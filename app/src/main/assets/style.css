@@ -1,0 +1,403 @@
+/* STRICT COLOR RULE: Zero green or green-like colors anywhere. */
+:root {
+  --bg: #0D0E12;
+  --surface: #15171E;
+  --module: #1E212B;
+  --border: #323748;
+  --text: #F4F1EA;
+  --subtext: #9A9890;
+  --orange: #FF4F18;
+  --cobalt: #3B68FF;
+  --amber: #FFB020;
+  --crimson: #FF2E54;
+}
+
+body.titanium-mode {
+  --bg: #F3EFE6;
+  --surface: #E8E2D5;
+  --module: #DDD5C5;
+  --border: #C5BCAE;
+  --text: #111318;
+  --subtext: #52504A;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  padding: 14px;
+  line-height: 1.4;
+}
+
+.chassis {
+  max-width: 560px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.deck-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.serial-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--module);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cobalt);
+}
+
+.status-dot.armed {
+  background: var(--orange);
+}
+
+.header-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.icon-btn {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.synth-bar {
+  background: var(--surface);
+  border: 1px solid var(--amber);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.synth-keys {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.synth-key {
+  flex: 1;
+  background: var(--module);
+  color: var(--amber);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 4px;
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.telemetry-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.telemetry-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tel-label {
+  font-family: monospace;
+  font-size: 10px;
+  color: var(--subtext);
+  letter-spacing: 0.8px;
+}
+
+.tel-value {
+  font-family: monospace;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.tel-sub {
+  font-family: monospace;
+  font-size: 9px;
+  color: var(--subtext);
+}
+
+.orange { color: var(--orange); }
+.cobalt { color: var(--cobalt); }
+.amber { color: var(--amber); }
+
+.dial-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.dial-container {
+  position: relative;
+  width: 280px;
+  height: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#rotaryCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  touch-action: none;
+  cursor: grab;
+}
+
+.dial-overlay {
+  position: relative;
+  z-index: 2;
+  pointer-events: none;
+  text-align: center;
+}
+
+.dial-sub, .dial-meta {
+  font-family: monospace;
+  font-size: 10px;
+  color: var(--subtext);
+  letter-spacing: 1px;
+}
+
+.dial-readout {
+  font-family: monospace;
+  font-size: 44px;
+  font-weight: 800;
+  letter-spacing: -1px;
+  margin: 4px 0;
+}
+
+.preset-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.chip {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.chip.active {
+  background: var(--orange);
+  color: #FFFFFF;
+  border-color: var(--orange);
+}
+
+.module-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.module-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.section-tag {
+  font-family: monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--subtext);
+}
+
+.intention-input {
+  width: 100%;
+  background: var(--module);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+.action-row {
+  display: flex;
+  gap: 8px;
+}
+
+.primary-arm-btn {
+  flex: 2;
+  background: var(--orange);
+  color: #FFFFFF;
+  border: none;
+  border-radius: 8px;
+  padding: 14px 12px;
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+
+.secondary-btn {
+  flex: 1;
+  background: var(--cobalt);
+  color: #FFFFFF;
+  border: none;
+  border-radius: 8px;
+  padding: 14px 10px;
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#artifactCanvas {
+  width: 100%;
+  height: 150px;
+  background: var(--module);
+  border-radius: 8px;
+  touch-action: none;
+}
+
+.app-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.app-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--module);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.app-row.blocked {
+  border-color: var(--orange);
+}
+
+.app-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.app-title {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.app-pkg {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--subtext);
+}
+
+.app-pill {
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--subtext);
+}
+
+.app-row.blocked .app-pill {
+  background: var(--orange);
+  color: #FFFFFF;
+}
+
+.airlock-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(13, 14, 18, 0.96);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.airlock-inner {
+  max-width: 420px;
+  width: 100%;
+  background: var(--surface);
+  border: 1.5px solid var(--orange);
+  border-radius: 16px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+}
+
+.airlock-title {
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.airlock-intention {
+  font-family: monospace;
+  color: var(--cobalt);
+  font-size: 13px;
+}
+
+.airlock-hint {
+  font-family: monospace;
+  color: var(--amber);
+  font-size: 11px;
+}
+
+.hidden {
+  display: none !important;
+}
