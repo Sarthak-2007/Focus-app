@@ -166,3 +166,21 @@ the seal, and a routine finish receipt carrying one verb
 complete-and-advance through the ESR-02 seal check. Priced
 MEDIUM by the panel; it is the natural sequel to the taskId
 question in Next wants.
+
+## Addendum — CI VERDICT (builds-free law, Oct 30 04:17+)
+- Merged main's CI unblock (keystore cfe6ee2 + issue-3 workflow
+  8d2b077) into agent/issue-12 (186318b); adopted issue-2 cell's
+  stale test call-site fixes verbatim, 5 files (bbadf5b).
+- Run 40969997299: Assemble debug GREEN (APK artifact uploaded);
+  unit tests COMPILE and EXECUTE: 157 tests, 33 failed —
+  31 Robolectric classMethod environment failures
+  (UnsupportedOperationException, DefaultSdkProvider:170 —
+  studio-wide, identical on agent/issue-2) + 2 pre-existing
+  shared failures (ChromeWaveUnitTest warrantDerivation,
+  TruthCar3SweepTest una06 — both fail identically on
+  agent/issue-2, whose whole brief was test health).
+- ZERO RoutineDeriveTest failures: every F-1 test, including
+  Wave-2's H1/H2/H3-era tests, PASSES on CI.
+- Named blockers handed to Ren: the Robolectric runner
+  environment (Methods/#3 territory) and the 2 shared
+  pre-existing failures — neither is cluster-F code.
