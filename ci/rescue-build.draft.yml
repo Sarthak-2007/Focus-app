@@ -1,43 +1,97 @@
 # DRAFT — issue #3 cell (Fern lead), for Ren to land on main.
-# Identical to .github/workflows/rescue-build.yml on main EXCEPT the one
-# added step marked "ISSUE-3 FIX". Stored outside .github/workflows/ so
-# this branch never executes its own draft.
+#
+# Identical in function to .github/workflows/rescue-build.yml on main,
+# EXCEPT the one added step marked "ISSUE-3 FIX" below.
+# Stored outside .github/workflows/ so this branch never executes
+# its own draft.
+#
+# Purpose: prove the automatic build circuit end to end —
+# push / manual dispatch → assemble → artifact uploaded →
+# unit-test step executes.
+# (Craft pass: Finisher 2 — every step named, every step's WHY recorded.)
 name: rescue-build
+
 on:
   workflow_dispatch:
   push:
+
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      # A clean runner starts empty; nothing else can run without the code.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Gradle / AGP need JDK 17. Temurin matches the project's toolchain,
+      # and this JDK also provides the keytool used in the fix below.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
+      # The runner image does not guarantee the SDK level this project
+      # compiles against, so install platform 36.1 + build-tools 36.1.0.
+      #
+      # sdkmanager is invoked by its full $ANDROID_HOME path on purpose:
+      # it is not reliably on PATH — run #2 died with
+      # "sdkmanager: command not found". Licences are accepted first;
+      # their output is discarded and failure is tolerated so an
+      # already-accepted licence never blocks the real install.
       - name: Install SDK platform 36.1
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
           "$SDKMANAGER" "platforms;android-36.1" "build-tools;36.1.0"
-      # ISSUE-3 FIX: app/build.gradle.kts signs the debug build with
-      # signingConfig "debugConfig" -> storeFile ${rootDir}/debug.keystore
-      # (standard Android debug key, password "android", alias
-      # "androiddebugkey"). debug.keystore is .gitignore line 18 — never
-      # committed — so every clean runner fails :app:validateSigningDebug
-      # (proven by run #4, 40957609929). Generate the identical standard
-      # key at the repo root before assembling. keytool ships with the JDK.
+
+      # ISSUE-3 FIX — the only functional change vs main.
+      #
+      # app/build.gradle.kts signs the debug build with signingConfig
+      # "debugConfig" → storeFile ${rootDir}/debug.keystore (standard
+      # Android debug key: password "android", alias "androiddebugkey").
+      # debug.keystore is .gitignore line 18 — never committed — so every
+      # clean runner fails :app:validateSigningDebug (proven by runs #4
+      # and #5, after full Kotlin compilation had passed).
+      #
+      # Generate the identical standard key at the repo root, where
+      # debugConfig expects it, before assembling. keytool ships with
+      # the JDK installed above, so no new dependency is introduced.
       - name: Generate debug keystore
         run: |
-          keytool -genkeypair -v -keystore debug.keystore -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          keytool -genkeypair -v \
+            -keystore debug.keystore \
+            -storepass android \
+            -keypass android \
+            -alias androiddebugkey \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+      # chmod guards against the checkout not preserving gradlew's
+      # executable bit — without it this step fails before Gradle starts.
       - name: Assemble debug
         run: |
           chmod +x gradlew
           ./gradlew --console=plain assembleDebug
-      - uses: actions/upload-artifact@v4
+
+      # The APK is the circuit's proof artifact. 3-day retention is
+      # deliberate: this is a debug build for verification, not a
+      # release shelf.
+      # Ordering preserved from the minimal draft: upload happens
+      # before the unit-test step, so the APK is already secured
+      # whatever the test verdict is.
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
         with:
           name: monolith-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 3
+
+      # Kept last, as in the minimal draft. The issue's bar is that this
+      # step executes; its verdict is a separate question (test-compile
+      # breakage belongs to issue #2).
       - name: Unit tests
         run: ./gradlew --console=plain testDebugUnitTest
