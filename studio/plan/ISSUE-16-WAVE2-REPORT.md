@@ -274,3 +274,11 @@ verbatim for Ren to post via gh, and the push was attempted via git.
   tree's feel pass.
 - **Paperwork staleness:** Wave-1 cell docs call the grant gate
   "uncommitted" — lead-verified it IS committed in `6c86ea5`.
+
+## PUSH STATUS (lead, Oct 30 Wave-2 close)
+Push attempted. Remote `agent/issue-16` exists at `873a23e` — a
+parallel Wave-1 commit (verification plan + merge flags only) with
+a different history — so the local cell history (352e5db, 6c86ea5,
+cdc5054, 0fd5645) diverges and a plain push is rejected; no
+force-push was made. Reconciliation belongs to Ren/Konto at the
+batch-10 composition. The Wave-2 commits are safe locally here.
