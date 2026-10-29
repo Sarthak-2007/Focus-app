@@ -48,11 +48,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.AppBlockTier
-import com.example.data.BlockedAppEntity
-import com.example.data.FocusProfileEntity
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
-import com.example.data.StudyChecklistItem
 import com.example.data.StudyModePreset
 import com.example.service.TactileSoundEngine
 import com.example.service.UsageAccess
@@ -97,37 +94,17 @@ fun TactileDeckScreen(
     activeSession: FocusSessionEntity?,
     dialMinutes: Int,
     studyBlocksCount: Int,
-    studyPreset: StudyModePreset,
-    checklist: List<StudyChecklistItem>,
     activeTask: FocusTaskEntity?,
     queuedTasks: List<FocusTaskEntity>,
-    completedTasksCount: Int,
-    totalQueueMinutes: Int,
-    selectedProfileName: String,
-    intentionText: String,
-    totalFocusedMinutes: Int,
-    totalInterceptions: Int,
-    profiles: List<FocusProfileEntity>,
-    apps: List<BlockedAppEntity>,
-    shortsReelsSniperEnabled: Boolean,
-    browserUrlBlockerEnabled: Boolean,
     capturedNotificationsCount: Int,
     soundEngine: TactileSoundEngine? = null,
     isDarkTheme: Boolean = false,
     onDialMinutesChanged: (Int) -> Unit,
     onSelectStudyPreset: (StudyModePreset) -> Unit,
     onSetStudyBlocksCount: (Int) -> Unit,
-    onToggleChecklistItem: (Int) -> Unit,
-    onAddChecklistItem: (String) -> Unit,
     onCompleteActiveTask: (Int) -> Unit,
-    onDeferActiveTask: (Int) -> Unit,
-    onExtendActiveTaskOvertime: () -> Unit,
-    onAddQuickTaskToQueue: (String, Int) -> Unit,
     onToggleTaskSubStep: (Int, Int) -> Unit,
     onOpenTaskSequencer: () -> Unit,
-    onOpenCurioVault: () -> Unit,
-    onIntentionChanged: (String) -> Unit,
-    onProfileSelected: (FocusProfileEntity) -> Unit,
     onArmSession: () -> Unit,
     onRequestDisarm: () -> Unit,
     onCancelWithinGraceWindow: () -> Unit,
