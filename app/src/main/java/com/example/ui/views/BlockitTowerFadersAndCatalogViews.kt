@@ -106,7 +106,7 @@ object HorizonLayout {
             }
             val below = pool.filter { remaining * entries[it].minutes / poolMins < safeMin }
             if (below.isEmpty()) {
-                for (i in pool) widths[i] = remaining * entries[it].minutes / poolMins
+                for (i in pool) widths[i] = remaining * entries[i].minutes / poolMins
                 break
             }
             for (i in below) {
