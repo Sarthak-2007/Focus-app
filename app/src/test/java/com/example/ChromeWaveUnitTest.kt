@@ -145,14 +145,18 @@ class ChromeWaveUnitTest {
     }
 
     @Test
-    fun guardLine_unmeasuredPrintsNothing() {
+    fun guardLine_unmeasuredPrintsNotChecked() {
+        // Issue #9 (Hof P-6): unmeasured used to print NOTHING and
+        // the blank read as fine. The line now names its ignorance
+        // in every unmeasured shape — partial set, no snapshot,
+        // empty snapshot.
         val snap = countedSnap(
             PermState.GRANTED, PermState.GRANTED, PermState.GRANTED, PermState.GRANTED
         )
         val partial = snap.copy(items = snap.items - WatchItemId.DEVICE_ADMIN)
-        assertNull(guardLineFor(partial, nowMono = 20_000L))
-        assertNull(guardLineFor(null, nowMono = 20_000L))
-        assertNull(guardLineFor(WatchSnapshot.EMPTY, nowMono = 20_000L))
+        assertEquals("GUARD — NOT CHECKED", guardLineFor(partial, nowMono = 20_000L).text)
+        assertEquals("GUARD — NOT CHECKED", guardLineFor(null, nowMono = 20_000L).text)
+        assertEquals("GUARD — NOT CHECKED", guardLineFor(WatchSnapshot.EMPTY, nowMono = 20_000L).text)
     }
 
     // ------------------------------------------------------------------

@@ -829,8 +829,12 @@ class MonolithViewModel(
         val warrantState: WarrantState,
         /** The header's Guard line, captured at the seal frame
          *  (chrome C2): the band freezes at this print for the
-         *  session's whole life. */
-        val guardLine: com.example.ui.components.GuardLinePrint? = null
+         *  session's whole life. Non-null since issue #9 (F-G4):
+         *  the default is the NOT CHECKED floor, so no freeze can
+         *  be minted carrying no line at all; both capture sites
+         *  pass an explicit guardLineFor(...) value. */
+        val guardLine: com.example.ui.components.GuardLinePrint =
+            com.example.ui.components.GuardLinePrint("GUARD — NOT CHECKED")
     )
 
     private val _sealFreeze = MutableStateFlow<SealFreeze?>(null)
@@ -862,19 +866,39 @@ class MonolithViewModel(
     /** The header's Guard line (chrome C2): derived from the Watch
      *  Store; while a session seals the phone it prints the freeze's
      *  captured line, untouched by anything the store does after. */
-    val guardLinePrint: StateFlow<com.example.ui.components.GuardLinePrint?> = combine(
+    /** The Guard line's slow clock (issue #9, Critic C-3): the
+     *  line's staleness is derived from the instant handed to
+     *  guardLineFor, and the combine below only re-derives when
+     *  one of its inputs emits — on a still screen a warranted
+     *  4/4 could otherwise outlive its own 45s threshold. This
+     *  ticker re-derives on the same 5s beat PARK's board uses;
+     *  its value is ignored, only its emission matters. Under
+     *  the seal the freeze branch answers instead, untouched. */
+    private val guardClock: kotlinx.coroutines.flow.Flow<Unit> =
+        kotlinx.coroutines.flow.flow {
+            while (true) {
+                emit(Unit)
+                kotlinx.coroutines.delay(5_000L)
+            }
+        }
+
+    val guardLinePrint: StateFlow<com.example.ui.components.GuardLinePrint> = combine(
         com.example.service.WatchStore.snapshots,
         _sealFreeze,
-        activeSession
-    ) { snap, freeze, session ->
-        if (session?.isActive == true && freeze?.guardLine != null) {
+        activeSession,
+        guardClock
+    ) { snap, freeze, session, _ ->
+        if (session?.isActive == true && freeze != null) {
             freeze.guardLine
         } else {
             com.example.ui.components.guardLineFor(
                 snap, android.os.SystemClock.elapsedRealtime()
             )
         }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    }.stateIn(
+        viewModelScope, SharingStarted.Eagerly,
+        com.example.ui.components.GuardLinePrint("GUARD — NOT CHECKED")
+    )
 
     // =========================================================================
     // THE CASCADE (Slice D step 4): the arm's proving controller.
