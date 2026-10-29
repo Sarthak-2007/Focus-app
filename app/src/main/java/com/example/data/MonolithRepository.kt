@@ -1235,8 +1235,18 @@ class MonolithRepository(
      * Grants a 2-minute peek lease (`activePeekUntilElapsedRealtime = nowMono + 120_000L`)
      * and pre-schedules `lastPeekEndElapsedRealtime = nowMono + 120_000L` so the 20-minute
      * cooldown is immediately armed in Room storage.
+     *
+     * Issue #16 (builder's grant gate): returns whether a lease
+     * was actually written, so the ViewModel's ST-08 launch can
+     * gate on the grant. This tree's version always grants; the
+     * false arm arrives with the batch-10 composition — the pill
+     * lane's version of this function, taken wholesale, reads
+     * the duration through EditableTimesProvider and must return
+     * false on its existing `durationMillis <= 0` early return
+     * (peekMinutes = 0: no grant, no row touched). Statement-
+     * position callers (tests) are unaffected by the new return.
      */
-    suspend fun startPeekLease(packageName: String) {
+    suspend fun startPeekLease(packageName: String): Boolean {
         val nowMono = SystemClock.elapsedRealtime()
         val leaseEndMono = nowMono + PEEK_DURATION_MILLIS
         dao.updatePeekLeaseAndCooldown(
@@ -1244,6 +1254,7 @@ class MonolithRepository(
             activeUntilMono = leaseEndMono,
             peekEndMono = leaseEndMono
         )
+        return true
     }
 
     /**
