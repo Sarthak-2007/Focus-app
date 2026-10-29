@@ -1,0 +1,1 @@
+20261029-110400,post-delta,0,127,24,74.0,0,0 # STRUCK (Ren, total sweep Oct 29): instrument failure — /usr/bin/time missing, gradle never ran; the 24 tests / 74.0s are stale build-1 XMLs and wall 0s is not a measurement. Not a data row.

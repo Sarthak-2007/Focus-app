@@ -1,0 +1,31 @@
+--- reap dry-run: deadpid(120s) + corpse(600s, must SURVIVE) + livepid(4000s, must SURVIVE) + dead temp(120s) + young temp(0s, must SURVIVE) ---
+would reap: /home/hatch/workspace/clone-inspect/design-refs/swarm/methods/queue-sim/q-new/compile-deadlane.flag (STALE-DEADPID, age 121s)
+would reap claim temp: /home/hatch/workspace/clone-inspect/design-refs/swarm/methods/queue-sim/q-new/.claim-dead.1.2.tmp (age 121s)
+reap-stale: 1 stale flag(s) [dry-run]
+reap-stale: 1 claim temp(s) [dry-run]
+reaped: /home/hatch/workspace/clone-inspect/design-refs/swarm/methods/queue-sim/q-new/compile-deadlane.flag (STALE-DEADPID, age 121s)
+reaped claim temp: /home/hatch/workspace/clone-inspect/design-refs/swarm/methods/queue-sim/q-new/.claim-dead.1.2.tmp (age 121s)
+reap-stale: 1 stale flag(s) [dry-run]
+reap-stale: 1 claim temp(s) [dry-run]
+--- now age the corpse to 1400s and reap again ---
+reaped: /home/hatch/workspace/clone-inspect/design-refs/swarm/methods/queue-sim/q-new/compile-oldcorpse.flag (STALE-LEGACY, age 1402s)
+reap-stale: 1 stale flag(s) [dry-run]
+--- survivors + note files ---
+total 12
+drwxrws--- 1 root nogroup 164 Oct 29 17:59 .
+drwxrws--- 1 root nogroup 344 Oct 29 17:59 ..
+-rw-rw---- 1 root nogroup   0 Oct 29 17:59 .claim-young.1.2.tmp
+-rw-rw---- 1 root nogroup  57 Oct 29 16:52 compile-livelane.flag
+-rw-rw---- 1 root nogroup  88 Oct 29 17:59 reaped-deadlane.note
+-rw-rw---- 1 root nogroup  83 Oct 29 17:59 reaped-oldcorpse.note
+--- note contents ---
+lane=deadlane
+class=STALE-DEADPID
+pid=999999
+age=121
+reaped_ist=2026-10-29 23:29:02 IST
+lane=oldcorpse
+class=STALE-LEGACY
+pid=
+age=1402
+reaped_ist=2026-10-29 23:29:03 IST

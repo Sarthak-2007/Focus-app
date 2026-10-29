@@ -1,0 +1,98 @@
+Picked up JAVA_TOOL_OPTIONS: -Djava.net.preferIPv6Addresses=true -Djavax.net.ssl.trustStore=/home/hatch/workspace/clone-inspect/tools/truststore.jks -Djavax.net.ssl.trustStorePassword=changeit
+Calculating task graph as no cached configuration is available for tasks: :app:assembleDebug :app:testDebugUnitTest
+Observed package id 'platforms;android-36-ext19' in inconsistent location '/home/hatch/workspace/android-sdk/platforms/android-36' (Expected '/home/hatch/workspace/android-sdk/platforms/android-36-ext19')
+Observed package id 'platforms;android-36.1' in inconsistent location '/home/hatch/workspace/android-sdk/platforms/android-36.1-2' (Expected '/home/hatch/workspace/android-sdk/platforms/android-36.1')
+[=========                              ] 25%                                   > Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+
+> Task :app:processDebugGoogleServices
+File google-services.json is missing.
+The Google Services Plugin cannot function without it.
+Searched locations: /home/hatch/workspace/clone-inspect/Focus-app/app/src/debug/google-services.json, /home/hatch/workspace/clone-inspect/Focus-app/app/src/debug/google-services.json, /home/hatch/workspace/clone-inspect/Focus-app/app/src/google-services.json, /home/hatch/workspace/clone-inspect/Focus-app/app/src/debug/google-services.json, /home/hatch/workspace/clone-inspect/Focus-app/app/src/Debug/google-services.json, /home/hatch/workspace/clone-inspect/Focus-app/app/google-services.json
+
+> Task :app:generateDebugResources
+> Task :app:generateDebugBuildConfig
+> Task :app:processDebugNavigationResources
+> Task :app:packageDebugResources
+> Task :app:parseDebugLocalResources
+> Task :app:generateDebugRFile
+> Task :app:javaPreCompileDebug
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets
+> Task :app:compressDebugAssets
+> Task :app:checkDebugDuplicateClasses
+> Task :app:desugarDebugFileDependencies
+> Task :app:kspDebugKotlin
+> Task :app:mergeExtDexDebug
+> Task :app:mergeLibDexDebug
+> Task :app:checkDebugAarMetadata
+> Task :app:mapDebugSourceSetPaths
+> Task :app:compileDebugNavigationResources
+> Task :app:compileDebugKotlin
+> Task :app:mergeDebugResources
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
+> Task :app:processDebugManifestForPackage
+
+> Task :app:processDebugResources
+[=========                              ] 25%                                   
+> Task :app:mergeDebugJniLibFolders
+> Task :app:mergeDebugNativeLibs
+
+> Task :app:stripDebugDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so, libdatastore_shared_counter.so. Run with --info option to learn more.
+
+> Task :app:validateSigningDebug
+> Task :app:writeDebugAppMetadata
+> Task :app:writeDebugSigningConfigVersions
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest
+> Task :app:packageDebugUnitTestForUnitTest
+> Task :app:processDebugUnitTestManifest
+> Task :app:generateDebugUnitTestConfig
+
+> Task :app:compileDebugKotlin
+w: file:///home/hatch/workspace/clone-inspect/Focus-app/app/src/main/java/com/example/data/MonolithRepository.kt:442:24 'fun unsafeCheckOpNoThrow(p0: String, p1: Int, p2: String): Int' is deprecated. Deprecated in Java.
+w: file:///home/hatch/workspace/clone-inspect/Focus-app/app/src/main/java/com/example/ui/screens/TactileDeckScreen.kt:507:37 Condition is always 'true'.
+w: file:///home/hatch/workspace/clone-inspect/Focus-app/app/src/main/java/com/example/ui/views/BlockitCoreViews.kt:115:67 'field scaledDensity: Float' is deprecated. Deprecated in Java.
+
+> Task :app:processDebugJavaRes
+> Task :app:compileDebugJavaWithJavac
+> Task :app:mergeDebugJavaResource
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:bundleDebugClassesToCompileJar
+Exception in thread "AWT-EventQueue-0" java.lang.NullPointerException: Cannot invoke "ksp.com.intellij.openapi.application.Application.getService(java.lang.Class)" because the return value of "ksp.com.intellij.openapi.application.ApplicationManager.getApplication()" is null
+	at ksp.com.intellij.openapi.fileEditor.FileDocumentManager.getInstance(FileDocumentManager.java:35)
+	at ksp.com.intellij.openapi.fileTypes.BinaryFileTypeDecompilers.lambda$notifyDecompilerSetChange$1(BinaryFileTypeDecompilers.java:29)
+	at java.desktop/java.awt.event.InvocationEvent.dispatch(InvocationEvent.java:318)
+	at java.desktop/java.awt.EventQueue.dispatchEventImpl(EventQueue.java:773)
+	at java.desktop/java.awt.EventQueue$4.run(EventQueue.java:720)
+	at java.desktop/java.awt.EventQueue$4.run(EventQueue.java:714)
+	at java.base/java.security.AccessController.doPrivileged(AccessController.java:400)
+	at java.base/java.security.ProtectionDomain$JavaSecurityAccessImpl.doIntersectionPrivilege(ProtectionDomain.java:87)
+	at java.desktop/java.awt.EventQueue.dispatchEvent(EventQueue.java:742)
+	at java.desktop/java.awt.EventDispatchThread.pumpOneEventForFilters(EventDispatchThread.java:203)
+	at java.desktop/java.awt.EventDispatchThread.pumpEventsForFilter(EventDispatchThread.java:124)
+	at java.desktop/java.awt.EventDispatchThread.pumpEventsForHierarchy(EventDispatchThread.java:113)
+	at java.desktop/java.awt.EventDispatchThread.pumpEvents(EventDispatchThread.java:109)
+	at java.desktop/java.awt.EventDispatchThread.pumpEvents(EventDispatchThread.java:101)
+	at java.desktop/java.awt.EventDispatchThread.run(EventDispatchThread.java:90)
+> Task :app:kspDebugUnitTestKotlin
+> Task :app:dexBuilderDebug
+> Task :app:mergeProjectDexDebug
+> Task :app:packageDebug
+> Task :app:createDebugApkListingFileRedirect
+> Task :app:assembleDebug
+> Task :app:compileDebugUnitTestKotlin
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugUnitTestJavaRes
+
+> Task :app:testDebugUnitTest
+Picked up JAVA_TOOL_OPTIONS: -Djava.net.preferIPv6Addresses=true -Djavax.net.ssl.trustStore=/home/hatch/workspace/clone-inspect/tools/truststore.jks -Djavax.net.ssl.trustStorePassword=changeit
+
+BUILD SUCCESSFUL in 3m 50s
+49 actionable tasks: 49 executed
+Configuration cache entry stored.
