@@ -103,6 +103,23 @@ class MonolithAccessibilityService : AccessibilityService() {
         var armedMono: Long = 0L
             internal set
 
+        /** Foreground witness (issue #43, finding 2): the package
+         *  of the most recent TYPE_WINDOW_STATE_CHANGED event —
+         *  the package string ONLY, never window content — and the
+         *  monotonic instant it was stamped. This is real
+         *  foreground detection: the shield prefers this witness
+         *  over the UsageStats lastTimeUsed guess whenever this
+         *  service is bound. Null / 0 when no window event has
+         *  been seen under this binding; the stamp dies with the
+         *  binding (onUnbind / onDestroy), like lastRootMono. */
+        @Volatile
+        var foregroundPackage: String? = null
+            internal set
+
+        @Volatile
+        var foregroundMono: Long = 0L
+            internal set
+
         /** Truth Car 3 (UNA-01): the sniper's gate. The sniper
          *  fires only where its persisted switch says so — OFF
          *  means Shorts and Reels are left alone. A missing
@@ -156,12 +173,28 @@ class MonolithAccessibilityService : AccessibilityService() {
             lastRootMono = 0L
             armedSessionId = -1
             armedMono = 0L
+            foregroundPackage = null
+            foregroundMono = 0L
             WatchStore.onAccessibilityBound(false)
         }
         return super.onUnbind(intent)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // Foreground witness (issue #43, finding 2), stamped BEFORE
+        // any early return below — including the own-package and
+        // systemui returns, so the witness always names the app
+        // actually in front (a stale witness naming the previous
+        // app would let the shield intercept an app the user has
+        // already left). Package string only; no window content
+        // is read or stored for this witness.
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val fgPkg = event.packageName?.toString()?.takeIf { it.isNotBlank() }
+            if (fgPkg != null) {
+                foregroundPackage = fgPkg
+                foregroundMono = SystemClock.elapsedRealtime()
+            }
+        }
         // Live Wire stamp, taken BEFORE any early return below
         // (Rosa's stamp-before-return ordering): the stamp proves
         // the event pipeline processed this foreground, not that a
@@ -437,6 +470,8 @@ class MonolithAccessibilityService : AccessibilityService() {
             lastRootMono = 0L
             armedSessionId = -1
             armedMono = 0L
+            foregroundPackage = null
+            foregroundMono = 0L
             WatchStore.onAccessibilityBound(false)
         }
         scope.cancel()
