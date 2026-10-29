@@ -1519,7 +1519,9 @@ class MonolithViewModel(
     }
 
     fun cycleRoutineLoadout(routine: com.example.data.RoutineEntity) {
-        val order = listOf(SmartLoadout.STUDY, SmartLoadout.WORK_SPRINT, SmartLoadout.SLEEP)
+        // Audit R1 #38: the seat order lives in ONE place —
+        // LoadoutStore.CAP_ORDER — not re-hardcoded here.
+        val order = com.example.data.LoadoutStore.CAP_ORDER
         val current = runCatching { SmartLoadout.valueOf(routine.loadoutName) }.getOrDefault(SmartLoadout.STUDY)
         val next = order[(order.indexOf(current) + 1) % order.size]
         soundEngine.playFirmClick()
@@ -2098,15 +2100,28 @@ class MonolithViewModel(
     fun applySmartLoadout(loadout: SmartLoadout) {
         soundEngine.playHarmonicSeal(true)
         _selectedProfileName.value = loadout.title
-        // UNA-07: a hand pick is a fact — persist it and rest the cap
-        // on it, so the selector survives navigation and process death.
-        loadoutStore.put(loadout)
-        _loadoutCapIndex.value = com.example.data.LoadoutStore.capIndexOf(loadout)
         if (loadout == SmartLoadout.STUDY) {
             _shortsReelsSniperEnabled.value = true
             _browserUrlBlockerEnabled.value = true
         }
         viewModelScope.launch {
+            // UNA-07: a hand pick is a fact — persist it and rest the
+            // cap on it, so the selector survives navigation and
+            // process death. Audit R1 #38: the synchronous commit()
+            // used to run HERE, on the tap's (main) thread, and its
+            // result was discarded — the cap moved even when the
+            // pick never reached disk. The commit now runs on IO,
+            // and the cap rests on the pick only when the store
+            // confirms it; on failure the cap re-reads the stored
+            // fact, so it can never present an unpersisted pick.
+            val persisted = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                loadoutStore.put(loadout)
+            }
+            _loadoutCapIndex.value = if (persisted) {
+                com.example.data.LoadoutStore.capIndexOf(loadout)
+            } else {
+                loadoutStore.capIndex()
+            }
             repository.applySmartLoadout(loadout)
             if (loadout == SmartLoadout.STUDY) {
                 repository.setBrowserBlockerEnabled(true)

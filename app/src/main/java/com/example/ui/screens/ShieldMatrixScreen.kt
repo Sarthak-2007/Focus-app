@@ -286,11 +286,12 @@ fun ShieldMatrixScreen(
                 soundEngine = soundEngine,
                 onSelect = { level ->
                     selectedLoadoutIndex = level
-                    when (level) {
-                        0 -> onApplySmartLoadout(SmartLoadout.STUDY)
-                        1 -> onApplySmartLoadout(SmartLoadout.WORK_SPRINT)
-                        else -> onApplySmartLoadout(SmartLoadout.SLEEP)
-                    }
+                    // Audit R1 #38: the inverse mapping is the
+                    // store's ONE seat order — no re-hardcoded
+                    // index→loadout table lives here any more.
+                    onApplySmartLoadout(
+                        com.example.data.LoadoutStore.loadoutForCapIndex(level)
+                    )
                 }
             )
         }
