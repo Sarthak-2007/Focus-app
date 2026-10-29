@@ -194,15 +194,7 @@ class ScreenshotHarnessTest {
             captureTo(File(shotsDir, name))
         }
 
-        // The Drawer cabinet (chrome C10): from the landing's CURIOS row.
-        composeRule.runOnUiThread { viewModel.navigateTo(MonolithDestination.VAULT) }
-        settle(900)
-        composeRule.onNodeWithTag("drawer_curios_row").performClick()
-        settle(900)
-        captureTo(File(shotsDir, "06_cabinet.png"))
-        composeRule.onNodeWithTag("cabinet_row_artifact_lissajous").performClick()
-        settle(900)
-        captureTo(File(shotsDir, "07_cabinet_detail.png"))
+        // Cabinet evicted from the Drawer (issue #8) — its captures end here.
     }
 
     @Test
@@ -248,12 +240,6 @@ class ScreenshotHarnessTest {
             settle(900)
             captureTo(File(nightDir, name))
         }
-
-        composeRule.runOnUiThread { viewModel.navigateTo(MonolithDestination.VAULT) }
-        settle(900)
-        composeRule.onNodeWithTag("drawer_curios_row").performClick()
-        settle(900)
-        captureTo(File(nightDir, "n06_cabinet.png"))
     }
 
     /** The empty-queue Tasks still (§10.3's owed proof): the ruled
@@ -726,8 +712,9 @@ class ScreenshotHarnessTest {
      *  (no ESTIMATE line; the date-line shows the finish's own
      *  date beside 01:15 — DRW-03), and an eleven-sub-step task
      *  on the Tasks screen (the counters run 01…11, never 010 —
-     *  DRW-08). The cabinet and composer states ride the standing
-     *  captures (06/07/03). */
+     *  DRW-08). The composer state rides the standing captures
+     *  (03); the cabinet captures ended with its eviction from the
+     *  Drawer (issue #8). */
     @Test
     fun tcDrawerDetailsAndSubSteps() {
         val zone = java.time.ZoneId.systemDefault()
@@ -840,8 +827,6 @@ class ScreenshotHarnessTest {
             File(nightDir, "n04_vault.png") to "drawer night",
             File(shotsDir, "05_park.png") to "park day",
             File(nightDir, "n05_park.png") to "park night",
-            File(shotsDir, "06_cabinet.png") to "cabinet day",
-            File(nightDir, "n06_cabinet.png") to "cabinet night",
             File(shotsDir, "03b_tasks_empty.png") to "tasks-empty day",
             File(nightDir, "n03b_tasks_empty.png") to "tasks-empty night"
         )) {

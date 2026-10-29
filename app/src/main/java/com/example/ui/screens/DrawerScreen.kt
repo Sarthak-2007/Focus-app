@@ -38,11 +38,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.PaddingValues
-import com.example.data.CurioCatalog
 import com.example.data.DayWordStore
 import com.example.data.DrawerDay
 import com.example.data.FocusTaskEntity
-import com.example.data.KineticArtifact
 import com.example.data.StoredMonth
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
@@ -69,7 +67,7 @@ import java.util.Locale
  * beside its date heading as his authored word — never a number.
  */
 
-private enum class DrawerView { LANDING, INDEX, MONTH, CABINET }
+private enum class DrawerView { LANDING, MONTH }
 
 private data class DrawerDayGroup(
     val date: LocalDate,
@@ -146,24 +144,16 @@ fun DrawerScreen(
     onLoadEarlier: () -> Unit,
     onQueryChange: (String) -> Unit,
     onLoadEarlierSearch: () -> Unit,
-    onDeclareTodayWord: (String?) -> Unit,
-    // The cabinet (chrome C10): the curios' new home. The Drawer is
-    // storage; the cabinet is its furniture — the six artifacts as
-    // ruled rows, their forged state read from real sessions, their
-    // detail carrying the lore the Vault screen printed. The
-    // kinetic toy VISUALS were never built as views in the shipped
-    // app and are not built here; the cabinet is the catalog and
-    // the record — not the toys. (Truth Car 2: the requirements
-    // print, the SELECT verb, and the serial-plate synth egg were
-    // removed with DRW-01/06/07 — each printed a fact the app does
-    // not hold.)
-    artifacts: List<KineticArtifact> = CurioCatalog.artifacts,
-    forgedArtifactIds: Set<String> = emptySet()
+    onDeclareTodayWord: (String?) -> Unit
+    // Issue #8 (AUDIT-drawer §2A): the cabinet is EVICTED from the
+    // Drawer — no CURIOS row, no cabinet view, no cabinet params.
+    // Its data stays in code (CurioCatalog, the DISTINCT forged-id
+    // read, the VM's forged flow) for its future home (issue #21);
+    // nothing is deleted — it simply has no Drawer address.
 ) {
     val scheme = MaterialTheme.colorScheme
     var view by remember { mutableStateOf(DrawerView.LANDING) }
     var selectedTask by remember { mutableStateOf<FocusTaskEntity?>(null) }
-    var cabinetArtifact by remember { mutableStateOf<KineticArtifact?>(null) }
 
     // DRW-05 (Truth Car 2): "today" keys to the day boundary, not
     // to an unkeyed remember frozen at first composition. The
@@ -322,191 +312,7 @@ fun DrawerScreen(
     }
 
     // ------------------------------------------------------------------
-    // CABINET — the curios, re-homed (chrome C10). Ruled rows like
-    // everything else in the Drawer; forged state from real
-    // sessions; sealed = read-only (the detail reads, SELECT does
-    // not answer).
-    // ------------------------------------------------------------------
-    if (view == DrawerView.CABINET) {
-        val artifact = cabinetArtifact
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(scheme.background)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .testTag("drawer_cabinet"),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(bottom = 100.dp)
-        ) {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "CABINET",
-                        fontFamily = AnonymousProFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        letterSpacing = 2.sp,
-                        color = scheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "BACK",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        color = scheme.onBackground,
-                        modifier = Modifier
-                            .clickable {
-                                if (cabinetArtifact != null) {
-                                    cabinetArtifact = null
-                                } else {
-                                    view = DrawerView.LANDING
-                                }
-                            }
-                            .testTag("cabinet_back")
-                    )
-                }
-            }
-            if (artifact == null) {
-                items(artifacts, key = { "cabinet-${it.id}" }) { item ->
-                    val forged = item.id in forgedArtifactIds
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { cabinetArtifact = item }
-                            .padding(vertical = 6.dp)
-                            .testTag("cabinet_row_${item.id}"),
-                        verticalArrangement = Arrangement.spacedBy(3.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = item.serialCode.uppercase(Locale.US),
-                                fontFamily = AnonymousProFamily,
-                                fontSize = 10.5.sp,
-                                letterSpacing = 1.sp,
-                                color = scheme.onSurfaceVariant
-                            )
-                            if (forged) {
-                                Text(
-                                    text = "FORGED",
-                                    fontFamily = AnonymousProFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 10.5.sp,
-                                    letterSpacing = 1.sp,
-                                    color = scheme.onBackground
-                                )
-                            }
-                        }
-                        Text(
-                            text = item.name,
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 14.sp,
-                            color = scheme.onBackground
-                        )
-                        Text(
-                            text = item.subtitle,
-                            fontFamily = AnonymousProFamily,
-                            fontSize = 10.5.sp,
-                            color = scheme.onSurfaceVariant
-                        )
-                    }
-                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-                }
-                // DRW-01: the true rule, printed once as the
-                // cabinet's standing line — exactly what the
-                // forge does (Repository: a finished span forges
-                // one artifact, chosen at random; routine arms
-                // never forge). No per-artifact prices, no
-                // thresholds nothing enforces.
-                item {
-                    Text(
-                        text = "A FINISHED SPAN FORGES ONE — THE FORGE CHOOSES WHICH.",
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 10.5.sp,
-                        letterSpacing = 1.sp,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier.testTag("cabinet_forge_rule")
-                    )
-                }
-            } else {
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        // The serial plate is print. (Truth Car 2,
-                        // DRW-07: the five-tap egg that toggled a
-                        // "HARMONIC SYNTH UNLOCKED" line is gone —
-                        // the synth it named was removed from the
-                        // app, and an achieved state for a feature
-                        // that does not exist is not an easter egg,
-                        // it is a false print.)
-                        Text(
-                            text = artifact.serialCode.uppercase(Locale.US),
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier.testTag("cabinet_serial_plate")
-                        )
-                        Text(
-                            text = artifact.name,
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
-                            color = scheme.onBackground
-                        )
-                        Text(
-                            text = artifact.subtitle,
-                            fontFamily = AnonymousProFamily,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = artifact.lore,
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 13.sp,
-                            color = scheme.onBackground
-                        )
-                        // DRW-01: the "REQUIRES … MIN · …
-                        // INTERCEPTIONS" price tag is gone — no
-                        // code ever read those numbers. The true
-                        // rule prints once, on the cabinet's list
-                        // (below), not as a per-artifact price.
-                        Text(
-                            text = if (artifact.id in forgedArtifactIds) {
-                                "FORGED — IT STANDS IN THE CABINET"
-                            } else {
-                                "NOT YET FORGED"
-                            },
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onBackground
-                        )
-                        // DRW-06: no SELECT verb, no SELECTED
-                        // state — the selection was consumed by
-                        // nothing, survived nothing, and chose
-                        // between toys that do not exist. The
-                        // detail now ends at the record.
-                    }
-                }
-            }
-        }
-        return
-    }
-
-    // ------------------------------------------------------------------
-    // LIST VIEWS — landing / month index / one month / search results.
+    // LIST VIEWS — landing (current month + MONTHS shelf) / one month / search results.
     // ------------------------------------------------------------------
     LazyColumn(
         modifier = Modifier
@@ -612,43 +418,6 @@ fun DrawerScreen(
                 }
             }
         } else when (view) {
-            // Unreachable: the CABINET page returns early above,
-            // before this column exists. Present for exhaustiveness.
-            DrawerView.CABINET -> {
-                item { Spacer(Modifier.height(0.dp)) }
-            }
-            DrawerView.INDEX -> {
-                // ---------- ALL MONTHS ----------
-                item {
-                    DrawerNavRow(
-                        label = "BACK",
-                        onClick = { view = DrawerView.LANDING }
-                    )
-                }
-                items(storedMonths, key = { "month-${it.year}-${it.month}" }) { month ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                onSelectMonth(month.year, month.month)
-                                view = DrawerView.MONTH
-                            }
-                            .padding(vertical = 10.dp)
-                            .testTag("drawer_month_${month.year}_${month.month}"),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = monthLabel(month.year, month.month),
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 14.sp,
-                            color = scheme.onBackground
-                        )
-                    }
-                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-                }
-            }
-
             DrawerView.MONTH -> {
                 // ---------- ONE MONTH ----------
                 item {
@@ -705,7 +474,7 @@ fun DrawerScreen(
             }
 
             DrawerView.LANDING -> {
-                // ---------- LANDING: ALL MONTHS + current month ----------
+                // ---------- LANDING: current month + MONTHS shelf ----------
                 if (globallyEmpty) {
                     item {
                         Text(
@@ -733,54 +502,9 @@ fun DrawerScreen(
                             onDeclareTodayWord = onDeclareTodayWord
                         )
                     }
-                    item {
-                        DrawerNavRow(
-                            label = "CURIOS",
-                            onClick = { view = DrawerView.CABINET },
-                            modifier = Modifier.testTag("drawer_curios_row")
-                        )
-                        HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-                    }
                 } else {
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { view = DrawerView.INDEX }
-                                .padding(vertical = 6.dp)
-                                .testTag("drawer_all_months"),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "ALL MONTHS",
-                                fontFamily = AnonymousProFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                letterSpacing = 1.sp,
-                                color = scheme.onBackground
-                            )
-                            Text(
-                                text = "›",
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontSize = 14.sp,
-                                color = scheme.onSurfaceVariant
-                            )
-                        }
-                        HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-                    }
-                    // The cabinet's door: ONE furniture row under
-                    // ALL MONTHS (chrome C10).
-                    item {
-                        DrawerNavRow(
-                            label = "CURIOS",
-                            onClick = { view = DrawerView.CABINET },
-                            modifier = Modifier.testTag("drawer_curios_row")
-                        )
-                        HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-                    }
                     // The current month, newest first. An empty current
-                    // month renders in SILENCE under the ALL MONTHS row —
+                    // month renders in SILENCE above the MONTHS shelf —
                     // no absence line greets a month that has barely begun.
                     val groups = buildDayGroups(
                         rows = drawerRows,
@@ -805,29 +529,60 @@ fun DrawerScreen(
                     if (drawerHasEarlier) {
                         item { EarlierRow(onClick = onLoadEarlier) }
                     }
+                    // MONTHS shelf (AUDIT-drawer §2): the INDEX
+                    // corridor is dead. Earlier stored months stand
+                    // inline on the landing itself — one ruled row
+                    // per month (name incl. year, NO counts), each
+                    // opening MONTH exactly as the index row did.
+                    // The current month is the landing's own body
+                    // above, never a shelf row. A word-only month is
+                    // still an address and still shelves.
+                    val earlierMonths = storedMonths.filterNot {
+                        it.year == currentYearMonth.first &&
+                            it.month == currentYearMonth.second
+                    }
+                    if (earlierMonths.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = "MONTHS",
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 6.dp)
+                            )
+                        }
+                        items(
+                            earlierMonths,
+                            key = { "shelf-${it.year}-${it.month}" }
+                        ) { month ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        onSelectMonth(month.year, month.month)
+                                        view = DrawerView.MONTH
+                                    }
+                                    .padding(vertical = 10.dp)
+                                    .testTag("drawer_month_${month.year}_${month.month}"),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = monthLabel(month.year, month.month),
+                                    fontFamily = AtkinsonHyperlegibleFamily,
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 14.sp,
+                                    color = scheme.onBackground
+                                )
+                            }
+                            HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+                        }
+                    }
                 }
             }
         }
     }
-}
-
-@Composable
-private fun DrawerNavRow(
-    label: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val scheme = MaterialTheme.colorScheme
-    Text(
-        text = label,
-        fontFamily = AtkinsonHyperlegibleFamily,
-        fontWeight = FontWeight.Bold,
-        fontSize = 12.sp,
-        color = scheme.onBackground,
-        modifier = modifier
-            .clickable { onClick() }
-            .padding(vertical = 6.dp)
-    )
 }
 
 /**

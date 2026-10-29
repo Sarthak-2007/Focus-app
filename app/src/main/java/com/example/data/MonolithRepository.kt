@@ -2047,7 +2047,23 @@ class MonolithRepository(
         // finalise funnel, which runs off evidence, not off the clock.
         val isRoutineSession = session.routineId != null
         val forgedId = if (allBlocksCompleted && !isRoutineSession) {
-            CurioCatalog.artifacts.shuffled().first().id
+            // Forge truth (AUDIT-drawer §2A): the lot draws ONLY from
+            // what the cabinet cannot already show. The cabinet reads
+            // the DISTINCT forged set (MonolithDao.getForgedArtifactIds),
+            // so the lot draws from that same set's complement — the
+            // two sides can never disagree. Drawing from all six
+            // forged repeats from the second forge onward, and once
+            // the set stood complete, forged invisibly forever while
+            // the printed rule kept its promise. When nothing unforged
+            // remains, this span forges nothing new (null): no fresh
+            // claim the cabinet cannot honour. (Whether a completed-set
+            // finish prints anything elsewhere is Ren's escalated call,
+            // audit §7.3 — not this fix.)
+            val alreadyForged = dao.getForgedArtifactIds().toSet()
+            CurioCatalog.artifacts
+                .filter { it.id !in alreadyForged }
+                .shuffled()
+                .firstOrNull()?.id
         } else null
 
         // Slice E (Nocke §2.3): the ending write classifies the
