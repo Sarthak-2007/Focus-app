@@ -558,7 +558,7 @@ class ReceptionSheetTest {
             .performClick()
         assertTrue("the stamp books at the press", stamped)
         assertFalse("the enter waits for the tear (260ms)", done)
-        composeRule.mainClock.advanceBy(300)
+        composeRule.mainClock.advanceTimeBy(300)
         assertTrue("DONE hands the exit to the host after the tear", done)
     }
 
