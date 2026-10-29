@@ -181,6 +181,17 @@ class MonolithRepository(
         const val APP_LIST_PREFS_NAME = "monolith_app_list"
         const val PRUNE_NOTE_COUNT_KEY = "prune_note_count"
         const val PRUNE_NOTE_RULES_KEY = "prune_note_rules_removed"
+
+        /** The catalog memory (Wave 3, issue #34): the two-strike
+         *  strike set and the pruned-rule tombstones, in the same
+         *  prefs file — the schema stays frozen at v12, and a
+         *  ruling's survival needs no column in the table it left.
+         *  ABSENT_ONCE: packages absent at the last sync (a prune
+         *  needs a second consecutive absence). REMEMBERED_RULES:
+         *  "pkg|TIER|limit" strings for pruned rows, restored
+         *  ahead of factory presets if the package returns. */
+        const val ABSENT_ONCE_KEY = "catalog_absent_once"
+        const val REMEMBERED_RULES_KEY = "catalog_remembered_rules"
     }
 
     /** The seal marker's session id, or -1 when no seal has ever
@@ -218,6 +229,10 @@ class MonolithRepository(
                 addCategory(Intent.CATEGORY_LAUNCHER)
             }
             val resolvedList = pm.queryIntentActivities(mainIntent, 0)
+            // The main activity per package (its launch intent's
+            // component), resolved once per package — the reconcile's
+            // dedupe rule lets it win over shortcut activities.
+            val mainActivityByPackage = mutableMapOf<String, String?>()
             val installed = resolvedList.mapNotNull { resolveInfo ->
                 val pkg = resolveInfo.activityInfo?.packageName ?: return@mapNotNull null
                 if (pkg == context.packageName || pkg.startsWith("com.android.settings")) {
@@ -225,14 +240,25 @@ class MonolithRepository(
                 }
                 val label = resolveInfo.loadLabel(pm)?.toString()
                     ?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                InstalledPackage(pkg, label)
+                val mainActivity = mainActivityByPackage.getOrPut(pkg) {
+                    runCatching {
+                        pm.getLaunchIntentForPackage(pkg)?.component?.className
+                    }.getOrNull()
+                }
+                InstalledPackage(
+                    pkg, label,
+                    isMainActivity = mainActivity != null &&
+                        mainActivity == resolveInfo.activityInfo?.name
+                )
             }
             // THE CATALOG IS THE PHONE'S TRUTH (Ordner lane, Sarthak's
             // complaint Oct 29 22:40: the list carried apps he never
             // installed). There is no blind factory seed any more:
-            // this sync reconciles the table to exactly the installed
-            // launchable set — rows for absent packages are PRUNED,
-            // present packages are discovered without a cap, and the
+            // this sync reconciles the table to the installed
+            // launchable set — rows for packages absent on TWO
+            // consecutive syncs are PRUNED (with their rulings filed
+            // in the catalog memory first, issue #34), present
+            // packages are discovered without a cap, and the
             // factory presets survive only as birth rules applied to
             // packages that actually exist on this phone. An empty
             // query result can only mean the query failed (the
@@ -245,10 +271,14 @@ class MonolithRepository(
                     existing = existingRows,
                     installed = installed,
                     usageMinutes = queryRealTodayUsageMinutes(),
-                    categorize = ::categorizePackage
+                    categorize = ::categorizePackage,
+                    previouslyAbsent = loadAbsentOnce(),
+                    rememberedRules = loadRememberedRules()
                 )
                 if (plan.toInsert.isNotEmpty()) {
                     dao.insertApps(plan.toInsert)
+                    // A restored package's tombstone is spent.
+                    forgetRememberedRules(plan.toInsert.map { it.packageName })
                 }
                 plan.usageUpdates.forEach { dao.updateApp(it) }
                 if (plan.toPrune.isNotEmpty()) {
@@ -260,6 +290,10 @@ class MonolithRepository(
                     val prunedRows = existingRows.filter {
                         it.packageName in plan.toPrune
                     }
+                    // Issue #34: file the rulings BEFORE the rows
+                    // leave, so a returning package is reborn with
+                    // its own ruling, never a silent OPEN.
+                    rememberPrunedRules(prunedRows)
                     recordPruneNote(
                         appsRemoved = prunedRows.size,
                         rulesRemoved = prunedRows.any {
@@ -268,6 +302,11 @@ class MonolithRepository(
                     )
                     dao.deleteAppsByPackage(plan.toPrune)
                 }
+                // The strike set for the next sync: only packages
+                // absent for the FIRST time here. A package absent
+                // twice has been pruned above; one present again
+                // clears itself by not being absent.
+                saveAbsentOnce(plan.pendingPrune.toSet())
             }
         } catch (_: Exception) {
             // Safe fallback if package querying is restricted
@@ -489,6 +528,58 @@ class MonolithRepository(
             .remove(PRUNE_NOTE_COUNT_KEY)
             .remove(PRUNE_NOTE_RULES_KEY)
             .apply()
+    }
+
+    // ------------------------------------------------------------------
+    // THE CATALOG MEMORY (issue #34): strike set + rule tombstones.
+    // ------------------------------------------------------------------
+
+    private fun loadAbsentOnce(): Set<String> =
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .getStringSet(ABSENT_ONCE_KEY, emptySet())
+            ?.toSet() ?: emptySet()
+
+    private fun saveAbsentOnce(packages: Set<String>) {
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putStringSet(ABSENT_ONCE_KEY, packages).apply()
+    }
+
+    /** Remembered rulings, decoded: "pkg|TIER|limit" per entry.
+     *  A malformed entry is skipped, never fatal. */
+    private fun loadRememberedRules(): Map<String, AppRulePreset> {
+        val raw = context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .getStringSet(REMEMBERED_RULES_KEY, emptySet()) ?: emptySet()
+        return raw.mapNotNull { entry ->
+            val parts = entry.split("|")
+            if (parts.size != 3) return@mapNotNull null
+            val tier = runCatching { AppBlockTier.valueOf(parts[1]) }.getOrNull()
+                ?: return@mapNotNull null
+            val limit = parts[2].toIntOrNull() ?: return@mapNotNull null
+            parts[0] to AppRulePreset(tier, limit)
+        }.toMap()
+    }
+
+    private fun rememberPrunedRules(rows: List<BlockedAppEntity>) {
+        if (rows.isEmpty()) return
+        val prefs = context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+        val kept = (prefs.getStringSet(REMEMBERED_RULES_KEY, emptySet()) ?: emptySet())
+            .filter { entry -> rows.none { it.packageName == entry.substringBefore("|") } }
+        val encoded = rows.map {
+            "${it.packageName}|${it.resolvedTier.name}|${it.dailyLimitMinutes}"
+        }
+        prefs.edit()
+            .putStringSet(REMEMBERED_RULES_KEY, (kept + encoded).toSet())
+            .apply()
+    }
+
+    private fun forgetRememberedRules(packages: List<String>) {
+        if (packages.isEmpty()) return
+        val prefs = context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getStringSet(REMEMBERED_RULES_KEY, emptySet()) ?: return
+        val kept = raw.filter { it.substringBefore("|") !in packages }
+        if (kept.size != raw.size) {
+            prefs.edit().putStringSet(REMEMBERED_RULES_KEY, kept.toSet()).apply()
+        }
     }
 
     fun markParkIntroDone() {

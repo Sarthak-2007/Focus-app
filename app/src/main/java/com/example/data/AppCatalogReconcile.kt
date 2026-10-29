@@ -9,17 +9,40 @@ package com.example.data
  * the packages the phone actually has (launchable, installed — the
  * PackageManager launcher query, whose visibility the manifest's
  * <queries> declaration grants), and today's real usage. The table
- * ends the sync holding EXACTLY the installed set:
+ * ends the sync holding the installed set — but a row is a man's
+ * RULING, not a cache entry, so the sync may only take a row away
+ * on corroborated evidence, never on one query's say-so (Wave 3,
+ * issue #34 — the honest-catalog repairs):
  *
- * - a stored row whose package is gone is PRUNED (the one rule for
- *   stored rows — never kept dormant, so no reader of this table can
- *   ever count a ghost: not the Shield list, not the Deck's held
- *   count, not PARK's census);
+ * - PRUNE NEEDS TWO CONSECUTIVE ABSENCES. A package absent from
+ *   one sync is only NOTED ([AppCatalogPlan.pendingPrune], which
+ *   the caller persists); it is pruned by a later sync only if it
+ *   is absent again. An empty installed list prunes nothing and
+ *   notes nothing — it can only be a failed query. A truncated or
+ *   visibility-filtered result therefore cannot wipe the catalog:
+ *   it would have to lie identically on two separate syncs, and
+ *   even then the tombstone below keeps the loss reversible.
+ * - A PRUNED RULE IS REMEMBERED. The caller files the pruned rows'
+ *   tiers/limits as remembered rules (prefs, no schema change) and
+ *   passes them back as [rememberedRules]; a rediscovered package
+ *   is reborn with its REMEMBERED ruling ahead of any factory
+ *   preset or category default — a user's LOCKED never silently
+ *   reopens because an app was transiently unlaunchable (disabled,
+ *   launcher-less, in another profile).
+ * - a stored row whose package is corroborated-gone is PRUNED (so
+ *   no reader of this table can count a ghost forever: not the
+ *   Shield list, not the Deck's held count, not PARK's census);
  * - an installed package with no row is DISCOVERED, uncapped, born
- *   with its factory preset if it has one, else its category default;
- * - an installed package with a row keeps its row untouched — the
- *   man's own tier is never re-priced by a sync — except its usage
- *   figure, which follows the real one.
+ *   with its remembered rule if it has one, else its factory
+ *   preset, else its category default;
+ * - an installed package with a row keeps its RULING untouched —
+ *   the man's own tier and limit are never re-priced by a sync —
+ *   but its FACTS follow the phone: the label and category are
+ *   refreshed from the installed record, and its usage figure
+ *   follows the real one — including a real zero. A package the
+ *   usage map does not mention keeps its figure: the map is a
+ *   partial witness (no permission reads as an empty map), and an
+ *   unmeasured app must not be zeroed on a guess.
  *
  * The old blind factory seed (twelve rows inserted whether or not
  * the apps existed, with invented usage and intercept figures) is
@@ -30,7 +53,13 @@ package com.example.data
  */
 data class InstalledPackage(
     val packageName: String,
-    val label: String
+    val label: String,
+    /** True when this entry is the package's launcher/main activity
+     *  (the caller resolves it against the package's launch intent).
+     *  One package can surface several launcher activities with
+     *  different labels; the main activity's label is the app's
+     *  name, the others are shortcuts wearing it. */
+    val isMainActivity: Boolean = false
 )
 
 /** A birth rule for a package: the tier and daily limit it is
@@ -43,8 +72,17 @@ data class AppRulePreset(
 /** What one sync must do to make the table equal the phone. */
 data class AppCatalogPlan(
     val toInsert: List<BlockedAppEntity>,
+    /** Rows to write back: a usage figure that followed the real
+     *  one and/or a label/category refreshed from the phone. The
+     *  ruling fields (tier, limit) on these copies are always the
+     *  stored ones — a sync never re-prices a ruling. */
     val usageUpdates: List<BlockedAppEntity>,
-    val toPrune: List<String>
+    val toPrune: List<String>,
+    /** Packages absent from THIS sync but not yet prunable (first
+     *  absence). The caller persists this set and hands it back as
+     *  `previouslyAbsent` on the next sync; only a package absent
+     *  twice in a row is pruned. */
+    val pendingPrune: List<String> = emptyList()
 )
 
 object AppCatalogReconcile {
@@ -64,19 +102,46 @@ object AppCatalogReconcile {
         "com.google.android.apps.docs" to AppRulePreset(AppBlockTier.OPEN, 120)
     )
 
+    /** THE DEDUPE RULE (issue #34): one package is one app, however
+     *  many launcher activities it surfaces. The surviving record
+     *  is, in order: (1) an entry flagged as the main/launcher
+     *  activity; (2) otherwise the lexicographically smallest label
+     *  (case-insensitive, then exact) — a stated, deterministic rule
+     *  that never depends on the query's return order. */
+    fun dedupeInstalled(installed: List<InstalledPackage>): Map<String, InstalledPackage> =
+        installed.groupBy { it.packageName }.mapValues { (_, entries) ->
+            entries.firstOrNull { it.isMainActivity }
+                ?: entries.minWithOrNull(
+                    compareBy({ it.label.lowercase() }, { it.label })
+                )!!
+        }
+
     fun reconcile(
         existing: List<BlockedAppEntity>,
         installed: List<InstalledPackage>,
         usageMinutes: Map<String, Int>,
-        categorize: (String, String) -> AppCategory
+        categorize: (String, String) -> AppCategory,
+        previouslyAbsent: Set<String> = emptySet(),
+        rememberedRules: Map<String, AppRulePreset> = emptyMap()
     ): AppCatalogPlan {
-        // A package with several launcher activities is still one app.
-        val installedByPackage = installed.associateBy { it.packageName }
+        val installedByPackage = dedupeInstalled(installed)
         val existingByPackage = existing.associateBy { it.packageName }
 
-        val toPrune = existing
+        // An empty query is a failed query, never evidence: prune
+        // nothing, note nothing.
+        if (installedByPackage.isEmpty()) {
+            return AppCatalogPlan(emptyList(), emptyList(), emptyList(), emptyList())
+        }
+
+        // Two consecutive absences or the row stays. The first
+        // absence is only noted (pendingPrune) for the caller to
+        // persist; a package present again clears its own note by
+        // simply not being absent.
+        val absent = existing
             .filter { it.packageName !in installedByPackage }
             .map { it.packageName }
+        val toPrune = absent.filter { it in previouslyAbsent }
+        val pendingPrune = absent.filter { it !in previouslyAbsent }
 
         val toInsert = mutableListOf<BlockedAppEntity>()
         val usageUpdates = mutableListOf<BlockedAppEntity>()
@@ -84,8 +149,11 @@ object AppCatalogReconcile {
             val current = existingByPackage[pkg]
             if (current == null) {
                 val category = categorize(pkg, info.label)
+                // His own remembered ruling outranks the factory:
+                // a rule survives its app's transient absence.
+                val remembered = rememberedRules[pkg]
                 val preset = FACTORY_PRESETS[pkg]
-                val tier = preset?.tier ?: when (category) {
+                val tier = remembered?.tier ?: preset?.tier ?: when (category) {
                     AppCategory.SHORT_VIDEO, AppCategory.GAMES -> AppBlockTier.LOCKED
                     AppCategory.MESSAGING -> AppBlockTier.PEEK_2M
                     else -> AppBlockTier.OPEN
@@ -96,20 +164,27 @@ object AppCatalogReconcile {
                     category = category.name,
                     isBlocked = tier != AppBlockTier.OPEN,
                     blockTier = tier.name,
-                    dailyLimitMinutes = preset?.dailyLimitMinutes ?: 30,
+                    dailyLimitMinutes = remembered?.dailyLimitMinutes
+                        ?: preset?.dailyLimitMinutes ?: 30,
                     todayUsageMinutes = usageMinutes[pkg] ?: 0,
                     interceptCount = 0,
                     isSystemDetected = true
                 )
             } else {
+                // Facts follow the phone (label, category, usage —
+                // a real 0 included); the ruling never moves.
+                val category = categorize(pkg, info.label)
                 val realMinutes = usageMinutes[pkg]
-                if (realMinutes != null && realMinutes > 0 &&
-                    realMinutes != current.todayUsageMinutes
-                ) {
-                    usageUpdates += current.copy(todayUsageMinutes = realMinutes)
+                val refreshed = current.copy(
+                    appName = info.label,
+                    category = category.name,
+                    todayUsageMinutes = realMinutes ?: current.todayUsageMinutes
+                )
+                if (refreshed != current) {
+                    usageUpdates += refreshed
                 }
             }
         }
-        return AppCatalogPlan(toInsert, usageUpdates, toPrune)
+        return AppCatalogPlan(toInsert, usageUpdates, toPrune, pendingPrune)
     }
 }
