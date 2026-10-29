@@ -150,3 +150,19 @@ agent/issue-12.
   exposed here.
 
 — Amt
+
+## Addendum — Panel seat (Panel-Feel-Critic) verdict
+Panel verdict on #12: **PASS, conditional** — the condition is
+Ren's, not rework: the `completeTaskAndAdvance` / ESR-02
+disagreement (a live session's intention can be rewritten with
+no seal check, Repository ~:2525 in the wave-1 numbering) must
+be ruled AT MERGE, before F-1's wider intentions ship — F-1
+increases that seam's blast radius. Already flagged in this
+report's Remainders; restated here as the panel's formal
+condition. Panel crazy idea, recorded: "The First Leaf" — the
+head printed once on the Session Room as a perforated leaf at
+the seal, and a routine finish receipt carrying one verb
+(`HEAD: <title> — DONE / NOT DONE`, default NOT DONE) feeding
+complete-and-advance through the ESR-02 seal check. Priced
+MEDIUM by the panel; it is the natural sequel to the taskId
+question in Next wants.
