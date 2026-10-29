@@ -332,7 +332,8 @@ class ArmProvingControllerTest {
         assertEquals(2, port.startShieldCalls)
         assertEquals(1, events.count { it == "jamhaptics" })
         val sentence = jamSentenceFor(jammed)
-        assertEquals("SHIELD DIDN'T ANSWER — STILL PROVING.", sentence?.text)
+        assertEquals(R.string.sentence_didnt_answer, sentence?.textRes)
+        assertEquals(listOf("SHIELD"), sentence?.args)
         assertNull(sentence?.action)
         // The retry answers: the attempt seals inside its window.
         witnesses.shieldMono = l + 700
@@ -364,7 +365,8 @@ class ArmProvingControllerTest {
         assertEquals(1, controller.annulCount.value)
         assertTrue(port.sealCalls.isEmpty())
         val sentence = controller.armSentence.value
-        assertEquals("SHIELD — NO PROOF. NOTHING WAS SEALED.", sentence?.text)
+        assertEquals(R.string.sentence_no_proof, sentence?.textRes)
+        assertEquals(listOf("SHIELD"), sentence?.args)
         assertNull(sentence?.action)
     }
 
@@ -393,8 +395,8 @@ class ArmProvingControllerTest {
             jammed.jamSet
         )
         assertEquals(
-            "SHIELD DIDN'T ANSWER — STILL PROVING.",
-            jamSentenceFor(jammed)?.text
+            R.string.sentence_didnt_answer,
+            jamSentenceFor(jammed)?.textRes
         )
     }
 
@@ -453,7 +455,7 @@ class ArmProvingControllerTest {
         assertTrue(!events.contains("sound"))
         assertEquals(1, transition.cancelCalls)
         val sentence = controller.armSentence.value
-        assertEquals("SESSION-ROW — NO PROOF. NOTHING WAS SEALED.", sentence?.text)
+        assertEquals(R.string.sentence_session_row_no_proof, sentence?.textRes)
     }
 
     @Test

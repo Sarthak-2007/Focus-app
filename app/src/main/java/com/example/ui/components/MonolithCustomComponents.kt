@@ -492,7 +492,7 @@ private fun splitTenantText(shut: Int, peek: Int, sealed: Boolean): String? {
  *  fact to read, not a door to tap. */
 enum class RefusalAction { FIX_ACCESSIBILITY, FIX_USAGE, RETRY_CHECK }
 
-data class RefusalSentence(val text: String, val action: RefusalAction?)
+data class RefusalSentence(@androidx.annotation.StringRes val textRes: Int, val args: List<Any> = emptyList(), val action: RefusalAction?)
 
 /**
  * Suki's cause table, ONE sentence, causal priority — the a11y row
@@ -505,15 +505,15 @@ internal fun refusalSentenceFor(warrant: Warrant?): RefusalSentence? {
     if (warrant == null) return null
     return when {
         !warrant.a11yBound ->
-            RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
+            RefusalSentence(R.string.sentence_blocking_off, RefusalAction.FIX_ACCESSIBILITY)
         warrant.state == WarrantState.UNPROVEN && !warrant.a11yStampedThisResidency ->
-            RefusalSentence("CAN'T CHECK BLOCKING — TAP TO RETRY", RefusalAction.RETRY_CHECK)
+            RefusalSentence(R.string.sentence_cant_check, RefusalAction.RETRY_CHECK)
         warrant.usage == UsageAccess.DENIED ->
-            RefusalSentence("USAGE ACCESS IS OFF — TAP TO FIX", RefusalAction.FIX_USAGE)
+            RefusalSentence(R.string.sentence_usage_off, RefusalAction.FIX_USAGE)
         warrant.usage == UsageAccess.UNSET ->
-            RefusalSentence("CAN'T CHECK BLOCKING — TAP TO RETRY", RefusalAction.RETRY_CHECK)
+            RefusalSentence(R.string.sentence_cant_check, RefusalAction.RETRY_CHECK)
         warrant.state == WarrantState.OFF ->
-            RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
+            RefusalSentence(R.string.sentence_blocking_off, RefusalAction.FIX_ACCESSIBILITY)
         else -> null
     }
 }
@@ -545,7 +545,8 @@ internal fun jamSentenceFor(phase: ArmPhase): RefusalSentence? {
     if (phase !is ArmPhase.Jammed) return null
     val first = phase.jamSet.minByOrNull { it.ordinal } ?: return null
     return RefusalSentence(
-        text = "${first.displayName} DIDN'T ANSWER — STILL PROVING.",
+        textRes = R.string.sentence_didnt_answer,
+        args = listOf(first.displayName),
         action = null
     )
 }
@@ -751,7 +752,7 @@ fun RefusalSentenceSlot(
         val current = displayed
         if (current != null) {
             Text(
-                text = current.text,
+                text = stringResource(current.textRes, *current.args.toTypedArray()),
                 style = TextStyle(
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,

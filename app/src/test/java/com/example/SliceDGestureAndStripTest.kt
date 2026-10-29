@@ -177,8 +177,8 @@ class StripDerivationsTest {
     fun causeTablePicksOneSentenceByCausalPriority() {
         // A11y death outranks everything.
         assertEquals(
-            "BLOCKING IS OFF — TAP TO FIX",
-            refusalSentenceFor(warrant(WarrantState.OFF, bound = false, stamped = false, usage = UsageAccess.DENIED))?.text
+            R.string.sentence_blocking_off,
+            refusalSentenceFor(warrant(WarrantState.OFF, bound = false, stamped = false, usage = UsageAccess.DENIED))?.textRes
         )
         // Bound but unstamped: can't check.
         assertEquals(
@@ -187,7 +187,7 @@ class StripDerivationsTest {
         )
         // Usage positively denied names its own pane.
         val usageSentence = refusalSentenceFor(warrant(WarrantState.OFF, usage = UsageAccess.DENIED))
-        assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", usageSentence?.text)
+        assertEquals(R.string.sentence_usage_off, usageSentence?.textRes)
         assertEquals(RefusalAction.FIX_USAGE, usageSentence?.action)
         // Usage never granted: can't check.
         assertEquals(

@@ -69,4 +69,10 @@
     <string name="deck_percent">%1$d%%</string>
     <string name="deck_now">NOW</string>
     <string name="deck_queue">QUEUE %1$d</string>
+    <string name="sentence_blocking_off">BLOCKING IS OFF — TAP TO FIX</string>
+    <string name="sentence_cant_check">CAN\'T CHECK BLOCKING — TAP TO RETRY</string>
+    <string name="sentence_usage_off">USAGE ACCESS IS OFF — TAP TO FIX</string>
+    <string name="sentence_didnt_answer">%1$s DIDN\'T ANSWER — STILL PROVING.</string>
+    <string name="sentence_no_proof">%1$s — NO PROOF. NOTHING WAS SEALED.</string>
+    <string name="sentence_session_row_no_proof">SESSION-ROW — NO PROOF. NOTHING WAS SEALED.</string>
 </resources>

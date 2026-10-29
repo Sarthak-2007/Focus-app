@@ -1,5 +1,7 @@
 package com.example.ui
 
+import com.example.R
+
 import android.content.Context
 import android.os.SystemClock
 import android.view.Choreographer
@@ -624,7 +626,7 @@ class ArmProvingController(
         _phase.value = ArmPhase.Idle
         _annulCount.value += 1
         val sentence = RefusalSentence(
-            text = "SESSION-ROW — NO PROOF. NOTHING WAS SEALED.",
+            textRes = R.string.sentence_session_row_no_proof,
             action = null
         )
         _armSentence.value = sentence
@@ -668,7 +670,8 @@ class ArmProvingController(
         _annulCount.value += 1
         val first = unanswering.minByOrNull { it.ordinal } ?: ArmLink.SESSION_ROW
         val sentence = RefusalSentence(
-            text = "${first.displayName} — NO PROOF. NOTHING WAS SEALED.",
+            textRes = R.string.sentence_no_proof,
+            args = listOf(first.displayName),
             action = null
         )
         _armSentence.value = sentence
