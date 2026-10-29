@@ -636,7 +636,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onLoadEarlier = viewModel::loadEarlierDrawer,
                                     onQueryChange = viewModel::setDrawerQuery,
                                     onLoadEarlierSearch = viewModel::loadEarlierDrawerSearch,
-                                    onDeclareTodayWord = viewModel::declareTodayWord
+                                    onDeclareDayWord = viewModel::declareDayWord
                                 )
                             }
                         }
