@@ -57,6 +57,8 @@ class ShortsToggleRenderTest {
                     isNight = false,
                     soundEnabled = true,
                     shortsReelsSniperEnabled = storedShorts,
+                    socialSitesEnabled = false,
+                    onToggleSocialSites = {},
                     soundEngine = soundEngine,
                     themeReadout = "AUTO · DAY — NO ROUTINE OWNS IT",
                     parkReturnTick = 0,

@@ -333,7 +333,9 @@ class ScreenshotHarnessTest {
                     onDismiss = {},
                     onFixClick = {},
                     onToggleSound = {},
-                    onToggleShortsReelsSniper = {}
+                    onToggleShortsReelsSniper = {},
+                    socialSitesEnabled = false,
+                    onToggleSocialSites = {}
                 )
             }
         }

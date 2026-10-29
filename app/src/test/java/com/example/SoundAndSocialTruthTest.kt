@@ -375,6 +375,8 @@ class SoundAndSocialTruthTest {
                     soundEngine = vm.soundEngine,
                     socialSitesEnabled = socialOn,
                     onToggleSocialSites = { vm.toggleBrowserUrlBlocker() },
+                    shortsReelsSniperEnabled = false,
+                    onToggleShortsReelsSniper = {},
                     themeReadout = "AUTO · DAY — NO ROUTINE OWNS IT",
                     parkReturnTick = 0,
                     onDismiss = {},
