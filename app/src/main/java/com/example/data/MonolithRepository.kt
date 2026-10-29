@@ -2909,15 +2909,11 @@ class MonolithRepository(
         updated
     }
 
-    suspend fun autoSplitTaskIntoMicroSteps(taskId: Int): FocusTaskEntity? = withContext(Dispatchers.IO) {
-        val target = dao.getTaskById(taskId)
-            ?: dao.getAllTasksSnapshot().firstOrNull { it.id == taskId }
-            ?: return@withContext null
-        val generated = FocusTaskEntity.defaultSubStepsForCategory(target.title, target.categoryTag)
-        val updated = target.copy(notesOrSubsteps = FocusTaskEntity.serializeSubSteps(generated))
-        dao.updateTask(updated)
-        updated
-    }
+    // F-6 (issue #12): autoSplitTaskIntoMicroSteps is DELETED —
+    // it was the generator's only caller (see the note at
+    // FocusTaskEntity's companion in MonolithModels). Splitting a
+    // task is now HAND-SPLIT on the Tasks screen: the man's own
+    // steps, written one by one through addTaskSubStep above.
 
     suspend fun updateTaskDuration(taskId: Int, estimatedMinutes: Int): FocusTaskEntity? = withContext(Dispatchers.IO) {
         val target = dao.getTaskById(taskId)

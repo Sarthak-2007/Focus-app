@@ -101,12 +101,27 @@ object RoutineHeartbeat {
         val sessionsById = sessions.associateBy { it.id }
         val settings = dao.getGuardSettingsSnapshot()
 
+        // F-1 (issue #12): the queue head, resolved HERE — the
+        // caller owns every DAO read; derive() stays pure and only
+        // receives the resulting title. The snapshot is the DAO's
+        // ordered task list (status CASE ACTIVE, QUEUED, DEFERRED,
+        // else; queueOrder ASC; id ASC) and the pure resolver takes
+        // its first ACTIVE/QUEUED non-blank row — never through any
+        // existing next-up helper (completeTaskAndAdvance's advance
+        // falls back to DEFERRED; a deferred task is "not today"
+        // and must never headline a session). Read in THIS pass, at
+        // seal time: a head deleted or reordered before the seal is
+        // simply read as the queue stands now. Null = no head, and
+        // derive() falls back to the routine's name.
+        val headTaskTitle = RoutineDerive.resolveHeadTitle(dao.getAllTasksSnapshot())
+
         val result = RoutineDerive.derive(
             routines = routines,
             nowMillis = now,
             activeSession = active,
             sessions = sessions,
-            settings = settings ?: GuardSettingsEntity()
+            settings = settings ?: GuardSettingsEntity(),
+            headTaskTitle = headTaskTitle
         )
 
         // 1. Finalise everything derive() declares due — known routines

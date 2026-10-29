@@ -79,7 +79,12 @@ fun evaluateTheme(
         routine.loadoutName == SmartLoadout.SLEEP.name &&
             com.example.data.RoutineDerive.deriveOne(
                 routine, nowMillis, null, emptyList(),
-                com.example.data.GuardSettingsEntity()
+                com.example.data.GuardSettingsEntity(),
+                // F-1 (issue #12): this evaluation reads only
+                // .state and discards the DesiredSession; there is
+                // no task list in its scope and none is threaded
+                // in (lead ruling) — null is the honest value.
+                headTaskTitle = null
             ).state in setOf(
                 com.example.data.WindowState.OPEN_IDLE,
                 com.example.data.WindowState.OPEN_RUNNING,
@@ -1997,13 +2002,9 @@ class MonolithViewModel(
         }
     }
 
-    fun autoSplitTaskIntoMicroSteps(taskId: Int) {
-        if (midSeal()) return
-        soundEngine.playHarmonicSeal(arming = true)
-        viewModelScope.launch {
-            repository.autoSplitTaskIntoMicroSteps(taskId)
-        }
-    }
+    // F-6 (issue #12): autoSplitTaskIntoMicroSteps is DELETED with
+    // the generator it drove. HAND-SPLIT needs no new verb — it
+    // rides addTaskSubStep above, one hand-written step at a time.
 
     fun updateTaskDuration(taskId: Int, estimatedMinutes: Int) {
         val clamped = estimatedMinutes.coerceIn(5, 180)
