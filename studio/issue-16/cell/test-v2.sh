@@ -176,7 +176,15 @@ write_verdict RUNNING "" ""
 source "$HOME/workspace/clone-inspect/env21.sh"
 export GRADLE_USER_HOME="$CELL_DIR/guh"
 mkdir -p "$GRADLE_USER_HOME"
-gradle --stop > /dev/null 2>&1 || ./gradlew --stop > /dev/null 2>&1 || true
+# Wave-2 fix (issue-16, Technical-execution seat, applied by Pforte):
+# fail fast if gradle is absent. The previous line silently fell back
+# to ./gradlew for the stop, then the main run below used bare gradle
+# and failed late with the cause buried in the log.
+if ! command -v gradle > /dev/null 2>&1; then
+  log_line "FATAL gradle not on PATH - JDK21 test discipline cannot run"
+  finish FAILED 9
+fi
+gradle --stop > /dev/null 2>&1 || true
 sleep 4
 
 # --- Watcher: snapshot completed test names from JUnit XML every 2s. ---
