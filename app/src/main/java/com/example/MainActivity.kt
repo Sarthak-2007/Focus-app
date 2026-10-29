@@ -139,7 +139,11 @@ class MainActivity : ComponentActivity() {
         val pkg = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
         if (!pkg.isNullOrBlank()) {
             val name = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
-                ?: "Short-Form Feed"
+                // Wave-2 cure (critic N-4): the old "Short-Form Feed"
+                // fallback fabricated a hero name for a door whose
+                // app was never identified. The name slot holds a
+                // fact or the package verbatim — never an invention.
+                ?: pkg
             // FIX-6 (C-10): the fallback badge word is "Blocked" —
             // this is the fourth of the four sites.
             val badge = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
