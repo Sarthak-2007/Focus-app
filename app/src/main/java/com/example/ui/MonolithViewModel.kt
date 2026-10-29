@@ -1649,7 +1649,8 @@ class MonolithViewModel(
 
     fun addTaskToQueue(
         title: String,
-        estimatedMinutes: Int = 25,
+        // Issue #32 F1: default 0 = no estimate given (was 25).
+        estimatedMinutes: Int = 0,
         categoryTag: String = "Study",
         notesOrSubsteps: String = "",
         promoteToActive: Boolean = false
