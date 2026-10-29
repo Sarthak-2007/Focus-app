@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -231,9 +232,51 @@ internal fun deskClockBannerText(taskTitle: String?, intention: String?): String
  * IN 2 MIN", never a rounded-down promise.
  */
 internal fun peekCooldownPrint(secondsRemaining: Int): String {
-    val minutes = (secondsRemaining.coerceAtLeast(0) + 59) / 60
+    // Issue #55: an expired cooldown never prints "AGAIN IN 0 MIN" —
+    // that self-contradictory line was the cooldown trap's dead end.
+    if (secondsRemaining <= 0) return "PEEK COOLDOWN — OVER"
+    val minutes = (secondsRemaining + 59) / 60
     return "PEEK COOLDOWN — AGAIN IN $minutes MIN"
 }
+
+/**
+ * Issue #55: the 5-second wall is DEADLINE-based, not tick-counted.
+ * Remaining seconds are always derived from the intercept's start
+ * instant, so scheduling drift can never stretch or shrink the wall,
+ * and a re-intercept (new instance) restarts from the full wall.
+ */
+internal fun airlockCountdownRemaining(
+    startedAtMillis: Long,
+    nowMillis: Long,
+    wallSeconds: Int = 5
+): Int {
+    val elapsedSeconds = ((nowMillis - startedAtMillis).coerceAtLeast(0L) / 1000L).toInt()
+    return (wallSeconds - elapsedSeconds).coerceIn(0, wallSeconds)
+}
+
+/** Issue #55: whole seconds until [deadlineMillis], ceiling — a
+ *  deadline-derived remainder that reaches 0 exactly at the deadline. */
+internal fun cooldownRemainingSeconds(deadlineMillis: Long, nowMillis: Long): Int {
+    val remainingMillis = deadlineMillis - nowMillis
+    if (remainingMillis <= 0L) return 0
+    return ((remainingMillis + 999L) / 1000L).toInt()
+}
+
+/**
+ * Issue #55: the peek unlocks the moment its ONLY blocker — the
+ * cooldown — has actually expired, even though the standing state's
+ * snapshot still says withheld. Any other withheld reason
+ * (a peek already running, peek off) never unlocks locally; the
+ * ViewModel's grant re-derives the offer from the repository
+ * regardless, so this local unlock can never sell a stale lease.
+ */
+internal fun peekUnlocked(
+    canUse2MinutePeek: Boolean,
+    withheld: PeekWithheld?,
+    cooldownRemainingSeconds: Int
+): Boolean =
+    canUse2MinutePeek ||
+        (withheld == PeekWithheld.COOLDOWN && cooldownRemainingSeconds <= 0)
 
 /**
  * The door's own statement of the session's end (SIL-1, Hale
@@ -550,45 +593,66 @@ fun ShieldPermissionPrimerModal(
 fun AirlockInterceptOverlay(
     state: AirlockInterceptState,
     onSelectReason: (DistractionTriggerReason) -> Unit,
-    onTransmuteParticleTap: () -> Unit,
     onReturnToFocus: () -> Unit,
     onTake2MinutePeek: () -> Unit
 ) {
+    // Issue #55 (HIGH): System Back must never bypass the wall toward
+    // the blocked app. While the airlock stands, Back is swallowed —
+    // the only exits are the composed RETURN TO FOCUS / peek actions.
+    BackHandler(enabled = state.isVisible) { }
     AnimatedVisibility(
         visible = state.isVisible,
         enter = fadeIn(MonolithCurves.specB()),
         exit = fadeOut(MonolithCurves.specA())
     ) {
-        var countdownSecs by remember(state.interceptedPackageName, state.isVisible) {
-            mutableIntStateOf(5)
+        // Issue #55 (MEDIUM): the wall is PER-INTERCEPT. Both timers are
+        // keyed on the intercept INSTANCE (not package+visibility, which
+        // a same-package re-intercept left unchanged) and are
+        // deadline-derived, so a fresh intercept always restarts the
+        // full 5 seconds and drift can never stretch the wall.
+        val wallStartMillis = remember(state.interceptInstanceId) {
+            state.interceptedAtMillis.takeIf { it > 0L } ?: System.currentTimeMillis()
         }
-        LaunchedEffect(state.isVisible, state.interceptedPackageName) {
-            countdownSecs = 5
+        var countdownSecs by remember(state.interceptInstanceId) {
+            mutableIntStateOf(airlockCountdownRemaining(wallStartMillis, System.currentTimeMillis()))
+        }
+        LaunchedEffect(state.interceptInstanceId, state.isVisible) {
+            countdownSecs = airlockCountdownRemaining(wallStartMillis, System.currentTimeMillis())
             while (countdownSecs > 0) {
-                delay(1000L)
-                countdownSecs--
+                delay(200L)
+                countdownSecs = airlockCountdownRemaining(wallStartMillis, System.currentTimeMillis())
             }
         }
 
         // The withheld peek's cooldown, ticking live while the
-        // airlock stands (Truth Car 3, UNA2-01): seeded from the
-        // state's snapshot at open, counted down here — the print
-        // never quotes a number minutes stale.
-        var cooldownSecs by remember(state.interceptedPackageName, state.isVisible) {
+        // airlock stands (Truth Car 3, UNA2-01) — now deadline-derived
+        // from the snapshot (Issue #55, HIGH): when it reaches zero the
+        // peek genuinely unlocks below (see peekUnlocked), instead of
+        // stranding the user on a frozen canUse flag at "0 MIN".
+        val cooldownDeadlineMillis = remember(state.interceptInstanceId) {
+            System.currentTimeMillis() + state.peekCooldownRemainingSeconds * 1000L
+        }
+        var cooldownSecs by remember(state.interceptInstanceId) {
             mutableIntStateOf(state.peekCooldownRemainingSeconds)
         }
-        LaunchedEffect(state.isVisible, state.interceptedPackageName) {
-            cooldownSecs = state.peekCooldownRemainingSeconds
+        LaunchedEffect(state.interceptInstanceId, state.isVisible) {
+            cooldownSecs = cooldownRemainingSeconds(cooldownDeadlineMillis, System.currentTimeMillis())
             while (cooldownSecs > 0) {
-                delay(1000L)
-                cooldownSecs--
+                delay(200L)
+                cooldownSecs = cooldownRemainingSeconds(cooldownDeadlineMillis, System.currentTimeMillis())
             }
         }
+        val peekReady = peekUnlocked(state.canUse2MinutePeek, state.peekWithheld, cooldownSecs)
 
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(NightColorBackground)
+                // Issue #55 (CRITICAL): the wall is modal — the root
+                // consumes every tap in the empty area around the card
+                // (same guard the digest sheet and primer already use),
+                // so nothing falls through to the UI underneath.
+                .clickable(enabled = false) {}
                 .padding(20.dp)
                 .testTag("airlock_intercept_overlay"),
             contentAlignment = Alignment.Center
@@ -599,6 +663,7 @@ fun AirlockInterceptOverlay(
                     .clip(RoundedCornerShape(24.dp))
                     .background(NightColorSurfaceBright)
                     .border(1.dp, NightColorPrimary.copy(alpha = 0.2f), RoundedCornerShape(24.dp))
+                    .clickable(enabled = false) {}
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -652,6 +717,36 @@ fun AirlockInterceptOverlay(
                     )
                 }
 
+                // Issue #55 (MEDIUM): reason selection is REAL wiring,
+                // not a dead parameter. The user picks why they opened
+                // the app; the pick is stored via onSelectReason and is
+                // the triggerReason actually recorded on return/peek —
+                // no longer a silently fabricated MUSCLE_MEMORY default
+                // (it remains only the visibly pre-selected first chip).
+                Text(
+                    text = "WHY DID YOU OPEN IT?",
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.5.sp,
+                    color = NightColorPrimary.copy(alpha = 0.8f)
+                )
+                DistractionTriggerReason.values().toList().chunked(2).forEach { rowReasons ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        rowReasons.forEach { reason ->
+                            BlockitActionChip(
+                                wordLabel = reason.shortTag.uppercase(Locale.US),
+                                isPrimaryInk = state.selectedReason == reason,
+                                onClick = { onSelectReason(reason) },
+                                modifier = Modifier.weight(1f),
+                                testTag = "airlock_reason_${reason.name.lowercase(Locale.US)}"
+                            )
+                        }
+                    }
+                }
+
                 BlockitActionChip(
                     wordLabel = "RETURN TO FOCUS",
                     isAccentArmed = true,
@@ -660,7 +755,7 @@ fun AirlockInterceptOverlay(
                     testTag = "airlock_return_button"
                 )
 
-                if (countdownSecs == 0 && state.canUse2MinutePeek) {
+                if (countdownSecs == 0 && peekReady) {
                     BlockitActionChip(
                         wordLabel = "EMERGENCY PEEK",
                         // SIL-2 / W-29: the badge is the SET value,
@@ -687,14 +782,18 @@ fun AirlockInterceptOverlay(
                 // live remaining time, or the running pill named.
                 // Doors that never owed a peek carry withheld ==
                 // null and print nothing here.
-                if (countdownSecs == 0 && !state.canUse2MinutePeek) {
+                if (countdownSecs == 0 && !peekReady) {
                     when (state.peekWithheld) {
-                        PeekWithheld.COOLDOWN -> Text(
-                            text = peekCooldownPrint(cooldownSecs),
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 12.5.sp,
-                            color = NightColorPrimary.copy(alpha = 0.8f)
-                        )
+                        PeekWithheld.COOLDOWN -> {
+                            if (cooldownSecs > 0) {
+                                Text(
+                                    text = peekCooldownPrint(cooldownSecs),
+                                    fontFamily = AtkinsonHyperlegibleFamily,
+                                    fontSize = 12.5.sp,
+                                    color = NightColorPrimary.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
                         PeekWithheld.ALREADY_ACTIVE -> Text(
                             text = "A PEEK IS ALREADY RUNNING",
                             fontFamily = AtkinsonHyperlegibleFamily,
@@ -737,6 +836,11 @@ fun DisarmChallengeOverlay(
     onCompleteDisarm: () -> Unit,
     onHoldStarted: () -> Unit = {}
 ) {
+    // Issue #55 (HIGH): Back must never exit toward the blocked app.
+    // On the disarm challenge, Back means exactly what the composed
+    // KEEP FOCUSING chip means — dismiss the challenge, stay in
+    // Monolith — never an activity finish.
+    BackHandler(enabled = state.isVisible) { onDismissKeepFocusing() }
     AnimatedVisibility(
         visible = state.isVisible,
         enter = fadeIn(MonolithCurves.specC()),
@@ -746,6 +850,9 @@ fun DisarmChallengeOverlay(
             modifier = Modifier
                 .fillMaxSize()
                 .background(NightColorBackground.copy(alpha = 0.94f))
+                // Issue #55 (CRITICAL): modal — consume every tap
+                // outside the card, same guard as digest/primer.
+                .clickable(enabled = false) {}
                 .padding(16.dp)
                 .testTag("disarm_challenge_overlay"),
             contentAlignment = Alignment.Center
@@ -756,6 +863,7 @@ fun DisarmChallengeOverlay(
                     .clip(RoundedCornerShape(24.dp))
                     .background(NightColorSurfaceBright)
                     .border(1.dp, NightColorPrimary.copy(alpha = 0.2f), RoundedCornerShape(24.dp))
+                    .clickable(enabled = false) {}
                     .padding(22.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {

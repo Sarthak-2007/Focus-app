@@ -157,8 +157,15 @@ data class AirlockInterceptState(
     val interceptReasonBadge: String = "Locked",
     val sessionIntention: String = "",
     val selectedReason: DistractionTriggerReason = DistractionTriggerReason.MUSCLE_MEMORY,
-    val transmutedParticles: Int = 0,
     val canUse2MinutePeek: Boolean = true,
+    /** Issue #55: a fresh identity for EVERY intercept — even a
+     *  same-package re-intercept while the overlay already stands.
+     *  The overlay keys its 5s wall and cooldown on this, never on
+     *  (package, visibility), which a re-intercept left unchanged. */
+    val interceptInstanceId: Long = 0L,
+    /** Issue #55: when this intercept fired (wall clock); the
+     *  overlay's countdown is deadline-derived from this instant. */
+    val interceptedAtMillis: Long = 0L,
     val peekCooldownRemainingSeconds: Int = 0,
     /** The door that fired (UNA2-01): carried from the firing
      *  service through the intent into this state, never inferred
@@ -384,6 +391,7 @@ class MonolithViewModel(
     private val _selectedCategoryFilter = MutableStateFlow<AppCategory?>(null)
     val selectedCategoryFilter: StateFlow<AppCategory?> = _selectedCategoryFilter.asStateFlow()
 
+    private var airlockInstanceSeq: Long = 0L
     private val _airlockState = MutableStateFlow(AirlockInterceptState())
     val airlockState: StateFlow<AirlockInterceptState> = _airlockState.asStateFlow()
 
@@ -2353,7 +2361,8 @@ class MonolithViewModel(
             interceptReasonBadge = reasonBadge,
             sessionIntention = active?.intention ?: _intentionText.value,
             selectedReason = DistractionTriggerReason.MUSCLE_MEMORY,
-            transmutedParticles = 0,
+            interceptInstanceId = ++airlockInstanceSeq,
+            interceptedAtMillis = System.currentTimeMillis(),
             canUse2MinutePeek = canPeek,
             peekCooldownRemainingSeconds = cooldownLeft,
             interceptPath = path,
@@ -2438,12 +2447,6 @@ class MonolithViewModel(
                 triggerReason = state.selectedReason.shortTag
             )
         }
-    }
-
-    fun incrementAirlockParticlePulse() {
-        val current = _airlockState.value
-        soundEngine.playRotaryDetent(500.0 + (current.transmutedParticles * 35.0))
-        _airlockState.value = current.copy(transmutedParticles = current.transmutedParticles + 1)
     }
 
     fun refreshSystemGuard() {

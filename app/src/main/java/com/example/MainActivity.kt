@@ -793,7 +793,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             AirlockInterceptOverlay(
                 state = airlockState,
                 onSelectReason = viewModel::selectDistractionReason,
-                onTransmuteParticleTap = viewModel::incrementAirlockParticlePulse,
                 onReturnToFocus = viewModel::transmuteImpulseAndReturn,
                 onTake2MinutePeek = viewModel::start2MinutePeek
             )
