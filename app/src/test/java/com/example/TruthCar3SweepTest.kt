@@ -3,8 +3,7 @@ package com.example
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import androidx.activity.ComponentActivity
-import androidx.compose.ui.test.assertDoesNotExist
-import androidx.compose.ui.test.assertExists
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.room.Room
@@ -311,7 +310,11 @@ class TruthCar3SweepRoboTest {
                     parkReturnTick = 0,
                     onDismiss = {},
                     onFixClick = {},
-                    onToggleSound = {}
+                    onToggleSound = {},
+                    shortsReelsSniperEnabled = false,
+                    onToggleShortsReelsSniper = {},
+                    socialSitesEnabled = false,
+                    onToggleSocialSites = {}
                 )
             }
         }
@@ -343,7 +346,11 @@ class TruthCar3SweepRoboTest {
                     parkReturnTick = 0,
                     onDismiss = {},
                     onFixClick = {},
-                    onToggleSound = {}
+                    onToggleSound = {},
+                    shortsReelsSniperEnabled = false,
+                    onToggleShortsReelsSniper = {},
+                    socialSitesEnabled = false,
+                    onToggleSocialSites = {}
                 )
             }
         }
@@ -386,5 +393,21 @@ class TruthCar3SweepRoboTest {
         } finally {
             db.close()
         }
+    }
+}
+
+// The ui-test version on this classpath no longer exports the
+// assertExists/assertDoesNotExist extensions; these file-local
+// equivalents keep the library's exact semantics (null-node checks).
+private fun SemanticsNodeInteraction.assertExists(): SemanticsNodeInteraction {
+    if (fetchSemanticsNode() == null) {
+        throw AssertionError("Expected the node to exist, but it does not.")
+    }
+    return this
+}
+
+private fun SemanticsNodeInteraction.assertDoesNotExist() {
+    if (fetchSemanticsNode() != null) {
+        throw AssertionError("Expected the node to not exist, but it does.")
     }
 }
