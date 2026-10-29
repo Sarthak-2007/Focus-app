@@ -109,10 +109,18 @@ object RoutineHeartbeat {
         // its first ACTIVE/QUEUED non-blank row — never through any
         // existing next-up helper (completeTaskAndAdvance's advance
         // falls back to DEFERRED; a deferred task is "not today"
-        // and must never headline a session). Read in THIS pass, at
-        // seal time: a head deleted or reordered before the seal is
-        // simply read as the queue stands now. Null = no head, and
+        // and must never headline a session). Null = no head, and
         // derive() falls back to the routine's name.
+        // Wave-2 fix (Seat F1-Verify, H1): this read is at DERIVE
+        // time, not seal time — the finalise loop below does real
+        // IO, and a queue edit landing inside it used to seal a
+        // stale head for the whole session while this comment
+        // claimed "at seal time". The seal therefore RE-RESOLVES
+        // the head at materialise (step 3) and overrides the
+        // derived intention with the queue as it stands then.
+        // What remains is the honest residue: five sequential DAO
+        // reads are not one transactional snapshot, and no claim
+        // here says otherwise.
         val headTaskTitle = RoutineDerive.resolveHeadTitle(dao.getAllTasksSnapshot())
 
         val result = RoutineDerive.derive(
@@ -151,7 +159,22 @@ object RoutineHeartbeat {
         //    window's session (back-to-back windows: the old session
         //    seals and the new one seals in — one pass, no dead gap).
         //    The repository's start path deactivates any predecessor.
-        val desired = result.derivations.firstNotNullOfOrNull { it.desiredSession }
+        val derivedDesired = result.derivations.firstNotNullOfOrNull { it.desiredSession }
+        // Wave-2 fix (Seat F1-Verify, H1): re-resolve the head at
+        // the seal, as close to materialise as this pass gets,
+        // and let IT name the session. SLEEP keeps its own name
+        // (the F-1 lead ruling), exactly as derive() ruled it.
+        val desired = if (derivedDesired != null) {
+            val routine = routinesById[derivedDesired.routineId]
+            if (routine != null && routine.loadoutName != SmartLoadout.SLEEP.name) {
+                val freshHead = RoutineDerive.resolveHeadTitle(dao.getAllTasksSnapshot())
+                derivedDesired.copy(intention = freshHead ?: routine.name)
+            } else {
+                derivedDesired
+            }
+        } else {
+            null
+        }
         var materialised = false
         if (desired != null) {
             val transition = SessionSealTransitions.get(appContext)

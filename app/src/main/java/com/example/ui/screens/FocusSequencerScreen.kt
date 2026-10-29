@@ -727,11 +727,16 @@ private fun TaskLeafItem(
                 }
                 // SPLIT (F-6, issue #12): HAND-SPLIT — the word
                 // opens the ruled blank above; nothing is generated.
-                // Same slot and visibility the generator's verb had:
-                // a leaf with no steps yet. Once steps exist the
-                // word retires (the split has happened); while the
-                // field is open the word is the field's, not a verb.
-                if (task.subSteps.isEmpty() && !splitting) {
+                // Wave-2 fix (Seat F1-Verify, H3): the word used to
+                // retire forever once any step existed — a split
+                // was a one-time event, and a task split yesterday
+                // could never be split further after the field
+                // closed. Re-entry is now the law: SPLIT stands
+                // whenever the field is closed, steps or none;
+                // reopening appends (addTaskSubStep appends at the
+                // list's end). While the field is open the word is
+                // the field's, not a verb.
+                if (!splitting) {
                     Text(
                         text = "SPLIT",
                         fontFamily = AtkinsonHyperlegibleFamily,

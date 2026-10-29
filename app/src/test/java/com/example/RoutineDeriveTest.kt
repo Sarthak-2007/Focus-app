@@ -399,6 +399,17 @@ class RoutineDeriveTest {
     }
 
     @Test
+    fun fastedBlock_blankHeadPassedDirectly_fallsBackToRoutineName() {
+        // Wave-2 (Seat F1-Verify, H2): derive() guards itself —
+        // a blank head handed straight to derive (bypassing the
+        // resolver) must never seal.
+        val now = at(0, 6, 0)
+        val d = derive(listOf(fastedBlock()), now, headTaskTitle = "   ").derivations.single()
+        assertNotNull(d.desiredSession)
+        assertEquals("FASTED BLOCK", d.desiredSession!!.intention)
+    }
+
+    @Test
     fun fastedBlock_openWindow_deferredOnlyQueue_fallsBackToRoutineName() {
         val now = at(0, 6, 0)
         val deferredOnly = listOf(

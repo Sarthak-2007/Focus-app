@@ -214,7 +214,14 @@ object RoutineDerive {
                     // the pre-F-1 behaviour. SLEEP exception (lead
                     // ruling): SLEEP always seals its own name; the
                     // head names work, never sleep.
-                    intention = if (isSleep) routine.name else headTaskTitle ?: routine.name,
+                    // Wave-2 fix (Seat F1-Verify, H2): the guard
+                    // lives HERE, not only in the resolver — a
+                    // blank head from any future caller must fall
+                    // back to the routine's name inside derive()
+                    // itself, never seal a blank that startSession
+                    // would silently rewrite downstream.
+                    intention = if (isSleep) routine.name
+                        else headTaskTitle?.takeIf { it.isNotBlank() } ?: routine.name,
                     profileName = "Routine: ${routine.name}"
                 )
             } else {
