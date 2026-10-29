@@ -2405,7 +2405,22 @@ class MonolithViewModel(
             secondsRemaining = MonolithRepository.PEEK_DURATION_SECONDS
         )
         viewModelScope.launch {
-            repository.startPeekLease(pkg)
+            // Issue #16, builder's grant gate (on top of the
+            // composition below): the launch and the record are
+            // gated on the grant actually landing. Once Frist's
+            // provider is live, startPeekLease can refuse at the
+            // source (peekMinutes = 0 — no lease written, no row
+            // touched), and peekOfferFor above does not read
+            // peekMinutes, so without this gate a stale offer
+            // would launch an app no lease protects, under a pill
+            // seeded over nothing, and record a peek that never
+            // happened. A refused grant clears the seeded pill
+            // and stops here.
+            val granted = repository.startPeekLease(pkg)
+            if (!granted) {
+                _floatingPeekPill.value = FloatingPeekPillState(isActive = false)
+                return@launch
+            }
             // ST-08 (Small Things register), composed in from the
             // pill lane at the batch-10 merge (issue #16, flag A):
             // a taken peek takes him TO the peeked app — the lease's
