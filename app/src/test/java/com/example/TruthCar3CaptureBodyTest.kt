@@ -69,7 +69,7 @@ class TruthCar3CaptureBodyTest {
             .build()
         val sbn = StatusBarNotification(
             "com.example.chat", "com.example.chat", 7, null,
-            0, 0, notification, Process.myUserHandle(),
+            0, 0, 0, notification, Process.myUserHandle(),
             System.currentTimeMillis()
         )
 
