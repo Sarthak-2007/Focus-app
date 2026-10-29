@@ -5,6 +5,12 @@ CURRENT main code before any fix. NOTE: the dispatch brief's paraphrase of the 5
 (RoutineAlarm request-code collision etc.) does NOT match the actual issue body — the body
 (read via `gh issue view 47`) is about `ReleaseRetryScheduler.kt` + `RoutineHeartbeat.kt`,
 and the body + `studio/audits/AUDIT-R1.txt` slice "heartbeat-retry" governed this work.
+Ren's correction (05:13 IST) confirmed the body's list as sole truth. **No effort was spent
+on the wrong list and nothing from it was committed** — the mismatch was caught by reading
+the issue body before any code was touched, so there is nothing to note as out-of-scope
+observation beyond this line. Extra subagents (freedom granted 05:08 IST): none seated —
+the bundle was already complete and CI-read when the freedom arrived; seating extras would
+have been idle seats, not speed.
 
 ## Per-finding verdicts
 
@@ -109,6 +115,64 @@ and the body + `studio/audits/AUDIT-R1.txt` slice "heartbeat-retry" governed thi
 - **Interaction-detail** — Deck-open remains a real trigger (`onDeckOpenRetry` untouched)
   and now actually delivers the promised third attempt; VM-init and boot triggers behave
   identically by the hints-not-mechanism law. — *Interaction-detail*
+
+## Added seats (full-roster order, 05:16 IST — seated as lead-run passes; this
+## session is depth-2 and cannot spawn children, same pattern as the 20 above)
+
+- **Keeper of Record** — Reconciled the disposition ledger end-to-end before closure:
+  5 findings → 5 verdicts (all FIXED-IN-CODE), each with exactly one evidence pointer
+  (code commit d4bcb57; files ReleaseRetryScheduler.kt / RoutineHeartbeat.kt /
+  MonolithDao.kt / MonolithModels.kt; tests ReleaseRetrySchedulerTest +
+  ReleaseRetryDaoTest; AUDIT-R1 slice "heartbeat-retry"). Counts agree across all
+  three surfaces — report (5/5/0/0), issue-body checkboxes + notes (5 ticked), evidence
+  comment (5 verified / 5 fixed / 0 false / 0 blocked) — no double-count, no orphan.
+  Impact flags on record: 5 (4 user-visible improvements + 1 internal-only, in the
+  IMPACT section below). DECISION-NEEDED items: **none**. Downgrades: **none** (every
+  cure adds a retry chance or a recovery path; F4 restores the *advertised* spacing
+  rather than removing anything). CI record: base run 40973343644 (failure, pre-existing
+  error set), code run 40973419095, tip runs 40974404531 + final tip run (assemble ✓;
+  unit-test compile ✗ pre-existing, named in the CI section). Closure + merge record
+  appended below when executed. — *Keeper of Record*
+- **Verifier (cadence claims)** — Independently re-derived the cadence from the
+  committed code (offsets [30 s, 300 s], size 2) and attacked every claim:
+  done=0 → WAIT before T+30 s / STOP at-or-after; done=1 → STOP at T+300 s, reschedule
+  via `nextRetryAtMillis` = nominal if future, else now+270 s (300 s−30 s gap) — **F4
+  claim holds numerically**; done=2 → exactly one STOP_FINAL, stamps 3; done≥3 →
+  EXHAUSTED, no further stops — **F2 claim holds**; negative done is unreachable (DB
+  default 0; only writers stamp +1 / size+1). `WAIT_UNTIL_DUE`'s `!!` cannot NPE
+  (branch requires done < size). Heal precedence (!shield beats live-session) is
+  correct: a starting session's not-yet-standing shield must not resurrect the old
+  fault. `recoveryRearmMillis` is always in the future (boundary / +60 s / +5 s
+  floor) — **F3 claim holds**. Two observations, neither breaks a claim: (i) two
+  triggers racing at done=2 can both fire STOP_FINAL — harmless, `stopShield` is
+  idempotent and both stamp the same 3; the old code had the same trigger shape.
+  (ii) SUPERSEDED trusts the active session's own arm path to own the standing
+  shield; a stuck shield surviving into a live session would need an arm-path
+  failure outside this issue's scope. — *Verifier*
+
+## IMPACT ON THE APP (plain words — for the person holding the phone)
+
+- A shield that once refused to stop at a finish now genuinely gets its promised
+  **last chance**: after the +30 s and +5 min retries, opening the Deck makes one
+  final real attempt to stand it down (before, that third try silently never
+  happened, so a stuck shield could stay up forever).
+- A shield problem from an **old, already-healed session can no longer kill a new
+  session's shield**. Before this fix, starting a fresh session while an old fault
+  was still on the books could get the new session's protection switched off by a
+  ghost. Now the old fault is recognised as finished and wiped from the live list
+  (its record stays in history).
+- If the routine heartbeat (the thing that fires routines like SLEEP on time) ever
+  crashes mid-check, it now **heals itself within about a minute** and logs what
+  happened, instead of silently never firing again until some unrelated event
+  happened to wake it.
+- A retry that was delayed (phone off, alarm lost) no longer fires its next retry
+  **instantly back-to-back**; it keeps the designed breathing room (+30 s / +5 min
+  spacing) — same cadence the app always advertised, now actually kept.
+- Everything else is internal bookkeeping only: the retry/heartbeat checks read
+  far less data per pass (targeted lookups instead of scanning every session ever
+  recorded), so the 30-second heartbeat is cheaper on battery. **No screens, no
+  look, no feel, no feature changes. No downgrades** — every cure adds a retry
+  chance or a recovery path; nothing the user had was taken away or slowed.
 
 ## CI
 
