@@ -15,6 +15,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -73,6 +74,18 @@ class MainActivity : ComponentActivity() {
      *  first composition (FIX-4). Set inside setContent. */
     private var viewModelRef: MonolithViewModel? = null
 
+    // Issue #13: the VM the content is showing, for the
+    // Activity-level interaction stamp (FLOW §2.1).
+    private var interactionViewModel: MonolithViewModel? = null
+
+    /** Every touch in the app stamps the VM's interaction clock:
+     *  the settle counts from his hand, A-4's discriminator reads
+     *  it, the battery-yield wake re-raises through it. */
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        interactionViewModel?.noteUserInteraction()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(
@@ -98,6 +111,7 @@ class MainActivity : ComponentActivity() {
                 )
             )
             viewModelRef = viewModel
+            interactionViewModel = viewModel
             val darkTheme by viewModel.darkTheme.collectAsStateWithLifecycle()
             val activeSessionForTheme by viewModel.activeSession.collectAsStateWithLifecycle()
             val shotGround by viewModel.shotGround.collectAsStateWithLifecycle()
@@ -250,6 +264,40 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val finishState by viewModel.finishState.collectAsStateWithLifecycle()
     val receiptState by viewModel.receiptState.collectAsStateWithLifecycle()
     val isAlwaysOnDeskClockVisible by viewModel.isAlwaysOnDeskClockVisible.collectAsStateWithLifecycle()
+    // Issue #13: A-4's cause table, A-10(v)'s keep-awake +
+    // surrender fade, E-1's veil + Landing — all VM-owned state.
+    val deskClockEntryCause by viewModel.deskClockEntryCause.collectAsStateWithLifecycle()
+    val deskClockExitIsFinish by viewModel.deskClockExitIsFinish.collectAsStateWithLifecycle()
+    val deskClockSurrenderFade by viewModel.deskClockSurrenderFade.collectAsStateWithLifecycle()
+    val deskClockKeepAwake by viewModel.deskClockKeepAwake.collectAsStateWithLifecycle()
+    val deskClockDescentApplies by viewModel.deskClockDescentApplies.collectAsStateWithLifecycle()
+    val nightVeil by viewModel.nightVeil.collectAsStateWithLifecycle()
+    val deckLandingDim by viewModel.deckLandingDim.collectAsStateWithLifecycle()
+
+    // A-10(v): keep-awake ownership is the VM's session
+    // machinery; this host only APPLIES the flag it is handed.
+    val activityWindow = (androidx.compose.ui.platform.LocalContext.current as? android.app.Activity)?.window
+    androidx.compose.runtime.LaunchedEffect(deskClockKeepAwake) {
+        if (deskClockKeepAwake) {
+            activityWindow?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            activityWindow?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+    // E-1 Landing bloom: the dim lifts over 520 Curve C at the
+    // first interaction after the unveil (the VM clears
+    // deckLandingDim in noteUserInteraction — the Activity hook
+    // cannot tell a true verb from any other touch, and this
+    // code does not claim it can; Wave-2 honesty fix). The
+    // scrim alpha 0.45 leaves the Deck at 0.55 light — the
+    // room's light law stated as its complement.
+    val landingDimAlpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (deckLandingDim) 0.45f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(
+            520, easing = com.example.ui.theme.MonolithCurves.EasingC
+        ),
+        label = "night_landing_dim"
+    )
     val burnInFigure8MinuteStep by viewModel.burnInFigure8MinuteStep.collectAsStateWithLifecycle()
     val showNotificationDigestSheet by viewModel.showNotificationDigestSheet.collectAsStateWithLifecycle()
     val capturedNotifications by viewModel.capturedNotifications.collectAsStateWithLifecycle()
@@ -283,12 +331,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // Vault keep the immediate session-night above.
     val groundNight = darkTheme ||
         shotGround == com.example.ui.MonolithViewModel.ShotGround.GROUNDED
-    // The receipt sheet's dismissal is host state (F-B1): the
-    // slip stands until the next DOWN anywhere, a navigation, or
-    // PARK's invocation — it is never dismissed by a timer. (The
-    // nav/PARK effect itself sits below, beside the PARK state
-    // it reads.)
-    var dismissedReceiptSessionId by remember { mutableStateOf(-1) }
+    // The receipt sheet's dismissal (F-B1, as amended by issue
+    // #13 A-10(iii)): the slip stands until the next DOWN
+    // anywhere, a navigation, or PARK's invocation — never a
+    // timer — and dismissal is NO LONGER host state: both paths
+    // route through viewModel.dismissReceipt, which writes the
+    // persisted filed-marker (ReceiptFiledStore). The old
+    // remember{} dismissal var is DELETED (Wave-2: it had no
+    // writers left — dead state wearing a live comment).
 
     // ------------------------------------------------------------------
     // PARK state (chrome C4). The drawer is invoked by arrival (the
@@ -333,7 +383,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         if (currentDestination != MonolithDestination.DECK || parkOpen) {
             receiptState?.let {
                 dismissedReceiptSessionId = it.sessionId
-                viewModel.dismissReceipt()
+                viewModel.dismissReceipt(it.sessionId)
             }
         }
     }
@@ -762,8 +812,34 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 activeTask = activeTask,
                 dialMinutes = dialMinutes,
                 burnInStep = burnInFigure8MinuteStep,
+                entryCause = deskClockEntryCause,
+                exitIsFinish = deskClockExitIsFinish,
+                surrenderFade = deskClockSurrenderFade,
+                descentApplies = deskClockDescentApplies,
                 onDismiss = { viewModel.toggleAlwaysOnDeskClock(false) }
             )
+
+            // E-1 — the night return, composed over the Deck:
+            // the VEIL (black scrim 0.80) stands after a routine
+            // finish until first touch; beneath it the LANDING
+            // dim holds the Deck at the room's light law until
+            // the first true verb blooms it to full light.
+            if (landingDimAlpha > 0f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = landingDimAlpha))
+                )
+            }
+            if (nightVeil) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.80f))
+                        .clickable { viewModel.unveilNightReturn() }
+                        .testTag("night_return_veil")
+                )
+            }
 
             // The digest renders the FROZEN snapshot whenever a
             // freeze exists or a session is sealing the phone — the
@@ -791,14 +867,13 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             // opening either dismisses this one first.
             val standingReceipt = receiptState
             if (standingReceipt != null &&
-                dismissedReceiptSessionId != standingReceipt.sessionId &&
                 currentDestination == MonolithDestination.DECK
             ) {
                 com.example.ui.components.ReceiptSheet(
                     receipt = standingReceipt,
                     onDismiss = {
                         dismissedReceiptSessionId = standingReceipt.sessionId
-                        viewModel.dismissReceipt()
+                        viewModel.dismissReceipt(standingReceipt.sessionId)
                     }
                 )
             }

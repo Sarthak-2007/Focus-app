@@ -117,11 +117,33 @@ fun finishKindOf(row: FocusSessionEntity, isSleepLoadout: Boolean, nowWallMillis
 
 /** Whether this finish kind sounds the E700 completion pulse.
  *  Death-booked finishes (ELAPSED_SHIELD_GAP) never pulse (B-12);
- *  PARTIAL never pulses; the rest of the publishable kinds do. */
+ *  PARTIAL never pulses; the rest of the publishable kinds do.
+ *
+ *  Issue #13, A-10(i) — SILENCE FOR THE KIND: the stand-down
+ *  returns false. The machine does not applaud sleep. The gate
+ *  sits on the finish ceremony's CALLS in the VM (the E0 knock
+ *  and the E880 pair die with the pulse), so the haptic half —
+ *  triggerWaveform fires unconditionally inside the sound
+ *  engine, NOT gated by the sound toggle — dies with the audio.
+ *  The voices themselves are untouched for every witnessed
+ *  finish. */
 fun finishPulses(kind: String, row: FocusSessionEntity): Boolean = when (kind) {
     FinishKind.MANUAL_FINISH -> row.outcome != SessionOutcome.ELAPSED_SHIELD_GAP
     FinishKind.FLOW_FINISH -> true
     FinishKind.ROUTINE_ATTENDED -> true
+    FinishKind.ROUTINE_SLEEP_STANDDOWN -> false
+    else -> false
+}
+
+/** Issue #13, A-10(ii): routine-born kinds. A receipt of one of
+ *  these kinds is BORN FILED — it never stands on the Deck; it
+ *  stays reachable as a record. One persisted filed-marker
+ *  (ReceiptFiledStore, beside the standing pointer's world)
+ *  carries the fact; rehydration and the standing composition
+ *  both refuse a filed slip. */
+fun isRoutineBornKind(kind: String): Boolean = when (kind) {
+    FinishKind.ROUTINE_ATTENDED,
+    FinishKind.ROUTINE_PARTIAL,
     FinishKind.ROUTINE_SLEEP_STANDDOWN -> true
     else -> false
 }
@@ -167,6 +189,13 @@ object InterceptOutcome {
  *  and the test suites' spelling differ in case only. */
 fun isBlockedInterceptOutcome(outcome: String): Boolean =
     InterceptOutcome.BLOCKED_OUTCOMES.any { it.equals(outcome.trim(), ignoreCase = true) }
+
+/** Issue #13, A-10(iv): kinds whose end is a STORED-END fact —
+ *  a routine row's end is its frozen windowEndMillis, so filing
+ *  at any age is truthful and branch U's 10-minute cliff (which
+ *  guards against fabricating a № for an unwitnessed finish)
+ *  does not apply. Witnessed manual finishes keep the cliff. */
+fun receiptCliffExempt(kind: String): Boolean = isRoutineBornKind(kind)
 
 /** One deflection on the slip: a blocked attempt the machine
  *  turned away during the session, reduced at assembly (window

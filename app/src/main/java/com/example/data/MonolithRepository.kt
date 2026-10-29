@@ -101,6 +101,17 @@ class MonolithRepository(
     val allSitesFlow: Flow<List<BlockedSiteEntity>> = dao.getAllSitesFlow()
     val allRoutinesFlow: Flow<List<RoutineEntity>> = dao.getAllRoutinesFlow()
 
+    // Issue #13, A-10(ii)/(iii): the receipt's persisted
+    // filed-marker — one store, two writers (birth for
+    // routine-born kinds, the hand for the rest).
+    private val receiptFiledStore = ReceiptFiledStore(context)
+
+    /** File a receipt so it never stands again (A-10). */
+    fun markReceiptFiled(sessionId: Int) = receiptFiledStore.markFiled(sessionId)
+
+    /** Whether [sessionId]'s receipt is filed (A-10). */
+    fun isReceiptFiled(sessionId: Int): Boolean = receiptFiledStore.isFiled(sessionId)
+
     companion object {
         private val seedMutex = Mutex()
         const val PEEK_DURATION_SECONDS = 120 // 2-Minute Peek
@@ -1792,6 +1803,20 @@ class MonolithRepository(
         // latch alone would hand back the standing № and let a
         // second slip be built over it.
         if (standingReceipt()?.second == pending.sessionId) return null
+        // Issue #13, A-10(ii): a routine-born slip is BORN
+        // FILED — the marker is written in the publish act
+        // itself, so no process can ever stand it, and the
+        // VM's emission refuses it on the same fact.
+        // Wave-2 fix (Salz C-21): the marker is written BEFORE
+        // the № claim commits. The two stores cannot be atomic;
+        // ordering them this way makes the crash window fail
+        // SAFE — filed-but-unclaimed (a record with no slip)
+        // instead of claimed-but-standing (a routine slip on
+        // the Deck at first morning open, the exact frame
+        // A-10(ii) exists to prevent).
+        if (isRoutineBornKind(pending.kind)) {
+            receiptFiledStore.markFiled(pending.sessionId)
+        }
         val number = claimReceiptNumber(pending.sessionId, pending.outcomeWord)
         if (faulted) {
             dao.stampReleaseFault(pending.sessionId, System.currentTimeMillis())
@@ -1841,6 +1866,12 @@ class MonolithRepository(
         // the cold-start door, so the dismissal is honoured here,
         // at the repository, where every host inherits it.
         if (number == dismissedReceiptNumber()) return null
+
+        // Issue #13, A-10(ii)/(iii): rehydration REFUSES a filed
+        // slip — born-filed routine receipts and hand-dismissed
+        // ones alike. The record stays; the standing does not
+        // resurrect.
+        if (receiptFiledStore.isFiled(sessionId)) return null
         val row = dao.getSessionById(sessionId) ?: return null
         if (row.isActive) return null
         val isSleep = row.routineId?.let { dao.getRoutineById(it)?.loadoutName } ==
