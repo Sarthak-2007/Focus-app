@@ -271,3 +271,20 @@ all cured above — plus DAE-1/DAE-3 as a pair:
   expiry) in place of the uncalibrated constant. Kills C-17's
   root. Priced MEDIUM by the panel; recommended to Ren as the
   §7 debt-9 discharge path.
+
+## Addendum — CI VERDICT (builds-free law, Oct 30 04:17+)
+- Merged main's CI unblock into agent/issue-13 (c40f0af);
+  adopted issue-2 cell's stale test call-site fixes verbatim,
+  5 files (5984712); fixed 5 stale DeskClockFlowTest
+  expectations my own C-8/DAE-1 cures had changed (3c7b092 —
+  the CI run caught them; the code was right).
+- Final run 40970833388: Assemble debug GREEN (APK artifact
+  uploaded); unit tests COMPILE and EXECUTE: 170 tests,
+  33 failed — 31 Robolectric classMethod environment failures
+  (studio-wide, identical on agent/issue-2) + the same 2
+  pre-existing shared failures as #12 (ChromeWave warrant,
+  TruthCar3 una06).
+- ALL DeskClockFlowTest tests PASS on CI — the settle machine,
+  C-16 charger-stamp scenario, dwell, H:MM grammar, DAE-1
+  window-end hero, break UNTIL: proven, not paper.
+- Named blockers handed to Ren: same shared pair as #12.
