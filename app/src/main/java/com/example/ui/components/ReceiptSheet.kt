@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -45,9 +46,15 @@ import java.util.Locale
  * anywhere or on navigation.
  *
  * The print discipline (build-ready §11.3, Wort's lexicon):
- * long-form durations (`50 MIN`, never `50M`); held counts
- * omitted whole when uncaptured (−1 never prints as a figure);
- * the faulted sheet carries NO title (F-W1 — `ENDED-FAULT`
+ * long-form durations (`50 MIN`, never `50M`); the total line
+ * `RAN {longSpan}` prints under ENDED over a rule (receipt
+ * audit item 5 — sealedElapsedSeconds was carried in state and
+ * printed nowhere); the HELD line prints ONLY from the W-41
+ * split figures (ReceiptState.heldLine) — the old summed line
+ * booked PEEK apps as held and counted sites blind, so until
+ * the persisted SHUT/PEEK columns land it is omitted whole,
+ * the same omission law that keeps −1 off the paper; the
+ * faulted sheet carries NO title (F-W1 — `ENDED-FAULT`
  * never prints anywhere) and exactly one receipt-only line;
  * the death-booked sheet books `THE SHIELD WAS OFF…` in words.
  * The footer is exact.
@@ -123,13 +130,33 @@ fun ReceiptSheet(
                 ReceiptMonoLine(
                     text = "ENDED ${hhmm(receipt.endedAtWallMs)} · ${receipt.outcomeWord}"
                 )
+                // The slip's total (receipt audit item 5, A1):
+                // the lived span, sealed on the session row and
+                // carried in state as sealedElapsedSeconds — set
+                // as the total line under ENDED, over a rule. On
+                // FLOW slips, where PLANNED is lawfully absent,
+                // it is the headline figure. A span of zero seals
+                // nothing to total: omitted, never `RAN 0 MIN`.
+                if (receipt.sealedElapsedSeconds > 0) {
+                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+                    ReceiptMonoLine(
+                        text = "RAN ${longSpan(receipt.sealedElapsedSeconds)}"
+                    )
+                }
                 receipt.routineLabelWithin?.let { label ->
                     ReceiptMonoLine(text = label)
                 }
-                if (receipt.heldAppsAtSeal >= 0 && receipt.heldSitesAtSeal >= 0) {
-                    ReceiptMonoLine(
-                        text = "HELD ${receipt.heldAppsAtSeal} APPS · ${receipt.heldSitesAtSeal} SITES"
-                    )
+                // W-41 (receipt audit item 9): the HELD line
+                // prints only from the split figures, when the
+                // persisted SHUT/PEEK columns exist to fill them.
+                // Today heldLine is always null and the line is
+                // omitted whole — the old line, summed from
+                // heldAppsAtSeal/heldSitesAtSeal, printed PEEK
+                // apps as HELD and a blind list size as SITES,
+                // and is killed as printed. The summed figures
+                // stay on the state as record (STATE-ONLY).
+                receipt.heldLine?.let { line ->
+                    ReceiptMonoLine(text = line)
                 }
                 if (receipt.bankedBreakSeconds > 0) {
                     ReceiptMonoLine(

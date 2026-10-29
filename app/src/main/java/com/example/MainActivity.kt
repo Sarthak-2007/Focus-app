@@ -302,9 +302,16 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
 
     // F-B1: PARK's invocation dismisses the receipt sheet on the
     // same input, and so does any navigation away from the Deck.
+    // Issue #10 (audit item 20, interim law): every dismissal
+    // also persists the slip's № through the VM, so the dismissed
+    // slip stays dismissed across process death — the remember
+    // above alone re-ambushed at every cold start.
     LaunchedEffect(currentDestination, parkOpen) {
         if (currentDestination != MonolithDestination.DECK || parkOpen) {
-            receiptState?.let { dismissedReceiptSessionId = it.sessionId }
+            receiptState?.let {
+                dismissedReceiptSessionId = it.sessionId
+                viewModel.dismissReceipt()
+            }
         }
     }
 
@@ -780,7 +787,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             ) {
                 com.example.ui.components.ReceiptSheet(
                     receipt = standingReceipt,
-                    onDismiss = { dismissedReceiptSessionId = standingReceipt.sessionId }
+                    onDismiss = {
+                        dismissedReceiptSessionId = standingReceipt.sessionId
+                        viewModel.dismissReceipt()
+                    }
                 )
             }
 

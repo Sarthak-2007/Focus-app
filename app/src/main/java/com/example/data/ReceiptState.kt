@@ -20,6 +20,16 @@ package com.example.data
  * end stamped at the ending write) and receiptNumber (RC-04,
  * the № this session claimed, stamped inside the claim
  * transaction; the claim latches on the row).
+ *
+ * Receipt audit (issue #10): two more persisted/carried facts.
+ * The DISMISSED № lives OUTSIDE Room, in the repository's
+ * `monolith_receipt` SharedPreferences (the audit's interim law,
+ * item 20: a dismissed slip stays dismissed across process
+ * death) — deliberately no guard_settings column, so this
+ * contract implies NO database version change. And the HELD
+ * line's future figures ride as [ReceiptHeldFigures]: today
+ * nothing fills them (see that type), so the line does not
+ * print at all.
  */
 
 /** Nocke §2.3's outcome vocabulary — the discriminator stamped
@@ -116,9 +126,52 @@ fun finishPulses(kind: String, row: FocusSessionEntity): Boolean = when (kind) {
     else -> false
 }
 
+/**
+ * The intercept log's outcome vocabulary, enumerated from EVERY
+ * writer in the tree (receipt audit item 11, Neu C-03: the cure
+ * must enumerate the vocabulary, not assume it). The column is
+ * free text at the writers; these are all the values that exist:
+ *
+ * - [BLOCKED] — the harness/test spelling of a plain block
+ *   ("Blocked" / "BLOCKED" in the test suites; matched
+ *   case-insensitively).
+ * - [STAYED_FOCUSED] — MonolithViewModel.transmuteImpulseAndReturn:
+ *   the airlock turned him away and he returned to the work.
+ * - [SPLIT_INTO_MICRO_STEP] — MonolithViewModel
+ *   .splitActiveTaskAndReturn: intercepted, never let in; he
+ *   split the task instead.
+ * - [USED_PEEK] — MonolithViewModel's peek grant: he was LET IN
+ *   on a 2-minute lease. NOT a block, and the one value this
+ *   enumeration exists to keep off the slip.
+ *
+ * (The repository's disarm path also writes intercept rows with
+ * the disarm reason as outcome, but always under the system
+ * package — assembly's system-row exclusion already keeps them
+ * off the slip.)
+ */
+object InterceptOutcome {
+    const val BLOCKED = "Blocked"
+    const val STAYED_FOCUSED = "Stayed Focused"
+    const val SPLIT_INTO_MICRO_STEP = "Split Into 10m Micro-Step"
+    const val USED_PEEK = "Used 2m Peek"
+
+    /** The outcomes that were truly turned away. Anything else —
+     *  a peek grant, or a value no writer above produces — is
+     *  NOT a deflection: the slip prints only what it can back,
+     *  so the filter is an allowlist, never a denylist. */
+    val BLOCKED_OUTCOMES: Set<String> = setOf(BLOCKED, STAYED_FOCUSED, SPLIT_INTO_MICRO_STEP)
+}
+
+/** True iff this intercept row's outcome was a block (see
+ *  [InterceptOutcome]). Case-insensitive: the writers' spelling
+ *  and the test suites' spelling differ in case only. */
+fun isBlockedInterceptOutcome(outcome: String): Boolean =
+    InterceptOutcome.BLOCKED_OUTCOMES.any { it.equals(outcome.trim(), ignoreCase = true) }
+
 /** One deflection on the slip: a blocked attempt the machine
  *  turned away during the session, reduced at assembly (window
- *  ∩ intention match ∩ 30s-per-package dedupe, first kept).
+ *  ∩ intention match ∩ BLOCKED outcome ∩ 30s-per-package
+ *  dedupe, first kept).
  *  There is deliberately NO total/count field anywhere in this
  *  contract (Zettel): the slip lists; it never sums. */
 data class ReceiptDeflection(
@@ -126,6 +179,42 @@ data class ReceiptDeflection(
     val packageName: String,
     val atWallMillis: Long
 )
+
+/**
+ * The HELD line's figures, in the only form the slip may print
+ * (receipt audit item 9 / W-41): apps split by what enforcement
+ * actually did — [shutApps] held shut, [peekApps] peek-tier,
+ * [heldSites] derived from the enforcer, never a list size.
+ *
+ * W-41 PREPARATION ONLY (issue #10): the persisted split columns
+ * (heldShutAtSeal / heldPeekAtSeal + an enforcer-derived sites
+ * figure) do NOT exist yet — they are Ren's batch-10 data work.
+ * Nothing in this codebase fills this type today: assembly
+ * leaves it null and the sheet prints no HELD line at all,
+ * under the slip's own omission law (an absent line over a
+ * false one). When the columns land, assembly fills this type
+ * from them at the one marked fill point in
+ * MonolithRepository.assemblePendingReceipt, and the line
+ * prints with no sheet change. The legacy summed columns
+ * (heldAppsAtSeal / heldSitesAtSeal) stay on the state as
+ * record, STATE-ONLY — the sheet never reads them again.
+ */
+data class ReceiptHeldFigures(
+    val shutApps: Int,
+    val peekApps: Int,
+    val heldSites: Int
+) {
+    /** The printed line, in the Shield header's split dialect
+     *  (MonolithCustomComponents' heldSplitText): zero parts are
+     *  omitted; null when nothing was held at all. */
+    fun printLine(): String? {
+        val parts = mutableListOf<String>()
+        if (shutApps > 0) parts += "$shutApps HELD"
+        if (peekApps > 0) parts += "$peekApps PEEK"
+        if (heldSites > 0) parts += "$heldSites SITES"
+        return if (parts.isEmpty()) null else parts.joinToString(" · ")
+    }
+}
 
 /** The facts gathered at E0 for a publish, before the claim
  *  transaction mints the №. Pure reads only (assembly, Reihe §3):
@@ -150,7 +239,11 @@ data class PendingReceipt(
     val routineLabelWithin: String?,
     val bankedBreakSeconds: Int,
     val shieldWasOff: Boolean,
-    val deflections: List<ReceiptDeflection>
+    val deflections: List<ReceiptDeflection>,
+    // W-41 seam (see ReceiptHeldFigures): null until the
+    // persisted SHUT/PEEK split columns land; assembly is the
+    // only fill point.
+    val heldFigures: ReceiptHeldFigures? = null
 )
 
 /**
@@ -182,8 +275,17 @@ data class ReceiptState(
     val faulted: Boolean,
     val deflections: List<ReceiptDeflection>,
     val restored: Boolean,
-    val receiptPublishedMonoMs: Long
+    val receiptPublishedMonoMs: Long,
+    // W-41 seam (see ReceiptHeldFigures): null until the
+    // persisted SHUT/PEEK split columns land — while null, the
+    // sheet prints NO HELD line (the old summed line booked
+    // PEEK apps as held and counted sites blind; killed as
+    // printed, audit item 9).
+    val heldFigures: ReceiptHeldFigures? = null
 ) {
+    /** The HELD line this slip may print, or null when the line
+     *  is omitted whole (figures uncaptured, or nothing held). */
+    val heldLine: String? get() = heldFigures?.printLine()
     /** The printed №: zero-padded to a minimum of 3, never
      *  truncated (№ 048 … № 1048). */
     val numberPrint: String get() = "№ " + number.toString().padStart(3, '0')
