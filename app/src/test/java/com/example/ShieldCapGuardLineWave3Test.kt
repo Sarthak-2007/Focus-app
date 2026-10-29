@@ -80,6 +80,34 @@ class ShieldCapGuardLineWave3Test {
     }
 
     @Test
+    fun guardLine_firstLackWinsBoardOrderWhateverItsAge() {
+        // Verifier-added precedence cases: the FIRST lack in board
+        // order is named, with ITS OWN age suffix — a later stale
+        // lack never steals the name, and a stale first lack is
+        // never laundered by a fresh second one.
+        val freshFirst = snapOf(
+            perm(WatchItemId.ACCESSIBILITY, PermState.MISSING, mono = 100_000L),
+            perm(WatchItemId.USAGE_ACCESS, PermState.MISSING, mono = 10_000L),
+            perm(WatchItemId.DEVICE_ADMIN, PermState.GRANTED, mono = 100_000L),
+            perm(WatchItemId.NOTIFICATION_LISTENER, PermState.GRANTED, mono = 100_000L)
+        )
+        assertEquals(
+            "GUARD 2/4 — ACCESSIBILITY",
+            guardLineFor(freshFirst, nowMono = 110_000L)?.text
+        )
+        val staleFirst = snapOf(
+            perm(WatchItemId.ACCESSIBILITY, PermState.GRANTED, mono = 10_000L),
+            perm(WatchItemId.USAGE_ACCESS, PermState.MISSING, mono = 100_000L),
+            perm(WatchItemId.DEVICE_ADMIN, PermState.GRANTED, mono = 100_000L),
+            perm(WatchItemId.NOTIFICATION_LISTENER, PermState.GRANTED, mono = 100_000L)
+        )
+        assertEquals(
+            "GUARD 2/4 — ACCESSIBILITY STALE",
+            guardLineFor(staleFirst, nowMono = 110_000L)?.text
+        )
+    }
+
+    @Test
     fun permPrint_missingStalesAtTheSameBoundaryAsGranted() {
         val snap = snapOf(
             perm(WatchItemId.ACCESSIBILITY, PermState.MISSING, mono = 10_000L)

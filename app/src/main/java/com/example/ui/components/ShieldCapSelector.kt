@@ -126,19 +126,29 @@ fun ShieldCapSelector(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .align(Alignment.Center),
+                // F3 pixel law: NOT centred. Old content (36 track +
+                // 6 pad + 8 ticks = 50dp) centred in the 84dp slot
+                // put the track top at 17dp and the ticks at 59dp.
+                // New content is 48 + 8 = 56dp; centring it would
+                // drop the track to 20dp — a 3dp shift. Top-aligned
+                // with an 11dp offset instead: wrapper top 11dp,
+                // track top 11 + 6 = 17dp, ticks top 11 + 48 = 59dp.
+                // Every printed Y is exactly the old Y.
+                .align(Alignment.TopCenter)
+                .offset(y = 11.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // F3 touch targets: the visible track stays 36dp, but
             // each stop's hit area is the 48dp minimum. This 48dp
             // wrapper centres the unchanged 36dp track (6dp of
             // invisible overhang above and below — it paints
-            // nothing), so inside the 84dp slot the track lands at
-            // exactly its old Y and the cap geometry — 36dp track,
-            // 30dp cap, radii, words — is untouched. The ticks
-            // below lose their 6dp top padding for the same reason:
-            // the wrapper's lower overhang IS that 6dp now, so the
-            // printed gap under the track is unchanged too.
+            // nothing), and the Column's top alignment + 11dp offset
+            // (above) lands the track at exactly its old Y, so the
+            // cap geometry — 36dp track, 30dp cap, radii, words,
+            // position — is untouched. The ticks below lose their
+            // 6dp top padding for the same reason: the wrapper's
+            // lower overhang IS that 6dp now, so the printed gap
+            // under the track is unchanged too.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
