@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -55,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.AppBlockTier
+import com.example.data.AppCategory
 import com.example.data.BlockedAppEntity
 import com.example.data.FocusSessionEntity
 import com.example.ui.theme.AnonymousProFamily
@@ -200,6 +202,33 @@ fun LauncherBlockScreen(
     var page by remember(visible, session?.id) { mutableStateOf(initialPage) }
     val partition = remember(apps) { launcherPartition(apps) }
 
+    // BACK LAW: this surface is un-exitable. Back on an app-grid
+    // page returns to launcher HOME; Back on HOME is swallowed —
+    // the handler consumes the press and does nothing. The handler
+    // is only composed while the launcher is visible, so it can
+    // never swallow a Back press meant for another surface.
+    BackHandler {
+        if (page != LauncherPage.HOME) page = LauncherPage.HOME
+    }
+
+    // BARRED FROM ALLOWED: browsers and the Play Store never appear
+    // on the ALLOWED door or in its count, whatever their tier.
+    // Browsers are born OPEN in the catalog, but the site blocker
+    // behind them is partial; the store is an install vector.
+    // launcherPartition itself is untouched (its tests own its
+    // logic) — its `allowed` output is filtered here, in the
+    // composable, and both the door count and the grid read this
+    // one filtered list so the numbers match what the user sees.
+    // BlockedAppEntity.category stores the AppCategory enum's name
+    // (writers store `category.name`), so browsers are the rows
+    // whose category is AppCategory.BROWSERS.name.
+    val allowedVisible = remember(partition.allowed) {
+        partition.allowed.filter { app ->
+            app.category != AppCategory.BROWSERS.name &&
+                app.packageName != "com.android.vending"
+        }
+    }
+
     // The dial's clock: derived from the session's own numbers at
     // open, ticked locally each second — the same derivation the
     // Airlock's session line uses (now + the span's remaining), so
@@ -217,7 +246,10 @@ fun LauncherBlockScreen(
         else System.currentTimeMillis() + session.spanRemainingSeconds * 1000L
     }
     val remainingSeconds = endsAtMs?.let { ((it - nowMs) / 1000L).toInt().coerceAtLeast(0) }
-    val progress = if (session == null) 0f else launcherProgress(
+    // STOPWATCH TRUTH: a count-up session has no fraction of
+    // anything, so it carries no progress at all — the dial below
+    // prints its numeral only and sweeps nothing.
+    val progress = if (session == null || session.isStopwatchMode) 0f else launcherProgress(
         elapsedSeconds = session.spanTargetSeconds - (remainingSeconds ?: session.spanRemainingSeconds),
         targetSeconds = session.spanTargetSeconds
     )
@@ -234,7 +266,7 @@ fun LauncherBlockScreen(
                 remainingSeconds = remainingSeconds,
                 endsAtMs = endsAtMs,
                 progress = progress,
-                allowedCount = partition.allowed.size,
+                allowedCount = allowedVisible.size,
                 peekCount = partition.peek.size,
                 shutCount = partition.shut.size,
                 onOpenAllowed = { SealHaptics.doorPress(context); page = LauncherPage.ALLOWED },
@@ -245,10 +277,11 @@ fun LauncherBlockScreen(
             LauncherPage.ALLOWED -> LauncherAppsPage(
                 title = "ALLOWED APPS",
                 sub = "OPEN — TAP TO USE",
-                apps = partition.allowed,
+                apps = allowedVisible,
                 emptyText = "NOTHING IS OPEN IN THIS SESSION",
                 onBack = { page = LauncherPage.HOME },
-                onAppTap = { app -> SealHaptics.tileSeat(context); onLaunchApp(app) }
+                onAppTap = { app -> SealHaptics.tileSeat(context); onLaunchApp(app) },
+                onRequestEmergencyBreak = onRequestEmergencyBreak
             )
             LauncherPage.PEEK -> LauncherAppsPage(
                 title = "PEEK APPS",
@@ -256,7 +289,8 @@ fun LauncherBlockScreen(
                 apps = partition.peek,
                 emptyText = "NO PEEK APPS ARE SET",
                 onBack = { page = LauncherPage.HOME },
-                onAppTap = { app -> SealHaptics.tileSeat(context); onPeekApp(app) }
+                onAppTap = { app -> SealHaptics.tileSeat(context); onPeekApp(app) },
+                onRequestEmergencyBreak = onRequestEmergencyBreak
             )
         }
     }
@@ -316,7 +350,11 @@ private fun LauncherHome(
                     size = arcSize,
                     style = Stroke(width = stroke)
                 )
-                if (progress > 0f) {
+                // Stopwatch sessions draw NO progress arc/sweep at
+                // all: a count-up has no fraction, so the dial is
+                // the rim and the numeral, nothing swept. Timed
+                // sessions keep the ring.
+                if (progress > 0f && session?.isStopwatchMode != true) {
                     drawArc(
                         color = NightColorPrimaryContainer,
                         startAngle = -90f,
@@ -356,6 +394,19 @@ private fun LauncherHome(
 
         Spacer(Modifier.height(14.dp))
 
+        if (session != null && session.isInSafeBreak) {
+            androidx.compose.material3.Text(
+                text = "ON A SAFE BREAK — THE SESSION CLOCK IS PAUSED",
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                letterSpacing = 1.5.sp,
+                color = NightColorPrimaryContainer,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.testTag("launcher_safe_break_eyebrow")
+            )
+            Spacer(Modifier.height(8.dp))
+        }
         if (session != null && session.intention.isNotBlank()) {
             androidx.compose.material3.Text(
                 text = session.intention,
@@ -502,7 +553,8 @@ private fun LauncherAppsPage(
     apps: List<BlockedAppEntity>,
     emptyText: String,
     onBack: () -> Unit,
-    onAppTap: (BlockedAppEntity) -> Unit
+    onAppTap: (BlockedAppEntity) -> Unit,
+    onRequestEmergencyBreak: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -543,7 +595,7 @@ private fun LauncherAppsPage(
         Spacer(Modifier.height(18.dp))
 
         if (apps.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 androidx.compose.material3.Text(
                     text = emptyText,
                     fontFamily = AtkinsonHyperlegibleFamily,
@@ -558,12 +610,49 @@ private fun LauncherAppsPage(
                 contentPadding = PaddingValues(4.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
-                modifier = Modifier.testTag("launcher_app_grid")
+                modifier = Modifier.weight(1f).testTag("launcher_app_grid")
             ) {
                 items(apps, key = { it.packageName }) { app ->
                     LauncherAppTile(app = app, onTap = { onAppTap(app) })
                 }
             }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // FOOT ROW: the Emergency Break valve is one tap from
+        // EVERY launcher screen, grid pages included — never
+        // buried behind a return to HOME first. This reuses the
+        // home foot row's tag: only one launcher page is composed
+        // at a time, so the tag stays unique on screen.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            androidx.compose.material3.Text(
+                text = "‹ LAUNCHER",
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                color = NightColorPrimary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(onClick = onBack)
+                    .padding(horizontal = 10.dp, vertical = 10.dp)
+            )
+            androidx.compose.material3.Text(
+                text = "EMERGENCY BREAK",
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                color = NightColorPrimaryContainer,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(onClick = onRequestEmergencyBreak)
+                    .padding(horizontal = 10.dp, vertical = 10.dp)
+                    .testTag("launcher_emergency_break")
+            )
         }
     }
 }

@@ -723,21 +723,28 @@ fun AirlockInterceptOverlay(
                 // allowed apps on one, peek apps on the other.
                 // They open rooms inside the seal; neither is an
                 // exit, and neither grants anything by itself.
-                BlockitActionChip(
-                    wordLabel = "ALLOWED APPS",
-                    monoBadge = allowedAppsCount.toString(),
-                    onClick = onOpenAllowedApps,
-                    modifier = Modifier.fillMaxWidth(),
-                    testTag = "airlock_allowed_apps_button"
-                )
+                // TIMING: absent until the 5-second countdown
+                // reaches 0 — the same countdown gate that reveals
+                // the peek chip above (countdownSecs == 0; the
+                // chip's additional canUse2MinutePeek term is that
+                // app's own peek eligibility, not a door timing).
+                if (countdownSecs == 0) {
+                    BlockitActionChip(
+                        wordLabel = "ALLOWED APPS",
+                        monoBadge = allowedAppsCount.toString(),
+                        onClick = onOpenAllowedApps,
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "airlock_allowed_apps_button"
+                    )
 
-                BlockitActionChip(
-                    wordLabel = "PEEK APPS",
-                    monoBadge = peekAppsCount.toString(),
-                    onClick = onOpenPeekApps,
-                    modifier = Modifier.fillMaxWidth(),
-                    testTag = "airlock_peek_apps_button"
-                )
+                    BlockitActionChip(
+                        wordLabel = "PEEK APPS",
+                        monoBadge = peekAppsCount.toString(),
+                        onClick = onOpenPeekApps,
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "airlock_peek_apps_button"
+                    )
+                }
             }
         }
     }

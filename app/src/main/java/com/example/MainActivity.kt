@@ -441,13 +441,32 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     onGuardLineTap = {
                         when {
                             parkOpen -> closePark(dismissReceipt = false)
-                            // While sealed, the Guard line opens the
-                            // launcher — the sealed phone's home.
-                            sealed -> {
-                                launcherPage = LauncherPage.HOME
-                                launcherOpen = true
+                            else -> {
+                                // TAP-TIME launcher entry predicate:
+                                // re-read the VM's flows here, at the
+                                // tap — never the composed `sealed`
+                                // value above, which can still hold
+                                // its pre-detention / pre-seal frame.
+                                // There is no `sealed` flow on the VM;
+                                // the seal fact is activeSession.isActive
+                                // (the same fact `sealed` composes
+                                // from). Entry also requires navigation
+                                // to be unlocked at this instant, and a
+                                // successful entry re-verifies the seal
+                                // via the watch sweep.
+                                val tapSealed =
+                                    viewModel.activeSession.value?.isActive == true
+                                if (tapSealed && !viewModel.navigationLocked()) {
+                                    viewModel.runWatchSweep()
+                                    launcherPage = LauncherPage.HOME
+                                    launcherOpen = true
+                                } else if (!tapSealed) {
+                                    openPark()
+                                }
+                                // tapSealed but navigationLocked():
+                                // the tap is dead — no launcher, no
+                                // PARK, no exit.
                             }
-                            else -> openPark()
                         }
                     }
                 )
@@ -817,24 +836,70 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 initialPage = launcherPage,
                 onClose = { launcherOpen = false },
                 onLaunchApp = { app ->
-                    launcherOpen = false
-                    runCatching {
-                        context.packageManager
-                            .getLaunchIntentForPackage(app.packageName)
-                            ?.let { launch ->
-                                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                context.startActivity(launch)
-                            }
+                    // TAP-TIME LAUNCH GATE: the entity handed in was
+                    // composed when the grid rendered — re-read the
+                    // VM's live rows at the tap and launch only what
+                    // is still true NOW. On any refusal: no launch,
+                    // the launcher stays open, nothing crashes.
+                    val liveApp = viewModel.apps.value
+                        .find { it.packageName == app.packageName }
+                    val tapSealed =
+                        viewModel.activeSession.value?.isActive == true
+                    val launchAllowed = liveApp != null &&
+                        liveApp.resolvedTier == com.example.data.AppBlockTier.OPEN &&
+                        tapSealed &&
+                        !viewModel.navigationLocked() &&
+                        // Defence in depth, even if OPEN: the Play
+                        // Store is an install vector, and browsers
+                        // sit behind only a partial site blocker.
+                        // BlockedAppEntity.category stores the
+                        // AppCategory enum's name (see
+                        // MonolithModels / repository writers).
+                        liveApp.packageName != "com.android.vending" &&
+                        liveApp.category != com.example.data.AppCategory.BROWSERS.name
+                    if (launchAllowed && liveApp != null) {
+                        launcherOpen = false
+                        runCatching {
+                            context.packageManager
+                                .getLaunchIntentForPackage(liveApp.packageName)
+                                ?.let { launch ->
+                                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    context.startActivity(launch)
+                                }
+                        }
                     }
                 },
                 onPeekApp = { app ->
-                    launcherOpen = false
-                    viewModel.triggerAirlockIntercept(
-                        app.packageName,
-                        app.appName,
-                        app.resolvedTier.badge,
-                        InterceptPath.APP_TIER
-                    )
+                    // SAFE-BREAK PEEK: during a Safe Break the active
+                    // session already suspends the interceptors
+                    // (WatchStore.updateInterceptorInputs reads
+                    // isInSafeBreak), so PEEK apps are already free —
+                    // launch directly, no peek lease is started and
+                    // no cooldown is armed. Read at tap time from
+                    // the VM's activeSession flow.
+                    val tapSession = viewModel.activeSession.value
+                    if (tapSession != null && tapSession.isActive && tapSession.isInSafeBreak) {
+                        launcherOpen = false
+                        runCatching {
+                            context.packageManager
+                                .getLaunchIntentForPackage(app.packageName)
+                                ?.let { launch ->
+                                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    context.startActivity(launch)
+                                }
+                        }
+                    } else {
+                        // Outside a Safe Break the existing Airlock
+                        // route stands exactly as it was — the peek
+                        // offer / lease machinery decides from there.
+                        launcherOpen = false
+                        viewModel.triggerAirlockIntercept(
+                            app.packageName,
+                            app.appName,
+                            app.resolvedTier.badge,
+                            InterceptPath.APP_TIER
+                        )
+                    }
                 },
                 onRequestEmergencyBreak = {
                     launcherOpen = false
