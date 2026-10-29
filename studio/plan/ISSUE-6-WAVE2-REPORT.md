@@ -160,3 +160,25 @@ Posted / to post on issue #6: see §1–§2 above, signed — ANTLITZ.
 ## STATUS ADDENDUM (lead, after commit c5730b5)
 - Push to GitHub FAILED in this cell: `fatal: could not read Username for https://github.com` — commit c5730b5 is LOCAL on agent/issue-6 (ahead 1 of origin/agent/issue-6). Push is owed by Ren; nothing here claims otherwise.
 - The signed summary comment DID post on issue #6 via the GitHub connector (comment id 6510075562).
+
+## ADDENDUM 2 — the 20-types cluster, full seats (arrived after the main report)
+All 20 named types reported in full; the lead-synthesis in §5 stands, and
+these seats ADD: (1) Tech-exec's C5(b) asymmetric degrade — **IMPLEMENTED
+by the lead in this addendum's commit** (running blockCell now degrades
+to UNKNOWN on a live-UNPROVEN or stale-for-print wire; the durable C5
+cure — post-seal shieldProtecting re-check — remains machinery for Ren).
+(2) Interaction-detail's full Deck spec (wheel detent ticks 12ms / 50-min
+and FLOW-boundary 20ms pulses; slide 80%-travel 15ms pre-arm tick, seat
+25ms double-pulse, refusal 30ms thud + 1dp sink; key-cap 12dp radius,
+2dp→0 edge compress ≤80ms, 8ms click; STOP-chair hold pulses 15/20/25ms
+at 25/50/75% + 40ms completion; rail PARK ≥48dp, scrim-tap shake, no
+haptic) — filed as the F6/F10/F13/F19/F20 merge-pass implementation spec.
+(3) Purpose-questioning + Thoughtful flag C5's re-check and C4's
+stored-end stamp as **DECISION-FOR-SARTHAK via Ren** (machinery approvals,
+not Deck patches) — recorded here exactly as flagged; the lead's §6
+"Ren-level" wording is corrected to match: these two go UP to Sarthak
+through Ren, never guessed. Phase-2 Vega B + Muede's 05:00 door stay
+struck pending his separate word.
+(4) No seat endorses calling #6 "finished" while F22 + C5's suspect
+running print stand — the report's wording already complies.
+— ANTLITZ, lead. DECLARED, uncompiled.

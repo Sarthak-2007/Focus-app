@@ -493,8 +493,23 @@ fun TactileDeckScreen(
     // or HELD beside a live OFF was the audit's impossible frame:
     // one tense, true at the instant it prints.
     val blockCell = if (isSessionRunning) {
-        if (liveWarrantState == WarrantState.OFF) blockCellFor(WarrantState.OFF)
-        else blockCellFor(frozenState)
+        when {
+            liveWarrantState == WarrantState.OFF -> blockCellFor(WarrantState.OFF)
+            // Issue #6 C5(b) (wave-2 Tech-exec): the degrade was
+            // asymmetric — running BLOCK followed the wire down to
+            // OFF but never to UNPROVEN, so a lost stamp or an
+            // UNSET re-read left the frozen ON standing forever.
+            // A live UNPROVEN wire, or a read gone stale for print
+            // (UNA2-03), degrades the running cell to UNKNOWN. The
+            // frozen verdict attests the seal act; it cannot outrank
+            // the wire's present tense. (Issue #4's SealBar encodes
+            // this same row as RUNNING_UNPROVEN — lamp dark, bolt
+            // thrown.)
+            liveWarrantState == WarrantState.UNPROVEN ||
+                warrantPrintState == WarrantState.UNPROVEN ->
+                blockCellFor(WarrantState.UNPROVEN)
+            else -> blockCellFor(frozenState)
+        }
     } else idleBlockCell
     val appsCell = when {
         isSessionRunning -> {
