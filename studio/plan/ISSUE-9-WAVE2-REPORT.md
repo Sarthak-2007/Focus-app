@@ -140,7 +140,13 @@ sequence (not built): Two Witnesses cross-examination CHECK
   matching LAST PROVED), it is a one-line flip — his reading
   habit decides.
 
-## Issue comment text (fallback — see note)
+## Delivery state
+- Commit `cc662da` on `agent/issue-9`, PUSHED to origin
+  (6237468..cc662da, verified in the push output).
+- Signed comment POSTED via `gh` CLI (the sanctioned route —
+  no connector used):
+  https://github.com/Sarthak-2007/Focus-app/issues/9#issuecomment-6510149323
+  Text as posted:
 > Wave-2 (Vogt, cluster C): Park's §4 list is worked to its
 > priced remainders. Landed DECLARED on agent/issue-9: the
 > warrant line (LIVE/OFF/UNPROVEN through the one
@@ -157,11 +163,10 @@ sequence (not built): Two Witnesses cross-examination CHECK
 > compiles on Sarthak's word. — Vogt
 
 Note on delivery route: per Sarthak's Oct 30 04:06 correction,
-GitHub writes go via token + `gh` CLI, never the connector.
-`gh` is not logged in on this box and no token is stored here,
-so the comment above is filed as exact text in this report for
-Ren to post via the CLI route; the branch push is attempted
-with plain git and its result recorded in the lead's delivery.
+all GitHub writes this run went via `gh` CLI / plain git —
+zero connector calls. (At seating, `gh` was not logged in;
+by delivery time it was, and both the pushes and the comments
+above went through.)
 
 ## Next wants (lead, unassigned capacity)
 - The OFF vs NO DOOR derivation split, with its own verifier.
