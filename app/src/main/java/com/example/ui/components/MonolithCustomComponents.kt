@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -574,134 +573,16 @@ private data class StripTones(
     val secondaryInk: Color
 )
 
-private fun StripTones.fill(density: StripDensity): Color = when (density) {
-    StripDensity.PASS -> recess
-    StripDensity.FAULT -> cap
-    StripDensity.UNKNOWN -> raised
-}
-
-private fun StripTones.ink(density: StripDensity): Color = when (density) {
-    StripDensity.PASS -> ordinaryInk
-    else -> glyphInk
-}
-
-@Composable
-private fun StripCell(
-    label: String,
-    state: String,
-    density: StripDensity,
-    mono: Boolean,
-    tones: StripTones,
-    modifier: Modifier = Modifier
-) {
-    Box(modifier.background(tones.fill(density))) {
-        if (density == StripDensity.FAULT) {
-            // The doubled top hairline, over this cell's width only.
-            Box(
-                Modifier
-                    .align(Alignment.TopStart)
-                    .fillMaxWidth()
-                    .height(2.dp)
-                    .background(tones.faultEdge)
-            )
-        }
-        Column(Modifier.padding(start = 10.dp, top = 4.dp)) {
-            Text(text = label, style = PillBadgeTextStyle, color = tones.secondaryInk)
-            Spacer(Modifier.height(1.dp))
-            Text(
-                text = state,
-                style = if (mono) {
-                    TextStyle(
-                        fontFamily = AnonymousProFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        lineHeight = 20.sp,
-                        letterSpacing = 0.sp
-                    )
-                } else {
-                    TextStyle(
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        lineHeight = 20.sp,
-                        letterSpacing = 0.5.sp
-                    )
-                },
-                color = tones.ink(density)
-            )
-        }
-    }
-}
-
 /**
- * The 53dp proof band (Kato's corrected sheet): three cells on a
- * recess body, square corners (radius 0 — the band is architecture,
- * not a card), 1px vertical hairlines one tone above recess, and the
- * seam stamp riding the hairline at the band's foot. Density flips
- * land in one frame — no easing, no pulse, ever: the strip is print.
+ * RETIRED (issue #4): the 53dp proof band (ProofStripBand + its
+ * StripCell) is gone — the Deck's pinned stack now seats the
+ * SealBar (components/SealBar.kt) at the same 53dp address, and
+ * the BIND / PROOF seam marks render nowhere. The pure helpers
+ * above (seamMarksFor, endsAtText, imprintTenantText,
+ * refusalSentenceFor, jamSentenceFor) stay: the sentence slot
+ * and the imprint below still read them, and the seam table
+ * remains pinned by its unit tests as the wire's grade record.
  */
-@Composable
-fun ProofStripBand(
-    blockWord: String,
-    blockDensity: StripDensity,
-    appsWord: String,
-    appsDensity: StripDensity,
-    timeText: String,
-    timeDensity: StripDensity,
-    stampLeft: String?,
-    stampRight: String?,
-    modifier: Modifier = Modifier
-) {
-    val tones = stripToneColors()
-    Column(
-        modifier
-            .fillMaxWidth()
-            .height(53.dp)
-            .background(tones.recess)
-    ) {
-        Row(Modifier.fillMaxWidth().weight(1f)) {
-            StripCell("BLOCK", blockWord, blockDensity, mono = false, tones = tones, modifier = Modifier.weight(1.05f).fillMaxHeight())
-            Box(Modifier.width(1.dp).fillMaxHeight().background(tones.divider))
-            StripCell("APPS", appsWord, appsDensity, mono = true, tones = tones, modifier = Modifier.weight(0.9f).fillMaxHeight())
-            Box(Modifier.width(1.dp).fillMaxHeight().background(tones.divider))
-            StripCell("TIME", timeText, timeDensity, mono = true, tones = tones, modifier = Modifier.weight(1.3f).fillMaxHeight())
-        }
-        // The seam: the stamp rides the hairline. Left mark inset
-        // 10dp; the right grade ends 10dp from the right edge; on
-        // collision the left degrades first (single line, clipped).
-        Box(Modifier.fillMaxWidth().height(12.dp)) {
-            Box(
-                Modifier
-                    .align(Alignment.TopStart)
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(tones.divider)
-            )
-            if (stampLeft != null && stampRight != null) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(start = 10.dp, end = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = stampLeft,
-                        style = PillBadgeTextStyle,
-                        color = tones.secondaryInk,
-                        maxLines = 1,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    Text(
-                        text = stampRight,
-                        style = PillBadgeTextStyle,
-                        color = tones.secondaryInk,
-                        maxLines = 1
-                    )
-                }
-            }
-        }
-    }
-}
 
 /**
  * The sentence slot (Suki): 22dp, reserved always, directly under the

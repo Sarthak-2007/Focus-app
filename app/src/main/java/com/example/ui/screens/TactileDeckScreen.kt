@@ -61,16 +61,17 @@ import com.example.service.WarrantState
 import com.example.ui.ArmPhase
 import com.example.ui.components.BlockitActionChip
 import com.example.ui.components.ImprintSlot
-import com.example.ui.components.ProofStripBand
+import com.example.ui.components.SealBar
 import com.example.ui.components.RefusalAction
 import com.example.ui.components.RefusalSentenceSlot
 import com.example.ui.components.StripDensity
 import com.example.ui.components.RefusalSentence
 import com.example.ui.components.endsAtText
 import com.example.ui.components.imprintTenantText
+import com.example.ui.components.endsAtNumeralsFor
 import com.example.ui.components.jamSentenceFor
 import com.example.ui.components.refusalSentenceFor
-import com.example.ui.components.seamMarksFor
+import com.example.ui.components.sealBarStateFor
 import com.example.ui.components.inkControlFill
 import com.example.ui.components.onInkControlFill
 import com.example.ui.components.FullBleedSectionHeader
@@ -528,7 +529,26 @@ fun TactileDeckScreen(
         pressLatch != null -> pressLatch!!.timeText to pressLatch!!.timeDensity
         else -> idleTimeCell
     }
-    val seamMarks = seamMarksFor(deckWarrant, nowMono)
+    // Issue #4 — the seal bar's face, derived from the SAME cells
+    // the retired proof strip printed (blockCell's word, timeCell's
+    // text, the session's spanRemainingSeconds). The re-encoding is
+    // pure (sealBarStateFor): position + light carry what BLOCK /
+    // TIME printed as words, and the BIND / PROOF seam marks render
+    // nowhere on this face any more. APPS keeps its one remaining
+    // home in the imprint directly below (the tenant still prints
+    // the split count); the bar's derivation does not read appsCell.
+    val sealState = sealBarStateFor(
+        isSessionRunning = isSessionRunning,
+        blockWord = blockCell.first,
+        remainingSeconds = if (isSessionRunning && activeSession != null &&
+            !activeSession.isStopwatchMode
+        ) {
+            activeSession.spanRemainingSeconds
+        } else {
+            null
+        }
+    )
+    val sealNumerals = endsAtNumeralsFor(timeCell.first)
     val imprintTenant = (if (!isSessionRunning) pressLatch?.tenant else null) ?: imprintTenantText(
         isSealed = isSessionRunning,
         shut = if (isSessionRunning) frozenShut else appsSplit?.shut,
@@ -941,27 +961,22 @@ fun TactileDeckScreen(
     }
         // =====================================================================
         // SECTION 5: THE PINNED STACK (Slice D) — outside the scroll:
-        // the proof strip, the slide's 72dp register, the reserved
-        // sentence slot, and the imprint. The strip keeps its 53dp
-        // address in every state; the slide zone holds the grace /
-        // valve chips at the same address while sealed (Δy = 0
-        // across tenancies), so the zone under the wheel never
-        // changes height by a pixel across the seal.
+        // the seal bar (issue #4 — THE BOLT's 60dp housing, grown
+        // from the retired proof strip's 53dp address per FEILE's
+        // grid; the pinned stack below it is unchanged), the slide's 72dp register,
+        // the reserved sentence slot, and the imprint. The slide zone
+        // holds the grace / valve chips at the same address while
+        // sealed (Δy = 0 across tenancies), so the zone under the
+        // wheel never changes height by a pixel across the seal.
         // =====================================================================
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
-            ProofStripBand(
-                blockWord = blockCell.first,
-                blockDensity = blockCell.second,
-                appsWord = appsCell.first,
-                appsDensity = appsCell.second,
-                timeText = timeCell.first,
-                timeDensity = timeCell.second,
-                stampLeft = seamMarks?.first,
-                stampRight = seamMarks?.second
+            SealBar(
+                state = sealState,
+                endsAtNumerals = sealNumerals
             )
             Spacer(Modifier.height(6.dp))
             Box(
