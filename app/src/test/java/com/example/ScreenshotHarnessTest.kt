@@ -112,6 +112,11 @@ class ScreenshotHarnessTest {
         // the destination captures the rig marks the introduction
         // done, exactly as a dismissed first open would.
         kotlinx.coroutines.runBlocking { repository.markParkIntroDone() }
+        // The reception's stamp, the same standing as the park bit
+        // above (Empfang lane, Oct 30): without it every RootApp
+        // capture would arrive sheet-covered. The sheet itself is
+        // captured directly below (setReception).
+        com.example.data.SetupStore(context).markCompleted()
         soundEngine = TactileSoundEngine(context)
         viewModel = MonolithViewModel(context, repository, soundEngine)
     }
@@ -366,6 +371,48 @@ class ScreenshotHarnessTest {
         nightDir.mkdirs()
         setPark(dark = true)
         captureTo(File(nightDir, "n05_park.png"))
+    }
+
+    /** THE RECEPTION (Empfang lane, Oct 30), composed directly
+     *  over the PARK capture's fabricated snapshot — DEVICE ADMIN
+     *  missing, so its FIX key stands and the total counts 3/4.
+     *  The routine line is a fabricated input, the setPark
+     *  pattern; every door word derives from the snapshot by
+     *  production code. */
+    private fun setReception(dark: Boolean) {
+        composeRule.setContent {
+            MyApplicationTheme(darkTheme = dark, dynamicColor = false) {
+                com.example.ui.components.ReceptionSheet(
+                    visible = true,
+                    snapshot = fabricatedSnapshot(),
+                    isFirstOpen = true,
+                    isNight = dark,
+                    returnTick = 0,
+                    soundEngine = soundEngine,
+                    firstRoutineLine = "NEXT ROUTINE — FASTED BLOCK · 05:00 · SET ON SHIELD",
+                    onShown = {},
+                    onFixClick = {},
+                    onCheckClick = {},
+                    onOpenShield = {},
+                    onDone = {}
+                )
+            }
+        }
+        settle(1200)
+    }
+
+    @Test
+    fun receptionSheetDay() {
+        setReception(dark = false)
+        captureTo(File(shotsDir, "11_reception.png"))
+    }
+
+    @Test
+    fun receptionSheetNight() {
+        val nightDir = File(shotsDir, "night")
+        nightDir.mkdirs()
+        setReception(dark = true)
+        captureTo(File(nightDir, "n11_reception.png"))
     }
 
     /** The mid-drag wheel render (chrome C8's verify-first): a DOWN
