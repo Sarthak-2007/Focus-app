@@ -516,15 +516,92 @@ fun ShieldMatrixScreen(
         // The first sentence the installed-only cure lets the app say
         // honestly (Liv, adopted by Gust): a search with no match is
         // answered in print, never with a void.
-        if (filteredApps.isEmpty() && searchQuery.isNotBlank()) {
+        if (filteredApps.isEmpty()) {
             item {
                 Text(
-                    text = "NO APP BY THAT NAME ON THIS PHONE",
+                    text = when {
+                        searchQuery.isNotBlank() ->
+                            "NO APP BY THAT NAME ON THIS PHONE"
+                        selectedCategory != null ->
+                            "NO APPS IN THIS CATEGORY ON THIS PHONE"
+                        else -> "NO APPS ON THIS PHONE"
+                    },
                     fontFamily = AnonymousProFamily,
                     fontSize = 11.sp,
                     color = scheme.onSurfaceVariant,
                     modifier = Modifier.testTag("shield_no_match_line")
                 )
+            }
+        }
+
+        // =====================================================================
+        // SECTION 5B: THE GUARDS (issue #51 F1 cure) — the sniper,
+        // the browser blocker and the profiles were wired from
+        // MainActivity to real ViewModel functions and rendered
+        // NOWHERE; this section is their UI. The switches sit
+        // directly above BLOCKED WEBSITES, whose header claimed
+        // sites were blocked with no switch in reach.
+        // =====================================================================
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                FullBleedSectionHeader(
+                    titleWord = "GUARDS",
+                    rightWordPrefix = "",
+                    rightMonoNumber = "",
+                    rightWordSuffix = ""
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "SHORTS & REELS SNIPER",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground
+                    )
+                    BlockitActionChip(
+                        wordLabel = if (shortsReelsSniperEnabled) "ON" else "OFF",
+                        isPrimaryInk = shortsReelsSniperEnabled,
+                        onClick = onToggleShortsReelsSniper,
+                        testTag = "shield_sniper_toggle"
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "BROWSER URL BLOCKER",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground
+                    )
+                    BlockitActionChip(
+                        wordLabel = if (browserUrlBlockerEnabled) "ON" else "OFF",
+                        isPrimaryInk = browserUrlBlockerEnabled,
+                        onClick = onToggleBrowserUrlBlocker,
+                        testTag = "shield_browser_blocker_toggle"
+                    )
+                }
+                if (profiles.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        profiles.forEach { profile ->
+                            FilterWord(
+                                label = profile.name.uppercase(),
+                                selected = profile.name == selectedProfileName,
+                                onClick = { onSelectProfile(profile) }
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -564,7 +641,10 @@ fun ShieldMatrixScreen(
                     }
                 }
 
-                var newSiteText by remember { mutableStateOf("") }
+                // Issue #51 F3 cure: saveable — the draft is no
+                // longer destroyed when this LazyColumn item is
+                // disposed on scroll.
+                var newSiteText by rememberSaveable { mutableStateOf("") }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -725,7 +805,11 @@ private fun RoutineRow(
             }
         }
         if (expanded) {
+        // Issue #51 F4 cure: the editor row scrolls horizontally
+        // (the category row's own pattern) instead of pushing the
+        // loadout chip off a phone-width screen.
         Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
