@@ -1953,9 +1953,24 @@ class MonolithViewModel(
      *  declarable from here — the Drawer files words, it does not
      *  rewrite past days. */
     fun declareTodayWord(word: String?) {
-        val iso = com.example.data.DrawerDay.dateIso(
-            com.example.data.DrawerDay.filingDate(System.currentTimeMillis())
+        declareDayWord(
+            com.example.data.DrawerDay.filingDate(System.currentTimeMillis()),
+            word
         )
+    }
+
+    /** Declare (or clear, with null) the word for a filing [date]
+     *  (AUDIT-drawer §2/§4, wave-2 — issue #8): the Drawer's filing
+     *  zone files TODAY and TOMORROW. Tomorrow is the point: at
+     *  01:00 "today" is still the filing day that began at 03:30,
+     *  and a sick man must be able to file the coming day before
+     *  he sleeps. Past days stay undeclarable from the Drawer —
+     *  it files words, it does not rewrite history. The repository
+     *  write is the same DayWordStore commit the today path has
+     *  always used (Truth Car 2, G-02); the word is durable the
+     *  moment the tap returns. */
+    fun declareDayWord(date: java.time.LocalDate, word: String?) {
+        val iso = com.example.data.DrawerDay.dateIso(date)
         viewModelScope.launch {
             repository.declareDayWord(iso, word)
             _dayWords.value = repository.allDayWords()

@@ -37,7 +37,7 @@ import java.time.LocalDate
 
 /**
  * Renders for the Drawer build (whole-studio review set): populated
- * landing + detail + month index, Tasks with the Last-Finished
+ * landing + detail + shelf-opened month, Tasks with the Last-Finished
  * Line, the globally-empty Drawer, and the digest sheet frozen and
  * live — day and night. Writes dr_* files into the lane's own
  * shots-own dir (Pipeline Law 4 render isolation).
@@ -224,9 +224,15 @@ class DrawerRenderTest {
         composeRule.onNodeWithTag("drawer_detail_back").performClick()
         settle(600)
 
-        composeRule.onNodeWithTag("drawer_all_months").performClick()
+        // INDEX is dead (issue #8): the earlier month opens from the
+        // landing's MONTHS shelf row. seedPopulated files one task in
+        // last month, so that shelf row exists.
+        val shelfMonth = LocalDate.now().minusMonths(1)
+        composeRule.onNodeWithTag(
+            "drawer_month_${shelfMonth.year}_${shelfMonth.monthValue}"
+        ).performClick()
         settle(600)
-        capture("dr_drawer_index_day.png")
+        capture("dr_drawer_month_day.png")
 
         composeRule.runOnUiThread { viewModel.navigateTo(MonolithDestination.TASKS) }
         settle(900)
