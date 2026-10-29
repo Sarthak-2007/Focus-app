@@ -25,10 +25,14 @@ import com.example.service.WatchStore
  *                included (#58 F1: MISSING_STALE prints with the
  *                suffix exactly as a stale grant does). One lack
  *                is named; a second rides unnamed in the count.
- *  - UNMEASURED: the line prints NOTHING. There is no default and
- *                no assumption — the seeded all-false guard status
+ *  - UNMEASURED: `GUARD — NOT CHECKED` (#9 cure, ported onto the
+ *                six-item board). There is no default and no
+ *                assumption — the seeded all-false guard status
  *                that used to print a day-one 0/4 is exactly the
- *                claim this state exists to prevent.
+ *                claim this state exists to prevent; silence read
+ *                as FINE on a cold open (Hof's PARK audit, P-6),
+ *                so the line now names its own ignorance — it
+ *                still assumes nothing, and it no longer hides.
  *
  * Pure: a function of (snapshot, now) and nothing else — no clock
  * reads beyond the passed instant, no Android, no state. The same
@@ -40,9 +44,11 @@ import com.example.service.WatchStore
 data class GuardLinePrint(val text: String)
 
 fun guardLineFor(snapshot: WatchSnapshot?, nowMono: Long): GuardLinePrint? {
-    if (snapshot == null) return null
+    if (snapshot == null) return GuardLinePrint("GUARD — NOT CHECKED")
     val prints = WatchItemId.PERMISSIONS.map { it to WatchStore.permPrintAt(snapshot, it, nowMono) }
-    if (prints.any { it.second == PermPrint.UNMEASURED }) return null
+    if (prints.any { it.second == PermPrint.UNMEASURED }) {
+        return GuardLinePrint("GUARD — NOT CHECKED")
+    }
     val warranted = prints.count { it.second == PermPrint.GRANTED }
     // Issue #109 F4 (merge resolution): the denominator is the
     // board's full permission set — PERMISSIONS.size (6) — never
