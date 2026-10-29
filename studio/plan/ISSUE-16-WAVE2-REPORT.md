@@ -297,3 +297,32 @@ batch-10 composition. The Wave-2 commits are safe locally here.
   verification package; the pill lane itself lives uncommitted in
   `builds/pill`.
 - **COMMENT POSTED** via gh: issue #16, comment 6510187966.
+
+## ADDENDUM-2 (final seat batch, folded in by lead — fixes applied)
+
+1. **test-v2.sh Bug A — PRECONDITION, recorded in the report where
+   Ren will read it:** the script's REPO is the cell clone, which
+   contains ZERO pill code. Firing it today would run the wrong
+   suite and a `DONE test=0` would silently certify it. The pill
+   lane must be merged/copied into `repo/` first, and any harvest
+   must confirm all 18 pill test names (15 PillDerivationTest +
+   3 PillLeaseRepositoryTest) — absence means NO_VERDICT for #16
+   whatever the exit code says.
+2. **test-v2.sh Bug B — FIXED (both copies, identical, syntax
+   clean):** stale JUnit XML is now deleted before the run, so the
+   completed list can only carry this run's evidence. Also: env21
+   source is guarded and `java -version`/`JAVA_HOME` are logged
+   (the JDK21 banner is now evidence, not assertion); HUP's exit
+   code 129 is documented in the header.
+3. **F3 classification applied** in the pill lane test file: the
+   two-lease test is labelled BELT, NOT INVARIANT, and gained a
+   reversed-order assertion proving arbitration is by lease end.
+4. **F4 note:** the lead's applied fix matches the seats' upgraded
+   form (literal 5-package list + set equality + iteration). The
+   inventory's original iterate-only proposal was itself circular
+   and was NOT used.
+5. **F6 exact specs recorded for the pre-run second wave:**
+   ShadowSystemClock-driven exact asserts (#16: lease end exactly
+   620_000 at a driven 500_000 now; #18: cooldown exactly 530_000
+   at a driven hand-back) and a per-test in-memory Room DB
+   replacing the shared singleton, all three call sites together.
