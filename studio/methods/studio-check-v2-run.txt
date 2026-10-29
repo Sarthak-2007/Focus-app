@@ -1,0 +1,67 @@
+STUDIO CHECK v2 — FULL RUN (Massarbeit, Methods, Sweep 2, Oct 29 2026)
+Baseline v1, run live at the start of this commission: 1 FAIL, 40 WARN, exit 1;
+evidence density LIE-REGISTER-3.md 0/31, FINISH-LIST-1.md 0/29 (headed-line definition).
+Corpus note: plan/ and BUILD-CHANGES.md are live files and grew during the run
+(new BUILD-CHANGES entries, new register/rulings lines); v2 also counts literal
+occurrences v1 silently suppressed (struck on their own line): 41 dead-literal
+occurrences in total, each dispositioned in methods/checker-v2.md.
+Run exit code: 1 (the 3 FAILs are REGISTER governing-position dead literals;
+corrections filed to Sana — her inline strike marks turn them green on re-run).
+----------------------------------------------------------------
+EVIDENCE DEFINITION: per claim block (entry heading + body to the next entry). STRONG = .kt file, file:line / file Lline, L<line> refs, sha fragments. TRACE = a named source document (.md / MEMORY.md / BUILD-CHANGES / mail path), a render path, a hex colour, or a section/step ref paired with a named source in the block or in its section's declared Home. Inherited Home credit is reported separately, never in the direct number.
+evidence density LIE-REGISTER-3.md: 49/53 entries carry direct evidence (25 with strong code evidence); +0 more via a declared section/file Home
+evidence density FINISH-LIST-1.md: 36/60 entries carry direct evidence (1 with strong code evidence); +24 more via a declared section/file Home
+evidence density RULINGS.md: 212/230 entries carry direct evidence (0 with strong code evidence); +7 more via a declared section/file Home
+CONSTANTS+GATE CHECK v2: 3 FAIL, 3 WARN, 40 INFO
+ FAIL: dead literal 796 (old room total (struck)) at plan/REGISTER.md:162 — GOVERNING position, no local context; struck only elsewhere in the doc [432] — a lookup reader takes it as law
+ FAIL: dead literal 85.5 (old band segment (struck)) at plan/REGISTER.md:154 — GOVERNING position, no local context; struck only elsewhere in the doc [453] — a lookup reader takes it as law
+ FAIL: dead literal 77.5 (old band cap (struck)) at plan/REGISTER.md:154 — GOVERNING position, no local context; struck only elsewhere in the doc [453] — a lookup reader takes it as law
+ warn: constants.json slide.gate_release=0.66 not found in REGISTER's slide section — unsourced charged value (report to Ren; constants are his file)
+ warn: dead literal 796 (old room total (struck)) at plan/BEYOND-deck.md:282 — no strike or correction anywhere in the doc; judge as a real dead literal
+ warn: dead literal 796 (old room total (struck)) at plan/BEYOND-deck.md:577 — no strike or correction anywhere in the doc; judge as a real dead literal
+ info: dead literal 85.5 at plan/DESIGNERS-PLAN.md:628 — conditional variant (filed alternative, not operative)
+ info: dead literal 77.5 at plan/DESIGNERS-PLAN.md:629 — conditional variant (filed alternative, not operative)
+ info: dead literal 796 at plan/MASTER-PLAN.md:229 — strike context in window
+ info: dead literal 796 at plan/MASTER-PLAN.md:5288 — strike context in window
+ info: dead literal 796 at plan/MASTER-PLAN.md:5290 — strike context in window
+ info: dead literal 85.5 at plan/MASTER-PLAN.md:3084 — governing value in window (comparison/correction context)
+ info: dead literal 85.5 at plan/MASTER-PLAN.md:3364 — prohibition context (the literal is the forbidden value)
+ info: dead literal 77.5 at plan/MASTER-PLAN.md:3084 — governing value in window (comparison/correction context)
+ info: dead literal 796 at plan/PLAN-AUDIT.md:52 — governing value in window (comparison/correction context)
+ info: dead literal 796 at plan/PLAN-AUDIT.md:55 — governing value in window (comparison/correction context)
+ info: dead literal 796 at plan/PLAN-AUDIT.md:56 — governing value in window (comparison/correction context)
+ info: dead literal 796 at plan/PLAN-AUDIT.md:416 — strike context in window
+ info: dead literal 85.5 at plan/PLAN-AUDIT.md:73 — strike context in window
+ info: dead literal 77.5 at plan/PLAN-AUDIT.md:73 — strike context in window
+ info: dead literal 796 at plan/PROCESS-PROPOSALS-1.md:135 — governing value in window (comparison/correction context)
+ info: dead literal 796 at plan/PROCESS-PROPOSALS-1.md:139 — strike context in window
+ info: dead literal 796 at plan/PROCESS-PROPOSALS-1.md:145 — strike context in window
+ info: dead literal 85.5 at plan/PROCESS-PROPOSALS-1.md:135 — governing value in window (comparison/correction context)
+ info: dead literal 77.5 at plan/PROCESS-PROPOSALS-1.md:135 — governing value in window (comparison/correction context)
+ info: dead literal 796 at plan/REGISTER.md:405 — strike context in window
+ info: dead literal 796 at plan/REGISTER.md:407 — strike context in window
+ info: dead literal 796 at plan/REGISTER.md:431 — strike context in window
+ info: dead literal 796 at plan/REGISTER.md:432 — strike context in window
+ info: dead literal 796 at plan/REGISTER.md:436 — strike context in window
+ info: dead literal 85.5 at plan/REGISTER.md:194 — strike context in window
+ info: dead literal 85.5 at plan/REGISTER.md:453 — strike context in window
+ info: dead literal 85.5 at plan/REGISTER.md:455 — strike context in window
+ info: dead literal 77.5 at plan/REGISTER.md:194 — strike context in window
+ info: dead literal 77.5 at plan/REGISTER.md:453 — strike context in window
+ info: dead literal 77.5 at plan/REGISTER.md:455 — strike context in window
+ info: dead literal 796 at plan/RULINGS.md:274 — strike context in window
+ info: dead literal 796 at plan/RULINGS.md:296 — correction in place (arrow to governing value)
+ info: dead literal 796 at plan/SLICE-D-E-BUILD-READY.md:362 — strike context in window
+ info: dead literal 796 at plan/SLICE-D-E-BUILD-READY.md:363 — strike context in window
+ info: dead literal 796 at plan/SLICE-D-E-BUILD-READY.md:599 — correction in place (arrow to governing value)
+ info: dead literal 796 at plan/SLICE-D-E-BUILD-READY.md:707 — governing value in window (comparison/correction context)
+ info: SLICE-D-E-BUILD-READY.md: code sites via route a: .kt cited in the brief
+ info: ROUTINES-REBUILD-READY.md: code sites via route b: .kt cited in incorporated part plan/routines-rebuild-parts/rurik.md
+ info: DIGEST-AND-DRAWER-BUILD-BRIEFS.md: code sites via route a: .kt cited in the brief
+ info: GOVERNS citations in corpus: 0 (format armed in v2; absence is reported, not failed)
+----------------------------------------------------------------
+CONTROL TEST (gate, Fundus req 5): code_sites() extracted and run standalone —
+ROUTINES (real brief) -> route b (.kt in incorporated part); FAKE brief with price
++ a forks word but no reachable sites -> None (the FAIL stands for it);
+FAKE2 with .kt cited -> route a.
+EXIT: 1
