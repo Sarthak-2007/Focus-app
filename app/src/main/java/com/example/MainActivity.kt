@@ -48,6 +48,7 @@ import com.example.data.MonolithRepository
 import com.example.service.InterceptPath
 import com.example.service.MonolithShieldService
 import com.example.service.TactileSoundEngine
+import com.example.service.WatchStore
 import com.example.ui.MonolithDestination
 import com.example.ui.ArmPhase
 import com.example.ui.MonolithViewModel
@@ -79,6 +80,10 @@ class MainActivity : ComponentActivity() {
                 android.graphics.Color.TRANSPARENT
             )
         )
+
+        // Watch Store bind (issue #48): LAST PROVED restored before
+        // any surface reads the store.
+        WatchStore.bind(applicationContext)
 
         val database = MonolithDatabase.getInstance(applicationContext)
         val repository = MonolithRepository(applicationContext, database.monolithDao())

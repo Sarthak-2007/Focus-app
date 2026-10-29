@@ -35,6 +35,7 @@ class MonolithNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         instance = this
+        WatchStore.bind(applicationContext)
         WatchStore.onNotificationListenerBound(true)
     }
 
