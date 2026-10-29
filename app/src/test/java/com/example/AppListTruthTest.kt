@@ -1,12 +1,9 @@
 package com.example
 
 import android.content.Context
-import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.ActivityInfo
-import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
-import android.test.mock.MockPackageManager
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.AppBlockTier
@@ -154,28 +151,38 @@ class AppListTruthTest {
         )
         assertNull(repository.pendingPruneNote())
 
-        // Now the same sync, through a package manager whose
-        // launcher query is OBSERVED being called and answers
-        // empty. If this run silently failed before the query,
-        // the call count stays zero and the test fails; if the
-        // guard were removed, the empty answer would prune both
-        // rows and the test fails. Only a working guard passes.
-        var queryCalls = 0
-        val emptyPm = object : MockPackageManager() {
-            override fun queryIntentActivities(
-                intent: Intent,
-                flags: Int
-            ): MutableList<ResolveInfo> {
-                queryCalls++
-                return mutableListOf()
-            }
-        }
-        val emptyContext = object : ContextWrapper(context) {
-            override fun getPackageManager(): PackageManager = emptyPm
-        }
-        MonolithRepository(emptyContext, dao).ensureSeededAndSyncPackages()
+        // Now make the launcher query TRULY empty and verify that
+        // as a direct fact (not an assumption): both faked answers
+        // are removed from the shadow package manager, and the
+        // exact query the repository issues returns nothing.
+        val shadow = Shadows.shadowOf(context.packageManager)
+        val query = Intent(Intent.ACTION_MAIN, null).addCategory(Intent.CATEGORY_LAUNCHER)
+        shadow.removeResolveInfosForIntent(query, "com.only.app")
+        shadow.removeResolveInfosForIntent(query, "com.control.app")
+        assertTrue(
+            "the second run's launcher query must be verifiably empty",
+            context.packageManager.queryIntentActivities(query, 0).isEmpty()
+        )
+        // A post-catalog effect as the second run's pulse: the
+        // sync seeds default tasks AFTER the catalog block, so
+        // delete every seeded task — if the second run silently
+        // dies anywhere before its end, they stay deleted.
+        dao.getAllTasksSnapshot().forEach { dao.deleteTaskById(it.id) }
+        assertTrue(dao.getAllTasksSnapshot().isEmpty())
 
-        assertTrue("the empty run must actually reach the launcher query", queryCalls > 0)
+        repository.ensureSeededAndSyncPackages()
+
+        // The run demonstrably ran to completion (tasks re-seeded
+        // past the catalog block)…
+        assertTrue(
+            "the empty-query run must execute past the catalog block",
+            dao.getAllTasksSnapshot().isNotEmpty()
+        )
+        // …its input was verifiably empty (asserted above), and
+        // still nothing was pruned: only a working empty-query
+        // guard explains all three facts together. Remove the
+        // guard and both rows are pruned; kill the run and the
+        // tasks never come back.
         assertEquals(
             setOf("com.only.app", "com.control.app"),
             dao.getAllAppsSnapshot().map { it.packageName }.toSet()
