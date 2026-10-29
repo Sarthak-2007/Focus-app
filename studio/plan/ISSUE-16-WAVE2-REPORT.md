@@ -237,3 +237,40 @@ verbatim for Ren to post via gh, and the push was attempted via git.
   the run; Route B/PillController device checks.
 
 — Pforte, cluster-G lead, Wave-2, issue #16. DECLARED, uncompiled.
+
+## ADDENDUM (late seat returns, folded in by lead before close)
+
+- **Route B does not consume the derivation (material truth defect).**
+  `PillFace.kt:8-11` claims "ONE derivation with two mouths… the glass
+  and the shade can never tell two times." The shipped Route B
+  (`MonolithShieldService.startMonitoringLoop`) re-implements the
+  priority inline on its own 2-second loop: break/session figures come
+  from persisted fields, not `breakRemainingAfter`/`elapsedAt`, and it
+  applies NONE of the absence gates (keyguard, own-package, telecom).
+  Only the peek ceiling formula is duplicated identically. The two
+  mouths can disagree by the progress tick's lag. At composition:
+  Route B must call `PillDerivation.derive`, or the claim in
+  PillFace.kt must be struck. — Feel-timing seat, lead-accepted.
+- **C13 ghost clock survives the composition (batch-10 must name it).**
+  Composed VM:2401-2406 still seeds `FloatingPeekPillState` from the
+  hard constant `PEEK_DURATION_SECONDS` (120s) — the ghost clock
+  PillFace's header declares dead. With peekMinutes > 2, every peek
+  silently truncates to 2 minutes. Fix priced by Improver seat: seed
+  from the granted lease end the repository just wrote.
+- **The grant gate's false arm is currently dead in this tree.** The
+  #16 repository's `startPeekLease` always returns true (no provider
+  read, no refusal path); the gate fires only when the pill lane's
+  repository lands wholesale WITH the Boolean patch (Flag B above).
+  Ship the VM without that companion and the gate is wired to nothing.
+- **Refusal experience is undesigned.** A peekMinutes=0 refusal hides
+  the airlock, silently un-seeds the pill, and explains nothing. A
+  designed refusal surface is owed before peekMinutes=0 is reachable.
+- **Pill feel facts (device-unproven, code-read):** the pill itself is
+  completely silent (no sound/haptics on any pill verb; sound lives at
+  the airlock verbs only); snap animation is a single 140ms
+  ValueAnimator; the ✕ target is ~28×27dp (under the 48dp guideline)
+  inside a draggable parent; fill is ~90% opaque despite the file
+  comment calling the alpha "slight". All recorded for the merged
+  tree's feel pass.
+- **Paperwork staleness:** Wave-1 cell docs call the grant gate
+  "uncommitted" — lead-verified it IS committed in `6c86ea5`.
