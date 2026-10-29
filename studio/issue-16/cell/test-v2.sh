@@ -54,7 +54,7 @@
 #   - The process exit code mirrors <code>: 0 green, non-zero = that code.
 #     Special codes: 9 = repo dir missing (nothing ran),
 #     3 = queue acquire failed AND PILL_REQUIRE_QUEUE=1 was set,
-#     130/143 = interrupted by SIGINT/SIGTERM (verdict says INTERRUPTED).
+#     130/143/129 = interrupted by SIGINT/SIGTERM/SIGHUP (verdict says INTERRUPTED).
 #   - Files left in the cell dir after ANY run, finished or killed:
 #         test-v2.log           full Gradle output, streamed incrementally
 #         test-v2.verdict       key=value state file (see below)
@@ -173,7 +173,8 @@ write_verdict RUNNING "" ""
 
 # --- JDK21 discipline (kept from pill/test.sh): env, own GUH, stop own daemon. ---
 # shellcheck disable=SC1091
-source "$HOME/workspace/clone-inspect/env21.sh"
+source "$HOME/workspace/clone-inspect/env21.sh" || { log_line "FATAL env21.sh missing - JDK21 discipline cannot be proven"; finish FAILED 9; }
+log_line "java: $(java -version 2>&1 | head -n 1) JAVA_HOME=$JAVA_HOME"
 export GRADLE_USER_HOME="$CELL_DIR/guh"
 mkdir -p "$GRADLE_USER_HOME"
 # Wave-2 fix (issue-16, Technical-execution seat, applied by Pforte):
@@ -186,6 +187,14 @@ if ! command -v gradle > /dev/null 2>&1; then
 fi
 gradle --stop > /dev/null 2>&1 || true
 sleep 4
+
+# --- Wave-2 Bug B fix (issue-16, Implementation-quality seat, applied
+# by Pforte): clear any stale JUnit XML from a previous run. Without
+# this, scan_completed() repopulates the completed list from the last
+# run within the watcher's first tick, and a killed/up-to-date run
+# inherits evidence it never produced.
+rm -rf "$XML_DIR"
+log_line "evidence: cleared stale JUnit XML dir before the run"
 
 # --- Watcher: snapshot completed test names from JUnit XML every 2s. ---
 ( while :; do scan_completed; sleep 2; done ) &
