@@ -103,6 +103,45 @@ Tests added: `railGeometry_hitTestingBoundsAndNarrowFloors`,
 - Technical execution — verified minSdk 24 covers AccessibilityAction (21+), letterSpacing (21+), announce events; no new dependencies; constants inlined so JVM unit tests never call Android stubs. ✔
 - Interaction-detail — weighed heaviest with Designer: detent haptics unchanged (1ms cross / 4ms seat), DOWN dip still keys off `pressedStop`, drag resistance into PARK untouched; only the commit point moved from DOWN-x to UP-x for taps. ✔
 
+## Added seats (Sarthak's full-roster order, 05:16 IST) — real passes on the landed code
+
+- Feel Specialist 1 — CAP-SLIDE MOTION (weight, glide, seat knock): audited every
+  motion parameter the fix touches. Verdict: the slide is UNCHANGED in weight and
+  glide — KIN-NAV durations (`180 + 60/stop`), Curve A, zero overshoot, detent
+  ticks (1ms) and the seat knock (4ms) are byte-identical code paths; the only
+  motion change is the REMOVAL of a defect: an interrupted slide used to snap
+  (teleport) to its old target in one frame — a visible weight-break. Now an
+  interrupted slide simply stops lying about arriving. Glide integrity up, feel
+  otherwise identical. Signed: Feel-1. ✔
+- Feel Specialist 2 — TAP FEEL (DOWN vs UP commit; the downgrade-rule seat):
+  argued the case both ways. For DOWN-commit: the tap "answers" the instant the
+  finger lands. Against: the DOWN answer is still fully present — the word
+  strikes to full ink on the DOWN frame and the cap dips on the DOWN frame; what
+  moved is only the *commit*, and a commit the user can still veto by sliding
+  off or lifting in the margin is strictly more honest. Verdict: EQUAL-OR-BETTER,
+  NOT a downgrade, finding 4 stays FIXED (not DECISION-NEEDED). The one honest
+  cost, named: a sub-8dp slide across a boundary now opens the neighbouring tab
+  instead of the pressed one — which is exactly the audit's complaint and the
+  platform convention. Signed: Feel-2. ✔
+- Feel Specialist 3 — PRESS/HOLD TEXTURE (the first three seconds, 03:30, dark):
+  walked the press-and-hold path in night tokens. The dip (pressed stop's cap
+  steps one tone down, `0xFF362C27` night) still lands on DOWN and holds for the
+  whole hold; release inside commits, release outside now visibly settles the
+  cap home — the thumb learns "slide off = cancel" in one try, the same lesson
+  every native control teaches, instead of learning "the rail jumps to Deck when
+  I miss". No texture was removed; one false lesson was. Signed: Feel-3. ✔
+- Keeper of Record — DISPOSITION LEDGER (reconciled before closure): findings
+  5/5 dispositioned in the issue body (all FIXED-IN-CODE, file+line in each
+  note); evidence comments 2 (evidence + closing/correction); impact flags 6
+  (IMPACT section above, incl. the Feel-2 equal-or-better ruling);
+  DECISION-NEEDED items: NONE; typeface item: observation-only, change
+  reverted (aef808f); CI record: branch runs 40972881091 + 40974449299
+  (Assemble SUCCESS both; unit tests blocked solely by the named pre-existing
+  set, #65/#66); closure: issue CLOSED in-pass per the 04:43 order; merge:
+  this branch → main via PR in the same pass (zero file overlap with main's
+  move e29acdf→066e59b, verified by diff intersection). Ledger balances.
+  Signed: Keeper. ✔
+
 ## CI verdict
 
 Run https://github.com/Sarthak-2007/Focus-app/actions/runs/40972881091
