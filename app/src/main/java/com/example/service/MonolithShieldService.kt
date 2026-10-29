@@ -19,7 +19,6 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.AppBlockTier
 import com.example.data.MonolithDatabase
-import com.example.data.MonolithRepository
 import com.example.MLog
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -218,8 +217,11 @@ class MonolithShieldService : Service() {
 
     private fun startMonitoringLoop() {
         monitorJob?.cancel()
-        val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
-        val repository = MonolithRepository(applicationContext, dao)
+        // ISSUE-67: construction via the single point; the DAO
+        // comes from the same container for the loop's remaining
+        // direct reads.
+        val dao = com.example.AppContainer.dao(applicationContext)
+        val repository = com.example.AppContainer.repository(applicationContext)
 
         monitorJob = serviceScope.launch {
             var iteration = 0
