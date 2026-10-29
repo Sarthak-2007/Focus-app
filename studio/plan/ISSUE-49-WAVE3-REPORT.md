@@ -74,3 +74,31 @@ haptics-as-fact, commit-verdict return).
   added by this branch; the 5 new tests compile clean within their file's error set.
   Per Wave-3 law these out-of-scope failures are recorded, not fixed here
   (they belong to the ParkDrawer-param issues' branches / the merge train rebase).
+
+## IMPACT ON THE APP (plain words, for the person holding the phone)
+- Sounds now stop COMPLETELY when the app/session tears down — before, the main
+  sound track, the vibration and the audio focus could keep living after the
+  screen that owned them was gone; a stopped engine could even play again.
+- Tapping things no longer fights other audio: if the phone denies audio focus
+  (e.g. during a call), the little incidental knocks stay quiet instead of
+  barging in. The seal's Throw still sounds — it is the act itself.
+- On phones running Android 7.0/7.1 (API 24–25), taps now request audio focus
+  properly; before they got none at all.
+- The app does less invisible work: merely existing (a background routine
+  process, an unused break engine) no longer spins up two threads and a playing
+  sound track. Sound machinery wakes only when a sound is actually played —
+  less battery/CPU burn while idle.
+- Turning SOUND off/on in PARK is now guaranteed to reach every sound the app
+  can make, on every thread, immediately — and if the setting ever failed to
+  save to disk, the screen would keep showing the true saved value instead of
+  lying until the app restarted.
+- NO sound changed in character: the quiet gate knocks and the seal's single
+  voice are exactly as before (Q6 settled law). No cue removed, nothing made
+  thinner, haptics not weakened — haptics simply gained a real on/off fact
+  behind the scenes (still ON, as shipped). No downgrade in this issue.
+
+## Merge note (Oct 30, ~05:10 IST)
+Merged origin/main 73aaeae (issue-2 landing) into agent/issue-49 — clean merge,
+no conflicts. That landing also healed main's pre-existing test-compile breakage
+(the ParkDrawer call sites), so this branch's CI re-run is the first where the
+unit tests can actually execute.
