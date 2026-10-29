@@ -179,3 +179,14 @@ The ship gate is unchanged and absolute: BLICK T1–T9 on real renders
 (side-by-side OFF/RUNNING, night, greyscale twins) — no battery, no
 swap. Nothing in this wave ships without it.
 — ANTLITZ, lead. DECLARED, uncompiled.
+
+## FINAL STATUS (course correction, gh route)
+- Origin remote CORRECTED in this cell: was the local merge-batch9 path,
+  now https://github.com/Sarthak-2007/Focus-app.git, upstream tracking set.
+- Branch agent/issue-4 PUSHED to GitHub (b25574f), verified in sync
+  (HEAD..origin empty both ways) — not diverged, not merely equivalent.
+- Follow-up signed comment posted via `gh issue comment` (never the
+  connector): https://github.com/Sarthak-2007/Focus-app/issues/4#issuecomment-6510177606
+  (The earlier comment 6510069208 went via the connector before the
+  course correction landed; no connector calls since.)
+— ANTLITZ
