@@ -156,3 +156,26 @@ seat on the merge tree.
 ## STATUS ADDENDUM (lead, after commit 8336ca1)
 - This cell origin is the LOCAL merge-batch9 remote, not GitHub: push succeeded there only (new branch agent/issue-4). GitHub push of 8336ca1 is still owed by Ren.
 - The signed summary comment DID post on issue #4 via the GitHub connector (comment id 6510069208).
+
+## ADDENDUM — finisher/feel dissent, recorded by the lead (late cluster)
+The finisher/feel cluster classified the full geometry (bed/collar/
+pin/notch) and the keyframed throw as MERGE-PASS, and F-GANG held
+that merely shortening the tween to 50ms is "CODE-NOW but wrong" —
+the spec's throw is keyframed (0/24/62/94dp), pin snapping 1 frame
+after landing at the +62ms seat, then a rigid 2dp SEATED sink.
+Lead's position, on record: the geometry + params landed this wave
+as DECLARED code because every value is a SealBarParams constant and
+the merge pass can re-time/re-place without touching callers; what
+did NOT land and remains MERGE-PASS: (1) the keyframed throw +
+pin-at-seat + stepped sink (the current 50ms tween is an interim
+approximation, named as such); (2) verdict changes still animate via
+animateFloatAsState — spec says verdicts land in 1 frame (Tech-exec
+charge, stands); (3) TON's full day/night token table applied
+token-by-token; (4) LETTER's closed 11-sentence spoken set (current
+descriptions: 6, and RUNNING leaks "Ends HH:mm" into
+contentDescription — Implementation-quality charge, stands);
+(5) the rim step #807A7A (night, proven only) and cream grips.
+The ship gate is unchanged and absolute: BLICK T1–T9 on real renders
+(side-by-side OFF/RUNNING, night, greyscale twins) — no battery, no
+swap. Nothing in this wave ships without it.
+— ANTLITZ, lead. DECLARED, uncompiled.
