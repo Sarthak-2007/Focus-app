@@ -61,3 +61,16 @@ haptics-as-fact, commit-verdict return).
 - Implementation-quality: single cure per finding at the engine boundary — no call-site try/catch scatter.
 - Technical execution: smart-cast and double-release hazards reviewed (liveTrack seam, try/catch around every track op, finally-block registry cleanup).
 - Interaction-detail: toggle's confirmation detent now fires only when the persisted fact truly says ON.
+
+## CI verdict (run 40973093859, tip 1987779)
+- Assemble debug: PASSED — all main-source changes (engine, setting, VM, seal transition) compile.
+- Unit tests: FAILED AT TEST-COMPILE on PRE-EXISTING breakage in origin/main, none in
+  this diff. Errors (all "No value passed for parameter" / unresolved compose assertions
+  against ParkDrawer params added by other lanes): ScreenshotHarnessTest.kt:350,
+  ShortsToggleRenderTest.kt:66, SoundAndSocialTruthTest.kt:464 (pre-existing
+  setParkContent call, untouched by this diff), TruthCar3CaptureBodyTest.kt:70,
+  TruthCar3SweepTest.kt:6,7,314,346. Proof of pre-existence: main's own completed CI
+  runs 40970102642 and 40969279638 are also `failure`. No error references any line
+  added by this branch; the 5 new tests compile clean within their file's error set.
+  Per Wave-3 law these out-of-scope failures are recorded, not fixed here
+  (they belong to the ParkDrawer-param issues' branches / the merge train rebase).
