@@ -713,14 +713,16 @@ object RoutineSchedule {
      * fire — switched on AND carrying at least one day. This is the
      * ONE definition every reader shares: the chain-alarm derivation
      * (RoutineDerive.nextBoundary skips non-live routines) and
-     * Shield's "n ACTIVE" header both read it, so the printed count
+     * Shield's "n ARMED" header both read it, so the printed count
      * can never again include a daysMask == 0 routine the scheduler
      * silently skips.
      */
     fun isLive(routine: RoutineEntity): Boolean =
         routine.enabled && routine.daysMask != 0
 
-    /** How many of [routines] are LIVE — Shield's "n ACTIVE" number. */
+    /** How many of [routines] are LIVE — Shield's "n ARMED" number
+     *  (R-6: ARMED, not ACTIVE — a live routine is armed to fire,
+     *  it is not presently blocking). */
     fun liveCount(routines: List<RoutineEntity>): Int =
         routines.count { isLive(it) }
 

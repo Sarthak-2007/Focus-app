@@ -1,10 +1,7 @@
 package com.example.ui.screens
 
-import android.os.SystemClock
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -22,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -37,21 +35,22 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -59,10 +58,15 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.AppBlockTier
 import com.example.data.AppCategory
 import com.example.data.BlockedAppEntity
-import com.example.data.FocusProfileEntity
+import com.example.data.BlockedBrowserDomains
+import com.example.data.MonolithRepository
 import com.example.data.SmartLoadout
-import com.example.data.groupedByRule
+import com.example.data.groupedForCatalogue
 import com.example.service.TactileSoundEngine
+import com.example.ui.ShieldBlockingProof
+import com.example.ui.ShieldBlockingStatus
+import com.example.ui.routineCapWord
+import com.example.ui.routineRunningNowSuffix
 import com.example.ui.components.BlockitActionChip
 import com.example.ui.components.ShieldCapSelector
 import com.example.ui.components.onInkControlFill
@@ -71,10 +75,9 @@ import com.example.ui.components.FullBleedSectionHeader
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.theme.MonolithCurves
-import com.example.ui.theme.SoraFamily
 import com.example.ui.views.AppRowSledToggleView
-import com.example.ui.views.SledSwitchView
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * TAB 1: SUITCASE & APP SWITCHBOARD (DEVELOPER-GUIDE.pdf §4.2 #4 BagTiles, #6 SledSwitch, #7 RombiKnob)
@@ -88,15 +91,25 @@ fun ShieldMatrixScreen(
     filteredApps: List<BlockedAppEntity>,
     searchQuery: String,
     selectedCategory: AppCategory?,
-    shortsReelsSniperEnabled: Boolean,
-    browserUrlBlockerEnabled: Boolean,
-    profiles: List<FocusProfileEntity> = emptyList(),
-    selectedProfileName: String = "Study Loadout",
+    // R-9 (Shield audit; wave-2): the phantom parameters are STRUCK.
+    // shortsReelsSniperEnabled / browserUrlBlockerEnabled / profiles /
+    // selectedProfileName and their callbacks each occurred exactly
+    // once in this contract — declaration only. PARK owns both
+    // switches (its sleds); a parameter that exists so other code
+    // compiles is not a surface.
     // UNA-07: the LOADOUT cap's resting position, from the persisted
     // last hand pick (LoadoutStore via the VM). Default 0 (STUDY) is
     // the pre-pick default for render harnesses and previews.
     loadoutCapIndex: Int = 0,
     isSessionActive: Boolean = false,
+    // R-5 (issue #7): the status sentence's derivation, supplied by
+    // the ViewModel from the living enforcement witnesses (see
+    // ShieldBlockingStatus.kt). Null = no proof was supplied to
+    // this composition (a render harness, a preview): the screen
+    // then prints its unproven fallback — it never derives
+    // BLOCKING from isSessionActive alone, because that flag is a
+    // session row's claim, not enforcement.
+    blockingStatus: ShieldBlockingStatus? = null,
     ratchetWarningMessage: String? = null,
     soundEngine: TactileSoundEngine? = null,
     isDarkTheme: Boolean = false,
@@ -104,9 +117,6 @@ fun ShieldMatrixScreen(
     onSelectCategory: (AppCategory?) -> Unit,
     onSetAppTier: (String, AppBlockTier) -> Unit,
     onApplySmartLoadout: (SmartLoadout) -> Unit,
-    onSelectProfile: (FocusProfileEntity) -> Unit = {},
-    onToggleShortsReelsSniper: () -> Unit,
-    onToggleBrowserUrlBlocker: () -> Unit,
     routines: List<com.example.data.RoutineEntity> = emptyList(),
     showResetNote: Boolean = false,
     onToggleRoutine: (com.example.data.RoutineEntity) -> Unit = {},
@@ -129,6 +139,7 @@ fun ShieldMatrixScreen(
     onPruneNoteDismissed: () -> Unit = {}
 ) {
     val scheme = MaterialTheme.colorScheme
+    val scope = rememberCoroutineScope()
     val effectiveNight = isDarkTheme || isSessionActive
     // UNA-07: the cap rests on the STORED FACT (loadoutCapIndex —
     // his last hand pick), not on a bare remember defaulting to
@@ -140,39 +151,23 @@ fun ShieldMatrixScreen(
     val peekCount = remember(allApps) { allApps.count { it.resolvedTier == AppBlockTier.PEEK_2M } }
 
     // =====================================================================
-    // THE STANDING ORDERS (Ordner lane — Liv's placement + catalogue
-    // discipline, Gust's slip as the form, Mikro's moments as its
-    // manners). His decisions, printed in the receipt's grammar,
-    // present tense, directly above the catalogue they govern.
+    // THE STANDING ORDERS, DE-DUPLICATED (Shield audit R-1; issue
+    // #7). The slip's per-app lines are RETIRED: they enumerated
+    // every ruled app a second time above the catalogue that
+    // already enumerates them, and the duplication cost ~1,230dp
+    // of pre-catalogue scroll. What remains of the slip is its
+    // tally — three counts that sum to the phone, state only —
+    // and the catalogue below now groups by ruling (see
+    // groupedForCatalogue), so every app's name and ruling print
+    // exactly once on this screen, on the sled row that can also
+    // change it.
     // =====================================================================
-    val rules = remember(allApps) { allApps.groupedByRule() }
     val openCount = allApps.size - shutCount - peekCount
 
     // M6 (Mikro): return is memory — the list reopens where his thumb
     // left it. Saveable, so the place survives this screen being
     // disposed on a tab switch.
     val listState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
-
-    // M3's rest: a flipped line wears its new ruling in its old
-    // section, rests 300ms, then leaves — never vanishing under the
-    // finger, never flying across the page.
-    var restingFlips by remember { mutableStateOf<Map<String, RestingFlip>>(emptyMap()) }
-    LaunchedEffect(searchQuery) {
-        // A search folds the slip (Liv D4/D6); rests die with the fold.
-        if (searchQuery.isNotBlank()) restingFlips = emptyMap()
-    }
-    // Sweeper: a rest whose lifecycle was interrupted (an outside
-    // actor re-tiered the app mid-rest) retires by age — a resting
-    // entry may never become a permanent suppression.
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(700)
-            if (restingFlips.isNotEmpty()) {
-                val now = SystemClock.elapsedRealtime()
-                restingFlips = restingFlips.filterValues { now - it.createdAtMs <= 1200 }
-            }
-        }
-    }
 
     // M4, governed (Gust): the tally never rolls its digits. A burst
     // of flips coalesces — the whole line re-strikes once, to the
@@ -184,57 +179,36 @@ fun ShieldMatrixScreen(
         tallyShown = tallyNow
     }
 
-    val slipTap: (BlockedAppEntity) -> Unit = { app ->
-        val pkg = app.packageName
-        val resting = restingFlips[pkg]
-        if (resting != null) {
-            // Re-tap before the exit cancels it: flip back, no motion.
-            restingFlips = restingFlips - pkg
-            onSetAppTier(pkg, resting.from)
-        } else {
-            val current = app.resolvedTier
-            val target = if (current == AppBlockTier.LOCKED) {
-                AppBlockTier.PEEK_2M
-            } else {
-                AppBlockTier.LOCKED
-            }
-            onSetAppTier(pkg, target)
-            // The choreography runs only when the commit will land:
-            // the one-way ratchet refuses a weakening mid-session,
-            // and a refused flip must not re-strike the line. This
-            // gate mirrors the ViewModel's rule exactly; the
-            // ViewModel remains the real guard.
-            val weakening = tierRank(target) < tierRank(current)
-            if (!isSessionActive || !weakening) {
-                restingFlips = restingFlips + (pkg to RestingFlip(
-                    from = current,
-                    to = target,
-                    exiting = false,
-                    createdAtMs = SystemClock.elapsedRealtime()
-                ))
-            }
-        }
-    }
+    // R-5: the status sentence. The supplied derivation is the
+    // only source. With none supplied (the cold-start instant
+    // before the ViewModel's first witness read, a render
+    // harness), the screen prints neither BLOCKING NOW nor a
+    // proven NOT BLOCKING: it prints the unproven fallback —
+    // a session row's isActive flag is a claim, not enforcement,
+    // and its absence before the first Room emission is not a
+    // measured fact either (critic Salz C-3).
+    val statusHeadline = blockingStatus?.headline
+        ?: "ENFORCEMENT NOT PROVEN — NO WITNESS READ YET"
 
-    /** The slip's lines for one section: committed lines in place,
-     *  plus any line resting here after a flip — and a line resting
-     *  elsewhere is suppressed here, so an app is present in exactly
-     *  one section at any instant. */
-    fun slipLines(tier: AppBlockTier): List<SlipLine> {
-        val committed = if (tier == AppBlockTier.PEEK_2M) rules.peek else rules.shut
-        val lines = mutableListOf<SlipLine>()
-        for (app in committed) {
-            val resting = restingFlips[app.packageName]
-            if (resting != null && resting.from != tier) continue
-            lines += SlipLine(app = app, word = app.resolvedTier, resting = null)
+    // The catalogue's one enumeration, grouped by ruling.
+    val catalogueGroups = remember(filteredApps) { filteredApps.groupedForCatalogue() }
+
+    // R-3 state: the websites cap and the failed-ADD print.
+    var showAllSites by remember { mutableStateOf(false) }
+    var siteError by remember { mutableStateOf<String?>(null) }
+
+    // R-1 tally jumps (Plan §5.1): the tally's words are jumps.
+    // Item index of a catalogue group header, counted in the
+    // LazyColumn's own order: status, banner, cap, routines,
+    // tally, [prune], websites, search — then per group a header
+    // plus its rows.
+    fun catalogueGroupIndex(tier: AppBlockTier): Int {
+        var idx = 7 + if (pruneNoteText != null) 1 else 0
+        for ((t, apps) in catalogueGroups) {
+            if (t == tier) return idx
+            idx += 1 + apps.size
         }
-        for ((pkg, resting) in restingFlips) {
-            if (resting.from != tier) continue
-            val app = allApps.firstOrNull { it.packageName == pkg } ?: continue
-            if (app.resolvedTier == tier) continue
-            lines += SlipLine(app = app, word = resting.to, resting = resting)
-        }
-        return lines.sortedBy { it.app.appName.lowercase() }
+        return idx
     }
 
     LazyColumn(
@@ -249,6 +223,60 @@ fun ShieldMatrixScreen(
         // content is never trapped under the rail.
         contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 100.dp)
     ) {
+        // =====================================================================
+        // SECTION 0: THE STATUS SENTENCE (R-5, merge item #1) —
+        // the first line on the screen, above every ruling it
+        // qualifies: whether the wall is standing right now,
+        // derived from the enforcement witnesses, never from a
+        // toggle or a session row alone.
+        // =====================================================================
+        item {
+            // Wave-2 finish cure (PANZER/SAUM/POLITUR/LUFT, one voice):
+            // the wave-1 form painted every not-blocking state in
+            // scheme.error — 3.49:1 by day, the most important line
+            // on the screen at its least readable. Now: FULL INK in
+            // every state; the state is carried by the verb and a
+            // 10dp solidity glyph (solid = the wall stands, hollow =
+            // it does not), never by colour alone. The slot is a
+            // fixed 40dp so a re-strike never shoves the screen.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(40.dp)
+                    .semantics { contentDescription = statusHeadline },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (blockingStatus?.proof == ShieldBlockingProof.LIVE) "●" else "○",
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    color = scheme.onBackground
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                // The re-strike (PANZER/SCHWUNG): a changed verdict
+                // re-prints as a whole line, 260ms Curve A — the
+                // tally's governed manners, never a partial swap.
+                AnimatedContent(
+                    targetState = statusHeadline,
+                    transitionSpec = {
+                        fadeIn(tween(260, easing = MonolithCurves.EasingA)) togetherWith
+                            fadeOut(tween(260, easing = MonolithCurves.EasingA))
+                    },
+                    label = "shield_blocking_status"
+                ) { headline ->
+                    Text(
+                        text = headline,
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = scheme.onBackground,
+                        modifier = Modifier.testTag("shield_blocking_status")
+                    )
+                }
+            }
+        }
+
         // One-Way Ratchet warning banner if user tries to weaken rules during active session
         item {
             AnimatedVisibility(visible = !ratchetWarningMessage.isNullOrBlank()) {
@@ -264,7 +292,9 @@ fun ShieldMatrixScreen(
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
-                        color = Color(0xFFFBF1EC)
+                        // R-7: tokenised — the old hardcoded 0xFFFBF1EC was
+                        // unprovable in the day theme.
+                        color = scheme.onPrimaryContainer
                     )
                 }
             }
@@ -279,8 +309,9 @@ fun ShieldMatrixScreen(
             // The counts left this header (Liv D3, adopted by Gust):
             // SHUT / PEEK / OPEN live on the standing-orders tally
             // below — one home per number, or numbers are decoration.
-            FullBleedSectionHeader(titleWord = "LOADOUT")
-            Spacer(modifier = Modifier.height(8.dp))
+            // R-4(c) (Dens F5): the LOADOUT header is KILLED — the
+            // cap self-labels (its detents print STUDY/WORK/SLEEP);
+            // the slot pays ~32dp back to the screen.
             ShieldCapSelector(
                 selectedIndex = selectedLoadoutIndex,
                 soundEngine = soundEngine,
@@ -293,6 +324,25 @@ fun ShieldMatrixScreen(
                     }
                 }
             )
+            // R-4(b), the honest half this screen can prove: the cap
+            // rests on the persisted LAST HAND PICK — it must never
+            // wear a running routine's clothes. When a routine
+            // session is the live one, the print says so; otherwise
+            // it names the cap's source as the hand pick it is.
+            Text(
+                text = if (blockingStatus?.activeRoutineId != null) {
+                    "A ROUTINE SESSION IS RUNNING — ITS LOADOUT GOVERNS, NOT THIS CAP"
+                } else {
+                    "THIS CAP SHOWS YOUR LAST HAND PICK"
+                },
+                fontFamily = AnonymousProFamily,
+                fontSize = 11.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp)
+                    .testTag("loadout_cap_source")
+            )
         }
 
         // =====================================================================
@@ -302,18 +352,23 @@ fun ShieldMatrixScreen(
             FullBleedSectionHeader(
                 titleWord = "ROUTINES",
                 rightWordPrefix = "",
-                // UNA-09: count what the scheduler counts — LIVE
-                // routines only (RoutineSchedule.liveCount: enabled
-                // AND at least one day). A daysMask == 0 routine the
-                // chain skips is never printed as ACTIVE.
+                // UNA-09, reworded (R-6; issue #7): count what the
+                // scheduler counts — LIVE routines only
+                // (RoutineSchedule.liveCount: enabled AND at least
+                // one day). A daysMask == 0 routine the chain skips
+                // is never counted. The word is ARMED, not ACTIVE:
+                // a live routine is armed to fire on its days, it
+                // is not presently blocking — BLOCKING NOW is the
+                // status sentence's claim, and it is proved
+                // separately, at the top of this screen.
                 rightMonoNumber = com.example.data.RoutineSchedule.liveCount(routines).toString(),
-                rightWordSuffix = " ACTIVE"
+                rightWordSuffix = " ARMED"
             )
             if (showResetNote) {
                 // One-time reseed strip (Freya §3.3): his schedule was
                 // reset to his real day; any row edit dismisses it.
                 Text(
-                    text = "SCHEDULE RESET TO YOUR DAY — TAP ANY ROW TO CHANGE IT",
+                    text = "YOUR DAY, SEEDED — TAP A ROW TO OPEN IT · TIMES YOU SET ARE NEVER CHANGED",
                     fontFamily = AnonymousProFamily,
                     fontSize = 11.sp,
                     color = scheme.primary,
@@ -328,6 +383,11 @@ fun ShieldMatrixScreen(
                 routines.forEach { routine ->
                     RoutineRow(
                         routine = routine,
+                        // RUNNING NOW's source: the active
+                        // session's own routineId, carried on the
+                        // status derivation — never window
+                        // arithmetic (see routineRunningNowSuffix).
+                        activeRoutineId = blockingStatus?.activeRoutineId,
                         onToggle = { onToggleRoutine(routine) },
                         onCycleLoadout = { onCycleRoutineLoadout(routine) },
                         onAdjustStart = { delta -> onAdjustRoutineTime(routine, true, delta) },
@@ -339,71 +399,34 @@ fun ShieldMatrixScreen(
         }
 
         // =====================================================================
-        // SECTION 3.5: YOUR RULES — THE STANDING ORDERS SLIP.
-        // The tally first (three numbers that sum to the phone — a
-        // ledger that doesn't balance is a lie), then PEEK before
-        // SHUT (the holes are the urgent read), one printed line per
-        // ruling. A line tap flips the ruling on the sled's own
-        // commit path; revoking to OPEN lives on the catalogue sled,
-        // where it belongs — the book amends, the catalogue revokes.
-        // Under search the slip folds to its header line (Liv D6):
-        // search is a finding tool for the catalogue and never
-        // filters the book, or its counts would stop being counts of
-        // his decisions.
+        // SECTION 3.5: YOUR RULES — THE TALLY ONLY (R-1; issue #7).
+        // Three numbers that sum to the phone — a ledger that
+        // doesn't balance is a lie — and nothing else: the slip's
+        // per-app lines are retired, and the rulings themselves
+        // print once, in the grouped catalogue below, on the sled
+        // rows that can change them. Under search the tally folds
+        // into its header line (Liv D6): search is a finding tool
+        // for the catalogue and never filters the counts, or they
+        // would stop being counts of his decisions.
         // =====================================================================
         if (searchQuery.isBlank()) {
             item {
                 Column {
-                    SlipHeaderRow(right = null)
+                    RulesHeaderRow(right = null)
                     Spacer(modifier = Modifier.height(8.dp))
-                    StandingTallyLine(counts = tallyShown)
-                }
-            }
-            val peekLines = slipLines(AppBlockTier.PEEK_2M)
-            item { SlipSectionHeader(word = "PEEK") }
-            if (peekLines.isEmpty()) {
-                item { SlipNoneLine() }
-            } else {
-                items(peekLines, key = { "slip_${it.app.packageName}" }) { line ->
-                    SlipLineRow(
-                        line = line,
-                        onTap = { slipTap(line.app) },
-                        onRestElapsed = {
-                            restingFlips[line.app.packageName]?.let { entry ->
-                                restingFlips = restingFlips +
-                                    (line.app.packageName to entry.copy(exiting = true))
+                    StandingTallyLine(
+                        counts = tallyShown,
+                        onJump = { tier ->
+                            scope.launch {
+                                listState.animateScrollToItem(catalogueGroupIndex(tier))
                             }
-                        },
-                        onExitElapsed = {
-                            restingFlips = restingFlips - line.app.packageName
-                        }
-                    )
-                }
-            }
-            val shutLines = slipLines(AppBlockTier.LOCKED)
-            item { SlipSectionHeader(word = "SHUT") }
-            if (shutLines.isEmpty()) {
-                item { SlipNoneLine() }
-            } else {
-                items(shutLines, key = { "slip_${it.app.packageName}" }) { line ->
-                    SlipLineRow(
-                        line = line,
-                        onTap = { slipTap(line.app) },
-                        onRestElapsed = {
-                            restingFlips[line.app.packageName]?.let { entry ->
-                                restingFlips = restingFlips +
-                                    (line.app.packageName to entry.copy(exiting = true))
-                            }
-                        },
-                        onExitElapsed = {
-                            restingFlips = restingFlips - line.app.packageName
                         }
                     )
                 }
             }
         } else {
             item {
-                SlipHeaderRow(right = tallyText(shutCount, peekCount, open = null))
+                RulesHeaderRow(right = tallyText(shutCount, peekCount, open = null))
             }
         }
 
@@ -428,14 +451,151 @@ fun ShieldMatrixScreen(
         }
 
         // =====================================================================
+        // SECTION 3.9: BLOCKED WEBSITES (R-3: ABOVE ALL APPS) — the editor transplanted from
+        // the dissolved Guard screen (chrome wave) — and MOVED by
+        // R-3 (wave-2): it sat ~6,100dp deep under the catalogue;
+        // an editor nobody reaches does not exist. Same rows, same
+        // add field, same wiring — the list below is the list the
+        // blocker enforces.
+        // =====================================================================
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                FullBleedSectionHeader(
+                    titleWord = "BLOCKED WEBSITES",
+                    rightWordPrefix = "",
+                    rightMonoNumber = blockedSites.size.toString(),
+                    rightWordSuffix = " SITES"
+                )
+
+                // R-3 (wave-2): capped at five rows + SHOW ALL —
+                // the full list is one tap away, never a scroll tax
+                // on the catalogue above it.
+                val shownSites = if (showAllSites) blockedSites else blockedSites.take(5)
+                shownSites.forEach { domain ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = domain,
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 14.sp,
+                            color = scheme.onBackground
+                        )
+                        BlockitActionChip(
+                            wordLabel = "REMOVE",
+                            onClick = { onRemoveSite(domain) }
+                        )
+                    }
+                }
+
+                if (blockedSites.size > 5) {
+                    BlockitActionChip(
+                        wordLabel = if (showAllSites) "SHOW FEWER" else "SHOW ALL ${blockedSites.size} SITES",
+                        onClick = { showAllSites = !showAllSites }
+                    )
+                }
+
+                var newSiteText by remember { mutableStateOf("") }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(scheme.surfaceVariant)
+                            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        if (newSiteText.isEmpty()) {
+                            Text(
+                                text = "Add a site — e.g. news.ycombinator.com",
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 13.sp,
+                                color = scheme.onSurfaceVariant
+                            )
+                        }
+                        BasicTextField(
+                            value = newSiteText,
+                            onValueChange = { newSiteText = it },
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 14.sp,
+                                color = scheme.onBackground
+                            ),
+                            // The accent law (chrome C7): ink caret.
+                            cursorBrush = SolidColor(scheme.onBackground),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("shield_site_input")
+                        )
+                    }
+                    BlockitActionChip(
+                        wordLabel = "ADD",
+                        isPrimaryInk = true,
+                        onClick = {
+                            // R-3 truth fix (Fremd C9b): a rejected ADD
+                            // PRINTS WHY and KEEPS the text. The old
+                            // form cleared the field and dropped the
+                            // failure silently — a print claiming
+                            // success for an add that never happened.
+                            // The screen judges with the repository's
+                            // own normaliser, so the verdict it prints
+                            // is the verdict the store will give.
+                            val normalised = BlockedBrowserDomains.normalizeDomain(newSiteText)
+                            when {
+                                newSiteText.isBlank() -> Unit
+                                normalised == null -> siteError =
+                                    "NOT A SITE — CHECK THE ADDRESS AND TRY AGAIN"
+                                blockedSites.contains(normalised) -> siteError =
+                                    "ALREADY ON THE LIST"
+                                else -> {
+                                    onAddSite(newSiteText)
+                                    newSiteText = ""
+                                    siteError = null
+                                }
+                            }
+                        }
+                    )
+                }
+                val err = siteError
+                if (err != null) {
+                    Text(
+                        text = err,
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("shield_site_error")
+                    )
+                }
+            }
+        }
+
+        // =====================================================================
         // SECTION 4: SEARCH & CATEGORY FILTER STRIP
         // =====================================================================
         item {
-            FullBleedSectionHeader(
-                titleWord = "ALL APPS",
-                rightWordPrefix = "SHOWING ",
-                rightMonoNumber = filteredApps.size.toString()
-            )
+            // Dens F6: SHOWING prints only when the catalogue is
+            // actually filtered — an unfiltered count here was a
+            // second home for the tally's numbers.
+            if (filteredApps.size != allApps.size) {
+                FullBleedSectionHeader(
+                    titleWord = "ALL APPS",
+                    rightWordPrefix = "SHOWING ",
+                    rightMonoNumber = filteredApps.size.toString()
+                )
+            } else {
+                FullBleedSectionHeader(titleWord = "ALL APPS")
+            }
             Spacer(modifier = Modifier.height(8.dp))
 
             // Recessed 12dp search bar
@@ -450,7 +610,7 @@ fun ShieldMatrixScreen(
             ) {
                 if (searchQuery.isEmpty()) {
                     Text(
-                        text = "Filter apps…",
+                        text = "SEARCH APPS",
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 13.sp,
                         color = scheme.onSurfaceVariant
@@ -502,15 +662,26 @@ fun ShieldMatrixScreen(
         }
 
         // =====================================================================
-        // SECTION 5: ULTRA-MINIMAL 3-STOP APP SLED ROWS (Decision #14)
+        // SECTION 5: ULTRA-MINIMAL 3-STOP APP SLED ROWS (Decision
+        // #14), GROUPED BY RULING (R-1; issue #7) — the screen's
+        // one enumeration of his decisions: a group header per
+        // ruling present (PEEK before SHUT, OPEN last), the sled
+        // rows unchanged inside their groups. Book and catalogue
+        // are one surface now; a ruling is read and revoked in
+        // the same place.
         // =====================================================================
-        items(filteredApps, key = { it.packageName }) { app ->
-            CatalogueAppRow(
-                app = app,
-                effectiveNight = effectiveNight,
-                soundEngine = soundEngine,
-                onSetAppTier = onSetAppTier
-            )
+        catalogueGroups.forEach { (tier, groupApps) ->
+            item(key = "catalogue_group_${tier.name}") {
+                CatalogueGroupHeader(tier = tier)
+            }
+            items(groupApps, key = { it.packageName }) { app ->
+                CatalogueAppRow(
+                    app = app,
+                    effectiveNight = effectiveNight,
+                    soundEngine = soundEngine,
+                    onSetAppTier = onSetAppTier
+                )
+            }
         }
 
         // The first sentence the installed-only cure lets the app say
@@ -528,95 +699,6 @@ fun ShieldMatrixScreen(
             }
         }
 
-        // =====================================================================
-        // SECTION 6: BLOCKED WEBSITES — the editor transplanted from
-        // the dissolved Guard screen (chrome wave). The Guard
-        // screen's section, moved whole: same rows, same add field,
-        // same wiring — the list below is the list the blocker
-        // enforces (the plate in PARK says so: SITES: KEPT WITH
-        // APPS ON SHIELD).
-        // =====================================================================
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                FullBleedSectionHeader(
-                    titleWord = "BLOCKED WEBSITES",
-                    rightWordPrefix = "",
-                    rightMonoNumber = blockedSites.size.toString(),
-                    rightWordSuffix = " SITES"
-                )
-
-                blockedSites.forEach { domain ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = domain,
-                            fontFamily = AnonymousProFamily,
-                            fontSize = 14.sp,
-                            color = scheme.onBackground
-                        )
-                        BlockitActionChip(
-                            wordLabel = "REMOVE",
-                            onClick = { onRemoveSite(domain) }
-                        )
-                    }
-                }
-
-                var newSiteText by remember { mutableStateOf("") }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(scheme.surfaceVariant)
-                            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
-                            .padding(horizontal = 12.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        if (newSiteText.isEmpty()) {
-                            Text(
-                                text = "Add a site — e.g. news.ycombinator.com",
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontSize = 13.sp,
-                                color = scheme.onSurfaceVariant
-                            )
-                        }
-                        BasicTextField(
-                            value = newSiteText,
-                            onValueChange = { newSiteText = it },
-                            singleLine = true,
-                            textStyle = TextStyle(
-                                fontFamily = AnonymousProFamily,
-                                fontSize = 14.sp,
-                                color = scheme.onBackground
-                            ),
-                            // The accent law (chrome C7): ink caret.
-                            cursorBrush = SolidColor(scheme.onBackground),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("shield_site_input")
-                        )
-                    }
-                    BlockitActionChip(
-                        wordLabel = "ADD",
-                        isPrimaryInk = true,
-                        onClick = {
-                            if (newSiteText.isNotBlank()) {
-                                onAddSite(newSiteText)
-                                newSiteText = ""
-                            }
-                        }
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -642,6 +724,7 @@ private fun routineLoadoutLabel(loadoutName: String): String = when (loadoutName
 @Composable
 private fun RoutineRow(
     routine: com.example.data.RoutineEntity,
+    activeRoutineId: Int? = null,
     onToggle: () -> Unit,
     onCycleLoadout: () -> Unit,
     onAdjustStart: (Int) -> Unit,
@@ -691,36 +774,66 @@ private fun RoutineRow(
             ) {
                 Text(
                     text = routine.name.uppercase(),
-                    fontFamily = SoraFamily,
+                    // Finish pass (Panzer item 7): the Sora guest is
+                    // evicted from routine rows — one axis, Atkinson
+                    // Bold 15sp, like every other working name here.
+                    fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    color = scheme.onBackground
+                    fontSize = 15.sp,
+                    color = scheme.onBackground,
+                    maxLines = 1
                 )
                 Text(
-                    text = "${routineDaysLabel(routine.daysMask)} · ${routineLoadoutLabel(routine.loadoutName)}",
+                    // R-5's marker rides the meta line: RUNNING NOW
+                    // only when the active session's own routineId
+                    // names this routine.
+                    text = "${routineDaysLabel(routine.daysMask)} · " +
+                        "${routineLoadoutLabel(routine.loadoutName)}" +
+                        routineRunningNowSuffix(routine, activeRoutineId),
                     fontFamily = AnonymousProFamily,
                     fontSize = 12.sp,
-                    color = scheme.onSurfaceVariant
+                    color = scheme.onSurfaceVariant,
+                    maxLines = 1
                 )
             }
             // Toggle as a cap (S1): sized to its payload, one cap grammar
             // with the selector band and sleds — not a 42dp box for a word.
+            // R-6 (issue #7): the cap word is the row's armed truth —
+            // routineCapWord prints WON'T FIRE for an enabled routine
+            // with no days, never a bare ON the scheduler won't honour;
+            // the cap widens past 48dp for that word rather than
+            // clipping the fact.
+            val capWord = routineCapWord(routine.enabled, routine.daysMask)
+            // WON'T FIRE wears the middle density (designer §3.3):
+            // the ink fill is ON's clothes, and this row is not on —
+            // surface fill + outline, the word itself carries it.
+            val wontFire = capWord == "WON'T FIRE"
+            val capFilled = routine.enabled && !wontFire
             Box(
                 modifier = Modifier
-                    .width(48.dp)
+                    .widthIn(min = 48.dp)
                     .height(32.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (routine.enabled) inkControlFill() else scheme.surfaceVariant)
-                    .border(1.dp, if (routine.enabled) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(8.dp))
-                    .clickable { onToggle() },
+                    .background(if (capFilled) inkControlFill() else scheme.surfaceVariant)
+                    .border(1.dp, if (capFilled) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(8.dp))
+                    .clickable { onToggle() }
+                    .padding(horizontal = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = if (routine.enabled) "ON" else "OFF",
+                    text = capWord,
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp,
-                    color = if (routine.enabled) onInkControlFill() else scheme.onSurfaceVariant
+                    fontSize = if (capWord.length > 3) 10.sp else 11.sp,
+                    // WON'T FIRE prints in FULL ink (wave-2 seat
+                    // cure): the fill stays off — this row is not
+                    // on — but the warning word itself is never
+                    // quiet. ON/OFF keep the quiet tone.
+                    color = when {
+                        capFilled -> onInkControlFill()
+                        wontFire -> scheme.onBackground
+                        else -> scheme.onSurfaceVariant
+                    }
                 )
             }
         }
@@ -799,35 +912,13 @@ private fun FilterWord(
 
 
 // =====================================================================
-// THE STANDING ORDERS SLIP — the rules region's furniture (Ordner
-// lane). Print only: no icons, no boxes, no accent. Ink.
+// THE RULES REGION'S FURNITURE — the tally header and line, and
+// the catalogue's group headers (Ordner lane, as recomposed by
+// R-1). Print only: no icons, no boxes, no accent. Ink. The slip's
+// line furniture (RestingFlip, SlipLineRow and their clocks) is
+// retired with the lines themselves — the catalogue's sled rows
+// are the one place a ruling prints per-app now.
 // =====================================================================
-
-/** A flip resting in its old section (Mikro M3): the ruling has
- *  committed to [to]; the line wears the new word in the [from]
- *  section, rests 300ms, then exits over 280ms and is present in its
- *  new section when next seen. [createdAtMs] lets the screen's
- *  sweeper retire an entry whose lifecycle was interrupted. */
-private data class RestingFlip(
-    val from: AppBlockTier,
-    val to: AppBlockTier,
-    val exiting: Boolean,
-    val createdAtMs: Long
-)
-
-/** One printed line of the book: the app, the ruling word it wears
- *  right now, and its rest state when it is mid-flip. */
-private data class SlipLine(
-    val app: BlockedAppEntity,
-    val word: AppBlockTier,
-    val resting: RestingFlip?
-)
-
-private fun tierRank(tier: AppBlockTier): Int = when (tier) {
-    AppBlockTier.OPEN -> 0
-    AppBlockTier.PEEK_2M -> 1
-    AppBlockTier.LOCKED -> 2
-}
 
 private fun tierWord(tier: AppBlockTier): String = when (tier) {
     AppBlockTier.LOCKED -> "SHUT"
@@ -835,7 +926,7 @@ private fun tierWord(tier: AppBlockTier): String = when (tier) {
     AppBlockTier.OPEN -> "OPEN"
 }
 
-/** The slip's mixed grammar — Anonymous Pro numerals, Atkinson
+/** The tally's mixed grammar — Anonymous Pro numerals, Atkinson
  *  words, the form the section headers print in. With [open] null
  *  this is Liv's D6 folded line: `7 SHUT · 2 PEEK`; with it, the
  *  tally: `9 SHUT · 4 PEEK · 61 OPEN` — three numbers that sum to
@@ -861,13 +952,13 @@ private fun tallyText(shut: Int, peek: Int, open: Int?): AnnotatedString =
         }
     }
 
-/** The slip's header row — mirrors FullBleedSectionHeader's shape
+/** The rules header row — mirrors FullBleedSectionHeader's shape
  *  with one deliberate exception (Liv): the title prints in ink.
  *  Every other section on this screen is grey; his decisions are
  *  the one section that speaks at full volume. [right] carries the
- *  folded line under search, and nothing when the slip is open. */
+ *  folded tally under search, and nothing when the tally is open. */
 @Composable
-private fun SlipHeaderRow(right: AnnotatedString?) {
+private fun RulesHeaderRow(right: AnnotatedString?) {
     val scheme = MaterialTheme.colorScheme
     Column(modifier = Modifier.fillMaxWidth()) {
         // Sections separate by gap + label, not a rule (S7) — the
@@ -903,7 +994,10 @@ private fun SlipHeaderRow(right: AnnotatedString?) {
  *  (Mikro M4 as governed by Gust: a loved slip never animates its
  *  numbers, and a rolling digit is a slot machine's manners). */
 @Composable
-private fun StandingTallyLine(counts: Triple<Int, Int, Int>) {
+private fun StandingTallyLine(
+    counts: Triple<Int, Int, Int>,
+    onJump: (AppBlockTier) -> Unit = {}
+) {
     val scheme = MaterialTheme.colorScheme
     AnimatedContent(
         targetState = counts,
@@ -913,149 +1007,76 @@ private fun StandingTallyLine(counts: Triple<Int, Int, Int>) {
         },
         label = "standing_tally"
     ) { (shut, peek, open) ->
-        Text(
-            text = tallyText(shut, peek, open),
-            fontSize = 11.5.sp,
-            color = scheme.onBackground,
-            modifier = Modifier.testTag("standing_tally")
-        )
+        // Plan §5.1 (R-1 completion, wave-2): the tally's words are
+        // JUMPS — tap a ruling and the catalogue scrolls to its
+        // group. Three segments, one line, the tally's own mixed
+        // typography (mono numerals, Atkinson words) in each.
+        Row(modifier = Modifier.testTag("standing_tally")) {
+            TallySegment(shut, " SHUT · ", scheme.onBackground) { onJump(AppBlockTier.LOCKED) }
+            TallySegment(peek, " PEEK · ", scheme.onBackground) { onJump(AppBlockTier.PEEK_2M) }
+            TallySegment(open, " OPEN", scheme.onBackground) { onJump(AppBlockTier.OPEN) }
+        }
     }
 }
 
 @Composable
-private fun SlipSectionHeader(word: String) {
+private fun TallySegment(count: Int, word: String, color: Color, onClick: () -> Unit) {
+    val text = buildAnnotatedString {
+        withStyle(SpanStyle(fontFamily = AnonymousProFamily, fontWeight = FontWeight.Bold)) {
+            append(count.toString())
+        }
+        withStyle(SpanStyle(fontFamily = AtkinsonHyperlegibleFamily, fontWeight = FontWeight.Bold)) {
+            append(word)
+        }
+    }
     Text(
-        text = word,
-        fontFamily = AtkinsonHyperlegibleFamily,
-        fontWeight = FontWeight.Bold,
+        text = text,
         fontSize = 11.5.sp,
-        letterSpacing = 0.6.sp,
-        color = MaterialTheme.colorScheme.onBackground,
-        modifier = Modifier.padding(top = 4.dp)
+        color = color,
+        modifier = Modifier
+            .clickable { onClick() }
+            .semantics { contentDescription = "$count ${word.trim().trim('·')}" }
     )
 }
 
-/** An empty section prints its fact, not a void (Gust): a missing
- *  section reads as a bug; a printed NONE is a fact. */
+/** One catalogue group header (R-1): the ruling word only, in
+ *  ink like the rules header above it. The group's COUNT does
+ *  not print here — counts have one home on this screen, the
+ *  tally, and a number with two homes is a duplication
+ *  (R-13; critic Salz C-11.1). */
 @Composable
-private fun SlipNoneLine() {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(40.dp),
-        contentAlignment = Alignment.CenterStart
-    ) {
+private fun CatalogueGroupHeader(tier: AppBlockTier) {
+    Column {
         Text(
-            text = "NONE",
-            fontFamily = AnonymousProFamily,
-            fontSize = 11.sp,
-            letterSpacing = 1.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.testTag("slip_none_line")
-        )
-    }
-}
-
-/**
- * One line of the book: the app's name, a dot leader, its ruling
- * word. The leader is the ledger's mechanism for binding an entry
- * to its figure — it makes the right edge a single column of
- * rulings, the glance a tired man needs: one vertical pass, no
- * sled-decoding. The whole 40dp line is the tap target; a tap
- * flips the ruling SHUT ↔ PEEK on the sled's commit path.
- */
-@Composable
-private fun SlipLineRow(
-    line: SlipLine,
-    onTap: () -> Unit,
-    onRestElapsed: () -> Unit,
-    onExitElapsed: () -> Unit
-) {
-    val scheme = MaterialTheme.colorScheme
-    val resting = line.resting
-    val exiting = resting?.exiting == true
-
-    // M3's clocks: rest 300ms wearing the new word, then the exit —
-    // fade + height collapse over 280ms on Curve C, the neighbours
-    // closing as the space gives up.
-    if (resting != null && !exiting) {
-        LaunchedEffect(line.app.packageName) {
-            delay(300)
-            onRestElapsed()
-        }
-    }
-    if (exiting) {
-        LaunchedEffect(line.app.packageName) {
-            delay(280)
-            onExitElapsed()
-        }
-    }
-    val exitAlpha by animateFloatAsState(
-        targetValue = if (exiting) 0f else 1f,
-        animationSpec = tween(280, easing = MonolithCurves.EasingC),
-        label = "slip_exit_alpha"
-    )
-    val exitHeight by animateDpAsState(
-        targetValue = if (exiting) 0.dp else 40.dp,
-        animationSpec = tween(280, easing = MonolithCurves.EasingC),
-        label = "slip_exit_height"
-    )
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(exitHeight)
-            .alpha(exitAlpha)
-            .clickable(enabled = !exiting) { onTap() }
-            .testTag("slip_line_${line.app.packageName}"),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = line.app.appName.uppercase(),
+            text = tierWord(tier),
             fontFamily = AtkinsonHyperlegibleFamily,
             fontWeight = FontWeight.Bold,
-            fontSize = 14.sp,
-            color = scheme.onBackground,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            text = " .".repeat(90),
-            fontFamily = AnonymousProFamily,
-            fontSize = 11.sp,
-            color = scheme.onSurfaceVariant,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Clip,
+            fontSize = 11.5.sp,
+            letterSpacing = 0.6.sp,
+            color = MaterialTheme.colorScheme.onBackground,
             modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 6.dp)
+                .padding(top = 4.dp)
+                .testTag("catalogue_group_${tier.name}")
         )
-        // The re-strike: the word lifts and lands whole, 260ms
-        // Curve A — never a roll (M4's governor rides the tally;
-        // the same manners hold at the line).
-        AnimatedContent(
-            targetState = line.word,
-            transitionSpec = {
-                fadeIn(tween(260, easing = MonolithCurves.EasingA)) togetherWith
-                    fadeOut(tween(260, easing = MonolithCurves.EasingA))
-            },
-            label = "slip_word_${line.app.packageName}"
-        ) { word ->
+        if (tier == AppBlockTier.PEEK_2M) {
+            // R-6: PEEK's contract prints ONCE on this screen, here,
+            // derived from the constants — never hardcoded, so an
+            // editable-times change reprints the truth for free.
+            val peekMin = MonolithRepository.PEEK_DURATION_SECONDS / 60
+            val coolMin = (MonolithRepository.PEEK_COOLDOWN_MILLIS / 60_000L).toInt()
             Text(
-                text = tierWord(word),
+                text = "PEEK — $peekMin MINUTES, THEN SHUT AGAIN · $coolMin MIN BETWEEN PEEKS",
                 fontFamily = AnonymousProFamily,
-                fontWeight = FontWeight.Bold,
                 fontSize = 11.sp,
-                letterSpacing = 1.sp,
-                color = scheme.onBackground
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("peek_contract_line")
             )
         }
     }
 }
 
 /** One catalogue row: the sled, hosted. The catalogue is where a
- *  ruling is made or revoked; the slip above is where it is read. */
+ *  ruling is printed, made, and revoked — its one home (R-1). */
 @Composable
 private fun CatalogueAppRow(
     app: BlockedAppEntity,
@@ -1074,6 +1095,11 @@ private fun CatalogueAppRow(
             view.soundEngine = soundEngine
             view.appName = app.appName
             view.currentTier = app.resolvedTier
+            // R-11 core: the sled is a Canvas — without this the
+            // row is silent to TalkBack and Shield cannot be
+            // operated by ear. The description carries name + tier.
+            view.contentDescription = "${app.appName}, ${tierWord(app.resolvedTier)}"
+
             view.onTierSelected = { newTier ->
                 onSetAppTier(app.packageName, newTier)
             }

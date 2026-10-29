@@ -580,6 +580,38 @@ class MonolithViewModel(
         _deckWarrant.value = repository.standingWarrant()
     }
 
+    /**
+     * Shield's status sentence (Shield audit R-5; issue #7): the
+     * one derivation (computeShieldBlockingStatus in
+     * ShieldBlockingStatus.kt) fed from the living witnesses — the
+     * shield service's protecting flip and the accessibility
+     * service's session-armed stamp, the same pair the arm
+     * cascade requires. Refreshed on the per-second ticker, on
+     * every Watch Store emission (the shield loop pokes the store
+     * each iteration, so a witness flip lands here within its
+     * beat), and on every session emission. Null until the first
+     * read: Shield prints its unproven fallback, never a guess.
+     */
+    private val _shieldBlockingStatus = MutableStateFlow<ShieldBlockingStatus?>(null)
+    val shieldBlockingStatus: StateFlow<ShieldBlockingStatus?> =
+        _shieldBlockingStatus.asStateFlow()
+
+    fun refreshShieldBlockingStatus() {
+        _shieldBlockingStatus.value = computeShieldBlockingStatus(
+            session = activeSession.value,
+            shieldServiceRunning =
+                com.example.service.MonolithShieldService.instance != null,
+            shieldProtecting = com.example.service.MonolithShieldService.protecting,
+            shieldProtectingSessionId =
+                com.example.service.MonolithShieldService.protectingSessionId,
+            accessibilityBound =
+                com.example.service.MonolithAccessibilityService.instance != null,
+            accessibilityArmedSessionId =
+                com.example.service.MonolithAccessibilityService.armedSessionId,
+            nowWallMillis = System.currentTimeMillis()
+        )
+    }
+
     /** The synchronous verdict the slide reads at DOWN, at the gate,
      *  on every MOVE, and at the latch frame (Ines: ≤5ms, no wait). */
     fun armWarrantNow(): Warrant = repository.standingWarrant()
@@ -795,11 +827,13 @@ class MonolithViewModel(
         viewModelScope.launch {
             com.example.service.WatchStore.snapshots.collect {
                 refreshDeckWarrant()
+                refreshShieldBlockingStatus()
             }
         }
         // The cascade's phase relaxes when the sealed row goes.
         viewModelScope.launch {
             activeSession.collect { session ->
+                refreshShieldBlockingStatus()
                 if (session == null) {
                     armProving.onActiveSessionGone()
                 }
@@ -1016,6 +1050,11 @@ class MonolithViewModel(
                 ) {
                     refreshDeckWarrant()
                 }
+
+                // Shield's status sentence rides the same beat:
+                // a witness flip or a beat going stale re-prints
+                // within a second, never on unbounded age.
+                refreshShieldBlockingStatus()
 
                 delay(1000L)
             }
@@ -2091,7 +2130,7 @@ class MonolithViewModel(
                 AppBlockTier.LOCKED -> 2
             }
             if (targetRank < currentRank) {
-                triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT WEAKEN '${app.appName.uppercase()}' DURING ACTIVE VAULT")
+                triggerRatchetWarning("CANNOT WEAKEN '${app.appName.uppercase()}' DURING THIS SESSION")
                 return
             }
         }
@@ -2164,7 +2203,7 @@ class MonolithViewModel(
 
     fun toggleProfileSchedule(profile: FocusProfileEntity) {
         if (activeSession.value?.isActive == true && profile.isScheduleEnabled) {
-            triggerRatchetWarning("ONE-WAY RATCHET • ACTIVE SCHEDULE CANNOT BE DISABLED DURING VAULT LOCKDOWN")
+            triggerRatchetWarning("CANNOT DISABLE AN ACTIVE SCHEDULE DURING THIS SESSION")
             return
         }
         soundEngine.playMechanicalLatch(!profile.isScheduleEnabled)
