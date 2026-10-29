@@ -1736,7 +1736,15 @@ class MonolithRepository(
     fun receiptOutcomeWord(row: FocusSessionEntity, kind: String): String = when (kind) {
         FinishKind.ROUTINE_ATTENDED -> "ATTENDED"
         FinishKind.ROUTINE_PARTIAL -> "PARTIAL"
-        FinishKind.ROUTINE_SLEEP_STANDDOWN -> "SLEPT THROUGH"
+        // Receipt audit item 7 (A2, wave-2 — issue #10): the
+        // stand-down word is STOOD DOWN — the machine's own act,
+        // and true. "SLEPT THROUGH" read in plain English as the
+        // man's failure (he slept through the alarm) for a finish
+        // the machine chose. The word is stamped via the claim
+        // (lastReceiptOutcome), so new slips carry it whole; the
+        // sheet additionally normalises the legacy word on
+        // rehydrated slips, so no old slip re-prints the lie.
+        FinishKind.ROUTINE_SLEEP_STANDDOWN -> "STOOD DOWN"
         FinishKind.FLOW_FINISH -> "FLOW ENDED"
         else -> if (row.outcome == SessionOutcome.ELAPSED_SHIELD_GAP) "ENDED · SHIELD GAP" else "ENDED"
     }
