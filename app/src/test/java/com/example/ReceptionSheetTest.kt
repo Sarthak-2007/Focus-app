@@ -558,7 +558,11 @@ class ReceptionSheetTest {
             .performClick()
         assertTrue("the stamp books at the press", stamped)
         assertFalse("the enter waits for the tear (260ms)", done)
-        composeRule.mainClock.advanceBy(300)
+        // Batch-10 compile cure: MainTestClock.advanceBy does not
+        // resolve against this tree's ui-test (1.7.x) — waitUntil
+        // advances the test clock while polling, which is the same
+        // 260ms tear, waited out honestly instead of stepped.
+        composeRule.waitUntil(timeoutMillis = 2_000) { done }
         assertTrue("DONE hands the exit to the host after the tear", done)
     }
 
