@@ -11,6 +11,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -41,7 +42,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
@@ -158,6 +161,9 @@ fun ParkDrawer(
     onToggleShortsReelsSniper: () -> Unit,
     socialSitesEnabled: Boolean,
     onToggleSocialSites: () -> Unit,
+    onOpenReception: () -> Unit = {},
+    setupStampMask: Int? = null,
+    handoverText: String? = null,
     modifier: Modifier = Modifier
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -971,6 +977,60 @@ fun ParkDrawer(
                         color = scheme.onBackground
                     )
                 }
+                // F-13 (second half): the rule above the stub is
+                // dashed at the tear's spec — the stub reads as
+                // torn in PARK's own grammar.
+                ParkDashedRule()
+
+                // (6b) The reception's stub (Empfang lane, grafted
+                // onto HEAD at the issue-#14 merge — C-12): the
+                // introduction itself lives here — this row is the
+                // torn slip's stub, printing the standing Guard
+                // total as its word; tapping re-opens the sheet,
+                // which reprints with live states. One document at
+                // two moments, never a link to a tour.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .then(
+                            if (interactive) {
+                                Modifier.clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) { onOpenReception() }
+                            } else Modifier
+                        )
+                        .testTag("park_reception_row"),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "SETUP + INTRODUCTION",
+                        style = PillBadgeTextStyle,
+                        color = scheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        // One datum, one dress (F-11's logic): the
+                        // Guard word is telemetry — Anonymous Pro
+                        // Bold 15, as on the sheet's own total. The
+                        // "OPEN" fallback is the row's invitation
+                        // word when no Guard line stands (acquitted
+                        // by name, Pforte's ruling on Glatt G-2) —
+                        // never a Guard fact. While the Armed
+                        // Handover stands it speaks here first
+                        // (N-2): one fact, one print, extended to
+                        // the stub — its own slot, per C-13's
+                        // amendment of §6.9.
+                        text = handoverText
+                            ?: guardLineFor(snapshot, nowMono)?.text ?: "OPEN",
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        letterSpacing = 0.5.sp,
+                        color = scheme.onBackground
+                    )
+                }
                 ParkHairline()
 
                 // (6b) The foot colophon (§1.3/§4.8 + §4.3, wave-2):
@@ -1100,6 +1160,14 @@ private fun ParkBoardRow(
             }
         }
         ParkHairline()
+        if (subLine != null) {
+            Text(
+                text = subLine,
+                style = PillBadgeTextStyle,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.testTag("park_board_sub_$name")
+            )
+        }
     }
 }
 
@@ -1231,4 +1299,23 @@ private fun ParkHairline() {
             .height(1.dp)
             .background(MaterialTheme.colorScheme.onBackground.copy(alpha = 0.18f))
     )
+}
+
+/** The tear's rule, PARK-side (F-13): dashed at the reception
+ *  tear's spec — 1dp of ink at 35%, dash 3dp / gap 3dp — drawn
+ *  above the reception stub row only; every other PARK hairline
+ *  stays solid. */
+@Composable
+private fun ParkDashedRule() {
+    val ink = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.35f)
+    Canvas(modifier = Modifier.fillMaxWidth().height(1.dp)) {
+        val dash = 3.dp.toPx()
+        drawLine(
+            color = ink,
+            start = Offset(0f, size.height / 2f),
+            end = Offset(size.width, size.height / 2f),
+            strokeWidth = size.height,
+            pathEffect = PathEffect.dashPathEffect(floatArrayOf(dash, dash), 0f)
+        )
+    }
 }

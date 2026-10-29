@@ -3,6 +3,7 @@ package com.example
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -46,9 +47,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
+import com.example.data.ReturnChitState
+import com.example.data.chitVerdictFor
 import com.example.service.InterceptPath
 import com.example.service.MonolithShieldService
+import com.example.service.PermPrint
 import com.example.service.TactileSoundEngine
+import com.example.service.WatchItemId
+import com.example.service.WatchStore
 import com.example.ui.MonolithDestination
 import com.example.ui.ArmPhase
 import com.example.ui.MonolithViewModel
@@ -56,14 +62,21 @@ import com.example.ui.components.AirlockInterceptOverlay
 import com.example.ui.components.AlwaysOnDeskClockOverlay
 import com.example.ui.components.CapturedNotificationsDigestSheet
 import com.example.ui.components.DisarmChallengeOverlay
+import com.example.ui.components.GuardLinePrint
 import com.example.ui.components.MonolithPullDownHeader
 import com.example.ui.components.ParkDrawer
+import com.example.ui.components.ReceptionSheet
+import com.example.ui.components.doorsMaskAt
+import com.example.ui.components.guardLineFor
+import com.example.ui.components.receptionFirstRoutineLine
+import com.example.ui.components.receptionTotal
 import com.example.ui.screens.DrawerScreen
 import com.example.ui.screens.FocusSequencerScreen
 import com.example.ui.screens.ShieldMatrixScreen
 import com.example.ui.screens.TactileDeckScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.views.MonolithRailView
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
@@ -349,6 +362,197 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     var parkOpen by remember { mutableStateOf(false) }
     var parkReturnTick by remember { mutableStateOf(0) }
 
+    // ------------------------------------------------------------------
+    // THE RECEPTION (Empfang lane, Oct 30 — GRAFTED onto HEAD at
+    // the issue-#14 merge, Stachel C-12: the lane's host file was
+    // a stale base and is never merged whole): the first-open
+    // setup + introduction sheet. The stamp lives in SetupStore
+    // (its own prefs, committed). The sheet opens itself only
+    // while unstamped; once stamped it never interrupts again,
+    // and PARK's stub row re-opens it. Stamping also discharges
+    // PARK's own first-run invitation below.
+    // ------------------------------------------------------------------
+    val setupStore = remember { com.example.data.SetupStore(context.applicationContext) }
+    var setupStamped by remember { mutableStateOf(setupStore.isCompleted()) }
+    var receptionOpen by remember {
+        mutableStateOf(
+            com.example.ui.components.receptionInitiallyOpen(setupStore.isCompleted())
+        )
+    }
+
+    // The Return Chit's host mirror (audit §3 Proposal 1): the
+    // store is the fact; this state is only its print. Cold
+    // start initialises from the store, so a process death in
+    // Settings loses nothing.
+    var chitUi by remember { mutableStateOf(setupStore.chit()) }
+
+    // The Armed Handover (§3 Proposal 3, as amended by Stachel
+    // C-13): a one-shot Guard-line override handed over by DONE
+    // — WHOLE CASE ONLY. At 4/4 the standing line names no lack,
+    // so the handover displaces nothing; in every other case
+    // the live line keeps its slot and the handover speaks only
+    // on PARK's stub (its own seat). Held in `remember` only —
+    // process death kills it lawfully. Auto-seal is killed by
+    // name: the handover points at the slide, never performs it.
+    var armedHandover by remember { mutableStateOf<GuardLinePrint?>(null) }
+
+    // H-2's departure record: set only by the Shield excursion
+    // of an UNSTAMPED sheet; the re-raise effect below is keyed
+    // on the destination so every return path obeys it.
+    var shieldExcursion by remember { mutableStateOf(false) }
+
+    /** Book the setup stamp ONLY (Letzt §1.2 unbundling, G-01):
+     *  DONE's stamping press dispatches this FIRST, before the
+     *  tear's sound or motion — the write, the commit, the
+     *  publish, in the house order. The sheet is still standing
+     *  when this returns; dismissal is stampSetupAndEnter(),
+     *  called by the sheet only after the tear has run. The
+     *  Setup Ledger lands in the same act (write-once mask,
+     *  fresh-GRANTED only by construction — doorsMaskAt reads
+     *  permPrintAt, whose GRANTED is never stale, C-14), and
+     *  the handover is armed from the same instant's snapshot
+     *  (whole case only, C-13). Idempotent: the guard makes a
+     *  second call a no-op, so the stamp can never book twice. */
+    fun stampSetupOnly() {
+        if (setupStamped) return
+        val nowMono = SystemClock.elapsedRealtime()
+        setupStore.stampSetup(doorsMaskAt(watchSnapshot, nowMono))
+        setupStamped = true
+        armedHandover = if (receptionTotal(watchSnapshot, nowMono).count == 4) {
+            GuardLinePrint("GUARD 4/4 — ONE ACT LEFT: SLIDE.")
+        } else {
+            null
+        }
+        if (viewModel.parkIntroPending()) {
+            viewModel.markParkIntroDone()
+        }
+    }
+
+    /** Exit only — the stamp is stampSetupOnly()'s business,
+     *  so the sheet's DONE predicate stays auditable (§1.1). */
+    fun stampSetupAndEnter() {
+        receptionOpen = false
+        viewModel.navigateTo(MonolithDestination.DECK)
+    }
+
+    // Chit resolution: judged on the first measurement taken
+    // AFTER departure, whenever it lands (return sweep, Deck
+    // entry, cold start). N-1 overnight law: a chit older than
+    // a day by the wall clock resolves DARK before any sweep is
+    // consulted — a verdict about Tuesday's excursion never
+    // prints on Friday.
+    LaunchedEffect(parkReturnTick, watchSnapshot) {
+        val c = setupStore.chit() ?: return@LaunchedEffect
+        if (c.state != ReturnChitState.DEPARTED) {
+            chitUi = c
+            return@LaunchedEffect
+        }
+        if (System.currentTimeMillis() - c.departureWall > 24 * 60 * 60 * 1000L) {
+            setupStore.resolveChit(ReturnChitState.RETURNED_DARK, null)
+            chitUi = setupStore.chit()
+            return@LaunchedEffect
+        }
+        val verdict = chitVerdictFor(
+            c,
+            watchSnapshot?.measurement(c.door),
+            SystemClock.elapsedRealtime()
+        ) ?: return@LaunchedEffect
+        val next = watchSnapshot?.let { snap ->
+            // Wave-2 cure (Pforte; Brutal-critic + Finisher-surface
+            // charge): the next-door search previously matched
+            // MISSING only, so a STALE or UNMEASURED sibling left
+            // next == null and the chit printed "· ALL FOUR SET."
+            // beside a total pricing that very door — S-1's disease
+            // inside the mechanism built to cure it. The search is
+            // now over every non-GRANTED print: the suffix claims
+            // ALL FOUR SET only when no other door lacks, and a
+            // stale or unread door is honestly named NEXT.
+            WatchItemId.COUNTED.firstOrNull { other ->
+                other != c.door &&
+                    WatchStore.permPrintAt(
+                        snap, other, SystemClock.elapsedRealtime()
+                    ) != PermPrint.GRANTED
+            }
+        }
+        setupStore.resolveChit(verdict, next)
+        if (verdict == ReturnChitState.RETURNED_REPAIRED) {
+            // Letzt A-5: the click is the second channel,
+            // REPAIRED only — never a failure voice.
+            viewModel.soundEngine.playFirmClick()
+        }
+        chitUi = setupStore.chit()
+    }
+
+    // The chit's deadline: the sweep gets a bounded window — a
+    // named 3 s, not the old 800 ms guess. Expiry resolves
+    // UNREAD (or DARK if the boot clock went backwards).
+    LaunchedEffect(parkReturnTick) {
+        if (parkReturnTick <= 0) return@LaunchedEffect
+        val c = setupStore.chit() ?: return@LaunchedEffect
+        if (c.state != ReturnChitState.DEPARTED) return@LaunchedEffect
+        delay(3_000L)
+        val still = setupStore.chit() ?: return@LaunchedEffect
+        if (still.state == ReturnChitState.DEPARTED) {
+            setupStore.resolveChit(
+                if (SystemClock.elapsedRealtime() < still.departureMono) {
+                    ReturnChitState.RETURNED_DARK
+                } else {
+                    ReturnChitState.RETURNED_UNREAD
+                },
+                null
+            )
+            chitUi = setupStore.chit()
+        }
+    }
+
+    // The ledger's ever-set mask: a bit is noted the first
+    // sweep that sees its door GRANTED after the stamp.
+    LaunchedEffect(watchSnapshot, setupStamped) {
+        if (!setupStamped) return@LaunchedEffect
+        val mask = doorsMaskAt(watchSnapshot, SystemClock.elapsedRealtime())
+        if (mask and setupStore.everSetMask().inv() != 0) {
+            setupStore.noteEverSet(mask)
+        }
+    }
+
+    // The chit prints for ONE printing of the sheet: closing
+    // the sheet spends a judged chit (an unjudged one is never
+    // silently spent — the store refuses from DEPARTED).
+    LaunchedEffect(receptionOpen) {
+        if (!receptionOpen) {
+            setupStore.spendChit()
+            chitUi = setupStore.chit()
+        }
+    }
+
+    // Handover spenders 2–4 (spender 1, the slide attempt, is
+    // wrapped at the Deck's arm call site): a session stands /
+    // he leaves the Deck / PARK opens — first act wins.
+    LaunchedEffect(activeSession?.isActive) {
+        if (activeSession?.isActive == true) armedHandover = null
+    }
+    LaunchedEffect(currentDestination) {
+        if (currentDestination != MonolithDestination.DECK) armedHandover = null
+    }
+    LaunchedEffect(parkOpen) {
+        if (parkOpen) armedHandover = null
+    }
+
+    // H-2 re-raise: returning to the Deck unstamped and
+    // unsealed raises the sheet for this sitting, once.
+    LaunchedEffect(currentDestination, setupStamped, sealed) {
+        if (shieldExcursion &&
+            currentDestination == MonolithDestination.DECK &&
+            !setupStamped && !sealed
+        ) {
+            shieldExcursion = false
+            receptionOpen = true
+        }
+    }
+    LaunchedEffect(sealed) {
+        if (sealed) shieldExcursion = false
+    }
+
     fun closePark(dismissReceipt: Boolean) {
         parkOpen = false
         if (dismissReceipt && showNotificationDigestSheet) {
@@ -391,8 +595,13 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // First run (§5.7): the store has never measured — PARK opens
     // directly at first composition. The persisted bit keeps a cold
     // start's unmeasured instant from re-inviting on later runs.
+    // Empfang gate (Oct 30): while the setup stands unstamped the
+    // RECEPTION does the first-open introducing, and PARK does not
+    // invite itself over it — the two first-open surfaces never
+    // stack. Once stamped, this invitation behaves exactly as
+    // before for any run whose park bit somehow survived.
     LaunchedEffect(Unit) {
-        if (viewModel.parkIntroPending()) {
+        if (viewModel.parkIntroPending() && setupStamped) {
             parkOpen = true
         }
     }
@@ -437,6 +646,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         BackHandler { closePark(dismissReceipt = false) }
     } else if (currentDestination != MonolithDestination.DECK) {
         BackHandler { viewModel.navigateTo(MonolithDestination.DECK) }
+    }
+
+    // The reception's BACK: leaving stamps nothing (composed
+    // after the chain above so it wins while the sheet stands).
+    // The sheet re-offers at the next cold start and waits in
+    // PARK — leaving is never a trap and never a finish.
+    if (receptionOpen) {
+        BackHandler { receptionOpen = false }
     }
 
     val selectedTabIndex = when (currentDestination) {
@@ -508,7 +725,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // The header band (chrome C2): brand + Guard line.
                 MonolithPullDownHeader(
-                    guardLine = guardLinePrint,
+                    // The handover masks the live line while it
+                    // stands — whole case only (C-13), so it can
+                    // never displace a named lack.
+                    guardLine = armedHandover ?: guardLinePrint,
                     // HB-1 (Truth Car 2) SUPERSEDES the chrome C11
                     // vi split: the header's door print drinks from
                     // the same doorLocked predicate as the openPark
@@ -576,7 +796,13 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onCompleteActiveTask = viewModel::completeTaskAndAdvance,
                                     onToggleTaskSubStep = viewModel::toggleTaskSubStep,
                                     onOpenTaskSequencer = { viewModel.navigateTo(MonolithDestination.TASKS) },
-                                    onArmSession = viewModel::armMonolithSession,
+                                    // Handover spender 1 (issue #14): the slide
+                                    // ATTEMPT spends the handover — a refused
+                                    // slide has still spent the act.
+                                    onArmSession = {
+                                        armedHandover = null
+                                        viewModel.armMonolithSession()
+                                    },
                                     onRequestDisarm = viewModel::requestDisarmChallenge,
                                     onCancelWithinGraceWindow = {
                                         viewModel.confirmDisarmSession("Accidental Start Grace Cancel")
@@ -734,6 +960,16 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         // the accessibility service enforces.
                         socialSitesEnabled = browserUrlBlockerEnabled,
                         onToggleSocialSites = { viewModel.toggleBrowserUrlBlocker() },
+                        onOpenReception = {
+                            closePark(dismissReceipt = false)
+                            receptionOpen = true
+                        },
+                        setupStampMask = if (setupStamped) {
+                            setupStore.doorsAtStampMask()
+                        } else {
+                            null
+                        },
+                        handoverText = armedHandover?.text,
                         modifier = Modifier.align(Alignment.BottomCenter)
                     )
 
@@ -877,6 +1113,41 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     }
                 )
             }
+
+            // THE RECEPTION (Empfang lane, Oct 30 — grafted seat):
+            // hosted in the overlay layer, BELOW the airlock and
+            // the disarm challenge — safety surfaces always win,
+            // and the sheet never renders its introduction over a
+            // session sealing the phone (visible gated on !sealed).
+            ReceptionSheet(
+                visible = receptionOpen && !sealed,
+                snapshot = watchSnapshot,
+                isFirstOpen = !setupStamped,
+                isNight = effectiveNight,
+                returnTick = parkReturnTick,
+                soundEngine = viewModel.soundEngine,
+                firstRoutineLine = receptionFirstRoutineLine(
+                    routines,
+                    System.currentTimeMillis()
+                ),
+                onShown = { viewModel.runWatchSweep() },
+                onFixClick = { item -> openFixPane(item) },
+                onCheckClick = { viewModel.runWatchSweep() },
+                onOpenShield = {
+                    // H-2: only the unstamped sheet's excursion
+                    // records a departure; a stamped sheet's home
+                    // is PARK and its return is PARK.
+                    if (!setupStamped) shieldExcursion = true
+                    receptionOpen = false
+                    viewModel.navigateTo(MonolithDestination.SHIELD)
+                },
+                onStamp = { stampSetupOnly() },
+                onDone = { stampSetupAndEnter() },
+                chit = chitUi,
+                onDeparture = { door, print ->
+                    setupStore.writeDepartureChit(door, print)
+                }
+            )
 
             // The ShieldPermissionPrimerModal binding stays REMOVED
             // (Slice D): its "COMMIT & ARM ANYWAY" path was the
