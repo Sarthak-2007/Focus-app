@@ -2,6 +2,7 @@ package com.example.data
 
 import android.app.AppOpsManager
 import android.app.admin.DevicePolicyManager
+import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.ComponentName
 import android.content.Context
@@ -611,6 +612,38 @@ class MonolithRepository(
     }
 
     fun hasUsageStatsPermission(): Boolean = usageAccess() == UsageAccess.ALLOWED
+
+    /**
+     * The current foreground package per UsageStats events — the pill
+     * controller's eyes (issue #16: carried in from the pill lane with
+     * PillController, which is its only caller). Null without usage
+     * access or on any query failure: the pill reads absence as
+     * "nothing to follow", never as an error.
+     */
+    fun queryForegroundPackage(): String? {
+        if (!hasUsageStatsPermission()) return null
+        return try {
+            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+                ?: return null
+            val end = System.currentTimeMillis()
+            val start = end - 15 * 60 * 1000L
+            val events = usm.queryEvents(start, end) ?: return null
+            val event = UsageEvents.Event()
+            var foreground: String? = null
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                if (event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND ||
+                    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                        event.eventType == UsageEvents.Event.ACTIVITY_RESUMED)
+                ) {
+                    foreground = event.packageName
+                }
+            }
+            foreground
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     /**
      * THE STANDING WARRANT (chrome C3, spec §4.5): the wire verdict
