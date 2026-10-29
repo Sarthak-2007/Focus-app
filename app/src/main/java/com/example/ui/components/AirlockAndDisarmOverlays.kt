@@ -712,7 +712,13 @@ fun AirlockInterceptOverlay(
         LaunchedEffect(state.isVisible, state.interceptNonce) {
             if (!state.isVisible) return@LaunchedEffect
             while (true) {
-                delay(250L)
+                // Wave-2 (Feel-3, timing): 50ms, not 250ms — the
+                // gate's draining rule stepped visibly at quarter-
+                // second intervals. Printed seconds still derive
+                // from the anchored ends at whatever frame prints
+                // them; this loop only decides how smooth the
+                // drain looks.
+                delay(50L)
                 nowMono = SystemClock.elapsedRealtime()
             }
         }
