@@ -57,3 +57,40 @@ File: `app/src/main/java/com/example/ui/views/BlockitTowerFadersAndCatalogViews.
 
 `app/src/test/java/com/example/HorizonLayoutTruthTest.kt` — 5 tests (see Dispositions).
 CI verdict + run URL: recorded in the closing issue comment.
+
+## CI verdict (tip c9b5409)
+
+- Run: https://github.com/Sarthak-2007/Focus-app/actions/runs/40973272449
+- **Assemble debug: GREEN** (first run failed on a real typo in my allocator,
+  `entries[it]` → fixed c9b5409; CI caught it, as designed).
+- **Unit tests: step FAILED at `compileDebugUnitTestKotlin` — PRE-EXISTING on main.**
+  Control run on unmodified base e29acdf (run 40972616501) fails the identical step
+  with the identical errors in the identical 5 files (ScreenshotHarnessTest,
+  ShortsToggleRenderTest, SoundAndSocialTruthTest, TruthCar3CaptureBodyTest,
+  TruthCar3SweepTest — stale params `socialSitesEnabled`/`shortsReelsSniperEnabled`,
+  unresolved `assertExists`). ZERO errors reference HorizonLayoutTruthTest.
+  Named remainder (out of scope for #61): main's test source set does not compile,
+  so no unit test — mine included — can execute in CI until that breakage is fixed
+  by its owning slice. My 5 tests are compile-clean per the CI error list and their
+  expected values were hand-verified against the allocator.
+
+## No-downgrade check (Sarthak 04:58 rule)
+
+- Tower deletion is NOT a downgrade: grep-level evidence of deadness — on main the
+  class had zero construction sites and zero callers; only an unused import existed.
+  No reachable feature was removed; no capacity was shrunk (the view was never shown).
+- Horizon minimum width was NOT removed: it is rendered honestly as a distinct
+  outline marker, exactly as briefed.
+
+## USER-VISIBLE FLAGS (for Ren → Sarthak, plain words)
+
+1. **Streak Tower: GONE from the code.** It was never actually shown anywhere in the
+   app (dead code), so nothing on screen changes today — but it cannot come back as-is;
+   a future tower must be rebuilt on real streak data.
+2. **Brick taps: nothing changes on screen** — the fake tap handler died with the dead
+   tower; it never had a screen to tap on.
+3. **Horizon bar (task queue, LIVE screen): proportions are now true.** A 1-minute
+   task no longer looks 10 minutes long next to bigger tasks; very short and
+   no-estimate tasks now appear as thin outline ticks instead of solid blocks.
+4. **Horizon bar with many tasks:** instead of segments running off the edge of the
+   screen, the bar now shows the first tasks plus one honest "+N" segment for the rest.
