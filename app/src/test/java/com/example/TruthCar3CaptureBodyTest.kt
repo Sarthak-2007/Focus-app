@@ -68,8 +68,14 @@ class TruthCar3CaptureBodyTest {
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .build()
         val sbn = StatusBarNotification(
+            // Issue #56 test-compile unblock (pre-existing breakage
+            // on main): SDK 36's StatusBarNotification constructor
+            // takes one more Int (the ranking/importance slot, p6)
+            // than the 9-argument form this test was written
+            // against; 0 keeps the fixture's meaning — an ordinary
+            // title-only notification from a sender.
             "com.example.chat", "com.example.chat", 7, null,
-            0, 0, notification, Process.myUserHandle(),
+            0, 0, 0, notification, Process.myUserHandle(),
             System.currentTimeMillis()
         )
 

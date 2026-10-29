@@ -161,16 +161,24 @@ fun ParkDrawer(
     isSealed: Boolean,
     isNight: Boolean,
     soundEnabled: Boolean,
-    shortsReelsSniperEnabled: Boolean,
+    // Defaults on the sled facts (issue #56, test-compile unblock):
+    // several pre-existing test renders were written against a
+    // ParkDrawer whose sled parameters had defaults and no longer
+    // compiled once the parameters lost them — the whole unit-test
+    // suite failed to compile on main. The one production caller
+    // (MainActivity) passes every argument explicitly, so these
+    // defaults change nothing at runtime; they only let the older
+    // renders compile again.
+    shortsReelsSniperEnabled: Boolean = false,
     soundEngine: TactileSoundEngine?,
     themeReadout: String,
     parkReturnTick: Int,
     onDismiss: () -> Unit,
     onFixClick: (WatchItemId) -> Unit,
     onToggleSound: () -> Unit,
-    onToggleShortsReelsSniper: () -> Unit,
-    socialSitesEnabled: Boolean,
-    onToggleSocialSites: () -> Unit,
+    onToggleShortsReelsSniper: () -> Unit = {},
+    socialSitesEnabled: Boolean = false,
+    onToggleSocialSites: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val scheme = MaterialTheme.colorScheme

@@ -3,8 +3,13 @@ package com.example
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import androidx.activity.ComponentActivity
-import androidx.compose.ui.test.assertDoesNotExist
-import androidx.compose.ui.test.assertExists
+// Issue #56 test-compile unblock (pre-existing breakage on main):
+// assertExists/assertDoesNotExist are member functions of
+// SemanticsNodeInteraction in the current compose ui-test — the
+// top-level imports below never resolved and failed the whole
+// test compilation. The call sites use them as members, unchanged.
+// (removed: import androidx.compose.ui.test.assertDoesNotExist)
+// (removed: import androidx.compose.ui.test.assertExists)
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.room.Room
