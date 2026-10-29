@@ -59,7 +59,6 @@ import com.example.ui.theme.NightColorSurfaceBright
 import com.example.ui.theme.NightColorSurfaceVariant
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.views.Emergency60sValveView
-import com.example.ui.views.TowerStreakView
 import kotlinx.coroutines.delay
 import java.util.Locale
 
