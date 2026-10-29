@@ -15,7 +15,6 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
-import com.example.MainActivity
 import com.example.R
 import com.example.data.AppBlockTier
 import com.example.data.MonolithDatabase
@@ -250,7 +249,7 @@ class MonolithShieldService : Service() {
                         applicationContext, RoutineHeartbeat.Source.SHIELD_LOOP
                     )
                 }
-                val activeSession = dao.getActiveSessionSnapshot()
+                val activeSession = repository.activeSessionSnapshot() // ISSUE-67(d): via repository, not direct DAO
                 if (activeSession == null || !activeSession.isActive) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
@@ -389,7 +388,7 @@ class MonolithShieldService : Service() {
                 WatchStore.onShieldIteration(protecting, usageGranted)
 
                 val nowMono = SystemClock.elapsedRealtime()
-                val blockedPackages = dao.getAllAppsSnapshot()
+                val blockedPackages = repository.allAppsSnapshot() /* ISSUE-67(d): via repository */
                     .filter { app ->
                         val tier = app.resolvedTier
                         // Issue #140: the daily limit is real. An app
@@ -474,30 +473,25 @@ class MonolithShieldService : Service() {
                 // verdict (see screenInteractive above).
                 val foregroundBlockedPkg = if (screenInteractive) selectedForeground else null
                 if (foregroundBlockedPkg != null && foregroundBlockedPkg != applicationContext.packageName) {
-                    val blockedApp = dao.getAllAppsSnapshot().find { it.packageName == foregroundBlockedPkg }
-                    val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                        putExtra(EXTRA_INTERCEPTED_PACKAGE, foregroundBlockedPkg)
-                        putExtra(EXTRA_INTERCEPTED_APP_NAME, blockedApp?.appName ?: "Blocked App")
-                        putExtra(EXTRA_INTERCEPT_BADGE, blockedApp?.resolvedTier?.badge ?: "Shut")
-                        // This door's blocked set already excludes a leased PEEK app
-                        // (the filter above), so a lease sold here is honoured (UNA2-01).
-                        putExtra(EXTRA_INTERCEPT_PATH, InterceptPath.SHIELD_APP.name)
-                        // Issue #78: every firing carries a unique id so
-                        // MainActivity can persist its consumption — a
-                        // redelivered copy of THIS intent (process death)
-                        // is then recognised and never re-shown.
-                        putExtra(EXTRA_INTERCEPT_ID, UUID.randomUUID().toString())
-                        // Issue #68 F5, Tier 2: provenance nonce (see
-                        // InterceptNonce) — required by MainActivity
-                        // before any intercept extra is honoured.
-                        putExtra(EXTRA_INTERCEPT_NONCE, InterceptNonce.mint(applicationContext))
-                    }
+                    val blockedApp = repository.allAppsSnapshot() /* ISSUE-67(d): via repository */.find { it.packageName == foregroundBlockedPkg }
+                    // ISSUE-67: intercept intent via the seam (no
+                    // MainActivity import; the seam mints the #68
+                    // nonce and the #78 firing id). This door's
+                    // blocked set already excludes a leased PEEK
+                    // app (the filter above), so a lease sold here
+                    // is honoured (UNA2-01) — InterceptPath.SHIELD_APP,
+                    // as before.
                     // Issue #94 (F2): never a bare background launch —
                     // a dropped launch stamps itself and falls back
                     // to a tappable notification (InterceptLaunch).
                     InterceptLaunch.launch(
-                        applicationContext, interceptIntent,
+                        applicationContext,
+                        InterceptIntents.interceptIntent(
+                            applicationContext, foregroundBlockedPkg,
+                            blockedApp?.appName ?: "Blocked App",
+                            blockedApp?.resolvedTier?.badge ?: "Shut",
+                            InterceptPath.SHIELD_APP
+                        ),
                         blockedApp?.appName ?: "Blocked App"
                     )
                 }
@@ -605,9 +599,7 @@ class MonolithShieldService : Service() {
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-            },
+            InterceptIntents.notificationIntent(this) // ISSUE-67: via the seam, same SINGLE_TOP semantics,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 

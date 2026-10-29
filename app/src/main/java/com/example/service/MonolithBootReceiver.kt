@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import com.example.data.MonolithDatabase
 import com.example.data.UndoDeleteStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -113,7 +112,7 @@ class MonolithBootReceiver : BroadcastReceiver() {
         // Group 1 — the boot stamp, once per real boot.
         runGuardedBootAction("boot-stamp") {
             if (bootStampDue(action)) {
-                MonolithDatabase.getInstance(appContext).monolithDao()
+                com.example.AppContainer.dao(appContext) /* ISSUE-67: single construction point */
                     .stampLastBoot(System.currentTimeMillis())
             }
         }
@@ -135,7 +134,7 @@ class MonolithBootReceiver : BroadcastReceiver() {
         // session is already active, it is shielded now, so a slow
         // or failed tick cannot lose the shield.
         runGuardedBootAction("shield-before-tick") {
-            val active = MonolithDatabase.getInstance(appContext).monolithDao()
+            val active = com.example.AppContainer.dao(appContext) /* ISSUE-67: single construction point */
                 .getActiveSessionSnapshot()
             if (shouldRaiseBootShield(active != null, active?.isActive == true)) {
                 MonolithShieldService.startShield(appContext)
@@ -151,7 +150,7 @@ class MonolithBootReceiver : BroadcastReceiver() {
         // finalised the session that was active, so raise the shield
         // only if one remains active afterwards.
         runGuardedBootAction("shield-after-tick") {
-            val active = MonolithDatabase.getInstance(appContext).monolithDao()
+            val active = com.example.AppContainer.dao(appContext) /* ISSUE-67: single construction point */
                 .getActiveSessionSnapshot()
             if (shouldRaiseBootShield(active != null, active?.isActive == true)) {
                 MonolithShieldService.startShield(appContext)

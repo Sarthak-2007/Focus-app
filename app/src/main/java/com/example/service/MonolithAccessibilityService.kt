@@ -11,12 +11,10 @@ import android.telecom.TelecomManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
-import com.example.MainActivity
 import com.example.MLog
 import com.example.data.AppBlockTier
 import com.example.data.BlockedBrowserDomains
 import com.example.data.GuardSettingsEntity
-import com.example.data.MonolithDatabase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -618,7 +616,7 @@ class MonolithAccessibilityService : AccessibilityService() {
      *  rebinds; the scope is per-instance, so a rebind creates a
      *  new service instance and a new scope with it). */
     private fun startSessionArmedCollector() {
-        val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
+        val dao = com.example.AppContainer.dao(applicationContext) /* ISSUE-67: single construction point */
         scope.launch {
             dao.getActiveSessionFlow().collect { session ->
                 if (session != null && session.isActive) {
@@ -950,7 +948,7 @@ class MonolithAccessibilityService : AccessibilityService() {
      *  (the pre-cure fan-out read it twice per event per coroutine). */
     private suspend fun processEvent(snapshot: EventSnapshot) {
         val pkgName = snapshot.packageName
-        val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
+        val dao = com.example.AppContainer.dao(applicationContext) /* ISSUE-67: single construction point */
         val activeSession = dao.getActiveSessionSnapshot() ?: return
         if (!activeSession.isActive) return
         // Session binding: a snapshot captured under a dead session
@@ -1452,30 +1450,19 @@ class MonolithAccessibilityService : AccessibilityService() {
         reasonBadge: String,
         path: InterceptPath
     ) {
-        val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            putExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE, packageName)
-            putExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME, appName)
-            putExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE, reasonBadge)
-            putExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH, path.name)
-            // Issue #78: unique firing id — MainActivity persists
-            // its consumption before showing the Airlock, so a
-            // process-death redelivery of this intent is dropped.
-            putExtra(
-                MonolithShieldService.EXTRA_INTERCEPT_ID,
-                java.util.UUID.randomUUID().toString()
-            )
-            // Issue #68 F5, Tier 2: single-use provenance nonce —
-            // MainActivity honours no intercept extra without one.
-            putExtra(
-                MonolithShieldService.EXTRA_INTERCEPT_NONCE,
-                InterceptNonce.mint(applicationContext)
-            )
-        }
-        // Issue #94 (F2): never a bare background launch — a dropped
-        // launch stamps itself and falls back to a tappable
-        // notification (InterceptLaunch).
-        InterceptLaunch.launch(applicationContext, interceptIntent, appName)
+        // ISSUE-67: the intercept intent is built by the seam —
+        // this service no longer imports the UI root
+        // (MainActivity); the seam mints the #68 nonce and the
+        // #78 firing id into the extras, exactly as the direct
+        // intent did.
+        // Issue #94 (F2): never a bare background launch — a
+        // dropped launch stamps itself and falls back to a
+        // tappable notification (InterceptLaunch).
+        InterceptLaunch.launch(
+            applicationContext,
+            InterceptIntents.interceptIntent(applicationContext, packageName, appName, reasonBadge, path),
+            appName
+        )
     }
 
     override fun onInterrupt() {}
