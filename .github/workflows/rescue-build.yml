@@ -11,9 +11,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
       - name: Install SDK platform 36.1
-        run: sdkmanager "platforms;android-36.1" "build-tools;36.1.0"
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platforms;android-36.1" "build-tools;36.1.0"
       - name: Assemble debug
         run: |
           chmod +x gradlew
