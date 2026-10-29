@@ -1,16 +1,23 @@
 package com.example.ui.components
 
+import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -26,22 +33,31 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.CapturedNotificationEntity
-import com.example.data.DistractionTriggerReason
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
 import com.example.service.TactileSoundEngine
@@ -57,10 +73,17 @@ import com.example.ui.theme.NightColorPrimary
 import com.example.ui.theme.NightColorPrimaryContainer
 import com.example.ui.theme.NightColorSurfaceBright
 import com.example.ui.theme.NightColorSurfaceVariant
+import com.example.ui.theme.NightColorOnPrimaryContainer
+import com.example.ui.theme.NightColorSecondaryContainer
+import com.example.ui.theme.NightTextColorPrimary
+import com.example.ui.theme.PillBadgeTextStyle
+import com.example.ui.theme.PrimaryButtonTextStyle
+import com.example.ui.theme.SoraFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.views.Emergency60sValveView
 import com.example.ui.views.TowerStreakView
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 /**
@@ -248,25 +271,113 @@ internal fun airlockSessionLine(endsAtMillis: Long?, isStopwatch: Boolean): Stri
 }
 
 /**
- * The peek chip's badge (SIL-2, Hale W-29): the SET value, read
- * from the same constant the lease machinery reads — never a
- * hardcoded "2m" on the surface. (Rurik's editable store replaces
- * the constant as the value's source; this function is the one
+ * The peek chip's badge (SIL-2, Hale W-29; FIX-8): the SET value,
+ * read from the same constant the lease machinery reads — never
+ * a hardcoded "2m" on the surface, and never a truncation:
+ * minutes and seconds render honestly (90s → "1m30s", 45s →
+ * "45s", 125s → "2m5s"). (Rurik's editable store replaces the
+ * constant as the value's source; this function is the one
  * print derivation that changes.)
  */
-internal fun peekBadgeText(durationSeconds: Int): String = "${durationSeconds / 60}m"
+internal fun peekBadgeText(durationSeconds: Int): String {
+    val total = durationSeconds.coerceAtLeast(0)
+    val minutes = total / 60
+    val seconds = total % 60
+    return when {
+        minutes > 0 && seconds > 0 -> "${minutes}m${seconds}s"
+        minutes > 0 -> "${minutes}m"
+        else -> "${seconds}s"
+    }
+}
 
 /**
- * The peek's price, printed on the offer before it is taken
- * (SIL-2, Hale W-29): the cooldown named in full, derived from
- * the cooldown the repository will actually arm — never a
- * hardcoded 20 on the surface.
+ * The peek's price, printed on the offer from frame one — before
+ * it is taken (FIX-8, re-timing C-11/B-2; Hale W-29's supplied
+ * text is replaced along with the name): the machine anchors
+ * the cooldown at the lease's END, so from the tap the real
+ * exclusion is lease + cooldown, and the sentence now says when
+ * the clock starts. Derived from the cooldown the repository
+ * will actually arm — never a hardcoded 20 on the surface.
  */
 internal fun peekPriceText(cooldownMillis: Long): String {
     val minutes = cooldownMillis / 60_000L
     val unit = if (minutes == 1L) "MINUTE" else "MINUTES"
-    return "TAKING THE PEEK STARTS A $minutes $unit COOLDOWN ON THIS APP"
+    return "WHEN THE PEEK ENDS, A $minutes $unit COOLDOWN STARTS ON THIS APP"
 }
+
+/**
+ * The gate line (FIX-6): the wall as a captioned print, not a
+ * hero numeral — "PEEK OPENS IN {M:SS}", minutes unpadded,
+ * seconds zero-padded. It names what it gates: the peek, and
+ * only the peek.
+ */
+internal fun peekGateLineText(secondsRemaining: Int): String {
+    val secs = secondsRemaining.coerceAtLeast(0)
+    return String.format(Locale.US, "PEEK OPENS IN %d:%02d", secs / 60, secs % 60)
+}
+
+/**
+ * The door's memory line (FIX-8, designer §5.7): the ordinal of
+ * THIS visit in the gate line's family — {prior booked + 1}
+ * TIME THIS SESSION. The scope word is THIS SESSION (Tor's
+ * ratification): the taper counts this session's booked
+ * intercepts, and a session is not a night. Printed only when
+ * at least one prior booking exists; the door claims no memory
+ * it doesn't have.
+ */
+internal fun doorMemoryLineText(priorInterceptsThisSession: Int): String? {
+    if (priorInterceptsThisSession < 1) return null
+    return "${ordinalWord(priorInterceptsThisSession + 1)} TIME THIS SESSION"
+}
+
+internal fun ordinalWord(n: Int): String = when (n) {
+    1 -> "FIRST"
+    2 -> "SECOND"
+    3 -> "THIRD"
+    4 -> "FOURTH"
+    5 -> "FIFTH"
+    6 -> "SIXTH"
+    7 -> "SEVENTH"
+    8 -> "EIGHTH"
+    9 -> "NINTH"
+    10 -> "TENTH"
+    else -> {
+        val suffix = when {
+            n % 100 in 11..13 -> "TH"
+            n % 10 == 1 -> "ST"
+            n % 10 == 2 -> "ND"
+            n % 10 == 3 -> "RD"
+            else -> "TH"
+        }
+        "$n$suffix"
+    }
+}
+
+/**
+ * Seconds until an anchored monotonic end, derived at the
+ * frame that prints (FIX-5b): the ceiling form, the same
+ * arithmetic as peekSecondsRemaining — a counter that ticks
+ * itself can disagree with its anchor; this cannot. An end of
+ * 0 (never anchored) or a passed end derives 0.
+ */
+internal fun derivedSecondsUntil(endMono: Long, nowMono: Long): Int {
+    if (endMono <= 0L) return 0
+    val remainingMs = endMono - nowMono
+    if (remainingMs <= 0L) return 0
+    return ((remainingMs + 999L) / 1000L).toInt()
+}
+
+/**
+ * The break appointment (FIX-8, the Errand's kernel; designer
+ * §4.5 wording, Tor-ratified cell spec): the instant the
+ * session's own schedule already guarantees, at which the Safe
+ * Break's tier law opens this app — no lease, no cooldown.
+ * Derived from the carried instant; never a literal.
+ */
+internal fun breakAppointmentText(nextBreakAtMillis: Long): String =
+    "BREAK AT " +
+        java.text.SimpleDateFormat("HH:mm", Locale.US).format(java.util.Date(nextBreakAtMillis)) +
+        " OPENS THIS APP"
 
 /** The capture's own time, for a frozen row: HH:mm when the
  *  capture is from today, d MMM · HH:mm when it is not — yesterday's
@@ -544,44 +655,116 @@ fun ShieldPermissionPrimerModal(
 }
 
 /**
- * 5. AIRLOCK INTERCEPTION OVERLAY (Decision #16: 5s Breathing Delay Wall)
+ * 5. AIRLOCK INTERCEPTION OVERLAY — THE HELD DOOR (issue #11;
+ * designer skeleton, docs/designer-skeleton.md).
+ *
+ * THE SKELETON LAW: nothing on this face changes position, size,
+ * or existence based on countdown state. Every slot is composed
+ * at frame one, at its final bounds, for the whole visit;
+ * countdown state may change a slot's contents (crossfade in
+ * place) — never its bounds, never a sibling's. The card column
+ * carries NO spacedBy (spacedBy collapsing around absent
+ * children was the original defect's mechanism): all spacing is
+ * explicit fixed slots and gaps. RETURN's bounds at wall-max,
+ * wall-1, wall-0 and offer-armed are pixel-identical, and are
+ * asserted so in HeldDoorStationarityTest.
+ *
+ * Slot stack (top → bottom): NAME 32 · gap 4 · INTENTION 24 ·
+ * gap 4 · SESSION BLOCK 40 (two 20dp lines) · gap 12 · PEEK ZONE
+ * 110 or 0 · gap 16 (peek-owing only) · RETURN 56 · gap 12 ·
+ * HONEST EXIT 48 (Tor round 2: the innovator's 48dp touch height
+ * at the designer's bare-text weight) · gap 8 · FOOTER BADGE 16.
+ * Card padding 24 all sides. The card is BOTTOM-anchored (Tor
+ * round 8): the peek zone's presence grows the card upward, so
+ * RETURN's screen-space address — centre 136dp above the card's
+ * bottom edge — is identical on every branch and every visit.
  */
 @Composable
 fun AirlockInterceptOverlay(
     state: AirlockInterceptState,
-    onSelectReason: (DistractionTriggerReason) -> Unit,
-    onTransmuteParticleTap: () -> Unit,
     onReturnToFocus: () -> Unit,
-    onTake2MinutePeek: () -> Unit
+    onTake2MinutePeek: () -> Unit,
+    onEndSessionInstead: () -> Unit,
+    onDoorStateRefresh: () -> Unit,
+    // FIX-7 (Ton §5.3): the overlay reports the derived instant
+    // the offer arms; the VM owns the engine call and its
+    // once-per-visit guard (onAirlockOfferArmed). Defaulted so
+    // other callers (tests, previews) need no wire.
+    onOfferArmed: () -> Unit = {}
 ) {
     AnimatedVisibility(
         visible = state.isVisible,
-        enter = fadeIn(MonolithCurves.specB()),
+        // FIX-7b: entry is specA at 180ms (was specB's 420ms
+        // ghost); exit keeps specA 260ms. Opacity only — the full
+        // skeleton is composed at final geometry underneath.
+        enter = fadeIn(MonolithCurves.specA(180)),
         exit = fadeOut(MonolithCurves.specA())
     ) {
-        var countdownSecs by remember(state.interceptedPackageName, state.isVisible) {
-            mutableIntStateOf(5)
+        // FIX-5b: the clock state is a REDRAW TRIGGER ONLY. Every
+        // print below derives from the state's anchored ends at
+        // the recomposition this state provokes; no value is
+        // counted locally (both old self-ticking counters die).
+        // Keyed by the arrival nonce (P-4c): a same-package
+        // re-fire starts a fresh visit under its own anchors.
+        var nowMono by remember(state.interceptNonce) {
+            mutableLongStateOf(SystemClock.elapsedRealtime())
         }
-        LaunchedEffect(state.isVisible, state.interceptedPackageName) {
-            countdownSecs = 5
-            while (countdownSecs > 0) {
-                delay(1000L)
-                countdownSecs--
+        LaunchedEffect(state.isVisible, state.interceptNonce) {
+            if (!state.isVisible) return@LaunchedEffect
+            while (true) {
+                delay(250L)
+                nowMono = SystemClock.elapsedRealtime()
             }
         }
 
-        // The withheld peek's cooldown, ticking live while the
-        // airlock stands (Truth Car 3, UNA2-01): seeded from the
-        // state's snapshot at open, counted down here — the print
-        // never quotes a number minutes stale.
-        var cooldownSecs by remember(state.interceptedPackageName, state.isVisible) {
-            mutableIntStateOf(state.peekCooldownRemainingSeconds)
+        val wallSecs = derivedSecondsUntil(state.wallEndsAtMono, nowMono)
+        val wallRemainingMs = (state.wallEndsAtMono - nowMono).coerceAtLeast(0L)
+        val cooldownSecs = derivedSecondsUntil(state.peekCooldownEndsAtMono, nowMono)
+
+        // FIX-5c: at derived 0 the face re-runs the offer
+        // derivation (VM side) — "AGAIN IN 0 MIN" never composes,
+        // because a cooldown at 0 has no cooldown tenant (below).
+        LaunchedEffect(state.peekWithheld, cooldownSecs, state.interceptNonce) {
+            if (state.peekWithheld == PeekWithheld.COOLDOWN && cooldownSecs == 0) {
+                onDoorStateRefresh()
+            }
         }
-        LaunchedEffect(state.isVisible, state.interceptedPackageName) {
-            cooldownSecs = state.peekCooldownRemainingSeconds
-            while (cooldownSecs > 0) {
-                delay(1000L)
-                cooldownSecs--
+
+        val peekOwing = state.canUse2MinutePeek || state.peekWithheld != null
+
+        // Z1's tenant for this frame. Tenants crossfade inside
+        // Z1's unchanged 48dp bounds; the zone and every slot
+        // below it never move, whichever tenant stands.
+        val z1Tenant = when {
+            state.canUse2MinutePeek && wallSecs > 0 -> AirlockZ1Tenant.GATE
+            state.canUse2MinutePeek -> AirlockZ1Tenant.CHIP
+            state.peekWithheld == PeekWithheld.COOLDOWN && cooldownSecs == 0 ->
+                AirlockZ1Tenant.RESOLVING
+            state.peekWithheld != null -> AirlockZ1Tenant.WITHHELD
+            else -> AirlockZ1Tenant.EMPTY
+        }
+
+        // TalkBack (Tor round 3): announcements at door OPEN and
+        // at offer ARM only — never per-second, never assertive.
+        // One polite live region (composed inside the root Box
+        // below) whose text changes at exactly those two moments.
+        var announcement by remember(state.interceptNonce) { mutableStateOf("") }
+        LaunchedEffect(state.isVisible, state.interceptNonce) {
+            if (state.isVisible) {
+                announcement =
+                    "${state.interceptedAppName} is held. Return to focus is available."
+            }
+        }
+        LaunchedEffect(z1Tenant) {
+            if (z1Tenant == AirlockZ1Tenant.CHIP) {
+                announcement = "Peek is now available."
+                // FIX-7 (Ton §5.3): the arm beat is REPORTED from
+                // here, never sounded — the VM owns the engine
+                // call and its once-per-visit nonce guard. On a
+                // FIX-5c resolution the VM already fired it inside
+                // refreshAirlockDoorState and marked the nonce, so
+                // this report is a no-op there.
+                onOfferArmed()
             }
         }
 
@@ -591,126 +774,512 @@ fun AirlockInterceptOverlay(
                 .background(NightColorBackground)
                 .padding(20.dp)
                 .testTag("airlock_intercept_overlay"),
-            contentAlignment = Alignment.Center
+            // BOTTOM-ANCHORED (Tor round 8, superseding the
+            // skeleton's §3.4 top-anchor): the thumb's frame is
+            // screen space, so the card grows UPWARD into empty
+            // night and RETURN's screen address is invariant
+            // across states, branches (peek-owing or never-owed)
+            // and visits — its centre sits 136dp above the card's
+            // bottom edge (24 padding + 16 footer + 8 + 48 exit +
+            // 12 + 28 half-slab) on every branch, because the slot
+            // stack below RETURN never changes height. The stack
+            // itself is untouched by the anchor.
+            contentAlignment = Alignment.BottomCenter
         ) {
+            // The TalkBack live region: visually absent, present
+            // in the semantics tree, polite — it speaks only when
+            // its text changes (door open, offer arm; see above).
+            Text(
+                text = announcement,
+                fontSize = 1.sp,
+                color = Color.Transparent,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .alpha(0f)
+                    .semantics { liveRegion = LiveRegionMode.Polite }
+            )
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(24.dp))
                     .background(NightColorSurfaceBright)
-                    .border(1.dp, NightColorPrimary.copy(alpha = 0.2f), RoundedCornerShape(24.dp))
+                    .border(1.dp, NightColorPrimary.copy(alpha = 0.38f), RoundedCornerShape(24.dp))
                     .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    text = "AIRLOCK INTERCEPTION • ${state.interceptReasonBadge.uppercase(Locale.US)}",
-                    fontFamily = AtkinsonHyperlegibleFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.5.sp,
-                    color = NightColorPrimary
-                )
-
-                Text(
-                    text = state.interceptedAppName,
-                    fontFamily = AtkinsonHyperlegibleFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 24.sp,
-                    color = NightColorPrimary
-                )
-
-                // SIL-1 / Hale W-28: under the app name, the door
-                // states the session's end — its own statement,
-                // from the session's own numbers.
-                airlockSessionLine(state.sessionEndsAtMillis, state.sessionIsStopwatch)?.let { line ->
+                // H1 — NAME (32dp): the face's one hero. What he
+                // opened, composed at the firing door (FIX-6 name
+                // slot): the app's real name, the feed's name, the
+                // browser's name, or what the guard caught him
+                // opening — never a door label restated.
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
                     Text(
-                        text = line,
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 12.5.sp,
-                        color = NightColorPrimary.copy(alpha = 0.8f)
+                        text = state.interceptedAppName,
+                        fontFamily = SoraFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 24.sp,
+                        color = NightColorPrimary,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
 
-                // Hero Architectural Countdown Numeral (Space Mono)
-                Text(
-                    text = if (countdownSecs > 0) String.format(Locale.US, "0%d", countdownSecs) else "00",
-                    fontFamily = AnonymousProFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 88.sp,
-                    color = NightColorPrimary // a readout numeral, not an accent (Round 1c)
-                )
+                Spacer(modifier = Modifier.height(4.dp))
 
-                // UNA2-07: the label prints only over a declared
-                // intention — never "ACTIVE INTENTION: " standing
-                // over a blank.
-                if (state.sessionIntention.isNotBlank()) {
-                    Text(
-                        text = "ACTIVE INTENTION: ${state.sessionIntention}",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 12.5.sp,
-                        color = NightColorPrimary.copy(alpha = 0.8f)
-                    )
-                }
-
-                BlockitActionChip(
-                    wordLabel = "RETURN TO FOCUS",
-                    isAccentArmed = true,
-                    onClick = onReturnToFocus,
-                    modifier = Modifier.fillMaxWidth(),
-                    testTag = "airlock_return_button"
-                )
-
-                if (countdownSecs == 0 && state.canUse2MinutePeek) {
-                    BlockitActionChip(
-                        wordLabel = "EMERGENCY PEEK",
-                        // SIL-2 / W-29: the badge is the SET value,
-                        // read from the lease machinery's own
-                        // constant — no hardcoded minutes here.
-                        monoBadge = peekBadgeText(MonolithRepository.PEEK_DURATION_SECONDS),
-                        onClick = onTake2MinutePeek,
-                        modifier = Modifier.fillMaxWidth(),
-                        testTag = "airlock_peek_button"
-                    )
-                    // SIL-2 / W-29: the price stands on the offer,
-                    // before the peek is taken — the cooldown the
-                    // repository will arm, named in full.
-                    Text(
-                        text = peekPriceText(MonolithRepository.PEEK_COOLDOWN_MILLIS),
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 12.5.sp,
-                        color = NightColorPrimary.copy(alpha = 0.8f)
-                    )
-                }
-
-                // The withheld peek prints its state AND its reason
-                // (Held Door Truth Baseline): cooldown with its
-                // live remaining time, or the running pill named.
-                // Doors that never owed a peek carry withheld ==
-                // null and print nothing here.
-                if (countdownSecs == 0 && !state.canUse2MinutePeek) {
-                    when (state.peekWithheld) {
-                        PeekWithheld.COOLDOWN -> Text(
-                            text = peekCooldownPrint(cooldownSecs),
+                // H2 — INTENTION (24dp): his words BARE, directly
+                // under the app name — the "ACTIVE INTENTION:"
+                // prefix dies (FIX-6). Blank intention → the slot
+                // stands empty and prints nothing (acquitted
+                // silence; FIX-3e killed the draft fallback).
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (state.sessionIntention.isNotBlank()) {
+                        Text(
+                            text = state.sessionIntention,
                             fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 12.5.sp,
-                            color = NightColorPrimary.copy(alpha = 0.8f)
+                            fontSize = 16.sp,
+                            color = NightColorPrimary.copy(alpha = 0.92f),
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth()
                         )
-                        PeekWithheld.ALREADY_ACTIVE -> Text(
-                            text = "A PEEK IS ALREADY RUNNING",
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 12.5.sp,
-                            color = NightColorPrimary.copy(alpha = 0.8f)
-                        )
-                        PeekWithheld.PEEK_OFF -> Text(
-                            text = "PEEK IS OFF",
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 12.5.sp,
-                            color = NightColorPrimary.copy(alpha = 0.8f)
-                        )
-                        null -> Unit
                     }
                 }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // H3 — SESSION BLOCK (40dp, two 20dp lines).
+                // Line 1: the session line (SIL-1 form acquitted;
+                // FIX-2's span value). Line 2: the break
+                // appointment on PEEK-tier doors (FIX-8 kernel),
+                // or the site door's matched domain — the two
+                // never contend (a site door owes no break line).
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(20.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        airlockSessionLine(state.sessionEndsAtMillis, state.sessionIsStopwatch)?.let { line ->
+                            Text(
+                                text = line,
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 12.5.sp,
+                                color = NightColorPrimary.copy(alpha = 0.92f),
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(20.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val subLine = state.nextBreakAtMillis?.let { breakAppointmentText(it) }
+                            ?: state.nameSubLine
+                        if (subLine != null) {
+                            Text(
+                                text = subLine,
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 12.5.sp,
+                                color = NightColorPrimary.copy(alpha = 0.92f),
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Z — THE PEEK ZONE (110dp peek-owing, absent
+                // never-owed). Composed from frame one at full
+                // height on every peek-owing door — offer AND
+                // withheld alike (Tor's ratification of the
+                // designer's deviation from Schliff's 34dp: the
+                // FIX-5c resolution crossfades inside Z1, it never
+                // grows the zone). Never-owed doors print no peek
+                // line of any kind (Baseline law 4): the zone is
+                // absent, not blanked.
+                if (peekOwing) {
+                    Column(modifier = Modifier.fillMaxWidth().height(110.dp)) {
+                        // Z1 — ACTION (48dp).
+                        Box(
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Crossfade(
+                                targetState = z1Tenant,
+                                animationSpec = MonolithCurves.specA(180),
+                                label = "airlock_z1_tenant"
+                            ) { tenant ->
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    when (tenant) {
+                                        AirlockZ1Tenant.GATE -> {
+                                            // The gate stack: the wall
+                                            // as a captioned print over
+                                            // the draining rule — born
+                                            // occupying the slot the
+                                            // chip will inherit (P-1).
+                                            Column(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalAlignment = Alignment.CenterHorizontally
+                                            ) {
+                                                Text(
+                                                    text = peekGateLineText(wallSecs),
+                                                    fontFamily = AnonymousProFamily,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 15.sp,
+                                                    color = NightColorPrimary,
+                                                    textAlign = TextAlign.Center,
+                                                    maxLines = 1,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                                Spacer(modifier = Modifier.height(6.dp))
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(2.dp)
+                                                        .background(NightColorPrimary.copy(alpha = 0.20f))
+                                                ) {
+                                                    val fraction = if (state.wallTotalSeconds > 0) {
+                                                        (wallRemainingMs.toFloat() /
+                                                            (state.wallTotalSeconds * 1000f))
+                                                            .coerceIn(0f, 1f)
+                                                    } else {
+                                                        0f
+                                                    }
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth(fraction)
+                                                            .height(2.dp)
+                                                            .background(NightColorPrimaryContainer)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        AirlockZ1Tenant.CHIP -> PeekHoldChip(
+                                            badgeText = peekBadgeText(
+                                                MonolithRepository.PEEK_DURATION_SECONDS
+                                            ),
+                                            nonce = state.interceptNonce,
+                                            onTake = onTake2MinutePeek
+                                        )
+                                        AirlockZ1Tenant.WITHHELD -> {
+                                            // The withheld lines print
+                                            // from SECOND 0 — never
+                                            // gated by any wall (FIX-6).
+                                            Column(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalAlignment = Alignment.CenterHorizontally
+                                            ) {
+                                                // P-5: a homecoming is
+                                                // greeted as what it is
+                                                // before its price line.
+                                                if (state.justExpiredLease) {
+                                                    Text(
+                                                        text = "THE PEEK ENDED",
+                                                        fontFamily = AtkinsonHyperlegibleFamily,
+                                                        fontSize = 12.5.sp,
+                                                        color = NightColorPrimary.copy(alpha = 0.92f),
+                                                        textAlign = TextAlign.Center,
+                                                        maxLines = 1,
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    )
+                                                }
+                                                when (state.peekWithheld) {
+                                                    PeekWithheld.COOLDOWN -> if (cooldownSecs > 0) {
+                                                        Text(
+                                                            text = peekCooldownPrint(cooldownSecs),
+                                                            fontFamily = AtkinsonHyperlegibleFamily,
+                                                            fontSize = 12.5.sp,
+                                                            color = NightColorPrimary.copy(alpha = 0.92f),
+                                                            textAlign = TextAlign.Center,
+                                                            maxLines = 1,
+                                                            modifier = Modifier.fillMaxWidth()
+                                                        )
+                                                    }
+                                                    PeekWithheld.ALREADY_ACTIVE -> Text(
+                                                        text = "A PEEK IS ALREADY RUNNING",
+                                                        fontFamily = AtkinsonHyperlegibleFamily,
+                                                        fontSize = 12.5.sp,
+                                                        color = NightColorPrimary.copy(alpha = 0.92f),
+                                                        textAlign = TextAlign.Center,
+                                                        maxLines = 1,
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    )
+                                                    PeekWithheld.PEEK_OFF -> Text(
+                                                        text = "PEEK IS OFF",
+                                                        fontFamily = AtkinsonHyperlegibleFamily,
+                                                        fontSize = 12.5.sp,
+                                                        color = NightColorPrimary.copy(alpha = 0.92f),
+                                                        textAlign = TextAlign.Center,
+                                                        maxLines = 1,
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    )
+                                                    null -> Unit
+                                                }
+                                            }
+                                        }
+                                        AirlockZ1Tenant.RESOLVING,
+                                        AirlockZ1Tenant.EMPTY -> Unit
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        // Z2 — PRICE (34dp): the re-timed price
+                        // sentence, standing from frame one on the
+                        // offer branch — during counting as well
+                        // as at offer, and through the hold (P-3a).
+                        // Held branch: empty-held.
+                        Box(
+                            modifier = Modifier.fillMaxWidth().height(34.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AnimatedVisibility(
+                                visible = state.canUse2MinutePeek,
+                                enter = fadeIn(MonolithCurves.specA(180)),
+                                exit = fadeOut(MonolithCurves.specA(180))
+                            ) {
+                                Text(
+                                    text = peekPriceText(MonolithRepository.PEEK_COOLDOWN_MILLIS),
+                                    fontFamily = AtkinsonHyperlegibleFamily,
+                                    fontSize = 12.5.sp,
+                                    color = NightColorPrimary.copy(alpha = 0.92f),
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 2,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        // Z3 — MEMORY (18dp): the taper's count in
+                        // the gate line's family, or empty-held.
+                        // A homecoming prints none — its ordinal
+                        // would count the lease's own expiry as a
+                        // reach (P-5).
+                        Box(
+                            modifier = Modifier.fillMaxWidth().height(18.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (!state.justExpiredLease) {
+                                doorMemoryLineText(state.priorInterceptsThisSession)?.let { line ->
+                                    Text(
+                                        text = line,
+                                        style = PillBadgeTextStyle,
+                                        color = NightColorPrimary.copy(alpha = 0.92f),
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                // R — RETURN (56dp slab): the face's only accent
+                // fill, its label in the scheme's own
+                // on-container ink #471602 (F-3, 5.37:1 — the
+                // shared chip's forced cream is not inherited).
+                // Live and tappable from frame one in every state;
+                // never gated, never dimmed, never re-labelled.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(NightColorPrimaryContainer)
+                        .border(1.dp, NightColorPrimary.copy(alpha = 0.38f), RoundedCornerShape(12.dp))
+                        .clickable(onClick = onReturnToFocus)
+                        .testTag("airlock_return_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "RETURN TO FOCUS",
+                        style = PrimaryButtonTextStyle,
+                        color = NightColorOnPrimaryContainer,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // X — THE HONEST EXIT (48dp touch row): one quiet
+                // bare-text line under RETURN (FIX-8). It ends
+                // nothing, spends nothing, books nothing — it
+                // routes to the Disarm face, which carries the
+                // gravity. Quiet by form, never by illegibility.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .clickable(onClick = onEndSessionInstead)
+                        .testTag("airlock_end_session_instead"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "END THE SESSION INSTEAD",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.92f),
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // F — FOOTER BADGE (16dp): the badge word ALONE —
+                // "AIRLOCK INTERCEPTION •" dies (FIX-6). On
+                // peek-tier doors the footer prints PEEK alone
+                // (Tor's ratification): the tier badge's literal
+                // "2m Peek" is the same hardcoded-duration lie
+                // FIX-8 cures on the chip, and never prints here.
+                // K-1 (Kante, Tor round 5): the ink is
+                // NightTextColorPrimary #D2C6BB ON THIS FACE ONLY —
+                // the shared NightTextColorSecondary #9C8E84
+                // measures 4.28:1 on this card and fails AA; the
+                // shared token itself is NOT changed.
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (peekOwing) {
+                            "PEEK"
+                        } else {
+                            state.interceptReasonBadge.uppercase(Locale.US)
+                        },
+                        style = PillBadgeTextStyle,
+                        color = NightTextColorPrimary,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
+        }
+    }
+}
+
+/** Z1's tenants (designer §5): one slot, four lawful contents and
+ *  the resolving instant between cooldown and offer. Tenancy is a
+ *  crossfade inside fixed bounds — never a layout change. */
+private enum class AirlockZ1Tenant { GATE, CHIP, WITHHELD, RESOLVING, EMPTY }
+
+/**
+ * The PEEK chip (innovator P-3a, adopted): taken by a 600ms
+ * HOLD-TO-FILL, not a tap — a travelling thumb cannot spend a
+ * lease. Press-and-hold fills the chip over 600ms; release early
+ * drains the fill in 120ms and books nothing; reaching full
+ * fires [onTake], whose grant-time re-derivation
+ * (peekOfferFor, acquitted) remains the final word. RETURN is a
+ * tap, PEEK is a hold, END is a 60-second valve: three acts,
+ * three weights, each proportional to what the act spends.
+ * Door-local by design — the shared BlockitActionChip stays
+ * tap-only for every other face. TalkBack carries a custom
+ * "Take the peek" action, so the gesture is never the only door.
+ */
+@Composable
+private fun PeekHoldChip(
+    badgeText: String,
+    nonce: Long,
+    onTake: () -> Unit
+) {
+    val fill = remember(nonce) { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(NightColorSecondaryContainer)
+            .border(1.dp, NightColorPrimary.copy(alpha = 0.38f), RoundedCornerShape(12.dp))
+            .semantics {
+                onClick(label = "Take the peek") {
+                    onTake()
+                    true
+                }
+            }
+            .pointerInput(nonce) {
+                detectTapGestures(
+                    onPress = {
+                        var fired = false
+                        val fillJob = scope.launch {
+                            fill.animateTo(
+                                1f,
+                                tween(durationMillis = 600, easing = LinearEasing)
+                            )
+                            if (fill.value >= 0.999f) {
+                                fired = true
+                                onTake()
+                            }
+                        }
+                        tryAwaitRelease()
+                        if (!fired) {
+                            fillJob.cancel()
+                            scope.launch {
+                                fill.animateTo(
+                                    0f,
+                                    tween(durationMillis = 120, easing = LinearEasing)
+                                )
+                            }
+                        }
+                    }
+                )
+            }
+            .testTag("airlock_peek_button"),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(fill.value)
+                .fillMaxHeight()
+                .background(NightColorPrimaryContainer.copy(alpha = 0.45f))
+                .align(Alignment.CenterStart)
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = "PEEK",
+                fontFamily = SoraFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp,
+                color = NightColorPrimary
+            )
+            Text(
+                text = " $badgeText",
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp,
+                color = NightColorPrimary
+            )
         }
     }
 }
@@ -735,7 +1304,8 @@ fun DisarmChallengeOverlay(
     soundEngine: TactileSoundEngine? = null,
     onDismissKeepFocusing: () -> Unit,
     onCompleteDisarm: () -> Unit,
-    onHoldStarted: () -> Unit = {}
+    onHoldStarted: () -> Unit = {},
+    onCompleteCleanSession: () -> Unit = {}
 ) {
     AnimatedVisibility(
         visible = state.isVisible,
@@ -768,17 +1338,36 @@ fun DisarmChallengeOverlay(
                 )
 
                 Text(
-                    text = if (tokensRemaining > 0) {
-                        "This ends the session early. It is the only break this week."
-                    } else {
-                        "This week's break is already spent."
+                    text = when {
+                        // P-2c: the door-originated face's lawful
+                        // second body — a stopwatch past its floor
+                        // completes, it does not break.
+                        state.cleanCompletionAvailable ->
+                            "This session has run its floor. Ending it now is a completion, not a break."
+                        tokensRemaining > 0 ->
+                            "This ends the session early. It is the only break this week."
+                        else ->
+                            "This week's break is already spent."
                     },
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontSize = 13.sp,
                     color = NightColorPrimary
                 )
 
-                if (tokensRemaining > 0) {
+                if (state.cleanCompletionAvailable) {
+                    // The completion's verb is a deliberate slab
+                    // tap standing between the door's footer line
+                    // and the act — never the footer's own tap
+                    // (P-2c). No valve, no token: nothing is spent
+                    // by finishing what already ran its floor.
+                    BlockitActionChip(
+                        wordLabel = "END THE SESSION",
+                        isPrimaryInk = true,
+                        onClick = onCompleteCleanSession,
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "disarm_end_session_button"
+                    )
+                } else if (tokensRemaining > 0) {
                     AndroidView(
                         factory = { ctx ->
                             Emergency60sValveView(ctx).apply {

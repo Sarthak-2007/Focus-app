@@ -192,30 +192,33 @@ data class FocusTaskEntity(
     }
 }
 
+/**
+ * A reason a man ACTUALLY stated for an intercept (Held Door
+ * audit FIX-3). The coachingTip strings die with this pass —
+ * counsel written for a reason picker that was never composed.
+ * No default lives here: an intercept nobody explained books
+ * UNSTATED (see MonolithRepository.recordIntercept's default),
+ * never a reason this enum invented for him.
+ */
 enum class DistractionTriggerReason(
     val shortTag: String,
-    val label: String,
-    val coachingTip: String
+    val label: String
 ) {
     MUSCLE_MEMORY(
         shortTag = "Habit",
-        label = "Opened by Habit",
-        coachingTip = "Your thumb tapped this on autopilot. Take one slow breath and return to your next micro-step."
+        label = "Opened by Habit"
     ),
     STUCK_ON_PROBLEM(
         shortTag = "Stuck",
-        label = "Stuck on a Hard Step",
-        coachingTip = "When a task feels heavy, your brain seeks quick novelty. Break the current task into a 10-minute micro-step."
+        label = "Stuck on a Hard Step"
     ),
     BORED_OR_TIRED(
         shortTag = "Tired",
-        label = "Low Energy / Brain Fog",
-        coachingTip = "Doomscrolling drains working memory faster than resting. Stand up, drink water, or finish this short block."
+        label = "Low Energy / Brain Fog"
     ),
     NEED_INFO(
         shortTag = "Message",
-        label = "Checking Urgent Message / Code",
-        coachingTip = "If this app allows a 2m Peek, start the 2-minute pass below—the floating timer will keep you anchored."
+        label = "Checking Urgent Message / Code"
     )
 }
 
@@ -456,7 +459,9 @@ data class InterceptLogEntity(
     val appName: String,
     val sessionIntention: String,
     val outcome: String,
-    val triggerReason: String = "Habit"
+    // FIX-3a: the "Habit" default dies — a log row nobody
+    // explained books UNSTATED, never a fabricated reason.
+    val triggerReason: String = "UNSTATED"
 )
 
 @Entity(tableName = "captured_notifications")

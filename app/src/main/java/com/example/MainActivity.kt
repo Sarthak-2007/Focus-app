@@ -68,6 +68,11 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var soundEngine: TactileSoundEngine
 
+    /** The composition's ViewModel, held so onNewIntent can route
+     *  repeat intercepts through the same consumption path as the
+     *  first composition (FIX-4). Set inside setContent. */
+    private var viewModelRef: MonolithViewModel? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(
@@ -92,6 +97,7 @@ class MainActivity : ComponentActivity() {
                     soundEngine = soundEngine
                 )
             )
+            viewModelRef = viewModel
             val darkTheme by viewModel.darkTheme.collectAsStateWithLifecycle()
             val activeSessionForTheme by viewModel.activeSession.collectAsStateWithLifecycle()
             val shotGround by viewModel.shotGround.collectAsStateWithLifecycle()
@@ -121,6 +127,11 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // FIX-4: a repeat intercept against this live (singleTop)
+        // activity consumes its extras HERE — first composition is
+        // no longer the only reader, so a second intercept can
+        // never land him on the previous app's stale door.
+        viewModelRef?.let { handleIncomingInterceptIntent(intent, it) }
     }
 
     private fun handleIncomingInterceptIntent(intent: Intent?, viewModel: MonolithViewModel) {
@@ -129,8 +140,10 @@ class MainActivity : ComponentActivity() {
         if (!pkg.isNullOrBlank()) {
             val name = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
                 ?: "Short-Form Feed"
+            // FIX-6 (C-10): the fallback badge word is "Blocked" —
+            // this is the fourth of the four sites.
             val badge = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
-                ?: "Locked"
+                ?: "Blocked"
             // WHICH door fired (Truth Car 3, UNA2-01): the peek
             // offer is computed per-path — an extra that is missing
             // or names no known door parses to UNKNOWN, and UNKNOWN
@@ -138,9 +151,14 @@ class MainActivity : ComponentActivity() {
             val path = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
                 ?.let { runCatching { InterceptPath.valueOf(it) }.getOrNull() }
                 ?: InterceptPath.UNKNOWN
-            viewModel.triggerAirlockIntercept(pkg, name, badge, path)
+            // The site door's sub-line (FIX-6 name slot): the
+            // browser holds the name; the matched domain rides
+            // here. Absent on every other door.
+            val subLine = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_SUBLINE)
+            viewModel.triggerAirlockIntercept(pkg, name, badge, path, subLine)
             intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
             intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
+            intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_SUBLINE)
         }
     }
 
@@ -792,10 +810,16 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
 
             AirlockInterceptOverlay(
                 state = airlockState,
-                onSelectReason = viewModel::selectDistractionReason,
-                onTransmuteParticleTap = viewModel::incrementAirlockParticlePulse,
                 onReturnToFocus = viewModel::transmuteImpulseAndReturn,
-                onTake2MinutePeek = viewModel::start2MinutePeek
+                onTake2MinutePeek = viewModel::start2MinutePeek,
+                // FIX-8 / P-2: the honest exit routes to the
+                // door-originated Disarm entry — the face stands
+                // in front of the still-standing door.
+                onEndSessionInstead = viewModel::requestDisarmChallengeFromDoor,
+                onDoorStateRefresh = viewModel::refreshAirlockDoorState,
+                // FIX-7: the overlay reports the arm instant; the
+                // VM sounds the arm beat under its nonce guard.
+                onOfferArmed = viewModel::onAirlockOfferArmed
             )
 
             DisarmChallengeOverlay(
@@ -804,7 +828,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 soundEngine = viewModel.soundEngine,
                 onDismissKeepFocusing = viewModel::dismissDisarmChallenge,
                 onCompleteDisarm = { viewModel.completeEmergencyBreakFromValve() },
-                onHoldStarted = viewModel::recordValveHoldStarted
+                onHoldStarted = viewModel::recordValveHoldStarted,
+                onCompleteCleanSession = viewModel::completeStopwatchCompletionFromDisarmFace
             )
 
         }

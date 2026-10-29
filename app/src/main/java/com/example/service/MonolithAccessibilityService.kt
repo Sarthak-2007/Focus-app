@@ -207,7 +207,17 @@ class MonolithAccessibilityService : AccessibilityService() {
                 performGlobalAction(GLOBAL_ACTION_BACK)
                 launchInterceptScreen(
                     packageName = pkgName,
-                    appName = "System Settings Guard",
+                    // FIX-6 name slot (C-8): the guard door prints
+                    // what he actually OPENED — the Settings app or
+                    // the package installer, by the package that
+                    // fired. "System Settings Guard" was a fiction
+                    // in the slot that everywhere else holds a fact;
+                    // the badge already names the guard.
+                    appName = if (pkgName == "com.android.settings") {
+                        "Settings"
+                    } else {
+                        "Package Installer"
+                    },
                     reasonBadge = "Uninstall Guard",
                     path = InterceptPath.UNINSTALL_GUARD
                 )
@@ -261,9 +271,13 @@ class MonolithAccessibilityService : AccessibilityService() {
                     performGlobalAction(GLOBAL_ACTION_BACK)
                     launchInterceptScreen(
                         packageName = pkgName,
-                        appName = matchedDomain,
+                        // FIX-6 name slot: the browser's name holds
+                        // the name slot; the matched domain rides as
+                        // the sub-line.
+                        appName = browserDisplayName(pkgName),
                         reasonBadge = "Site Blocked",
-                        path = InterceptPath.SITE
+                        path = InterceptPath.SITE,
+                        subLine = matchedDomain
                     )
                     return@launch
                 }
@@ -285,6 +299,10 @@ class MonolithAccessibilityService : AccessibilityService() {
                 return@launch
             }
 
+            // FIX-7a: BACK before launch, like this door's three
+            // siblings — the blocked app must not stand visible,
+            // reward delivered, through the launch latency.
+            performGlobalAction(GLOBAL_ACTION_BACK)
             launchInterceptScreen(
                 packageName = appRule.packageName,
                 appName = appRule.appName,
@@ -292,6 +310,19 @@ class MonolithAccessibilityService : AccessibilityService() {
                 path = InterceptPath.APP_TIER
             )
         }
+    }
+
+    /** The browser's display name for the site door's name slot
+     *  (FIX-6): composed here, where the package is known — never
+     *  re-inferred on the face. An unlisted browser prints its
+     *  package name verbatim rather than an invented label. */
+    private fun browserDisplayName(packageName: String): String = when (packageName) {
+        "com.android.chrome" -> "Chrome"
+        "com.brave.browser" -> "Brave"
+        "org.mozilla.firefox" -> "Firefox"
+        "com.microsoft.emmx" -> "Microsoft Edge"
+        "com.sec.android.app.sbrowser" -> "Samsung Internet"
+        else -> packageName
     }
 
     private fun isCallActive(): Boolean {
@@ -417,7 +448,8 @@ class MonolithAccessibilityService : AccessibilityService() {
         packageName: String,
         appName: String,
         reasonBadge: String,
-        path: InterceptPath
+        path: InterceptPath,
+        subLine: String? = null
     ) {
         val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -425,6 +457,9 @@ class MonolithAccessibilityService : AccessibilityService() {
             putExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME, appName)
             putExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE, reasonBadge)
             putExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH, path.name)
+            if (subLine != null) {
+                putExtra(MonolithShieldService.EXTRA_INTERCEPTED_SUBLINE, subLine)
+            }
         }
         startActivity(interceptIntent)
     }

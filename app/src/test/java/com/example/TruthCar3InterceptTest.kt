@@ -53,15 +53,15 @@ class TruthCar3InterceptTest {
     fun peekOfferHoldsOnlyOnHonouringDoors() {
         val peekApp = app(AppBlockTier.PEEK_2M)
         // The two doors whose blockers read the lease.
-        assertTrue(peekOfferFor(InterceptPath.APP_TIER, peekApp, 0, false))
-        assertTrue(peekOfferFor(InterceptPath.SHIELD_APP, peekApp, 0, false))
+        assertTrue(peekOfferFor(InterceptPath.APP_TIER, peekApp, 0, false, sessionLive = true))
+        assertTrue(peekOfferFor(InterceptPath.SHIELD_APP, peekApp, 0, false, sessionLive = true))
         // The sniper, the site blocker, the uninstall guard and an
         // unidentified door never sell a peek — on the guard's door
         // the old code defaulted the offer ON for an unlisted app.
-        assertFalse(peekOfferFor(InterceptPath.SNIPER, peekApp, 0, false))
-        assertFalse(peekOfferFor(InterceptPath.SITE, peekApp, 0, false))
-        assertFalse(peekOfferFor(InterceptPath.UNINSTALL_GUARD, peekApp, 0, false))
-        assertFalse(peekOfferFor(InterceptPath.UNKNOWN, peekApp, 0, false))
+        assertFalse(peekOfferFor(InterceptPath.SNIPER, peekApp, 0, false, sessionLive = true))
+        assertFalse(peekOfferFor(InterceptPath.SITE, peekApp, 0, false, sessionLive = true))
+        assertFalse(peekOfferFor(InterceptPath.UNINSTALL_GUARD, peekApp, 0, false, sessionLive = true))
+        assertFalse(peekOfferFor(InterceptPath.UNKNOWN, peekApp, 0, false, sessionLive = true))
     }
 
     @Test
@@ -69,19 +69,19 @@ class TruthCar3InterceptTest {
         // The uninstall guard's whole caseload: no row, no offer —
         // on ANY door, including an honouring one.
         for (path in InterceptPath.values()) {
-            assertFalse(peekOfferFor(path, null, 0, false))
+            assertFalse(peekOfferFor(path, null, 0, false, sessionLive = true))
         }
     }
 
     @Test
     fun peekOfferNeedsThePeekTierAClearCooldownAndNoRunningPill() {
         val peekApp = app(AppBlockTier.PEEK_2M)
-        assertFalse(peekOfferFor(InterceptPath.APP_TIER, app(AppBlockTier.LOCKED), 0, false))
-        assertFalse(peekOfferFor(InterceptPath.APP_TIER, app(AppBlockTier.OPEN), 0, false))
-        assertFalse(peekOfferFor(InterceptPath.APP_TIER, peekApp, 1, false))
-        assertFalse(peekOfferFor(InterceptPath.APP_TIER, peekApp, 900, false))
-        assertFalse(peekOfferFor(InterceptPath.APP_TIER, peekApp, 0, true))
-        assertFalse(peekOfferFor(InterceptPath.SHIELD_APP, peekApp, 0, true))
+        assertFalse(peekOfferFor(InterceptPath.APP_TIER, app(AppBlockTier.LOCKED), 0, false, sessionLive = true))
+        assertFalse(peekOfferFor(InterceptPath.APP_TIER, app(AppBlockTier.OPEN), 0, false, sessionLive = true))
+        assertFalse(peekOfferFor(InterceptPath.APP_TIER, peekApp, 1, false, sessionLive = true))
+        assertFalse(peekOfferFor(InterceptPath.APP_TIER, peekApp, 900, false, sessionLive = true))
+        assertFalse(peekOfferFor(InterceptPath.APP_TIER, peekApp, 0, true, sessionLive = true))
+        assertFalse(peekOfferFor(InterceptPath.SHIELD_APP, peekApp, 0, true, sessionLive = true))
     }
 
     // -----------------------------------------------------------------
@@ -223,16 +223,29 @@ class TruthCar3InterceptTest {
         // SIL-2 (Pruefer's form): set the peek to 5 — the badge
         // says 5; the price names the 20-minute cooldown the arm
         // will impose. No surface hardcodes either number.
+        // FIX-8: the price sentence is re-timed (the cooldown
+        // starts when the peek ENDS — W-29's text is replaced
+        // along with the EMERGENCY PEEK name).
         assertEquals("5m", peekBadgeText(5 * 60))
         assertEquals("2m", peekBadgeText(120))
         assertEquals(
-            "TAKING THE PEEK STARTS A 20 MINUTES COOLDOWN ON THIS APP",
+            "WHEN THE PEEK ENDS, A 20 MINUTES COOLDOWN STARTS ON THIS APP",
             peekPriceText(20 * 60_000L)
         )
         assertEquals(
-            "TAKING THE PEEK STARTS A 1 MINUTE COOLDOWN ON THIS APP",
+            "WHEN THE PEEK ENDS, A 1 MINUTE COOLDOWN STARTS ON THIS APP",
             peekPriceText(60_000L)
         )
+    }
+
+    @Test
+    fun peekBadgeNeverTruncates() {
+        // FIX-8 (F-8): m+s honestly — 90s is "1m30s", never "1m".
+        assertEquals("1m30s", peekBadgeText(90))
+        assertEquals("45s", peekBadgeText(45))
+        assertEquals("2m5s", peekBadgeText(125))
+        assertEquals("1m", peekBadgeText(60))
+        assertEquals("0s", peekBadgeText(0))
     }
 
     @Test

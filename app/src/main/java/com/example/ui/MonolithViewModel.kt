@@ -12,7 +12,6 @@ import com.example.data.BlockedAppEntity
 import com.example.data.CapturedNotificationEntity
 import com.example.data.CurioCatalog
 import com.example.data.DailyFocusStat
-import com.example.data.DistractionTriggerReason
 import com.example.data.FocusProfileEntity
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
@@ -142,24 +141,175 @@ internal fun peekOfferFor(
     path: InterceptPath,
     entity: BlockedAppEntity?,
     cooldownLeftSeconds: Int,
-    pillActive: Boolean
+    pillActive: Boolean,
+    sessionLive: Boolean
 ): Boolean =
-    path.canHonourPeekLease &&
+    sessionLive &&
+        path.canHonourPeekLease &&
         entity != null &&
         entity.resolvedTier == AppBlockTier.PEEK_2M &&
         cooldownLeftSeconds == 0 &&
         !pillActive
 
+/**
+ * Session liveness (N-2, Tor round 11): a session is LIVE only
+ * while it is active and its span has not run out. A stopwatch
+ * session has no span end, so active is its whole truth. A dead
+ * session — ended, inactive, or a timed span at zero — yields
+ * no peek offer, no peek line, and no printed end instant: the
+ * door dismisses rather than stand over a corpse (the VM's
+ * session collector) and the grant refuses (start2MinutePeek's
+ * re-derivation). Pure, so the matrix is unit-tested.
+ */
+internal fun sessionIsLive(session: FocusSessionEntity?): Boolean {
+    if (session == null || !session.isActive) return false
+    if (session.isStopwatchMode) return true
+    return session.spanRemainingSeconds > 0
+}
+
+/**
+ * The withheld derivation, one home (C-07 precedence included,
+ * Tor round 7): owed only where this door could have honoured a
+ * peek, the tier is PEEK, and a LIVE session stands — a dead
+ * session owes no peek line at all (N-2; Baseline law 4's shape:
+ * a door that owes nothing prints nothing). Precedence: a LIVE
+ * LEASE on THIS package outranks its own cooldown — during a
+ * lease the cooldown read is lease-remainder + cooldown, and
+ * labelling that COOLDOWN misnames the binding constraint. A
+ * pill on a DIFFERENT package does not outrank this package's
+ * own cooldown, which remains its binding fact.
+ */
+internal fun peekWithheldFor(
+    canPeek: Boolean,
+    path: InterceptPath,
+    entity: BlockedAppEntity?,
+    cooldownLeftSeconds: Int,
+    pillActive: Boolean,
+    pillIsForPackage: Boolean,
+    sessionLive: Boolean
+): PeekWithheld? = when {
+    canPeek -> null
+    !sessionLive -> null
+    !path.canHonourPeekLease -> null
+    entity?.resolvedTier != AppBlockTier.PEEK_2M -> null
+    // Hale W-30: a peek length of zero is its own reason — the
+    // peek is OFF, not cooling down.
+    MonolithRepository.PEEK_DURATION_SECONDS <= 0 -> PeekWithheld.PEEK_OFF
+    pillActive && pillIsForPackage -> PeekWithheld.ALREADY_ACTIVE
+    cooldownLeftSeconds > 0 -> PeekWithheld.COOLDOWN
+    pillActive -> PeekWithheld.ALREADY_ACTIVE
+    else -> null
+}
+
+/**
+ * The taper (FIX-8, Funke P-1 as amended): the wall is 5 + this
+ * session's booked intercepts of this package, capped at 10. It
+ * gates only the peek offer's appearance — never RETURN, never
+ * the withheld lines. Pure, so the wall's arithmetic is tested
+ * directly. A homecoming arrival (P-5: the lease's own expiry
+ * echo) pays the floor with no count increment — it is not a
+ * new reach.
+ */
+internal fun taperWallSeconds(priorBookedThisSession: Int, justExpiredLease: Boolean): Int =
+    if (justExpiredLease) 5
+    else (5 + priorBookedThisSession.coerceAtLeast(0)).coerceAtMost(10)
+
+/**
+ * This session's booked intercepts of one package (FIX-8 /
+ * innovator P-4b): counted from the intercept LOG over the
+ * session's wall window — the receipt assembly's own derivation
+ * (getInterceptLogsBetween's precedent) — NEVER from
+ * BlockedAppEntity.interceptCount, which is a lifetime counter
+ * and would print a lifetime total in this session's clothes.
+ * Homecoming bookings (outcome "Peek Expired", P-5) are excluded:
+ * a lease's expiry echo is not a reach.
+ */
+internal fun sessionInterceptCount(
+    logs: List<InterceptLogEntity>,
+    sessionStartWallMillis: Long,
+    packageName: String
+): Int = logs.count { log ->
+    log.packageName == packageName &&
+        log.timestampMillis >= sessionStartWallMillis &&
+        log.outcome != "Peek Expired"
+}
+
+/**
+ * The session schedule's next Safe Break instant, wall clock
+ * (FIX-8, the Errand's kernel): derived from the session's own
+ * block arithmetic — the current block's stored end when a
+ * further block follows it, or, mid-break, the end of the block
+ * the break precedes. Null when the schedule holds no next
+ * break (single-block, last block, stopwatch): the door prints
+ * nothing rather than invent an appointment.
+ */
+internal fun nextBreakInstantMillis(session: FocusSessionEntity, nowWallMillis: Long): Long? {
+    if (session.isStopwatchMode) return null
+    return if (session.isInSafeBreak) {
+        // Mid-break the index still names the block that just
+        // finished (advancePastBreak increments at the exit), so
+        // the upcoming block is index + 1 — a break follows it
+        // only when that block is not the last.
+        if (session.currentBlockIndex + 1 < session.totalStudyBlocks) {
+            nowWallMillis +
+                (session.safeBreakSecondsRemaining + session.effectiveTargetSeconds) * 1000L
+        } else {
+            null
+        }
+    } else {
+        if (session.currentBlockIndex < session.totalStudyBlocks) {
+            nowWallMillis + session.remainingSeconds * 1000L
+        } else {
+            null
+        }
+    }
+}
+
 data class AirlockInterceptState(
     val isVisible: Boolean = false,
     val interceptedPackageName: String = "",
     val interceptedAppName: String = "",
-    val interceptReasonBadge: String = "Locked",
+    // FIX-6 (C-10): the fallback badge word is "Blocked" at every
+    // site — state default, trigger default, intent fallback,
+    // shield extra fallback.
+    val interceptReasonBadge: String = "Blocked",
     val sessionIntention: String = "",
-    val selectedReason: DistractionTriggerReason = DistractionTriggerReason.MUSCLE_MEMORY,
-    val transmutedParticles: Int = 0,
-    val canUse2MinutePeek: Boolean = true,
-    val peekCooldownRemainingSeconds: Int = 0,
+    // FIX-8 (Funke C-4): the offer default is FALSE — an unloaded
+    // state must read as no-offer, never a phantom offer beside
+    // peekOfferFor's never-default-ON law.
+    val canUse2MinutePeek: Boolean = false,
+    /** The wall's anchored monotonic END (FIX-5b): every wall
+     *  print derives remaining = end − now at recomposition; no
+     *  counter ticks itself anywhere on this face. 0 = no wall
+     *  (non-offer branches). */
+    val wallEndsAtMono: Long = 0L,
+    /** The taper-derived wall length, for the draining rule's
+     *  fraction (designer §5.2). */
+    val wallTotalSeconds: Int = 0,
+    /** The cooldown's anchored monotonic END (FIX-5b), replacing
+     *  the peekCooldownRemainingSeconds snapshot as the print
+     *  source. 0 = no cooldown anchored. */
+    val peekCooldownEndsAtMono: Long = 0L,
+    /** Booked intercepts of this package in this session BEFORE
+     *  this visit (FIX-8): one count drives both the taper and
+     *  the memory line, so the two can never disagree. */
+    val priorInterceptsThisSession: Int = 0,
+    /** The session schedule's next break instant, wall clock
+     *  (FIX-8 errand kernel); null when none is owed. */
+    val nextBreakAtMillis: Long? = null,
+    /** The site door's matched domain (FIX-6 name slot): the
+     *  browser's name holds the name slot; the domain rides here
+     *  as the sub-line. Null on every other door. */
+    val nameSubLine: String? = null,
+    /** A nonce per arrival (innovator P-4c): every remember /
+     *  effect key in the overlay carries it, so a same-package
+     *  re-fire can never inherit a previous visit's expired wall
+     *  and skip its own tapered wall. */
+    val interceptNonce: Long = 0L,
+    /** Homecoming (innovator P-5): this arrival is the expiry
+     *  echo of a lease this door granted — greeted "THE PEEK
+     *  ENDED", never counted as a new reach. */
+    val justExpiredLease: Boolean = false,
     /** The door that fired (UNA2-01): carried from the firing
      *  service through the intent into this state, never inferred
      *  from the badge or the package. */
@@ -167,6 +317,15 @@ data class AirlockInterceptState(
     /** Non-null only when this door could have honoured a peek
      *  and the tier owed one: the withheld line's reason. */
     val peekWithheld: PeekWithheld? = null,
+    /** C-11: the arrival row's id, booked at TRIGGER — RETURN and
+     *  PEEK update THIS row's outcome when known, never a second
+     *  row. 0 until the arrival write lands (or if it failed): the
+     *  resolution paths then fall back to a single insert stamped
+     *  with [interceptArrivedAtWallMillis]. */
+    val interceptLogId: Long = 0L,
+    /** C-11: the arrival instant, wall clock — the row's stamp,
+     *  carried in state so no resolution can re-stamp it late. */
+    val interceptArrivedAtWallMillis: Long = 0L,
     /** The session's span end (SIL-1, Hale W-28): the door states
      *  the end from the session's own numbers — the same
      *  now + remaining derivation the Deck's TIME cell prints.
@@ -192,7 +351,13 @@ internal fun peekSecondsRemaining(leaseEndMono: Long, nowMono: Long): Int? {
 
 data class DisarmChallengeState(
     val isVisible: Boolean = false,
-    val requiredHoldSeconds: Int = 60
+    val requiredHoldSeconds: Int = 60,
+    /** Door-originated entry only (innovator P-2c): a stopwatch
+     *  session past its floor may complete cleanly, and from the
+     *  Held Door that completion is presented ON THIS FACE — a
+     *  deliberate slab tap — never as requestDisarmChallenge's
+     *  silent Deck shortcut. The Deck entry never sets this. */
+    val cleanCompletionAvailable: Boolean = false
     // No token count lives here (TOKEN-SPEC §5, Amendment A): a count
     // copied into this state at open time is a snapshot that can lie
     // for the visit's whole life. The overlay derives its count from
@@ -802,6 +967,20 @@ class MonolithViewModel(
             activeSession.collect { session ->
                 if (session == null) {
                     armProving.onActiveSessionGone()
+                }
+            }
+        }
+        // N-2 (Tor round 11): a standing door is dismissed at
+        // session end — it never stands over a corpse printing a
+        // past end instant in the future tense. Fires on session
+        // emissions only; a door triggered while no session stands
+        // simply carries no offer and no end line (trigger's own
+        // liveness derivation), and the next emission that finds
+        // its session dead clears it.
+        viewModelScope.launch {
+            activeSession.collect { session ->
+                if (_airlockState.value.isVisible && !sessionIsLive(session)) {
+                    _airlockState.value = _airlockState.value.copy(isVisible = false)
                 }
             }
         }
@@ -1963,24 +2142,6 @@ class MonolithViewModel(
         }
     }
 
-    fun splitActiveTaskAndReturn(microStepTitle: String) {
-        if (midSeal()) return
-        soundEngine.playHarmonicSeal(arming = true)
-        val state = _airlockState.value
-        _airlockState.value = state.copy(isVisible = false)
-        viewModelScope.launch {
-            val microTask = repository.splitActiveTaskIntoMicroStep(microStepTitle)
-            _intentionText.value = microTask.title
-            repository.recordIntercept(
-                packageName = state.interceptedPackageName.ifBlank { "com.google.android.youtube" },
-                appName = state.interceptedAppName.ifBlank { "Blocked App" },
-                sessionIntention = microTask.title,
-                outcome = "Split Into 10m Micro-Step",
-                triggerReason = DistractionTriggerReason.STUCK_ON_PROBLEM.shortTag
-            )
-        }
-    }
-
     fun toggleTaskSubStep(taskId: Int, stepIndex: Int) {
         soundEngine.playRotaryDetent(640.0)
         viewModelScope.launch {
@@ -2264,6 +2425,68 @@ class MonolithViewModel(
         _disarmChallenge.value = _disarmChallenge.value.copy(isVisible = false)
     }
 
+    /**
+     * The Held Door's honest exit entry (FIX-8 / innovator P-2):
+     * END THE SESSION INSTEAD routes here. Guards, non-negotiable:
+     * - the Disarm face ALWAYS presents — the stopwatch-past-floor
+     *   clean completion is offered on the face as a deliberate
+     *   slab, never taken silently from a footer tap;
+     * - the airlock is NOT dismissed: the Disarm face stands in
+     *   front of the still-standing door, and KEEP FOCUSING
+     *   (dismissDisarmChallenge) returns him to it, untouched —
+     *   looking at the exit books nothing;
+     * - the airlock clears only when a disarm actually completes
+     *   (P-2d, in the completion paths below) — a door never
+     *   stands over a dead session, and a tap that opens nothing
+     *   never strands him on no face at all.
+     */
+    fun requestDisarmChallengeFromDoor() {
+        val current = activeSession.value ?: return
+        val cleanCompletion = current.isStopwatchMode &&
+            current.elapsedSeconds >= MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
+        // FIX-7 (Ton §5.6): the exit voice fires HERE — on the
+        // CONFIRMED handoff (the session exists and the Disarm
+        // face is about to open below), never on a tap that opens
+        // nothing. It is the handoff's ONLY voice: this door route
+        // never calls requestDisarmChallenge, so that function's
+        // own playMechanicalLatch(false) can never double-sound
+        // the seam — one voice per handoff, by construction.
+        soundEngine.playDoorExit()
+        _disarmChallenge.value = DisarmChallengeState(
+            isVisible = true,
+            requiredHoldSeconds = 60,
+            cleanCompletionAvailable = cleanCompletion
+        )
+    }
+
+    /**
+     * The door-originated face's END THE SESSION slab (P-2c): the
+     * lawful clean completion of a stopwatch session past its
+     * floor, taken deliberately on the Disarm face. Books exactly
+     * what the Deck shortcut books ("Stopwatch Completed") — the
+     * difference is the man's hand, not the ledger.
+     */
+    fun completeStopwatchCompletionFromDisarmFace() {
+        val current = activeSession.value ?: return
+        if (!current.isStopwatchMode ||
+            current.elapsedSeconds < MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
+        ) {
+            return
+        }
+        soundEngine.playHarmonicSeal(arming = false)
+        _isAlwaysOnDeskClockVisible.value = false
+        _disarmChallenge.value = DisarmChallengeState(isVisible = false)
+        _airlockState.value = _airlockState.value.copy(isVisible = false)
+        viewModelScope.launch {
+            repository.disarmActiveSession(completed = true, outcomeReason = "Stopwatch Completed")
+            MonolithShieldService.stopShield(appContext)
+            com.example.service.RoutineHeartbeat.tickAsync(
+                appContext, com.example.service.RoutineHeartbeat.Source.SESSION_EDGE
+            )
+            _sevenDayStats.value = repository.compute7DayHistory()
+        }
+    }
+
     fun confirmDisarmSession(reason: String = "Ended Early") {
         // TOKEN-SPEC §5: this path never touches the token again. The
         // grace cancel (§4.4) is free and unrecorded by the ledger;
@@ -2271,6 +2494,9 @@ class MonolithViewModel(
         soundEngine.playHarmonicSeal(arming = false)
         _isAlwaysOnDeskClockVisible.value = false
         _disarmChallenge.value = DisarmChallengeState(isVisible = false)
+        // P-2d: a completed disarm clears the standing door in the
+        // same emission — no airlock over a dead session.
+        _airlockState.value = _airlockState.value.copy(isVisible = false)
         viewModelScope.launch {
             repository.disarmActiveSession(completed = false, outcomeReason = reason)
             MonolithShieldService.stopShield(appContext)
@@ -2298,6 +2524,9 @@ class MonolithViewModel(
                     soundEngine.playHarmonicSeal(arming = false)
                     _isAlwaysOnDeskClockVisible.value = false
                     _disarmChallenge.value = DisarmChallengeState(isVisible = false)
+                    // P-2d: the door clears with the session it
+                    // stood over — same emission, no dead door.
+                    _airlockState.value = _airlockState.value.copy(isVisible = false)
                     MonolithShieldService.stopShield(appContext)
                     com.example.service.RoutineHeartbeat.tickAsync(
                         appContext, com.example.service.RoutineHeartbeat.Source.SESSION_EDGE
@@ -2315,47 +2544,106 @@ class MonolithViewModel(
     fun triggerAirlockIntercept(
         packageName: String,
         appName: String,
-        reasonBadge: String = "Locked",
-        path: InterceptPath = InterceptPath.UNKNOWN
+        reasonBadge: String = "Blocked",
+        path: InterceptPath = InterceptPath.UNKNOWN,
+        subLine: String? = null
     ) {
-        soundEngine.playMechanicalLatch(true)
+        // FIX-7c: the arrival voice — the seal's recipe at door
+        // pitch, latch haptics kept (TactileSoundEngine).
+        soundEngine.playDoorArrival()
         val active = activeSession.value
+        val nowMono = SystemClock.elapsedRealtime()
+        val nowWall = System.currentTimeMillis()
 
         val appEntity = apps.value.find { it.packageName == packageName }
         val cooldownLeft = if (appEntity != null) repository.getPeekCooldownRemainingSeconds(appEntity) else 0
         val pillActive = _floatingPeekPill.value.isActive
+        // N-2: the offer derivation takes session liveness as an
+        // input — a dead session yields no offer and no peek line.
+        val live = sessionIsLive(active)
         // UNA2-01: the offer is computed per-path by the one pure
         // function — tier alone never sells a peek, and an unlisted
         // package (the uninstall guard's whole caseload) never
         // defaults the offer ON.
-        val canPeek = peekOfferFor(path, appEntity, cooldownLeft, pillActive)
+        val canPeek = peekOfferFor(path, appEntity, cooldownLeft, pillActive, live)
         // The withheld reason is owed only where the door could
         // have honoured a peek and the tier is PEEK: elsewhere no
         // peek line prints at all (Held Door Truth Baseline).
-        val withheld = when {
-            canPeek -> null
-            !path.canHonourPeekLease -> null
-            appEntity?.resolvedTier != AppBlockTier.PEEK_2M -> null
-            // Hale W-30: a peek length of zero is its own reason —
-            // the peek is OFF, not cooling down. (Trunk's constant
-            // is 120 s; the branch arms the day Rurik's editable
-            // store can set it to 0.)
-            MonolithRepository.PEEK_DURATION_SECONDS <= 0 -> PeekWithheld.PEEK_OFF
-            cooldownLeft > 0 -> PeekWithheld.COOLDOWN
-            pillActive -> PeekWithheld.ALREADY_ACTIVE
-            else -> null
+        // C-07 precedence lives inside peekWithheldFor: a live
+        // lease on THIS package outranks its own cooldown.
+        val withheld = peekWithheldFor(
+            canPeek = canPeek,
+            path = path,
+            entity = appEntity,
+            cooldownLeftSeconds = cooldownLeft,
+            pillActive = pillActive,
+            pillIsForPackage = _floatingPeekPill.value.packageName == packageName,
+            sessionLive = live
+        )
+
+        // P-5 (homecoming): a lease this door granted has just
+        // expired under him — the row still carries its end, and
+        // an expiry inside the launch-latency window is the
+        // lease's own echo, not a new reach. An early-ended peek
+        // zeroes the field, so it can never masquerade here.
+        val leaseEndMono = appEntity?.activePeekUntilElapsedRealtime ?: 0L
+        val justExpiredLease = leaseEndMono > 0L &&
+            nowMono - leaseEndMono in 0L..15_000L
+
+        // FIX-8 / P-4b: the session-window count from the log —
+        // one derivation driving both the taper and the memory
+        // line. No session in state → no count (the door claims
+        // no memory it doesn't have).
+        val priorCount = if (active != null) {
+            sessionInterceptCount(interceptLogs.value, active.startWallTimeMillis, packageName)
+        } else {
+            0
         }
+        val wallSeconds = if (canPeek) taperWallSeconds(priorCount, justExpiredLease) else 0
+
+        // P-4c: a fresh nonce per arrival — a same-package re-fire
+        // starts its own visit, its own tapered wall. Computed
+        // before the state so the arrival booking below can guard
+        // its id write on this visit still standing.
+        val nonce = maxOf(nowMono, _airlockState.value.interceptNonce + 1L)
 
         _airlockState.value = AirlockInterceptState(
             isVisible = true,
             interceptedPackageName = packageName,
             interceptedAppName = appName,
             interceptReasonBadge = reasonBadge,
-            sessionIntention = active?.intention ?: _intentionText.value,
-            selectedReason = DistractionTriggerReason.MUSCLE_MEMORY,
-            transmutedParticles = 0,
+            // FIX-3e: the intention is the ARMED session's, or
+            // blank — never the composer's draft (_intentionText).
+            // No armed session in state → blank → no line.
+            sessionIntention = active?.intention ?: "",
             canUse2MinutePeek = canPeek,
-            peekCooldownRemainingSeconds = cooldownLeft,
+            // FIX-5b: anchored ends, never counters — the wall's
+            // end and the cooldown's end enter state as monotonic
+            // instants; every print derives from them.
+            wallEndsAtMono = if (canPeek) nowMono + wallSeconds * 1000L else 0L,
+            wallTotalSeconds = wallSeconds,
+            peekCooldownEndsAtMono = appEntity?.let {
+                repository.peekCooldownEndsAtElapsedRealtime(it)
+            } ?: 0L,
+            priorInterceptsThisSession = priorCount,
+            // FIX-8 errand kernel: the break appointment exists
+            // only on PEEK-tier doors — exactly where a break
+            // actually opens this app (designer §4.5).
+            nextBreakAtMillis = if (
+                path.canHonourPeekLease &&
+                appEntity?.resolvedTier == AppBlockTier.PEEK_2M &&
+                active != null
+            ) {
+                nextBreakInstantMillis(active, nowWall)
+            } else {
+                null
+            },
+            nameSubLine = subLine,
+            interceptNonce = nonce,
+            // C-11: the arrival instant rides in state; the row
+            // itself is booked just below, at this same trigger.
+            interceptArrivedAtWallMillis = nowWall,
+            justExpiredLease = justExpiredLease,
             interceptPath = path,
             peekWithheld = withheld,
             // SIL-1 / W-28: the door states the session's end from
@@ -2366,15 +2654,123 @@ class MonolithViewModel(
             // at MonolithModels is the model's own derivation, the
             // same one the desk clock reads) — never for a stopwatch.
             sessionEndsAtMillis = active
-                ?.takeIf { !it.isStopwatchMode }
+                // N-2: a past end instant never prints — a dead
+                // session's end is not stated at all.
+                ?.takeIf { !it.isStopwatchMode && live }
                 ?.let { System.currentTimeMillis() + it.spanRemainingSeconds * 1000L },
             sessionIsStopwatch = active?.isStopwatchMode == true
         )
+
+        // C-11 (Tor round 7, ruled in full): BOOK AT ARRIVAL. The
+        // row is written NOW, stamped with the arrival instant,
+        // outcome AT DOOR; RETURN/PEEK update this same row when
+        // their outcome is known. The taper and the memory line
+        // (both derived from the log) therefore count arrivals —
+        // priorCount above was read BEFORE this write, so this
+        // visit never counts itself. The id lands back into state
+        // only if this visit (same nonce) is still standing.
+        val arrivalIntention = active?.intention ?: ""
+        viewModelScope.launch {
+            val rowId = runCatching {
+                repository.bookInterceptArrival(
+                    packageName = packageName,
+                    appName = appName,
+                    sessionIntention = arrivalIntention,
+                    arrivedAtWallMillis = nowWall
+                )
+            }.getOrDefault(0L)
+            if (rowId > 0L && _airlockState.value.interceptNonce == nonce) {
+                _airlockState.value = _airlockState.value.copy(interceptLogId = rowId)
+            }
+        }
     }
 
-    fun selectDistractionReason(reason: DistractionTriggerReason) {
-        soundEngine.playRotaryDetent(580.0)
-        _airlockState.value = _airlockState.value.copy(selectedReason = reason)
+    /**
+     * FIX-5c: the cooldown's expiry resolution. The overlay calls
+     * this when its derived cooldown reaches 0; the offer
+     * derivation re-runs against the CURRENT row, cooldown and
+     * pill, and the state updates in place — the peek stands in
+     * Z1's slot, or the withheld line re-derives to its new true
+     * state. "AGAIN IN 0 MIN" is unrepresentable: at derived 0
+     * there is no cooldown line, by construction. A door whose
+     * withheld reason is not COOLDOWN is left untouched.
+     */
+    fun refreshAirlockDoorState() {
+        val state = _airlockState.value
+        if (!state.isVisible || state.peekWithheld != PeekWithheld.COOLDOWN) return
+        // N-2: a door whose session died while it stood is
+        // dismissed, never resolved into an offer over a corpse.
+        if (!sessionIsLive(activeSession.value)) {
+            _airlockState.value = state.copy(isVisible = false)
+            return
+        }
+        val entity = apps.value.find { it.packageName == state.interceptedPackageName }
+        val cooldownLeft = entity?.let { repository.getPeekCooldownRemainingSeconds(it) } ?: 0
+        val pillActive = _floatingPeekPill.value.isActive
+        val pillIsForPackage = _floatingPeekPill.value.packageName == state.interceptedPackageName
+        // C-07: a live lease on THIS package outranks its own
+        // cooldown even mid-visit — the standing COOLDOWN line
+        // re-derives to ALREADY_ACTIVE rather than waiting out a
+        // cooldown read that is really lease-remainder + cooldown.
+        if (cooldownLeft > 0 && !(pillActive && pillIsForPackage)) return
+        val canPeek = peekOfferFor(
+            state.interceptPath, entity, cooldownLeft, pillActive,
+            sessionLive = true
+        )
+        val withheld = peekWithheldFor(
+            canPeek = canPeek,
+            path = state.interceptPath,
+            entity = entity,
+            cooldownLeftSeconds = cooldownLeft,
+            pillActive = pillActive,
+            pillIsForPackage = pillIsForPackage,
+            sessionLive = true
+        )
+        if (!canPeek && withheld == state.peekWithheld) return
+        _airlockState.value = state.copy(
+            canUse2MinutePeek = canPeek,
+            peekWithheld = withheld,
+            peekCooldownEndsAtMono = entity?.let {
+                repository.peekCooldownEndsAtElapsedRealtime(it)
+            } ?: 0L,
+            // The wall already ran on this visit in the only coin
+            // that matters — the cooldown itself. A resolved offer
+            // stands immediately; it does not queue behind a
+            // second wall (designer §5.5).
+            wallEndsAtMono = if (canPeek) SystemClock.elapsedRealtime() else state.wallEndsAtMono
+        )
+        // FIX-7 / Ton §5.3: a held→offer resolution arms with the
+        // same beat as a wall expiry — an offer arriving is an
+        // offer arriving. The nonce is marked sounded so the
+        // overlay's arm effect cannot spend it a second time.
+        if (canPeek) {
+            armSoundedForNonce = state.interceptNonce
+            soundEngine.playDoorArm()
+        }
+    }
+
+    /** The visit nonce whose offer-arm beat has already sounded
+     *  (FIX-7): the arm fires exactly once per visit, whichever
+     *  route arms it — wall expiry (the overlay's effect calls
+     *  [onAirlockOfferArmed]) or a FIX-5c held→offer resolution
+     *  (refreshAirlockDoorState fires and marks it there). */
+    private var armSoundedForNonce: Long = -1L
+
+    /**
+     * The wall-expiry arm (FIX-7, Ton §5.3): called by the overlay
+     * when its derived tenant first becomes the armed chip. The
+     * engine call lives HERE, at the VM's transition guard — never
+     * in the composable — and the nonce guard makes a recomposition
+     * or a re-fired effect incapable of double-sounding it. Held
+     * zeros (nothing arms) never call this; the guard also refuses
+     * any state that does not actually carry an offer.
+     */
+    fun onAirlockOfferArmed() {
+        val state = _airlockState.value
+        if (!state.isVisible || !state.canUse2MinutePeek) return
+        if (armSoundedForNonce == state.interceptNonce) return
+        armSoundedForNonce = state.interceptNonce
+        soundEngine.playDoorArm()
     }
 
     /**
@@ -2388,14 +2784,29 @@ class MonolithViewModel(
         // state can never sell a lease its door couldn't honour,
         // and a blank package no longer defaults to an unrelated
         // app. A refused grant leaves the airlock standing.
+        // N-2 (Tor round 11): the re-derivation includes session
+        // liveness — a dead session REFUSES the grant outright:
+        // no lease, no cooldown anchor, no booking, and (Ton §5.5)
+        // no sound; arithmetic does not apologise.
         val entity = apps.value.find { it.packageName == state.interceptedPackageName }
         val cooldownNow = entity?.let { repository.getPeekCooldownRemainingSeconds(it) } ?: 0
-        if (!peekOfferFor(state.interceptPath, entity, cooldownNow, _floatingPeekPill.value.isActive)) {
+        if (!peekOfferFor(
+                state.interceptPath, entity, cooldownNow,
+                _floatingPeekPill.value.isActive,
+                sessionLive = sessionIsLive(activeSession.value)
+            )
+        ) {
             return
         }
         val pkg = state.interceptedPackageName
-        val name = state.interceptedAppName.ifBlank { "2m Peek App" }
-        soundEngine.playMechanicalLatch(true)
+        // FIX-3d's law: blank books blank — the "2m Peek App"
+        // fallback dies (it was unreachable; unreachable fallbacks
+        // are how L-04 armed itself).
+        val name = state.interceptedAppName
+        // FIX-7 (Ton §5.5): the grant's own voice — the binding
+        // chord at door pitch, replacing the generic latch every
+        // switch in the app shares.
+        soundEngine.playDoorPeek()
         _airlockState.value = state.copy(isVisible = false)
         _floatingPeekPill.value = FloatingPeekPillState(
             isActive = true,
@@ -2405,13 +2816,25 @@ class MonolithViewModel(
         )
         viewModelScope.launch {
             repository.startPeekLease(pkg)
-            repository.recordIntercept(
-                packageName = pkg,
-                appName = name,
-                sessionIntention = state.sessionIntention.ifBlank { _intentionText.value },
-                outcome = "Used 2m Peek",
-                triggerReason = state.selectedReason.shortTag
-            )
+            // C-11: the outcome updates the ARRIVAL row in place.
+            // Fallback (the arrival write has not landed or
+            // failed): one insert, still stamped at arrival.
+            if (state.interceptLogId > 0L) {
+                repository.resolveIntercept(state.interceptLogId, "Used 2m Peek")
+            } else {
+                repository.recordIntercept(
+                    packageName = pkg,
+                    appName = name,
+                    // FIX-3e: the armed session's intention or
+                    // blank — never the composer's draft. FIX-3a:
+                    // no reason was stated, so none is booked
+                    // (UNSTATED default).
+                    sessionIntention = state.sessionIntention,
+                    outcome = "Used 2m Peek",
+                    timestampMillis = state.interceptArrivedAtWallMillis
+                        .takeIf { it > 0L } ?: System.currentTimeMillis()
+                )
+            }
         }
     }
 
@@ -2427,23 +2850,37 @@ class MonolithViewModel(
 
     fun transmuteImpulseAndReturn() {
         val state = _airlockState.value
-        soundEngine.playHarmonicSeal(arming = true)
+        // FIX-7d (Ton §5.4): RETURN's own voice — the release
+        // chord at door pitch. playHarmonicSeal is RETIRED from
+        // this path: the seal's voice is never spent on a goodbye.
+        soundEngine.playDoorReturn()
         _airlockState.value = state.copy(isVisible = false)
+        // FIX-3c: the tap is observed; the sequel is not. RETURN
+        // books "RETURNED AT DOOR", never "Stayed Focused". P-5: a
+        // homecoming return books the lease's own outcome, "Peek
+        // Expired" — the ledger gains a true word, and the taper's
+        // count excludes it (sessionInterceptCount).
+        val outcome = if (state.justExpiredLease) "Peek Expired" else "RETURNED AT DOOR"
         viewModelScope.launch {
-            repository.recordIntercept(
-                packageName = state.interceptedPackageName.ifBlank { "com.zhiliaoapp.musically" },
-                appName = state.interceptedAppName.ifBlank { "Blocked App" },
-                sessionIntention = state.sessionIntention.ifBlank { _intentionText.value },
-                outcome = "Stayed Focused",
-                triggerReason = state.selectedReason.shortTag
-            )
+            // C-11: the outcome updates the ARRIVAL row in place —
+            // same row, arrival timestamp unmoved. Fallback (the
+            // arrival write has not landed or failed): one insert,
+            // still stamped at arrival, package and name verbatim
+            // (FIX-3d: blank books blank — the fallback that booked
+            // TikTok's package for an unnamed arrival stays dead).
+            if (state.interceptLogId > 0L) {
+                repository.resolveIntercept(state.interceptLogId, outcome)
+            } else {
+                repository.recordIntercept(
+                    packageName = state.interceptedPackageName,
+                    appName = state.interceptedAppName,
+                    sessionIntention = state.sessionIntention,
+                    outcome = outcome,
+                    timestampMillis = state.interceptArrivedAtWallMillis
+                        .takeIf { it > 0L } ?: System.currentTimeMillis()
+                )
+            }
         }
-    }
-
-    fun incrementAirlockParticlePulse() {
-        val current = _airlockState.value
-        soundEngine.playRotaryDetent(500.0 + (current.transmutedParticles * 35.0))
-        _airlockState.value = current.copy(transmutedParticles = current.transmutedParticles + 1)
     }
 
     fun refreshSystemGuard() {
