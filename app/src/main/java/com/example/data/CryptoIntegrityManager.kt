@@ -13,11 +13,16 @@ import javax.crypto.spec.SecretKeySpec
 
 /**
  * Provides:
- * Hardware AndroidKeyStore HmacSHA256 signing & verification of active focus
- * timer state to detect local DB/SharedPreferences tampering and trigger a
- * penalty lock. (The AES-GCM backup export that used to live here was killed
- * Oct 29, 2026: its payload had no egress and no restore - theatre, not a
- * backup. Critics Phase-3, caller-verified.)
+ * AndroidKeyStore HmacSHA256 signing & verification of active focus timer
+ * state to detect local DB/SharedPreferences tampering and trigger a
+ * penalty lock. Keys are REQUESTED from the AndroidKeyStore; hardware/TEE
+ * backing is not verified (no StrongBox request, no KeyInfo security-level
+ * check), and when the KeyStore is unavailable signing falls back to a
+ * built-in software key — so a valid signature proves consistency with
+ * whatever key signed, not hardware custody of that key. (The AES-GCM
+ * backup export that used to live here was killed Oct 29, 2026: its
+ * payload had no egress and no restore - theatre, not a backup. Critics
+ * Phase-3, caller-verified.)
  */
 object CryptoIntegrityManager {
 
