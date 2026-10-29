@@ -117,13 +117,15 @@
             android:directBootAware="true"
             android:exported="false" />
 
-        <!-- Kernel-Level Uninstall Guard (DeviceAdminReceiver) -->
+        <!-- Device Admin (DeviceAdminReceiver): friction + a warning
+             on deactivation only — it does not prevent deactivation
+             or uninstall (issue #44). -->
         <receiver
             android:name=".service.MonolithDeviceAdminReceiver"
-            android:description="@string/accessibility_service_description"
+            android:description="@string/device_admin_description"
             android:directBootAware="true"
             android:exported="false"
-            android:label="Monolith Uninstall Guard"
+            android:label="@string/device_admin_label"
             android:permission="android.permission.BIND_DEVICE_ADMIN">
             <meta-data
                 android:name="android.app.device_admin"

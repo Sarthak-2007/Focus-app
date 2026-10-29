@@ -1,5 +1,7 @@
 package com.example
 
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -46,6 +48,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
 import com.example.service.InterceptPath
+import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithShieldService
 import com.example.service.TactileSoundEngine
 import com.example.ui.MonolithDestination
@@ -357,8 +360,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         MonolithDestination.VAULT -> 3
     }
 
-    // The FIX key's panes: the exact Settings pane per grant,
-    // including the device-admin pane the app has never had.
+    // The FIX key's panes: the exact Settings pane per grant; device
+    // admin instead fires the official activation intent for this
+    // app's own admin (issue #44), with Security Settings as fallback.
     fun openFixPane(item: com.example.service.WatchItemId) {
         runCatching {
             when (item) {
@@ -367,13 +371,24 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 com.example.service.WatchItemId.USAGE_ACCESS ->
                     context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
                 com.example.service.WatchItemId.DEVICE_ADMIN -> {
-                    val direct = Intent().setComponent(
-                        android.content.ComponentName(
-                            "com.android.settings",
-                            "com.android.settings.DeviceAdminSettings"
+                    // Issue #44: ask Android for THIS admin through the
+                    // official activation intent — the old hardcoded
+                    // com.android.settings component only opened a
+                    // generic list (and broke wherever that class name
+                    // differed) and never actually requested the admin.
+                    // Security Settings is only the fallback for when
+                    // the official intent itself cannot be fired.
+                    val requestAdmin = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                        putExtra(
+                            DevicePolicyManager.EXTRA_DEVICE_ADMIN,
+                            ComponentName(context, MonolithDeviceAdminReceiver::class.java)
                         )
-                    )
-                    runCatching { context.startActivity(direct) }
+                        putExtra(
+                            DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                            context.getString(R.string.device_admin_add_explanation)
+                        )
+                    }
+                    runCatching { context.startActivity(requestAdmin) }
                         .getOrElse {
                             context.startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
                         }
