@@ -276,6 +276,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val shotGround by viewModel.shotGround.collectAsStateWithLifecycle()
     val finishState by viewModel.finishState.collectAsStateWithLifecycle()
     val receiptState by viewModel.receiptState.collectAsStateWithLifecycle()
+    // The receipt sheet's dismissal is host state (F-B1): the
+    // slip stands until the next DOWN anywhere, a navigation, or
+    // PARK's invocation — it is never dismissed by a timer. (The
+    // nav/PARK effect itself sits below, beside the PARK state
+    // it reads.)
+    var dismissedReceiptSessionId by remember { mutableStateOf(-1) }
     val isAlwaysOnDeskClockVisible by viewModel.isAlwaysOnDeskClockVisible.collectAsStateWithLifecycle()
     // Issue #13: A-4's cause table, A-10(v)'s keep-awake +
     // surrender fade, E-1's veil + Landing — all VM-owned state.
@@ -1103,6 +1109,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             // opening either dismisses this one first.
             val standingReceipt = receiptState
             if (standingReceipt != null &&
+                dismissedReceiptSessionId != standingReceipt.sessionId &&
                 currentDestination == MonolithDestination.DECK
             ) {
                 com.example.ui.components.ReceiptSheet(

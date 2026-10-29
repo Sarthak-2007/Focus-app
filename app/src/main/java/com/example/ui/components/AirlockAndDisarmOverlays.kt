@@ -8,8 +8,6 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -1559,7 +1557,7 @@ fun AirlockInterceptOverlay(
                             modifier = Modifier.fillMaxWidth().height(34.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            AnimatedVisibility(
+                            androidx.compose.animation.AnimatedVisibility(
                                 visible = state.canUse2MinutePeek,
                                 enter = fadeIn(MonolithCurves.specA(180)),
                                 exit = fadeOut(MonolithCurves.specA(180))

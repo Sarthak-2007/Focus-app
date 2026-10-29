@@ -25,37 +25,10 @@ jobs:
           yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
           "$SDKMANAGER" "platforms;android-36.1" "build-tools;36.1.0"
 
-      # ISSUE-3 FIX (Wave-2, landed on agent/issue-3 by Fuge's cell;
-      # first filed as ci/rescue-build.draft.yml by Fern's cell).
-      #
-      # app/build.gradle.kts signs the debug build with signingConfig
-      # "debugConfig" -> storeFile ${rootDir}/debug.keystore (standard
-      # Android debug key: password "android", alias
-      # "androiddebugkey"). debug.keystore is .gitignore line 18 —
-      # never committed — so every clean runner failed
-      # :app:validateSigningDebug (runs #4-#7, identical, after full
-      # Kotlin compilation had passed).
-      #
-      # Generate the identical standard key at the repo root, where
-      # debugConfig expects it, before assembling. keytool ships with
-      # the JDK installed above; no new dependency, no repo change,
-      # no binary in history. The guard keeps a locally committed
-      # keystore (if Ren ever chooses that route) untouched.
-      - name: Generate debug keystore (issue #3 fix)
-        run: |
-          if [ -f debug.keystore ]; then
-            echo "debug.keystore already present — using it as-is"
-          else
-            keytool -genkeypair -v \
-              -keystore debug.keystore \
-              -storepass android \
-              -keypass android \
-              -alias androiddebugkey \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
-          fi
+      # Debug keystore: committed at the repo root (the standard
+      # Android debug key debugConfig points at) — CI and local
+      # builds now share one signature; no generation step needed.
+      # The release/upload key is NEVER committed (see .gitignore).
 
       - name: Assemble debug
         id: assemble

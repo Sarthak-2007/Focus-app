@@ -336,7 +336,31 @@ data class FocusSessionEntity(
     // session can never mint a second №, whatever the settings
     // slot holds by then — replacing the single-slot arithmetic
     // coincidence the guarantee used to rest on.
-    val receiptNumber: Int = 0
+    val receiptNumber: Int = 0,
+    // Batch 10 (12→13): appended after receiptNumber, in exactly
+    // MIGRATION_12_13's ADD COLUMN order (entity order = column
+    // order, per table — the composed-order law).
+    // Frist: the break length stamped on the row at seal, so the
+    // span prices the break that was SET, not a constant.
+    val breakSeconds: Int = 600,
+    // Frist: ADD TIME's accumulated grant on this row; the span
+    // getters price it via effectiveTargetSeconds' extension term.
+    val extensionSecondsAdded: Int = 0,
+    // Frist: the per-extension event log ("+10@HH:MM" entries),
+    // list-never-sum on the slip (W-44).
+    val extensionLog: String = "",
+    // Voss (routine-edit, RC-03): the routine's WITHIN label,
+    // frozen at seal; null = no label. Nullable, NO default in
+    // the migration — the only nullable column of the eight.
+    val withinLabel: String? = null,
+    // W-41 split (Suki's Car-3 offer, built at this merge): the
+    // seal-time split of held apps — SHUT vs PEEK — stored by the
+    // birth writer beside the merged count, because the split
+    // cannot be reconstructed at print time. -1 = not recorded
+    // (every pre-v13 row); the HELD line prints only when shut,
+    // peek and sites are all >= 0, else it is OMITTED.
+    val heldShutAtSeal: Int = -1,
+    val heldPeekAtSeal: Int = -1
 ) {
     // ONE derivation of session time (the Now Frame fix, Nadia x Freya):
     // every surface - Deck, desk clock, airlock, the enforcing service -
@@ -747,7 +771,14 @@ data class GuardSettingsEntity(
     // not exist and the sniper fired (or not) on a value no store
     // held. Default true IS the truthful pre-v12 value: the sniper
     // fired unconditionally whenever a session was active.
-    val shortsReelsSniperEnabled: Boolean = true
+    val shortsReelsSniperEnabled: Boolean = true,
+    // Batch 10 (12→13, Frist — truth-3-times): the peek/break
+    // lengths become settings the lease and the break actually
+    // read, replacing the hardcoded 2 / 10 minutes. Bounds live
+    // in the setters (peek 0–30, break 0–60, clamped on write),
+    // not the schema. peekMinutes = 0 means PEEK IS OFF.
+    val peekMinutes: Int = 2,
+    val breakMinutes: Int = 10
 )
 
 /**

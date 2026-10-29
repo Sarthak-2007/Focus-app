@@ -1119,7 +1119,10 @@ private fun ParkBoardRow(
     name: String,
     word: String?,
     wordInk: ParkWordInk,
-    ageWord: String? = null
+    ageWord: String? = null,
+    // Issue #14's Setup Ledger print: a second, quieter line under
+    // the row (e.g. "WAS SET AT SETUP — SINCE LOST"); null = no line.
+    subLine: String? = null
 ) {
     val scheme = MaterialTheme.colorScheme
     Column {

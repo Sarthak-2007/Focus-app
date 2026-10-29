@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         EmergencyBreakSpendEntity::class,
         DayNoteEntity::class
     ],
-    version = 12,
+    version = 13,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -195,6 +195,31 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
+         * Batch 10 (12→13): THE one composed migration. Neither
+         * lane's private 11→12 text survives anywhere — only their
+         * column deltas, re-based here: Frist's five (peek/break
+         * settings + the break/extension stamps) and Voss's one
+         * (withinLabel), plus the W-41 split pair (heldShutAtSeal /
+         * heldPeekAtSeal, Suki's Car-3 offer built at this merge;
+         * default -1 = not recorded, by analogy to the seal-count
+         * columns, so pre-split rows can never print a false HELD
+         * line). ADD COLUMN order mirrors the entity append order
+         * per table exactly.
+         */
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE guard_settings ADD COLUMN peekMinutes INTEGER NOT NULL DEFAULT 2")
+                db.execSQL("ALTER TABLE guard_settings ADD COLUMN breakMinutes INTEGER NOT NULL DEFAULT 10")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN breakSeconds INTEGER NOT NULL DEFAULT 600")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN extensionSecondsAdded INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN extensionLog TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN withinLabel TEXT")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN heldShutAtSeal INTEGER NOT NULL DEFAULT -1")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN heldPeekAtSeal INTEGER NOT NULL DEFAULT -1")
+            }
+        }
+
+        /**
          * TOKEN-SPEC §6: the spend ledger arrives as an explicit
          * migration. There is NO backfill — today's in-memory spends
          * were never recorded, so v8 truthfully starts with an empty
@@ -239,7 +264,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
                     .build()
                 INSTANCE = instance
                 instance
