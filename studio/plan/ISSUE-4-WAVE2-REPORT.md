@@ -152,3 +152,7 @@ compile and run BLICK T1–T9 against this code; then the §2 host fold
 seat on the merge tree.
 
 — ANTLITZ, cluster-B lead, issue #4. DECLARED, uncompiled, awaiting Ren.
+
+## STATUS ADDENDUM (lead, after commit 8336ca1)
+- This cell origin is the LOCAL merge-batch9 remote, not GitHub: push succeeded there only (new branch agent/issue-4). GitHub push of 8336ca1 is still owed by Ren.
+- The signed summary comment DID post on issue #4 via the GitHub connector (comment id 6510069208).
