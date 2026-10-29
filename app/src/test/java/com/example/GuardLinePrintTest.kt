@@ -44,7 +44,7 @@ class GuardLinePrintTest {
 
     @Test
     fun nullSnapshot_printsNotChecked() {
-        assertEquals("GUARD — NOT CHECKED", guardLineFor(null, 10_000L)?.text)
+        assertEquals("GUARD — NOT CHECKED", guardLineFor(null, 10_000L).text)
     }
 
     @Test
@@ -52,19 +52,19 @@ class GuardLinePrintTest {
         // Three counted doors measured, the fourth never measured:
         // no count may print — the set is not measured.
         val snap = snapshot(wholeSet() - WatchItemId.NOTIFICATION_LISTENER)
-        assertEquals("GUARD — NOT CHECKED", guardLineFor(snap, 10_000L)?.text)
+        assertEquals("GUARD — NOT CHECKED", guardLineFor(snap, 10_000L).text)
     }
 
     @Test
     fun wholeSet_printsFourOfFour() {
         val snap = snapshot(wholeSet())
-        assertEquals("GUARD 4/4", guardLineFor(snap, 10_000L)?.text)
+        assertEquals("GUARD 4/4", guardLineFor(snap, 10_000L).text)
     }
 
     @Test
     fun missingDoor_printsCountAndBareName() {
         val snap = snapshot(wholeSet() + (WatchItemId.USAGE_ACCESS to PermState.MISSING))
-        assertEquals("GUARD 3/4 — USAGE ACCESS", guardLineFor(snap, 10_000L)?.text)
+        assertEquals("GUARD 3/4 — USAGE ACCESS", guardLineFor(snap, 10_000L).text)
     }
 
     @Test
@@ -74,7 +74,7 @@ class GuardLinePrintTest {
         val snap = snapshot(wholeSet())
         assertEquals(
             "GUARD 3/4 — ACCESSIBILITY STALE",
-            guardLineFor(snap, 56_000L)?.text
+            guardLineFor(snap, 56_000L).text
         )
     }
 }

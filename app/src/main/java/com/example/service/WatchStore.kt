@@ -144,6 +144,13 @@ data class WatchSnapshot(
     val engineHeartbeatWall: Long,
     val engineProtecting: Boolean,
     val lastProvedWallMillis: Long?,
+    /** The generation of the latest sweep whose COMPLETE set has
+     *  landed (issue #9, Critic C-1). PARK's CHECK key derives its
+     *  CHECKING state from this — a press is answered only by the
+     *  sweep it dispatched, never by the shield loop's gen-0
+     *  re-stamps or an earlier sweep's late landings. 0 = no sweep
+     *  has completed in this process. */
+    val lastCompletedSweepGen: Int = 0,
     /** Emission generation (issue #48): bumped by [WatchStore.poke]
      *  so a poke is a REAL emission — StateFlow suppresses equal
      *  values, and a bare copy() of a data class is equal to the
@@ -215,13 +222,25 @@ object WatchStore {
     val snapshots: StateFlow<WatchSnapshot> = _snapshots.asStateFlow()
 
     private val sweepScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var sweepGen = 0
+    @Volatile private var sweepGen = 0
 
     /** The in-flight sweep's dispatch instant. A permission item
      *  counts toward the completing set when its measurement landed
      *  at or after this wall time — from the sweep's own query or
      *  from a fresher lifecycle/heartbeat stamp of the same era. */
     @Volatile private var pendingSweepStartWall: Long = 0L
+
+    /** The in-flight sweep's generation, companion to
+     *  [pendingSweepStartWall]: when the set completes, the
+     *  snapshot's lastCompletedSweepGen takes this value — the
+     *  tie between a completed proof and the sweep that made it. */
+    @Volatile private var pendingSweepGen: Int = 0
+
+    /** The latest dispatched sweep's generation. PARK's CHECK
+     *  key reads this immediately after dispatching its sweep:
+     *  the press is answered when the snapshot's
+     *  lastCompletedSweepGen reaches it. */
+    fun currentSweepGen(): Int = sweepGen
 
     // Interceptor inputs: the settings and the suspension, pushed by
     // the ViewModel (the settings live in guard_settings; the
@@ -328,6 +347,7 @@ object WatchStore {
      */
     fun runSweep(query: (WatchItemId) -> Boolean) {
         val gen = ++sweepGen
+        pendingSweepGen = gen
         pendingSweepStartWall = System.currentTimeMillis()
         for (item in WatchItemId.PERMISSIONS) {
             sweepScope.launch {
@@ -516,10 +536,18 @@ object WatchStore {
         // measurement from the in-flight sweep's era (at or after
         // its dispatch), the set is complete and the instant is the
         // last landing's wall time. A partial set never advances it.
+        // The set must also COEXIST (Critic C-5): the era test
+        // alone let five landings and a sixth stamp hours later —
+        // from any other road — "complete" a set that never stood
+        // together, advancing LAST PROVED over five STALE rows.
+        // The window is the board's own freshness law: a set whose
+        // span exceeds STALE_AFTER_MS is not a set. Past the
+        // window the sweep is abandoned; its late stamps remain
+        // ordinary measurements and complete nothing.
         val sweepStart = pendingSweepStartWall
         if (sweepStart > 0L) {
             val perms = WatchItemId.PERMISSIONS.mapNotNull { next.items[it] }
-            if (perms.size == WatchItemId.PERMISSIONS.size &&
+            val completedAt = if (perms.size == WatchItemId.PERMISSIONS.size &&
                 perms.all { it.measuredWall >= sweepStart }
             ) {
                 val completedAt = perms.maxOf { it.measuredWall }
@@ -532,6 +560,15 @@ object WatchStore {
                     next = next.copy(lastProvedWallMillis = completedAt)
                     persistLastProved(completedAt)
                 }
+                // Issue #9 (Critic C-1): publish the completed set's
+                // generation so PARK's CHECK key can derive its
+                // CHECKING state from the sweep IT dispatched —
+                // never from gen-0 re-stamps or an earlier sweep.
+                if (next.lastCompletedSweepGen != pendingSweepGen) {
+                    next = next.copy(lastCompletedSweepGen = pendingSweepGen)
+                }
+                pendingSweepStartWall = 0L
+            } else if (wall - sweepStart > STALE_AFTER_MS) {
                 pendingSweepStartWall = 0L
             }
         }
@@ -599,6 +636,7 @@ object WatchStore {
         _snapshots.value = WatchSnapshot.EMPTY
         boundContext = null
         sweepGen = 0
+        pendingSweepGen = 0
         pendingSweepStartWall = 0L
         shortsSettingOn = true
         sitesSettingOn = true
