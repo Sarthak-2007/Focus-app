@@ -2,6 +2,7 @@ package com.example.data
 
 import android.app.AppOpsManager
 import android.app.admin.DevicePolicyManager
+import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.ComponentName
 import android.content.Context
@@ -586,6 +587,36 @@ class MonolithRepository(
                 mode == AudioManager.MODE_IN_COMMUNICATION
         } catch (_: Exception) {
             false
+        }
+    }
+
+    /** Batch-10 (pill lane port): the current foreground package,
+     *  whatever it is — the pill's ticker asks once per second so
+     *  the face can tell "you are inside the peeked app" from
+     *  "you wandered off". Event-based (queryEvents), unlike the
+     *  stats-based blocked-app query below. */
+    fun queryForegroundPackage(): String? {
+        if (!hasUsageStatsPermission()) return null
+        return try {
+            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+                ?: return null
+            val end = System.currentTimeMillis()
+            val start = end - 15 * 60 * 1000L
+            val events = usm.queryEvents(start, end) ?: return null
+            val event = UsageEvents.Event()
+            var foreground: String? = null
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                if (event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND ||
+                    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                        event.eventType == UsageEvents.Event.ACTIVITY_RESUMED)
+                ) {
+                    foreground = event.packageName
+                }
+            }
+            foreground
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -1765,7 +1796,7 @@ class MonolithRepository(
             routineLabelWithin = routineLabel,
             bankedBreakSeconds = banked,
             shieldWasOff = row.outcome == SessionOutcome.ELAPSED_SHIELD_GAP,
-            deflections = deflections
+            deflections = deflections,
             // W-41 FILL POINT (batch-10, landed): the split columns
             // now exist (MIGRATION_12_13) and the birth writer stores
             // them with the enforcer-derived sites figure. The gate

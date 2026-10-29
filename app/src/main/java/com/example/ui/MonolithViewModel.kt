@@ -826,6 +826,7 @@ class MonolithViewModel(
     }
 
     val apps: StateFlow<List<BlockedAppEntity>> = repository.allAppsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** Batch-10: the Guard settings row, held — the synchronous
      *  readers (the pill's Frist seed, the PEEK_OFF withheld
@@ -834,7 +835,6 @@ class MonolithViewModel(
     val guardSettingsState: StateFlow<com.example.data.GuardSettingsEntity?> =
         repository.guardSettingsFlow
             .stateIn(viewModelScope, SharingStarted.Eagerly, null)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val filteredApps: StateFlow<List<BlockedAppEntity>> = combine(
         apps,
