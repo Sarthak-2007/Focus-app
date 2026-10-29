@@ -660,7 +660,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     ParkDrawer(
                         visible = parkOpen,
                         snapshot = watchSnapshot,
-                        isSealed = sealed,
+                        // §4.12 (wave-2): PARK's gate composes the
+                        // unified doorLocked — HB-1/HB-2 were fixed
+                        // everywhere except inside PARK, which drank
+                        // from raw `sealed` while the header band
+                        // above it already used doorLocked.
+                        isSealed = doorLocked,
+                        // §4.2: the same warrant the Deck prints.
+                        warrant = deckWarrant,
                         isNight = effectiveNight,
                         soundEnabled = soundEnabled,
                         shortsReelsSniperEnabled = shortsReelsSniperEnabled,

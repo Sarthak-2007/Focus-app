@@ -57,6 +57,8 @@ import com.example.service.PermPrint
 import com.example.service.TactileSoundEngine
 import com.example.service.WatchItemId
 import com.example.service.WatchSnapshot
+import com.example.service.Warrant
+import com.example.service.WarrantState
 import com.example.service.WatchStore
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AppTitleTextStyle
@@ -114,26 +116,34 @@ private val PLATE_HEAD = listOf(
     "UNIT Nº 01 · BUILT FOR ONE USER · NOT FOR SALE"
 )
 private val PLATE_BODY = listOf(
-    "WHEEL SETS TIME · SLIDE ARMS · THE HOLD BREAKS",
     "HOLD: 60 SECONDS, BANKED EVERY 15 · ONE BREAK A WEEK",
     "PEEK: 2 MINUTES, THEN SHUT AGAIN",
-    "COLOUR IS A VERB: ORANGE = COMMIT · INK = SHUT · GREY = PEEK · PORCELAIN = OPEN",
-    // UNA-05 (Truth Car 3, words half; Hale W-11, Una's brief):
-    // the "FIRED AS SET" clause is STRUCK in this lane. It was
-    // falsified on his phone (Oct 29, 20:00 SLEEP no-fire) and the
-    // merged tree may print it again only when Wache's F1–F5 are in
-    // the same build AND a live fire has been re-verified — that
-    // restoration is a merge-time act on that evidence, not before.
-    "ROUTINES: SET BY HAND ON SHIELD",
-    "SITES: KEPT WITH APPS ON SHIELD · DATA: ON THIS PHONE ONLY",
-    "STUDY HOURS: IN YPT",
-    "SOUND: FLOAT-PCM, 4 PARTIALS · POWER: YOUR PHONE"
+    // Wave-2 plate cut (AUDIT-park §1.11/§4.9, lead ruling): the
+    // plate is cut toward the ruled four lines (head 2 + HOLD +
+    // PEEK). CUT: the WHEEL line, the COLOUR line (it contradicted
+    // this file's own orange-zero law), the ROUTINES line (its
+    // "FIRED AS SET" clause remains STRUCK under W-11 — UNA-05:
+    // falsified on his phone Oct 29, 20:00 SLEEP no-fire; it may
+    // return only when Wache's F1–F5 land in the same build AND a
+    // live fire is re-verified), the SOUND/POWER line, and the
+    // "DATA: ON THIS PHONE ONLY" clause (it contradicted the YPT
+    // line it stood beside). KEPT as one combined fifth line —
+    // against the literal count, on the record — because SITES and
+    // STUDY HOURS are truth facts this plate uniquely carries on
+    // this surface; deleting them to hit a number would trade
+    // truth for arithmetic.
+    "SITES: KEPT WITH APPS ON SHIELD · STUDY HOURS: IN YPT"
 )
 
 @Composable
 fun ParkDrawer(
     visible: Boolean,
     snapshot: WatchSnapshot?,
+    // §4.2 (wave-2): the wire warrant, supplied by the host from the
+    // same deckWarrant flow the Deck prints — Park derives its word
+    // ONLY through WatchStore.printState, never a second derivation.
+    // Null = no warrant read supplied: the line prints NOT CHECKED.
+    warrant: Warrant? = null,
     isSealed: Boolean,
     isNight: Boolean,
     soundEnabled: Boolean,
@@ -185,6 +195,15 @@ fun ParkDrawer(
             WatchStore.permPrintAt(snap, it, nowMono) == PermPrint.MISSING
         }
     }
+    // The Healing Staircase's print half (P-5, wave-2): how many
+    // doors lack, in board order — the FIX key names its place in
+    // the walk (FIX 1 OF 3). The walk itself is sequential by
+    // construction: on return the key re-names the next lack.
+    val missingItems = snapshot?.let { snap ->
+        WatchItemId.PERMISSIONS.filter {
+            WatchStore.permPrintAt(snap, it, nowMono) == PermPrint.MISSING
+        }
+    } ?: emptyList()
 
     // The CHECK key's sweep generation (Hof P-1 cure, issue #9;
     // derivation tightened under Critic C-1): the press dispatches
@@ -296,6 +315,17 @@ fun ParkDrawer(
     }
     val checkInk = checking || checkNeeded
 
+    // The FIX return's PRINTED verdict (AUDIT-park P-5, wave-2):
+    // Muede overruled the silent verdict for the drawer's real
+    // hour — the firm click stays for sound, and a word now prints
+    // too: FIXED or STILL OPEN, naming the door. Silence read
+    // identical for fixed and still-broken, so he took the trip
+    // twice. Cleared on the next press and on close.
+    var fixVerdict by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
+    LaunchedEffect(visible) {
+        if (!visible) fixVerdict = null
+    }
+
     // The FIX key's dip: pressed on DOWN, held for the whole absence,
     // resolved on the return (see the return effect below).
     var fixPressed by remember { mutableStateOf(false) }
@@ -318,10 +348,12 @@ fun ParkDrawer(
         val repaired = WatchStore.permPrintAt(snap, item, SystemClock.elapsedRealtime()) ==
             PermPrint.GRANTED
         if (repaired) {
-            // The repaired line alone gets the firm click; the hand
-            // goes back in silence — no word prints, ever.
+            // The repaired line alone gets the firm click (the
+            // sound acquittal stands) — and, since wave-2, the
+            // printed verdict below the key (P-5).
             soundEngine?.playFirmClick()
         }
+        fixVerdict = item.boardName to repaired
         // Either the key now names the next lack or it absents
         // itself; in both cases the dip releases (PRESS-BACK).
         fixPressed = false
@@ -417,55 +449,56 @@ fun ParkDrawer(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(PaddingValues(start = 20.dp, end = 20.dp, bottom = 100.dp))
+                    .padding(PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp)) // §4.11: the 100dp void is cut to 24
             ) {
-                // (1) Header + the LAST PROVED telltale. The instant
-                // lives HERE and nowhere else; the slot is blank
-                // until the first complete set lands.
+                // (1) Header (wave-2, §4.3 + §4.2): the headline
+                // finally prints the count it everywhere else
+                // printed — GUARD {n}/4, from the store's own
+                // countedWarranted. LAST PROVED is DEMOTED from
+                // here to the foot colophon (§1.3/§4.8): it is a
+                // six-permission complete-set instant and may not
+                // sit as the four's headline.
+                val countedNow = snapshot?.let { WatchStore.countedWarranted(it, nowMono) }
                 Text(
-                    text = "GUARD",
+                    text = if (countedNow != null) "GUARD $countedNow/4" else "GUARD",
                     style = DrawerHeaderTextStyle,
-                    color = scheme.onBackground
+                    color = scheme.onBackground,
+                    modifier = Modifier.testTag("park_guard_headline")
                 )
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "LAST PROVED",
-                        style = PillBadgeTextStyle,
-                        color = scheme.onSurfaceVariant
-                    )
-                    val proved = snapshot?.lastProvedWallMillis
-                    if (proved != null) {
-                        Spacer(modifier = Modifier.width(10.dp))
-                        // The instant prints its date when it is
-                        // not today (Critic C-5): the store is
-                        // in-memory but a process lives for days,
-                        // and a bare HH:mm cannot say which day it
-                        // proved — a stale-proof path by typography.
-                        val provedDate = Date(proved)
-                        val sameDay = SimpleDateFormat("yyyyMMdd", Locale.US)
-                            .format(provedDate) ==
-                            SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
-                        Text(
-                            text = SimpleDateFormat("HH:mm", Locale.US).format(provedDate) +
-                                (if (sameDay) "" else
-                                    " · " + SimpleDateFormat("dd MMM", Locale.US)
-                                        .format(provedDate)) +
-                                " · SELF-REPORT",
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            letterSpacing = 0.5.sp,
-                            color = scheme.onBackground
-                        )
+                Spacer(modifier = Modifier.height(8.dp))
+                // The warrant line (§1.7/§4.2, P-2 cheap half): the
+                // board that answers "is blocking on?" can now say
+                // LIVE — the word derives ONLY through
+                // WatchStore.printState on the host-supplied
+                // warrant (a stale LIVE reads UNPROVEN there).
+                val warrantPrint = WatchStore.printState(warrant, nowMono)
+                ParkBoardRow(
+                    name = "WARRANT",
+                    word = warrantPrint?.name ?: "NOT CHECKED",
+                    wordInk = when (warrantPrint) {
+                        WarrantState.LIVE -> ParkWordInk.QUIET
+                        WarrantState.UNPROVEN -> ParkWordInk.HALF
+                        else -> ParkWordInk.FULL
                     }
-                }
+                )
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 // (2) The board: nine ruled lines, fixed order.
                 if (snapshot != null) {
-                    WatchItemId.PERMISSIONS.forEach { item ->
+                    WatchItemId.PERMISSIONS.forEachIndexed { permIdx, item ->
+                        // The doors are RANKED (§3, wave-2 §4.7):
+                        // tier eyebrows in board order — Tier 1 the
+                        // warrant's only conjuncts, Tier 2 the
+                        // anchor, Tier 3 the quiet; OVERLAY +
+                        // BATTERY are false citizens of the counted
+                        // family and sit under their own eyebrow.
+                        when (permIdx) {
+                            0 -> ParkTierEyebrow("TIER 1 — THE PROOF ITSELF")
+                            2 -> ParkTierEyebrow("TIER 2 — THE ANCHOR")
+                            3 -> ParkTierEyebrow("TIER 3 — THE QUIET")
+                            4 -> ParkTierEyebrow("NOT COUNTED — THE REST")
+                        }
                         // One derivation per row per frame (F-B3):
                         // word and ink read the SAME print — two
                         // calls could straddle the 45s boundary and
@@ -473,6 +506,15 @@ fun ParkDrawer(
                         val print = WatchStore.permPrintAt(snapshot, item, nowMono)
                         ParkBoardRow(
                             name = item.boardName,
+                            // §4.4 age column (wave-2): every row
+                            // prints the age of its own measurement,
+                            // from the stamp the store already
+                            // buries — a GRANTED from an hour ago
+                            // and one from a second ago no longer
+                            // wear the same face.
+                            ageWord = snapshot.measurement(item)?.let { m ->
+                                parkAgeWord(nowMono - m.measuredMono)
+                            },
                             word = when (print) {
                                 PermPrint.GRANTED -> "GRANTED"
                                 PermPrint.MISSING -> "MISSING"
@@ -570,6 +612,24 @@ fun ParkDrawer(
                     val item = firstMissing ?: return@AnimatedVisibility
                     Column {
                         Spacer(modifier = Modifier.height(16.dp))
+                        // The escort (P-5, wave-2 print half): FIX
+                        // used to abandon him at the OS border —
+                        // the general Accessibility list, "find
+                        // MONOLITH" said nowhere. The drawer now
+                        // says where the trip goes and that the
+                        // verdict waits here on return.
+                        Text(
+                            text = if (item == WatchItemId.ACCESSIBILITY) {
+                                "FIX OPENS SETTINGS — FIND MONOLITH IN THE LIST, TURN IT ON, THEN COME BACK HERE"
+                            } else {
+                                "FIX OPENS THIS DOOR'S SETTINGS PAGE — MAKE THE CHANGE, THEN COME BACK HERE FOR THE VERDICT"
+                            },
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("park_fix_escort")
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -585,6 +645,7 @@ fun ParkDrawer(
                                                 onPress = {
                                                     fixPressed = true
                                                     fixPressedItem = item
+                                                    fixVerdict = null
                                                     // The engine's quietest
                                                     // existing voice: the seat
                                                     // knock at its floor.
@@ -628,13 +689,33 @@ fun ParkDrawer(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "FIX — ${item.boardName}",
+                                // The staircase's label (P-5): with
+                                // several lacks, the key names its
+                                // place in the walk — FIX 1 OF 3.
+                                text = if (missingItems.size > 1) {
+                                    "FIX 1 OF ${missingItems.size} — ${item.boardName}"
+                                } else {
+                                    "FIX — ${item.boardName}"
+                                },
                                 style = PrimaryButtonTextStyle,
                                 color = onInkControlFill(),
                                 maxLines = 1
                             )
                         }
                     }
+                }
+
+                // The FIX return's printed verdict (P-5, wave-2):
+                // FIXED or STILL OPEN, naming the door — persists
+                // until the next press or the drawer closing.
+                val verdict = fixVerdict
+                if (verdict != null) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    ParkBoardRow(
+                        name = if (verdict.second) "FIXED" else "STILL OPEN",
+                        word = verdict.first,
+                        wordInk = if (verdict.second) ParkWordInk.QUIET else ParkWordInk.FULL
+                    )
                 }
 
                 // (3b) The CHECK key (Hof P-1 cure, issue #9) — the
@@ -888,8 +969,54 @@ fun ParkDrawer(
                 }
                 ParkHairline()
 
+                // (6b) The foot colophon (§1.3/§4.8 + §4.3, wave-2):
+                // LAST PROVED lives here now, demoted from the
+                // header — a six-permission complete-set instant is
+                // a colophon fact, not the four's headline. Beside
+                // it the board signs its work like the receipt signs
+                // its: GUARD ···· {n}/4 · {HH:mm}.
+                Spacer(modifier = Modifier.height(24.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "LAST PROVED",
+                        style = PillBadgeTextStyle,
+                        color = scheme.onSurfaceVariant
+                    )
+                    val proved = snapshot?.lastProvedWallMillis
+                    if (proved != null) {
+                        Spacer(modifier = Modifier.width(10.dp))
+                        val provedDate = Date(proved)
+                        val sameDay = SimpleDateFormat("yyyyMMdd", Locale.US)
+                            .format(provedDate) ==
+                            SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
+                        Text(
+                            text = SimpleDateFormat("HH:mm", Locale.US).format(provedDate) +
+                                (if (sameDay) "" else
+                                    " · " + SimpleDateFormat("dd MMM", Locale.US)
+                                        .format(provedDate)) +
+                                " · SELF-REPORT",
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            letterSpacing = 0.5.sp,
+                            color = scheme.onBackground
+                        )
+                    }
+                }
+                if (snapshot != null) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "GUARD ···· ${WatchStore.countedWarranted(snapshot, nowMono)}/4 · " +
+                            SimpleDateFormat("HH:mm", Locale.US).format(Date()),
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("park_guard_footline")
+                    )
+                }
+
                 // (7) The spec plate — furniture at the foot.
-                Spacer(modifier = Modifier.height(32.dp))
+                Spacer(modifier = Modifier.height(24.dp))
                 ParkHairline()
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
@@ -924,7 +1051,12 @@ private enum class ParkWordInk { QUIET, HALF, FULL }
 /** One board line: name plate left, state word right, ruled under.
  *  A never-measured line prints its NAME ONLY — no word, no fill. */
 @Composable
-private fun ParkBoardRow(name: String, word: String?, wordInk: ParkWordInk) {
+private fun ParkBoardRow(
+    name: String,
+    word: String?,
+    wordInk: ParkWordInk,
+    ageWord: String? = null
+) {
     val scheme = MaterialTheme.colorScheme
     Column {
         Row(
@@ -939,6 +1071,15 @@ private fun ParkBoardRow(name: String, word: String?, wordInk: ParkWordInk) {
                 color = scheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.weight(1f))
+            if (ageWord != null) {
+                Text(
+                    text = ageWord,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+            }
             if (word != null) {
                 Text(
                     text = word,
@@ -1051,6 +1192,30 @@ private fun ParkSocialSitesRow(
         }
         ParkHairline()
     }
+}
+
+/** A tier eyebrow (§3): Atkinson bold small caps in quiet ink —
+ *  rank is designed by order and label, never by shrinking a row. */
+@Composable
+private fun ParkTierEyebrow(text: String) {
+    Text(
+        text = text,
+        fontFamily = AtkinsonHyperlegibleFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 10.sp,
+        letterSpacing = 0.6.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
+    )
+}
+
+/** The age of a measurement, printed (§4.4): NOW inside five
+ *  seconds, seconds to a minute, minutes beyond. An age is a fact
+ *  about the measurement, never about the grant. */
+internal fun parkAgeWord(ageMs: Long): String = when {
+    ageMs < 5_000L -> "NOW"
+    ageMs < 60_000L -> "${ageMs / 1_000L}S AGO"
+    else -> "${ageMs / 60_000L}M AGO"
 }
 
 /** PARK's ruling: 1dp of ink at 18% — print ruling, not a depth line. */
