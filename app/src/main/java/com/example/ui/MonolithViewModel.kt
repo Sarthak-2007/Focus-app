@@ -1610,6 +1610,21 @@ class MonolithViewModel(
         }
     }
 
+    /**
+     * Receipt audit item 20, interim law (issue #10): persist
+     * the standing slip's dismissal by №. The host keeps its
+     * in-process dismissal state exactly as before; this is the
+     * durable half — after process death the repository's
+     * rehydration refuses the dismissed №, so the slip never
+     * re-ambushes at cold start. The state flow is NOT cleared
+     * here: the slip stood in-session until the host's own law
+     * (dismissal state, next arm) retires it.
+     */
+    fun dismissReceipt() {
+        val receipt = _receiptState.value ?: return
+        repository.dismissReceipt(receipt.number)
+    }
+
     /** The Deck host's gate doors (Schlitten §3.2/§3.3). */
     fun witnessSledReturn(sessionId: Int) = sledReturnGate.witness(sessionId)
 

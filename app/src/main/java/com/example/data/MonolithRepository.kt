@@ -179,6 +179,18 @@ class MonolithRepository(
         const val SEAL_MARKER_SESSION_KEY = "sealed_session_id"
         const val SEAL_MARKER_WALL_KEY = "sealed_wall_ms"
 
+        /** Receipt audit item 20, interim law (issue #10): the
+         *  dismissed slip's №. Prefs, not Room — the fact is one
+         *  integer, and a guard_settings column would cost a
+         *  database version bump for it alone (12→13); this store
+         *  carries it with NO schema change. Only the LATEST
+         *  dismissed № is kept: a newer slip supersedes it, and a
+         *  № can never be re-issued to another session (the claim
+         *  sequence only mints forward), so one slot is the whole
+         *  truth. */
+        const val RECEIPT_PREFS_NAME = "monolith_receipt"
+        const val DISMISSED_RECEIPT_NUMBER_KEY = "dismissed_receipt_number"
+
         /** The prune note's prefs home (Ordner lane, Mikro M5): a
          *  record of what the catalog reconcile removed, kept until
          *  Shield has shown it once. Prefs, not Room — announcing a
@@ -1547,6 +1559,28 @@ class MonolithRepository(
         }
     }
 
+    /** The dismissed receipt's №, or 0 when no slip has ever
+     *  been dismissed on this install (№s start at 1, so 0 can
+     *  never match a real slip). */
+    fun dismissedReceiptNumber(): Int =
+        context.getSharedPreferences(RECEIPT_PREFS_NAME, Context.MODE_PRIVATE)
+            .getInt(DISMISSED_RECEIPT_NUMBER_KEY, 0)
+
+    /** Persist a dismissal (receipt audit item 20, interim law):
+     *  the № is written the moment the slip is dismissed, so
+     *  the dismissal survives process death and the slip never
+     *  re-ambushes at cold start. The write COMMITS — the same
+     *  standard as the day words (DayWordStore, G-02): apply()'s
+     *  async flush would leave exactly the hard-death window
+     *  this law exists to close. */
+    fun dismissReceipt(number: Int) {
+        if (number <= 0) return
+        context.getSharedPreferences(RECEIPT_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(DISMISSED_RECEIPT_NUMBER_KEY, number)
+            .commit()
+    }
+
     /** The standing receipt's identity, for rehydration (Z6 case
      *  b): (№, sessionId, outcomeWord) when a receipt stands. */
     suspend fun standingReceipt(): Triple<Int, Int, String>? {
@@ -1619,6 +1653,14 @@ class MonolithRepository(
         // session's wall window, intention-matched, system rows
         // excluded, break-window openings excluded, 30s-per-
         // package dedupe keeping the first. A list, never a sum.
+        //
+        // Receipt audit item 11 (Neu C-03): the filter also reads
+        // the row's OUTCOME — blocked outcomes only (the
+        // enumerated vocabulary on InterceptOutcome). A peek
+        // grant ("Used 2m Peek") is a let-in, not a block: it
+        // never reaches the slip, and because the outcome test
+        // runs BEFORE the dedupe, a peek row never eats the 30s
+        // dedupe slot of a real block of the same package.
         val windowEnd = if (row.routineId != null && row.windowEndMillis > 0L) {
             maxOf(trueEndedAtWallMs, row.windowEndMillis)
         } else {
@@ -1631,6 +1673,7 @@ class MonolithRepository(
             .filter { log ->
                 log.sessionIntention == row.intention &&
                     log.packageName != "com.monolith.system" &&
+                    isBlockedInterceptOutcome(log.outcome) &&
                     breakWindows.none { log.timestampMillis in it }
             }
             .filter { log ->
@@ -1666,6 +1709,16 @@ class MonolithRepository(
             bankedBreakSeconds = banked,
             shieldWasOff = row.outcome == SessionOutcome.ELAPSED_SHIELD_GAP,
             deflections = deflections
+            // W-41 FILL POINT (issue #10 preparation): heldFigures
+            // stays null here — the row carries no SHUT/PEEK split
+            // columns yet, and the summed heldAppsAtSeal above is
+            // NOT enforcement truth (it books PEEK apps as held;
+            // heldSitesAtSeal is a blind list size). When Ren's
+            // batch-10 columns (heldShutAtSeal / heldPeekAtSeal +
+            // enforcer-derived sites) land on the session row,
+            // fill heldFigures = ReceiptHeldFigures(...) from them
+            // HERE, at this one point, and the HELD line prints
+            // with no sheet or state change.
         )
     }
 
@@ -1705,7 +1758,15 @@ class MonolithRepository(
     fun receiptOutcomeWord(row: FocusSessionEntity, kind: String): String = when (kind) {
         FinishKind.ROUTINE_ATTENDED -> "ATTENDED"
         FinishKind.ROUTINE_PARTIAL -> "PARTIAL"
-        FinishKind.ROUTINE_SLEEP_STANDDOWN -> "SLEPT THROUGH"
+        // Receipt audit item 7 (A2, wave-2 — issue #10): the
+        // stand-down word is STOOD DOWN — the machine's own act,
+        // and true. "SLEPT THROUGH" read in plain English as the
+        // man's failure (he slept through the alarm) for a finish
+        // the machine chose. The word is stamped via the claim
+        // (lastReceiptOutcome), so new slips carry it whole; the
+        // sheet additionally normalises the legacy word on
+        // rehydrated slips, so no old slip re-prints the lie.
+        FinishKind.ROUTINE_SLEEP_STANDDOWN -> "STOOD DOWN"
         FinishKind.FLOW_FINISH -> "FLOW ENDED"
         else -> if (row.outcome == SessionOutcome.ELAPSED_SHIELD_GAP) "ENDED · SHIELD GAP" else "ENDED"
     }
@@ -1753,7 +1814,8 @@ class MonolithRepository(
             faulted = faulted,
             deflections = pending.deflections,
             restored = false,
-            receiptPublishedMonoMs = 0L
+            receiptPublishedMonoMs = 0L,
+            heldFigures = pending.heldFigures
         )
     }
 
@@ -1774,6 +1836,11 @@ class MonolithRepository(
      */
     suspend fun rehydrateReceipt(): ReceiptState? {
         val (number, sessionId, _) = standingReceipt() ?: return null
+        // Receipt audit item 20, interim law: a slip he dismissed
+        // stays dismissed across process death — rehydration is
+        // the cold-start door, so the dismissal is honoured here,
+        // at the repository, where every host inherits it.
+        if (number == dismissedReceiptNumber()) return null
         val row = dao.getSessionById(sessionId) ?: return null
         if (row.isActive) return null
         val isSleep = row.routineId?.let { dao.getRoutineById(it)?.loadoutName } ==
@@ -1805,7 +1872,8 @@ class MonolithRepository(
             faulted = row.releaseFaultShield,
             deflections = pending.deflections,
             restored = true,
-            receiptPublishedMonoMs = 0L
+            receiptPublishedMonoMs = 0L,
+            heldFigures = pending.heldFigures
         )
     }
 
