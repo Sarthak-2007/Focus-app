@@ -193,34 +193,16 @@ data class FocusTaskEntity(
 }
 
 /**
- * A reason a man ACTUALLY stated for an intercept (Held Door
- * audit FIX-3). The coachingTip strings die with this pass —
- * counsel written for a reason picker that was never composed.
- * No default lives here: an intercept nobody explained books
- * UNSTATED (see MonolithRepository.recordIntercept's default),
- * never a reason this enum invented for him.
+ * Wave-2 (Purpose-questioning, KILL): the DistractionTriggerReason
+ * enum is deleted whole. FIX-3 killed its picker, its state, its
+ * coaching tips and every caller; the taxonomy survived as dead
+ * vocabulary describing reasons nobody can state — exactly the
+ * shape that re-arms a fabricated default ("just use
+ * MUSCLE_MEMORY, it's right there"). An intercept nobody
+ * explained books UNSTATED (MonolithRepository.recordIntercept's
+ * default). If a stated-reason surface is ever composed, its
+ * vocabulary is written then, for that surface.
  */
-enum class DistractionTriggerReason(
-    val shortTag: String,
-    val label: String
-) {
-    MUSCLE_MEMORY(
-        shortTag = "Habit",
-        label = "Opened by Habit"
-    ),
-    STUCK_ON_PROBLEM(
-        shortTag = "Stuck",
-        label = "Stuck on a Hard Step"
-    ),
-    BORED_OR_TIRED(
-        shortTag = "Tired",
-        label = "Low Energy / Brain Fog"
-    ),
-    NEED_INFO(
-        shortTag = "Message",
-        label = "Checking Urgent Message / Code"
-    )
-}
 
 enum class AppCategory(val label: String, val code: String) {
     SHORT_VIDEO("Short Video", "Video"),
