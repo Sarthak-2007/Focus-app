@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,12 +20,14 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -89,7 +92,13 @@ private fun buildDayGroups(
     today: LocalDate
 ): List<DrawerDayGroup> {
     val byDate = rows.groupBy { DrawerDay.filingDate(it.completedAtMillis) }.toMutableMap()
-    val dates = byDate.keys.toMutableSet()
+    // Issue #52 F4 cure: scopeMonth scopes ROW dates as well as
+    // day-word dates — a scoped call no longer renders rows from
+    // outside the month it names.
+    val dates = byDate.keys.filter { date ->
+        scopeMonth == null ||
+            (date.year == scopeMonth.first && date.monthValue == scopeMonth.second)
+    }.toMutableSet()
     for (iso in dayWords.keys) {
         val date = runCatching { LocalDate.parse(iso) }.getOrNull() ?: continue
         if (scopeMonth == null || (date.year == scopeMonth.first && date.monthValue == scopeMonth.second)) {
@@ -161,9 +170,33 @@ fun DrawerScreen(
     forgedArtifactIds: Set<String> = emptySet()
 ) {
     val scheme = MaterialTheme.colorScheme
-    var view by remember { mutableStateOf(DrawerView.LANDING) }
-    var selectedTask by remember { mutableStateOf<FocusTaskEntity?>(null) }
-    var cabinetArtifact by remember { mutableStateOf<KineticArtifact?>(null) }
+    // Issue #52 F1 cure: the navigation stack is saveable.
+    // Entities are stored by key and resolved against the live
+    // lists, so rotation/process recreation restores the open
+    // view instead of resetting to LANDING.
+    var viewName by rememberSaveable { mutableStateOf(DrawerView.LANDING.name) }
+    val view = runCatching { DrawerView.valueOf(viewName) }
+        .getOrDefault(DrawerView.LANDING)
+    var selectedTaskId by rememberSaveable { mutableStateOf(-1) }
+    val selectedTask: FocusTaskEntity? =
+        (drawerRows + drawerResults).firstOrNull { it.id == selectedTaskId }
+    var cabinetArtifactId by rememberSaveable { mutableStateOf("") }
+    val cabinetArtifact: KineticArtifact? =
+        artifacts.firstOrNull { it.id == cabinetArtifactId }
+
+    // System Back pops ONE internal level (detail -> its list,
+    // cabinet detail -> cabinet list, any view -> LANDING)
+    // instead of ejecting to DECK via MainActivity's handler.
+    BackHandler(
+        enabled = selectedTaskId != -1 || cabinetArtifactId.isNotEmpty() ||
+            view != DrawerView.LANDING
+    ) {
+        when {
+            selectedTaskId != -1 -> selectedTaskId = -1
+            cabinetArtifactId.isNotEmpty() -> cabinetArtifactId = ""
+            else -> viewName = DrawerView.LANDING.name
+        }
+    }
 
     // DRW-05 (Truth Car 2): "today" keys to the day boundary, not
     // to an unkeyed remember frozen at first composition. The
@@ -235,7 +268,7 @@ fun DrawerScreen(
                         fontSize = 12.sp,
                         color = scheme.onBackground,
                         modifier = Modifier
-                            .clickable { selectedTask = null }
+                            .clickable { selectedTaskId = -1 }
                             .testTag("drawer_detail_back")
                     )
                 }
@@ -361,9 +394,9 @@ fun DrawerScreen(
                         modifier = Modifier
                             .clickable {
                                 if (cabinetArtifact != null) {
-                                    cabinetArtifact = null
+                                    cabinetArtifactId = ""
                                 } else {
-                                    view = DrawerView.LANDING
+                                    viewName = DrawerView.LANDING.name
                                 }
                             }
                             .testTag("cabinet_back")
@@ -376,7 +409,7 @@ fun DrawerScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { cabinetArtifact = item }
+                            .clickable { cabinetArtifactId = item.id }
                             .padding(vertical = 6.dp)
                             .testTag("cabinet_row_${item.id}"),
                         verticalArrangement = Arrangement.spacedBy(3.dp)
@@ -566,6 +599,24 @@ fun DrawerScreen(
                         .fillMaxWidth()
                         .testTag("drawer_search_input")
                 )
+                // Issue #52 F2 cure: the escape from search is
+                // always live — clearing is not editing, so the
+                // seal does not gate it. A sealed user with a
+                // query set is no longer trapped in the results.
+                if (searching) {
+                    Text(
+                        text = "CLEAR SEARCH",
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        letterSpacing = 1.sp,
+                        color = scheme.onBackground,
+                        modifier = Modifier
+                            .clickable { onQueryChange("") }
+                            .padding(vertical = 10.dp)
+                            .testTag("drawer_search_clear")
+                    )
+                }
             }
         }
 
@@ -602,7 +653,7 @@ fun DrawerScreen(
                         )
                     }
                     items(group.rows, key = { "search-${it.id}" }) { task ->
-                        StoredRow(task = task, onClick = { selectedTask = task })
+                        StoredRow(task = task, onClick = { selectedTaskId = task.id })
                     }
                 }
                 if (drawerSearchHasEarlier) {
@@ -622,7 +673,7 @@ fun DrawerScreen(
                 item {
                     DrawerNavRow(
                         label = "BACK",
-                        onClick = { view = DrawerView.LANDING }
+                        onClick = { viewName = DrawerView.LANDING.name }
                     )
                 }
                 items(storedMonths, key = { "month-${it.year}-${it.month}" }) { month ->
@@ -631,7 +682,7 @@ fun DrawerScreen(
                             .fillMaxWidth()
                             .clickable {
                                 onSelectMonth(month.year, month.month)
-                                view = DrawerView.MONTH
+                                viewName = DrawerView.MONTH.name
                             }
                             .padding(vertical = 10.dp)
                             .testTag("drawer_month_${month.year}_${month.month}"),
@@ -673,7 +724,7 @@ fun DrawerScreen(
                             color = scheme.onBackground,
                             modifier = Modifier.clickable {
                                 onSelectMonth(currentYearMonth.first, currentYearMonth.second)
-                                view = DrawerView.LANDING
+                                viewName = DrawerView.LANDING.name
                             }
                         )
                     }
@@ -686,6 +737,19 @@ fun DrawerScreen(
                         drawerMonth == currentYearMonth,
                     today = today
                 )
+                if (groups.isEmpty()) {
+                    item {
+                        Text(
+                            text = "NOTHING FILED IN " +
+                                monthLabel(drawerMonth.first, drawerMonth.second),
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 24.dp)
+                        )
+                    }
+                }
                 groups.forEach { group ->
                     item(key = "month-head-${group.date}") {
                         DayHeading(
@@ -696,7 +760,7 @@ fun DrawerScreen(
                         )
                     }
                     items(group.rows, key = { "month-${it.id}" }) { task ->
-                        StoredRow(task = task, onClick = { selectedTask = task })
+                        StoredRow(task = task, onClick = { selectedTaskId = task.id })
                     }
                 }
                 if (drawerHasEarlier) {
@@ -736,7 +800,7 @@ fun DrawerScreen(
                     item {
                         DrawerNavRow(
                             label = "CURIOS",
-                            onClick = { view = DrawerView.CABINET },
+                            onClick = { viewName = DrawerView.CABINET.name },
                             modifier = Modifier.testTag("drawer_curios_row")
                         )
                         HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
@@ -746,7 +810,7 @@ fun DrawerScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { view = DrawerView.INDEX }
+                                .clickable { viewName = DrawerView.INDEX.name }
                                 .padding(vertical = 6.dp)
                                 .testTag("drawer_all_months"),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -774,7 +838,7 @@ fun DrawerScreen(
                     item {
                         DrawerNavRow(
                             label = "CURIOS",
-                            onClick = { view = DrawerView.CABINET },
+                            onClick = { viewName = DrawerView.CABINET.name },
                             modifier = Modifier.testTag("drawer_curios_row")
                         )
                         HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
@@ -799,7 +863,7 @@ fun DrawerScreen(
                             )
                         }
                         items(group.rows, key = { "land-${it.id}" }) { task ->
-                            StoredRow(task = task, onClick = { selectedTask = task })
+                            StoredRow(task = task, onClick = { selectedTaskId = task.id })
                         }
                     }
                     if (drawerHasEarlier) {
@@ -825,8 +889,9 @@ private fun DrawerNavRow(
         fontSize = 12.sp,
         color = scheme.onBackground,
         modifier = modifier
-            .clickable { onClick() }
-            .padding(vertical = 6.dp)
+            .clickable(role = androidx.compose.ui.semantics.Role.Button) { onClick() }
+            .sizeIn(minHeight = 48.dp)
+            .padding(vertical = 14.dp)
     )
 }
 
@@ -871,7 +936,11 @@ private fun DayHeading(
                         fontSize = 11.sp,
                         color = if (active) scheme.onBackground else scheme.onSurfaceVariant,
                         modifier = Modifier
-                            .clickable { onDeclareTodayWord(if (active) null else word) }
+                            .clickable(
+                                role = androidx.compose.ui.semantics.Role.Button
+                            ) { onDeclareTodayWord(if (active) null else word) }
+                            .sizeIn(minHeight = 48.dp)
+                            .padding(vertical = 12.dp)
                             .testTag("declare_word_${word.lowercase()}")
                     )
                 }
