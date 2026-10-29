@@ -66,6 +66,42 @@ interface MonolithDao {
     @Query("SELECT * FROM focus_sessions WHERE isActive = 1 ORDER BY id DESC LIMIT 1")
     suspend fun getActiveSessionSnapshot(): FocusSessionEntity?
 
+    /**
+     * Issue #45 (C5): the session covering a given wall instant —
+     * the notification capture path decides "was a session active
+     * when this notification was POSTED" against sbn.postTime, not
+     * against whenever its coroutine happens to be scheduled. A
+     * coroutine delayed past a session's end used to read
+     * getActiveSessionSnapshot(), find nothing, and silently drop a
+     * message that was genuinely captured during the session.
+     *
+     * The covering predicate, by row shape:
+     * - isActive: the session is still running, and it started at
+     *   or before the instant — it covers it.
+     * - endWallMillis > 0 (the v11 ending stamp): the session's
+     *   true span is exactly [startWallTimeMillis, endWallMillis];
+     *   the instant must lie inside it.
+     * - endWallMillis = 0 (a legacy row ended before the stamp
+     *   existed): no exact end survives, so the bound is the
+     *   session's own maximum span, priced from its stored fields
+     *   the same way FocusSessionEntity.spanTargetSeconds prices
+     *   it — totalStudyBlocks × (target + penalty) plus one
+     *   600-second Safe Break between blocks. This can only
+     *   over-cover a legacy row that ended early; it can never
+     *   miss a message posted while that session truly ran,
+     *   because no real run exceeds its own span target.
+     */
+    @Query(
+        "SELECT * FROM focus_sessions WHERE startWallTimeMillis <= :instantMillis AND (" +
+            "isActive = 1 " +
+            "OR (endWallMillis > 0 AND :instantMillis <= endWallMillis) " +
+            "OR (endWallMillis = 0 AND :instantMillis <= startWallTimeMillis + " +
+            "(totalStudyBlocks * (targetDurationSeconds + penaltySecondsAdded) + " +
+            "(totalStudyBlocks - 1) * 600) * 1000)" +
+            ") ORDER BY startWallTimeMillis DESC LIMIT 1"
+    )
+    suspend fun getSessionCoveringInstant(instantMillis: Long): FocusSessionEntity?
+
     @Query("SELECT * FROM focus_sessions ORDER BY startWallTimeMillis DESC")
     fun getSessionHistoryFlow(): Flow<List<FocusSessionEntity>>
 
@@ -166,6 +202,54 @@ interface MonolithDao {
 
     @Query("DELETE FROM captured_notifications")
     suspend fun clearAllCapturedNotifications()
+
+    // Issue #45 (C5) retention: captured bodies are plaintext
+    // message content, so the table is bounded — the insert path
+    // prunes by age and caps the row count after every insert.
+    // The bounds (7 days / newest 200) live in
+    // MonolithNotificationListener; these are the two deletes it
+    // runs. The trim orders by timestamp then id so that, among
+    // rows sharing a postTime, the later inserts survive.
+    @Query("DELETE FROM captured_notifications WHERE timestampMillis < :cutoffMillis")
+    suspend fun pruneCapturedNotificationsOlderThan(cutoffMillis: Long)
+
+    @Query(
+        "DELETE FROM captured_notifications WHERE id NOT IN " +
+            "(SELECT id FROM captured_notifications ORDER BY timestampMillis DESC, id DESC LIMIT :keep)"
+    )
+    suspend fun trimCapturedNotificationsToNewest(keep: Int)
+
+    // Issue #45 (C5): the identity of one stored capture — the
+    // package, the title and body AS STORED (senderTitle is the
+    // title after the app-name fallback), and the row's
+    // timestampMillis, which is the notification's sbn.postTime
+    // snapshot. The dedupe-replace path finds the superseded row
+    // by this quadruple before deleting it; the removal path
+    // deletes by the same quadruple so a recalled message cannot
+    // resurrect in the digest.
+    @Query(
+        "SELECT * FROM captured_notifications WHERE packageName = :packageName " +
+            "AND senderTitle = :senderTitle AND messageBody = :messageBody " +
+            "AND timestampMillis = :timestampMillis ORDER BY id DESC LIMIT 1"
+    )
+    suspend fun findCapturedNotificationMatching(
+        packageName: String,
+        senderTitle: String,
+        messageBody: String,
+        timestampMillis: Long
+    ): CapturedNotificationEntity?
+
+    @Query(
+        "DELETE FROM captured_notifications WHERE packageName = :packageName " +
+            "AND senderTitle = :senderTitle AND messageBody = :messageBody " +
+            "AND timestampMillis = :timestampMillis"
+    )
+    suspend fun deleteCapturedNotificationMatching(
+        packageName: String,
+        senderTitle: String,
+        messageBody: String,
+        timestampMillis: Long
+    ): Int
 
     // Timeboxed Task Queue (Solar Queue)
     @Query("SELECT * FROM focus_tasks ORDER BY CASE status WHEN 'ACTIVE' THEN 0 WHEN 'QUEUED' THEN 1 WHEN 'DEFERRED' THEN 2 ELSE 3 END, queueOrder ASC, id ASC")
