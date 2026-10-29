@@ -448,12 +448,18 @@ class SoundAndSocialTruthTest {
             val socialOn by vm.browserUrlBlockerEnabled.collectAsState()
             val snapshot by WatchStore.snapshots.collectAsState()
             MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+                // shorts = true below is a premise, not filler: with
+                // the sniper OFF, the shorts row would print OFF from
+                // the first frame and break
+                // SocialBoardWordFollowsTheToggle's pre-toggle
+                // "OFF does not exist" assertion.
                 ParkDrawer(
                     visible = true,
                     snapshot = snapshot,
                     isSealed = false,
                     isNight = false,
                     soundEnabled = true,
+                    shortsReelsSniperEnabled = true,
                     soundEngine = vm.soundEngine,
                     socialSitesEnabled = socialOn,
                     onToggleSocialSites = { vm.toggleBrowserUrlBlocker() },
@@ -461,7 +467,8 @@ class SoundAndSocialTruthTest {
                     parkReturnTick = 0,
                     onDismiss = {},
                     onFixClick = {},
-                    onToggleSound = {}
+                    onToggleSound = {},
+                    onToggleShortsReelsSniper = {}
                 )
             }
         }
