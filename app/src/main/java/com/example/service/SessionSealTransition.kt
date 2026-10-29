@@ -116,6 +116,13 @@ class SessionSealTransitionImpl(
 
     private fun claim(sessionId: Int): Boolean = synchronized(claimed) { claimed.add(sessionId) }
 
+    /** Serializes the marker's read-modify-write (verifier pass,
+     *  issue #48): two doors sealing different sessions
+     *  concurrently must not lose one another's id from the
+     *  persisted set — each writer reads the standing set and
+     *  writes back the union, so the pair of operations locks. */
+    private val markerLock = Any()
+
     /** The seal marker (F-K1): committed synchronously BEFORE
      *  the Throw sounds, so a process dying mid-seal leaves
      *  proof on disk that the seal landed — recovery then adopts
@@ -129,15 +136,17 @@ class SessionSealTransitionImpl(
      *  older readers consult. */
     private fun writeSealMarker(sessionId: Int) {
         synchronized(sealed) { sealed += sessionId }
-        appContext.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, sessionId)
-            .putLong(MonolithRepository.SEAL_MARKER_WALL_KEY, System.currentTimeMillis())
-            .putStringSet(
-                MonolithRepository.SEAL_MARKER_SESSIONS_KEY,
-                persistedSealedIds() + sessionId.toString()
-            )
-            .commit()
+        synchronized(markerLock) {
+            appContext.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, sessionId)
+                .putLong(MonolithRepository.SEAL_MARKER_WALL_KEY, System.currentTimeMillis())
+                .putStringSet(
+                    MonolithRepository.SEAL_MARKER_SESSIONS_KEY,
+                    persistedSealedIds() + sessionId.toString()
+                )
+                .commit()
+        }
     }
 
     private fun persistedSealedIds(): Set<String> =
@@ -156,26 +165,28 @@ class SessionSealTransitionImpl(
      *  sounded as if it had been heard. */
     private fun clearSealMarker(sessionId: Int) {
         synchronized(sealed) { sealed -= sessionId }
-        val prefs = appContext.getSharedPreferences(
-            MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE
-        )
-        val ids = persistedSealedIds()
-        val namesThis = prefs.getInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, -1) == sessionId
-        if (!namesThis && sessionId.toString() !in ids) return
-        val editor = prefs.edit()
-        val remaining = ids - sessionId.toString()
-        if (sessionId.toString() in ids) {
-            editor.putStringSet(MonolithRepository.SEAL_MARKER_SESSIONS_KEY, remaining)
-        }
-        if (namesThis) {
-            val fallback = remaining.firstNotNullOfOrNull { it.toIntOrNull() }
-            if (fallback != null) {
-                editor.putInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, fallback)
-            } else {
-                editor.remove(MonolithRepository.SEAL_MARKER_SESSION_KEY)
+        synchronized(markerLock) {
+            val prefs = appContext.getSharedPreferences(
+                MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE
+            )
+            val ids = persistedSealedIds()
+            val namesThis = prefs.getInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, -1) == sessionId
+            if (!namesThis && sessionId.toString() !in ids) return
+            val editor = prefs.edit()
+            val remaining = ids - sessionId.toString()
+            if (sessionId.toString() in ids) {
+                editor.putStringSet(MonolithRepository.SEAL_MARKER_SESSIONS_KEY, remaining)
             }
+            if (namesThis) {
+                val fallback = remaining.firstNotNullOfOrNull { it.toIntOrNull() }
+                if (fallback != null) {
+                    editor.putInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, fallback)
+                } else {
+                    editor.remove(MonolithRepository.SEAL_MARKER_SESSION_KEY)
+                }
+            }
+            editor.commit()
         }
-        editor.commit()
     }
 
     private fun loadPersistedTombstones(): MutableSet<Pair<Int, Long>> {

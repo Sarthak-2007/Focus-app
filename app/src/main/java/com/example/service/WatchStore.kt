@@ -198,10 +198,14 @@ object WatchStore {
 
     private fun persistLastProved(wallMillis: Long) {
         val app = boundContext ?: return
+        // commit(), not apply() (verifier pass, issue #48): the
+        // fact must be on disk when this returns — the seal
+        // marker's own standard. Advances are rare (one per
+        // completed sweep), so the synchronous write is cheap.
         app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putLong(KEY_LAST_PROVED_WALL, wallMillis)
-            .apply()
+            .commit()
     }
 
     private val _snapshots = MutableStateFlow(WatchSnapshot.EMPTY)
