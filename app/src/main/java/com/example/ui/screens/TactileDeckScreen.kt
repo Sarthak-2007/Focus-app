@@ -237,16 +237,6 @@ fun TactileDeckScreen(
             exitPhase = 0
         }
     }
-    // Storage hygiene for the F2 derivation: once a session is
-    // running the stored latch is cleared in an effect, so it
-    // can never revive when the session ends. Prints never wait
-    // for this — pressLatchLive already reads null while running.
-    LaunchedEffect(isSessionRunning) {
-        if (isSessionRunning && (pressLatch != null || commitInFlight)) {
-            pressLatch = null
-            commitInFlight = false
-        }
-    }
     val shot = sealShot
     LaunchedEffect(shot) {
         if (shot == null || shot.preExisting) return@LaunchedEffect
@@ -424,6 +414,17 @@ fun TactileDeckScreen(
     // view's press-end (Emil E-5): between the latch frame and the
     // sealed composition, the latched print must keep standing.
     var commitInFlight by remember { mutableStateOf(false) }
+
+    // Storage hygiene for the F2 derivation: once a session is
+    // running the stored latch is cleared in an effect, so it
+    // can never revive when the session ends. Prints never wait
+    // for this — pressLatchLive already reads null while running.
+    LaunchedEffect(isSessionRunning) {
+        if (isSessionRunning && (pressLatch != null || commitInFlight)) {
+            pressLatch = null
+            commitInFlight = false
+        }
+    }
 
     // The seal freeze (Emil §3.2, as far as this slice can honestly
     // build it): the ViewModel captures the count and the verdict
