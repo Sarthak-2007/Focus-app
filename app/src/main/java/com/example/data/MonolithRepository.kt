@@ -1426,13 +1426,36 @@ class MonolithRepository(
         // (this insert); no DAO update for them will ever exist.
         val database = MonolithDatabase.getInstance(context)
         return database.withTransaction {
-            val heldApps = countHeldApps(dao.getAllAppsSnapshot())
-            val heldSites = dao.getAllSitesSnapshot().size
+            val appsSnapshot = dao.getAllAppsSnapshot()
+            val heldApps = countHeldApps(appsSnapshot)
+            // W-41 (batch-10 writer): the SHUT/PEEK split, stored
+            // beside the merged count in the same transaction — the
+            // split cannot be reconstructed at print time. The sites
+            // figure is ENFORCER-DERIVED, not a blind list size: the
+            // accessibility enforcer holds the stored list only
+            // while the Guard's browser blocker is on (UNA-06: the
+            // stored list IS the enforced list), so a session sealed
+            // with the blocker off held zero sites, whatever the
+            // list holds.
+            val heldShut = appsSnapshot.count { it.resolvedTier == AppBlockTier.LOCKED }
+            val heldPeek = appsSnapshot.count { it.resolvedTier == AppBlockTier.PEEK_2M }
+            val guardSettings = dao.getGuardSettingsSnapshot()
+            val heldSites = if (guardSettings?.browserBlockerEnabled ?: true) {
+                dao.getAllSitesSnapshot().size
+            } else {
+                0
+            }
             dao.deactivateAllSessions()
             val id = dao.insertSession(
-                session.copy(heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites)
+                session.copy(
+                    heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites,
+                    heldShutAtSeal = heldShut, heldPeekAtSeal = heldPeek
+                )
             ).toInt()
-            session.copy(id = id, heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites)
+            session.copy(
+                id = id, heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites,
+                heldShutAtSeal = heldShut, heldPeekAtSeal = heldPeek
+            )
         }
     }
 
@@ -1720,16 +1743,22 @@ class MonolithRepository(
             bankedBreakSeconds = banked,
             shieldWasOff = row.outcome == SessionOutcome.ELAPSED_SHIELD_GAP,
             deflections = deflections
-            // W-41 FILL POINT (issue #10 preparation): heldFigures
-            // stays null here — the row carries no SHUT/PEEK split
-            // columns yet, and the summed heldAppsAtSeal above is
-            // NOT enforcement truth (it books PEEK apps as held;
-            // heldSitesAtSeal is a blind list size). When Ren's
-            // batch-10 columns (heldShutAtSeal / heldPeekAtSeal +
-            // enforcer-derived sites) land on the session row,
-            // fill heldFigures = ReceiptHeldFigures(...) from them
-            // HERE, at this one point, and the HELD line prints
-            // with no sheet or state change.
+            // W-41 FILL POINT (batch-10, landed): the split columns
+            // now exist (MIGRATION_12_13) and the birth writer stores
+            // them with the enforcer-derived sites figure. The gate
+            // is all-or-nothing: the HELD line fills only when BOTH
+            // split columns were recorded (>= 0) — a pre-v13 row
+            // carries -1 and prints no HELD line, under the slip's
+            // omission law (an absent line over a false one).
+            heldFigures = if (row.heldShutAtSeal >= 0 && row.heldPeekAtSeal >= 0) {
+                ReceiptHeldFigures(
+                    shutApps = row.heldShutAtSeal,
+                    peekApps = row.heldPeekAtSeal,
+                    heldSites = row.heldSitesAtSeal
+                )
+            } else {
+                null
+            }
         )
     }
 
