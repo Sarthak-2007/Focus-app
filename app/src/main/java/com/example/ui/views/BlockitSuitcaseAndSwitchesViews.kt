@@ -164,13 +164,42 @@ class SledSwitchView(context: Context) : BlockitCanvasView(context) {
         }
     }
 
+    // Issue #56, finding 3: a toggle is a COMPLETE press that both
+    // starts and ends on this sled. The old body fired on ANY
+    // ACTION_UP — no DOWN tracking, no bounds check, no CANCEL
+    // handling — so a sheet scroll that merely ended over the sled
+    // (or a gesture the scroller cancelled) flipped a persisted
+    // setting. The rocker in this same file (AppRowSledToggleView)
+    // already keeps this discipline; the sled now does too.
+    private var pressStartedOnSled: Boolean = false
+
+    private fun insideSled(event: MotionEvent): Boolean =
+        event.x >= 0f && event.x <= width.toFloat() &&
+            event.y >= 0f && event.y <= height.toFloat()
+
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_UP) {
-            // §6: 8ms Firm click on SledSwitch throw!
-            fireFeel(8L)
-            onToggleRequested?.invoke()
-            return true
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                pressStartedOnSled = insideSled(event)
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                val completedHere = pressStartedOnSled && insideSled(event)
+                pressStartedOnSled = false
+                if (completedHere) {
+                    // §6: 8ms Firm click on SledSwitch throw!
+                    fireFeel(8L)
+                    onToggleRequested?.invoke()
+                }
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                // The parent scroller took the gesture: no toggle,
+                // and the next UP (if any) must not find a stale press.
+                pressStartedOnSled = false
+                return true
+            }
         }
         return true
     }
