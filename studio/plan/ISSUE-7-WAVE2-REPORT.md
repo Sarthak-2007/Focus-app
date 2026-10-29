@@ -120,7 +120,13 @@ Seat dissent preserved in the seat files.
 - The ARMED collision dissent (Salz C-9) stays a wording-pass
   item for Ren, not Sarthak.
 
-## Issue comment text (fallback if the connector call blocks)
+## Delivery state
+- Commit `495a398` on `agent/issue-7`, PUSHED to origin
+  (8ec3e4a..495a398, verified in the push output).
+- Signed comment POSTED via `gh` CLI (the sanctioned route —
+  no connector used):
+  https://github.com/Sarthak-2007/Focus-app/issues/7#issuecomment-6510148045
+  Text as posted:
 > Wave-2 (Vogt, cluster C): Shield's audit list is now worked to
 > its priced remainders. Landed DECLARED on agent/issue-7: the
 > status sentence's finish cure (full ink + solidity glyph +
