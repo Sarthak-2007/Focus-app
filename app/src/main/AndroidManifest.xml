@@ -8,6 +8,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Issue #46: routine boundaries are user-asked times and must
+         fire exactly — the chain alarm is armed via setAlarmClock.
+         SCHEDULE_EXACT_ALARM is the (user-revocable) exact-alarm grant
+         checked via canScheduleExactAlarms() on API 31+; when denied,
+         RoutineScheduler degrades VISIBLY to an inexact arm. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
