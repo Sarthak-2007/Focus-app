@@ -2461,12 +2461,19 @@ class MonolithViewModel(
 
     class Factory(
         private val appContext: Context,
-        private val repository: MonolithRepository,
-        private val soundEngine: TactileSoundEngine
+        private val repository: MonolithRepository
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return MonolithViewModel(appContext, repository, soundEngine) as T
+            // Issue #27: the sound engine is born HERE, inside
+            // create() — ViewModelProvider calls create() only when
+            // no retained instance exists, so an Activity recreation
+            // can never mint an orphaned engine the retained
+            // ViewModel will ignore, and the engine's death stays
+            // where it belongs: onCleared().
+            return MonolithViewModel(
+                appContext, repository, TactileSoundEngine(appContext)
+            ) as T
         }
     }
 }
