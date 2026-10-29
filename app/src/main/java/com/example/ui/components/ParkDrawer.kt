@@ -3,12 +3,14 @@ package com.example.ui.components
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -43,6 +45,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -182,16 +186,21 @@ fun ParkDrawer(
         }
     }
 
-    // The CHECK key's press instant (Hof P-1 cure, issue #9): the
-    // key is CHECKING from the press until every permission item
-    // carries a measurement stamped at or after it — a derivation
-    // from the store, never a timer. Any writer's stamp counts
-    // (the sweep's queries, a lifecycle hook, the shield loop):
-    // the claim is "re-measured since you asked", whoever measured.
-    var checkPressedMono by remember { mutableStateOf(0L) }
-    val checking = checkPressedMono > 0L && !WatchItemId.PERMISSIONS.all { item ->
-        (snapshot?.items?.get(item)?.measuredMono ?: 0L) >= checkPressedMono
-    }
+    // The CHECK key's sweep generation (Hof P-1 cure, issue #9;
+    // derivation tightened under Critic C-1): the press dispatches
+    // a fresh Watch sweep and records ITS generation; the key is
+    // CHECKING until the snapshot's lastCompletedSweepGen reaches
+    // that generation — a derivation from the store, never a
+    // timer. The first form read raw stamp times, and the shield
+    // loop's gen-0 re-stamps (every 2s, presence alone) plus an
+    // earlier sweep's late landings could "answer" a press they
+    // never served. A generation cannot be laundered: only the
+    // completing set of the sweep the press dispatched releases
+    // the key, in parity with LAST PROVED (the same completion
+    // advances both). -1 = no check in flight.
+    var checkPressGen by remember { mutableStateOf(-1) }
+    val checking = checkPressGen >= 0 &&
+        (snapshot?.lastCompletedSweepGen ?: 0) < checkPressGen
     // The last completed check's verdict, when it landed unwhole
     // (Designer's failed state, issue-9 spec): a persistent line
     // under the CHECK key naming the first unproved counted item.
@@ -202,11 +211,17 @@ fun ParkDrawer(
     // whole by any road (a FIX return included).
     var lastCheckLackName by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(checking) {
-        if (!checking && checkPressedMono > 0L) {
-            // The set has landed. If it landed whole, the firm
-            // click — the same voice the FIX return uses for a
-            // repaired line; a set with a lack stays silent and
-            // the board prints the lack in full ink.
+        if (!checking && checkPressGen >= 0) {
+            // The set has landed. Two wholes live on this
+            // surface, named (Critic C-11): CHECKING completed
+            // on the PROVED SET (all six — LAST PROVED's own
+            // definition); the verdict below — the firm click
+            // and the NOT PROVED name — is computed on the
+            // COUNTED FOUR, the doors the warrant gates on.
+            // If the four landed whole, the firm click — the
+            // same voice the FIX return uses for a repaired
+            // line; a set with a lack stays silent and the
+            // board prints the lack in full ink.
             val snap = snapshot
             val now = SystemClock.elapsedRealtime()
             val firstLack = snap?.let { s ->
@@ -220,7 +235,7 @@ fun ParkDrawer(
             } else {
                 lastCheckLackName = firstLack?.boardName
             }
-            checkPressedMono = 0L
+            checkPressGen = -1
         }
     }
     LaunchedEffect(snapshot) {
@@ -235,10 +250,51 @@ fun ParkDrawer(
     }
     LaunchedEffect(visible) {
         if (!visible) {
-            checkPressedMono = 0L
+            checkPressGen = -1
             lastCheckLackName = null
         }
     }
+
+    // The keys' dip motion (Finisher 2, §2): a gallery key
+    // travels — 90 SEAT in on the press, 160 THROW back on the
+    // release. One animator spec for both keys; the verbs part
+    // only in what holds the dip (FIX: the Settings absence;
+    // CHECK: the sweep's landings).
+    val fixDip by animateDpAsState(
+        targetValue = if (fixPressed) 1.dp else 0.dp,
+        animationSpec = tween(
+            durationMillis = if (fixPressed) MonolithKin.PRESS_MS
+            else MonolithKin.DRAWER_CLOSE_MS,
+            easing = if (fixPressed) MonolithKin.EasingSeat
+            else MonolithKin.EasingThrow
+        ),
+        label = "park_fix_dip"
+    )
+    val checkDip by animateDpAsState(
+        targetValue = if (checking) 1.dp else 0.dp,
+        animationSpec = tween(
+            durationMillis = if (checking) MonolithKin.PRESS_MS
+            else MonolithKin.DRAWER_CLOSE_MS,
+            easing = if (checking) MonolithKin.EasingSeat
+            else MonolithKin.EasingThrow
+        ),
+        label = "park_check_dip"
+    )
+
+    // The CHECK key's dress ladder (Designer §1.4, Finisher 2
+    // §4.1): print dress at rest on a fresh board; ink exactly
+    // when pressing CHECK is the answer — a row STALE or
+    // UNMEASURED, or a sweep in flight. MISSING does not promote
+    // it: a lack's answer is the FIX key above it.
+    val checkNeeded = if (snapshot == null) {
+        true
+    } else {
+        WatchItemId.PERMISSIONS.any { item ->
+            val p = WatchStore.permPrintAt(snapshot, item, nowMono)
+            p == PermPrint.STALE || p == PermPrint.UNMEASURED
+        }
+    }
+    val checkInk = checking || checkNeeded
 
     // The FIX key's dip: pressed on DOWN, held for the whole absence,
     // resolved on the return (see the return effect below).
@@ -381,8 +437,20 @@ fun ParkDrawer(
                     val proved = snapshot?.lastProvedWallMillis
                     if (proved != null) {
                         Spacer(modifier = Modifier.width(10.dp))
+                        // The instant prints its date when it is
+                        // not today (Critic C-5): the store is
+                        // in-memory but a process lives for days,
+                        // and a bare HH:mm cannot say which day it
+                        // proved — a stale-proof path by typography.
+                        val provedDate = Date(proved)
+                        val sameDay = SimpleDateFormat("yyyyMMdd", Locale.US)
+                            .format(provedDate) ==
+                            SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
                         Text(
-                            text = SimpleDateFormat("HH:mm", Locale.US).format(Date(proved)) +
+                            text = SimpleDateFormat("HH:mm", Locale.US).format(provedDate) +
+                                (if (sameDay) "" else
+                                    " · " + SimpleDateFormat("dd MMM", Locale.US)
+                                        .format(provedDate)) +
                                 " · SELF-REPORT",
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
@@ -398,17 +466,24 @@ fun ParkDrawer(
                 // (2) The board: nine ruled lines, fixed order.
                 if (snapshot != null) {
                     WatchItemId.PERMISSIONS.forEach { item ->
+                        // One derivation per row per frame (F-B3):
+                        // word and ink read the SAME print — two
+                        // calls could straddle the 45s boundary and
+                        // tear (word GRANTED, ink STALE) for a frame.
+                        val print = WatchStore.permPrintAt(snapshot, item, nowMono)
                         ParkBoardRow(
                             name = item.boardName,
-                            word = when (WatchStore.permPrintAt(snapshot, item, nowMono)) {
+                            word = when (print) {
                                 PermPrint.GRANTED -> "GRANTED"
                                 PermPrint.MISSING -> "MISSING"
                                 PermPrint.STALE -> "STALE"
                                 PermPrint.UNMEASURED -> null
                             },
-                            wordIsLack = when (WatchStore.permPrintAt(snapshot, item, nowMono)) {
-                                PermPrint.GRANTED -> false
-                                else -> true
+                            wordInk = when (print) {
+                                PermPrint.GRANTED,
+                                PermPrint.UNMEASURED -> ParkWordInk.QUIET
+                                PermPrint.STALE -> ParkWordInk.HALF
+                                PermPrint.MISSING -> ParkWordInk.FULL
                             }
                         )
                     }
@@ -431,7 +506,11 @@ fun ParkDrawer(
                             ParkSocialSitesRow(
                                 name = item.boardName,
                                 word = word,
-                                wordIsLack = m?.interceptor != InterceptorState.RUNNING,
+                                wordInk = if (m?.interceptor == InterceptorState.RUNNING) {
+                                    ParkWordInk.QUIET
+                                } else {
+                                    ParkWordInk.FULL
+                                },
                                 enabled = socialSitesEnabled,
                                 soundEngine = soundEngine,
                                 isSealed = isSealed,
@@ -441,7 +520,11 @@ fun ParkDrawer(
                             ParkBoardRow(
                                 name = item.boardName,
                                 word = word,
-                                wordIsLack = m?.interceptor != InterceptorState.RUNNING
+                                wordInk = if (m?.interceptor == InterceptorState.RUNNING) {
+                                    ParkWordInk.QUIET
+                                } else {
+                                    ParkWordInk.FULL
+                                }
                             )
                         }
                     }
@@ -459,14 +542,14 @@ fun ParkDrawer(
                             ParkSocialSitesRow(
                                 name = item.boardName,
                                 word = null,
-                                wordIsLack = true,
+                                wordInk = ParkWordInk.FULL,
                                 enabled = socialSitesEnabled,
                                 soundEngine = soundEngine,
                                 isSealed = isSealed,
                                 onToggle = onToggleSocialSites
                             )
                         } else {
-                            ParkBoardRow(name = item.boardName, word = null, wordIsLack = true)
+                            ParkBoardRow(name = item.boardName, word = null, wordInk = ParkWordInk.FULL)
                         }
                     }
                 }
@@ -476,21 +559,25 @@ fun ParkDrawer(
                 // print (absent here: the gate is !isSealed).
                 AnimatedVisibility(
                     visible = firstMissing != null && !isSealed,
-                    enter = expandVertically(tween(MonolithKin.DRAWER_CLOSE_MS, easing = MonolithKin.EasingSeat)) +
-                        fadeIn(tween(MonolithKin.DRAWER_CLOSE_MS)),
+                    // Entry at drawer tempo (audit §1.8: 280 SEAT);
+                    // exit stays at throw tempo — arrivals land,
+                    // departures are thrown (Finisher 2, §3.1).
+                    enter = expandVertically(tween(MonolithKin.DRAWER_OPEN_MS, easing = MonolithKin.EasingSeat)) +
+                        fadeIn(tween(MonolithKin.DRAWER_OPEN_MS)),
                     exit = shrinkVertically(tween(MonolithKin.DRAWER_CLOSE_MS, easing = MonolithKin.EasingThrow)) +
                         fadeOut(tween(MonolithKin.DRAWER_CLOSE_MS))
                 ) {
                     val item = firstMissing ?: return@AnimatedVisibility
                     Column {
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(48.dp)
-                                .offset(y = if (fixPressed) 1.dp else 0.dp)
+                                .offset(y = fixDip)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(inkControlFill())
+                                .semantics { contentDescription = "Fix ${item.boardName}" }
                                 .then(
                                     if (interactive) {
                                         Modifier.pointerInput(item) {
@@ -519,7 +606,8 @@ fun ParkDrawer(
                             Text(
                                 text = "FIX — ${item.boardName}",
                                 style = PrimaryButtonTextStyle,
-                                color = onInkControlFill()
+                                color = onInkControlFill(),
+                                maxLines = 1
                             )
                         }
                     }
@@ -536,28 +624,57 @@ fun ParkDrawer(
                 // only honest move on the surface — and absent
                 // under the seal, where the drawer is print.
                 if (!isSealed) {
-                    Spacer(modifier = Modifier.height(14.dp))
+                    // Spacing on the audit's module (Finisher 2,
+                    // §7): 8 between the two keys, 16 from the
+                    // board when CHECK stands alone.
+                    Spacer(
+                        modifier = Modifier.height(
+                            if (firstMissing != null) 8.dp else 16.dp
+                        )
+                    )
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(48.dp)
-                            .offset(y = if (checking) 1.dp else 0.dp)
+                            .offset(y = checkDip)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(inkControlFill())
                             .then(
-                                if (interactive && !checking) {
+                                if (checkInk) {
+                                    Modifier.background(inkControlFill())
+                                } else {
+                                    Modifier.border(
+                                        1.dp, scheme.outline, RoundedCornerShape(8.dp)
+                                    )
+                                }
+                            )
+                            .semantics { contentDescription = "Check guard state" }
+                            .then(
+                                if (interactive) {
                                     Modifier.pointerInput(Unit) {
                                         detectTapGestures(
                                             onPress = {
-                                                checkPressedMono =
-                                                    SystemClock.elapsedRealtime()
+                                                // Dispatch first, then
+                                                // record the NEW sweep's
+                                                // generation — the press
+                                                // is answered only by
+                                                // the sweep it caused.
+                                                // A press while CHECKING
+                                                // re-dispatches and
+                                                // re-bases (Critic C-2):
+                                                // the verb itself is the
+                                                // escape from a query
+                                                // that never returns; no
+                                                // timer ever declares
+                                                // anything here.
+                                                onCheckClick()
+                                                checkPressGen =
+                                                    WatchStore.currentSweepGen()
                                                 lastCheckLackName = null
                                                 soundEngine?.playSeatKnock(
                                                     durationMs = 10,
                                                     amplitude01 = if (isNight) 0.06f else 0.1f,
                                                     pitchHz = 300f
                                                 )
-                                                onCheckClick()
                                                 tryAwaitRelease()
                                             }
                                         )
@@ -570,7 +687,8 @@ fun ParkDrawer(
                         Text(
                             text = if (checking) "CHECKING" else "CHECK",
                             style = PrimaryButtonTextStyle,
-                            color = onInkControlFill()
+                            color = if (checkInk) onInkControlFill() else scheme.onBackground,
+                            maxLines = 1
                         )
                     }
                     // The failed check's verdict line: print, not a
@@ -580,16 +698,16 @@ fun ParkDrawer(
                     // closes; it never blames a door that answered.
                     val lackName = lastCheckLackName
                     if (lackName != null && !checking) {
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
                         ParkBoardRow(
                             name = "NOT PROVED",
                             word = lackName,
-                            wordIsLack = true
+                            wordInk = ParkWordInk.FULL
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 // (4) Sound — the shipped sled, moved whole. PARK's
                 // row grammar: name plate left, margin word (the
@@ -773,10 +891,16 @@ fun ParkDrawer(
     }
 }
 
+/** The board word's ink tier (F-B2) — form first: the weight of
+ *  the ink says which kind of state it is before the word is read.
+ *  QUIET = proved/at rest, HALF = granted but stale (audit P-4,
+ *  Linea F-1: 0.60 of primary ink), FULL = a measured lack. */
+private enum class ParkWordInk { QUIET, HALF, FULL }
+
 /** One board line: name plate left, state word right, ruled under.
  *  A never-measured line prints its NAME ONLY — no word, no fill. */
 @Composable
-private fun ParkBoardRow(name: String, word: String?, wordIsLack: Boolean) {
+private fun ParkBoardRow(name: String, word: String?, wordInk: ParkWordInk) {
     val scheme = MaterialTheme.colorScheme
     Column {
         Row(
@@ -798,7 +922,11 @@ private fun ParkBoardRow(name: String, word: String?, wordIsLack: Boolean) {
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
                     letterSpacing = 0.5.sp,
-                    color = if (wordIsLack) scheme.onBackground else scheme.onSurfaceVariant
+                    color = when (wordInk) {
+                        ParkWordInk.QUIET -> scheme.onSurfaceVariant
+                        ParkWordInk.HALF -> scheme.onBackground.copy(alpha = 0.60f)
+                        ParkWordInk.FULL -> scheme.onBackground
+                    }
                 )
             }
         }
@@ -825,7 +953,7 @@ private fun ParkBoardRow(name: String, word: String?, wordIsLack: Boolean) {
 private fun ParkSocialSitesRow(
     name: String,
     word: String?,
-    wordIsLack: Boolean,
+    wordInk: ParkWordInk,
     enabled: Boolean,
     soundEngine: TactileSoundEngine?,
     isSealed: Boolean,
@@ -852,7 +980,11 @@ private fun ParkSocialSitesRow(
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
                     letterSpacing = 0.5.sp,
-                    color = if (wordIsLack) scheme.onBackground else scheme.onSurfaceVariant
+                    color = when (wordInk) {
+                        ParkWordInk.QUIET -> scheme.onSurfaceVariant
+                        ParkWordInk.HALF -> scheme.onBackground.copy(alpha = 0.60f)
+                        ParkWordInk.FULL -> scheme.onBackground
+                    }
                 )
                 Spacer(modifier = Modifier.width(12.dp))
             }

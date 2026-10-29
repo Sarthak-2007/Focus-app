@@ -35,7 +35,7 @@ import com.example.service.WatchStore
  */
 data class GuardLinePrint(val text: String)
 
-fun guardLineFor(snapshot: WatchSnapshot?, nowMono: Long): GuardLinePrint? {
+fun guardLineFor(snapshot: WatchSnapshot?, nowMono: Long): GuardLinePrint {
     if (snapshot == null) return GuardLinePrint("GUARD — NOT CHECKED")
     val prints = WatchItemId.COUNTED.map { it to WatchStore.permPrintAt(snapshot, it, nowMono) }
     if (prints.any { it.second == PermPrint.UNMEASURED }) {

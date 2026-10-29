@@ -249,7 +249,7 @@ fun BlockitActionChip(
  */
 @Composable
 fun MonolithPullDownHeader(
-    guardLine: GuardLinePrint?,
+    guardLine: GuardLinePrint,
     isSealed: Boolean,
     onGuardLineTap: () -> Unit
 ) {
@@ -276,23 +276,23 @@ fun MonolithPullDownHeader(
                 modifier = Modifier.padding(start = 20.dp)
             )
             Spacer(modifier = Modifier.weight(1f))
-            if (guardLine != null) {
-                Text(
-                    text = guardLine.text,
-                    fontFamily = AnonymousProFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    letterSpacing = 0.5.sp,
-                    color = scheme.onBackground,
-                    modifier = Modifier
-                        .padding(end = 20.dp)
-                        .then(
-                            if (isSealed) Modifier
-                            else Modifier.clickable { onGuardLineTap() }
-                        )
-                        .testTag("header_guard_line")
-                )
-            }
+            // The line always prints (issue #9, F-G4): unmeasured
+            // is GUARD — NOT CHECKED, never a blank band.
+            Text(
+                text = guardLine.text,
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp,
+                letterSpacing = 0.5.sp,
+                color = scheme.onBackground,
+                modifier = Modifier
+                    .padding(end = 20.dp)
+                    .then(
+                        if (isSealed) Modifier
+                        else Modifier.clickable { onGuardLineTap() }
+                    )
+                    .testTag("header_guard_line")
+            )
         }
         Box(
             modifier = Modifier

@@ -89,13 +89,96 @@ Ren's plate lands in batch 10; this cell prepares only its inputs:
   host (MainActivity) and no default — a second host cannot
   silently seat the drawer without wiring the verb.
 
+## Addendum — finish patches adopted (all DECLARED, same branch)
+- **F-B2/F-B3 (Finisher 1):** the board's word ink is a
+  three-tier enum (`ParkWordInk` QUIET/HALF/FULL) replacing the
+  lack Boolean; STALE takes the half-ink (P-4's dress half —
+  it rides with this issue because a check landing on STALE
+  rows must read honestly; §4.4's age column stays with the
+  wider pass). Every row derives word + ink from ONE
+  `permPrintAt` per frame — no more boundary tearing.
+- **Finisher 2:** dip animators on both keys (90 SEAT in,
+  160 THROW back); FIX entry corrected to the audit's 280 SEAT;
+  CHECK's dress ladder built (print dress on a fresh board,
+  ink when STALE/UNMEASURED/in-flight — MISSING never promotes
+  it); key-zone spacing on the {8,16,24} module; maxLines=1 and
+  spoken names on both keys.
+- **F-G4 (Finisher 4):** the Guard line is unblankable in TYPE,
+  not just in fact — `guardLineFor` is total, the flow's initial
+  value is the NOT CHECKED print (the cold-open blank window is
+  dead), `SealFreeze.guardLine` is non-null, and the band's
+  null gate is gone. No printed string changed.
+- `ChromeWaveUnitTest`'s old unmeasured-prints-nothing test
+  now asserts the NOT CHECKED print in all three shapes.
+
+## Addendum — the Critic's charges, ruled (issue-9-critic.md)
+- **C-1 (S1) — CURED in this branch.** CHECKING's first form
+  read raw stamp times; the shield loop and an earlier sweep
+  could answer a press. Now: `WatchSnapshot.lastCompletedSweepGen`
+  + `WatchStore.currentSweepGen()` — a press is answered only
+  by the completing set of the sweep it dispatched, in parity
+  with LAST PROVED. DECLARED tests pin both halves.
+- **C-2 (S1) — ANSWERED.** A query that never returns leaves
+  the key at CHECKING (Finisher 2's law stands: no timer may
+  declare anything) — but the verb is its own escape: a press
+  while CHECKING re-dispatches and re-bases the generation,
+  and closing the drawer abandons the key's claim while the
+  sweep completes in the store regardless.
+- **C-3 (S1) — CURED.** The Guard line's derivation now rides
+  a 5s guard clock in the VM combine, so a warranted 4/4
+  cannot outlive its 45s threshold on a still screen. The
+  seal-freeze branch is untouched (its tense is the seal's).
+- **C-4 (S2) — RULED AGAINST, on the record.** The freeze
+  holding a seal-frame NOT CHECKED is the freeze's tense
+  (Designer §2.3 + Finisher 4 §4 concur), and sealed
+  read-only is a §7 acquittal. The compound concern — doors
+  dying mid-session (P-8) — is real and its cure is the
+  seal-time warning line (§4.12, wider pass), not a live key
+  under the seal. The Innovator's "CHECK stays live while
+  sealed" is NOT adopted; Finisher 2's absence ruling stands
+  over the Designer's inert-print seat. Three papers, one
+  ruling, recorded here so no builder inherits by accident.
+- **C-5 (S1) — CURED.** The complete-set rule now requires
+  coexistence: the set's span must fit the board's own 45s
+  freshness law, and a sweep past its window is abandoned
+  (late stamps remain ordinary measurements). LAST PROVED's
+  print now carries its date when it is not today.
+- **C-6 (S2) — STANDS, escalated.** Interceptor RUNNING has
+  no stale form; `poke()` bypasses the derivation it claims
+  to refresh; interceptor stamps are re-dated at publish.
+  Not cured here: the derivation feeds the Deck warrant, and
+  a derivation-law change needs its own verifier. Filed for
+  Ren to route — it is P-2's machinery half.
+- **C-7 (S2) — STANDS, pre-flagged.** Presence-proved BIND
+  doors (the audit's own RESIDUE) and NOTIFICATIONS'
+  never-captured RUNNING. The L2 cure is the warrant car's
+  `provePipelineNow()` territory, not this branch.
+- **C-8 (S2) — STANDS, and amends the Innovator.** The
+  residency stamp precedes the own-package filter, so LIVE
+  can rest on Monolith's own windows. M2 (provoked pull) is
+  buildable honestly only with a SEPARATE pull stamp — the
+  Innovator's recommendation carries this amendment.
+- **C-9 (S2) — CURED.** A thrown query stamps nothing; the
+  item keeps its old word and age; the set cannot complete
+  on it. (This also corrects the record: "every door
+  answers" is true only at a completion, by construction.)
+- **C-10 (S2) — CURED in paper.** `FIRED AS SET` stood
+  unmarked in MASTER-PLAN, CHROME-BUILD-READY, teen.md and
+  two seat drafts; all five now carry the strike and the
+  W-11 return conditions at the site. Item 3's closure rests
+  on the app grep AND this paper census (Finisher 3).
+- **C-11 (S3) — RULED deliberate.** Two wholes, named:
+  CHECKING completes on the PROVED SET (six — LAST PROVED's
+  own definition); the verdict click and the NOT PROVED name
+  use the COUNTED FOUR (the Guard's definition — the doors
+  the warrant gates on). The code comments now say which
+  whole each site means.
+
 ## Cell roster
-Lead: Hof. Wave 1: Designer (spec delivered:
-issue-9-designer.md), Innovator, Critic, Builder (dossier) —
-running. Expansion (Sarthak's order via Ren): Finishers 1–5
-(board print, keys, plate, guard line, sheet), Feel 1–5
-(touch, sound, motion, atmosphere, the 1 AM test) — seating
-proceeded one-by-one through an infrastructure pool limit;
-all seats are recorded on the issue.
+Lead: Hof. Wave 1: Designer, Innovator, Critic, Builder —
+all delivered (issue-9-designer / -innovator / -critic /
+-builder .md). Expansion (Sarthak's order via Ren):
+Finishers 1–5 and Feel 1–5 — all delivered (issue-9-finisher-*
+and issue-9-feel-* .md). Fourteen seats, fourteen filings.
 
 — Hof, cell lead, issue #9

@@ -62,6 +62,47 @@ class WatchStoreRobolectricTest {
     }
 
     @Test
+    fun sweep_completionAdvancesTheCompletedGeneration() {
+        // Issue #9 (Critic C-1): PARK's CHECK key is answered only
+        // by the sweep it dispatched — the snapshot records WHICH
+        // generation completed, in parity with LAST PROVED.
+        assertEquals(0, WatchStore.snapshots.value.lastCompletedSweepGen)
+        WatchStore.runSweep { true }
+        val gen = WatchStore.currentSweepGen()
+        awaitSnapshot { it.lastCompletedSweepGen == gen }
+        assertEquals(gen, WatchStore.snapshots.value.lastCompletedSweepGen)
+        assertNotNull(WatchStore.snapshots.value.lastProvedWallMillis)
+    }
+
+    @Test
+    fun sweep_thrownQueryStampsNothingAndBlocksCompletion() {
+        // Issue #9 (Critic C-9): a query that throws is a crashed
+        // question, not a measured "no" — it stamps nothing, the
+        // item keeps its (absent) word, and the set cannot
+        // complete on it.
+        WatchStore.runSweep { item ->
+            if (item == WatchItemId.DEVICE_ADMIN) {
+                throw RuntimeException("binder died")
+            }
+            true
+        }
+        // The other five land…
+        awaitSnapshot { snap ->
+            WatchItemId.PERMISSIONS
+                .filter { it != WatchItemId.DEVICE_ADMIN }
+                .all { snap.measurement(it) != null }
+        }
+        // …and after a settle, the crashed door is still
+        // unmeasured and nothing has completed.
+        Thread.sleep(250)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        val snap = WatchStore.snapshots.value
+        assertNull(snap.measurement(WatchItemId.DEVICE_ADMIN))
+        assertNull(snap.lastProvedWallMillis)
+        assertEquals(0, snap.lastCompletedSweepGen)
+    }
+
+    @Test
     fun bindWriters_stampTheirItems() {
         WatchStore.onAccessibilityBound(true)
         WatchStore.onNotificationListenerBound(false)
