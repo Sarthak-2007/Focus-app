@@ -298,3 +298,372 @@ and stays true under F20. Untouched.)
    never touches either framing line.
 
 ---
+
+## §3 · F21 — COMMENT TRUTH PASS, `TactileDeckScreen.kt` (S)
+
+Audit charges: §5.8 (comment rot — the header's "12dp universal
+spacing" promise over a 24dp-radius card at 16/18 padding;
+sections run 1, 2, 3, 5) and §5.5 (idle ENDS slides while the
+comments swear it never does). Method: the whole file's comments
+read against the code beneath them, this shift. Every false or
+imprecise comment is listed below with its exact replacement
+text. Comments verified true are listed at §3.5 — the pass is a
+sweep, not a sample.
+
+### 3.1 · Ruling: sections UNNUMBERED, not renumbered
+
+The banners drop their numbers and keep their names. A number
+promises a sequence the file does not maintain (the pinned stack
+was "5" because Slice D counted rooms that live in other files);
+the next inserted room would either break the sequence or force
+a renumber of every banner below it. Names are stable; numbers
+were the rot's vector. The four banners become: THE INSTRUMENT ·
+THE TASK · ARMED · THE PINNED STACK.
+
+### 3.2 · Idle ENDS labelled PLANNED — the print spec
+
+The fix list rules the label (not the freeze): §5.5's alternative
+"freeze the derivation" dies — a frozen idle end would print a
+time computed from a stale now, a worse lie than a moving plan.
+
+- **Print:** the idle TIME cell reads **`ENDS 14:30 · PLANNED`** —
+  the tense mark as a suffix, in the house's own tense grammar
+  (the imprint's `· AS SEALED` suffix, Hale W-24). Suffix, not
+  prefix, for a print reason: the HH:mm then sits at the same
+  offset in idle and running cells, so the eye comparing the plan
+  against the running end reads the clock in one place.
+- **Site:** struck at the idle derivation only —
+  `idleTimeCell`'s else-branch in the Deck file:
+  `endsAtText(nowFrame + totalSpanMinutes * 60_000L) + " · PLANNED"`,
+  density logic (UNA2-03: PASS only beside a freshly LIVE wire,
+  else UNKNOWN) untouched.
+- **NOT in `endsAtText`:** the formatter stays a pure
+  "ENDS HH:mm" — the running cell and the press latch's running
+  form use it unmarked, and F5's break eyebrow (`BACK AT HH:MM`)
+  derives from the same helper family. The mark belongs to the
+  idle call site, nowhere else.
+- **Inheritance, free:** the press latch captures
+  `idleTimeCell.first`, so the latched press print carries
+  `· PLANNED` with no latch change — the plan stays labelled
+  while the finger is down, which is exactly when a man might
+  mistake it for a promise.
+- **Branches that do NOT take the mark:** running ENDS (a pure
+  function of the stored end — a fact, unmarked); idle FLOW's
+  `NO END` (no end is claimed); `INVALID` (no end is claimed).
+- **Fit:** TIME is the widest strip cell (weight 1.3 of 3.25;
+  ≈146dp at 390dp). `ENDS 14:30 · PLANNED` = 20 mono characters
+  ≈ 132dp at the cell's 11sp — fits; at 360dp (≈134dp cell) it is
+  within ~2dp of the edge, so the builder verifies on the 360dp
+  render and, if it clips, the cell's word drops to
+  `ENDS 14:30 · PLAN` — never a smaller type size, never a wrap.
+
+### 3.3 · The ledger — every false comment, with its replacement
+
+**C1 · File header KDoc (lines 85–92).** Current:
+
+```
+ * TAB 0: FOCUS COMMAND CONSOLE (DEVELOPER-GUIDE.pdf §1–§11)
+ * - Full-bleed stacked sections with 12dp universal spacing.
+ * - The Instrument: one raised panel holding the readout + RotaryWheelView (Ren).
+ * - Pinned `SlideToStartView` commit bar below the scroll.
+ * - When armed, transforms into the dark Armed Lockdown state with One-Way Ratchet enforcement.
+```
+
+False in three places: there is no 12dp universal spacing (the
+scroll column pads 12 horizontal / 8 vertical and spaces sections
+12; the card is radius 24, padded 16/18, spaced 10 inside; the
+pinned stack pads 12/8 with 6dp and 8dp spacers); the pinned
+stack is four objects, not a lone commit bar; and this screen
+enforces no ratchet — enforcement lives in the service and the
+VM, the screen renders and asks. The DEVELOPER-GUIDE cite is
+unverifiable from the tree and dies with the rest. Replacement:
+
+```
+ * TAB 0 — THE DECK: set the session, see the wire can hold it,
+ * seal it.
+ * - Scroll column: 12dp horizontal / 8dp vertical padding,
+ *   sections spaced 12dp. The hero card: 24dp radius, 16dp
+ *   horizontal / 18dp vertical padding, 10dp internal spacing.
+ *   There is no universal spacing constant on this screen;
+ *   each surface carries its own numbers.
+ * - The Instrument: one surfaceBright panel holding the readout
+ *   + RotaryWheelView — readout and wheel are one object.
+ * - Pinned beneath the scroll: the proof strip, the slide's
+ *   72dp register, the reserved sentence slot, and the imprint.
+ * - Running: the same composable renders the running form over
+ *   the session-night split (hero at t=0, ground at t+400).
+ *   Enforcement lives in the service and the VM; this screen
+ *   renders and asks.
+```
+
+**C2 · Slice D banner (line 323).** Current first sentences:
+"TIME is a pure function of now + a span; it is re-derived at
+minute boundaries from a frame clock, never stored, never slid."
+— the §5.5 lie in its banner form: the idle print IS fed a
+now-frame that advances every minute, so ENDS 14:30 becomes
+14:31. (The banner's second half, the imprint freeze, is true
+and is carried into the replacement verbatim.) Replacement:
+
+```
+    // SLICE D — the strip's derivations (Uma/Rosa/Emil). Running
+    // TIME is a pure function of the session's stored end — it
+    // never slides. Idle TIME is a PLAN: now + the dialled span,
+    // re-derived at minute boundaries from a frame clock, so the
+    // printed end advances as the clock does; the cell confesses
+    // it on its face ("· PLANNED", §3.2 of the F21 spec). The
+    // imprint's count freezes at the seal (host-side, Emil's
+    // −1 law): the first composition that sees a running session
+    // captures the then-live count and the BLOCK verdict, keyed
+    // by the session's id.
+```
+
+**C3 · UNA2-03 rider (line 358).** Current is honest as far as it
+goes ("a fact about the plan") but predates the label; it gains
+the label's sentence so the next reader does not "simplify" the
+suffix away. Replacement:
+
+```
+        // UNA2-03 rider: "ENDS HH:mm" is a fact about the plan, but
+        // its PASS tone is a claim the wire stands behind — beside
+        // a warrant that is not freshly LIVE the end prints at
+        // UNKNOWN density, never PASS beside BLOCK OFF. The idle
+        // print carries its tense as a suffix — "· PLANNED" —
+        // struck at this derivation only; the running cell, a
+        // stored end, carries no mark.
+```
+
+**C4 · Section 1 banner (line 544).** Number dies (§3.1); the
+closing clause "The preset tiles are gone: one value, one
+control — the wheel" is false while the FLOW key-cap stands
+below the wheel as a second control (it dies under F2, not
+here). Replacement:
+
+```
+        // =====================================================================
+        // THE INSTRUMENT (Ren — hero card and dial are ONE object:
+        // the readout lives in the same panel as the wheel that sets it.)
+        // =====================================================================
+```
+
+**C5 · ESR-13 hero-card comment (line 552).** Current calls the
+card "the Deck's one raised surface" — nothing raises it: the
+`import androidx.compose.ui.draw.shadow` (line 36) is never
+applied, and the audit (§2) records the lift as tone alone.
+F11 owns the shadow-or-silence decision; until it lands the
+comment stops claiming lift. Replacement:
+
+```
+                // ESR-13 (chrome C6): the hero card is the Deck's one
+                // surfaceBright panel, both modes — lift by tone
+                // alone; no shadow is applied (the draw.shadow
+                // import above stands dead until F11 rules one).
+                // The ground token (surface) here was the leaf-paper
+                // false close's twin: the panel painted in the
+                // ground's own tone.
+```
+
+**C6 · Vertigo comment (line 559).** Current: "at the seal the
+room recedes" — the transform is applied to the hero card
+itself, not the room; the instrument is what blurs (Schein's §6
+charge; F15 moves the transform to the ground). Replacement:
+
+```
+                // The vertigo (Zug-II §5.2): at the seal THIS CARD
+                // scales, rises and blurs — scale and rise on the
+                // transform easing, the blur on its own re-ease,
+                // peaking mid-shot (6dp at t = 0.5) and gone at
+                // Settle. At rest every term is identity. (F15
+                // moves the transform to the ground; until it
+                // lands, the instrument itself is what recedes.)
+```
+
+**C7 · Eyebrow eviction comment (line 603).** Current: "the app
+count's only homes are the strip's APPS cell and the imprint —
+one number, LOCKED+PEEK, one rendering per fact." Internally
+false — it lists two homes and claims one rendering (audit §4:
+the eviction "moved it from three homes to two and declared
+victory"; §7's U-3 names this comment as the law enforced by
+comment alone). Replacement:
+
+```
+                // The eyebrow's count is EVICTED (D9/A8): the app
+                // count's homes are the strip's APPS cell and the
+                // imprint — two renderings of one number (the
+                // split, LOCKED+PEEK), both struck from the same
+                // split. The eyebrow's copy was the third; it is
+                // the one that died.
+```
+
+**C8 · Pia FINISHES comment (line 713).** Current calls TIME
+"(a pure function…)" without the idle caveat — the §5.5 lie in
+miniature, at the exact spot a future editor would trust.
+Replacement:
+
+```
+                    // Pia: the FINISHES line dies here — TIME's only
+                    // home is the strip's TIME cell (running: a pure
+                    // function of the stored end; idle: of the minute
+                    // frame — a plan, printed "· PLANNED"). This
+                    // row's copy slid with every recomposition.
+```
+
+**C9 · Section 2 banner (line 758) / Section 3 banner
+(line 874).** Numbers die; the words are true and stand.
+Replacements are the same lines minus `SECTION 2: ` / `SECTION
+3: `:
+
+```
+        // THE TASK — one quiet line (Ren). Sub-steps behind a tap.
+        // ARMED — session utilities (desk clock, held notifications)
+```
+
+**C10 · Section 5 banner (line 920).** Number dies; the closing
+clause "so the zone under the wheel never changes height by a
+pixel" misplaces the zone (the pinned stack sits beneath the
+scroll column, not under the wheel). The strip's 53dp and the
+Δy = 0 claims are true today and stand (F16 rewrites this banner
+when it collapses the stack). Replacement:
+
+```
+        // =====================================================================
+        // THE PINNED STACK (Slice D) — outside the scroll: the proof
+        // strip, the slide's 72dp register, the reserved sentence
+        // slot, and the imprint. The strip keeps its 53dp address in
+        // every state; the slide zone holds the grace / valve chips
+        // at the same address while sealed (Δy = 0 across tenancies),
+        // so the pinned zone never changes height by a pixel across
+        // the seal.
+        // =====================================================================
+```
+
+**C11 · Slide-address comment (line 951).** Current parenthetical:
+"(F-Z3's room, read by Kato's fallback: the utilities keep the
+Δy = 0 address the zone has always had)" — the utilities live in
+the scroll column's Section 3; they have never held this zone.
+The zone's other tenants are the grace/valve chips. Replacement:
+
+```
+                    // The slide holds this address through the seal
+                    // (as the seated ghost), through the finish's
+                    // detention, and through its own return — the
+                    // grace / valve chips take the address only for
+                    // a settled, receipt-free running session
+                    // (F-Z3's room: the chips are the zone's only
+                    // other tenants, at the same address — Δy = 0
+                    // across tenancies).
+```
+
+### 3.4 · Annex A — one file over, the same lie (severable)
+
+`MonolithCustomComponents.kt`, `endsAtText` KDoc (lines 424–426).
+Current: "TIME's print (Uma): a pure function of a stored
+end-milli — the shipped ever-sliding finish line dies here;
+nothing about this text is remembered, and nothing here ticks."
+False for the idle call, which feeds it `nowFrame + span` — no
+stored end exists at idle. It is outside the Deck file; flagged
+as an annex so Rost can sever it if the file boundary must stay
+hard — but the pass that fixes C2 and leaves this standing has
+done half its job. Replacement:
+
+```
+ *  TIME's print (Uma): a pure function of ONE end-milli — the
+ *  formatter stores nothing and ticks nothing. What the milli
+ *  IS differs by caller: running passes the session's stored
+ *  end (a fact); idle passes the current frame plus the dialled
+ *  span (a plan — the Deck marks that print "· PLANNED" at its
+ *  own derivation; this formatter never marks). */
+```
+
+### 3.5 · Acquitted — read, checked, true (no change)
+
+The seal-shot banner and its clock note (Slice E); the cascade
+gate comment (proving renders idle form); the print-tense law
+(UNA2-03/04) and the wire-word note; Emil's latch comments
+(E-4/E-5) and the latch-retirement notes at the seal and at
+annulment (E-13, J-2); the seal-freeze block including the
+restore fallback's honesty (E-1/E-2/E-3) and the freeze-presence
+guard note; the held-finish and sled-scheduler comments; the
+ESR-08 stopwatch derivation comment; the held-frame readout
+comment (F-L2); the total-span pricing comment (BEYOND W3 —
+breaks priced in, audit-acquitted); the hero span-class and
+press comment (D3 — two ghosts at ±1dp, true today; F10 amends
+its ghost sentence when the catch ghost dies); the wheel
+ghost-through-the-shot comment (Zug-II §4.1); the FLOW key-cap
+comment (true of the cap while it stands; dies with F2); the
+input-death comments (Zug-II §4.6, ×3); the DONE key-cap comment
+(ESR-07); the two-digit sub-step comment (DRW-08); the E5b B3/B4
+exit comments; the F-Z3 utilities note; both ST-02 comments
+(param default + END BREAK chip); the Wrapper (Ren) pinning
+comment; the slot-tenant phase comment (step 4); the Suki
+UNSET-retry comment; the parameter-block Slice D/E comments
+(host owns the wire / phase / freeze / struck record);
+`SealShotState`'s KDoc (phase boundaries match `phaseName`);
+`PressLatch`'s KDoc (E-5/E-6). Signature and wiring comments in
+`MainActivity.kt`'s Deck call (Zug-II §5.1 raw-theme note) also
+checked — true.
+
+### 3.6 · Acceptance
+
+1. Grep the Deck file for `SECTION [0-9]` → zero hits; for
+   `12dp universal` → zero hits; for `never slid` outside the
+   running-TIME sentence of C2's replacement → zero hits.
+2. Idle render: TIME cell prints `ENDS HH:MM · PLANNED`;
+   one minute later the HH:MM has advanced and the mark stands.
+3. Running render: TIME cell prints `ENDS HH:MM`, no mark.
+   Idle FLOW: `NO END`, no mark. Press latch at idle: the
+   latched TIME print carries the mark.
+4. Every replacement above pasted verbatim — a paraphrased
+   "equivalent" comment is a new unverified claim, not this pass.
+
+---
+
+## §4 · FLAGS FOR ROST
+
+**4.1 · F19 vs AUDIT-receipt A8 — supersession needs the merge's
+word.** Zettel's receipt audit (item 19, group A8) ruled:
+dismissal on a real DOWN gesture + a 2-second dwell from
+`receiptPublishedMonoMs` during which taps pass through + the
+faulted slip dismissing only on an explicit act. Rost's F19
+(deck audit §9, later document, and my brief) rules a different
+set: scrim tap shakes, dismissal by slip-swipe or PARK/rail
+only. This spec follows F19 whole, on two stated grounds: (a)
+the deck audit is the later ruling and this cell's commission;
+(b) the dwell would make the LAWFUL doors feel broken for the
+slip's first two seconds — a man swiping a slip that will not
+move reads a jam, not a courtesy; the shake answers the stray
+tap without gating the true doors. Muede's intent under A8
+(a faulted slip must not die by accident) is preserved in
+substance: a scrim tap cannot kill any slip, faulted included,
+and the swipe is an unmistakable act. If Ren wants A8's dwell
+back, it bolts onto §1.3 as one clause (doors inert for 2s from
+the publication stamp; shake still live) — flagged, not built
+into the spec. Zettel's cell should hear the supersession from
+the merge, not discover it.
+
+**4.2 · Not mine, not touched.** The receipt sheet's arrival
+(A7: feed not fade; the dead exit `fadeOut`) — F19's exit is
+internal to the sheet and does not depend on it, but the two
+lanes edit adjacent lines of `ReceiptSheet.kt`; sequence A7
+before F19 or expect a trivial conflict at the
+`AnimatedVisibility` block. The dismissed-№ persistence
+(AUDIT-receipt item 20 interim law) changes the host state F19
+reads; compatible, separate lane.
+
+**4.3 · F20 is host chrome.** As the builder map already flagged:
+`MonolithRailView.kt` is outside the Deck file and adjacent to
+issue #4's territory (top status strip — a different surface;
+the rail is the foot band and §2 touches nothing above it).
+Spec is written to land under this issue; Rost rules the lane
+boundary.
+
+## §5 · WHAT THIS SPEC DOES NOT DO
+
+No code is written here and nothing is compiled or committed —
+DECLARED only, per the build law. Prices stand as the audit's:
+F19 S · F20 S · F21 S. Files the builders will touch: F19 →
+`ReceiptSheet.kt` + comment-only edits in `MainActivity.kt`;
+F20 → `MonolithRailView.kt`; F21 → `TactileDeckScreen.kt` (+
+Annex A in `MonolithCustomComponents.kt` if Rost keeps it).
+
+— FINISHER-4, Rost's cell, issue #6. Spec DECLARED, uncompiled,
+uncommitted.
