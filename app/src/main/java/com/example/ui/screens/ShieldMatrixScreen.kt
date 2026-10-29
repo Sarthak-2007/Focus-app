@@ -75,6 +75,7 @@ import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.theme.MonolithCurves
 import com.example.ui.theme.SoraFamily
+import com.example.ui.theme.TokenColorOnPrimary
 import com.example.ui.views.AppRowSledToggleView
 import com.example.ui.views.SledSwitchView
 import kotlinx.coroutines.delay
@@ -293,7 +294,7 @@ fun ShieldMatrixScreen(
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
-                        color = Color(0xFFFBF1EC)
+                        color = TokenColorOnPrimary
                     )
                 }
             }

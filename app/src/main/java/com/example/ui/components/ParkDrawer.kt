@@ -293,7 +293,7 @@ fun ParkDrawer(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.32f * (1f - effectiveFraction)))
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f * (1f - effectiveFraction)))
                 .then(
                     // Issue #56, finding 5: the scrim blocks for as
                     // long as it is DRAWN — the old `if (visible)`
