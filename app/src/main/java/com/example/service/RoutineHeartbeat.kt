@@ -2,6 +2,7 @@ package com.example.service
 
 import android.content.Context
 import android.os.SystemClock
+import android.util.Log
 import com.example.data.GuardSettingsEntity
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
@@ -22,7 +23,14 @@ import java.util.concurrent.atomic.AtomicLong
  * throttled opportunistic wakes from the accessibility service and
  * notification listener — enters through here and runs the SAME pass:
  *
- *   read schedule + sessions → derive() → apply diffs → rearm chain.
+ *   read schedule → REARM CHAIN FIRST → read sessions → derive() →
+ *   apply diffs → re-confirm chain → stamp.
+ *
+ * Issue #46: the rearm runs before every fallible session-reconcile
+ * step, so an exception later in the tick can never leave the chain
+ * unarmed. [lastArmedBoundaryMillis] records a boundary ONLY when the
+ * scheduler reports an armed state (exact or degraded-inexact);
+ * failed arms are logged and never believed.
  *
  * derive() is the only brain; this object is the only pair of hands.
  * Coalescing: one pass at a time; a trigger arriving mid-pass sets a
@@ -42,6 +50,7 @@ object RoutineHeartbeat {
         RESUME, CRUD, SESSION_EDGE, SHIELD_LOOP, OPPORTUNISTIC
     }
 
+    private const val TAG = "RoutineHeartbeat"
     private const val OPPORTUNISTIC_THROTTLE_MILLIS = 30_000L
     private const val DERIVE_LOOKBACK_MILLIS = 48L * 60L * 60L * 1000L
 
@@ -94,6 +103,13 @@ object RoutineHeartbeat {
         val now = System.currentTimeMillis()
         val routines = dao.getAllRoutinesSnapshot()
         val routinesById = routines.associateBy { it.id }
+
+        // 0. REARM FIRST (issue #46): compute the next boundary from
+        //    the routines snapshot and arm the chain BEFORE any of the
+        //    fallible session-reconcile work below, so an exception
+        //    later in this tick can never leave the chain unarmed.
+        rearmChainIfNeeded(appContext, RoutineDerive.nextBoundaryMillis(routines, now))
+
         val active = dao.getActiveSessionSnapshot()
         val since = now - DERIVE_LOOKBACK_MILLIS
         val sessions = (dao.getRoutineSessionsForDerive(since) + dao.getSessionsStartedSince(since))
@@ -171,19 +187,54 @@ object RoutineHeartbeat {
             MonolithShieldService.stopShield(appContext)
         }
 
-        // 5. Rearm the chain when the boundary moved or the chain is
-        //    missing entirely.
-        val boundary = result.nextBoundaryMillis
-        if (boundary != lastArmedBoundaryMillis || !RoutineScheduler.isChainArmed(appContext)) {
-            if (boundary == null) {
-                RoutineScheduler.cancelChain(appContext)
-            } else {
-                RoutineScheduler.rearmChain(appContext, boundary)
-            }
-            lastArmedBoundaryMillis = boundary
-        }
+        // 5. Re-confirm the chain against derive()'s boundary. The
+        //    step-0 rearm already armed this same boundary from the
+        //    same snapshot in the normal case, so this is a no-op
+        //    then; it exists so a boundary that somehow moved during
+        //    the pass is still the one left armed.
+        rearmChainIfNeeded(appContext, result.nextBoundaryMillis)
 
         // 6. Liveness stamp — proof on disk that the funnel ran.
         dao.stampLastRoutineTick(now)
     }
+
+    /**
+     * Arm the chain at [boundary] when the boundary moved or the chain
+     * is missing entirely (issue #46). [lastArmedBoundaryMillis] is
+     * updated ONLY on an armed result — a failed arm is logged, never
+     * believed, and the next tick retries because the recorded
+     * boundary still differs (or the chain probe still reads missing).
+     * Degraded (inexact) arms are logged distinctly from exact arms.
+     */
+    private fun rearmChainIfNeeded(appContext: Context, boundary: Long?) {
+        if (boundary == lastArmedBoundaryMillis && RoutineScheduler.isChainArmed(appContext)) return
+        if (boundary == lastArmedBoundaryMillis && boundary == null) return
+        if (boundary == null) {
+            RoutineScheduler.cancelChain(appContext)
+            lastArmedBoundaryMillis = null
+            return
+        }
+        when (val result = RoutineScheduler.rearmChain(appContext, boundary)) {
+            is RoutineScheduler.ChainArmResult.ArmedExact -> {
+                lastArmedBoundaryMillis = boundary
+            }
+            is RoutineScheduler.ChainArmResult.ArmedInexact -> {
+                // Armed, but DEGRADED — recorded (the chain exists, so
+                // re-arming every tick would churn it) and logged
+                // distinctly so the degradation is never mistaken for
+                // an exact arm.
+                Log.w(TAG, "chain armed DEGRADED (inexact) at $boundary — ${result.reason}")
+                lastArmedBoundaryMillis = boundary
+            }
+            is RoutineScheduler.ChainArmResult.Failed -> {
+                Log.e(TAG, "chain arm FAILED at $boundary — ${result.reason}; NOT recorded as armed, next tick retries")
+            }
+            RoutineScheduler.ChainArmResult.NoBoundary -> {
+                // rearmChain(boundary) never returns this; the list
+                // overload does. Treat as not-armed for this boundary.
+                Log.e(TAG, "chain arm returned NoBoundary for $boundary — NOT recorded as armed")
+            }
+        }
+    }
+
 }
