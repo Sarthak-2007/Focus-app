@@ -282,3 +282,18 @@ a different history — so the local cell history (352e5db, 6c86ea5,
 cdc5054, 0fd5645) diverges and a plain push is rejected; no
 force-push was made. Reconciliation belongs to Ren/Konto at the
 batch-10 composition. The Wave-2 commits are safe locally here.
+
+## FINAL STATUS (gh route live, Oct 30 04:10 update — supersedes PUSH STATUS above)
+- **DIVERGED — left local, Ren reconciles at batch-10.** Remote
+  `agent/issue-16` @ `873a23e` "issue-16: pill verification plan +
+  merge flags verified (Pastille cell)" carries a docs-only subset
+  (verification-plan + merge-flags, based directly on 8438f5a).
+  Local `agent/issue-16` carries different, fuller work:
+  `352e5db` "pill verification prep — composed start2MinutePeek",
+  `6c86ea5` "full cell package", `cdc5054` + `0fd5645` + status
+  (Wave-2). Trees differ by 17 files. No rebase, no force-push.
+  This branch — the issue-16 CELL CLONE's branch
+  (`builds/cells/issue-16/repo`) — is the one carrying the pill
+  verification package; the pill lane itself lives uncommitted in
+  `builds/pill`.
+- **COMMENT POSTED** via gh: issue #16, comment 6510187966.
