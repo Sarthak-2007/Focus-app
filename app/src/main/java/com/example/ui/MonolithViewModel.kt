@@ -831,7 +831,7 @@ class MonolithViewModel(
      *  readers (the pill's Frist seed, the PEEK_OFF withheld
      *  branch) read the SET peek length from here instead of the
      *  retired 2-minute constant. */
-    private val guardSettingsState: StateFlow<com.example.data.GuardSettingsEntity?> =
+    val guardSettingsState: StateFlow<com.example.data.GuardSettingsEntity?> =
         repository.guardSettingsFlow
             .stateIn(viewModelScope, SharingStarted.Eagerly, null)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())

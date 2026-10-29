@@ -120,6 +120,8 @@ private val PLATE_HEAD = listOf(
 )
 private val PLATE_BODY = listOf(
     "HOLD: 60 SECONDS, BANKED EVERY 15 · ONE BREAK A WEEK",
+    // The PEEK line is NOT static text: plateBodyFor() substitutes
+    // the set length (W-08). This entry is the default-value form.
     "PEEK: 2 MINUTES, THEN SHUT AGAIN",
     // Wave-2 plate cut (AUDIT-park §1.11/§4.9, lead ruling): the
     // plate is cut toward the ruled four lines (head 2 + HOLD +
@@ -162,6 +164,10 @@ fun ParkDrawer(
     socialSitesEnabled: Boolean,
     onToggleSocialSites: () -> Unit,
     onOpenReception: () -> Unit = {},
+    // W-08 (batch-10): the spec plate's PEEK line reads the SET
+    // peek length from the same GuardSettings row the lease reads
+    // — never the retired 2-minute constant. 0 prints PEEK: OFF.
+    peekMinutes: Int = 2,
     setupStampMask: Int? = null,
     handoverText: String? = null,
     modifier: Modifier = Modifier
@@ -1093,7 +1099,14 @@ fun ParkDrawer(
                     color = scheme.onBackground
                 )
                 Text(
-                    text = PLATE_BODY.joinToString("\n"),
+                    text = PLATE_BODY.map { line ->
+                        if (line.startsWith("PEEK:")) {
+                            if (peekMinutes == 0) "PEEK: OFF"
+                            else "PEEK: $peekMinutes MINUTES, THEN SHUT AGAIN"
+                        } else {
+                            line
+                        }
+                    }.joinToString("\n"),
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Normal,
                     fontSize = 10.sp,

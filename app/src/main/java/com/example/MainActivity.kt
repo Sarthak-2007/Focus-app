@@ -227,6 +227,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val themeEvaluation by viewModel.themeEvaluation.collectAsStateWithLifecycle()
     val guardLinePrint by viewModel.guardLinePrint.collectAsStateWithLifecycle()
     val watchSnapshot by viewModel.watchSnapshots.collectAsStateWithLifecycle()
+    val guardSettings by viewModel.guardSettingsState.collectAsStateWithLifecycle()
     val dialMinutes by viewModel.dialMinutes.collectAsStateWithLifecycle()
     val studyBlocksCount by viewModel.studyBlocksCount.collectAsStateWithLifecycle()
     val studyPreset by viewModel.studyPreset.collectAsStateWithLifecycle()
@@ -975,6 +976,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         } else {
                             null
                         },
+                        peekMinutes = guardSettings?.peekMinutes ?: 2,
                         handoverText = armedHandover?.text,
                         modifier = Modifier.align(Alignment.BottomCenter)
                     )
