@@ -16,3 +16,8 @@
 local.properties
 .env
 debug.keystore
+
+# Release/upload keys must never be committed (audit round 1, fix 1)
+*.jks
+my-upload-key.jks
+keystore.properties
