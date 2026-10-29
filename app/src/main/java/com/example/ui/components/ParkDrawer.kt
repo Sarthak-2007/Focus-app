@@ -80,7 +80,10 @@ import kotlinx.coroutines.launch
  * except the FIX key, radii 16 (panel) and 8 (key) only, orange
  * zero. The board is nine ruled lines over the Watch Store; the
  * only object is the FIX key, present only while a permission lack
- * exists. (Truth Car 3, UNA-02, seats ONE exception on the board
+ * exists. (Hof P-1, issue #9, seats the board's second object: the
+ * CHECK key — the drawer's verb of proof, present whenever the
+ * drawer is operable, firing the Watch sweep on demand; opening
+ * PARK fires the same sweep from the host.) (Truth Car 3, UNA-02, seats ONE exception on the board
  * itself: the SOCIAL SITES line carries its sled — the setting's
  * own switch on the line it governs; see ParkSocialSitesRow.)
  * Below the board: the Sound sled (the shipped control,
@@ -136,6 +139,7 @@ fun ParkDrawer(
     parkReturnTick: Int,
     onDismiss: () -> Unit,
     onFixClick: (WatchItemId) -> Unit,
+    onCheckClick: () -> Unit,
     onToggleSound: () -> Unit,
     onToggleShortsReelsSniper: () -> Unit,
     socialSitesEnabled: Boolean,
@@ -175,6 +179,64 @@ fun ParkDrawer(
     val firstMissing = snapshot?.let { snap ->
         WatchItemId.PERMISSIONS.firstOrNull {
             WatchStore.permPrintAt(snap, it, nowMono) == PermPrint.MISSING
+        }
+    }
+
+    // The CHECK key's press instant (Hof P-1 cure, issue #9): the
+    // key is CHECKING from the press until every permission item
+    // carries a measurement stamped at or after it — a derivation
+    // from the store, never a timer. Any writer's stamp counts
+    // (the sweep's queries, a lifecycle hook, the shield loop):
+    // the claim is "re-measured since you asked", whoever measured.
+    var checkPressedMono by remember { mutableStateOf(0L) }
+    val checking = checkPressedMono > 0L && !WatchItemId.PERMISSIONS.all { item ->
+        (snapshot?.items?.get(item)?.measuredMono ?: 0L) >= checkPressedMono
+    }
+    // The last completed check's verdict, when it landed unwhole
+    // (Designer's failed state, issue-9 spec): a persistent line
+    // under the CHECK key naming the first unproved counted item.
+    // The name is the MEASURED lack — every item answered; a
+    // MISSING is an answer, not a silence — so the line says
+    // NOT PROVED and names the door, nothing more. It clears on
+    // the next press, on close, and whenever the board reads
+    // whole by any road (a FIX return included).
+    var lastCheckLackName by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(checking) {
+        if (!checking && checkPressedMono > 0L) {
+            // The set has landed. If it landed whole, the firm
+            // click — the same voice the FIX return uses for a
+            // repaired line; a set with a lack stays silent and
+            // the board prints the lack in full ink.
+            val snap = snapshot
+            val now = SystemClock.elapsedRealtime()
+            val firstLack = snap?.let { s ->
+                WatchItemId.COUNTED.firstOrNull {
+                    WatchStore.permPrintAt(s, it, now) != PermPrint.GRANTED
+                }
+            }
+            if (snap != null && firstLack == null) {
+                soundEngine?.playFirmClick()
+                lastCheckLackName = null
+            } else {
+                lastCheckLackName = firstLack?.boardName
+            }
+            checkPressedMono = 0L
+        }
+    }
+    LaunchedEffect(snapshot) {
+        val snap = snapshot ?: return@LaunchedEffect
+        val now = SystemClock.elapsedRealtime()
+        if (WatchItemId.COUNTED.all {
+                WatchStore.permPrintAt(snap, it, now) == PermPrint.GRANTED
+            }
+        ) {
+            lastCheckLackName = null
+        }
+    }
+    LaunchedEffect(visible) {
+        if (!visible) {
+            checkPressedMono = 0L
+            lastCheckLackName = null
         }
     }
 
@@ -460,6 +522,70 @@ fun ParkDrawer(
                                 color = onInkControlFill()
                             )
                         }
+                    }
+                }
+
+                // (3b) The CHECK key (Hof P-1 cure, issue #9) — the
+                // board's second object, and its only verb of proof.
+                // The FIX key repairs a named lack; this key re-proves
+                // the whole board on demand: the host re-runs the
+                // Watch sweep, each line re-stamps as its query
+                // lands, and LAST PROVED advances when the complete
+                // set lands. Present in every state the FIX key is
+                // not — including never-measured, where it is the
+                // only honest move on the surface — and absent
+                // under the seal, where the drawer is print.
+                if (!isSealed) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .offset(y = if (checking) 1.dp else 0.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(inkControlFill())
+                            .then(
+                                if (interactive && !checking) {
+                                    Modifier.pointerInput(Unit) {
+                                        detectTapGestures(
+                                            onPress = {
+                                                checkPressedMono =
+                                                    SystemClock.elapsedRealtime()
+                                                lastCheckLackName = null
+                                                soundEngine?.playSeatKnock(
+                                                    durationMs = 10,
+                                                    amplitude01 = if (isNight) 0.06f else 0.1f,
+                                                    pitchHz = 300f
+                                                )
+                                                onCheckClick()
+                                                tryAwaitRelease()
+                                            }
+                                        )
+                                    }
+                                } else Modifier
+                            )
+                            .testTag("park_check_key"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (checking) "CHECKING" else "CHECK",
+                            style = PrimaryButtonTextStyle,
+                            color = onInkControlFill()
+                        )
+                    }
+                    // The failed check's verdict line: print, not a
+                    // control — full ink, the board's own lack dress,
+                    // ruled under like a board line. It persists
+                    // until the board reads whole or the drawer
+                    // closes; it never blames a door that answered.
+                    val lackName = lastCheckLackName
+                    if (lackName != null && !checking) {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        ParkBoardRow(
+                            name = "NOT PROVED",
+                            word = lackName,
+                            wordIsLack = true
+                        )
                     }
                 }
 

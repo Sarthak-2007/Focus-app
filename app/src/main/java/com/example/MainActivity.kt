@@ -322,9 +322,18 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // board renders the Watch Store — unless a diagnostic line is
     // invoked; the sweep itself is the point (clock/HMAC/boot facts
     // stay warm for the day a diagnostic needs them).
+    //
+    // Hof P-1 cure (issue #9): opening PARK ALSO re-runs the Watch
+    // Store's grant-check sweep — the sweep the board actually
+    // reads. Before this, PARK opened on whatever the last Deck
+    // entry or resume had measured and never re-proved anything
+    // itself: grants decayed to STALE in front of the reader with
+    // no verb anywhere on the surface. The drawer's own CHECK key
+    // (ParkDrawer) fires this same sweep on demand.
     LaunchedEffect(parkOpen) {
         if (parkOpen) {
             viewModel.refreshSystemGuard()
+            viewModel.runWatchSweep()
         }
     }
 
@@ -660,6 +669,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         parkReturnTick = parkReturnTick,
                         onDismiss = { closePark(dismissReceipt = false) },
                         onFixClick = { item -> openFixPane(item) },
+                        onCheckClick = { viewModel.runWatchSweep() },
                         onToggleSound = { viewModel.toggleSound() },
                         onToggleShortsReelsSniper = { viewModel.toggleShortsReelsSniper() },
                         // Truth Car 3 (UNA-02): the SOCIAL SITES
