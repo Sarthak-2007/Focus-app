@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,6 +44,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -55,7 +58,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.AppBlockTier
 import com.example.data.AppCategory
 import com.example.data.BlockedAppEntity
-import com.example.data.FocusProfileEntity
+import com.example.data.BlockedBrowserDomains
+import com.example.data.MonolithRepository
 import com.example.data.SmartLoadout
 import com.example.data.groupedForCatalogue
 import com.example.service.TactileSoundEngine
@@ -71,9 +75,9 @@ import com.example.ui.components.FullBleedSectionHeader
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.theme.MonolithCurves
-import com.example.ui.theme.SoraFamily
 import com.example.ui.views.AppRowSledToggleView
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * TAB 1: SUITCASE & APP SWITCHBOARD (DEVELOPER-GUIDE.pdf §4.2 #4 BagTiles, #6 SledSwitch, #7 RombiKnob)
@@ -87,10 +91,12 @@ fun ShieldMatrixScreen(
     filteredApps: List<BlockedAppEntity>,
     searchQuery: String,
     selectedCategory: AppCategory?,
-    shortsReelsSniperEnabled: Boolean,
-    browserUrlBlockerEnabled: Boolean,
-    profiles: List<FocusProfileEntity> = emptyList(),
-    selectedProfileName: String = "Study Loadout",
+    // R-9 (Shield audit; wave-2): the phantom parameters are STRUCK.
+    // shortsReelsSniperEnabled / browserUrlBlockerEnabled / profiles /
+    // selectedProfileName and their callbacks each occurred exactly
+    // once in this contract — declaration only. PARK owns both
+    // switches (its sleds); a parameter that exists so other code
+    // compiles is not a surface.
     // UNA-07: the LOADOUT cap's resting position, from the persisted
     // last hand pick (LoadoutStore via the VM). Default 0 (STUDY) is
     // the pre-pick default for render harnesses and previews.
@@ -111,9 +117,6 @@ fun ShieldMatrixScreen(
     onSelectCategory: (AppCategory?) -> Unit,
     onSetAppTier: (String, AppBlockTier) -> Unit,
     onApplySmartLoadout: (SmartLoadout) -> Unit,
-    onSelectProfile: (FocusProfileEntity) -> Unit = {},
-    onToggleShortsReelsSniper: () -> Unit,
-    onToggleBrowserUrlBlocker: () -> Unit,
     routines: List<com.example.data.RoutineEntity> = emptyList(),
     showResetNote: Boolean = false,
     onToggleRoutine: (com.example.data.RoutineEntity) -> Unit = {},
@@ -136,6 +139,7 @@ fun ShieldMatrixScreen(
     onPruneNoteDismissed: () -> Unit = {}
 ) {
     val scheme = MaterialTheme.colorScheme
+    val scope = rememberCoroutineScope()
     val effectiveNight = isDarkTheme || isSessionActive
     // UNA-07: the cap rests on the STORED FACT (loadoutCapIndex —
     // his last hand pick), not on a bare remember defaulting to
@@ -189,6 +193,24 @@ fun ShieldMatrixScreen(
     // The catalogue's one enumeration, grouped by ruling.
     val catalogueGroups = remember(filteredApps) { filteredApps.groupedForCatalogue() }
 
+    // R-3 state: the websites cap and the failed-ADD print.
+    var showAllSites by remember { mutableStateOf(false) }
+    var siteError by remember { mutableStateOf<String?>(null) }
+
+    // R-1 tally jumps (Plan §5.1): the tally's words are jumps.
+    // Item index of a catalogue group header, counted in the
+    // LazyColumn's own order: status, banner, cap, routines,
+    // tally, [prune], websites, search — then per group a header
+    // plus its rows.
+    fun catalogueGroupIndex(tier: AppBlockTier): Int {
+        var idx = 7 + if (pruneNoteText != null) 1 else 0
+        for ((t, apps) in catalogueGroups) {
+            if (t == tier) return idx
+            idx += 1 + apps.size
+        }
+        return idx
+    }
+
     LazyColumn(
         state = listState,
         modifier = Modifier
@@ -209,28 +231,50 @@ fun ShieldMatrixScreen(
         // toggle or a session row alone.
         // =====================================================================
         item {
-            Text(
-                text = statusHeadline,
-                fontFamily = AnonymousProFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
-                // The tone map (feel review, Haut §1.4/§3): LIVE is
-                // full ink; NO SESSION is the quiet tone — the wall
-                // is down as scheduled, nothing is wrong; UNPROVEN
-                // and STALE wear the alert tone — a session claims
-                // the wall and the proof does not back it.
-                color = when {
-                    blockingStatus?.proof == ShieldBlockingProof.LIVE ->
-                        scheme.onBackground
-                    blockingStatus?.proof == ShieldBlockingProof.NO_SESSION ->
-                        scheme.onSurfaceVariant
-                    blockingStatus != null -> scheme.error
-                    else -> scheme.onSurfaceVariant
-                },
+            // Wave-2 finish cure (PANZER/SAUM/POLITUR/LUFT, one voice):
+            // the wave-1 form painted every not-blocking state in
+            // scheme.error — 3.49:1 by day, the most important line
+            // on the screen at its least readable. Now: FULL INK in
+            // every state; the state is carried by the verb and a
+            // 10dp solidity glyph (solid = the wall stands, hollow =
+            // it does not), never by colour alone. The slot is a
+            // fixed 40dp so a re-strike never shoves the screen.
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("shield_blocking_status")
-            )
+                    .height(40.dp)
+                    .semantics { contentDescription = statusHeadline },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (blockingStatus?.proof == ShieldBlockingProof.LIVE) "●" else "○",
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    color = scheme.onBackground
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                // The re-strike (PANZER/SCHWUNG): a changed verdict
+                // re-prints as a whole line, 260ms Curve A — the
+                // tally's governed manners, never a partial swap.
+                AnimatedContent(
+                    targetState = statusHeadline,
+                    transitionSpec = {
+                        fadeIn(tween(260, easing = MonolithCurves.EasingA)) togetherWith
+                            fadeOut(tween(260, easing = MonolithCurves.EasingA))
+                    },
+                    label = "shield_blocking_status"
+                ) { headline ->
+                    Text(
+                        text = headline,
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = scheme.onBackground,
+                        modifier = Modifier.testTag("shield_blocking_status")
+                    )
+                }
+            }
         }
 
         // One-Way Ratchet warning banner if user tries to weaken rules during active session
@@ -248,7 +292,9 @@ fun ShieldMatrixScreen(
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
-                        color = Color(0xFFFBF1EC)
+                        // R-7: tokenised — the old hardcoded 0xFFFBF1EC was
+                        // unprovable in the day theme.
+                        color = scheme.onPrimaryContainer
                     )
                 }
             }
@@ -263,8 +309,9 @@ fun ShieldMatrixScreen(
             // The counts left this header (Liv D3, adopted by Gust):
             // SHUT / PEEK / OPEN live on the standing-orders tally
             // below — one home per number, or numbers are decoration.
-            FullBleedSectionHeader(titleWord = "LOADOUT")
-            Spacer(modifier = Modifier.height(8.dp))
+            // R-4(c) (Dens F5): the LOADOUT header is KILLED — the
+            // cap self-labels (its detents print STUDY/WORK/SLEEP);
+            // the slot pays ~32dp back to the screen.
             ShieldCapSelector(
                 selectedIndex = selectedLoadoutIndex,
                 soundEngine = soundEngine,
@@ -276,6 +323,25 @@ fun ShieldMatrixScreen(
                         else -> onApplySmartLoadout(SmartLoadout.SLEEP)
                     }
                 }
+            )
+            // R-4(b), the honest half this screen can prove: the cap
+            // rests on the persisted LAST HAND PICK — it must never
+            // wear a running routine's clothes. When a routine
+            // session is the live one, the print says so; otherwise
+            // it names the cap's source as the hand pick it is.
+            Text(
+                text = if (blockingStatus?.activeRoutineId != null) {
+                    "A ROUTINE SESSION IS RUNNING — ITS LOADOUT GOVERNS, NOT THIS CAP"
+                } else {
+                    "THIS CAP SHOWS YOUR LAST HAND PICK"
+                },
+                fontFamily = AnonymousProFamily,
+                fontSize = 11.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp)
+                    .testTag("loadout_cap_source")
             )
         }
 
@@ -302,7 +368,7 @@ fun ShieldMatrixScreen(
                 // One-time reseed strip (Freya §3.3): his schedule was
                 // reset to his real day; any row edit dismisses it.
                 Text(
-                    text = "SCHEDULE RESET TO YOUR DAY — TAP ANY ROW TO CHANGE IT",
+                    text = "YOUR DAY, SEEDED — TAP A ROW TO OPEN IT · TIMES YOU SET ARE NEVER CHANGED",
                     fontFamily = AnonymousProFamily,
                     fontSize = 11.sp,
                     color = scheme.primary,
@@ -348,7 +414,14 @@ fun ShieldMatrixScreen(
                 Column {
                     RulesHeaderRow(right = null)
                     Spacer(modifier = Modifier.height(8.dp))
-                    StandingTallyLine(counts = tallyShown)
+                    StandingTallyLine(
+                        counts = tallyShown,
+                        onJump = { tier ->
+                            scope.launch {
+                                listState.animateScrollToItem(catalogueGroupIndex(tier))
+                            }
+                        }
+                    )
                 }
             }
         } else {
@@ -378,14 +451,151 @@ fun ShieldMatrixScreen(
         }
 
         // =====================================================================
+        // SECTION 3.9: BLOCKED WEBSITES (R-3: ABOVE ALL APPS) — the editor transplanted from
+        // the dissolved Guard screen (chrome wave) — and MOVED by
+        // R-3 (wave-2): it sat ~6,100dp deep under the catalogue;
+        // an editor nobody reaches does not exist. Same rows, same
+        // add field, same wiring — the list below is the list the
+        // blocker enforces.
+        // =====================================================================
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                FullBleedSectionHeader(
+                    titleWord = "BLOCKED WEBSITES",
+                    rightWordPrefix = "",
+                    rightMonoNumber = blockedSites.size.toString(),
+                    rightWordSuffix = " SITES"
+                )
+
+                // R-3 (wave-2): capped at five rows + SHOW ALL —
+                // the full list is one tap away, never a scroll tax
+                // on the catalogue above it.
+                val shownSites = if (showAllSites) blockedSites else blockedSites.take(5)
+                shownSites.forEach { domain ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = domain,
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 14.sp,
+                            color = scheme.onBackground
+                        )
+                        BlockitActionChip(
+                            wordLabel = "REMOVE",
+                            onClick = { onRemoveSite(domain) }
+                        )
+                    }
+                }
+
+                if (blockedSites.size > 5) {
+                    BlockitActionChip(
+                        wordLabel = if (showAllSites) "SHOW FEWER" else "SHOW ALL ${blockedSites.size} SITES",
+                        onClick = { showAllSites = !showAllSites }
+                    )
+                }
+
+                var newSiteText by remember { mutableStateOf("") }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(scheme.surfaceVariant)
+                            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        if (newSiteText.isEmpty()) {
+                            Text(
+                                text = "Add a site — e.g. news.ycombinator.com",
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 13.sp,
+                                color = scheme.onSurfaceVariant
+                            )
+                        }
+                        BasicTextField(
+                            value = newSiteText,
+                            onValueChange = { newSiteText = it },
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 14.sp,
+                                color = scheme.onBackground
+                            ),
+                            // The accent law (chrome C7): ink caret.
+                            cursorBrush = SolidColor(scheme.onBackground),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("shield_site_input")
+                        )
+                    }
+                    BlockitActionChip(
+                        wordLabel = "ADD",
+                        isPrimaryInk = true,
+                        onClick = {
+                            // R-3 truth fix (Fremd C9b): a rejected ADD
+                            // PRINTS WHY and KEEPS the text. The old
+                            // form cleared the field and dropped the
+                            // failure silently — a print claiming
+                            // success for an add that never happened.
+                            // The screen judges with the repository's
+                            // own normaliser, so the verdict it prints
+                            // is the verdict the store will give.
+                            val normalised = BlockedBrowserDomains.normalizeDomain(newSiteText)
+                            when {
+                                newSiteText.isBlank() -> Unit
+                                normalised == null -> siteError =
+                                    "NOT A SITE — CHECK THE ADDRESS AND TRY AGAIN"
+                                blockedSites.contains(normalised) -> siteError =
+                                    "ALREADY ON THE LIST"
+                                else -> {
+                                    onAddSite(newSiteText)
+                                    newSiteText = ""
+                                    siteError = null
+                                }
+                            }
+                        }
+                    )
+                }
+                val err = siteError
+                if (err != null) {
+                    Text(
+                        text = err,
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("shield_site_error")
+                    )
+                }
+            }
+        }
+
+        // =====================================================================
         // SECTION 4: SEARCH & CATEGORY FILTER STRIP
         // =====================================================================
         item {
-            FullBleedSectionHeader(
-                titleWord = "ALL APPS",
-                rightWordPrefix = "SHOWING ",
-                rightMonoNumber = filteredApps.size.toString()
-            )
+            // Dens F6: SHOWING prints only when the catalogue is
+            // actually filtered — an unfiltered count here was a
+            // second home for the tally's numbers.
+            if (filteredApps.size != allApps.size) {
+                FullBleedSectionHeader(
+                    titleWord = "ALL APPS",
+                    rightWordPrefix = "SHOWING ",
+                    rightMonoNumber = filteredApps.size.toString()
+                )
+            } else {
+                FullBleedSectionHeader(titleWord = "ALL APPS")
+            }
             Spacer(modifier = Modifier.height(8.dp))
 
             // Recessed 12dp search bar
@@ -400,7 +610,7 @@ fun ShieldMatrixScreen(
             ) {
                 if (searchQuery.isEmpty()) {
                     Text(
-                        text = "Filter apps…",
+                        text = "SEARCH APPS",
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 13.sp,
                         color = scheme.onSurfaceVariant
@@ -489,95 +699,6 @@ fun ShieldMatrixScreen(
             }
         }
 
-        // =====================================================================
-        // SECTION 6: BLOCKED WEBSITES — the editor transplanted from
-        // the dissolved Guard screen (chrome wave). The Guard
-        // screen's section, moved whole: same rows, same add field,
-        // same wiring — the list below is the list the blocker
-        // enforces (the plate in PARK says so: SITES: KEPT WITH
-        // APPS ON SHIELD).
-        // =====================================================================
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                FullBleedSectionHeader(
-                    titleWord = "BLOCKED WEBSITES",
-                    rightWordPrefix = "",
-                    rightMonoNumber = blockedSites.size.toString(),
-                    rightWordSuffix = " SITES"
-                )
-
-                blockedSites.forEach { domain ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = domain,
-                            fontFamily = AnonymousProFamily,
-                            fontSize = 14.sp,
-                            color = scheme.onBackground
-                        )
-                        BlockitActionChip(
-                            wordLabel = "REMOVE",
-                            onClick = { onRemoveSite(domain) }
-                        )
-                    }
-                }
-
-                var newSiteText by remember { mutableStateOf("") }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(scheme.surfaceVariant)
-                            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
-                            .padding(horizontal = 12.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        if (newSiteText.isEmpty()) {
-                            Text(
-                                text = "Add a site — e.g. news.ycombinator.com",
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontSize = 13.sp,
-                                color = scheme.onSurfaceVariant
-                            )
-                        }
-                        BasicTextField(
-                            value = newSiteText,
-                            onValueChange = { newSiteText = it },
-                            singleLine = true,
-                            textStyle = TextStyle(
-                                fontFamily = AnonymousProFamily,
-                                fontSize = 14.sp,
-                                color = scheme.onBackground
-                            ),
-                            // The accent law (chrome C7): ink caret.
-                            cursorBrush = SolidColor(scheme.onBackground),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("shield_site_input")
-                        )
-                    }
-                    BlockitActionChip(
-                        wordLabel = "ADD",
-                        isPrimaryInk = true,
-                        onClick = {
-                            if (newSiteText.isNotBlank()) {
-                                onAddSite(newSiteText)
-                                newSiteText = ""
-                            }
-                        }
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -653,10 +774,14 @@ private fun RoutineRow(
             ) {
                 Text(
                     text = routine.name.uppercase(),
-                    fontFamily = SoraFamily,
+                    // Finish pass (Panzer item 7): the Sora guest is
+                    // evicted from routine rows — one axis, Atkinson
+                    // Bold 15sp, like every other working name here.
+                    fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    color = scheme.onBackground
+                    fontSize = 15.sp,
+                    color = scheme.onBackground,
+                    maxLines = 1
                 )
                 Text(
                     // R-5's marker rides the meta line: RUNNING NOW
@@ -667,7 +792,8 @@ private fun RoutineRow(
                         routineRunningNowSuffix(routine, activeRoutineId),
                     fontFamily = AnonymousProFamily,
                     fontSize = 12.sp,
-                    color = scheme.onSurfaceVariant
+                    color = scheme.onSurfaceVariant,
+                    maxLines = 1
                 )
             }
             // Toggle as a cap (S1): sized to its payload, one cap grammar
@@ -699,7 +825,15 @@ private fun RoutineRow(
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = if (capWord.length > 3) 10.sp else 11.sp,
-                    color = if (capFilled) onInkControlFill() else scheme.onSurfaceVariant
+                    // WON'T FIRE prints in FULL ink (wave-2 seat
+                    // cure): the fill stays off — this row is not
+                    // on — but the warning word itself is never
+                    // quiet. ON/OFF keep the quiet tone.
+                    color = when {
+                        capFilled -> onInkControlFill()
+                        wontFire -> scheme.onBackground
+                        else -> scheme.onSurfaceVariant
+                    }
                 )
             }
         }
@@ -860,7 +994,10 @@ private fun RulesHeaderRow(right: AnnotatedString?) {
  *  (Mikro M4 as governed by Gust: a loved slip never animates its
  *  numbers, and a rolling digit is a slot machine's manners). */
 @Composable
-private fun StandingTallyLine(counts: Triple<Int, Int, Int>) {
+private fun StandingTallyLine(
+    counts: Triple<Int, Int, Int>,
+    onJump: (AppBlockTier) -> Unit = {}
+) {
     val scheme = MaterialTheme.colorScheme
     AnimatedContent(
         targetState = counts,
@@ -870,13 +1007,36 @@ private fun StandingTallyLine(counts: Triple<Int, Int, Int>) {
         },
         label = "standing_tally"
     ) { (shut, peek, open) ->
-        Text(
-            text = tallyText(shut, peek, open),
-            fontSize = 11.5.sp,
-            color = scheme.onBackground,
-            modifier = Modifier.testTag("standing_tally")
-        )
+        // Plan §5.1 (R-1 completion, wave-2): the tally's words are
+        // JUMPS — tap a ruling and the catalogue scrolls to its
+        // group. Three segments, one line, the tally's own mixed
+        // typography (mono numerals, Atkinson words) in each.
+        Row(modifier = Modifier.testTag("standing_tally")) {
+            TallySegment(shut, " SHUT · ", scheme.onBackground) { onJump(AppBlockTier.LOCKED) }
+            TallySegment(peek, " PEEK · ", scheme.onBackground) { onJump(AppBlockTier.PEEK_2M) }
+            TallySegment(open, " OPEN", scheme.onBackground) { onJump(AppBlockTier.OPEN) }
+        }
     }
+}
+
+@Composable
+private fun TallySegment(count: Int, word: String, color: Color, onClick: () -> Unit) {
+    val text = buildAnnotatedString {
+        withStyle(SpanStyle(fontFamily = AnonymousProFamily, fontWeight = FontWeight.Bold)) {
+            append(count.toString())
+        }
+        withStyle(SpanStyle(fontFamily = AtkinsonHyperlegibleFamily, fontWeight = FontWeight.Bold)) {
+            append(word)
+        }
+    }
+    Text(
+        text = text,
+        fontSize = 11.5.sp,
+        color = color,
+        modifier = Modifier
+            .clickable { onClick() }
+            .semantics { contentDescription = "$count ${word.trim().trim('·')}" }
+    )
 }
 
 /** One catalogue group header (R-1): the ruling word only, in
@@ -886,17 +1046,33 @@ private fun StandingTallyLine(counts: Triple<Int, Int, Int>) {
  *  (R-13; critic Salz C-11.1). */
 @Composable
 private fun CatalogueGroupHeader(tier: AppBlockTier) {
-    Text(
-        text = tierWord(tier),
-        fontFamily = AtkinsonHyperlegibleFamily,
-        fontWeight = FontWeight.Bold,
-        fontSize = 11.5.sp,
-        letterSpacing = 0.6.sp,
-        color = MaterialTheme.colorScheme.onBackground,
-        modifier = Modifier
-            .padding(top = 4.dp)
-            .testTag("catalogue_group_${tier.name}")
-    )
+    Column {
+        Text(
+            text = tierWord(tier),
+            fontFamily = AtkinsonHyperlegibleFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 11.5.sp,
+            letterSpacing = 0.6.sp,
+            color = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier
+                .padding(top = 4.dp)
+                .testTag("catalogue_group_${tier.name}")
+        )
+        if (tier == AppBlockTier.PEEK_2M) {
+            // R-6: PEEK's contract prints ONCE on this screen, here,
+            // derived from the constants — never hardcoded, so an
+            // editable-times change reprints the truth for free.
+            val peekMin = MonolithRepository.PEEK_DURATION_SECONDS / 60
+            val coolMin = (MonolithRepository.PEEK_COOLDOWN_MILLIS / 60_000L).toInt()
+            Text(
+                text = "PEEK — $peekMin MINUTES, THEN SHUT AGAIN · $coolMin MIN BETWEEN PEEKS",
+                fontFamily = AnonymousProFamily,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("peek_contract_line")
+            )
+        }
+    }
 }
 
 /** One catalogue row: the sled, hosted. The catalogue is where a
@@ -919,6 +1095,11 @@ private fun CatalogueAppRow(
             view.soundEngine = soundEngine
             view.appName = app.appName
             view.currentTier = app.resolvedTier
+            // R-11 core: the sled is a Canvas — without this the
+            // row is silent to TalkBack and Shield cannot be
+            // operated by ear. The description carries name + tier.
+            view.contentDescription = "${app.appName}, ${tierWord(app.resolvedTier)}"
+
             view.onTierSelected = { newTier ->
                 onSetAppTier(app.packageName, newTier)
             }

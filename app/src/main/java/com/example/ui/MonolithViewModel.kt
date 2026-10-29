@@ -2115,7 +2115,7 @@ class MonolithViewModel(
                 AppBlockTier.LOCKED -> 2
             }
             if (targetRank < currentRank) {
-                triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT WEAKEN '${app.appName.uppercase()}' DURING ACTIVE VAULT")
+                triggerRatchetWarning("CANNOT WEAKEN '${app.appName.uppercase()}' DURING THIS SESSION")
                 return
             }
         }
@@ -2188,7 +2188,7 @@ class MonolithViewModel(
 
     fun toggleProfileSchedule(profile: FocusProfileEntity) {
         if (activeSession.value?.isActive == true && profile.isScheduleEnabled) {
-            triggerRatchetWarning("ONE-WAY RATCHET • ACTIVE SCHEDULE CANNOT BE DISABLED DURING VAULT LOCKDOWN")
+            triggerRatchetWarning("CANNOT DISABLE AN ACTIVE SCHEDULE DURING THIS SESSION")
             return
         }
         soundEngine.playMechanicalLatch(!profile.isScheduleEnabled)
