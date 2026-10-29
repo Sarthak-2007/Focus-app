@@ -1,9 +1,12 @@
 package com.example
 
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
+import android.test.mock.MockPackageManager
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.AppBlockTier
@@ -131,13 +134,51 @@ class AppListTruthTest {
     fun sync_emptyQueryResult_prunesNothing() = runBlocking {
         val dao = db.monolithDao()
         dao.insertApps(listOf(storedRow("com.only.app", "Only", AppBlockTier.PEEK_2M)))
-        // Nothing registered: the launcher query can only fail or
-        // come back empty, and an empty answer must never be read
-        // as "he uninstalled everything".
+
+        // DISTINGUISHING CONTROL (audit R1 tests-1 #3): the old
+        // version of this test could not tell "the empty-query
+        // guard worked" from "the entire sync silently failed" —
+        // both leave the table untouched. So first, in this same
+        // harness, a sync whose query DOES answer must visibly
+        // work: it discovers the control app, keeps the stored
+        // one, and records no prune. The pipeline (launcher query
+        // → reconcile → DAO) is proven alive before it is trusted.
+        fakeInstalled(
+            "com.only.app" to "Only",
+            "com.control.app" to "Control"
+        )
         repository.ensureSeededAndSyncPackages()
         assertEquals(
-            listOf("com.only.app"),
-            dao.getAllAppsSnapshot().map { it.packageName }
+            setOf("com.only.app", "com.control.app"),
+            dao.getAllAppsSnapshot().map { it.packageName }.toSet()
+        )
+        assertNull(repository.pendingPruneNote())
+
+        // Now the same sync, through a package manager whose
+        // launcher query is OBSERVED being called and answers
+        // empty. If this run silently failed before the query,
+        // the call count stays zero and the test fails; if the
+        // guard were removed, the empty answer would prune both
+        // rows and the test fails. Only a working guard passes.
+        var queryCalls = 0
+        val emptyPm = object : MockPackageManager() {
+            override fun queryIntentActivities(
+                intent: Intent,
+                flags: Int
+            ): MutableList<ResolveInfo> {
+                queryCalls++
+                return mutableListOf()
+            }
+        }
+        val emptyContext = object : ContextWrapper(context) {
+            override fun getPackageManager(): PackageManager = emptyPm
+        }
+        MonolithRepository(emptyContext, dao).ensureSeededAndSyncPackages()
+
+        assertTrue("the empty run must actually reach the launcher query", queryCalls > 0)
+        assertEquals(
+            setOf("com.only.app", "com.control.app"),
+            dao.getAllAppsSnapshot().map { it.packageName }.toSet()
         )
         assertNull(repository.pendingPruneNote())
     }
@@ -199,7 +240,17 @@ class AppListTruthTest {
         val rules = dao.getAllAppsSnapshot().groupedByRule()
         assertEquals(listOf("One"), rules.peek.map { it.appName })
         assertEquals(listOf("Two"), rules.shut.map { it.appName })
-        assertEquals(1, rules.peekCount)
-        assertEquals(1, rules.shutCount)
+        // Audit R1 tests-1 #5 (sibling site): the peekCount /
+        // shutCount assertions are replaced, not merely dropped —
+        // the counts are derived getters (`list.size`) over the
+        // lists just asserted, so they checked nothing. Content
+        // carries the claim instead: packages, tiers, and the
+        // untouched third app's exclusion from both groups.
+        assertEquals(listOf("com.one.app"), rules.peek.map { it.packageName })
+        assertEquals(listOf("com.two.app"), rules.shut.map { it.packageName })
+        assertTrue(rules.peek.all { it.resolvedTier == AppBlockTier.PEEK_2M })
+        assertTrue(rules.shut.all { it.resolvedTier == AppBlockTier.LOCKED })
+        assertTrue(rules.peek.none { it.packageName == "com.three.app" })
+        assertTrue(rules.shut.none { it.packageName == "com.three.app" })
     }
 }
