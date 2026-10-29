@@ -28,6 +28,7 @@ import com.example.service.WatchItemId
 import com.example.service.WatchStore
 import androidx.annotation.WorkerThread
 import androidx.room.withTransaction
+import com.example.domain.FocusDomain
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -978,6 +979,10 @@ class MonolithRepository(
     // this category (plus label and usage) onto an existing row;
     // a survivor's tier and limit are never re-priced by a sync,
     // so a corrected category can never move an existing ruling.
+    // ISSUE-67 NOTE: this branch originally extracted the same
+    // function into FocusDomain; main's #132 extraction landed
+    // first and is a superset (MUSIC token category), so the
+    // domain slice defers to it — one classifier, never two.
     private fun categorizePackage(pkg: String, label: String): AppCategory =
         AppCategorizer.categorize(pkg, label)
 
@@ -1917,13 +1922,16 @@ class MonolithRepository(
      * fail-safe for a lease that lapses unrecorded, so the window can
      * never be shortened by killing the app mid-peek.
      */
-    fun getPeekCooldownRemainingSeconds(app: BlockedAppEntity): Int {
-        val nowMono = SystemClock.elapsedRealtime()
-        val anchorEndMono = max(app.lastPeekEndElapsedRealtime, app.activePeekUntilElapsedRealtime)
-        if (anchorEndMono <= 0L) return 0
-        val remainingMs = (anchorEndMono + PEEK_COOLDOWN_MILLIS - nowMono).coerceAtMost(PEEK_COOLDOWN_MILLIS)
-        return if (remainingMs > 0L) (remainingMs / 1000L).toInt() else 0
-    }
+    fun getPeekCooldownRemainingSeconds(app: BlockedAppEntity): Int =
+        // ISSUE-67: the cooldown arithmetic is domain logic
+        // (FocusDomain, pure + JVM-tested); only the clock read
+        // stays here, where Android belongs.
+        FocusDomain.peekCooldownRemainingSeconds(
+            lastPeekEndMono = app.lastPeekEndElapsedRealtime,
+            activePeekUntilMono = app.activePeekUntilElapsedRealtime,
+            nowMono = SystemClock.elapsedRealtime(),
+            cooldownMillis = PEEK_COOLDOWN_MILLIS
+        )
 
     /**
      * Issue #55: the cooldown's absolute deadline in the SAME
@@ -2189,7 +2197,8 @@ class MonolithRepository(
      *  tier is not OPEN. One derivation, shared by the birth
      *  capture and every surface that ever prints the figure. */
     fun countHeldApps(apps: List<BlockedAppEntity>): Int =
-        apps.count { it.resolvedTier != AppBlockTier.OPEN }
+        // ISSUE-67: domain derivation (FocusDomain), fed tier names.
+        FocusDomain.countHeldApps(apps.map { it.resolvedTier.name })
 
     suspend fun startSession(
         intention: String,
@@ -3866,7 +3875,7 @@ class MonolithRepository(
             val daySessions = sessions.filter { it.startWallTimeMillis in startOfDay until endOfDay }
             val totalSecs = daySessions.sumOf { it.elapsedSeconds }
             val totalMins = totalSecs / 60
-            val blocks25 = (totalMins / 25).coerceAtLeast(if (totalMins >= 15) 1 else 0)
+            val blocks25 = FocusDomain.blocks25For(totalMins) // ISSUE-67: domain derivation
             val intercepts = daySessions.sumOf { it.phantomReachesBlocked }
 
             result.add(
@@ -4122,27 +4131,11 @@ class MonolithRepository(
      * no estimate segment — "(0m est …)" would book a figure the
      * man never gave.
      */
-    private fun completedTaskSummaryEntry(task: FocusTaskEntity): String {
-        // Issue #110 (vault-history-lived, finding 3): the actual
-        // segment prints the task's REAL accrued time. The old
-        // coerceAtLeast(1) inflated every sub-minute completion —
-        // including tasks ticked done with no session ever run
-        // (0 accrued seconds) — to "1m actual": a printed minute
-        // that never happened, on the receipt of the very session
-        // that proves it didn't. Zero accrued seconds says so;
-        // a real sub-minute accrual says "<1m", never a whole
-        // minute it did not reach.
-        val actualSegment = when {
-            task.actualSecondsSpent <= 0 -> "no session time"
-            task.actualSecondsSpent < 60 -> "<1m actual"
-            else -> "${task.actualSecondsSpent / 60}m actual"
-        }
-        return if (task.estimatedMinutes > 0) {
-            "${task.title} (${task.estimatedMinutes}m est / $actualSegment)"
-        } else {
-            "${task.title} ($actualSegment)"
-        }
-    }
+    private fun completedTaskSummaryEntry(task: FocusTaskEntity): String =
+        // ISSUE-67: the one formatter lives in the domain slice —
+        // the reopen repair strips by this exact string, so booking
+        // and repair must share ONE implementation (FocusDomain).
+        FocusDomain.completedTaskSummaryEntry(task.title, task.estimatedMinutes, task.actualSecondsSpent)
 
     /**
      * REOPEN — the Last-Finished Line's own verb (Register 3,
