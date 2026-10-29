@@ -112,5 +112,19 @@ and the body + `studio/audits/AUDIT-R1.txt` slice "heartbeat-retry" governed thi
 
 ## CI
 
-Pushed early; verdict recorded in the issue evidence comment (run URL + result).
-READY-FOR-MERGE pending that CI verdict.
+Run 40973419095 (branch tip d4bcb57): **Assemble debug ✓ PASSED** — all main-code
+changes in this bundle (scheduler, heartbeat, DAO incl. Room validation of the new
+queries) compile and package. **Unit tests ✗ FAILED at `compileDebugUnitTestKotlin`
+on pre-existing breakage outside this diff**: stale call-sites in
+`ScreenshotHarnessTest.kt:350`, `ShortsToggleRenderTest.kt:66`,
+`SoundAndSocialTruthTest.kt:382`, `TruthCar3CaptureBodyTest.kt:70`,
+`TruthCar3SweepTest.kt:6,7,314,346` (missing `socialSitesEnabled` /
+`shortsReelsSniperEnabled` params, unresolved `assertExists`/`assertDoesNotExist`).
+Proof it is pre-existing: the run for the untouched base commit (40973343644,
+origin/main @ e29acdf pushed to this branch before any bundle commit) failed with a
+**byte-identical error set**, and neither of this bundle's test files
+(`ReleaseRetrySchedulerTest`, `ReleaseRetryDaoTest`) appears in either error set.
+Consequence: the new tests could not execute in CI until that stale-test train
+(batch-10 / its owners) lands its call-site fixes — recorded here, NOT fixed out of
+scope. Verdict for this bundle: READY-FOR-MERGE with the named pre-existing CI block
+on test execution.
