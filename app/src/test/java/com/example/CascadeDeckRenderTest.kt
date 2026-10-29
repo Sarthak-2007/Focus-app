@@ -60,7 +60,7 @@ class CascadeDeckRenderTest {
             File("app/shots-redirect.txt")
         ).firstOrNull { it.isFile }
         val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        File(target ?: "/home/hatch/workspace/clone-inspect/shots")
+        File(target ?: System.getenv("MONOLITH_SHOTS_DIR") ?: "build/outputs/screenshots") // issue #66 cluster-priority: hardcoded author path removed, same cure as ScreenshotHarnessTest
     }
 
     @Before
