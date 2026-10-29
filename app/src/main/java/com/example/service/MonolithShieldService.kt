@@ -178,11 +178,22 @@ class MonolithShieldService : Service() {
                 val foregroundBlockedPkg = repository.queryForegroundBlockedApp(blockedPackages)
                 if (foregroundBlockedPkg != null && foregroundBlockedPkg != applicationContext.packageName) {
                     val blockedApp = dao.getAllAppsSnapshot().find { it.packageName == foregroundBlockedPkg }
+                    // FIX-7a: BACK parity — the blocked app must not
+                    // stand visible, reward delivered, through the
+                    // launch latency. The shield holds no
+                    // accessibility binding of its own, so the line
+                    // is performed through the live accessibility
+                    // service instance, like its sibling doors do
+                    // directly; no instance, no claim.
+                    MonolithAccessibilityService.instance?.performGlobalAction(
+                        android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK
+                    )
                     val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                         putExtra(EXTRA_INTERCEPTED_PACKAGE, foregroundBlockedPkg)
-                        putExtra(EXTRA_INTERCEPTED_APP_NAME, blockedApp?.appName ?: "Blocked App")
-                        putExtra(EXTRA_INTERCEPT_BADGE, blockedApp?.resolvedTier?.badge ?: "Locked")
+                        // Name slot holds a fact or the package verbatim (N-4 law).
+                        putExtra(EXTRA_INTERCEPTED_APP_NAME, blockedApp?.appName ?: foregroundBlockedPkg)
+                        putExtra(EXTRA_INTERCEPT_BADGE, blockedApp?.resolvedTier?.badge ?: "Blocked")
                         // This door's blocked set already excludes a leased PEEK app
                         // (the filter above), so a lease sold here is honoured (UNA2-01).
                         putExtra(EXTRA_INTERCEPT_PATH, InterceptPath.SHIELD_APP.name)
@@ -284,6 +295,10 @@ class MonolithShieldService : Service() {
         const val EXTRA_INTERCEPTED_PACKAGE = "extra_intercepted_package"
         const val EXTRA_INTERCEPTED_APP_NAME = "extra_intercepted_app_name"
         const val EXTRA_INTERCEPT_BADGE = "extra_intercept_badge"
+        /** The site door's sub-line (FIX-6 name slot): the matched
+         *  domain, printed under the browser's name on the Held
+         *  Door. Written only by the site door's launcher. */
+        const val EXTRA_INTERCEPTED_SUBLINE = "extra_intercepted_subline"
         /** The firing door's [InterceptPath] name (Truth Car 3,
          *  UNA2-01): the badge says WHAT stopped him; the path says
          *  WHICH door — and only lease-honouring doors may sell a

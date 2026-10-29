@@ -120,6 +120,11 @@ class MonolithRepository(
          *  (TOKEN-SPEC §2 — stored on the spend row). */
         const val EMERGENCY_BREAK_HELD_SECONDS = 60
 
+        /** C-11: the outcome an intercept row carries from its
+         *  arrival until a resolution is known — a visit that was
+         *  never resolved reads as exactly that. */
+        const val AT_DOOR_OUTCOME = "AT DOOR"
+
         /** The shipped routine-session recogniser (TOKEN-SPEC §4.1):
          *  a session started by a routine carries this profile prefix.
          *  Kept for recognising legacy pre-rebuild rows (arbitration
@@ -1178,7 +1183,24 @@ class MonolithRepository(
         val anchorEndMono = max(app.lastPeekEndElapsedRealtime, app.activePeekUntilElapsedRealtime)
         if (anchorEndMono <= 0L) return 0
         val remainingMs = (anchorEndMono + PEEK_COOLDOWN_MILLIS - nowMono).coerceAtMost(PEEK_COOLDOWN_MILLIS)
-        return if (remainingMs > 0L) (remainingMs / 1000L).toInt() else 0
+        // FIX-5a: the CEILING form, matching peekSecondsRemaining —
+        // the old floor (remainingMs / 1000) understated before the
+        // print ceilinged it back up, the one direction this face
+        // swears it never goes. Ceiling once, at the source.
+        return if (remainingMs > 0L) ((remainingMs + 999L) / 1000L).toInt() else 0
+    }
+
+    /**
+     * The cooldown's monotonic END instant for [app] (FIX-5b):
+     * the anchor the Held Door's print derives from at each
+     * recomposition, instead of a snapshot seconds count ticked
+     * locally by the overlay. Null when no peek has ever anchored
+     * a cooldown on this row.
+     */
+    fun peekCooldownEndsAtElapsedRealtime(app: BlockedAppEntity): Long? {
+        val anchorEndMono = max(app.lastPeekEndElapsedRealtime, app.activePeekUntilElapsedRealtime)
+        if (anchorEndMono <= 0L) return null
+        return anchorEndMono + PEEK_COOLDOWN_MILLIS
     }
 
     suspend fun getPeekCooldownRemainingSeconds(packageName: String): Int {
@@ -2122,11 +2144,19 @@ class MonolithRepository(
         appName: String,
         sessionIntention: String,
         outcome: String,
-        triggerReason: String = "Habit"
+        // FIX-3a: the "Habit" default dies with the MUSCLE_MEMORY
+        // default on the door — intercepts book UNSTATED unless a
+        // reason was actually stated by the man.
+        triggerReason: String = "UNSTATED",
+        // C-11: the row stamps the ARRIVAL instant, never the
+        // resolution's — callers that book on a resolution path
+        // pass the arrival they carry in state.
+        timestampMillis: Long = System.currentTimeMillis()
     ) {
         dao.incrementInterceptCount(packageName)
         dao.insertInterceptLog(
             InterceptLogEntity(
+                timestampMillis = timestampMillis,
                 packageName = packageName,
                 appName = appName,
                 sessionIntention = sessionIntention,
@@ -2134,9 +2164,63 @@ class MonolithRepository(
                 triggerReason = triggerReason
             )
         )
-        val active = dao.getActiveSessionSnapshot()
-        if (active != null) {
-            dao.updateSession(active.copy(phantomReachesBlocked = active.phantomReachesBlocked + 1))
+        // C-12: a honoured peek is not a blocked reach — the
+        // session's phantom count moves only on a turn-back.
+        if (outcome == "RETURNED AT DOOR") {
+            val active = dao.getActiveSessionSnapshot()
+            if (active != null) {
+                dao.updateSession(active.copy(phantomReachesBlocked = active.phantomReachesBlocked + 1))
+            }
+        }
+    }
+
+    /**
+     * C-11 (Fein, ruled in full by Tor, round 7): BOOK AT
+     * ARRIVAL. The intercept row is written at TRIGGER, stamped
+     * with the arrival instant, outcome [AT DOOR] — a visit that
+     * never resolves (process death, a disarm completing over the
+     * standing door, the honest exit) leaves exactly this truthful
+     * residue. The package's interceptCount increments HERE, at
+     * the arrival it names, so every count derivation (the taper,
+     * the receipt assembly) reads arrivals, not resolutions. The
+     * session's phantom count does NOT move: a reach is counted
+     * when it is turned back (see [resolveIntercept]).
+     * Returns the row id the resolution updates in place.
+     */
+    suspend fun bookInterceptArrival(
+        packageName: String,
+        appName: String,
+        sessionIntention: String,
+        triggerReason: String = "UNSTATED",
+        arrivedAtWallMillis: Long
+    ): Long {
+        dao.incrementInterceptCount(packageName)
+        return dao.insertInterceptLog(
+            InterceptLogEntity(
+                timestampMillis = arrivedAtWallMillis,
+                packageName = packageName,
+                appName = appName,
+                sessionIntention = sessionIntention,
+                outcome = AT_DOOR_OUTCOME,
+                triggerReason = triggerReason
+            )
+        )
+    }
+
+    /**
+     * C-11's second half: the outcome is updated into the arrival
+     * row when known — same row, same arrival timestamp, no
+     * second insert, no second count. A turn-back
+     * ([RETURNED AT DOOR]) is the one resolution that moves the
+     * session's phantom count (C-12); a taken peek does not.
+     */
+    suspend fun resolveIntercept(id: Long, outcome: String) {
+        dao.updateInterceptOutcome(id, outcome)
+        if (outcome == "RETURNED AT DOOR") {
+            val active = dao.getActiveSessionSnapshot()
+            if (active != null) {
+                dao.updateSession(active.copy(phantomReachesBlocked = active.phantomReachesBlocked + 1))
+            }
         }
     }
 
@@ -2877,26 +2961,6 @@ class MonolithRepository(
 
     fun declareDayWord(dateIso: String, word: String?) {
         dayWordStore.put(dateIso, word)
-    }
-
-    /**
-     * Used from the Airlock "Stuck on a Problem" coaching flow:
-     * Breaks the current intimidating task into a 10-minute micro-step and promotes it to #1 ACTIVE immediately.
-     */
-    suspend fun splitActiveTaskIntoMicroStep(microStepTitle: String): FocusTaskEntity = withContext(Dispatchers.IO) {
-        val cleanStep = microStepTitle.trim().ifEmpty { "Outline first 3 bullet points (10m micro-step)" }
-        addTaskToQueue(
-            title = cleanStep,
-            estimatedMinutes = 10,
-            categoryTag = "Micro-Step",
-            notesOrSubsteps = FocusTaskEntity.serializeSubSteps(
-                listOf(
-                    TaskSubStep(0, "Open notes & clear workspace (2m)", false),
-                    TaskSubStep(1, cleanStep, false)
-                )
-            ),
-            promoteToActive = true
-        )
     }
 
     suspend fun toggleTaskSubStep(taskId: Int, stepIndex: Int): FocusTaskEntity? = withContext(Dispatchers.IO) {
