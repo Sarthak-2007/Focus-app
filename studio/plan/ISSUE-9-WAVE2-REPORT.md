@@ -76,6 +76,12 @@ restorable until 2026-11-28).
    surface drinking from raw `sealed` while its own header band
    already composed `doorLocked` (HB-1/HB-2's fork, closed).
 
+10. **Declaration-order cure (named-seats MUST-1, postscript).**
+    `fixDip` read `fixPressed` ~50 lines before its declaration
+    in ParkDrawer.kt. The declarations now sit above the dip
+    animators — a free, zero-behaviour-change move, so Ren's
+    one compile is not spent discovering it (commit be8fc7f+1).
+
 ## REMAINDERS (priced, not hidden)
 - **P-2 whole answer / §5 Live-Fire Strip:** parked in issue
   #21 by Sarthak's order — NOT touched. Recorded as

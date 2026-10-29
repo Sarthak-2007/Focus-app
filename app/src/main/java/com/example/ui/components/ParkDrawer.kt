@@ -274,6 +274,14 @@ fun ParkDrawer(
         }
     }
 
+    // The FIX key's press state — declared BEFORE the dip
+    // animators that read it (wave-2 named-seats MUST-1: fixDip
+    // read fixPressed ~50 lines before its declaration; the move
+    // is free and zero-behaviour-change, and Ren's one compile
+    // should not be spent discovering it).
+    var fixPressed by remember { mutableStateOf(false) }
+    var fixPressedItem by remember { mutableStateOf<WatchItemId?>(null) }
+
     // The keys' dip motion (Finisher 2, §2): a gallery key
     // travels — 90 SEAT in on the press, 160 THROW back on the
     // release. One animator spec for both keys; the verbs part
@@ -326,10 +334,6 @@ fun ParkDrawer(
         if (!visible) fixVerdict = null
     }
 
-    // The FIX key's dip: pressed on DOWN, held for the whole absence,
-    // resolved on the return (see the return effect below).
-    var fixPressed by remember { mutableStateOf(false) }
-    var fixPressedItem by remember { mutableStateOf<WatchItemId?>(null) }
     LaunchedEffect(visible) {
         if (!visible) {
             fixPressed = false
