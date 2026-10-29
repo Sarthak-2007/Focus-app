@@ -361,8 +361,17 @@ class ExampleRobolectricTest {
         assertEquals("Re-seeding must be strictly idempotent for tasks", taskCountBeforeReSeed, db.monolithDao().getAllTasksSnapshot().size)
         assertEquals("Re-seeding must be strictly idempotent for sessions", sessionCountBeforeReSeed, db.monolithDao().getSessionHistorySnapshot().size)
 
-        // Verify interactive sub-step toggling and auto-splitting
-        repository.autoSplitTaskIntoMicroSteps(addedTask.id)
+        // Verify interactive sub-step toggling and HAND-SPLIT
+        // (F-6, issue #12: the auto-split generator is deleted —
+        // this segment previously called it, and the generator
+        // OVERWROTE the notes with its fabricated triple, which is
+        // what made the count below exactly 3. Hand-split APPENDS:
+        // the task's edited notes ("Include p99 latency chart")
+        // already parse as one step, so two hand-written steps
+        // bring the same total to the same 3 — by addition now,
+        // never by overwrite)
+        repository.addTaskSubStep(addedTask.id, "Draft results section")
+        repository.addTaskSubStep(addedTask.id, "Verify units & captions")
         val splitTask = db.monolithDao().getTaskById(addedTask.id)
         assertNotNull(splitTask)
         assertEquals(3, splitTask!!.subSteps.size)

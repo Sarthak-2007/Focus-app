@@ -611,7 +611,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onReopenTask = viewModel::reopenTask,
                                     onToggleSubStep = viewModel::toggleTaskSubStep,
                                     onAddSubStep = viewModel::addTaskSubStep,
-                                    onAutoSplitTask = viewModel::autoSplitTaskIntoMicroSteps,
                                     onNavigateToDeck = { viewModel.navigateTo(MonolithDestination.DECK) }
                                 )
                             }

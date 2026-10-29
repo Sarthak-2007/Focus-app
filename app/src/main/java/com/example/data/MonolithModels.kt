@@ -165,30 +165,13 @@ data class FocusTaskEntity(
             }
         }
 
-        fun defaultSubStepsForCategory(title: String, category: String): List<TaskSubStep> {
-            return when (category.lowercase()) {
-                "code" -> listOf(
-                    TaskSubStep(0, "Trace base cases & data invariants", false),
-                    TaskSubStep(1, "Implement core algorithm logic", false),
-                    TaskSubStep(2, "Verify edge cases & complexity", false)
-                )
-                "writing" -> listOf(
-                    TaskSubStep(0, "Draft 3-bullet structural outline", false),
-                    TaskSubStep(1, "Write core synthesis section", false),
-                    TaskSubStep(2, "Tighten key takeaways & citations", false)
-                )
-                "exam" -> listOf(
-                    TaskSubStep(0, "First pass without reference notes", false),
-                    TaskSubStep(1, "Flag & drill missed concepts", false),
-                    TaskSubStep(2, "Final rapid recall check", false)
-                )
-                else -> listOf(
-                    TaskSubStep(0, "Sketch diagram & list known variables", false),
-                    TaskSubStep(1, "Solve core problem set step-by-step", false),
-                    TaskSubStep(2, "Check units & boundary conditions", false)
-                )
-            }
-        }
+        // F-6 (issue #12): defaultSubStepsForCategory is DELETED
+        // here. The generator never read the title it was handed
+        // and branched on category alone; the Tasks composer
+        // hard-codes category "Study", which matched no branch, so
+        // every auto-split leaf received the same generic triple —
+        // fabricated steps wearing the task's name. Sub-steps are
+        // now written by hand only (HAND-SPLIT, via addTaskSubStep).
     }
 }
 

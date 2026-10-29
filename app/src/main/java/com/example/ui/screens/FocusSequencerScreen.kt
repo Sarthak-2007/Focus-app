@@ -46,7 +46,6 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.FocusTaskEntity
 import com.example.service.TactileSoundEngine
 import com.example.ui.components.BlockitActionChip
@@ -58,14 +57,22 @@ import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.theme.MonolithCurves
-import com.example.ui.views.TaskHorizonBarView
 import kotlinx.coroutines.delay
 
 /**
- * TAB 2: HORIZON TASK QUEUE (DEVELOPER-GUIDE.pdf §1.1, §2, §3)
+ * TAB 2: TASK QUEUE (DEVELOPER-GUIDE.pdf §1.1, §2, §3)
  * - Full-bleed stacked sections with 12dp universal spacing.
- * - Proportional `TaskHorizonBarView` at the top where only active task #1 uses THE Accent (#F55314).
- * - Single-line task entry + micro-step auto-splitter (`+ SPLIT 3`) + Undo banner.
+ * - Single-line task entry + Undo banner.
+ *
+ * F-3 (issue #12): the HORIZON header + proportional horizon bar
+ * are KILLED — the bar's proportions derived from a floored
+ * estimatedMinutes (every composer-made task floored to a phantom
+ * 10, drawing equal segments of a quantity the app no longer
+ * asks for since MINUTES DIE), and the header's minute total was
+ * the same fossil. The bar also carried a second "NOTHING QUEUED"
+ * printing; it dies with the bar and the blank leaf below remains
+ * the one printing. The task count moved to the QUEUE header.
+ * Nothing replaces the bar — the reclaimed space stays empty.
  */
 @Composable
 fun FocusSequencerScreen(
@@ -92,7 +99,6 @@ fun FocusSequencerScreen(
     onReopenTask: (Int) -> Unit,
     onToggleSubStep: (Int, Int) -> Unit,
     onAddSubStep: (Int, String) -> Unit,
-    onAutoSplitTask: (Int) -> Unit,
     onNavigateToDeck: () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -128,10 +134,6 @@ fun FocusSequencerScreen(
             add(tornIndex.coerceIn(0, base.size), LeafSlot(ghost, ghost = true))
         }
     }
-    val computedTotalMins = remember(orderedQueue) {
-        orderedQueue.sumOf { it.estimatedMinutes }
-    }
-
     fun submitTask() {
         val clean = newTaskTitle.trim()
         if (clean.isNotEmpty()) {
@@ -166,44 +168,7 @@ fun FocusSequencerScreen(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 100.dp)
     ) {
         // =====================================================================
-        // SECTION 1: PROPORTIONAL HORIZON WORKLOAD BAR (TaskHorizonBarView)
-        // =====================================================================
-        item {
-            FullBleedSectionHeader(
-                titleWord = "HORIZON",
-                // MINUTES DIE: the minute total prints only while
-                // stored estimates exist to sum (pre-order rows).
-                // A queue of name-only tasks totals nothing, and
-                // printing "0m" would state a false sum.
-                rightWordPrefix = if (computedTotalMins > 0) {
-                    "${orderedQueue.size} TASKS • "
-                } else {
-                    "${orderedQueue.size} TASKS"
-                },
-                rightMonoNumber = if (computedTotalMins > 0) "${computedTotalMins}m" else "",
-                useAccentOnNumber = false
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            AndroidView(
-                factory = { ctx ->
-                    TaskHorizonBarView(ctx).apply {
-                        this.soundEngine = soundEngine
-                    }
-                },
-                update = { view ->
-                    view.isNightMode = effectiveNight
-                    view.soundEngine = soundEngine
-                    view.tasks = orderedQueue
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(42.dp)
-                    .testTag("total_horizon_bar")
-            )
-        }
-
-        // =====================================================================
-        // SECTION 2: SINGLE-LINE TASK COMPOSER (Decision #18)
+        // SECTION 1: SINGLE-LINE TASK COMPOSER (Decision #18)
         // =====================================================================
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -301,13 +266,27 @@ fun FocusSequencerScreen(
         // SECTION 3: PROPORTIONAL TASK QUEUE CARDS (Decision #19)
         // =====================================================================
         item {
-            // Title only — the DONE n tally that rode here counted
-            // stored tasks with no lawful action attached; the
-            // Drawer is storage, and counts of it are tracker talk.
+            // F-3 (issue #12): QUEUE is now the screen's ONLY header
+            // and carries the count the killed HORIZON header used
+            // to print — assembled from the component's own slots
+            // (mono digit + word suffix, no accent, no component
+            // change). The count derives from displayQueue in EVERY
+            // state — the paper in hand, ghost included, the same
+            // list #NN numbers — never orderedQueue, which
+            // undercounted by one during the tear's ghost window.
+            // While sealed, the seal gets one printed word:
+            // "N TASKS · SEALED" (separator is U+00B7, not the
+            // dying header's bullet). The DONE n tally that once
+            // rode here stays dead: it counted stored tasks with no
+            // lawful action attached — the Drawer is storage, and
+            // counts of it are tracker talk. No minute total
+            // survives anywhere on this screen.
             FullBleedSectionHeader(
                 titleWord = "QUEUE",
-                rightWordPrefix = "",
-                rightMonoNumber = ""
+                rightMonoNumber = "${displayQueue.size}",
+                rightWordSuffix = (if (displayQueue.size == 1) " TASK" else " TASKS") +
+                    if (isSessionActive) " · SEALED" else "",
+                useAccentOnNumber = false
             )
         }
 
@@ -425,7 +404,7 @@ fun FocusSequencerScreen(
                 ghost = slot.ghost,
                 onTear = { onTearLeaf(slot.task, index) },
                 onToggleSubStep = onToggleSubStep,
-                onAutoSplitTask = onAutoSplitTask,
+                onAddSubStep = onAddSubStep,
                 onCueTaskToFocus = onCueTaskToFocus,
                 onDeleteTask = onDeleteTask,
                 onNavigateToDeck = onNavigateToDeck
@@ -484,7 +463,7 @@ private fun TaskLeafItem(
     ghost: Boolean,
     onTear: () -> Unit,
     onToggleSubStep: (Int, Int) -> Unit,
-    onAutoSplitTask: (Int) -> Unit,
+    onAddSubStep: (Int, String) -> Unit,
     onCueTaskToFocus: (Int) -> Unit,
     onDeleteTask: (Int) -> Unit,
     onNavigateToDeck: () -> Unit,
@@ -513,6 +492,27 @@ private fun TaskLeafItem(
             // The parent books at this tap, then sounds the tear;
             // this leaf's own motion is the ghost's, not its own.
             onTear()
+        }
+    }
+
+    // HAND-SPLIT (F-6, issue #12): SPLIT no longer generates
+    // anything — it opens a ruled blank line on the leaf (the
+    // step field below) and the man writes his own steps, one at
+    // a time, through the long-dead onAddSubStep this wires. The
+    // field stays open across adds so a split can take several
+    // steps; CLOSE folds it away. (Truly blank PERSISTED lines
+    // are impossible in the current model — parseSubSteps drops
+    // empty titles and the add verb refuses blanks — so the
+    // blank lives as the field, and only written steps persist.
+    // See builder.md.)
+    var splitting by remember(task.id, ghost) { mutableStateOf(false) }
+    var stepDraft by remember(task.id, ghost) { mutableStateOf("") }
+
+    fun submitStep() {
+        val clean = stepDraft.trim()
+        if (clean.isNotEmpty()) {
+            onAddSubStep(task.id, clean)
+            stepDraft = ""
         }
     }
 
@@ -634,6 +634,77 @@ private fun TaskLeafItem(
                 }
             }
 
+            // HAND-SPLIT's ruled blank (F-6): the step field, in
+            // the composer's own recessed grammar, indented to the
+            // sub-steps' line. Written steps land in the numbered
+            // list above it as they are added.
+            if (splitting && !ghost) {
+                Column(
+                    modifier = Modifier.padding(start = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(40.dp)
+                            .clip(RoundedCornerShape(9.dp))
+                            .background(scheme.surfaceVariant)
+                            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(9.dp))
+                            .padding(horizontal = 10.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        if (stepDraft.isEmpty()) {
+                            Text(
+                                text = "Write a step...",
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 12.5.sp,
+                                color = scheme.onSurfaceVariant
+                            )
+                        }
+                        BasicTextField(
+                            value = stepDraft,
+                            onValueChange = { stepDraft = it },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { submitStep() }),
+                            textStyle = TextStyle(
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 12.5.sp,
+                                color = scheme.onBackground
+                            ),
+                            cursorBrush = SolidColor(scheme.onBackground),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("hand_split_input_${task.id}")
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                        Text(
+                            text = "ADD STEP",
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = scheme.onBackground,
+                            modifier = Modifier
+                                .clickable { submitStep() }
+                                .testTag("hand_split_add_${task.id}")
+                        )
+                        Text(
+                            text = "CLOSE",
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.clickable {
+                                splitting = false
+                                stepDraft = ""
+                            }
+                        )
+                    }
+                }
+            }
+
             // Actions as words, not a chip farm (T8). The screen's one
             // orange lives on the cued task's START — as text.
             Row(
@@ -654,14 +725,25 @@ private fun TaskLeafItem(
                         modifier = Modifier.clickable(enabled = !ghost) { tear() }
                     )
                 }
-                if (task.subSteps.isEmpty()) {
+                // SPLIT (F-6, issue #12): HAND-SPLIT — the word
+                // opens the ruled blank above; nothing is generated.
+                // Wave-2 fix (Seat F1-Verify, H3): the word used to
+                // retire forever once any step existed — a split
+                // was a one-time event, and a task split yesterday
+                // could never be split further after the field
+                // closed. Re-entry is now the law: SPLIT stands
+                // whenever the field is closed, steps or none;
+                // reopening appends (addTaskSubStep appends at the
+                // list's end). While the field is open the word is
+                // the field's, not a verb.
+                if (!splitting) {
                     Text(
                         text = "SPLIT",
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
                         color = scheme.onSurfaceVariant,
-                        modifier = Modifier.clickable(enabled = !ghost) { onAutoSplitTask(task.id) }
+                        modifier = Modifier.clickable(enabled = !ghost) { splitting = true }
                     )
                 }
                 if (isCued) {

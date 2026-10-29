@@ -9,7 +9,10 @@ package com.example.data
  * randomness inside derive(). Every input arrives as a parameter;
  * the same inputs return an equal result, always. This is what
  * makes a stale or hallucinated caller harmless: a wrong *trigger*
- * can only ever produce a correct *evaluation of now*.
+ * can only ever produce a correct *evaluation of now*. F-1's
+ * queue-head title honours the same law: the caller resolves it
+ * (resolveHeadTitle over its own DAO snapshot) and passes the
+ * resulting String? in — derive() never reads the task queue.
  *
  * There is NO test-date suppression anywhere in this file (Ren,
  * 0915 — struck in its widest form): the app does not know that a
@@ -30,7 +33,12 @@ data class DesiredSession(
     val windowEndMillis: Long,
     val durationMinutes: Int,    // = remainderMinutes, NEVER the full window
     val loadoutName: String,     // routine.loadoutName, applied at materialise
-    val intention: String,       // = routine.name
+    val intention: String,       // F-1 (issue #12): the queue head's title as
+                                 // resolved by the caller (see resolveHeadTitle);
+                                 // the routine's own name when no head exists,
+                                 // and ALWAYS the routine's own name for SLEEP
+                                 // routines (lead ruling: the head names work,
+                                 // never sleep)
     val profileName: String      // = "Routine: <name>" — legacy rendering only;
                                  // identity is routineId, never this string
 )
@@ -76,15 +84,45 @@ object RoutineDerive {
      *  him for its own lateness. */
     const val MIN_REMAINDER_MINUTES = 5
 
+    /**
+     * F-1 (issue #12): resolves the queue head's title from the
+     * caller's ordered task snapshot. PURE — a list in, a title
+     * (or null) out; no DAO, no Context, no clock — so the rule
+     * is unit-tested directly and derive() purity is untouched:
+     * derive() only ever receives the String? this returns.
+     *
+     * Input contract: [tasks] in the DAO's queue order (MonolithDao
+     * getAllTasksSnapshot: status CASE ACTIVE, QUEUED, DEFERRED,
+     * else; queueOrder ASC; id ASC). Candidates are ACTIVE or
+     * QUEUED rows only — a DEFERRED task is "not today" and NEVER
+     * headlines a session (plan ruling 7: no next-up helper with a
+     * DEFERRED fallback may serve this seam), and COMPLETED rows
+     * are the Drawer's record, not the queue's future. A blank or
+     * whitespace title is skipped to the next eligible row. Null
+     * when nothing is eligible (empty queue, DEFERRED-only,
+     * all-blank): the caller passes null on and deriveOne falls
+     * back to the routine name — the pre-F-1 behaviour.
+     */
+    fun resolveHeadTitle(tasks: List<FocusTaskEntity>): String? =
+        tasks.firstOrNull { task ->
+            (task.resolvedStatus == TaskQueueStatus.ACTIVE ||
+                task.resolvedStatus == TaskQueueStatus.QUEUED) &&
+                task.title.isNotBlank()
+        }?.title
+
     fun derive(
         routines: List<RoutineEntity>,
         nowMillis: Long,
         activeSession: FocusSessionEntity?,
         sessions: List<FocusSessionEntity>,
-        settings: GuardSettingsEntity
+        settings: GuardSettingsEntity,
+        headTaskTitle: String?
     ): DeriveResult {
         val derivations = routines.map { routine ->
-            deriveOne(routine, nowMillis, activeSession, sessions, settings)
+            deriveOne(
+                routine, nowMillis, activeSession, sessions, settings,
+                headTaskTitle = headTaskTitle
+            )
         }
         val knownIds = routines.map { it.id }.toSet()
         val orphans = sessions.filter { s ->
@@ -103,7 +141,8 @@ object RoutineDerive {
         nowMillis: Long,
         activeSession: FocusSessionEntity?,
         sessions: List<FocusSessionEntity>,
-        settings: GuardSettingsEntity
+        settings: GuardSettingsEntity,
+        headTaskTitle: String?
     ): RoutineDerivation {
         val mine = sessions.filter { it.routineId == routine.id }
         val isSleep = routine.loadoutName == SmartLoadout.SLEEP.name
@@ -166,7 +205,23 @@ object RoutineDerive {
                     windowEndMillis = window.endMillis,
                     durationMinutes = window.remainderMinutes,
                     loadoutName = routine.loadoutName,
-                    intention = routine.name,
+                    // F-1 (issue #12): the head names the session
+                    // when the queue has one — a snapshot frozen
+                    // here, at seal time; later queue edits cannot
+                    // rewrite it, and sealing consumes nothing (no
+                    // task is completed, promoted or dequeued).
+                    // Empty queue falls back to the routine name —
+                    // the pre-F-1 behaviour. SLEEP exception (lead
+                    // ruling): SLEEP always seals its own name; the
+                    // head names work, never sleep.
+                    // Wave-2 fix (Seat F1-Verify, H2): the guard
+                    // lives HERE, not only in the resolver — a
+                    // blank head from any future caller must fall
+                    // back to the routine's name inside derive()
+                    // itself, never seal a blank that startSession
+                    // would silently rewrite downstream.
+                    intention = if (isSleep) routine.name
+                        else headTaskTitle?.takeIf { it.isNotBlank() } ?: routine.name,
                     profileName = "Routine: ${routine.name}"
                 )
             } else {
