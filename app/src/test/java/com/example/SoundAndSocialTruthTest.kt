@@ -364,7 +364,6 @@ class SoundAndSocialTruthTest {
     private fun setParkContent(vm: MonolithViewModel) {
         composeRule.setContent {
             val socialOn by vm.browserUrlBlockerEnabled.collectAsState()
-            val shortsOn by vm.shortsReelsSniperEnabled.collectAsState()
             val snapshot by WatchStore.snapshots.collectAsState()
             MyApplicationTheme(darkTheme = false, dynamicColor = false) {
                 // shorts = true below is a premise, not filler: with
@@ -380,8 +379,6 @@ class SoundAndSocialTruthTest {
                     soundEnabled = true,
                     shortsReelsSniperEnabled = true,
                     soundEngine = vm.soundEngine,
-                    shortsReelsSniperEnabled = shortsOn,
-                    onToggleShortsReelsSniper = { vm.toggleShortsReelsSniper() },
                     socialSitesEnabled = socialOn,
                     onToggleSocialSites = { vm.toggleBrowserUrlBlocker() },
                     themeReadout = "AUTO · DAY — NO ROUTINE OWNS IT",
