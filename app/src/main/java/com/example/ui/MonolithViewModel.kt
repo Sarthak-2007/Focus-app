@@ -249,6 +249,233 @@ class MonolithViewModel(
     private val _isAlwaysOnDeskClockVisible = MutableStateFlow(false)
     val isAlwaysOnDeskClockVisible: StateFlow<Boolean> = _isAlwaysOnDeskClockVisible.asStateFlow()
 
+    // FLOW §2 / issue #13 (Session Room merge): the desk clock
+    // raises ITSELF — once per session, on the settle, and at
+    // once on a cold open into a live session. The settle
+    // machine (DeskClockSettle.kt, V1 as amended) decides; the
+    // per-second ticker below performs the flag writes. The
+    // dismissal bit lives in the machine, in memory only.
+    private val deskClockSettle = DeskClockSettleMachine()
+    private val deskClockProcessBirthWallMillis = System.currentTimeMillis()
+
+    // His hand, last seen. Stamped by the Activity's
+    // onUserInteraction (MainActivity) — the settle counts from
+    // here, and A-4's watched/unwatched discriminator reads it.
+    @Volatile
+    private var deskClockLastInteractionMono: Long = SystemClock.elapsedRealtime()
+
+    // A-4: why the face last rose, and whether its pending exit
+    // is a finish (the receipt seam) rather than a dismissal.
+    private val _deskClockEntryCause =
+        MutableStateFlow(com.example.ui.components.DeskClockEntryCause.HAND)
+    val deskClockEntryCause: StateFlow<com.example.ui.components.DeskClockEntryCause> =
+        _deskClockEntryCause.asStateFlow()
+    private val _deskClockExitIsFinish = MutableStateFlow(false)
+    val deskClockExitIsFinish: StateFlow<Boolean> = _deskClockExitIsFinish.asStateFlow()
+
+    // V1 as amended: the tremor sampler. Registered at
+    // SENSOR_DELAY_GAME (~50 Hz) ONLY while a session is
+    // armed-undecided (the machine's duty law gates it further
+    // once HELD persists); unregistered the moment the clock
+    // stands or the session decides. The band energy is a
+    // running variance of the detrended acceleration magnitude —
+    // physiological tremor (7–14 Hz) rides on it; furniture
+    // does not sign it.
+    private var sensorManager: android.hardware.SensorManager? = null
+    private var tremorListener: android.hardware.SensorEventListener? = null
+    @Volatile
+    private var tremorVerdict: DeskClockVerdict = DeskClockVerdict.UNKNOWN
+    // Wave-2 fix (Salz C-17): the discriminator is a real
+    // two-one-pole bandpass, seeded — see updateTremorSampler.
+    @Volatile
+    private var tremorSeeded: Boolean = false
+    @Volatile
+    private var tremorSlowPole: Double = 0.0
+    @Volatile
+    private var tremorFastPole: Double = 0.0
+    @Volatile
+    private var tremorBandEnergy: Double = 0.0
+
+    // A-10(v): KEEP-AWAKE OWNERSHIP lives here, in the session
+    // machinery — not in the face's DisposableEffect (deleted
+    // from the overlay at this merge). MainActivity applies
+    // FLAG_KEEP_SCREEN_ON from this flow. The surrender law:
+    // deadline = max(settle stamp, last interaction, last
+    // charger disconnect) + 10 min still, on battery; a plug-in
+    // before the deadline cancels the yield, after it does not
+    // resurrect (the wake path's job — see noteUserInteraction).
+    private val _deskClockKeepAwake = MutableStateFlow(false)
+    val deskClockKeepAwake: StateFlow<Boolean> = _deskClockKeepAwake.asStateFlow()
+    private val _deskClockSurrenderFade = MutableStateFlow(false)
+    val deskClockSurrenderFade: StateFlow<Boolean> = _deskClockSurrenderFade.asStateFlow()
+    @Volatile
+    private var deskClockSettleStampMono: Long = 0L
+    @Volatile
+    private var lastChargerDisconnectMono: Long = 0L
+    // Wave-2 fix (Salz C-16, CRITICAL): the plug state as last
+    // sampled by the ticker — sampled EVERY beat, whatever the
+    // clock's visibility, so the plugged→unplugged EDGE is
+    // stamped where it happens. null = never sampled.
+    @Volatile
+    private var lastChargerPluggedSeen: Boolean? = null
+    @Volatile
+    private var deskClockYieldedSessionId: Int = DeskClockSettleMachine.NO_SESSION
+
+    // E-1 (ratified): the night return. A machine return after
+    // a routine finish wears the VEIL (black scrim 0.80 over the
+    // Deck until first touch); the first touch unveils onto the
+    // LANDING (the Deck at the room's light law, 0.55 over true
+    // black); the first true verb blooms it to full light over
+    // 520 Curve C. lockNow is NOT in this merge (Ren's lean).
+    private val _nightVeil = MutableStateFlow(false)
+    val nightVeil: StateFlow<Boolean> = _nightVeil.asStateFlow()
+
+    // Wave-2 fix (Samt D-1/D-2): the descent's scope. A-2's
+    // descent is the NIGHT's deepening — it belongs to the
+    // SLEEP-routine span alone (the audit's §1 inventory; E-3
+    // reserves descent off the SLEEP path as a later extension
+    // that changes the trigger, not the shape). The ticker
+    // derives this from the same isSleepLoadout path the
+    // stand-down uses; the overlay gates its span fraction (and
+    // the stopwatch's — always 0) on it.
+    private val _deskClockDescentApplies = MutableStateFlow(false)
+    val deskClockDescentApplies: StateFlow<Boolean> = _deskClockDescentApplies.asStateFlow()
+    private val _deckLandingDim = MutableStateFlow(false)
+    val deckLandingDim: StateFlow<Boolean> = _deckLandingDim.asStateFlow()
+
+    /** The Activity's interaction stamp (FLOW §2.1). Also the
+     *  wake path: an interaction while the face stands yielded
+     *  (A-10(v)) re-raises it BY HAND, at once — a hand raise is
+     *  a decision under the settle's law 2, not a sensor act —
+     *  and RE-ARMS the settle machine (noteWakeReRaise), so if
+     *  the face is dismissed again its next AUTO-raise is
+     *  sensor-built, never time-only. (Wave-2 honesty fix, Seat
+     *  VM-Review: the old text claimed the wake re-raise itself
+     *  was sensor-built; the code raises it immediately, and
+     *  now says so.) And E-1: the first interaction while the
+     *  Landing is dim blooms the Deck to full light — the hook
+     *  cannot distinguish a true verb from any other touch. */
+    fun noteUserInteraction() {
+        val nowMono = SystemClock.elapsedRealtime()
+        deskClockLastInteractionMono = nowMono
+        if (_deckLandingDim.value) _deckLandingDim.value = false
+        val yielded = deskClockYieldedSessionId
+        if (yielded != DeskClockSettleMachine.NO_SESSION) {
+            val session = activeSession.value
+            if (session != null && session.isActive && session.id == yielded) {
+                deskClockYieldedSessionId = DeskClockSettleMachine.NO_SESSION
+                deskClockSettle.noteWakeReRaise(session.id)
+                _deskClockEntryCause.value =
+                    com.example.ui.components.DeskClockEntryCause.SEEDED
+                _deskClockSurrenderFade.value = false
+                _isAlwaysOnDeskClockVisible.value = true
+                deskClockSettleStampMono = nowMono
+            } else {
+                deskClockYieldedSessionId = DeskClockSettleMachine.NO_SESSION
+            }
+        }
+    }
+
+    /** E-1: first touch on the veil unveils onto the Landing. */
+    fun unveilNightReturn() {
+        if (_nightVeil.value) {
+            _nightVeil.value = false
+            _deckLandingDim.value = true
+        }
+    }
+
+    /** The battery's plug state, read from the sticky intent —
+     *  no receiver is registered for this; the ticker samples
+     *  it once a second, which is the surrender law's grain. */
+    private fun chargerPlugged(): Boolean {
+        val intent = appContext.registerReceiver(
+            null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)
+        ) ?: return true // unreadable: never surrender on a guess
+        val plugged = intent.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0)
+        return plugged != 0
+    }
+
+    /** V1's sampler registration follows the machine's duty law:
+     *  registered only while armed-undecided; the listener feeds
+     *  the band-energy estimate the verdict function reads. */
+    private fun updateTremorSampler(sessionId: Int?, nowMono: Long) {
+        val shouldSample = sessionId != null &&
+            deskClockSettle.sensorSamplingActive(sessionId, nowMono)
+        if (shouldSample && tremorListener == null) {
+            val manager = appContext.getSystemService(
+                android.content.Context.SENSOR_SERVICE
+            ) as? android.hardware.SensorManager ?: return
+            val accel = manager.getDefaultSensor(
+                android.hardware.Sensor.TYPE_ACCELEROMETER
+            ) ?: run {
+                tremorVerdict = DeskClockVerdict.UNKNOWN // sensor-absent: backstop alone
+                return
+            }
+            val listener = object : android.hardware.SensorEventListener {
+                override fun onSensorChanged(event: android.hardware.SensorEvent) {
+                    val x = event.values[0]
+                    val y = event.values[1]
+                    val z = event.values[2]
+                    val magnitude = kotlin.math.sqrt(x * x + y * y + z * z).toDouble()
+                    // Wave-2 fix (Salz C-17): the old listener was
+                    // a first difference against an uncalibrated
+                    // constant — broadband gain RISING past the
+                    // band (a fan at 20 Hz convicted HELD harder
+                    // than a hand), and tremorLastMagnitude seeded
+                    // at 0 made every registration open with a
+                    // spurious HELD for ~2 s (first delta ≈ |g|).
+                    // Now: SEED both poles from the first sample
+                    // (no birth transient, verdict stays UNKNOWN
+                    // until real band content exists), then a
+                    // two-one-pole bandpass — slow pole tracks
+                    // below ~7 Hz, fast pole tracks below ~14 Hz,
+                    // their difference IS the 7–14 Hz band signal
+                    // (gravity and >14 Hz hum both fall outside
+                    // it). Energy is the band signal's running
+                    // variance. The floor below is an ESTIMATOR
+                    // CONSTANT, untuned — §7 debt 9 (Vega's bench)
+                    // stands over it; this code does not claim
+                    // otherwise.
+                    if (!tremorSeeded) {
+                        tremorSeeded = true
+                        tremorSlowPole = magnitude
+                        tremorFastPole = magnitude
+                        tremorBandEnergy = 0.0
+                        tremorVerdict = DeskClockVerdict.UNKNOWN
+                        return
+                    }
+                    tremorSlowPole += 0.36 * (magnitude - tremorSlowPole)
+                    tremorFastPole += 0.58 * (magnitude - tremorFastPole)
+                    val bandSignal = tremorFastPole - tremorSlowPole
+                    tremorBandEnergy =
+                        tremorBandEnergy * 0.95 + bandSignal * bandSignal * 0.05
+                    tremorVerdict = deskClockTremorVerdict(
+                        bandEnergy = tremorBandEnergy,
+                        noiseFloor = TREMOR_FLOOR_UNCALIBRATED
+                    )
+                }
+
+                override fun onAccuracyChanged(
+                    sensor: android.hardware.Sensor?, accuracy: Int
+                ) = Unit
+            }
+            sensorManager = manager
+            tremorListener = listener
+            manager.registerListener(
+                listener, accel, android.hardware.SensorManager.SENSOR_DELAY_GAME
+            )
+        } else if (!shouldSample && tremorListener != null) {
+            sensorManager?.unregisterListener(tremorListener)
+            tremorListener = null
+            sensorManager = null
+            // Wave-2 (C-17): a re-registration starts clean —
+            // no stale energy, no inherited poles.
+            tremorSeeded = false
+            tremorBandEnergy = 0.0
+            tremorVerdict = DeskClockVerdict.UNKNOWN
+        }
+    }
+
     private val _burnInFigure8MinuteStep = MutableStateFlow(0)
     val burnInFigure8MinuteStep: StateFlow<Int> = _burnInFigure8MinuteStep.asStateFlow()
 
@@ -973,6 +1200,125 @@ class MonolithViewModel(
                     repository.updateSessionProgress(current)
                 }
 
+                // Issue #13: the desk clock's auto-raise beat.
+                // The settle machine carries the law (V1 as
+                // amended: REST raises at once, HELD suppresses
+                // both paths, UNKNOWN/sensor-absent take the
+                // 20 s backstop) — and this beat performs the
+                // flag write and stamps A-4's entry cause from
+                // the same interaction stamp the machine read.
+                val clockNowMono = SystemClock.elapsedRealtime()
+                val clockSession = activeSession.value?.takeIf { it.isActive }
+                updateTremorSampler(clockSession?.id, clockNowMono)
+                if (deskClockSettle.tick(
+                        sessionId = clockSession?.id,
+                        sessionStartWallMillis = clockSession?.startWallTimeMillis ?: 0L,
+                        processBirthWallMillis = deskClockProcessBirthWallMillis,
+                        visible = _isAlwaysOnDeskClockVisible.value,
+                        nowMono = clockNowMono,
+                        lastInteractionMono = deskClockLastInteractionMono,
+                        sensorVerdict = tremorVerdict
+                    )
+                ) {
+                    _deskClockEntryCause.value = when {
+                        deskClockSettle.lastRaiseWasColdOpen ->
+                            com.example.ui.components.DeskClockEntryCause.SEEDED
+                        clockNowMono - deskClockLastInteractionMono < 10_000L ->
+                            com.example.ui.components.DeskClockEntryCause.WATCHED
+                        else -> com.example.ui.components.DeskClockEntryCause.UNWATCHED
+                    }
+                    _deskClockExitIsFinish.value = false
+                    _isAlwaysOnDeskClockVisible.value = true
+                    deskClockSettleStampMono = clockNowMono
+                }
+
+                // A-10(v): the keep-awake surrender, evaluated on
+                // this same beat. While the clock stands: charging
+                // holds the face; on battery the deadline is
+                // max(settle, last interaction, last charger
+                // disconnect) + 10 min still. At deadline − 520 ms
+                // the print fades (the overlay's surrender fade);
+                // at the deadline the flag clears into OLED black
+                // and the session is marked yielded — a wake tap
+                // re-raises it (noteUserInteraction) and re-arms
+                // the sampler. The face prints NOTHING after the
+                // yield — zero figures by law, not by defect.
+                // Wave-2 fix (Salz C-16, CRITICAL): sample the
+                // plug state on EVERY beat, before either branch
+                // consumes it, and stamp the disconnect edge where
+                // it happens — visible or hidden. The stamp is
+                // STICKY: a plugged beat never zeroes it (the old
+                // hidden-branch reset erased a real disconnect that
+                // preceded a later raise, and the visible branch
+                // never stamped at all — an unplug at 03:00 with
+                // the face standing yielded instantly, no fade, at
+                // a deadline set by the evening). First unplugged
+                // observation also stamps: a process born on
+                // battery prices its stillness from its first beat.
+                _deskClockDescentApplies.value =
+                    clockSession != null && isSleepLoadout(clockSession.routineId)
+
+                val pluggedBeat = chargerPlugged()
+                lastChargerDisconnectMono = chargerDisconnectStamp(
+                    prevPlugged = lastChargerPluggedSeen,
+                    nowPlugged = pluggedBeat,
+                    prevStampMono = lastChargerDisconnectMono,
+                    nowMono = clockNowMono
+                )
+                lastChargerPluggedSeen = pluggedBeat
+
+                if (_isAlwaysOnDeskClockVisible.value && clockSession != null) {
+                    _deskClockKeepAwake.value = true
+                    val plugged = pluggedBeat
+                    if (!plugged) {
+                        val deadline = deskClockSurrenderDeadlineMono(
+                            settleStampMono = deskClockSettleStampMono,
+                            lastInteractionMono = deskClockLastInteractionMono,
+                            lastChargerDisconnectMono = lastChargerDisconnectMono
+                        )
+                        // True-off is the system's own screen
+                        // timeout horizon; the surrender deadline
+                        // is the earlier, designed one — the fade
+                        // is keyed to it (deadline − 520 ms).
+                        // Wave-2 fix (Seat VM-Review): this ticker
+                        // beats once a second, so a 520 ms window
+                        // was a coin-flip — most yields would jump
+                        // from no-fade straight to cleared and the
+                        // farewell would never render. The flag
+                        // therefore leads by one ticker grain
+                        // (1 s): the overlay's 520 Curve C fade
+                        // runs inside that final second and
+                        // completes just before the flag clears.
+                        _deskClockSurrenderFade.value =
+                            clockNowMono >= deadline - 1_000L &&
+                                clockNowMono < deadline
+                        if (clockNowMono >= deadline) {
+                            deskClockYieldedSessionId = clockSession.id
+                            _isAlwaysOnDeskClockVisible.value = false
+                            _deskClockKeepAwake.value = false
+                            _deskClockSurrenderFade.value = false
+                        }
+                    } else {
+                        _deskClockSurrenderFade.value = false
+                    }
+                } else if (!_isAlwaysOnDeskClockVisible.value) {
+                    _deskClockKeepAwake.value = false
+                    _deskClockSurrenderFade.value = false
+                    // Disconnect stamping lives in the every-beat
+                    // sampler above (Wave-2, C-16) — no writes here.
+                }
+
+                // Wave-2 fix (Seat VM-Review): the visible-with-
+                // no-session beat fell through both branches
+                // above and left keep-awake at whatever the last
+                // session beat set — the flag could stick ON with
+                // no session to surrender. No session, no hold.
+                if (clockSession == null) {
+                    _deskClockKeepAwake.value = false
+                    _deskClockSurrenderFade.value = false
+                    _deskClockDescentApplies.value = false
+                }
+
                 // The peek pill's remaining time is DERIVED from the
                 // Room lease, never counted (Truth Car 3, UNA2-06):
                 // the row's activePeekUntilElapsedRealtime is the
@@ -1175,6 +1521,14 @@ class MonolithViewModel(
                         val ageMs = nowWall - endWall
                         when {
                             ageMs <= 1_800L -> onFinishE0(row, kind, witnessed = true)
+                            // A-10(iv): the 10-minute cliff dies
+                            // for stored-end kinds — a routine
+                            // row's end is its frozen
+                            // windowEndMillis, a stored fact, so
+                            // filing at any age is truthful.
+                            // Witnessed manual finishes keep it.
+                            com.example.data.receiptCliffExempt(kind) ->
+                                onFinishE0(row, kind, witnessed = false)
                             ageMs <= 600_000L -> onFinishE0(row, kind, witnessed = false)
                             else -> handledFinishIds += row.id
                         }
@@ -1203,8 +1557,20 @@ class MonolithViewModel(
         val e0Wall = System.currentTimeMillis()
         if (activeSession.value?.id == sessionId) {
             // Zeile's coarse ended edge: the desk clock's hide
-            // lives here now, not in the ticker.
+            // lives here now, not in the ticker. A-4: this hide
+            // is a FINISH exit (print fades, ground holds), not
+            // a dismissal.
+            _deskClockExitIsFinish.value = true
             _isAlwaysOnDeskClockVisible.value = false
+        }
+        // E-1: a SLEEP STAND-DOWN is the night machine-return —
+        // the Deck it returns to wears the veil until first
+        // touch. Wave-2 fix (Salz C-22): the old gate fired for
+        // EVERY routine-born kind at any hour — a witnessed noon
+        // finish blacked the Deck at 0.80 in his hand. The veil's
+        // grammar is the stand-down; gate on that kind alone.
+        if (kind == com.example.data.FinishKind.ROUTINE_SLEEP_STANDDOWN) {
+            _nightVeil.value = true
         }
         viewModelScope.launch {
             _sevenDayStats.value = repository.compute7DayHistory()
@@ -1244,7 +1610,15 @@ class MonolithViewModel(
             // completion voice's only lawful spend); E880 knock
             // pair. Death-booked: the E700 slot stands EMPTY.
             val pulses = com.example.data.finishPulses(kind, row)
-            launch {
+            // A-10(i): SILENCE FOR THE KIND — for
+            // ROUTINE_SLEEP_STANDDOWN finishPulses is false and
+            // the gate sits on the CALLS: the whole ceremony
+            // launch below is skipped, so the E0 knock and the
+            // E880 pair die with the pulse, haptics included
+            // (triggerWaveform is not gated by the sound toggle;
+            // only never calling it silences both halves).
+            val ceremonySounds = kind != com.example.data.FinishKind.ROUTINE_SLEEP_STANDDOWN
+            if (ceremonySounds) launch {
                 soundEngine.playSeatKnock(24, 1.0f, 320f)
                 if (pulses) {
                     val toPulse = 700L - (SystemClock.elapsedRealtime() - e0Mono)
@@ -1320,6 +1694,12 @@ class MonolithViewModel(
      *  with its expiry. A restored receipt never passes through
      *  here (Z6). */
     private fun emitReceipt(receipt: com.example.data.ReceiptState) {
+        // A-10(ii): a routine-born receipt is born filed — it
+        // never stands, on any path that reaches this emission.
+        // The record exists (№ claimed, row stamped); the Deck's
+        // first surface is not it.
+        if (com.example.data.isRoutineBornKind(receipt.kind)) return
+        if (repository.isReceiptFiled(receipt.sessionId)) return
         if (_receiptState.value?.sessionId == receipt.sessionId &&
             _receiptState.value?.number == receipt.number
         ) {
@@ -1360,6 +1740,18 @@ class MonolithViewModel(
             ) ?: return@launch
             val receipt = repository.publishReceipt(pending, faulted = false)
             if (receipt != null) emitReceipt(receipt)
+        }
+    }
+
+    /** A-10(iii): dismissal WRITES THROUGH — dismissing any
+     *  standing receipt writes the same persisted filed fact
+     *  A-10(ii) writes at a routine receipt's birth, so
+     *  rehydration cannot re-stand what a hand put away. One
+     *  mechanism, two writers. */
+    fun dismissReceipt(sessionId: Int) {
+        repository.markReceiptFiled(sessionId)
+        if (_receiptState.value?.sessionId == sessionId) {
+            _receiptState.value = null
         }
     }
 
@@ -1561,8 +1953,27 @@ class MonolithViewModel(
     }
 
     fun toggleAlwaysOnDeskClock(visible: Boolean) {
-        soundEngine.playMechanicalLatch(visible)
+        // A-9: the room never clicks — the desk-clock toggle's
+        // clock path is SILENT both ways (the latch call that
+        // stood here is deleted for this path only; the seal's
+        // Throw and the machinery voices are untouched).
+        // FLOW §2.2, law 2: a hand decision decides the session —
+        // the settle machine is told, so the ticker never argues
+        // with the hand. A hand raise stamps the interaction
+        // clock (A-2(iii): the wake/raise path guarantees the
+        // descent's 60 s suspension window from a real stamp).
+        deskClockLastInteractionMono = SystemClock.elapsedRealtime()
+        if (visible) {
+            _deskClockEntryCause.value =
+                com.example.ui.components.DeskClockEntryCause.HAND
+            _deskClockExitIsFinish.value = false
+            deskClockSettleStampMono = deskClockLastInteractionMono
+        }
         _isAlwaysOnDeskClockVisible.value = visible
+        val session = activeSession.value
+        if (session != null && session.isActive) {
+            deskClockSettle.noteHandDecision(session.id)
+        }
     }
 
     fun toggleNotificationDigestSheet(visible: Boolean) {
@@ -2455,6 +2866,14 @@ class MonolithViewModel(
     }
 
     override fun onCleared() {
+        // Wave-2 fix (Seat VM-Review): the tremor listener was
+        // never unregistered here — a cleared VM leaked a live
+        // 50 Hz sensor registration for the process's life.
+        tremorListener?.let { listener ->
+            sensorManager?.unregisterListener(listener)
+        }
+        tremorListener = null
+        sensorManager = null
         soundEngine.stopAllAudio()
         super.onCleared()
     }

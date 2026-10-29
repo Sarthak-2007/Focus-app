@@ -3,6 +3,9 @@ package com.example.ui.components
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,13 +30,18 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
@@ -61,10 +69,116 @@ import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.views.Emergency60sValveView
 import com.example.ui.views.TowerStreakView
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Locale
+
+// FLOW §2.4.4 — the light cure, in constants (Salz's desk,
+// plan/REFINE-salz-aod.md §§1–3). Nacht's ceiling for the night
+// face is 0.25 relative luminance; NightColorPrimary (#FFE4CF)
+// prints 0.8125 at full strength — a 3.3× breach on a face that
+// now raises ITSELF and may stand all night. Composited over
+// the overlay's true-black ground: the content prints at 0.55
+// land at ≈0.216, and the exit line at 0.58 lands at ≈0.246.
+// The auto-raise ships only under this cure; these two numbers
+// are the cure.
+private const val DESK_CLOCK_PRINT_ALPHA = 0.55f
+private const val DESK_CLOCK_EXIT_ALPHA = 0.58f
+
+// Issue #13, A-2 — the descent (item 14 / V4), completed:
+// DIM BY AREA. The hero and the tear rule descend 0.55 → 0.36
+// across the span; every number-carrying small line (sub-line,
+// block line, banner incl. the break line) FLOORS at 0.50 — a
+// number too dim to read is a number withheld. The EXIT line is
+// excepted from that floor: it carries no figure, and keeps its
+// descended 0.40.
+// THE DOOR INVARIANT, pinned (Mond, ratio form): at every span
+// fraction, exit luminance ≥ 1.10 × hero-print luminance. Both
+// prints are the same ink, so the invariant is kept by
+// construction: exitAlpha = max(0.40, heroAlpha × 1.10).
+// Wave-2 honesty fix (Seat Overlay-Review): that sentence was
+// FALSE at the standing alphas — the exit is also capped at
+// its ruled ceiling DESK_CLOCK_EXIT_ALPHA (0.58), and
+// 0.58 / 0.55 = 1.055 < 1.10, so the cap binds wherever the
+// hero stands above 0.58 / 1.10 ≈ 0.527 (fraction ≲ 0.12, the
+// 60 s suspension, and the dawn's return). The invariant as
+// constructed holds through the descent; at standing, the
+// ruled ceiling wins. Which of the two constants yields is a
+// ruling for Ren — this merge changes neither number, and no
+// longer claims both.
+private const val DESK_CLOCK_HERO_FLOOR_ALPHA = 0.36f
+private const val DESK_CLOCK_NUMBER_FLOOR_ALPHA = 0.50f
+private const val DESK_CLOCK_EXIT_FLOOR_ALPHA = 0.40f
+private const val DOOR_INVARIANT_RATIO = 1.10f
+
+/** A-4's entry causes: the arrival motion is keyed to WHY the
+ *  face rose, and the witness discriminator is the settle
+ *  machine's own lastInteraction stamp (carried by the VM). */
+enum class DeskClockEntryCause { UNWATCHED, WATCHED, HAND, SEEDED }
+
+/** The face's print alphas at one instant (A-2/A-3, pure). */
+internal data class DeskClockAlphas(
+    val hero: Float,
+    val exit: Float,
+    val numberLine: Float
+)
+
+/**
+ * The descent's whole law in one pure function (A-2 + A-3):
+ * - the descent variable is NAMED: [spanElapsedFraction], the
+ *   span-elapsed fraction, clamped to [0, 1];
+ * - hero descends standing → 0.36 by that fraction; number
+ *   lines descend standing → their 0.50 floor; the exit line
+ *   follows the door invariant (≥ 1.10 × hero, floor 0.40,
+ *   capped at the 0.58 ceiling — see the invariant's note at
+ *   DOOR_INVARIANT_RATIO for where the cap binds);
+ * - a raise or re-raise SUSPENDS the descent for 60 s
+ *   ([descentSuspended]): the face opens at standing alphas;
+ * - the DAWN RAMP (A-3): in the final 60 s every descended
+ *   alpha lerps back to its standing constant, reaching full
+ *   exactly at T-0 ([spanRemainingSeconds] in 1..60).
+ */
+internal fun deskClockPrintAlphas(
+    spanElapsedFraction: Float,
+    descentSuspended: Boolean,
+    spanRemainingSeconds: Int?,
+    isStopwatch: Boolean
+): DeskClockAlphas {
+    val fraction = spanElapsedFraction.coerceIn(0f, 1f)
+    var hero = DESK_CLOCK_PRINT_ALPHA +
+        (DESK_CLOCK_HERO_FLOOR_ALPHA - DESK_CLOCK_PRINT_ALPHA) * fraction
+    var number = DESK_CLOCK_PRINT_ALPHA +
+        (DESK_CLOCK_NUMBER_FLOOR_ALPHA - DESK_CLOCK_PRINT_ALPHA) * fraction
+    if (descentSuspended) {
+        hero = DESK_CLOCK_PRINT_ALPHA
+        number = DESK_CLOCK_PRINT_ALPHA
+    }
+    if (!isStopwatch && spanRemainingSeconds != null && spanRemainingSeconds in 1..60) {
+        val dawn = (60 - spanRemainingSeconds) / 60f
+        hero += (DESK_CLOCK_PRINT_ALPHA - hero) * dawn
+        number += (DESK_CLOCK_PRINT_ALPHA - number) * dawn
+    }
+    val exit = maxOf(DESK_CLOCK_EXIT_FLOOR_ALPHA, hero * DOOR_INVARIANT_RATIO)
+        .coerceAtMost(DESK_CLOCK_EXIT_ALPHA)
+    return DeskClockAlphas(hero = hero, exit = exit, numberLine = number)
+}
+
+/** A-7: the tear fraction never prints below a hair and never
+ *  past the span — elapsed can run past target in a delayed-
+ *  finish window while the hero sits at 0:00. */
+internal const val TEAR_HAIR_FRACTION = 0.01f
+internal fun tearFraction(spanElapsedFraction: Float): Float =
+    spanElapsedFraction.coerceIn(TEAR_HAIR_FRACTION, 1f)
 
 /**
  * 1. ALWAYS-ON NIGHTSTAND DESK CLOCK OVERLAY (Decision #8)
+ *
+ * Issue #13 merge notes: keep-awake ownership MOVED to the VM's
+ * session machinery (A-10(v)) — this face no longer touches
+ * FLAG_KEEP_SCREEN_ON; the VM's surrender law (deadline, fade,
+ * yield) drives it. Arrival/exit motion is A-4's cause table,
+ * carried in [entryCause] / [exitIsFinish]; the surrender fade
+ * (A-10(v): print fades 520 Curve C to 0 at true-off − 520 ms)
+ * arrives as [surrenderFade].
  */
 @Composable
 fun AlwaysOnDeskClockOverlay(
@@ -73,91 +187,227 @@ fun AlwaysOnDeskClockOverlay(
     activeTask: FocusTaskEntity?,
     dialMinutes: Int,
     burnInStep: Int,
+    entryCause: DeskClockEntryCause = DeskClockEntryCause.HAND,
+    exitIsFinish: Boolean = false,
+    surrenderFade: Boolean = false,
+    // Wave-2 (Samt D-1): the descent belongs to the SLEEP span
+    // alone; the VM derives this from the stand-down's own
+    // isSleepLoadout path and hands it in. Default false: a
+    // caller that does not know keeps the face at standing.
+    descentApplies: Boolean = false,
     onDismiss: () -> Unit
 ) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(MonolithCurves.specB()),
-        exit = fadeOut(MonolithCurves.specA())
-    ) {
-        // The desk clock's premise (Round 0 fix): the screen stays on while
-        // the clock shows. No FLAG_KEEP_SCREEN_ON existed anywhere in the
-        // app, so the "always-on" clock died to the screen timeout. The
-        // flag is restored on dispose.
-        val clockView = LocalView.current
-        DisposableEffect(visible) {
-            var ctx: android.content.Context? = clockView.context
-            var activity: android.app.Activity? = null
-            while (ctx is android.content.ContextWrapper) {
-                if (ctx is android.app.Activity) { activity = ctx; break }
-                ctx = ctx.baseContext
+    // A-4 — arrival and exit, keyed to cause. Ground and print
+    // animate separately: the ground is true black, the print
+    // lands on completed black and never blends over a lit Deck.
+    val groundAlpha = remember { Animatable(0f) }
+    val printAlpha = remember { Animatable(0f) }
+    LaunchedEffect(visible, entryCause) {
+        if (visible) {
+            when (entryCause) {
+                DeskClockEntryCause.SEEDED -> {
+                    // SEEDED (cold open; battery-yield return):
+                    // NO fade — frame one at full lawful alpha.
+                    // THE FACE FADES ONLY ON ITS FIRST ARRIVAL
+                    // IN A SESSION (Mond's law).
+                    groundAlpha.snapTo(1f)
+                    printAlpha.snapTo(1f)
+                }
+                DeskClockEntryCause.UNWATCHED -> {
+                    // Machine fire ≥ 10 s after the last
+                    // interaction: ground 260 Curve A, print
+                    // 520 Curve C at +140.
+                    // Wave-2 fix (Salz C-15): ground and print run
+                    // in PARALLEL child coroutines — animateTo
+                    // suspends, so the old serial calls started
+                    // the print's delay only after the ground
+                    // finished (~40% long, and a completed black
+                    // slab on the WATCHED row). Both delays now
+                    // run from the same t=0 the table is written
+                    // against.
+                    launch { groundAlpha.animateTo(1f, tween(260, easing = MonolithCurves.EasingA)) }
+                    launch {
+                        printAlpha.animateTo(
+                            1f,
+                            tween(520, delayMillis = 140, easing = MonolithCurves.EasingC)
+                        )
+                    }
+                }
+                DeskClockEntryCause.WATCHED -> {
+                    // Machine fire < 10 s after the last
+                    // interaction (incl. V1's set-down fire):
+                    // ground 180 Curve A; print 420 Curve B at
+                    // +180 — total 600 ms, no black slab.
+                    launch { groundAlpha.animateTo(1f, tween(180, easing = MonolithCurves.EasingA)) }
+                    launch {
+                        printAlpha.animateTo(
+                            1f,
+                            tween(420, delayMillis = 180, easing = MonolithCurves.EasingB)
+                        )
+                    }
+                }
+                DeskClockEntryCause.HAND -> {
+                    // The DESK CLOCK chip: ground 180 Curve A;
+                    // print 260 Curve A at +180; total 440 ms.
+                    launch { groundAlpha.animateTo(1f, tween(180, easing = MonolithCurves.EasingA)) }
+                    launch {
+                        printAlpha.animateTo(
+                            1f,
+                            tween(260, delayMillis = 180, easing = MonolithCurves.EasingA)
+                        )
+                    }
+                }
             }
-            val window = activity?.window
-            window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            onDispose {
-                window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            }
-        }
-        val displaySecs = if (activeSession != null && activeSession.isActive) {
-            // Timed sessions read the SPAN remaining, never the
-            // per-block remaining: the block's remainder is 0 for
-            // the whole of a Safe Break, and this clock has no block
-            // context - it would read 00:00 (FINISH) through every
-            // break. The span counts the break as session time.
-            if (activeSession.isStopwatchMode) activeSession.elapsedSeconds else activeSession.spanRemainingSeconds
         } else {
-            dialMinutes * 60
+            if (exitIsFinish) {
+                // EXIT, FINISH (A-4): print fades 260 Curve A
+                // while the true-black ground HOLDS over the
+                // Deck through the detention; the ground fades
+                // 260 Curve A as the receipt fades in. No surface
+                // brighter than the clock stands between the
+                // clock and the receipt (item 19, extended).
+                // Wave-2 (C-15): parallel — the ground's 1200 ms
+                // hold is measured from the exit's t=0, not from
+                // the print fade's end. (C-23's residual stands:
+                // the hold is still a constant against a
+                // detention that can run to 1800 ms on the
+                // faulted branch — keying it to the VM's issued
+                // flag is a named debt, not done here.)
+                launch { printAlpha.animateTo(0f, tween(260, easing = MonolithCurves.EasingA)) }
+                launch {
+                    groundAlpha.animateTo(
+                        0f,
+                        tween(260, delayMillis = 1200, easing = MonolithCurves.EasingA)
+                    )
+                }
+            } else {
+                // EXIT, DISMISSAL: 180 EasingThrow, ground and
+                // print together (item 17 stands). Wave-2 (C-15):
+                // "together" is now literally true — parallel
+                // launches, not two serial 180 ms fades.
+                launch {
+                    groundAlpha.animateTo(
+                        0f, tween(180, easing = com.example.ui.theme.MonolithKin.EasingThrow)
+                    )
+                }
+                launch {
+                    printAlpha.animateTo(
+                        0f, tween(180, easing = com.example.ui.theme.MonolithKin.EasingThrow)
+                    )
+                }
+            }
         }
-        val mm = displaySecs / 60
-        val ss = displaySecs % 60
-        val timeText = String.format(Locale.US, "%02d:%02d", mm, ss)
-
-        // The old idle branch rendered a fabricated constant (0.65f) -
-        // a made-up progress on the nightstand clock, the surface he
-        // actually reads at night. Every branch below is a real
-        // derivation from the session, or honestly empty.
-        val progress = when {
-            // The desk clock tells SESSION time only, on the span
-            // derivation: a Safe Break earns no special rendering
-            // (Nacht's law - the break's one rendering is the Deck's
-            // BREAK eyebrow) and the bar never reads empty mid-
-            // session. The fabricated 0.65 constant stays dead.
-            activeSession != null && activeSession.isActive && !activeSession.isStopwatchMode ->
-                (activeSession.spanElapsedSeconds.toFloat() / activeSession.spanTargetSeconds.coerceAtLeast(1)).coerceIn(0.04f, 1f)
-            activeSession != null && activeSession.isActive ->
-                (activeSession.elapsedSeconds.toFloat() / 1200f).coerceIn(0.04f, 1f)
-            else -> 0f
+    }
+    // A-10(v): the surrender fade — at true-off − 520 ms the
+    // print fades 520 Curve C to 0 over the black ground.
+    val surrenderAlpha = remember { Animatable(1f) }
+    LaunchedEffect(surrenderFade) {
+        if (surrenderFade) {
+            surrenderAlpha.animateTo(0f, tween(520, easing = MonolithCurves.EasingC))
+        } else {
+            surrenderAlpha.snapTo(1f)
         }
+    }
+    if (!visible && groundAlpha.value <= 0f && printAlpha.value <= 0f) return
 
-        val dx = ((burnInStep % 5) - 2) * 3
-        val dy = (((burnInStep / 5) % 5) - 2) * 3
+    // FLOW §2.4.2 — the idle lie dies (ST-01 / FL-03). The hero
+    // is derived by deskClockHeroText: a live session reads its
+    // span; no live session, the hero is the CURRENT TIME,
+    // labelled THE TIME NOW directly above it (K-8).
+    // dialMinutes is no longer read here at all.
+    val nowWallMillis = System.currentTimeMillis()
+    val running = activeSession != null && activeSession.isActive
+    val timeText = deskClockHeroText(activeSession, nowWallMillis)
 
-        Box(
+    // A-2(ii): THE VARIABLE IS NAMED — span-elapsed fraction.
+    // Wave-2 fixes (Samt D-1 + D-2): the fraction exists ONLY
+    // for the SLEEP span. D-1: the old code descended on every
+    // timed span — a 25-minute afternoon session sank to vigil
+    // alphas in daylight, and the descent (whose meaning is
+    // "the night is deepening") came to mean "a timer runs".
+    // D-2: a stopwatch divided by an invented 1200 s span that
+    // exists in no ruling; the stopwatch is the awake
+    // instrument and never descends.
+    val spanElapsedFraction = when {
+        descentApplies && activeSession != null && activeSession.isActive &&
+            !activeSession.isStopwatchMode ->
+            activeSession.spanElapsedSeconds.toFloat() /
+                activeSession.spanTargetSeconds.coerceAtLeast(1)
+        else -> 0f
+    }
+
+    // A-2(iii): any raise or re-raise opens at the standing
+    // alphas; the descent suspends 60 s from the raise stamp the
+    // VM's interaction clock guarantees (the composition's first
+    // frame of this raise), then resumes from span progress.
+    var raisedAtMono by remember(activeSession?.id) {
+        mutableStateOf(android.os.SystemClock.elapsedRealtime())
+    }
+    LaunchedEffect(visible) {
+        if (visible) raisedAtMono = android.os.SystemClock.elapsedRealtime()
+    }
+    val descentSuspended =
+        android.os.SystemClock.elapsedRealtime() - raisedAtMono < 60_000L
+    val alphas = deskClockPrintAlphas(
+        spanElapsedFraction = spanElapsedFraction,
+        descentSuspended = descentSuspended,
+        spanRemainingSeconds = activeSession?.spanRemainingSeconds,
+        isStopwatch = activeSession?.isStopwatchMode == true
+    )
+
+    val dx = ((burnInStep % 5) - 2) * 3
+    val dy = (((burnInStep / 5) % 5) - 2) * 3
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            // AOD ground is true black (Round 1a) — OLED pixels
+            // off, not the block-bar tone. Its alpha is A-4's
+            // ground animation.
+            .background(Color.Black.copy(alpha = groundAlpha.value))
+            .clickable(onClick = onDismiss)
+            .padding(24.dp)
+            .testTag("always_on_desk_clock_overlay"),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
             modifier = Modifier
-                .fillMaxSize()
-                // AOD ground is true black (Round 1a) — OLED pixels off,
-                // not the block-bar tone.
-                .background(Color.Black)
-                .clickable(onClick = onDismiss)
-                .padding(24.dp)
-                .testTag("always_on_desk_clock_overlay"),
-            contentAlignment = Alignment.Center
+                .fillMaxWidth()
+                .offset { IntOffset(dx, dy) }
+                .graphicsLayer {
+                    alpha = printAlpha.value * surrenderAlpha.value
+                },
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .offset { IntOffset(dx, dy) },
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(18.dp)
-            ) {
-                Text(
-                    text = "NIGHTSTAND DESK CLOCK • TAP ANYWHERE TO EXIT",
-                    fontFamily = AtkinsonHyperlegibleFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp,
-                    color = NightColorPrimary.copy(alpha = 0.6f)
-                )
+            // A-6(i): ENDS's top-line seat is DELETED. The top
+            // line is the constant "TAP ANYWHERE TO EXIT" with
+            // no conditional (§C-2's line, unamended per E-4);
+            // ENDS lives only in the sub-line (§C-1's seat).
+            Text(
+                text = "TAP ANYWHERE TO EXIT",
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                color = NightColorPrimary.copy(alpha = alphas.exit)
+            )
 
+            // The hero and its companion lines, bound in one
+            // tight cell (K-8: label and figure inseparable).
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                if (!running) {
+                    Text(
+                        text = "THE TIME NOW",
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        letterSpacing = 2.sp,
+                        color = NightColorPrimary.copy(alpha = alphas.numberLine)
+                    )
+                }
                 // Hero architectural Space Mono numerals (112sp)
                 Text(
                     text = timeText,
@@ -165,49 +415,145 @@ fun AlwaysOnDeskClockOverlay(
                     fontWeight = FontWeight.Bold,
                     fontSize = 96.sp,
                     letterSpacing = (-3).sp,
-                    color = NightColorPrimary
+                    color = NightColorPrimary.copy(alpha = alphas.hero)
                 )
+                if (running) {
+                    // §C-1 / A-6(ii): the sub-line. Timed: "NOW
+                    // HH:MM · ENDS HH:MM"; the last minute drops
+                    // NOW, ENDS alone; stopwatch: "NOW HH:MM"
+                    // alone (an ENDS derived from elapsed would
+                    // be a fabricated end). Idle has none.
+                    Text(
+                        text = deskClockSubLine(activeSession!!, nowWallMillis),
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        letterSpacing = 2.sp,
+                        color = NightColorPrimary.copy(alpha = alphas.numberLine)
+                    )
+                    // A-1: the block line — STATE-ONLY (suppressed
+                    // on a break, the break line owns those
+                    // minutes), its figure the block's end in wall
+                    // time, the final block figureless.
+                    deskClockBlockLine(activeSession!!, nowWallMillis)?.let { blockLine ->
+                        Text(
+                            text = blockLine,
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            letterSpacing = 2.sp,
+                            color = NightColorPrimary.copy(alpha = alphas.numberLine)
+                        )
+                    }
+                }
+            }
 
-                // Full-bleed TimelineBar progress strip
+            // A-7 — the tear rule, bounded and grounded. Solid
+            // is spent, dashed is still attached; the tear
+            // fraction is coerceIn(hair, 1f); block boundaries
+            // cut 3 dp full-height notches whose gaps are GROUND
+            // — true black, drawn as absence over this face's
+            // black ground. Verified at the merge: NO
+            // NightColorSurfaceVariant bed (#100E0C) sits under
+            // this rule anywhere — the old capsule's bed is gone
+            // with the capsule, so every notch is truly black.
+            if (running && activeSession?.isStopwatchMode != true) {
+                val tear = tearFraction(spanElapsedFraction)
+                val blockCount = activeSession?.totalStudyBlocks ?: 1
+                val ink = NightColorPrimary.copy(alpha = alphas.hero)
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .testTag("desk_clock_tear_rule")
+                ) {
+                    val w = size.width
+                    val h = size.height
+                    // Spent: solid to the tear fraction.
+                    drawRect(
+                        color = ink,
+                        topLeft = Offset(0f, 0f),
+                        size = Size(w * tear, h)
+                    )
+                    // Attached: dashed to the span's end.
+                    drawLine(
+                        color = ink,
+                        start = Offset(w * tear, h / 2f),
+                        end = Offset(w, h / 2f),
+                        strokeWidth = h,
+                        pathEffect = PathEffect.dashPathEffect(
+                            floatArrayOf(8f, 6f), 0f
+                        )
+                    )
+                    // Notches: 3 dp ground-black gaps at the
+                    // TRUE block-boundary fractions of the span.
+                    // Wave-2 fix (Salz C-19): the old code cut at
+                    // equal fractions (k/n) — but a span is n
+                    // blocks + (n−1) breaks, so block k ends at
+                    // (k·block + (k−1)·600) / spanTarget, the
+                    // same span arithmetic the hero reads
+                    // (MonolithModels.spanTargetSeconds). At
+                    // 25-min blocks, n=4, the equal cut stood
+                    // ~5.8% of the rule's width inside block 2.
+                    if (blockCount > 1) {
+                        val spanTarget = (activeSession?.spanTargetSeconds ?: 0).coerceAtLeast(1)
+                        val blockSeconds = activeSession?.effectiveTargetSeconds ?: 0
+                        val notchWidth = 3.dp.toPx()
+                        for (k in 1 until blockCount) {
+                            val boundarySeconds = k * blockSeconds + (k - 1) * 600
+                            val x = w * (boundarySeconds.toFloat() / spanTarget)
+                            drawRect(
+                                color = Color.Black,
+                                topLeft = Offset(x - notchWidth / 2f, 0f),
+                                size = Size(notchWidth, h)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // A-5 + A-8 — the banner slot. A-8: the banner
+            // derives ONLY inside a live session (the VM's
+            // activeTask falls back to the first QUEUED task —
+            // an idle face must never name a session that is not
+            // running). A-5: while a session runs the slot's
+            // height is FIXED, text top-aligned; the absent banner
+            // leaves the slot empty and still. Idle wears no slot.
+            // Wave-2 fix (Salz C-24): the slot is measured from
+            // the text it actually holds — 14 sp Atkinson Bold,
+            // two lines (≈2 × 20 dp) + 12 dp vertical padding
+            // each side = 64 dp, set at 68 for the font's
+            // leading — and the text carries a LAW for line 3:
+            // maxLines 2 + ellipsis. A long task title truncates
+            // by decision, never clips in silence.
+            if (running) {
+                val bannerLine = deskClockBreakLine(
+                    isInSafeBreak = activeSession?.isInSafeBreak == true,
+                    safeBreakSecondsRemaining = activeSession?.safeBreakSecondsRemaining ?: 0,
+                    nowWallMillis = nowWallMillis
+                ) ?: deskClockBannerText(
+                    activeTask?.title, activeSession?.intention, activeSession?.profileName
+                )
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(16.dp)
+                        .height(68.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(NightColorSurfaceVariant)
+                        .background(
+                            if (bannerLine != null) NightColorSurfaceBright else Color.Transparent
+                        )
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    contentAlignment = Alignment.TopStart
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(progress)
-                            .height(16.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            // Session progress in cream — orange is the
-                            // arm commit only (Round 1c).
-                            .background(NightColorPrimary)
-                    )
-                }
-
-                // Active task banner — absence is the honest
-                // print (Truth Car 3, appendix / FL-06): a real
-                // task title, else a declared intention, else NO
-                // banner. The old "Deep Focus Session" default
-                // fabricated a name for a session nobody named,
-                // and a blank intention printed an empty box.
-                val bannerText = deskClockBannerText(activeTask?.title, activeSession?.intention)
-                if (bannerText != null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(NightColorSurfaceBright)
-                            .padding(horizontal = 16.dp, vertical = 12.dp)
-                    ) {
+                    if (bannerLine != null) {
                         Text(
-                            text = bannerText,
+                            text = bannerLine,
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
-                            color = NightColorPrimary
+                            maxLines = 2,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            color = NightColorPrimary.copy(alpha = alphas.numberLine)
                         )
                     }
                 }
@@ -216,14 +562,144 @@ fun AlwaysOnDeskClockOverlay(
     }
 }
 
+/** The wall clock as this app prints it everywhere else:
+ *  HH:mm, 24-hour (the ENDS / WITHIN grammar). */
+internal fun wallClockTimeText(wallMillis: Long): String =
+    java.text.SimpleDateFormat("HH:mm", Locale.US).format(java.util.Date(wallMillis))
+
+/**
+ * The desk clock's hero (FLOW §2.4.1–2 — ST-01 / FL-03). A live
+ * session reads its span: the span remaining for a timed
+ * session (never the per-block remainder — it is 0 through
+ * every Safe Break and this clock has no block context), the
+ * elapsed for a stopwatch. NO live session: the hero is the
+ * current time — never the composer's dial setting.
+ */
+internal fun deskClockHeroText(activeSession: FocusSessionEntity?, nowWallMillis: Long): String {
+    if (activeSession != null && activeSession.isActive) {
+        val displaySecs =
+            if (activeSession.isStopwatchMode) activeSession.elapsedSeconds else activeSession.spanRemainingSeconds
+        // Wave-2 fix (Salz C-8): the L1 dual grammar. The old
+        // single %02d:%02d of TOTAL minutes printed figures no
+        // other surface prints ("125:49" for a 2 h stopwatch,
+        // "65:00" for a 65-minute span). L1: ≥ 60 min prints
+        // H:MM (hours unpadded, minutes zero-padded, no
+        // seconds); < 60 min prints MM:SS.
+        return if (displaySecs >= 3600) {
+            String.format(Locale.US, "%d:%02d", displaySecs / 3600, (displaySecs % 3600) / 60)
+        } else {
+            String.format(Locale.US, "%02d:%02d", displaySecs / 60, displaySecs % 60)
+        }
+    }
+    return wallClockTimeText(nowWallMillis)
+}
+
+/** The current-time line: NOW HH:mm — the figure wears its
+ *  label in the same string (K-8). */
+internal fun deskClockNowLine(nowWallMillis: Long): String = "NOW " + wallClockTimeText(nowWallMillis)
+
+/**
+ * A-12 / C-1, answered from the code: a routine row's frozen
+ * windowEndMillis (MonolithModels.kt — the stand-down reads
+ * the same stamp) IS the end the machine will keep, and a
+ * routine span's target CAN differ from its window (the span
+ * derives from block targets + breaks; the window is the
+ * schedule's frozen snapshot). So for routine-born rows ENDS
+ * derives from windowEndMillis; for hand rows, from now + the
+ * span remaining — the face promises the end the stand-down
+ * will keep.
+ */
+internal fun deskClockEndsAtMillis(session: FocusSessionEntity, nowWallMillis: Long): Long =
+    if (session.routineId != null && session.windowEndMillis > 0L) {
+        session.windowEndMillis
+    } else {
+        nowWallMillis + session.spanRemainingSeconds * 1000L
+    }
+
+internal fun deskClockEndsLine(session: FocusSessionEntity, nowWallMillis: Long): String =
+    "ENDS " + wallClockTimeText(deskClockEndsAtMillis(session, nowWallMillis))
+
+/**
+ * §C-1 / A-6(ii) — the sub-line, whole: timed sessions read
+ * "NOW HH:MM · ENDS HH:MM"; in the last minute NOW drops and
+ * ENDS stands alone; a stopwatch reads "NOW HH:MM" alone.
+ */
+internal fun deskClockSubLine(session: FocusSessionEntity, nowWallMillis: Long): String {
+    if (session.isStopwatchMode) return deskClockNowLine(nowWallMillis)
+    if (session.spanRemainingSeconds in 1..60) return deskClockEndsLine(session, nowWallMillis)
+    return deskClockNowLine(nowWallMillis) + " · " + deskClockEndsLine(session, nowWallMillis)
+}
+
+/**
+ * A-1 — the block line, state-only: suppressed during a break
+ * (the row's per-block remaining is 0 for the whole break and
+ * the break line owns those minutes); suppressed for a
+ * single-block span (no block context to name). For k < n its
+ * figure is the block's end in wall time — "BLOCK k OF n ·
+ * UNTIL HH:MM" (UNTIL is the house's phase-end word; ENDS
+ * belongs to the span alone). The FINAL block prints no
+ * figure: there the block's end IS the span's ENDS, already
+ * standing in the sub-line — one instant never prints twice.
+ */
+internal fun deskClockBlockLine(session: FocusSessionEntity, nowWallMillis: Long): String? {
+    if (!session.isActive || session.isStopwatchMode) return null
+    if (session.isInSafeBreak) return null
+    val n = session.totalStudyBlocks
+    if (n <= 1) return null
+    val k = session.currentBlockIndex.coerceIn(1, n)
+    if (k >= n) return "BLOCK $n OF $n"
+    val blockEndWall = nowWallMillis + session.remainingSeconds.coerceAtLeast(0) * 1000L
+    return "BLOCK $k OF $n · UNTIL " + wallClockTimeText(blockEndWall)
+}
+
+/**
+ * The break's one honest line on the clock (FLOW §2.3, as cured
+ * by §C-3): during a Safe Break the banner says the doors are
+ * open and until when, in wall time (A-11(c)'s one sentence,
+ * room side). Not in a break: null.
+ *
+ * Wave-2 fix (Salz C-18): the merged code printed a countdown
+ * ("n MIN LEFT") while this comment claimed a wall-time UNTIL.
+ * There is no stored break-end field on the row — the end is
+ * DERIVED at the derivation's instant (now + the remaining
+ * seconds the row does carry), which is the same instant the
+ * shade's countdown reads, so the two surfaces cannot drift
+ * apart by more than the beat that separates them. The code
+ * now does what the comment always said.
+ */
+internal fun deskClockBreakLine(
+    isInSafeBreak: Boolean,
+    safeBreakSecondsRemaining: Int,
+    nowWallMillis: Long
+): String? {
+    if (!isInSafeBreak) return null
+    val breakEndWall = nowWallMillis + safeBreakSecondsRemaining.coerceAtLeast(0) * 1000L
+    return "BREAK — PEEK APPS OPEN · UNTIL " + wallClockTimeText(breakEndWall)
+}
+
 /**
  * The desk clock's banner text (Truth Car 3, appendix / FLOW
- * FL-06): a real task title wins; a declared intention stands in;
- * both absent or blank → null and NO banner is composed. There is
- * no default name — "Deep Focus Session" was fabricated.
+ * FL-06) under A-12 / C-2, answered from the code: L7's fallback
+ * chain is task → intention → routine name → absent. The chain
+ * gains its truer floor at this merge: a hand-started session
+ * with neither task nor intention still carries its loadout —
+ * profileName is stamped on every row at birth (the seal's
+ * snapshot; routine rows wear "Routine: <name>", hand rows the
+ * loadout's name) — so the floor is the row's own profile name,
+ * stripped of the routine prefix. Anonymity now stands only
+ * when even that is blank, which no arming path produces.
  */
-internal fun deskClockBannerText(taskTitle: String?, intention: String?): String? =
-    taskTitle?.takeIf { it.isNotBlank() } ?: intention?.takeIf { it.isNotBlank() }
+internal fun deskClockBannerText(
+    taskTitle: String?,
+    intention: String?,
+    profileName: String? = null
+): String? =
+    taskTitle?.takeIf { it.isNotBlank() }
+        ?: intention?.takeIf { it.isNotBlank() }
+        ?: profileName
+            ?.removePrefix("Routine:")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
 
 /**
  * The withheld peek's cooldown print (Truth Car 3, SIL-3; Hale
