@@ -146,6 +146,33 @@ class SeedAndDayWordDrainTest {
         assertEquals(2, prefs.all.size)
     }
 
+    // Audit R1 #37 (HIGH): clearing a word that had drained into
+    // Room used to resurrect on the next union read — the clear
+    // removed only the (already drained, hence absent) prefs key
+    // and no DELETE for day_notes existed. The clear must now
+    // reach the table, and the word must stay gone.
+    @Test
+    fun clear_afterDrain_removesWordFromUnionForever() = runBlocking {
+        prefs.edit().putString("2026-10-26", "REST").commit()
+        repository.ensureSeededAndSyncPackages()
+        val dao = db.monolithDao()
+        assertEquals(
+            listOf(DayNoteEntity("2026-10-26", "REST")),
+            dao.getAllDayNotesSnapshot()
+        )
+        assertEquals("REST", repository.allDayWords()["2026-10-26"])
+
+        val cleared = repository.declareDayWord("2026-10-26", null)
+
+        assertTrue("the prefs removal must report its commit verdict", cleared)
+        assertTrue(dao.getAllDayNotesSnapshot().isEmpty())
+        assertTrue(repository.allDayWords().isEmpty())
+
+        // And the date is declarable again afterwards.
+        assertTrue(repository.declareDayWord("2026-10-26", "ILL"))
+        assertEquals("ILL", repository.allDayWords()["2026-10-26"])
+    }
+
     @Test
     fun drain_prefValueWinsOverExistingRow_captureIsTheRecord() = runBlocking {
         val dao = db.monolithDao()

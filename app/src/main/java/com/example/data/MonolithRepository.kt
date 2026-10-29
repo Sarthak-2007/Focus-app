@@ -2821,7 +2821,15 @@ class MonolithRepository(
      *  index, or the word would be filed nowhere. Word months come
      *  from BOTH word stores (see allDayWords). */
     suspend fun storedMonths(): List<StoredMonth> {
-        val fromTasks = dao.getStoredMonths()
+        // Audit R1 #37: months are filed by the ONE filing function
+        // (DrawerDay) from raw instants — the SQL twin that used to
+        // compute this in SQLite disagreed with it on DST days.
+        val fromTasks = dao.getStoredCompletionInstants()
+            .map { instant ->
+                val (year, month) = DrawerDay.filingYearMonth(instant)
+                StoredMonth(year, month)
+            }
+            .distinct()
         val fromWords = allDayWords().keys.mapNotNull { iso ->
             runCatching {
                 val date = java.time.LocalDate.parse(iso)
@@ -2859,8 +2867,23 @@ class MonolithRepository(
         return fromTable + dayWordStore.all()
     }
 
-    fun declareDayWord(dateIso: String, word: String?) {
-        dayWordStore.put(dateIso, word)
+    /** Declare (or clear, with null) the word for [dateIso].
+     *  Returns whether the prefs write reached disk (DayWordStore's
+     *  commit verdict — Audit R1 #37: the result used to be
+     *  discarded, so a failed write still displayed as declared).
+     *
+     *  A CLEAR reaches BOTH stores: before this fix it removed only
+     *  the prefs key, so a word that had drained into day_notes at
+     *  seed-sync resurrected on the very next union read and could
+     *  never be undeclared. The table row is deleted only when the
+     *  prefs removal committed — if that failed, nothing about the
+     *  clear is presented as done. */
+    suspend fun declareDayWord(dateIso: String, word: String?): Boolean {
+        val committed = dayWordStore.put(dateIso, word)
+        if (committed && word == null) {
+            dao.deleteDayNote(dateIso)
+        }
+        return committed
     }
 
     /**
