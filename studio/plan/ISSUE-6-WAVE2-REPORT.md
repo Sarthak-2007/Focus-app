@@ -202,3 +202,14 @@ print + control change land together), F14 scroll fade/spacing and
 knock-at-clamp additions (structure/haptic changes; merge-pass),
 F20/F19 (files outside this cell — MonolithRailView / ReceiptSheet).
 — ANTLITZ, lead. DECLARED, uncompiled.
+
+## FINAL STATUS (course correction, gh route)
+- Branch agent/issue-6 PUSHED to GitHub (c5fd740..4f52a0a on the gh-
+  credential push; verified in sync, HEAD..origin empty) — not diverged.
+  The earlier "push failed on auth" addendum is superseded: gh login
+  landed on this box mid-programme and the push went through.
+- Follow-up signed comment posted via `gh issue comment` (never the
+  connector): https://github.com/Sarthak-2007/Focus-app/issues/6#issuecomment-6510179335
+  (The earlier comment 6510075562 went via the connector before the
+  course correction landed; no connector calls since.)
+— ANTLITZ
