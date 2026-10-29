@@ -156,3 +156,7 @@ F22's semantics in the same pass or keep this issue honestly open.
 
 ## APPENDIX — exact GitHub comment text (fallback if the comment call blocks)
 Posted / to post on issue #6: see §1–§2 above, signed — ANTLITZ.
+
+## STATUS ADDENDUM (lead, after commit c5730b5)
+- Push to GitHub FAILED in this cell: `fatal: could not read Username for https://github.com` — commit c5730b5 is LOCAL on agent/issue-6 (ahead 1 of origin/agent/issue-6). Push is owed by Ren; nothing here claims otherwise.
+- The signed summary comment DID post on issue #6 via the GitHub connector (comment id 6510075562).
