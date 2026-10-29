@@ -38,10 +38,14 @@ class ModelsInvariantsWave3Test {
     // ---- F3: stringly-typed resolvers -------------------------------
 
     @Test
-    fun task_corruptStatus_resolvesDeferred_andIsMarked() {
+    fun task_corruptStatus_isMarked_fallbackUnchangedPendingDecision() {
+        // Landed part: corruption is marked. NOT landed (Rule 2,
+        // DECISION-NEEDED in the report): changing the fallback
+        // from QUEUED to DEFERRED — so this pins QUEUED until
+        // Sarthak rules.
         val t = FocusTaskEntity(title = "x", status = "GARBAGE")
         assertTrue(t.statusIsCorrupt)
-        assertEquals(TaskQueueStatus.DEFERRED, t.resolvedStatus)
+        assertEquals(TaskQueueStatus.QUEUED, t.resolvedStatus)
     }
 
     @Test

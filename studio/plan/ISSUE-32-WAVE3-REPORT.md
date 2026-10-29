@@ -53,19 +53,26 @@ Tests: garbageRows_constructWithoutThrowing (the anti-brick pin),
 profile_sanitized…, routine_sanitized…, routineSchedule_corruptRow…,
 session_garbageBlockCounts….
 
-### F3 [HIGH] Stringly-typed state + silent fallbacks — FIXED-IN-CODE (beaecac) for the evidenced resolvers; remainder evidenced below
+### F3 [HIGH] Stringly-typed state + silent fallbacks — PARTIALLY FIXED-IN-CODE; one part DECISION-NEEDED (Rule 2 split, Oct 30 04:58 IST)
 Verified: resolvedStatus (was MonolithModels 125–126) laundered garbage
 → QUEUED; resolvedTier (245–249) garbage → isBlocked fallback, which
 for isBlocked=false meant OPEN.
-Cure: resolvedStatus garbage → DEFERRED + `statusIsCorrupt` marker.
-QUEUED is promotable (a garbled COMPLETED row resurrected into the live
-queue); DEFERRED is inert, visible in Saved-for-Later, and never
-auto-promoted ahead of a real QUEUED task — callers all branch on the
-four real statuses, so DEFERRED is tolerated everywhere QUEUED was.
-resolvedTier: garbage + isBlocked → LOCKED (fail-CLOSED; a corrupt tier
-can no longer silently become OPEN and defeat the block); garbage +
-isBlocked=false → OPEN but marked by `tierIsCorrupt` (inventing a block
-on a typo would lock a user's app). Corruption is marked, not laundered.
+Landed (no behaviour change for any row): corruption is now MARKED,
+not laundered — `statusIsCorrupt` on FocusTaskEntity, `tierIsCorrupt`
+on BlockedAppEntity. resolvedTier's resolution VALUES are unchanged
+from the pre-audit fallback (garbage + isBlocked → LOCKED, garbage +
+not-blocked → OPEN): a corrupt tier still cannot silently become OPEN
+when the row claims a block, and we do not invent a block on a typo.
+DECISION-NEEDED (NOT landed): changing resolvedStatus's corrupt
+fallback from QUEUED to DEFERRED. It would stop a garbled task from
+auto-promoting into the live queue (today a garbled COMPLETED row can
+resurrect as QUEUED) and park it visibly in Saved-for-Later instead —
+safer, but it changes what the app does with a corrupt row, and under
+the no-downgrade rule that is Sarthak's call. Options: (A) keep QUEUED
+(status quo; marker only), (B) DEFERRED (inert + visible; a corrupt
+task never goes live on its own, user can still promote it by hand),
+(C) COMPLETED (parks it in the Drawer — rejected by this bundle: it
+would fabricate a completion that never happened).
 Remainder of the audit's string list, verified, no resolver launders
 them into an enforcement decision: DayNoteEntity.word is closed by
 construction at its only writer (DayWordStore.kt:54 WORDS =
@@ -113,6 +120,34 @@ block length/blocks and never arm a Safe Break of their own length.
 Test: spanTarget_pricesBreaksAtTheNamedConstant; existing BreakSpanTest
 expectations unchanged numerically (constant = 600 today).
 
+## What changes for the user — plain words, per finding (Rule 1, Oct 30 04:58 IST)
+
+- F1: Tasks you create without typing an estimate no longer show a
+  made-up "25m" estimate anywhere. Estimates you actually type are
+  unchanged. (Improvement, intended by the fix.)
+- F2: Nothing changes for normal use — every value the app's own
+  screens can produce passes through untouched. Only impossible
+  values (an hour of 99, a negative duration, a routine starting at
+  minute 5000 — reachable only via a corrupted database) get pulled
+  back into range at the moment data is saved, instead of being
+  stored as-is. FLAG: this is coercion, never rejection — no screen
+  can newly refuse input; the one edge is a custom profile saved
+  with more than 1440 minutes would be stored as 1440 (no current
+  screen offers that).
+- F3: No visible change today. Corrupt rows are now flagged in code
+  (so a future surface can show them), and the one change that WOULD
+  be visible — parking a garbled task in Saved-for-Later instead of
+  letting it rejoin the live queue — is held as DECISION-NEEDED
+  above, not landed.
+- F4: No visible change. The app already decided blocking from the
+  tier everywhere; this only makes the stored on/off flag always
+  agree with the tier, so the two can never contradict each other
+  after an edit.
+- F5: No visible change today — the break is 10 minutes under both
+  the old hard-coded number and the named constant. It only means a
+  future change to the break length now updates the session target
+  and the elapsed clock together instead of silently disagreeing.
+
 ## Tests
 New: app/src/test/java/com/example/ModelsInvariantsWave3Test.kt —
 13 pure-logic JUnit tests (existing plain-JUnit style, cf.
@@ -134,7 +169,7 @@ RoutineDeriveTest). No local compile (law: CI is the court).
 - Enthusiastic designer: LEAD-COVERED — "Span target and elapsed now share one constant — one knob, no silent divergence. Clean." — Lead for Enthusiastic designer
 - Wow-level designer: LEAD-COVERED — "No wow surface here; correctness is the wow in a models file." — Lead for Wow-level designer
 - Designer-29-years: "Thirty years of data classes say: never validate in the constructor of a persisted entity. The brief's trap was the test; we passed it." — Designer-29-years
-- Intentionality designer: "Every default now means something stated: 0 = no estimate, DEFERRED = corrupt-and-parked, LOCKED = corrupt-and-closed." — Intentionality designer
+- Intentionality designer: "Every default now means something stated: 0 = no estimate, corrupt = marked not laundered, LOCKED = a claimed block never silently opens. (Re-signed after the Rule-2 split: the DEFERRED parking I praised is DECISION-NEEDED, not landed — the marking is what's mine to praise.)" — Intentionality designer
 - Synchronous collaboration: "Wave-2 branches checked before writing a line — no duplicated cures, no rival fixes." — Synchronous collaboration
 - Implementation-quality: "13 focused tests, each naming the finding it pins; garbage-construction test guards the anti-brick property forever." — Implementation-quality
 - Technical execution: "Diff is surgical: Models + two funnel files + one test file. No schema, no migration, no entity field changes." — Technical execution

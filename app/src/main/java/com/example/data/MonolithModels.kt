@@ -132,14 +132,17 @@ data class FocusTaskEntity(
     val statusIsCorrupt: Boolean
         get() = runCatching { TaskQueueStatus.valueOf(status) }.isFailure
 
-    // Issue #32 F3: a corrupt status resolves to DEFERRED, not
-    // QUEUED. QUEUED is promotable — a garbled COMPLETED row used
-    // to resurrect into the live queue; DEFERRED is inert and
-    // VISIBLE (it surfaces in the Saved-for-Later list, where a
-    // human can see the odd row) and is never auto-promoted ahead
-    // of a real QUEUED task.
+    // Issue #32 F3 (as landed): a corrupt status is MARKED via
+    // [statusIsCorrupt] above, and the fallback stays QUEUED —
+    // exactly the pre-audit behaviour. The stronger cure (corrupt
+    // → DEFERRED, inert + visible instead of promotable) changes
+    // what the app DOES with a corrupt row: a garbled task would
+    // stop auto-promoting into the live queue. Per Sarthak's
+    // no-downgrade rule (Oct 30, 04:58 IST) that behaviour change
+    // is NOT landed unilaterally — it is DECISION-NEEDED, options
+    // spelled out in studio/plan/ISSUE-32-WAVE3-REPORT.md.
     val resolvedStatus: TaskQueueStatus
-        get() = runCatching { TaskQueueStatus.valueOf(status) }.getOrDefault(TaskQueueStatus.DEFERRED)
+        get() = runCatching { TaskQueueStatus.valueOf(status) }.getOrDefault(TaskQueueStatus.QUEUED)
 
     /** Issue #32 F2 (write-boundary cure): a copy of this row with
      *  every numeric field inside its lawful range. Applied at
