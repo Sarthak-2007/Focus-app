@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.content.Context
+import android.content.Intent
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -2405,6 +2406,25 @@ class MonolithViewModel(
         )
         viewModelScope.launch {
             repository.startPeekLease(pkg)
+            // ST-08 (Small Things register), composed in from the
+            // pill lane at the batch-10 merge (issue #16, flag A):
+            // a taken peek takes him TO the peeked app — the lease's
+            // first seconds are his, not the walk's. The grant is
+            // written before the launch fires, so the sniper admits
+            // the app he lands in; a package with no launcher entry
+            // (or a launch the system refuses) simply leaves him
+            // where he stands, lease running, exactly as before
+            // this verb existed. Suki's pre-grant guard above runs
+            // first and unchanged — a refused grant never reaches
+            // this launch.
+            runCatching {
+                val launchIntent = appContext.packageManager
+                    .getLaunchIntentForPackage(pkg)
+                    ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (launchIntent != null) {
+                    appContext.startActivity(launchIntent)
+                }
+            }
             repository.recordIntercept(
                 packageName = pkg,
                 appName = name,
