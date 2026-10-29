@@ -682,7 +682,16 @@ fun ParkDrawer(
                                                         amplitude01 = if (isNight) 0.06f else 0.1f,
                                                         pitchHz = 300f
                                                     )
-                                                    onFixClick(item)
+                                                    // Issue #9 (Feel 1, T-1): FIX
+                                                    // commits on RELEASE, not on
+                                                    // DOWN — a scroll starting on
+                                                    // the key, or a press sliding
+                                                    // off it, must not exile him
+                                                    // to Settings. The knock and
+                                                    // the dip stay on DOWN (they
+                                                    // cost nothing); onFixClick
+                                                    // fires below only on a
+                                                    // confirmed release.
                                                     // Issue #56, fresh-eyes A:
                                                     // a press INTERRUPTED before
                                                     // release (gesture stolen by
@@ -714,6 +723,11 @@ fun ParkDrawer(
                                                     if (!fixPressHoldsForReturn(released)) {
                                                         fixPressed = false
                                                         fixPressedItem = null
+                                                    } else {
+                                                        // Confirmed release:
+                                                        // the trip fires now,
+                                                        // and only now (#9 T-1).
+                                                        onFixClick(item)
                                                     }
                                                 }
                                             )
