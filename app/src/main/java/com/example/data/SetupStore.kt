@@ -32,9 +32,16 @@ class SetupStore(context: Context) {
     /** True once DONE has been pressed on the reception sheet. */
     fun isCompleted(): Boolean = prefs.getBoolean(SETUP_DONE_KEY, false)
 
-    /** Stamp the setup complete. Committed synchronously (G-02). */
+    /** Stamp the setup complete. Committed synchronously (G-02).
+     *  Wave-2 cure (Pforte; Improver + Implementation-quality
+     *  seats): this previously set setup_done WITHOUT the ledger
+     *  wall/mask, so any caller silently re-opened the C-14 hole
+     *  (a stamp PARK could testify from a null). It now delegates
+     *  to the ledger write with an empty mask — the honest claim
+     *  for a completion that measured no doors. Remaining callers
+     *  are tests and the screenshot harness only. */
     fun markCompleted() {
-        prefs.edit().putBoolean(SETUP_DONE_KEY, true).commit()
+        stampSetup(0)
     }
 
     // ---------------------------------------------------------------
@@ -86,8 +93,13 @@ class SetupStore(context: Context) {
 
     /** Mark one door's call-in spent. One edit, commit(). */
     fun markCalledIn(door: WatchItemId) {
-        val bit = 1 shl WatchItemId.COUNTED.indexOf(door)
-        if (bit == 0) return
+        // Wave-2 cure (Pforte): the old guard computed the bit
+        // before checking membership — for a non-COUNTED door
+        // indexOf is -1 and `1 shl -1` is not 0, so the guard
+        // rejected nothing. Membership is checked first now.
+        val idx = WatchItemId.COUNTED.indexOf(door)
+        if (idx < 0) return
+        val bit = 1 shl idx
         val merged = calledInMask() or bit
         if (merged != calledInMask()) {
             prefs.edit().putInt(CALLED_IN_MASK_KEY, merged).commit()

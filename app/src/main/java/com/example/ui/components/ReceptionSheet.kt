@@ -65,6 +65,7 @@ import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AppTitleTextStyle
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.theme.BodyTextStyle
+import com.example.ui.theme.DoorJobTextStyle
 import com.example.ui.theme.DrawerHeaderTextStyle
 import com.example.ui.theme.MonolithCurves
 import com.example.ui.theme.MonolithKin
@@ -180,14 +181,17 @@ fun receptionDoorPrepare(item: WatchItemId): String = when (item) {
  *  (M-5/M-6). [count] is null while any counted door is
  *  unmeasured — a total is never printed over an unread door.
  *
- *  S-1 (audit, merge-blocking): the total branches on print
- *  KIND, never on != GRANTED. A STALE door is a granted door
- *  whose proof aged out — it is priced as aged proof, never as
- *  absence. Any MISSING door → the acquitted absence sentences,
- *  one per missing door (Blank item 6: the total prices EVERY
- *  lacking door; the one-lack case prints exactly as before).
- *  No MISSING but any STALE → the aged-proof sentence, one per
- *  stale door. All fresh-granted → S-9's full stop. */
+ *  S-1 (audit, merge-blocking): the total prices EVERY lack,
+ *  per print KIND, in COUNTED order — composition, never
+ *  precedence (C-10; Wave-2 comment cure: this doc previously
+ *  described the old branch-wins reading, under which a MISSING
+ *  door erased every STALE door; that reading is dead in code,
+ *  in tests, and now here). Each MISSING door prices as its
+ *  acquitted absence sentence; each STALE door — a granted door
+ *  whose proof aged out — prices as aged proof, never as
+ *  absence; the two kinds compose in one total (Blank item 6:
+ *  every lacking door is priced; the one-lack case prints
+ *  exactly as before). All fresh-granted → S-9's full stop. */
 data class ReceptionTotal(val count: Int?, val sentence: String)
 
 /** The acquitted absence sentence for one MISSING door (A-2,

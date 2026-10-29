@@ -210,3 +210,37 @@ cell act. The Wave-2 commits are safe locally on this branch.
   `aa3bc36..ac9944b`. Wave-2 commits on remote: `e8567fd` (fixes +
   guard + report), `ac9944b` (status record).
 - **COMMENT POSTED** via gh: issue #14, comment 6510185497.
+
+## ADDENDUM-2 (final seat batch, folded in by lead — fixes applied)
+
+1. **COMPILE-BLOCKER FOUND + FIXED: `DoorJobTextStyle`.** Used at
+   ReceptionSheet.kt:1008/1061/1074/1089 with NO definition and NO
+   import anywhere in this tree, while MERGE-PLAN item 12 recorded
+   print "CLOSED". Fix: the val now exists in Type.kt with
+   BodyTextStyle's values per Fein §B (the door's second voice;
+   colour is call-site `onSurfaceVariant`), and the import is added.
+   DECLARED, uncompiled — Ren's compile is still the first proof.
+2. **Chit suffix lie FOUND + FIXED.** `chitLineFor` prints
+   "· ALL FOUR SET." when `nextDoor == null`, but the host computed
+   nextDoor over MISSING only (MainActivity), so a STALE/UNMEASURED
+   sibling produced ALL FOUR SET beside a total pricing that door.
+   Host search is now over `!= PermPrint.GRANTED`; the suffix claims
+   ALL FOUR SET only when no other door lacks.
+3. **ReceptionTotal doc comment cured** — it still legislated the
+   old branch precedence; it now states the composition law (C-10).
+4. **SetupStore latent holes FIXED:** `markCompleted()` delegates to
+   `stampSetup(0)` (no more ledger-less stamp; test/harness callers
+   unaffected); `markCalledIn` checks COUNTED membership before
+   shifting (the old `bit == 0` guard rejected nothing).
+5. **Recorded, not applied (priced):** the STUCK fifth word for
+   enabled-but-unbound doors (spec complete in seat texts; MEDIUM,
+   enum ripple incl. `standingWarrant` + the listener's identical
+   structure) — S-12's honest status is OPEN until it lands; the
+   ROOM-beat strike-now proposal (FREE) vs the lead's flag +
+   composition gate — gate stands, strike proposal recorded for
+   Ren's composition call; F-6's "glide" is a hard cut in code (plan
+   understates it) — shared-shell `animateContentSize` 180 SEAT spec,
+   SMALL; 24h DARK expiry is host-side and untested (move into
+   `chitVerdictFor`, S); tear-duration pin (XS); drag-off tests (S);
+   recording sound-fake tests (S); ParkDrawer plate "DATA: ON THIS
+   PHONE ONLY" flagged as an adjacent C-16-family overclaim.

@@ -385,11 +385,20 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             SystemClock.elapsedRealtime()
         ) ?: return@LaunchedEffect
         val next = watchSnapshot?.let { snap ->
+            // Wave-2 cure (Pforte; Brutal-critic + Finisher-surface
+            // charge): the next-door search previously matched
+            // MISSING only, so a STALE or UNMEASURED sibling left
+            // next == null and the chit printed "· ALL FOUR SET."
+            // beside a total pricing that very door — S-1's disease
+            // inside the mechanism built to cure it. The search is
+            // now over every non-GRANTED print: the suffix claims
+            // ALL FOUR SET only when no other door lacks, and a
+            // stale or unread door is honestly named NEXT.
             WatchItemId.COUNTED.firstOrNull { other ->
                 other != c.door &&
                     WatchStore.permPrintAt(
                         snap, other, SystemClock.elapsedRealtime()
-                    ) == PermPrint.MISSING
+                    ) != PermPrint.GRANTED
             }
         }
         setupStore.resolveChit(verdict, next)
