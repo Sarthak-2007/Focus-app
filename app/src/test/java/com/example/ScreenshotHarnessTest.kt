@@ -348,6 +348,8 @@ class ScreenshotHarnessTest {
                     onFixClick = {},
                     onToggleSound = {},
                     onToggleShortsReelsSniper = {},
+                    // Wave-2 premise: social pair is scaffolding here —
+                    // `true` is the persisted default; the toggle is not under test in this file.
                     socialSitesEnabled = true,
                     onToggleSocialSites = {}
                 )

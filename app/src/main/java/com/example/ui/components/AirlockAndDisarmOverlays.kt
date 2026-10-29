@@ -59,7 +59,6 @@ import com.example.ui.theme.NightColorSurfaceBright
 import com.example.ui.theme.NightColorSurfaceVariant
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.views.Emergency60sValveView
-import com.example.ui.views.TowerStreakView
 import kotlinx.coroutines.delay
 import java.util.Locale
 
@@ -552,7 +551,15 @@ fun AirlockInterceptOverlay(
     onSelectReason: (DistractionTriggerReason) -> Unit,
     onTransmuteParticleTap: () -> Unit,
     onReturnToFocus: () -> Unit,
-    onTake2MinutePeek: () -> Unit
+    onTake2MinutePeek: () -> Unit,
+    // The launcher doors (Sarthak's ruling, Oct 30 04:29 IST): the
+    // block screen is a launcher — from the door, the sealed phone's
+    // allowed and peek apps live one plate away, each on its own
+    // screen. Counts print from the rows' own tiers.
+    allowedAppsCount: Int = 0,
+    peekAppsCount: Int = 0,
+    onOpenAllowedApps: () -> Unit = {},
+    onOpenPeekApps: () -> Unit = {}
 ) {
     AnimatedVisibility(
         visible = state.isVisible,
@@ -710,6 +717,26 @@ fun AirlockInterceptOverlay(
                         null -> Unit
                     }
                 }
+
+                // THE LAUNCHER DOORS: two plates, two screens —
+                // allowed apps on one, peek apps on the other.
+                // They open rooms inside the seal; neither is an
+                // exit, and neither grants anything by itself.
+                BlockitActionChip(
+                    wordLabel = "ALLOWED APPS",
+                    monoBadge = allowedAppsCount.toString(),
+                    onClick = onOpenAllowedApps,
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "airlock_allowed_apps_button"
+                )
+
+                BlockitActionChip(
+                    wordLabel = "PEEK APPS",
+                    monoBadge = peekAppsCount.toString(),
+                    onClick = onOpenPeekApps,
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "airlock_peek_apps_button"
+                )
             }
         }
     }
