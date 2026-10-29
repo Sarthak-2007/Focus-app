@@ -276,3 +276,14 @@ overwrite's name-and-date entry for the log (Lapse 0 residue), and draft
 the PeekLeaseForUnlistedPackageArmsNothing end-state test for UNA2-01.
 
 — Tor, cluster-E lead, issue #5 (wave 2)
+
+## ADDENDUM — delivery state under the gh/git route (Oct 30, 04:10 IST)
+
+Course correction (Ren, Sarthak's order): the GitHub connector is retired —
+gh CLI / git only. Reconciliation: remote bb2393f (wave-1) + 5a82872 (this
+report, landed via the connector *before* the correction) vs local fa38861 —
+tree diff after `git fetch`: **empty — PUSHED-EQUIVALENT**. Local branch
+reset to the remote tip (no content lost) and this addendum is the first
+commit pushed by plain `git push`. The signed issue comment was posted
+before the correction (comment 6510087901, correction 6510150454); NOT
+re-posted via gh, to avoid a duplicate — exact text stands above. — Tor
