@@ -301,22 +301,33 @@ fun TactileDeckScreen(
     // the naive product understated a 3 x 50 morning by 20 minutes.
     val totalSpanMinutes = dialMinutes * studyBlocksCount + (studyBlocksCount - 1) * 10
 
+    // Issue #6 F3 (audit §3, Vega T-1/T-2/T-3 — the floored,
+    // inverted, invented fraction dies): timed progress is
+    // ELAPSED / TARGET, filling, no floors — never remaining/target
+    // born full and draining, never a 3–5% that isn't true. FLOW
+    // (stopwatch) has NO bar and NO fraction: NO END means no bar,
+    // and the old /1200 denominator was invented by the mode that
+    // denies it. Idle: no session exists, so no progress exists.
+    val progressIsFlow = finishState?.frozenIsStopwatch
+        ?: (isSessionRunning && activeSession.isStopwatchMode)
     val progressFraction = if (finishState != null) {
         if (finishState.frozenIsStopwatch) {
-            (finishState.frozenElapsedSeconds.toFloat() / 1200f).coerceIn(0.05f, 1f)
+            0f
         } else {
             val target = finishState.frozenTargetSeconds.coerceAtLeast(1)
-            (finishState.frozenDisplaySeconds.toFloat() / target.toFloat()).coerceIn(0.03f, 1f)
+            val elapsed = (target - finishState.frozenDisplaySeconds).coerceAtLeast(0)
+            (elapsed.toFloat() / target.toFloat()).coerceIn(0f, 1f)
         }
     } else if (isSessionRunning) {
         if (activeSession.isStopwatchMode) {
-            (activeSession.elapsedSeconds.toFloat() / 1200f).coerceIn(0.05f, 1f)
+            0f
         } else {
             val target = activeSession.effectiveTargetSeconds.coerceAtLeast(1)
-            (activeSession.remainingSeconds.toFloat() / target.toFloat()).coerceIn(0.03f, 1f)
+            val elapsed = (target - activeSession.remainingSeconds).coerceAtLeast(0)
+            (elapsed.toFloat() / target.toFloat()).coerceIn(0f, 1f)
         }
     } else {
-        ((dialMinutes - 5).toFloat() / 175f).coerceIn(0.04f, 1f)
+        0f
     }
 
     // =====================================================================
@@ -740,17 +751,10 @@ fun TactileDeckScreen(
                             .background(inkControlFill())
                     )
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    Text(
-                        text = "${(progressFraction * 100).toInt()}%",
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        color = scheme.onSurfaceVariant
-                    )
-                }
+                // Issue #6 F3: the % text is KILLED (audit §3,
+                // unanimous) — the track itself is the reading;
+                // a printed percent was the floored fraction's
+                // second lie. FLOW renders the empty track only.
             }
         }
 

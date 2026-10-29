@@ -508,7 +508,11 @@ internal fun refusalSentenceFor(warrant: Warrant?): RefusalSentence? {
         warrant.usage == UsageAccess.DENIED ->
             RefusalSentence("USAGE ACCESS IS OFF — TAP TO FIX", RefusalAction.FIX_USAGE)
         warrant.usage == UsageAccess.UNSET ->
-            RefusalSentence("CAN'T CHECK BLOCKING — TAP TO RETRY", RefusalAction.RETRY_CHECK)
+            // Issue #6 C3/F9: UNSET is a known lack with a known
+            // owner — the sentence names the door the hand opens.
+            // "TAP TO RETRY" was the live lie: the Deck's tap on
+            // this row already routed to the Usage pane.
+            RefusalSentence("USAGE ACCESS IS OFF — TAP TO FIX", RefusalAction.FIX_USAGE)
         warrant.state == WarrantState.OFF ->
             RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
         else -> null
