@@ -106,7 +106,10 @@ class SuitcaseViewsIssue60Test {
         saveMethod.isAccessible = true
         val saved = saveMethod.invoke(fresh) as Bundle
         val reborn = Emergency60sValveView(context)
-        reborn.onRestoreInstanceState(saved)
+        val restoreMethod = Emergency60sValveView::class.java
+            .getDeclaredMethod("onRestoreInstanceState", android.os.Parcelable::class.java)
+        restoreMethod.isAccessible = true
+        restoreMethod.invoke(reborn, saved)
         assertEquals(30_000L, reborn.currentBankedMs)
     }
 
