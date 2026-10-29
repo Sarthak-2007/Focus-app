@@ -312,7 +312,13 @@ fun MonolithPullDownHeader(
 @Composable
 fun inkControlFill(): Color {
     val scheme = MaterialTheme.colorScheme
-    return if (scheme.background.luminance() < 0.5f) Color(0xFF4A423C) else scheme.onBackground
+    // Issue #6 F12 (value half): night controls step DOWN to
+    // #2A2320 — at #4A423C the control fill (1.86:1) out-lit the
+    // hero card (1.35:1) and broke the Lamp order. Blast radius
+    // noted: slide cap + STOP chair share this fill — they are
+    // all controls, so the sharing is correct. Full tokenisation
+    // remains F17's table at merge.
+    return if (scheme.background.luminance() < 0.5f) Color(0xFF2A2320) else scheme.onBackground
 }
 
 @Composable
@@ -508,7 +514,11 @@ internal fun refusalSentenceFor(warrant: Warrant?): RefusalSentence? {
         warrant.usage == UsageAccess.DENIED ->
             RefusalSentence("USAGE ACCESS IS OFF — TAP TO FIX", RefusalAction.FIX_USAGE)
         warrant.usage == UsageAccess.UNSET ->
-            RefusalSentence("CAN'T CHECK BLOCKING — TAP TO RETRY", RefusalAction.RETRY_CHECK)
+            // Issue #6 C3/F9: UNSET is a known lack with a known
+            // owner — the sentence names the door the hand opens.
+            // "TAP TO RETRY" was the live lie: the Deck's tap on
+            // this row already routed to the Usage pane.
+            RefusalSentence("USAGE ACCESS IS OFF — TAP TO FIX", RefusalAction.FIX_USAGE)
         warrant.state == WarrantState.OFF ->
             RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
         else -> null

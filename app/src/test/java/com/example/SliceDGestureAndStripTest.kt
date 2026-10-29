@@ -189,11 +189,11 @@ class StripDerivationsTest {
         val usageSentence = refusalSentenceFor(warrant(WarrantState.OFF, usage = UsageAccess.DENIED))
         assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", usageSentence?.text)
         assertEquals(RefusalAction.FIX_USAGE, usageSentence?.action)
-        // Usage never granted: can't check.
-        assertEquals(
-            RefusalAction.RETRY_CHECK,
-            refusalSentenceFor(warrant(WarrantState.UNPROVEN, usage = UsageAccess.UNSET))?.action
-        )
+        // Usage never granted (issue #6 C3): the sentence names
+        // the Usage pane — the door its tap has always opened.
+        val unsetSentence = refusalSentenceFor(warrant(WarrantState.UNPROVEN, usage = UsageAccess.UNSET))
+        assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", unsetSentence?.text)
+        assertEquals(RefusalAction.FIX_USAGE, unsetSentence?.action)
         // Healthy wire: the slot stands empty.
         assertNull(refusalSentenceFor(warrant(WarrantState.LIVE)))
         assertNull(refusalSentenceFor(null))
