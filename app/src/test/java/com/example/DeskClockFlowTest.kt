@@ -456,6 +456,22 @@ class DeskClockFlowTest {
     }
 
     @Test
+    fun routineHeroCountsToTheWindowEnd_notTheFlooredSpan() {
+        // Wave-2 (Daemmer DAE-1): a routine row whose span
+        // arithmetic says 30 s remain (target built from floored
+        // minutes) while its frozen window ends 75 s from now —
+        // the hero must read the window's end (1:15), the same
+        // instant ENDS prints, never the span's early 00:30.
+        val now = wallAt(3, 28, 45)
+        val s = session(
+            targetDurationSeconds = 3600, elapsedSeconds = 3570,
+            routineId = 3, windowEndMillis = now + 75_000L
+        )
+        assertEquals("1:15", deskClockHeroText(s, now))
+        assertEquals("ENDS 03:30", deskClockEndsLine(s, now))
+    }
+
+    @Test
     fun nowLineWearsItsLabel() {
         assertEquals("NOW 21:47", deskClockNowLine(wallAt(21, 47)))
     }

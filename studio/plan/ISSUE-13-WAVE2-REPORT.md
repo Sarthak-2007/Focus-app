@@ -244,3 +244,30 @@ agent/issue-13.
   Drawer cell.
 
 — Amt
+
+## Addendum — Panel seat (Panel-Feel-Critic) dispositions
+The panel's FIX-FIRST blockers were C-16, Samt F-1, C-18, C-8 —
+all cured above — plus DAE-1/DAE-3 as a pair:
+- **DAE-1 — CURED (follow-on commit).** Dawn and hero were keyed
+  to the floored span; both now key to the window's frozen end
+  for routine rows (the A-12 C-1 derivation), with a test
+  (span says 0:30, window says 1:15, hero reads 1:15 and ENDS
+  agrees). The face can no longer print two ends at once.
+- **DAE-3 — REMAINDER (named).** The stand-down's trigger is a
+  finish emission discovered by the ticker, not a hardware
+  instant; on timer-wins nights the face can stand past its
+  ending until the next beat discovers it. The grain is the
+  1 s ticker; a true instant trigger is alarm-chain work
+  (Wache/no-fire territory), not this merge.
+- **Samt D-5 / DAE-6 — REMAINDERS (named).** The banner slab
+  does not descend with the print (at deep night the slab is
+  the brightest object on the face); the unveil flashes
+  0.80 → ~0 → 0.45 across two animations. Both are feel-grade
+  defects priced SMALL in the cell filings; they ride the
+  batch-10 merge list, not this commit.
+- Panel crazy idea, recorded: "The Nightstand Calibration" —
+  at SLEEP arm, 3 s of silent sampling records that nightstand's
+  floor + that hand's set-down signature (two floats, 7-night
+  expiry) in place of the uncalibrated constant. Kills C-17's
+  root. Priced MEDIUM by the panel; recommended to Ren as the
+  §7 debt-9 discharge path.

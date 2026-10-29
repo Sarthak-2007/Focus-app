@@ -351,7 +351,16 @@ fun AlwaysOnDeskClockOverlay(
     val alphas = deskClockPrintAlphas(
         spanElapsedFraction = spanElapsedFraction,
         descentSuspended = descentSuspended,
-        spanRemainingSeconds = activeSession?.spanRemainingSeconds,
+        // Wave-2 (DAE-1): the dawn ramp keys to the same end
+        // the hero and ENDS read — the window's end for a
+        // routine row, the span's remaining otherwise.
+        spanRemainingSeconds = activeSession?.let { s ->
+            if (s.routineId != null && s.windowEndMillis > 0L) {
+                ((s.windowEndMillis - nowWallMillis) / 1000L).coerceAtLeast(0L).toInt()
+            } else {
+                s.spanRemainingSeconds
+            }
+        },
         isStopwatch = activeSession?.isStopwatchMode == true
     )
 
@@ -577,8 +586,24 @@ internal fun wallClockTimeText(wallMillis: Long): String =
  */
 internal fun deskClockHeroText(activeSession: FocusSessionEntity?, nowWallMillis: Long): String {
     if (activeSession != null && activeSession.isActive) {
+        // Wave-2 fix (Daemmer DAE-1, HIGH): for a routine row
+        // the hero counts to the STAND-DOWN's instant — the
+        // frozen windowEndMillis, the same derivation ENDS
+        // prints (A-12 C-1) — not to the span's arithmetic.
+        // The span target is built from whole FLOORED minutes
+        // at materialisation, so spanRemaining hit 00:00 up to
+        // 59 s before the window's end, every night, while the
+        // sub-line still promised ENDS 03:30: two ends at once
+        // inside the last minute, and dawn's peak spent early.
         val displaySecs =
-            if (activeSession.isStopwatchMode) activeSession.elapsedSeconds else activeSession.spanRemainingSeconds
+            if (activeSession.isStopwatchMode) {
+                activeSession.elapsedSeconds
+            } else if (activeSession.routineId != null && activeSession.windowEndMillis > 0L) {
+                ((activeSession.windowEndMillis - nowWallMillis) / 1000L)
+                    .coerceAtLeast(0L).toInt()
+            } else {
+                activeSession.spanRemainingSeconds
+            }
         // Wave-2 fix (Salz C-8): the L1 dual grammar. The old
         // single %02d:%02d of TOTAL minutes printed figures no
         // other surface prints ("125:49" for a 2 h stopwatch,
