@@ -1,0 +1,189 @@
+package com.example.service
+
+import android.content.Context
+import android.os.SystemClock
+import com.example.data.GuardSettingsEntity
+import com.example.data.MonolithDatabase
+import com.example.data.MonolithRepository
+import com.example.data.RoutineDerive
+import com.example.data.SmartLoadout
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * The single reconcile funnel (routines rebuild §2). Every trigger —
+ * chain alarm, boot, package replaced, clock change, app resume,
+ * routine CRUD, session edges, the shield loop's cadence, and
+ * throttled opportunistic wakes from the accessibility service and
+ * notification listener — enters through here and runs the SAME pass:
+ *
+ *   read schedule + sessions → derive() → apply diffs → rearm chain.
+ *
+ * derive() is the only brain; this object is the only pair of hands.
+ * Coalescing: one pass at a time; a trigger arriving mid-pass sets a
+ * flag and the pass loops once more, so nothing is ever lost and
+ * nothing ever runs twice for the same state.
+ *
+ * Purity (Otis N1–N6): this file never reads system-guard status,
+ * never advances session progress, never takes the generic disarm
+ * path, and touches no UI or notification surface. A tick cannot
+ * disturb a live manual session beyond finalising what derive()
+ * declares due.
+ */
+object RoutineHeartbeat {
+
+    enum class Source {
+        CHAIN_ALARM, BOOT, PACKAGE_REPLACED, TIME_CHANGED,
+        RESUME, CRUD, SESSION_EDGE, SHIELD_LOOP, OPPORTUNISTIC
+    }
+
+    private const val OPPORTUNISTIC_THROTTLE_MILLIS = 30_000L
+    private const val DERIVE_LOOKBACK_MILLIS = 48L * 60L * 60L * 1000L
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val gate = Mutex()
+    private val pendingAgain = AtomicBoolean(false)
+    private val lastOpportunisticAt = AtomicLong(0L)
+
+    @Volatile
+    private var lastArmedBoundaryMillis: Long? = null
+
+    /** The suspending entry — callers with a coroutine use this. */
+    suspend fun tick(context: Context, source: Source, force: Boolean = false) {
+        val appContext = context.applicationContext
+        if (!gate.tryLock()) {
+            pendingAgain.set(true)
+            return
+        }
+        try {
+            do {
+                pendingAgain.set(false)
+                reconcileOnce(appContext)
+            } while (pendingAgain.get())
+        } finally {
+            gate.unlock()
+        }
+    }
+
+    /** Fire-and-forget entry for receivers and service callbacks. */
+    fun tickAsync(context: Context, source: Source, force: Boolean = false) {
+        val appContext = context.applicationContext
+        scope.launch { tick(appContext, source, force) }
+    }
+
+    /** Throttled entry for high-frequency service callbacks: at most
+     *  one opportunistic pass per 30 s of monotonic time. */
+    fun tickOpportunistic(context: Context) {
+        val now = SystemClock.elapsedRealtime()
+        val last = lastOpportunisticAt.get()
+        if (now - last < OPPORTUNISTIC_THROTTLE_MILLIS) return
+        if (!lastOpportunisticAt.compareAndSet(last, now)) return
+        tickAsync(context, Source.OPPORTUNISTIC)
+    }
+
+    private suspend fun reconcileOnce(appContext: Context) {
+        val database = MonolithDatabase.getInstance(appContext)
+        val dao = database.monolithDao()
+        val repository = MonolithRepository(appContext, dao)
+
+        val now = System.currentTimeMillis()
+        val routines = dao.getAllRoutinesSnapshot()
+        val routinesById = routines.associateBy { it.id }
+        val active = dao.getActiveSessionSnapshot()
+        val since = now - DERIVE_LOOKBACK_MILLIS
+        val sessions = (dao.getRoutineSessionsForDerive(since) + dao.getSessionsStartedSince(since))
+            .distinctBy { it.id }
+        val sessionsById = sessions.associateBy { it.id }
+        val settings = dao.getGuardSettingsSnapshot()
+
+        val result = RoutineDerive.derive(
+            routines = routines,
+            nowMillis = now,
+            activeSession = active,
+            sessions = sessions,
+            settings = settings ?: GuardSettingsEntity()
+        )
+
+        // 1. Finalise everything derive() declares due — known routines
+        //    first, then orphans (routine row deleted; sealed by the
+        //    stored window snapshot alone, R5).
+        val finaliseIds = result.derivations.flatMap { it.finaliseDue } + result.orphanFinaliseDue
+        var activeFinalised = false
+        for (id in finaliseIds.distinct()) {
+            val session = sessionsById[id] ?: continue
+            repository.finaliseRoutineSession(session, now)
+            if (active != null && session.id == active.id) activeFinalised = true
+        }
+
+        // 2. SLEEP stand-downs: an active SLEEP session past its stored
+        //    window end is stood down unstamped (J2) — a plain
+        //    deactivation, never a judgement.
+        if (active != null && active.routineId != null && active.windowEndMillis in 1..now) {
+            if (routinesById[active.routineId]?.loadoutName == SmartLoadout.SLEEP.name) {
+                repository.deactivateRoutineSession(active)
+                activeFinalised = true
+            }
+        }
+
+        // 3. Materialise at most one desired session. derive() only
+        //    emits one for an unclaimed containing window, so this is
+        //    safe even in the same pass that finalised the previous
+        //    window's session (back-to-back windows: the old session
+        //    seals and the new one seals in — one pass, no dead gap).
+        //    The repository's start path deactivates any predecessor.
+        val desired = result.derivations.firstNotNullOfOrNull { it.desiredSession }
+        var materialised = false
+        if (desired != null) {
+            val transition = SessionSealTransitions.get(appContext)
+            // Slice E (F-S1(i)): an annulled proving tombstoned its
+            // window — the machine refused that seal late, and the
+            // window stays refused for this process's life. The
+            // tombstone is checked BEFORE materialising, never after.
+            if (transition.isTombstoned(desired.routineId, desired.windowStartMillis)) {
+                materialised = false
+            } else {
+                val session = repository.materialiseRoutineSession(desired)
+                materialised = true
+                // 3b. THE SEAL'S FOURTH ACT (F-S1(i) full
+                // convergence): the materialised session proves
+                // and seals through the same transition the Deck's
+                // arm uses — the SLEEP 20:00 seal sounds, bit-
+                // identically. Launched off-pass: the proving
+                // window (≤1500ms) must not hold the reconcile
+                // mutex, and its verdict needs no witness here —
+                // the tombstone and the row carry it.
+                val sealSessionId = session.id
+                scope.launch {
+                    transition.proveAndSeal(sealSessionId, null)
+                }
+            }
+        }
+
+        // 4. Shield bookkeeping: if a finalise ended the active session
+        //    and nothing replaced it, the shield stands down. A live
+        //    session (manual or routine) is never stopped here.
+        if (activeFinalised && !materialised) {
+            MonolithShieldService.stopShield(appContext)
+        }
+
+        // 5. Rearm the chain when the boundary moved or the chain is
+        //    missing entirely.
+        val boundary = result.nextBoundaryMillis
+        if (boundary != lastArmedBoundaryMillis || !RoutineScheduler.isChainArmed(appContext)) {
+            if (boundary == null) {
+                RoutineScheduler.cancelChain(appContext)
+            } else {
+                RoutineScheduler.rearmChain(appContext, boundary)
+            }
+            lastArmedBoundaryMillis = boundary
+        }
+
+        // 6. Liveness stamp — proof on disk that the funnel ran.
+        dao.stampLastRoutineTick(now)
+    }
+}

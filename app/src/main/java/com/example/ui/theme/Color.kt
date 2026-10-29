@@ -20,34 +20,34 @@ val TokenColorOnPrimaryContainer = Color(0xFF471602)  // 9. Content on the accen
 val TokenColorSecondaryContainer = Color(0xFF615B5A)  // 10. Selected pill in the bottom nav (R:97, G:91, B:90)
 val TokenColorOnSecondaryContainer = Color(0xFFF4EFEE)// 11. Content on the pill (R:244, G:239, B:238)
 val TokenColorOnSurface = Color(0xFF4E4948)           // 12. Primary icon/glyph tone on surfaces (R:78, G:73, B:72)
-val TokenColorOnSurfaceVariant = Color(0xFF787170)    // 13. Secondary text/glyphs (R:120, G:113, B:112)
+val TokenColorOnSurfaceVariant = Color(0xFF5F5856)    // 13. Secondary text/glyphs (R:120, G:113, B:112)
 val TokenColorOutline = Color(0xFF615B5A)             // 14. Strong hairlines, borders (R:97, G:91, B:90)
 val TokenColorOutlineVariant = Color(0x75615B5A)      // 15. Hairlines (base colour at 0x75 alpha)
 val TokenBlockBarSurface = Color(0xFF2E2A26)          // 16. The session/block bar — darkest element (R:46, G:42, B:38)
 val TokenTextColorPrimary = Color(0xFF2C2A29)         // 17. Body text (R:44, G:42, B:41)
 val TokenTextColorSecondary = Color(0xFF615B5A)       // 18. Secondary text (R:97, G:91, B:90)
-val TokenNothingRed = Color(0xFFE30613)               // 19. Brand/dot-matrix accents only (R:227, G:6, B:19)
+val TokenAlert = Color(0xFFD63E06)                    // 19. Alert tone — deepest step of the ONE orange hue (R:214, G:62, B:6). Was Nothing Red; killed in Ren's revamp.
 
 // Night / Armed Lockdown Mode 19 Tokens (DEVELOPER-GUIDE.pdf §1 Night table)
-val NightColorBackground = Color(0xFF201D1A)          // 1. Night ground (R:32, G:29, B:26)
-val NightColorSurface = Color(0xFF201D1A)             // 2. Night default surface
-val NightColorSurfaceSheet = Color(0xFF2E2A26)        // 3. Night bottom sheets (R:46, G:42, B:38)
-val NightColorSurfaceVariant = Color(0xFF272320)      // 4. Night recessed/inset areas (R:39, G:35, B:32)
-val NightColorSurfaceBright = Color(0xFF332A27)       // 5. Night raised card (R:51, G:42, B:39)
+val NightColorBackground = Color(0xFF171412)          // 1. Night ground — Round 1a staircase base (R:23, G:20, B:18)
+val NightColorSurface = Color(0xFF171412)             // 2. Night default surface — same as ground, flat by default
+val NightColorSurfaceSheet = Color(0xFF4A423C)        // 3. Night sheets — the control-fill cap tone (1.86:1 over ground); topmost hardware
+val NightColorSurfaceVariant = Color(0xFF100E0C)      // 4. Night recessed/inset — BELOW ground (was #272320, lighter than ground: recesses reversed)
+val NightColorSurfaceBright = Color(0xFF362C27)       // 5. Night raised card — staircase step 1, 1.35:1 over ground
 val NightColorPrimary = Color(0xFFFFE4CF)             // 6. Flips to cream — ink inverts, doesn't grey (R:255, G:228, B:207)
 val NightColorOnPrimary = Color(0xFF1B110D)           // 7. Content on cream primary (R:27, G:17, B:13)
 val NightColorPrimaryContainer = Color(0xFFF47442)    // 8. Accent warms up one step for dark ground (R:244, G:116, B:66)
 val NightColorOnPrimaryContainer = Color(0xFF471602)  // 9. Content on night accent (R:71, G:22, B:2)
-val NightColorSecondaryContainer = Color(0xFFFFB38F)  // 10. Selected pill in night bottom nav (R:255, G:179, B:143)
-val NightColorOnSecondaryContainer = Color(0xFF40352E)// 11. Content on night pill (R:64, G:53, B:46)
-val NightColorOnSurface = Color(0xFFFBECE1)           // 12. Night primary icon/glyph tone (R:251, G:236, B:225)
-val NightColorOnSurfaceVariant = Color(0xFFFAE4D3)    // 13. Night secondary text/glyphs (R:250, G:228, B:211)
+val NightColorSecondaryContainer = Color(0xFF4A423C)  // 10. Selected pill fill — the cap (was peach #FFB38F, a second floodlight at night)
+val NightColorOnSecondaryContainer = Color(0xFFFFE4CF)// 11. Content on the cap — cream text, 8.1:1
+val NightColorOnSurface = Color(0xFFEDE3D8)           // 12. Night primary glyph tone — 14.5:1 over ground
+val NightColorOnSurfaceVariant = Color(0xFF776A60)    // 13. Night muted tier — 3.5:1 (was #FAE4D3 at ~14.9:1: no mute existed)
 val NightColorOutline = Color(0xFF807A7A)             // 14. Night strong hairlines (R:128, G:122, B:122)
 val NightColorOutlineVariant = Color(0x758F8888)      // 15. Night hairlines at 0x75 alpha (R:143, G:136, B:136)
 val NightBlockBarSurface = Color(0xFF161311)          // 16. Night block bar surface (R:22, G:19, B:17)
-val NightTextColorPrimary = Color(0xFFF8F5F5)         // 17. Night body text (R:248, G:245, B:245)
-val NightTextColorSecondary = Color(0xFFF1E8E6)       // 18. Night secondary text (R:241, G:232, B:230)
-val NightNothingRed = Color(0xFFFF2A3C)               // 19. Night dot-matrix red (R:255, G:42, B:60)
+val NightTextColorPrimary = Color(0xFFD2C6BB)         // 17. Night body text — 11:1 tier (was ~16.8:1, everything shouted)
+val NightTextColorSecondary = Color(0xFF9C8E84)       // 18. Night secondary text — 5.8:1 tier
+val NightAlert = Color(0xFFFF8A5C)                    // 19. Night alert tone — the same orange hue, warmed for dark ground (R:255, G:138, B:92)
 
 val DaylightZeroGreenTokens: List<Color> = listOf(
     TokenColorBackground,
@@ -68,7 +68,7 @@ val DaylightZeroGreenTokens: List<Color> = listOf(
     TokenBlockBarSurface,
     TokenTextColorPrimary,
     TokenTextColorSecondary,
-    TokenNothingRed
+    TokenAlert
 )
 
 val NightZeroGreenTokens: List<Color> = listOf(
@@ -90,7 +90,7 @@ val NightZeroGreenTokens: List<Color> = listOf(
     NightBlockBarSurface,
     NightTextColorPrimary,
     NightTextColorSecondary,
-    NightNothingRed
+    NightAlert
 )
 
 // =========================================================================
@@ -174,7 +174,6 @@ val SolarOrange = TokenColorPrimaryContainer
 val WarmAmber = TokenColorPrimaryContainer
 val ElectricViolet = TokenColorSecondaryContainer
 val DeepIndigo = TokenBlockBarSurface
-val CrimsonAlert = TokenNothingRed
 
 val Basalt = TokenColorSurfaceBright
 val BasaltBottomShadow = TokenColorOutline

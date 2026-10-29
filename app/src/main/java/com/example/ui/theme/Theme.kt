@@ -1,11 +1,17 @@
 package com.example.ui.theme
 
+import androidx.compose.foundation.IndicationNodeFactory
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.node.DelegatableNode
 import androidx.compose.ui.unit.dp
 
 val WarmTactileStudioColorScheme = lightColorScheme(
@@ -27,7 +33,7 @@ val WarmTactileStudioColorScheme = lightColorScheme(
     onSurface = TokenColorOnSurface,
     surfaceVariant = TokenColorSurfaceVariant,
     onSurfaceVariant = TokenColorOnSurfaceVariant,
-    error = TokenNothingRed,
+    error = TokenAlert,
     onError = TokenColorOnPrimary,
     outline = TokenColorOutline,
     outlineVariant = TokenColorOutlineVariant
@@ -52,8 +58,17 @@ val SealedVaultNightColorScheme = darkColorScheme(
     onSurface = NightColorOnSurface,
     surfaceVariant = NightColorSurfaceVariant,
     onSurfaceVariant = NightColorOnSurfaceVariant,
-    error = NightNothingRed,
-    onError = NightColorPrimary,
+    error = NightColorPrimaryContainer,
+    // Chrome C7 (the accent law): the night error slot is re-voiced
+    // to the locked night accent #F47442 — #FF8A5C (NightAlert) was
+    // a fourth orange living in the scheme, outside the accent set;
+    // it leaves the screen set here. (NightAlert stays in the
+    // palette file as a token definition; nothing renders it.)
+    // Measured (Round 0b): cream #FFE4CF on NightAlert #FF8A5C is 1.95:1 —
+    // illegible. The dark on-primary ink gives 8.1:1. (onTertiary and
+    // onTertiaryContainer were audited in the same pass: cream on their
+    // containers measures 5.6:1 and 11.9:1, so they stay.)
+    onError = NightColorOnPrimary,
     outline = NightColorOutline,
     outlineVariant = NightColorOutlineVariant
 )
@@ -71,6 +86,18 @@ val MonolithShapes = Shapes(
     extraLarge = RoundedCornerShape(24.dp)
 )
 
+/**
+ * A no-op indication (Round 1c): draws nothing for any interaction.
+ * The public NoIndication object only exists in newer foundation
+ * versions than this project's BOM 2024.09, so the factory is local.
+ */
+private object NoRippleIndication : IndicationNodeFactory {
+    override fun create(interactionSource: InteractionSource): DelegatableNode =
+        object : Modifier.Node() {}
+    override fun hashCode(): Int = -1
+    override fun equals(other: Any?): Boolean = other === this
+}
+
 @Composable
 fun MyApplicationTheme(
     darkTheme: Boolean = false,
@@ -86,7 +113,12 @@ fun MyApplicationTheme(
     MaterialTheme(
         colorScheme = scheme,
         typography = Typography,
-        shapes = MonolithShapes,
-        content = content
-    )
+        shapes = MonolithShapes
+    ) {
+        // Ripple is purged app-wide (Round 1c, state grammar): controls in
+        // this app answer with position, fill and sound — never a wash.
+        CompositionLocalProvider(LocalIndication provides NoRippleIndication) {
+            content()
+        }
+    }
 }

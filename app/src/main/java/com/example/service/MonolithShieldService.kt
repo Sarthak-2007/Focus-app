@@ -35,10 +35,23 @@ class MonolithShieldService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
         if (action == ACTION_STOP_SHIELD) {
+            protecting = false
+            protectingSessionId = -1
+            protectingMono = 0L
+            WatchStore.onShieldIteration(protecting = false)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
+
+        // Cascade witness reset (Slice D step 4, Opal L2): a fresh
+        // start must re-prove protection for the session this loop
+        // is about to read - a stale flip from a previous session
+        // would let the cascade confirm a shield that has not yet
+        // run one iteration over the latched row.
+        protecting = false
+        protectingSessionId = -1
+        protectingMono = 0L
 
         createNotificationChannel()
         val fgsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -52,6 +65,11 @@ class MonolithShieldService : Service() {
             buildNotification("Monolith Locked", "Protecting your focus session..."),
             fgsType
         )
+        // Live Wire registry (Ines): the instance exists only once
+        // startForeground has actually succeeded - no instance, no
+        // flag, no rumour.
+        instance = this
+        WatchStore.poke()
         startMonitoringLoop()
 
         return START_STICKY
@@ -63,7 +81,18 @@ class MonolithShieldService : Service() {
         val repository = MonolithRepository(applicationContext, dao)
 
         monitorJob = serviceScope.launch {
+            var iteration = 0
             while (isActive) {
+                iteration++
+                // Routine heartbeat cadence (rebuild §2.2): first pass,
+                // then ~every 30 s (15 iterations of the 2 s loop), so a
+                // window boundary is reconciled within half a minute
+                // even if every alarm was lost.
+                if (iteration == 1 || iteration % 15 == 0) {
+                    RoutineHeartbeat.tick(
+                        applicationContext, RoutineHeartbeat.Source.SHIELD_LOOP
+                    )
+                }
                 val activeSession = dao.getActiveSessionSnapshot()
                 if (activeSession == null || !activeSession.isActive) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
@@ -71,8 +100,19 @@ class MonolithShieldService : Service() {
                     break
                 }
 
-                val updated = repository.updateSessionProgress(activeSession)
+                // Slice E (Nocke §2.2): the shield's own loop is
+                // the beat's only lawful writer — its tick stamps
+                // shieldLastBeatWallMillis into the row it already
+                // persists, so the finish machine can later prove
+                // whether the shield was present or gone.
+                val updated = repository.updateSessionProgress(activeSession, stampShieldBeat = true)
                 if (!updated.isActive) {
+                    // Session-edge tick BEFORE standing down: a routine
+                    // session that just timer-completed gets finalised
+                    // by derive() now, not at some later wake.
+                    RoutineHeartbeat.tickAsync(
+                        applicationContext, RoutineHeartbeat.Source.SESSION_EDGE
+                    )
                     updateNotification("Session Complete", "Unlocked desk toy ready in your Break tab.")
                     stopForeground(STOP_FOREGROUND_DETACH)
                     stopSelf()
@@ -104,6 +144,23 @@ class MonolithShieldService : Service() {
                     subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped"
                 )
 
+                // Live Wire: the shield is PROTECTING only once a
+                // full monitor iteration has run under a live
+                // session - started is not protecting. The cascade
+                // witness (Opal L2) is stamped at the same flip:
+                // the session this iteration read, and the mono it
+                // flipped - CONFIRMED stamp for SHIELD-PROTECTING.
+                if (!protecting) {
+                    protecting = true
+                    protectingSessionId = updated.id
+                    protectingMono = SystemClock.elapsedRealtime()
+                    WatchStore.poke()
+                }
+                // Watch Store (chrome C3): ONE publication per
+                // iteration — the engine heartbeat plus a re-read of
+                // the two BIND items' present state.
+                WatchStore.onShieldIteration(protecting)
+
                 val nowMono = SystemClock.elapsedRealtime()
                 val blockedPackages = dao.getAllAppsSnapshot()
                     .filter { app ->
@@ -126,6 +183,9 @@ class MonolithShieldService : Service() {
                         putExtra(EXTRA_INTERCEPTED_PACKAGE, foregroundBlockedPkg)
                         putExtra(EXTRA_INTERCEPTED_APP_NAME, blockedApp?.appName ?: "Blocked App")
                         putExtra(EXTRA_INTERCEPT_BADGE, blockedApp?.resolvedTier?.badge ?: "Locked")
+                        // This door's blocked set already excludes a leased PEEK app
+                        // (the filter above), so a lease sold here is honoured (UNA2-01).
+                        putExtra(EXTRA_INTERCEPT_PATH, InterceptPath.SHIELD_APP.name)
                     }
                     startActivity(interceptIntent)
                 }
@@ -178,12 +238,45 @@ class MonolithShieldService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        if (instance === this) {
+            instance = null
+        }
+        protecting = false
+        protectingSessionId = -1
+        protectingMono = 0L
+        WatchStore.onShieldIteration(protecting = false)
         monitorJob?.cancel()
         serviceScope.cancel()
         super.onDestroy()
     }
 
     companion object {
+        // Live Wire registry (Ines): in-memory only, never persisted.
+        @Volatile
+        var instance: MonolithShieldService? = null
+            internal set
+
+        /** True only after startForeground succeeded AND a full
+         *  monitor iteration ran. The Live Wire reads this as a
+         *  post-latch cascade link and a strip fact - never as a
+         *  pre-arm conjunct (the shield starts WITH the session). */
+        @Volatile
+        var protecting: Boolean = false
+            internal set
+
+        /** Cascade witness (Slice D step 4, Opal L2): the session
+         *  id the first full iteration read when `protecting`
+         *  flipped, and the monotonic instant of the flip. -1 / 0
+         *  when no iteration has flipped under the current start.
+         *  Reset on every start and stop so the witness can only
+         *  ever attest the latched session's own loop. */
+        @Volatile
+        var protectingSessionId: Int = -1
+            internal set
+
+        @Volatile
+        var protectingMono: Long = 0L
+            internal set
         const val CHANNEL_ID = "monolith_shield_channel"
         const val NOTIFICATION_ID = 4096
         const val ACTION_START_SHIELD = "com.example.action.START_SHIELD"
@@ -191,6 +284,11 @@ class MonolithShieldService : Service() {
         const val EXTRA_INTERCEPTED_PACKAGE = "extra_intercepted_package"
         const val EXTRA_INTERCEPTED_APP_NAME = "extra_intercepted_app_name"
         const val EXTRA_INTERCEPT_BADGE = "extra_intercept_badge"
+        /** The firing door's [InterceptPath] name (Truth Car 3,
+         *  UNA2-01): the badge says WHAT stopped him; the path says
+         *  WHICH door — and only lease-honouring doors may sell a
+         *  peek. Written by both intercept launchers. */
+        const val EXTRA_INTERCEPT_PATH = "extra_intercept_path"
 
         fun startShield(context: Context) {
             try {

@@ -119,8 +119,13 @@ class TowerStreakView(context: Context) : BlockitCanvasView(context) {
                         canvas.drawRoundRect(cellRect, dp(4f), dp(4f), paintAccent)
                     }
                     brickNumber < bricks -> {
-                        // Solid laid brick in colorPrimary ink
-                        paintFill.color = tokPrimary()
+                        // Solid laid brick in colorPrimary ink. At
+                        // night the fill caps at #A79587 (F-03: the
+                        // 38% cream blend ceiling for night fills) —
+                        // raw cream bricks were a wall of light. The
+                        // CURRENT brick's accent (above) is the filed
+                        // exception and stands.
+                        paintFill.color = if (isNightMode) 0xFFA79587.toInt() else tokPrimary()
                         canvas.drawRoundRect(cellRect, dp(4f), dp(4f), paintFill)
                     }
                     else -> {
@@ -138,7 +143,7 @@ class TowerStreakView(context: Context) : BlockitCanvasView(context) {
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_UP) {
-            fireFeel(4L, 610f)
+            fireFeel(4L)
             onBrickTapped?.invoke(totalBricksCount)
             return true
         }
@@ -146,237 +151,6 @@ class TowerStreakView(context: Context) : BlockitCanvasView(context) {
     }
 }
 
-/**
- * ============================================================================
- * 12. DAY FADERS VIEW (DEVELOPER-GUIDE.pdf §4.2 #10 DayFaders)
- * ============================================================================
- * - 7 vertical fader columns (MON..SUN) with recessed track (`colorSurfaceVariant`),
- *   `colorPrimary` ink level bars, `#F55314` accent cap on the active day, and Space Mono
- *   minute readouts.
- */
-class DayFadersView(context: Context) : BlockitCanvasView(context) {
-
-    var statsList: List<DailyFocusStat> = emptyList()
-        set(value) {
-            field = value
-            invalidate()
-        }
-
-    var selectedDayIndex: Int = 6
-        set(value) {
-            val clamped = value.coerceIn(0, 6)
-            if (field != clamped) {
-                field = clamped
-                invalidate()
-            }
-        }
-
-    var onDaySelected: ((Int) -> Unit)? = null
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val w = width.toFloat()
-        val h = height.toFloat()
-        if (w <= 0f || h <= 0f) return
-
-        val days = if (statsList.size >= 7) statsList.takeLast(7) else listOf(
-            DailyFocusStat("MON", "2026-10-22", 45, 2, 3),
-            DailyFocusStat("TUE", "2026-10-23", 75, 3, 5),
-            DailyFocusStat("WED", "2026-10-24", 60, 2, 4),
-            DailyFocusStat("THU", "2026-10-25", 90, 4, 6),
-            DailyFocusStat("FRI", "2026-10-26", 50, 2, 2),
-            DailyFocusStat("SAT", "2026-10-27", 110, 4, 7),
-            DailyFocusStat("SUN", "2026-10-28", 85, 3, 4)
-        )
-
-        val maxMins = (days.maxOfOrNull { it.totalMinutes } ?: 90).coerceAtLeast(60)
-        val gap = gapUnit // 12dp universal gap
-        val colW = (w - gap * 6f) / 7f
-        val faderTop = dp(24f)
-        val faderBottom = h - dp(24f)
-        val faderH = (faderBottom - faderTop).coerceAtLeast(dp(40f))
-
-        for (i in 0 until 7) {
-            val item = days[i]
-            val isSelected = i == selectedDayIndex
-            val left = i * (colW + gap)
-            val right = left + colW
-
-            // Top Space Mono minute readout
-            paintMono.color = if (isSelected) tokAccent() else tokTextPrimary()
-            paintMono.textSize = sp(10.5f)
-            paintMono.textAlign = Paint.Align.CENTER
-            canvas.drawText("${item.totalMinutes}m", left + colW * 0.5f, dp(14f), paintMono)
-
-            // Recessed vertical fader slot (12dp radius)
-            trackRect.set(left, faderTop, right, faderBottom)
-            paintFill.color = tokSurfaceVariant()
-            canvas.drawRoundRect(trackRect, radiusSmall, radiusSmall, paintFill)
-            paintStroke.color = tokHairline()
-            paintStroke.strokeWidth = dp(1f)
-            canvas.drawRoundRect(trackRect, radiusSmall, radiusSmall, paintStroke)
-
-            // Filled fader bar from bottom
-            val frac = (item.totalMinutes.toFloat() / maxMins.toFloat()).coerceIn(0.12f, 1f)
-            val fillTop = faderBottom - faderH * frac
-            thumbRect.set(left + dp(3f), fillTop + dp(3f), right - dp(3f), faderBottom - dp(3f))
-            paintFill.color = if (isSelected) tokAccent() else tokPrimary()
-            canvas.drawRoundRect(thumbRect, radiusSmall - dp(3f), radiusSmall - dp(3f), paintFill)
-
-            // Horizontal fader cap notch
-            paintStroke.color = if (isSelected) LIGHT_ON_PRIMARY else tokOnPrimary()
-            paintStroke.strokeWidth = dp(1.5f)
-            canvas.drawLine(
-                thumbRect.left + dp(6f),
-                thumbRect.top + dp(7f),
-                thumbRect.right - dp(6f),
-                thumbRect.top + dp(7f),
-                paintStroke
-            )
-
-            // Bottom day word label in Sans
-            paintWord.color = if (isSelected) tokTextPrimary() else tokTextSecondary()
-            paintWord.textSize = sp(10f)
-            paintWord.textAlign = Paint.Align.CENTER
-            canvas.drawText(item.dayLabel.take(3).uppercase(Locale.US), left + colW * 0.5f, h - dp(6f), paintWord)
-        }
-    }
-
-    @SuppressLint("ClickableViewAccessibility")
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_UP) {
-            val colW = (width - gapUnit * 6f) / 7f
-            val idx = (event.x / (colW + gapUnit)).toInt().coerceIn(0, 6)
-            if (event.actionMasked == MotionEvent.ACTION_UP) {
-                selectedDayIndex = idx
-                fireFeel(4L, 480f + idx * 45f)
-                onDaySelected?.invoke(idx)
-            }
-            return true
-        }
-        return super.onTouchEvent(event)
-    }
-}
-
-/**
- * ============================================================================
- * 13. FALLING SQUARES VIEW (DEVELOPER-GUIDE.pdf §4.2 #10 FallingSquaresView)
- * ============================================================================
- * - Celebration / milestone view: a one-shot rain of 16 physical squares animated with Curve C (520ms).
- */
-class FallingSquaresView(context: Context) : BlockitCanvasView(context) {
-
-    private val squareXFracs = FloatArray(16) { i -> (i + 0.5f) / 16f }
-    private val squareSpeeds = FloatArray(16) { i -> 0.65f + (i % 5) * 0.12f }
-    private var rainProgress: Float = 0f
-    private var rainAnimator: ValueAnimator? = null
-
-    fun triggerCelebrationRain() {
-        rainAnimator?.cancel()
-        rainAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = MonolithCurves.DURATION_520.toLong()
-            interpolator = MonolithCurves.CurveC
-            addUpdateListener {
-                rainProgress = it.animatedValue as Float
-                invalidate()
-            }
-            start()
-        }
-        fireFeel(10L, 760f)
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        if (rainProgress <= 0.01f || rainProgress >= 0.99f) return
-        val w = width.toFloat()
-        val h = height.toFloat()
-        val sq = dp(8f)
-
-        for (i in 0 until 16) {
-            val cx = squareXFracs[i] * w
-            val cy = (rainProgress * squareSpeeds[i] * h).coerceIn(0f, h)
-            paintFill.color = if (i % 4 == 0) tokAccent() else tokPrimary()
-            paintFill.alpha = ((1f - rainProgress) * 255).toInt().coerceIn(0, 255)
-            canvas.drawRoundRect(cx - sq * 0.5f, cy - sq * 0.5f, cx + sq * 0.5f, cy + sq * 0.5f, dp(2f), dp(2f), paintFill)
-        }
-        paintFill.alpha = 255
-    }
-}
-
-/**
- * ============================================================================
- * 14. TILE NUMBER COUNTER VIEW (DEVELOPER-GUIDE.pdf §4.2 #8 TileNumberView)
- * ============================================================================
- * - Renders streaks/scores as physical tiles on the 4dp dot grid ("counter machine" readout).
- */
-class TileNumberCounterView(context: Context) : BlockitCanvasView(context) {
-
-    var labelWord: String = "FOCUSED MIN"
-        set(value) {
-            if (field != value) {
-                field = value
-                invalidate()
-            }
-        }
-
-    var numberValue: Int = 145
-        set(value) {
-            if (field != value) {
-                field = value
-                invalidate()
-            }
-        }
-
-    var useAccentColor: Boolean = false
-        set(value) {
-            if (field != value) {
-                field = value
-                invalidate()
-            }
-        }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val w = width.toFloat()
-        val h = height.toFloat()
-        if (w <= 0f || h <= 0f) return
-
-        cardRect.set(0f, 0f, w, h)
-        paintFill.color = tokSurfaceVariant()
-        canvas.drawRoundRect(cardRect, radiusSmall, radiusSmall, paintFill)
-        paintStroke.color = tokHairline()
-        paintStroke.strokeWidth = dp(1f)
-        canvas.drawRoundRect(cardRect, radiusSmall, radiusSmall, paintStroke)
-
-        val pad = gapUnit
-        paintWord.color = tokTextSecondary()
-        paintWord.textSize = sp(10f)
-        paintWord.textAlign = Paint.Align.LEFT
-        canvas.drawText(labelWord, pad, pad + dp(8f), paintWord)
-
-        // Draw 3-digit 4dp dot-matrix counter on the left-bottom
-        val digitsStr = String.format(Locale.US, "%03d", numberValue.coerceIn(0, 999))
-        val tile = dotTileSize // 4dp
-        val gap = dp(1.5f)
-        val digitW = tile * 3f + gap * 2f
-        var curX = pad
-        val topY = h - pad - (tile * 5f + gap * 4f)
-        val activeCol = if (useAccentColor) tokAccent() else tokPrimary()
-        val ghostCol = tokHairline()
-
-        for (ch in digitsStr) {
-            val d = (ch - '0').coerceIn(0, 9)
-            drawDotMatrixDigit(canvas, d, curX, topY, tile, gap, activeCol, ghostCol)
-            curX += digitW + dp(6f)
-        }
-
-        // Right-aligned crisp Space Mono numeral mirror
-        paintMono.color = activeCol
-        paintMono.textSize = sp(22f)
-        paintMono.textAlign = Paint.Align.RIGHT
-        canvas.drawText(numberValue.toString(), w - pad, h - pad - dp(2f), paintMono)
-    }
-}
 
 /**
  * ============================================================================
@@ -410,7 +184,7 @@ class TaskHorizonBarView(context: Context) : BlockitCanvasView(context) {
             paintWord.color = tokTextSecondary()
             paintWord.textSize = sp(10.5f)
             paintWord.textAlign = Paint.Align.CENTER
-            canvas.drawText("HORIZON CLEAR • ADD TASK BELOW", w * 0.5f, h * 0.5f + dp(4f), paintWord)
+            canvas.drawText("NOTHING QUEUED", w * 0.5f, h * 0.5f + dp(4f), paintWord)
             return
         }
 
@@ -425,19 +199,43 @@ class TaskHorizonBarView(context: Context) : BlockitCanvasView(context) {
             val segW = availW * weight
             cellRect.set(curX, pad, curX + segW, h - pad)
 
-            // §1.1 Discipline: Only active task #0 gets colorPrimaryContainer (#F55314)!
-            paintFill.color = when (idx) {
-                0 -> tokAccent()
-                1 -> tokPrimary()
-                else -> tokSecondaryContainer()
+            // Tonal staircase (Ren; re-voiced chrome C9 §10.2): the
+            // active task is the heaviest INK, never the loudest
+            // color — orange is rationed to START's text. At night
+            // seg 0 takes the CAP tone (#4A423C — it was raw cream
+            // #FFE4CF, ESR-14's flood) with a 1dp marker line on its
+            // top edge; segs >= 1 recede in steps toward the night
+            // fill ceiling #A79587, never reaching raw cream. Day:
+            // seg 0 ink, seg 1 #615B5A, seg >= 2 the recess tone.
+            paintFill.color = when {
+                idx == 0 -> tokControlFill()
+                isNightMode && idx == 1 -> 0xFF574D45.toInt()
+                isNightMode && idx == 2 -> 0xFF6B5D52.toInt()
+                isNightMode -> 0xFF7F6E60.toInt()
+                idx == 1 -> tokSecondaryContainer()
+                else -> tokSurfaceVariant()
             }
             canvas.drawRoundRect(cellRect, radiusSmall - dp(3f), radiusSmall - dp(3f), paintFill)
+            if (isNightMode && idx == 0) {
+                paintStroke.color = 0xE6FFE4CF.toInt()
+                paintStroke.strokeWidth = dp(1f)
+                canvas.drawLine(
+                    cellRect.left + dp(6f), cellRect.top + dp(1f),
+                    cellRect.right - dp(6f), cellRect.top + dp(1f),
+                    paintStroke
+                )
+            }
 
-            if (segW > dp(38f)) {
-                val fg = when (idx) {
-                    0 -> LIGHT_ON_PRIMARY
-                    1 -> tokOnPrimary()
-                    else -> tokOnSecondaryContainer()
+            // MINUTES DIE (Truth Car 2): the segment's minute
+            // figure prints only where an estimate was given —
+            // a name-only task's segment stands unfigured rather
+            // than wearing a "0m" it never earned.
+            if (segW > dp(38f) && task.estimatedMinutes > 0) {
+                val fg = when {
+                    idx == 0 -> tokOnControlFill()
+                    isNightMode -> tokTextPrimary()
+                    idx == 1 -> tokOnSecondaryContainer()
+                    else -> tokTextPrimary()
                 }
                 drawMixedWordAndMono(
                     canvas = canvas,
@@ -458,45 +256,3 @@ class TaskHorizonBarView(context: Context) : BlockitCanvasView(context) {
     }
 }
 
-/**
- * ============================================================================
- * COMPLETE 108 CUSTOM CONTROLS CATALOG (DEVELOPER-GUIDE.pdf §4 Verification)
- * ============================================================================
- */
-data class CustomControlDescriptor(
-    val id: Int,
-    val name: String,
-    val section: String
-) {
-    val controlNumber: Int get() = id
-    val title: String get() = name
-}
-
-object MonolithCustomControlCatalog {
-    val all108Controls: List<CustomControlDescriptor> = (1..108).map { idx ->
-        val name = when (idx) {
-            1 -> "HeroTimerCardView"
-            2 -> "RotaryWheelView"
-            3 -> "SlideToStartView"
-            4 -> "HapticPresetStripView"
-            5 -> "BagTilesSuitcaseView"
-            6 -> "TimelineBarView"
-            7 -> "SledSwitchView"
-            8 -> "RombiKnobView"
-            9 -> "TileNumberCounterView"
-            10 -> "TowerStreakView"
-            11 -> "DayFadersView"
-            12 -> "FallingSquaresView"
-            13 -> "MonolithBottomNavView"
-            14 -> "AppRowSledToggleView"
-            15 -> "Emergency60sValveView"
-            16 -> "TaskHorizonBarView"
-            else -> String.format(Locale.US, "BlockitArchitecturalControl_%03d", idx)
-        }
-        CustomControlDescriptor(
-            id = idx,
-            name = name,
-            section = "DEVELOPER-GUIDE.pdf §4"
-        )
-    }
-}

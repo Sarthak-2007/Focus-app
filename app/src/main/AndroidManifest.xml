@@ -21,8 +21,13 @@
         </intent>
     </queries>
 
+    <!-- UNA-04 (Truth Car 3): PARK's plate prints "DATA: ON THIS PHONE
+         ONLY" — so backup is OFF, in every regime: allowBackup=false
+         (kills Auto Backup and cloud backup), and both rules files
+         exclude every domain for cloud backup AND device transfer, so
+         the sentence stays true even if this flag is ever revisited. -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
@@ -96,8 +101,21 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".service.RoutineAlarmReceiver"
+            android:directBootAware="true"
+            android:exported="false" />
+
+        <!-- Slice E (Draht): the release-retry cadence's hint. -->
+        <receiver
+            android:name=".service.ReleaseRetryReceiver"
+            android:directBootAware="true"
+            android:exported="false" />
 
         <!-- Kernel-Level Uninstall Guard (DeviceAdminReceiver) -->
         <receiver

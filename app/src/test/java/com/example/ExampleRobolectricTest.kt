@@ -9,7 +9,6 @@ import com.example.data.BlockedBrowserDomains
 import com.example.data.CryptoIntegrityManager
 import com.example.data.CurioCatalog
 import com.example.data.FocusSessionEntity
-import com.example.data.FrictionTier
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
 import com.example.data.SmartLoadout
@@ -41,6 +40,33 @@ class ExampleRobolectricTest {
             .allowMainThreadQueries()
             .build()
         repository = MonolithRepository(context, db.monolithDao())
+        fakeInstalledApps()
+    }
+
+    /** The catalog is the phone's truth now (Ordner lane): no blind
+     *  factory seed remains, so the apps these tests exercise must
+     *  be installed on the fake phone — they are discovered at
+     *  seed-sync with their factory presets as birth rules (TikTok
+     *  born SHUT, YouTube and WhatsApp born PEEK). */
+    private fun fakeInstalledApps() {
+        val shadow = org.robolectric.Shadows.shadowOf(context.packageManager)
+        val query = android.content.Intent(android.content.Intent.ACTION_MAIN, null)
+            .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+        for ((pkg, label) in listOf(
+            "com.whatsapp" to "WhatsApp",
+            "com.zhiliaoapp.musically" to "TikTok",
+            "com.google.android.youtube" to "YouTube"
+        )) {
+            val info = android.content.pm.ResolveInfo().apply {
+                activityInfo = android.content.pm.ActivityInfo().apply {
+                    packageName = pkg
+                    name = "$pkg.MainActivity"
+                    nonLocalizedLabel = label
+                }
+                nonLocalizedLabel = label
+            }
+            shadow.addResolveInfoForIntent(query, info)
+        }
     }
 
     @After
@@ -71,7 +97,6 @@ class ExampleRobolectricTest {
         val honestSession = FocusSessionEntity(
             intention = "Deep Work",
             profileName = "Study Loadout",
-            frictionTier = FrictionTier.KINETIC_CIPHER.name,
             targetDurationSeconds = 1800,
             elapsedSeconds = 10,
             startWallTimeMillis = nowWall - 10_000L,
@@ -173,7 +198,6 @@ class ExampleRobolectricTest {
         val stopwatchSession = repository.startSession(
             intention = "Open-Ended Lab Research",
             profileName = "Study Loadout",
-            frictionTier = FrictionTier.KINETIC_CIPHER,
             durationMinutes = 5,
             studyBlocksCount = 2
         )
@@ -191,17 +215,11 @@ class ExampleRobolectricTest {
         val notifications = db.monolithDao().getCapturedNotificationsFlow().first()
         assertEquals(initialCount + 1, notifications.size)
 
-        // Export AES-GCM 256-bit encrypted backup and verify decryption round-trip
-        val encryptedPayload = repository.exportEncryptedBackup()
-        assertTrue(encryptedPayload.startsWith("MONOLITH-AES256-GCM:"))
-        val decryptedJson = CryptoIntegrityManager.decryptBackupAesGcm(encryptedPayload)
-        assertNotNull("AES-GCM ciphertext should decrypt cleanly", decryptedJson)
-        assertTrue(decryptedJson!!.contains("\"version\":2"))
         assertEquals(6, CurioCatalog.artifacts.size)
     }
 
     @Test
-    fun `verify Sundial Studio 3-stop switch labels and partial-credit session stamp banking`() = runBlocking {
+    fun `verify 3-stop switch labels and partial-credit session banking`() = runBlocking {
         assertEquals("Shut", AppBlockTier.LOCKED.label)
         assertEquals("2m Knock", AppBlockTier.PEEK_2M.label)
         assertEquals("Open", AppBlockTier.OPEN.label)
@@ -210,7 +228,6 @@ class ExampleRobolectricTest {
         val session = repository.startSession(
             intention = "Read Architectural History Ch. 3",
             profileName = "Study + Chat",
-            frictionTier = FrictionTier.KINETIC_CIPHER,
             durationMinutes = 25,
             studyBlocksCount = 1
         )
@@ -232,7 +249,7 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `verify Zero-Green Bauhaus Primary and Warm Indigo Dusk palette and Stamp Press ritual state`() {
+    fun `verify Zero-Green Bauhaus Primary and Warm Indigo Dusk palette`() {
         val allStudioColors = listOf(
             com.example.ui.theme.SunlitPaper,
             com.example.ui.theme.RecessedLinen,
@@ -267,31 +284,19 @@ class ExampleRobolectricTest {
             )
         }
 
-        val initialTicket = com.example.ui.StampPressTicketState(
-            isVisible = true,
-            minutesBanked = 25,
-            plannedMinutes = 25,
-            intention = "Architectural Sketching",
-            isPartial = false,
-            selectedInk = com.example.ui.StampInkColor.CRIMSON,
-            motifIndex = 0,
-            isStamped = true
-        )
-        val stampedTicket = initialTicket.copy(
-            selectedInk = com.example.ui.StampInkColor.ULTRAMARINE,
-            motifIndex = 2,
-            isStamped = true
-        )
-        assertEquals("Ultramarine", stampedTicket.selectedInk.label)
-        assertEquals("Seal: Chrono Prism", stampedTicket.motifName)
-        assertTrue(stampedTicket.isStamped)
     }
 
     @Test
     fun `verify Solar Queue timeboxed task CRUD, auto-advance, session receipt summary, and undo restore`() = runBlocking {
         repository.ensureSeededAndSyncPackages()
         val initialTasks = db.monolithDao().getAllTasksSnapshot()
-        assertTrue("Default timeboxed tasks should be seeded in Room", initialTasks.size >= 4)
+        // >= 3, amended Oct 29 (Drawer build): the shipped seed's
+        // 4th task was a fabricated COMPLETED row ("Review
+        // Spaced-Repetition Deck", completed an hour before
+        // install) — deleted on Neu's ruling so a fresh install's
+        // Drawer can be honestly empty. The three honest queue
+        // seeds are what this line now counts.
+        assertTrue("Default timeboxed tasks should be seeded in Room", initialTasks.size >= 3)
 
         val firstActive = initialTasks.first { it.resolvedStatus == com.example.data.TaskQueueStatus.ACTIVE }
         assertEquals("Finish Chapter 4 Problem Set (#1–6)", firstActive.title)
@@ -300,7 +305,6 @@ class ExampleRobolectricTest {
         val activeSession = repository.startSession(
             intention = firstActive.title,
             profileName = "Study Loadout",
-            frictionTier = FrictionTier.KINETIC_CIPHER,
             durationMinutes = 25,
             studyBlocksCount = 1
         )
@@ -368,7 +372,7 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `verify 19 Zero-Green daylight and night tokens, 108 custom controls catalog, and Float-PCM synth constants`() {
+    fun `verify 19 Zero-Green daylight and night tokens and Float-PCM synth constants`() {
         assertEquals(19, com.example.ui.theme.DaylightZeroGreenTokens.size)
         assertEquals(19, com.example.ui.theme.NightZeroGreenTokens.size)
 
@@ -378,11 +382,6 @@ class ExampleRobolectricTest {
                 color.green < maxOf(color.red, color.blue)
             )
         }
-
-        // Verify all 108 custom controls in MonolithCustomControlCatalog
-        val allControls = com.example.ui.views.MonolithCustomControlCatalog.all108Controls
-        assertEquals(108, allControls.size)
-        assertTrue(allControls.all { it.id in 1..108 && it.name.isNotBlank() })
 
         // Verify Float-PCM Hardware Transient Synthesizer constants from DEVELOPER-GUIDE.pdf §7
         val weights = com.example.service.TactileSoundEngine.PARTIAL_WEIGHTS

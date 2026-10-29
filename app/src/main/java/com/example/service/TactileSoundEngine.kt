@@ -10,30 +10,21 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
-import android.view.View
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.sin
 
-enum class StudySoundscape(val label: String, val subtitle: String) {
-    OFF("Silent", "Pure Float-PCM hardware transients only"),
-    BROWN_NOISE("Silent", "Pure Float-PCM hardware transients only"),
-    WARM_RAIN("Silent", "Pure Float-PCM hardware transients only"),
-    BINAURAL_DRONE("Silent", "Pure Float-PCM hardware transients only")
-}
-
 /**
  * MONOLITH HAPTIC & FLOAT-PCM TRANSIENT SYNTHESIZER (DEVELOPER-GUIDE.pdf §6 & §7)
  *
- * 1. Haptics (§6):
+ * 1. Haptics (§6, rebuilt in Ren's revamp):
  *    - Never calls View.performHapticFeedback().
- *    - Always uses VibrationEffect.createOneShot(ms, DEFAULT_AMPLITUDE) at four calibrated durations:
- *      • 1ms: Rotary wheel tick
- *      • 4ms: Switch flip / button press / slider step
- *      • 8ms: Session lock / major commit
- *      • 10ms: Session completion / 60s emergency valve pulse
+ *    - Waveform patterns with amplitude envelopes, one per physical action:
+ *      detent tick, two-stage latch, firm click, session-seal clunk,
+ *      softening completion ticks. One-shots survive only as the
+ *      pre-API-26 fallback and the legacy triggerOneShotHaptic() API.
  *
  * 2. Procedural Float-PCM Sound Engine (§7):
  *    - Zero audio files in res/raw or assets/.
@@ -50,6 +41,34 @@ enum class StudySoundscape(val label: String, val subtitle: String) {
 class TactileSoundEngine(private val context: Context) {
 
     companion object {
+        // Truth Car 3 (UNA-03): the live-engine registry. A process
+        // can hold more than one engine (MainActivity's, the seal
+        // transition's), constructed through different doors at
+        // different times; the persisted sound fact reaches ALL of
+        // them through here. Weak keys: a dead engine's entry dies
+        // with it, nothing to unregister.
+        private val liveEngines: MutableSet<TactileSoundEngine> =
+            java.util.Collections.newSetFromMap(
+                java.util.WeakHashMap<TactileSoundEngine, Boolean>()
+            )
+
+        internal fun registerLiveEngine(engine: TactileSoundEngine) {
+            synchronized(liveEngines) { liveEngines.add(engine) }
+        }
+
+        /** Push a freshly-written sound fact to every live engine.
+         *  Called ONLY by [SoundEffectsSetting.setEnabled], after
+         *  the commit has landed. */
+        fun pushSoundEnabledToLiveEngines(enabled: Boolean) {
+            synchronized(liveEngines) {
+                liveEngines.forEach { it.soundEnabled = enabled }
+            }
+        }
+
+        /** Test seam: how many engines this process currently holds. */
+        internal fun liveEngineCountForTest(): Int =
+            synchronized(liveEngines) { liveEngines.size }
+
         const val HAPTIC_ROTARY_TICK_1MS = 1L
         const val HAPTIC_SWITCH_FLIP_4MS = 4L
         const val HAPTIC_SESSION_LOCK_8MS = 8L
@@ -61,32 +80,216 @@ class TactileSoundEngine(private val context: Context) {
         // Exact dual exponential decay factors per sample step from DEVELOPER-GUIDE.pdf §7
         val BODY_DECAY_STEP = exp(-0.0114).toFloat()
         val TAIL_DECAY_STEP = exp(-0.0313).toFloat()
+
+        // =====================================================================
+        // SLICE E — THE SEAL THROW (B-5: ONE voice, bit-identical at
+        // every seal; Siegel's recipe, Riegel's constants). The bolt
+        // and room layers contain ZERO transcendental calls: every
+        // coefficient is a decimal literal, derivation in its
+        // comment, so the grain is bit-exact on every device. The
+        // body keeps its shipped sin() path, unmodified — E1's law
+        // is "body unmodified".
+        // =====================================================================
+
+        /** The Throw's full length: 1000 ms at 44 100 Hz. */
+        const val SEAL_SAMPLES = 44_100
+
+        /** xorshift32 seed (Marsaglia shifts 13/17/5), frozen.
+         *  Golden vector, pinned by test: the first four raw
+         *  outputs are 0x510C4619, 0xE02E553E, 0x7BB98F3A,
+         *  0x0183A8B5. Non-zero — the zero state is absorbing. */
+        const val SEAL_BOLT_SEED: Int = 0x9E3779B9.toInt()
+
+        /** The bolt enters at +30 ms, exactly. */
+        const val BOLT_START_SAMPLE = 1323
+
+        /** The bolt's support: 2426 samples, ending at +85.0 ms. */
+        const val BOLT_LENGTH_SAMPLES = 2426
+
+        /** One-pole lowpass for the bolt: 900 Hz at 44.1 kHz. */
+        const val BOLT_LP_ALPHA = 0.1203f
+
+        /** Bolt peak gain: 0.62 × 10^(−6/20), Orson's 0.311
+         *  unrounded (−6 dB under the body's gain). */
+        const val BOLT_PEAK_GAIN = 0.31074f
+
+        /** Bolt envelope decay step: exp(−1/(0.018 × 44100)),
+         *  τ = 18 ms. */
+        const val BOLT_ENV_STEP = 0.9987410f
+
+        /** Room comb feedback, both combs: −46 dB at ≈900 ms by
+         *  construction. A build-time constant (Riegel §4): the
+         *  device-gate fallback is a one-line edit to 0.78f with
+         *  its dependents, in one commit — never a runtime switch,
+         *  because bit-identity forbids two voices. */
+        const val COMB_G = 0.836f
+
+        /** The combs' in-loop lowpass: 1.8 kHz at 44.1 kHz. */
+        const val LOOP_LP_ALPHA = 0.2262f
+
+        /** Wet send: 10^(−12/20). */
+        const val WET_SEND = 0.25119f
+
+        /** Where the tail crosses −46 dB and the linear fade to
+         *  zero begins (900 ms). The bed catch (a later build,
+         *  unassigned — Riegel §3.4) triggers off this coordinate;
+         *  until it lands the Throw ships lawfully uncaught. */
+        const val TAIL_CATCH_SAMPLE = 39_690
+
+        /** The Throw's haptic twin (Siegel §1): the shipped seal's
+         *  skeleton with the middle segment zeroed — 110 → 0, a
+         *  true gap. The shipped seal thuds through its middle;
+         *  the Throw breathes through it. */
+        val SEAL_THROW_TIMINGS = longArrayOf(0, 24, 38, 16)
+        val SEAL_THROW_AMPLITUDES = intArrayOf(0, 255, 0, 175)
+
+        /** The Throw buffer's golden hash (Siegel T1): SHA-256 of
+         *  the PCM16-LE encoding, pinned from the first green
+         *  run's own output — any later drift in the render (a
+         *  constant nudged, a partial re-weighted) turns the
+         *  identity test red instead of shipping silently. */
+        const val SEAL_BUFFER_GOLDEN_SHA256 =
+            "d204b95a372942604d0a273b526a3b2ac857df80122f1dfbcc09680bf96bcde4"
+
+        /** One xorshift32 step. JVM Int overflow and shift
+         *  semantics are spec-defined, so this sequence is
+         *  identical on every device, every process, forever. */
+        internal fun xorshift32(state: Int): Int {
+            var s = state
+            s = s xor (s shl 13)
+            s = s xor (s ushr 17)
+            s = s xor (s shl 5)
+            return s
+        }
+
+        /** The bolt layer alone, on a silent buffer (test T4's
+         *  subject): exactly zero outside [1323, 1323 + 2426). */
+        internal fun renderBoltLayer(): FloatArray {
+            val out = FloatArray(SEAL_SAMPLES)
+            addBolt(out)
+            return out
+        }
+
+        private fun addBolt(out: FloatArray) {
+            var s = SEAL_BOLT_SEED
+            var lp = 0f
+            var env = 1f
+            val onsetSamples = 88 // 2 ms linear onset
+            val fadeSamples = 220 // final 5 ms linear fade
+            for (k in 0 until BOLT_LENGTH_SAMPLES) {
+                s = xorshift32(s)
+                // Top 24 bits mapped to [−1, 1) in exact 2^-23 steps.
+                val raw = (s ushr 8).toFloat() * (1f / 8388608f) - 1f
+                lp += BOLT_LP_ALPHA * (raw - lp)
+                val onset = if (k < onsetSamples) k.toFloat() / onsetSamples else 1f
+                val fade = if (k >= BOLT_LENGTH_SAMPLES - fadeSamples) {
+                    (BOLT_LENGTH_SAMPLES - k).toFloat() / fadeSamples
+                } else {
+                    1f
+                }
+                out[BOLT_START_SAMPLE + k] += lp * onset * env * fade * BOLT_PEAK_GAIN
+                env *= BOLT_ENV_STEP
+            }
+        }
+
+        /**
+         * THE RENDER (Siegel §2): one pass, 44 100 samples,
+         * input-free — no clock, no Random, no stored state; only
+         * compile-time constants and the frozen seed. Layer A the
+         * shipped body unmodified (360 Hz, partials 360/1080/1080/
+         * 1692, weights {0.6, 0.28, 0.37, 2.2}, the decay pair,
+         * gain 0.62, clamp ±0.95, sample 0 = the attack, zero
+         * pre-silence). Layer B the bolt at sample 1323. Layer C
+         * the room: 18 ms pre-delay, two feedback combs
+         * (1310/1372 samples) summed 0.5 each, one allpass
+         * (221, 0.5), wet send −12 dB. Samples 39 690–44 100 fade
+         * linearly to zero.
+         */
+        internal fun renderSealBuffer(out: FloatArray) {
+            require(out.size == SEAL_SAMPLES)
+            val weights = PARTIAL_WEIGHTS
+            val weightNorm = weights.sum()
+            var envBody = 1.0f
+            var envTail = 1.0f
+            val twoPiOverSr = (2.0 * PI / SAMPLE_RATE).toFloat()
+            val f0 = 360f
+            for (n in 0 until SEAL_SAMPLES) {
+                val phase = n * twoPiOverSr * f0
+                val p1 = sin(phase.toDouble()).toFloat() * weights[0]
+                val p2 = sin((phase * 2.0f * 1.5f).toDouble()).toFloat() * weights[1]
+                val p3 = sin((phase * 3.0f).toDouble()).toFloat() * weights[2]
+                val p4 = sin((phase * 4.7f).toDouble()).toFloat() * weights[3]
+                val sample = (((p1 + p2 + p3) * envBody + p4 * envTail) / weightNorm) * 0.62f
+                out[n] = sample.coerceIn(-0.95f, 0.95f)
+                envBody *= BODY_DECAY_STEP
+                envTail *= TAIL_DECAY_STEP
+            }
+            addBolt(out)
+
+            // Room (Layer C), computed off a dry snapshot so the
+            // wet path can never feed on its own additions.
+            val dry = out.copyOf()
+            val comb1 = FloatArray(1310)
+            val comb2 = FloatArray(1372)
+            var idx1 = 0
+            var idx2 = 0
+            var lp1 = 0f
+            var lp2 = 0f
+            val allpass = FloatArray(221)
+            var apIdx = 0
+            val preDelay = 794 // 18 ms
+            for (n in 0 until SEAL_SAMPLES) {
+                val inp = if (n >= preDelay) dry[n - preDelay] else 0f
+                val prev1 = comb1[idx1]
+                lp1 += LOOP_LP_ALPHA * (prev1 - lp1)
+                val y1 = inp + COMB_G * lp1
+                comb1[idx1] = y1
+                idx1 = if (idx1 + 1 == comb1.size) 0 else idx1 + 1
+                val prev2 = comb2[idx2]
+                lp2 += LOOP_LP_ALPHA * (prev2 - lp2)
+                val y2 = inp + COMB_G * lp2
+                comb2[idx2] = y2
+                idx2 = if (idx2 + 1 == comb2.size) 0 else idx2 + 1
+                val wetIn = (y1 + y2) * 0.5f
+                val apPrev = allpass[apIdx]
+                val apOut = apPrev - 0.5f * wetIn
+                allpass[apIdx] = wetIn + 0.5f * apOut
+                apIdx = if (apIdx + 1 == allpass.size) 0 else apIdx + 1
+                out[n] = (dry[n] + apOut * WET_SEND).coerceIn(-0.95f, 0.95f)
+            }
+            // The tail fade: linear to zero under the (future)
+            // bed catch — with no bed, the Throw ends at −46 dB
+            // fading to exact silence, never a truncation click.
+            val fadeLen = SEAL_SAMPLES - TAIL_CATCH_SAMPLE
+            for (n in TAIL_CATCH_SAMPLE until SEAL_SAMPLES) {
+                val k = n - TAIL_CATCH_SAMPLE
+                out[n] *= (fadeLen - k).toFloat() / fadeLen
+            }
+        }
     }
 
     private data class SynthCommand(
         val fundamentalHz: Float,
         val durationSamples: Int,
         val gain: Float,
-        val chordRatio: Float = 1.0f
+        val chordRatio: Float = 1.0f,
+        /** Riegel's sequence barrier stamp: commands enqueued
+         *  before a seal prime are pre-latch backlog and are
+         *  dropped, never allowed to delay the Throw. */
+        val seq: Long = 0L
     )
 
-    var soundEnabled: Boolean = true
+    /** The sound gate every playback path reads. Truth Car 3
+     *  (UNA-03): this var is a CACHE of the persisted fact
+     *  ([SoundEffectsSetting]), never the fact itself — it is born
+     *  from the fact at construction, on whichever thread and
+     *  through whichever door the engine is constructed, and
+     *  [SoundEffectsSetting.setEnabled] rewrites it on every live
+     *  engine when the fact changes. Before this, the initializer
+     *  was the literal `true`: a heartbeat-born engine carried ON
+     *  while PARK printed OFF. */
+    var soundEnabled: Boolean = SoundEffectsSetting.isEnabled(context)
     var hapticsEnabled: Boolean = true
-    var activeSoundscape: StudySoundscape = StudySoundscape.OFF
-        private set
-
-    @Volatile
-    var brownNoiseVolume: Float = 0f
-        private set
-
-    @Volatile
-    var rainVolume: Float = 0f
-        private set
-
-    @Volatile
-    var droneVolume: Float = 0f
-        private set
-
     private val commandQueue = LinkedBlockingQueue<SynthCommand>(64)
 
     @Volatile
@@ -95,11 +298,115 @@ class TactileSoundEngine(private val context: Context) {
     private var audioFocusRequest: AudioFocusRequest? = null
     private val synthThread: Thread
 
+    // =====================================================================
+    // THE SEAL LANE (Riegel §1): the Throw never enters the serial
+    // queue, never waits, never mixes. Its own retained buffer and
+    // its own AudioTrack; pre-rendered at prime (the latch), so at
+    // t=0 the whole audio cost is one play() call. Preempt is three
+    // layers: the queue purge, the barrier drop in the synth loop,
+    // and the legacy track's pause+flush under a lane epoch.
+    // =====================================================================
+
+    private val seqCounter = java.util.concurrent.atomic.AtomicLong(0L)
+    private val laneEpoch = java.util.concurrent.atomic.AtomicInteger(0)
+
+    @Volatile
+    private var legacyTrack: AudioTrack? = null
+
+    private val sealBuffer = FloatArray(SEAL_SAMPLES)
+    @Volatile
+    private var sealTrack: AudioTrack? = null
+    @Volatile
+    private var sealReady: Boolean = false
+    @Volatile
+    private var sealBarrierSeq: Long = -1L
+
+    private val sealPrimeSignal = LinkedBlockingQueue<Unit>(1)
+    private val sealRenderThread: Thread
+
     init {
+        // Truth Car 3 (UNA-03): join the live registry before any
+        // playback thread starts, so a fact written at any moment
+        // after construction reaches this engine.
+        registerLiveEngine(this)
         synthThread = Thread({ runFloatPcmSynthLoop() }, "MonolithFloatPcmSynth").apply {
             isDaemon = true
             priority = Thread.MAX_PRIORITY
             start()
+        }
+        sealRenderThread = Thread({ runSealRenderLoop() }, "MonolithSealRender").apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    /** The prime worker: renders the Throw into the retained
+     *  buffer and writes it whole into the seal track (stopped),
+     *  inside the latch→t=0 window that has nothing else to do.
+     *  Only then does sealReady stand. */
+    private fun runSealRenderLoop() {
+        while (running) {
+            try {
+                sealPrimeSignal.poll(500, TimeUnit.MILLISECONDS) ?: continue
+                val track = ensureSealTrack() ?: continue
+                try {
+                    track.pause()
+                    track.flush()
+                } catch (_: Exception) {}
+                renderSealBuffer(sealBuffer)
+                var off = 0
+                var failed = false
+                while (off < SEAL_SAMPLES) {
+                    val n = try {
+                        track.write(sealBuffer, off, SEAL_SAMPLES - off, AudioTrack.WRITE_BLOCKING)
+                    } catch (_: Exception) {
+                        -1
+                    }
+                    if (n <= 0) {
+                        failed = true
+                        break
+                    }
+                    off += n
+                }
+                if (!failed && off == SEAL_SAMPLES) {
+                    sealReady = true
+                }
+            } catch (_: InterruptedException) {
+                if (!running) return
+            } catch (_: Exception) {
+                // Headless fallback: sealReady stays false and
+                // playSealThrow takes its synchronous path.
+            }
+        }
+    }
+
+    private fun ensureSealTrack(): AudioTrack? {
+        sealTrack?.let { return it }
+        return try {
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+                        .setSampleRate(SAMPLE_RATE)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                // The render plus 5% headroom (185 220 B): a track
+                // buffer smaller than the render is the one way
+                // this lane could silently become a queue again.
+                .setBufferSizeInBytes(SEAL_SAMPLES * 4 * 105 / 100)
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build()
+            sealTrack = track
+            track
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -132,12 +439,20 @@ class TactileSoundEngine(private val context: Context) {
                 .build()
 
             track.play()
+            legacyTrack = track
             val floatBuffer = FloatArray(maxSamples)
             val weights = PARTIAL_WEIGHTS
             val weightNorm = weights.sum()
+            var lastSeenEpoch = laneEpoch.get()
 
             while (running) {
                 val cmd = commandQueue.poll(500, TimeUnit.MILLISECONDS) ?: continue
+                // Riegel's barrier: a command stamped before the
+                // seal prime is pre-latch backlog — dropped here
+                // even if it was polled a microsecond before the
+                // purge, so it can never delay the Throw.
+                val barrier = sealBarrierSeq
+                if (barrier >= 0L && cmd.seq < barrier) continue
                 if (!soundEnabled) continue
 
                 requestTransientAudioFocus()
@@ -164,7 +479,34 @@ class TactileSoundEngine(private val context: Context) {
                     envTail *= TAIL_DECAY_STEP
                 }
 
-                track.write(floatBuffer, 0, count, AudioTrack.WRITE_BLOCKING)
+                // Chunked writes under the lane epoch (Riegel
+                // §1.3 layer 3): if the Throw preempted while this
+                // command was being written, the writer abandons
+                // it within one 1024-sample chunk; the loop owns
+                // the resume — flush once more, then play — so no
+                // stale sample can be PLAYED after t=0.
+                val epochAtStart = laneEpoch.get()
+                if (epochAtStart != lastSeenEpoch) {
+                    try {
+                        track.flush()
+                        track.play()
+                    } catch (_: Exception) {}
+                    lastSeenEpoch = epochAtStart
+                }
+                var off = 0
+                while (off < count) {
+                    if (laneEpoch.get() != epochAtStart) break
+                    val n = try {
+                        track.write(
+                            floatBuffer, off, minOf(1024, count - off),
+                            AudioTrack.WRITE_BLOCKING
+                        )
+                    } catch (_: Exception) {
+                        -1
+                    }
+                    if (n <= 0) break
+                    off += n
+                }
             }
         } catch (_: Exception) {
             // Safe fallback in headless unit test / Robolectric JVM
@@ -193,10 +535,42 @@ class TactileSoundEngine(private val context: Context) {
         } catch (_: Exception) {}
     }
 
+    private fun resolveVibrator(): Vibrator? = try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+            vm?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        }
+    } catch (_: Exception) {
+        null
+    }
+
     /**
-     * Strict 4-Duration Haptic Vocabulary (DEVELOPER-GUIDE.pdf §6):
-     * Always uses VibrationEffect.createOneShot(ms, DEFAULT_AMPLITUDE).
-     * Never calls View.performHapticFeedback().
+     * Waveform haptic with an amplitude envelope (Ren's revamp).
+     * [timingsMs] / [amplitudes] follow VibrationEffect.createWaveform:
+     * segment 0 is the lead-in (amplitude 0). Falls back to a plain
+     * one-shot of [fallbackMs] before API 26.
+     */
+    private fun triggerWaveform(timingsMs: LongArray, amplitudes: IntArray, fallbackMs: Long) {
+        if (!hapticsEnabled) return
+        try {
+            val vibrator = resolveVibrator()
+            if (vibrator?.hasVibrator() == true) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(VibrationEffect.createWaveform(timingsMs, amplitudes, -1))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(fallbackMs)
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Legacy one-shot API, kept for compatibility. New feel work uses
+     * the named waveform patterns below.
      */
     fun triggerOneShotHaptic(durationMs: Long) {
         if (!hapticsEnabled) return
@@ -207,13 +581,7 @@ class TactileSoundEngine(private val context: Context) {
             else -> HAPTIC_COMPLETION_10MS
         }
         try {
-            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
-                vm?.defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-            }
+            val vibrator = resolveVibrator()
             if (vibrator?.hasVibrator() == true) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     vibrator.vibrate(
@@ -243,39 +611,113 @@ class TactileSoundEngine(private val context: Context) {
                 fundamentalHz = fundamentalHz,
                 durationSamples = samples,
                 gain = gain,
-                chordRatio = chordRatio
+                chordRatio = chordRatio,
+                seq = seqCounter.incrementAndGet()
             )
         )
     }
+
+    /** Test seam (Siegel T2): the pending legacy command count —
+     *  the Throw's queue-clear law is asserted against it. */
+    internal fun pendingCommandCount(): Int = commandQueue.size
 
     // =========================================================================
     // 4 CALIBRATED HAPTIC + FLOAT-PCM CALL SITES (DEVELOPER-GUIDE.pdf §6 & §7)
     // =========================================================================
 
-    /** 1ms rotary wheel tick + crisp 4-partial transient */
+    /** Rotary detent: a strike that settles — 7ms at full tick, 5ms tail. */
     fun playRotaryDetent(frequencyHz: Double = 680.0) {
-        triggerOneShotHaptic(HAPTIC_ROTARY_TICK_1MS)
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 7, 5),
+            amplitudes = intArrayOf(0, 180, 70),
+            fallbackMs = HAPTIC_ROTARY_TICK_1MS
+        )
         enqueueTransient(
             fundamentalHz = frequencyHz.toFloat().coerceIn(280f, 1480f),
-            durationMs = 8,
-            gain = 0.42f
+            durationMs = 6,
+            gain = 0.38f
         )
     }
 
-    /** 4ms switch flip / button / slider step + tactile latch transient */
+    /** Firm click for heavy Canvas controls (sled throws, knob detents):
+     *  a hard strike, a breath, a softer seat. */
+    fun playFirmClick() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 13, 20, 8),
+            amplitudes = intArrayOf(0, 225, 0, 135),
+            fallbackMs = HAPTIC_SESSION_LOCK_8MS
+        )
+        enqueueTransient(
+            fundamentalHz = 620f,
+            durationMs = 12,
+            gain = 0.5f,
+            chordRatio = 1.1f
+        )
+    }
+
+    /** Weighted seat knock (Vega's Loaded Wheel): the pawl stopping
+     *  the flywheel. Duration and strike amplitude are parameters,
+     *  not an effect choice - 16ms @ 0.85 unloaded rising to 24ms
+     *  @ 1.0 at eight blocks - and the thock's pitch drops as the
+     *  mass rises. The same voice at other weights speaks the
+     *  strait's gate landings (FLOW shore 14ms @ 0.8, toll 10ms
+     *  @ 0.5). */
+    fun playSeatKnock(durationMs: Int, amplitude01: Float, pitchHz: Float = 300f) {
+        val amp = (amplitude01.coerceIn(0f, 1f) * 255f).toInt()
+        val strike = durationMs.coerceIn(6, 32).toLong()
+        triggerWaveform(
+            timingsMs = longArrayOf(0, strike, strike / 2),
+            amplitudes = intArrayOf(0, amp, (amp * 0.35f).toInt()),
+            fallbackMs = strike
+        )
+        enqueueTransient(
+            fundamentalHz = pitchHz.coerceIn(160f, 420f),
+            durationMs = (durationMs + 6).coerceIn(10, 44),
+            gain = 0.22f + 0.3f * amplitude01.coerceIn(0f, 1f),
+            chordRatio = 0.9f
+        )
+    }
+
+    /** Two-stage latch: strike, gap, seat. Engaging snaps sharp;
+     *  releasing lands heavier on the seat. */
     fun playMechanicalLatch(engaged: Boolean) {
-        triggerOneShotHaptic(HAPTIC_SWITCH_FLIP_4MS)
+        if (engaged) {
+            triggerWaveform(
+                timingsMs = longArrayOf(0, 11, 26, 9),
+                amplitudes = intArrayOf(0, 215, 0, 150),
+                fallbackMs = HAPTIC_SWITCH_FLIP_4MS
+            )
+        } else {
+            triggerWaveform(
+                timingsMs = longArrayOf(0, 9, 22, 10),
+                amplitudes = intArrayOf(0, 165, 0, 195),
+                fallbackMs = HAPTIC_SWITCH_FLIP_4MS
+            )
+        }
         enqueueTransient(
             fundamentalHz = if (engaged) 760f else 520f,
             durationMs = 16,
             gain = 0.54f,
-            chordRatio = if (engaged) 1.25f else 0.9f
+            chordRatio = if (engaged) 1.2f else 0.9f
         )
     }
 
-    /** 8ms session lock / major commit + harmonic fifth transient */
+    /** Session seal clunk: full-force thunk, a settling shoulder,
+     *  then the lock seating. Disarming is the same shape, lighter. */
     fun playHarmonicSeal(arming: Boolean) {
-        triggerOneShotHaptic(HAPTIC_SESSION_LOCK_8MS)
+        if (arming) {
+            triggerWaveform(
+                timingsMs = longArrayOf(0, 24, 38, 16),
+                amplitudes = intArrayOf(0, 255, 110, 175),
+                fallbackMs = HAPTIC_SESSION_LOCK_8MS
+            )
+        } else {
+            triggerWaveform(
+                timingsMs = longArrayOf(0, 18, 30, 12),
+                amplitudes = intArrayOf(0, 200, 90, 140),
+                fallbackMs = HAPTIC_SESSION_LOCK_8MS
+            )
+        }
         enqueueTransient(
             fundamentalHz = if (arming) 360f else 480f,
             durationMs = 48,
@@ -284,9 +726,116 @@ class TactileSoundEngine(private val context: Context) {
         )
     }
 
-    /** 10ms completion / emergency valve / stamp press */
-    fun playStampPressSound() {
-        triggerOneShotHaptic(HAPTIC_COMPLETION_10MS)
+    /**
+     * Prime the seal lane (Orson §4.2 / Riegel §1.2), called by
+     * the transition AT LATCH — inside the cadence, never at t=0:
+     * the audio-focus transaction is paid here, the barrier is
+     * captured (the latch knock was fired before this call, so
+     * its seq is ≤ the barrier and lawfully survives), pre-latch
+     * backlog still pending is purged, and the render thread is
+     * signalled to pre-render + pre-write the Throw.
+     */
+    fun primeForSeal() {
+        requestTransientAudioFocus()
+        val barrier = seqCounter.get()
+        sealBarrierSeq = barrier
+        commandQueue.removeIf { it.seq < barrier }
+        sealReady = false
+        sealPrimeSignal.offer(Unit)
+    }
+
+    /** A primed seal that never fires (annulment, refusal after
+     *  latch) must not leave a barrier standing over the queue. */
+    fun cancelSealPrime() {
+        sealReady = false
+        sealBarrierSeq = -1L
+        sealPrimeSignal.poll()
+    }
+
+    /**
+     * THE THROW (B-5): the one seal voice, zero parameters — no
+     * provenance, no duration, no clock can enter it, so two
+     * seals cannot differ. Fired ONLY by SessionSealTransition,
+     * as the seal act's last statement. Haptic on the caller's
+     * thread; audio off the dedicated lane: queue purge, legacy
+     * pause+flush under a new epoch, then one play(). If the
+     * prime was missed, the same pure render runs synchronously
+     * and streams in behind a play() that starts the landmarks on
+     * time — degraded, never silent, never queued. With sound
+     * off: haptic only (S0 — muting loses timbre, never the event).
+     */
+    fun playSealThrow() {
+        triggerWaveform(
+            timingsMs = SEAL_THROW_TIMINGS,
+            amplitudes = SEAL_THROW_AMPLITUDES,
+            fallbackMs = HAPTIC_SESSION_LOCK_8MS
+        )
+        if (!soundEnabled) {
+            sealReady = false
+            sealBarrierSeq = -1L
+            return
+        }
+        commandQueue.clear()
+        laneEpoch.incrementAndGet()
+        try {
+            legacyTrack?.pause()
+            legacyTrack?.flush()
+        } catch (_: Exception) {}
+        val track = ensureSealTrack()
+        if (track != null) {
+            if (sealReady) {
+                try {
+                    track.play()
+                } catch (_: Exception) {}
+            } else {
+                renderSealBuffer(sealBuffer)
+                try {
+                    track.pause()
+                    track.flush()
+                    track.play()
+                    var off = 0
+                    while (off < SEAL_SAMPLES) {
+                        val n = track.write(
+                            sealBuffer, off, minOf(4096, SEAL_SAMPLES - off),
+                            AudioTrack.WRITE_BLOCKING
+                        )
+                        if (n <= 0) break
+                        off += n
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+        sealReady = false
+        sealBarrierSeq = -1L
+    }
+
+    /** The counterfoil tear's own voice (F-N2): the tear is not a
+     *  completion and must not spend the completion pulse. Same
+     *  body family, a different chord (1.21 against the pulse's
+     *  1.33) and a shorter, ripping haptic — near enough to read
+     *  as paper, far enough to never be mistaken for the finish. */
+    fun playTearPulse() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 8, 14, 8),
+            amplitudes = intArrayOf(0, 160, 0, 110),
+            fallbackMs = HAPTIC_ROTARY_TICK_1MS
+        )
+        enqueueTransient(
+            fundamentalHz = 240f,
+            durationMs = 40,
+            gain = 0.68f,
+            chordRatio = 1.21f
+        )
+    }
+
+    /** Completion: three ticks that soften as they land —
+     *  the machine winding down, not alarming. */
+    fun playCompletionPulse() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 10, 24, 10, 24, 14),
+            amplitudes = intArrayOf(0, 175, 0, 125, 0, 80),
+            fallbackMs = HAPTIC_COMPLETION_10MS
+        )
         enqueueTransient(
             fundamentalHz = 185f,
             durationMs = 64,
@@ -295,53 +844,14 @@ class TactileSoundEngine(private val context: Context) {
         )
     }
 
-    fun playHoldRampPulse(progress: Float) {
-        val clamped = progress.coerceIn(0f, 1f)
-        val ms = if (clamped > 0.85f) HAPTIC_COMPLETION_10MS else HAPTIC_SWITCH_FLIP_4MS
-        triggerOneShotHaptic(ms)
-        enqueueTransient(
-            fundamentalHz = 360f + clamped * 540f,
-            durationMs = 14,
-            gain = 0.48f
-        )
-    }
-
-    fun playPendulumEscapementTick(progress: Float) {
-        val clamped = progress.coerceIn(0f, 1f)
-        triggerOneShotHaptic(HAPTIC_ROTARY_TICK_1MS)
-        enqueueTransient(
-            fundamentalHz = 520f + clamped * 360f,
-            durationMs = 10,
-            gain = 0.40f
-        )
-    }
-
-    fun playMicroSwitchClick25ms(freqHz: Double = 680.0) {
-        playRotaryDetent(freqHz)
-    }
-
-    fun performViewTick(view: View?) {
-        playRotaryDetent(680.0)
-    }
-
-    fun performViewConfirm(view: View?) {
-        playMechanicalLatch(true)
-    }
-
-    // Stubbed no-ops for removed ambient mixer (preserved for API compatibility)
-    fun setMixerVolumes(brown: Float, rain: Float, drone: Float) {
-        brownNoiseVolume = 0f
-        rainVolume = 0f
-        droneVolume = 0f
-        activeSoundscape = StudySoundscape.OFF
-    }
-
-    fun setStudySoundscape(soundscape: StudySoundscape) {
-        activeSoundscape = StudySoundscape.OFF
-    }
-
     fun stopAllAudio() {
         running = false
         commandQueue.clear()
+        try {
+            sealTrack?.stop()
+            sealTrack?.release()
+        } catch (_: Exception) {}
+        sealTrack = null
+        sealReady = false
     }
 }

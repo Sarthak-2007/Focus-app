@@ -24,10 +24,36 @@ class MonolithNotificationListener : NotificationListenerService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    companion object {
+        // Watch Store BIND registry (chrome C3): the listener proves
+        // its binding by EXISTING, stamped by its own lifecycle.
+        @Volatile
+        var instance: MonolithNotificationListener? = null
+            internal set
+    }
+
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        instance = this
+        WatchStore.onNotificationListenerBound(true)
+    }
+
+    override fun onListenerDisconnected() {
+        if (instance === this) {
+            instance = null
+            WatchStore.onNotificationListenerBound(false)
+        }
+        super.onListenerDisconnected()
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val notification = sbn?.notification ?: return
         val pkg = sbn.packageName ?: return
         if (pkg == applicationContext.packageName || pkg.startsWith("com.android.systemui")) return
+
+        // Opportunistic routine reconcile (throttled to 30 s inside
+        // the heartbeat) — same reasoning as the accessibility feed.
+        RoutineHeartbeat.tickOpportunistic(applicationContext)
 
         // Never suppress incoming cellular or VoIP call notifications
         if (notification.category == Notification.CATEGORY_CALL ||
@@ -53,7 +79,14 @@ class MonolithNotificationListener : NotificationListenerService() {
                         packageName = pkg,
                         appName = appRule.appName,
                         senderTitle = title.ifEmpty { appRule.appName },
-                        messageBody = text.ifEmpty { "Suppressed notification during study session" }
+                        // The captured body is the notification's
+                        // own text or nothing (Truth Car 3,
+                        // appendix): a title-only notification
+                        // stores an EMPTY body — the digest prints
+                        // the title alone. The old fallback
+                        // sentence was invented copy wearing the
+                        // sender's name.
+                        messageBody = text
                     )
                 )
                 try {
@@ -64,6 +97,12 @@ class MonolithNotificationListener : NotificationListenerService() {
     }
 
     override fun onDestroy() {
+        // Chrome wave: the Watch Store's listener stamp dies with
+        // the binding (merged into this, the class's one onDestroy).
+        if (instance === this) {
+            instance = null
+            WatchStore.onNotificationListenerBound(false)
+        }
         scope.cancel()
         super.onDestroy()
     }

@@ -4,7 +4,7 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Outer Bauhaus Ultramarine Sundial Ring -->
+    <!-- Outer Bauhaus Ultramarine Ring -->
     <path
         android:fillColor="#1E40FF"
         android:pathData="M54,26 A28,28 0 1,1 53.99,26 Z" />
