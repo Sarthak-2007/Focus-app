@@ -674,6 +674,15 @@ fun ReceptionSheet(
             )
             ReceptionBeatLine(
                 label = "THE ROOM",
+                // S-8 — INTERIM FALSEHOOD, DO NOT SHIP SILENTLY
+                // (Wave-2, Pforte): this tree has no 20 s untouched
+                // settle and its desk clock prints one figure, not
+                // this beat's three. The line is true only when
+                // issue #13's settle machinery composes with this
+                // tree; whoever composes #13 + #14 re-words or
+                // strikes this beat in that act. Flagged in
+                // MERGE-PLAN.md item 6 since the graft; marked in
+                // code here so a code-only review cannot miss it.
                 line = "After twenty seconds untouched, the desk clock takes " +
                     "the face: the time, the time left, when it ends."
             )

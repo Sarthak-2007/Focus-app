@@ -320,11 +320,19 @@ class ReceptionSheetTest {
     }
 
     @Test
-    fun totalMissingBranchWinsOverStale() {
+    fun totalPricesStaleAndMissingEachInItsOwnKindsWords() {
         val now = SystemClock.elapsedRealtime()
-        // Kind-branching precedence (S-1): any MISSING → the
-        // absence sentences; the stale door is not re-priced as
-        // absence and adds no aged-proof sentence here.
+        // Wave-2 correction (Pforte, lead): this test previously
+        // codified the pre-C-10 branch-wins rule — any MISSING
+        // erased every STALE door from the total. That is the
+        // exact erasure C-10 killed ("a MISSING branch must
+        // never erase a STALE door from the total, nor the
+        // reverse") and it contradicted both the implementation
+        // and totalPricesMixedLacksEachInItsOwnKindsWords above:
+        // as written it would have failed on first run. The law
+        // is per-kind pricing: EVERY lack is priced, in COUNTED
+        // order, each in its own kind's words — here the stale
+        // door (ACCESSIBILITY, first counted) prices first.
         val snap = snapshotWithMonos(
             mapOf(
                 WatchItemId.ACCESSIBILITY to PermState.GRANTED,
@@ -336,9 +344,58 @@ class ReceptionSheetTest {
         val total = receptionTotal(snap, now)
         assertEquals(2, total.count)
         assertEquals(
-            "WITHOUT USAGE ACCESS, BLOCKING CANNOT PROVE ITSELF — SESSIONS WILL NOT SEAL.",
+            "THE LAST PROOF OF ACCESSIBILITY AGED OUT — CHECK RE-PROVES IT. " +
+                "WITHOUT USAGE ACCESS, BLOCKING CANNOT PROVE ITSELF — SESSIONS WILL NOT SEAL.",
             total.sentence
         )
+    }
+
+    @Test
+    fun totalNeverContradictsItselfAcrossAllDoorStateCombinations() {
+        // Wave-2 (Synchronous-collaboration seat, applied by
+        // Pforte): the buried-contradiction guard. S-1 was one
+        // combination (one stale door) found by hand; this sweep
+        // prices all 4^4 = 256 combinations of the counted doors'
+        // prints (fresh-GRANTED / stale-GRANTED / MISSING /
+        // UNMEASURED) and pins the total's contract in each:
+        // a null count rides exactly the still-being-read
+        // sentence, and a printed count equals the number of
+        // fresh-GRANTED doors — never more, never fewer.
+        val now = SystemClock.elapsedRealtime()
+        val counted = WatchItemId.COUNTED
+        for (code in 0 until 256) {
+            var rest = code
+            val states = mutableMapOf<WatchItemId, PermState>()
+            val stale = mutableSetOf<WatchItemId>()
+            var freshGranted = 0
+            var anyUnmeasured = false
+            for (item in counted) {
+                when (rest % 4) {
+                    0 -> { states[item] = PermState.GRANTED; freshGranted++ }
+                    1 -> { states[item] = PermState.GRANTED; stale += item }
+                    2 -> states[item] = PermState.MISSING
+                    else -> anyUnmeasured = true // absent = unmeasured
+                }
+                rest /= 4
+            }
+            val snap = snapshotWithMonos(states) { item ->
+                if (item in stale) now - 60_000L else now
+            }
+            val total = receptionTotal(snap, now)
+            if (anyUnmeasured) {
+                assertNull("combo $code: unread door, no count", total.count)
+                assertEquals(
+                    "combo $code: unread door, reading sentence",
+                    "THE DOORS ARE STILL BEING READ.", total.sentence
+                )
+            } else {
+                assertEquals("combo $code: fresh count", freshGranted, total.count)
+                assertFalse(
+                    "combo $code: priced total never claims still-reading",
+                    total.sentence == "THE DOORS ARE STILL BEING READ."
+                )
+            }
+        }
     }
 
     // ------------------------------------------------------------
