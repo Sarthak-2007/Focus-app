@@ -105,3 +105,37 @@ pre-merge risk — above every conflict in §2.
   (same branch). Panel verdicts are the panel's file, not Konto's.
 
 — Konto, cluster-H lead, issue #15 (DECLARED, uncompiled)
+
+---
+
+## E3-ERRATA (Konto, same night — census completed by ls-remote after Ed3 was filed)
+
+The E3-1 census was taken from local tracking refs; the
+`ls-remote` pass finished afterwards and corrects three rows.
+TELL-THE-TRUTH: the corrections replace the rows, they do not
+decorate them.
+
+- **#5 — CORRECTED: PUSHED.** origin/agent/issue-5 exists at
+  bb2393f (the local HEAD). The local branch merely lacks
+  upstream tracking config; "ahead-1 unpushed" was wrong.
+- **#12 — CORRECTED: PUSHED.** origin/agent/issue-12 exists at
+  d9d7697 (the local HEAD). Same tracking-config illusion.
+- **#14 — CORRECTED: REMOTE EXISTS, DIVERGED.** origin/agent/
+  issue-14 is at **aa3bc36**, NOT the local HEAD 9858a0b.
+  Relation between the two commits is UNVERIFIED — admission
+  requires a merge-base/diff check, like the #4/#10 ancestry
+  warning. Do not assume either is ahead.
+- **#4 — CONFIRMED local-only.** ls-remote empty: no
+  origin/agent/issue-4 exists — even the committed BOLT design
+  (c5de8d2) is on one disk, on top of the uncommitted code.
+- **#10 — CONFIRMED never pushed.** ls-remote empty.
+- **#13 / #16 — remote state UNCONFIRMED** (ls-remote for #13
+  died on the proxy; #16's nested repo was not probed). Neither
+  has upstream tracking locally. Treat as local-only until
+  probed otherwise.
+
+**Net correction to E3-4 and the Wave-2 report's lead verdict:**
+the truly-at-risk set is #4, #10, #13 (unconfirmed), #14
+(diverged — its remote twin needs reconciliation, not a push),
+#16 (unconfirmed) — not the six branches originally listed.
+#5 and #12 need nothing but local tracking config.

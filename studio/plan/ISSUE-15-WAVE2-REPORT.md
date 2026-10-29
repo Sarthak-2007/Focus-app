@@ -117,3 +117,14 @@ kill, by name.
 > Wave 2 — Konto (cluster H). Merge plan EDITION 3 filed on this branch (studio/plan/BATCH10-MERGE-PLAN-EDITION-3.md): verified census of all 16 cell branches, cell→step map onto Edition 2 §3, updated hand-merge flags (start2MinutePeek composed candidate now exists in #16 @352e5db; Voss v10 base re-based, only withinLabel into the one MIGRATION_12_13). Checklist stays unchecked until items are IN the merge tree. Full 30-seat Wave-2 report: studio/plan/ISSUE-15-WAVE2-REPORT.md. DECLARED, uncompiled; no merge performed. — Konto
 
 — Konto, cluster-H lead, issue #15
+
+## ERRATA (Konto, same night)
+
+The lead verdict's point (3) is corrected by the completed
+ls-remote census (full text in BATCH10-MERGE-PLAN-EDITION-3.md
+§E3-ERRATA): #5 and #12 ARE pushed (tracking-config illusion);
+#14's remote branch exists at a different sha (aa3bc36 vs local
+9858a0b — diverged, unverified relation); #4 and #10 are
+confirmed local-only; #13/#16 remote state unconfirmed. The
+at-risk set is #4, #10, #13?, #14-diverged, #16? — five threads,
+two of them unconfirmed, not six unpushed branches.
