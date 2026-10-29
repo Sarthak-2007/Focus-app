@@ -191,7 +191,8 @@ class MonolithShieldService : Service() {
                     val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                         putExtra(EXTRA_INTERCEPTED_PACKAGE, foregroundBlockedPkg)
-                        putExtra(EXTRA_INTERCEPTED_APP_NAME, blockedApp?.appName ?: "Blocked App")
+                        // Name slot holds a fact or the package verbatim (N-4 law).
+                        putExtra(EXTRA_INTERCEPTED_APP_NAME, blockedApp?.appName ?: foregroundBlockedPkg)
                         putExtra(EXTRA_INTERCEPT_BADGE, blockedApp?.resolvedTier?.badge ?: "Blocked")
                         // This door's blocked set already excludes a leased PEEK app
                         // (the filter above), so a lease sold here is honoured (UNA2-01).

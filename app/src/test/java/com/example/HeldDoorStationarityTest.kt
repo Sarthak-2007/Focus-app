@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import com.example.ui.AirlockInterceptState
 import com.example.ui.PeekWithheld
 import com.example.ui.components.AirlockInterceptOverlay
@@ -52,7 +53,10 @@ class HeldDoorStationarityTest {
         withheld: PeekWithheld? = null,
         wallSecs: Long? = 10L,
         cooldownSecs: Long? = null,
-        nonce: Long = 1L
+        nonce: Long = 1L,
+        priorIntercepts: Int = 0,
+        justExpiredLease: Boolean = false,
+        nextBreakAtMillis: Long? = null
     ): AirlockInterceptState {
         val now = SystemClock.elapsedRealtime()
         return AirlockInterceptState(
@@ -66,7 +70,10 @@ class HeldDoorStationarityTest {
             wallTotalSeconds = wallSecs?.toInt() ?: 0,
             peekCooldownEndsAtMono = cooldownSecs?.let { now + it * 1000L } ?: 0L,
             interceptNonce = nonce,
-            peekWithheld = withheld
+            peekWithheld = withheld,
+            priorInterceptsThisSession = priorIntercepts,
+            justExpiredLease = justExpiredLease,
+            nextBreakAtMillis = nextBreakAtMillis
         )
     }
 
@@ -112,6 +119,17 @@ class HeldDoorStationarityTest {
         render(state(wallSecs = -1L, nonce = 3L))
         assertEquals(counting10, returnBounds())
         composeRule.onNodeWithTag("airlock_peek_button").assertExists()
+        // Wave-2 (Deep-thinker): the dead name is asserted HERE,
+        // in the one frame where the chip actually stands — the
+        // counting-frame assertion alone would stay green if the
+        // offer chip were renamed back to it. The chip's badge is
+        // likewise asserted at the surface: PEEK_DURATION_SECONDS
+        // is 120, so the honest m+s badge prints "2m".
+        composeRule.onNodeWithText("EMERGENCY PEEK").assertDoesNotExist()
+        composeRule.onNodeWithText("2m", substring = true).assertExists()
+        // The honest exit stands on peek-owing doors too, not
+        // only on the never-owed door (Wave-2, Deep-thinker).
+        composeRule.onNodeWithText("END THE SESSION INSTEAD").assertIsDisplayed()
 
         // HELD (cooldown): the withheld line stands from frame
         // one, the zone is the same 110dp, RETURN unmoved.
@@ -152,6 +170,65 @@ class HeldDoorStationarityTest {
         val neverOwed = returnBounds()
         render(state(wallSecs = 10L, nonce = 6L))
         assertEquals(neverOwed, returnBounds())
+    }
+
+    @Test
+    fun returnBoundsHoldWithMemoryErrandAndHomecomingContent() {
+        // Wave-2 (Designer-29y): the wave-1 frames never composed
+        // the three variable-content risks — the memory line, the
+        // errand sub-line, the homecoming greeting. All three
+        // stand in fixed slots; RETURN must not move for any.
+        render(state(wallSecs = 10L, nonce = 8L))
+        val plain = returnBounds()
+
+        // MEMORY + ERRAND composed: third visit this session,
+        // a break appointment on the sub-line.
+        render(
+            state(
+                wallSecs = 10L,
+                nonce = 9L,
+                priorIntercepts = 2,
+                nextBreakAtMillis = 1_800_000_000_000L
+            )
+        )
+        composeRule.onNodeWithText("THIRD TIME THIS SESSION").assertIsDisplayed()
+        assertEquals(plain, returnBounds())
+
+        // HOMECOMING composed: the lease's own expiry echo,
+        // greeted in the withheld tenant, cooldown still running.
+        render(
+            state(
+                canPeek = false,
+                withheld = PeekWithheld.COOLDOWN,
+                wallSecs = null,
+                cooldownSecs = 900L,
+                nonce = 10L,
+                justExpiredLease = true
+            )
+        )
+        composeRule.onNodeWithText("THE PEEK ENDED").assertIsDisplayed()
+        assertEquals(plain, returnBounds())
+    }
+
+    @Test
+    fun honestExitRoutesOutOfTheDoor() {
+        // Wave-2 (Deep-thinker): the exit is asserted as a ROUTE,
+        // not just a print — its tap must reach the caller's
+        // end-session-instead handler (which owns the P-2 guards).
+        var exited = false
+        composeRule.setContent {
+            MyApplicationTheme(darkTheme = true, dynamicColor = false, isFocusSessionActive = true) {
+                AirlockInterceptOverlay(
+                    state = state(wallSecs = -1L, nonce = 11L),
+                    onReturnToFocus = {},
+                    onTake2MinutePeek = {},
+                    onEndSessionInstead = { exited = true },
+                    onDoorStateRefresh = {}
+                )
+            }
+        }
+        composeRule.onNodeWithText("END THE SESSION INSTEAD").performClick()
+        org.junit.Assert.assertTrue(exited)
     }
 
     @Test
