@@ -497,6 +497,7 @@ fun ParkDrawer(
                             factory = { ctx ->
                                 SledSwitchView(ctx).apply {
                                     chromeMode = true
+                                    contentDescription = "Sound"
                                     this.soundEngine = soundEngine
                                     isChecked = soundEnabled
                                     onToggleRequested = { onToggleSound() }
@@ -566,6 +567,7 @@ fun ParkDrawer(
                             factory = { ctx ->
                                 SledSwitchView(ctx).apply {
                                     chromeMode = true
+                                    contentDescription = "Shorts and Reels blocker"
                                     this.soundEngine = soundEngine
                                     isChecked = shortsReelsSniperEnabled
                                     onToggleRequested = { onToggleShortsReelsSniper() }
@@ -735,6 +737,7 @@ private fun ParkSocialSitesRow(
                     factory = { ctx ->
                         SledSwitchView(ctx).apply {
                             chromeMode = true
+                            contentDescription = "Social sites blocker"
                             this.soundEngine = soundEngine
                             isChecked = enabled
                             onToggleRequested = { onToggle() }
