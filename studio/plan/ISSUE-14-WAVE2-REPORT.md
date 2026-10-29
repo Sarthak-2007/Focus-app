@@ -200,3 +200,13 @@ so the local cell history (9858a0b + 5a646bc) diverges from it and
 a plain push is rejected; no force-push was made. Reconciling the
 two histories is a composition act for Ren/Konto (batch-10), not a
 cell act. The Wave-2 commits are safe locally on this branch.
+
+## FINAL STATUS (gh route live, Oct 30 04:10 update — supersedes PUSH STATUS above)
+- **PUSHED.** gh logged in as Sarthak-2007. Remote `aa3bc36` was
+  verified tree-identical to local Wave-1 `9858a0b` (empty diff), so
+  the two Wave-2 commits were rebased onto it (pre-rebase tip kept
+  as local branch `wave2-issue14-pre-rebase`), tree re-verified
+  identical after rebase, and pushed fast-forward:
+  `aa3bc36..ac9944b`. Wave-2 commits on remote: `e8567fd` (fixes +
+  guard + report), `ac9944b` (status record).
+- **COMMENT POSTED** via gh: issue #14, comment 6510185497.
