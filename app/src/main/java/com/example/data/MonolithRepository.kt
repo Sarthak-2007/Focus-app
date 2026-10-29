@@ -1247,8 +1247,20 @@ class MonolithRepository(
      * position callers (tests) are unaffected by the new return.
      */
     suspend fun startPeekLease(packageName: String): Boolean {
+        // Batch-10 composition (pill Flag B + Ed2 B6): the duration
+        // comes through EditableTimesProvider off the settings row
+        // (peekMinutes, clamped 0-30). peekMinutes = 0 refuses at
+        // the source: no lease written, no row touched. The
+        // Repository-head guard stands here too: a grant against an
+        // unlisted package arms NOTHING — no lease, no cooldown —
+        // whatever caller reaches this function.
+        val durationMillis = EditableTimesProvider(dao).peekDurationMillis()
+        if (durationMillis <= 0L) return false
+        val listed = dao.getAllAppsSnapshot().any { it.packageName == packageName }
+        if (!listed) return false
+        dao.clearOtherPeekLeases(packageName)
         val nowMono = SystemClock.elapsedRealtime()
-        val leaseEndMono = nowMono + PEEK_DURATION_MILLIS
+        val leaseEndMono = nowMono + durationMillis
         dao.updatePeekLeaseAndCooldown(
             packageName = packageName,
             activeUntilMono = leaseEndMono,

@@ -35,11 +35,17 @@ class EditableTimesProvider(
      *  the shipped 120 s constant. At the Car 3 merge: the
      *  settings row's peekMinutes, clamped 0–30 (§3.5); 0 means
      *  no lease is granted at all. */
-    suspend fun peekDurationMillis(): Long = MonolithRepository.PEEK_DURATION_MILLIS
+    suspend fun peekDurationMillis(): Long {
+        val minutes = (dao.getGuardSettingsSnapshot()?.peekMinutes ?: 2).coerceIn(0, 30)
+        return minutes * 60_000L
+    }
 
     /** The safe break's length at session creation, in seconds
      *  (the future stamp's source). Today: the shipped 600 s
      *  constant. At the Car 3 merge: the settings row's
      *  breakMinutes × 60, clamped 0–60 (§3.5). */
-    suspend fun breakDurationSeconds(): Int = MonolithRepository.SAFE_BREAK_DURATION_SECONDS
+    suspend fun breakDurationSeconds(): Int {
+        val minutes = (dao.getGuardSettingsSnapshot()?.breakMinutes ?: 10).coerceIn(0, 60)
+        return minutes * 60
+    }
 }

@@ -192,7 +192,13 @@ internal fun peekWithheldFor(
     cooldownLeftSeconds: Int,
     pillActive: Boolean,
     pillIsForPackage: Boolean,
-    sessionLive: Boolean
+    sessionLive: Boolean,
+    // S-7(a) rewired (batch-10): the PEEK_OFF branch reads the SET
+    // peek length, not the retired constant — peekMinutes = 0 is
+    // its own withheld reason. Default 2 = the migration default,
+    // so pure-function callers that predate the setting keep the
+    // shipped behaviour.
+    peekMinutes: Int = 2
 ): PeekWithheld? = when {
     canPeek -> null
     !sessionLive -> null
@@ -200,7 +206,7 @@ internal fun peekWithheldFor(
     entity?.resolvedTier != AppBlockTier.PEEK_2M -> null
     // Hale W-30: a peek length of zero is its own reason — the
     // peek is OFF, not cooling down.
-    MonolithRepository.PEEK_DURATION_SECONDS <= 0 -> PeekWithheld.PEEK_OFF
+    peekMinutes <= 0 -> PeekWithheld.PEEK_OFF
     pillActive && pillIsForPackage -> PeekWithheld.ALREADY_ACTIVE
     cooldownLeftSeconds > 0 -> PeekWithheld.COOLDOWN
     pillActive -> PeekWithheld.ALREADY_ACTIVE
@@ -820,6 +826,14 @@ class MonolithViewModel(
     }
 
     val apps: StateFlow<List<BlockedAppEntity>> = repository.allAppsFlow
+
+    /** Batch-10: the Guard settings row, held — the synchronous
+     *  readers (the pill's Frist seed, the PEEK_OFF withheld
+     *  branch) read the SET peek length from here instead of the
+     *  retired 2-minute constant. */
+    private val guardSettingsState: StateFlow<com.example.data.GuardSettingsEntity?> =
+        repository.guardSettingsFlow
+            .stateIn(viewModelScope, SharingStarted.Eagerly, null)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val filteredApps: StateFlow<List<BlockedAppEntity>> = combine(
@@ -3083,6 +3097,7 @@ class MonolithViewModel(
             path = path,
             entity = appEntity,
             cooldownLeftSeconds = cooldownLeft,
+            peekMinutes = guardSettingsState.value?.peekMinutes ?: 2,
             pillActive = pillActive,
             pillIsForPackage = _floatingPeekPill.value.packageName == packageName,
             sessionLive = live
@@ -3231,7 +3246,8 @@ class MonolithViewModel(
             cooldownLeftSeconds = cooldownLeft,
             pillActive = pillActive,
             pillIsForPackage = pillIsForPackage,
-            sessionLive = true
+            sessionLive = true,
+            peekMinutes = guardSettingsState.value?.peekMinutes ?: 2
         )
         if (!canPeek && withheld == state.peekWithheld) return
         _airlockState.value = state.copy(
@@ -3319,7 +3335,14 @@ class MonolithViewModel(
             isActive = true,
             packageName = pkg,
             appName = name,
-            secondsRemaining = MonolithRepository.PEEK_DURATION_SECONDS
+            // Frist's seed (batch-10): the pill is seeded from the
+            // SET peek length (peekMinutes x 60), never the retired
+            // constant — a 10-minute peek no longer dies at 2:00
+            // while its lease lives. The per-second ticker then
+            // derives from the lease end itself (UNA2-06), so the
+            // seed and the lease can never disagree for long.
+            secondsRemaining = (guardSettingsState.value?.peekMinutes ?: 2)
+                .coerceIn(0, 30) * 60
         )
         viewModelScope.launch {
             // Issue #16, builder's grant gate (on top of the

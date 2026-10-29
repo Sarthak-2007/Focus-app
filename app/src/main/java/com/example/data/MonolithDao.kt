@@ -30,6 +30,10 @@ interface MonolithDao {
 
     @Query("UPDATE blocked_apps SET activePeekUntilElapsedRealtime = :activeUntilMono, lastPeekEndElapsedRealtime = :peekEndMono WHERE packageName = :packageName")
     suspend fun updatePeekLeaseAndCooldown(packageName: String, activeUntilMono: Long, peekEndMono: Long)
+    /** Batch-10 (pill Flag B companion): the one-live-lease law —
+     *  granting a lease zeroes every OTHER app's live lease. */
+    @Query("UPDATE blocked_apps SET activePeekUntilElapsedRealtime = 0 WHERE packageName != :packageName AND activePeekUntilElapsedRealtime > 0")
+    suspend fun clearOtherPeekLeases(packageName: String)
 
     /** The prune (Ordner lane): rows for packages the phone no longer
      *  has leave the table at sync — the catalog is the phone's truth,
