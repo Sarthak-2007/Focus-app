@@ -447,13 +447,9 @@ class MonolithRailView(context: Context) : BlockitCanvasView(context) {
         // Words flip on arrival: mid-travel the DEPARTING stop keeps
         // the glyph tone; the arriving word takes it only when the
         // cap seats. While PARK is open no word is selected.
-        // Destination words are interface LABELS, so they print in
-        // the bundled Atkinson Hyperlegible (paintWord) per the font
-        // law — Anonymous Pro (paintMono) is for numbers/telemetry
-        // only, and there are no numbers on this band.
-        paintWord.textSize = sp(10f)
-        paintWord.letterSpacing = 0.2f
-        paintWord.textAlign = android.graphics.Paint.Align.CENTER
+        paintMono.textSize = sp(10f)
+        paintMono.letterSpacing = 0.2f
+        paintMono.textAlign = android.graphics.Paint.Align.CENTER
         val wordBaseline = centerY + sp(10f) * 0.36f
         val toneStop = if (animator?.isRunning == true) {
             selectedTabIndex
@@ -462,18 +458,18 @@ class MonolithRailView(context: Context) : BlockitCanvasView(context) {
         }
         for (i in 0..3) {
             val cx = left + dp(RailGeometry.INSET_DP + seg * (i + 0.5f))
-            paintWord.color = when {
+            paintMono.color = when {
                 i == pressedStop && !dragging -> tokTextPrimary()
                 !parkOpen && i == toneStop -> tokOnControlFill()
                 else -> tokTextSecondary()
             }
-            canvas.drawText(RailGeometry.WORDS[i], cx, wordBaseline, paintWord)
+            canvas.drawText(RailGeometry.WORDS[i], cx, wordBaseline, paintMono)
         }
 
         // The armed marker at the DECK stop: stroked circle, filled
         // centre, ink — drawn last, over whatever the cap is doing.
         if (isSessionArmed) {
-            val wordW = paintWord.measureText(RailGeometry.WORDS[0])
+            val wordW = paintMono.measureText(RailGeometry.WORDS[0])
             val cx = left + dp(RailGeometry.INSET_DP + seg * 0.5f) - wordW / 2f - dp(10f)
             val markerColor = if (capPos < 0.5f) tokOnControlFill() else tokTextPrimary()
             paintStroke.color = markerColor

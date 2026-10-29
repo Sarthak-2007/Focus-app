@@ -34,13 +34,46 @@ substance held on all five). All 5 FIXED-IN-CODE in
    `recessWidthDp` / `segmentDp` / `capWidthDp` coerce at 0 — narrow hosts
    degrade to zero-size segments, never negative/NaN.
 
-Extra (brief's font item, outside the audit's five): the brief claimed labels
-paint in `Typeface.DEFAULT` — VERIFIED-FALSE as stated (parent class loads
-bundled fonts; labels used `paintMono` = Anonymous Pro Bold). But per the
-font law, destination words are interface labels, so they now print in
-`paintWord` (bundled Atkinson Hyperlegible Bold); Anonymous Pro remains the
-numbers/telemetry face and the rail carries no numbers. Armed-marker
-`measureText` switched to the same paint it draws with.
+OBSERVATION ONLY (per Ren's correction — NOT in issue #62, NOT fixed on
+this branch; an earlier commit on this branch changed it and was reverted
+in full): the first brief claimed labels paint in `Typeface.DEFAULT` —
+VERIFIED-FALSE as stated. The parent class `BlockitCanvasView` loads the
+bundled fonts via ResourcesCompat, and the rail's words paint with
+`paintMono` = bundled Anonymous Pro Bold. A genuine font-law question
+remains for a future ruling: the four destination words are interface
+labels (Atkinson Hyperlegible's role) currently set in the
+numbers/telemetry face. Recorded here as an observation; the branch
+leaves the paint exactly as it was on main.
+
+## IMPACT ON THE APP (plain words — what changes for the person holding the phone)
+
+- Tapping the bottom rail now switches screens when you LIFT your finger,
+  at the spot where you lift it — press on one tab, slide a little into
+  the next one, let go: the tab under your fingertip at release opens
+  (the way native tab bars behave). What you FEEL on press is unchanged:
+  the word still strikes to full ink instantly and the cap still dips on
+  touch-down; drags of the cap, its detent ticks and its seat buzz are
+  untouched. Seat judgment (Interaction-detail + User + UX): the corrected
+  feel is EQUAL-OR-BETTER — no gesture lost, no motion changed, and
+  wrong-tab commits from small slides are gone. No seat judged it a
+  downgrade, so finding 4 is FIXED, not DECISION-NEEDED.
+- TalkBack can now read and operate the bottom rail: it announces the
+  current tab (and when Park is open), and offers named actions — "Go to
+  Deck / Shield / Tasks / Ledger" and "Open Park / Close Park". A
+  keyboard or D-pad can also drive it: arrows move the focus, Enter
+  commits. Before this, the rail was completely invisible to both.
+- Tapping the empty margins at the sides of the rail no longer does
+  anything — previously a tap in the left margin jumped to Deck and a
+  tap at the right edge opened Park.
+- Grabbing the rail while the cap is still sliding no longer makes the
+  cap teleport or fires the screen change you just interrupted; leaving
+  a screen mid-slide no longer lets the rail switch screens behind your
+  back afterwards.
+- In split-screen or other narrow windows the rail now shrinks sanely
+  instead of its segments collapsing into broken/negative geometry.
+- At normal phone width NOTHING looks different: same words, same cap,
+  same travel, same haptics — the reference-geometry unit test pins the
+  exact numbers and they are unchanged.
 
 Tests added: `railGeometry_hitTestingBoundsAndNarrowFloors`,
 `railGeometry_resolveMeasureHonoursModes` (ChromeWaveUnitTest). Existing
@@ -53,7 +86,7 @@ Tests added: `railGeometry_hitTestingBoundsAndNarrowFloors`,
 - Maximum-implementation-potential — pushed for full ExploreByTouchHelper virtual hierarchy; weighed against zero new dependencies + framework custom actions covering every destination; framework route shipped, virtual-node upgrade priced below as an open note. ✔
 - Brutal critic — "a cancel that reports success is a lie the machine tells the host" — finding 1 framed as a truth violation, not a glitch; demanded the seat suppression be structural (per-animation flag), not a host-side guard. Shipped that way. ✔
 - Improver — spotted that ACTION_CANCEL already settled silently while ACTION_UP committed the DOWN stop; insisted both release paths share one recompute rule. ✔
-- Designer — words are labels, not telemetry: Atkinson for the four words; kept 10sp/0.2 letter-spacing so the band's print character is unchanged. ✔
+- Designer — words are labels, not telemetry: flagged the Atkinson-vs-Anonymous question; per Ren's correction it is recorded as an observation above, NOT changed on this branch — the band's print character is pixel-identical to main. ✔
 - Consumer — "if I fat-finger the margin I did not choose Deck" — margin taps now do nothing, visibly (cap settles back). ✔
 - Student — narrow split-screen is how students actually run this next to a PDF; geometry floors + measure honouring were prioritised over cosmetic work. ✔
 - User — press-slide-release across a boundary must commit where the finger lifts, matching every native tab bar. Shipped. ✔
