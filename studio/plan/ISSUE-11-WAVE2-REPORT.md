@@ -213,3 +213,16 @@ for it; it shares this file and ledger), and the resolved-label lookup polish
 for the nameless-package hero edge case.
 
 — Tor, cluster-E lead, issue #11 (wave 2)
+
+## ADDENDUM — delivery state under the gh/git route (Oct 30, 04:10 IST)
+
+Course correction (Ren, Sarthak's order): the GitHub connector is retired —
+gh CLI / git only. Reconciliation under that rule: this branch's remote
+commits (219b888, 92f1c4f, b781c45, b6e94a2, landed via the connector
+*before* the correction) and the local wave-2 commit (985fabc) were compared
+tree-to-tree after `git fetch`: **diff empty — PUSHED-EQUIVALENT**. The local
+branch was reset to the remote tip (no content lost; trees identical) and
+this addendum is the first commit pushed by plain `git push`. The signed
+issue comment was posted before the correction (comment 6510082633,
+correction 6510143749); it is NOT re-posted via gh, to avoid a duplicate —
+its exact text stands in the GITHUB COMMENT section above. — Tor
