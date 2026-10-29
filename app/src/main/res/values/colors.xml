@@ -16,20 +16,12 @@
     <color name="colorSecondaryContainer">#FF615B5A</color>
     <color name="colorOnSecondaryContainer">#FFF4EFEE</color>
     <color name="colorOnSurface">#FF4E4948</color>
-    <color name="colorOnSurfaceVariant">#FF787170</color>
+    <color name="colorOnSurfaceVariant">#FF5F5856</color>
     <color name="colorOutline">#FF615B5A</color>
     <color name="colorOutlineVariant">#75615B5A</color>
     <color name="blockBarSurface">#FF2E2A26</color>
     <color name="textColorPrimary">#FF2C2A29</color>
     <color name="textColorSecondary">#FF615B5A</color>
-    <color name="nothing_red">#FFE30613</color>
+    <color name="nothing_red">#FFD63E06</color>
 
-    <!-- Legacy XML aliases -->
-    <color name="bauhaus_crimson">#FFF55314</color>
-    <color name="bauhaus_ultramarine">#FF615B5A</color>
-    <color name="bauhaus_canary">#FFF55314</color>
-    <color name="warm_indigo_dusk">#FF201D1A</color>
-    <color name="sunlit_paper">#FFE4DFDA</color>
-    <color name="black">#FF252323</color>
-    <color name="white">#FFFAF6F0</color>
 </resources>

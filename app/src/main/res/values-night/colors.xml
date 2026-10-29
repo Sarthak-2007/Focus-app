@@ -4,32 +4,24 @@
     <!-- MONOLITH 19 SEMANTIC COLOR TOKENS — NIGHT (DEVELOPER-GUIDE.pdf §1)  -->
     <!-- Strictly Zero-Green: Every hex value satisfies G < max(R, B)       -->
     <!-- ================================================================== -->
-    <color name="colorBackground">#FF201D1A</color>
-    <color name="colorSurface">#FF201D1A</color>
-    <color name="colorSurfaceSheet">#FF2E2A26</color>
-    <color name="colorSurfaceVariant">#FF272320</color>
-    <color name="colorSurfaceBright">#FF332A27</color>
+    <color name="colorBackground">#FF171412</color>
+    <color name="colorSurface">#FF171412</color>
+    <color name="colorSurfaceSheet">#FF4A423C</color>
+    <color name="colorSurfaceVariant">#FF100E0C</color>
+    <color name="colorSurfaceBright">#FF362C27</color>
     <color name="colorPrimary">#FFFFE4CF</color>
     <color name="colorOnPrimary">#FF1B110D</color>
     <color name="colorPrimaryContainer">#FFF47442</color>
     <color name="colorOnPrimaryContainer">#FF471602</color>
-    <color name="colorSecondaryContainer">#FFFFB38F</color>
-    <color name="colorOnSecondaryContainer">#FF40352E</color>
-    <color name="colorOnSurface">#FFFBECE1</color>
-    <color name="colorOnSurfaceVariant">#FFFAE4D3</color>
+    <color name="colorSecondaryContainer">#FF4A423C</color>
+    <color name="colorOnSecondaryContainer">#FFFFE4CF</color>
+    <color name="colorOnSurface">#FFEDE3D8</color>
+    <color name="colorOnSurfaceVariant">#FF776A60</color>
     <color name="colorOutline">#FF807A7A</color>
     <color name="colorOutlineVariant">#758F8888</color>
     <color name="blockBarSurface">#FF161311</color>
-    <color name="textColorPrimary">#FFF8F5F5</color>
-    <color name="textColorSecondary">#FFF1E8E6</color>
-    <color name="nothing_red">#FFFF2A3C</color>
+    <color name="textColorPrimary">#FFD2C6BB</color>
+    <color name="textColorSecondary">#FF9C8E84</color>
+    <color name="nothing_red">#FFFF8A5C</color>
 
-    <!-- Legacy XML aliases -->
-    <color name="bauhaus_crimson">#FFF47442</color>
-    <color name="bauhaus_ultramarine">#FFFFB38F</color>
-    <color name="bauhaus_canary">#FFF47442</color>
-    <color name="warm_indigo_dusk">#FF201D1A</color>
-    <color name="sunlit_paper">#FF201D1A</color>
-    <color name="black">#FF161311</color>
-    <color name="white">#FFFFE4CF</color>
 </resources>

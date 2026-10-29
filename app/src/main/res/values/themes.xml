@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.MyApplication" parent="android:Theme.DeviceDefault.NoActionBar" />
+    <!-- Window truth comes from the Compose tokens in ui/theme/Color.kt;
+         @color/colorBackground resolves to the same token in values/ and
+         values-night/colors.xml (synced verbatim, issue #64). The launcher
+         icon on the token ground is the splash content — no stock blink. -->
+    <style name="Theme.MyApplication" parent="android:Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@color/colorBackground</item>
+    </style>
 </resources>
