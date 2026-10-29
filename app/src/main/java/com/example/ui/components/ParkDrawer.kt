@@ -1,5 +1,8 @@
 package com.example.ui.components
 
+import androidx.compose.ui.res.stringResource
+import com.example.R
+
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
@@ -305,14 +308,14 @@ fun ParkDrawer(
                 // lives HERE and nowhere else; the slot is blank
                 // until the first complete set lands.
                 Text(
-                    text = "GUARD",
+                    text = stringResource(R.string.park_guard),
                     style = DrawerHeaderTextStyle,
                     color = scheme.onBackground
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "LAST PROVED",
+                        text = stringResource(R.string.park_last_proved),
                         style = PillBadgeTextStyle,
                         color = scheme.onSurfaceVariant
                     )
@@ -455,7 +458,7 @@ fun ParkDrawer(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "FIX — ${item.boardName}",
+                                text = stringResource(R.string.park_fix_item, item.boardName),
                                 style = PrimaryButtonTextStyle,
                                 color = onInkControlFill()
                             )
@@ -476,7 +479,7 @@ fun ParkDrawer(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "SOUND EFFECTS",
+                        text = stringResource(R.string.park_sound_effects),
                         style = PillBadgeTextStyle,
                         color = scheme.onSurfaceVariant
                     )
@@ -545,7 +548,7 @@ fun ParkDrawer(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "SHORTS + REELS",
+                        text = stringResource(R.string.park_shorts_reels),
                         style = PillBadgeTextStyle,
                         color = scheme.onSurfaceVariant
                     )
@@ -607,7 +610,7 @@ fun ParkDrawer(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "THEME",
+                        text = stringResource(R.string.park_theme),
                         style = PillBadgeTextStyle,
                         color = scheme.onSurfaceVariant
                     )

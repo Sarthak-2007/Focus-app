@@ -1,5 +1,8 @@
 package com.example.ui.components
 
+import androidx.compose.ui.res.stringResource
+import com.example.R
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -267,7 +270,7 @@ fun MonolithPullDownHeader(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "MONOLITH",
+                text = stringResource(R.string.brand_word),
                 fontFamily = AnonymousProFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 10.sp,

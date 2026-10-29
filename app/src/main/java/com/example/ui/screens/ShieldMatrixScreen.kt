@@ -1,5 +1,8 @@
 package com.example.ui.screens
 
+import androidx.compose.ui.res.stringResource
+import com.example.R
+
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -313,7 +316,7 @@ fun ShieldMatrixScreen(
                 // One-time reseed strip (Freya §3.3): his schedule was
                 // reset to his real day; any row edit dismisses it.
                 Text(
-                    text = "SCHEDULE RESET TO YOUR DAY — TAP ANY ROW TO CHANGE IT",
+                    text = stringResource(R.string.shield_schedule_reset),
                     fontFamily = AnonymousProFamily,
                     fontSize = 11.sp,
                     color = scheme.primary,
@@ -450,7 +453,7 @@ fun ShieldMatrixScreen(
             ) {
                 if (searchQuery.isEmpty()) {
                     Text(
-                        text = "Filter apps…",
+                        text = stringResource(R.string.shield_filter_apps),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 13.sp,
                         color = scheme.onSurfaceVariant
@@ -519,7 +522,7 @@ fun ShieldMatrixScreen(
         if (filteredApps.isEmpty() && searchQuery.isNotBlank()) {
             item {
                 Text(
-                    text = "NO APP BY THAT NAME ON THIS PHONE",
+                    text = stringResource(R.string.shield_no_app),
                     fontFamily = AnonymousProFamily,
                     fontSize = 11.sp,
                     color = scheme.onSurfaceVariant,
@@ -582,7 +585,7 @@ fun ShieldMatrixScreen(
                     ) {
                         if (newSiteText.isEmpty()) {
                             Text(
-                                text = "Add a site — e.g. news.ycombinator.com",
+                                text = stringResource(R.string.shield_add_site_hint),
                                 fontFamily = AtkinsonHyperlegibleFamily,
                                 fontSize = 13.sp,
                                 color = scheme.onSurfaceVariant
@@ -679,7 +682,7 @@ private fun RoutineRow(
                     color = scheme.onBackground
                 )
                 Text(
-                    text = "→ " + fmtRoutineTime(routine.endMinutes),
+                    text = stringResource(R.string.shield_routine_end, fmtRoutineTime(routine.endMinutes)),
                     fontFamily = AnonymousProFamily,
                     fontSize = 11.sp,
                     color = scheme.onSurfaceVariant
@@ -697,7 +700,7 @@ private fun RoutineRow(
                     color = scheme.onBackground
                 )
                 Text(
-                    text = "${routineDaysLabel(routine.daysMask)} · ${routineLoadoutLabel(routine.loadoutName)}",
+                    text = stringResource(R.string.routine_meta, routineDaysLabel(routine.daysMask), routineLoadoutLabel(routine.loadoutName)),
                     fontFamily = AnonymousProFamily,
                     fontSize = 12.sp,
                     color = scheme.onSurfaceVariant
@@ -730,7 +733,7 @@ private fun RoutineRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "START",
+                text = stringResource(R.string.label_start),
                 fontFamily = AnonymousProFamily,
                 fontSize = 11.sp,
                 color = scheme.onSurfaceVariant
@@ -738,7 +741,7 @@ private fun RoutineRow(
             BlockitActionChip(wordLabel = "−30", onClick = { onAdjustStart(-30) })
             BlockitActionChip(wordLabel = "+30", onClick = { onAdjustStart(30) })
             Text(
-                text = "END",
+                text = stringResource(R.string.label_end),
                 fontFamily = AnonymousProFamily,
                 fontSize = 11.sp,
                 color = scheme.onSurfaceVariant
@@ -879,7 +882,7 @@ private fun SlipHeaderRow(right: AnnotatedString?) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "YOUR RULES",
+                text = stringResource(R.string.shield_your_rules),
                 fontFamily = AtkinsonHyperlegibleFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 11.5.sp,
@@ -946,7 +949,7 @@ private fun SlipNoneLine() {
         contentAlignment = Alignment.CenterStart
     ) {
         Text(
-            text = "NONE",
+            text = stringResource(R.string.label_none),
             fontFamily = AnonymousProFamily,
             fontSize = 11.sp,
             letterSpacing = 1.sp,

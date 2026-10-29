@@ -84,7 +84,7 @@
             android:directBootAware="true"
             android:enabled="true"
             android:exported="false"
-            android:label="Monolith Notification Catcher"
+            android:label="@string/notification_catcher_label"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
@@ -124,7 +124,7 @@
             android:description="@string/accessibility_service_description"
             android:directBootAware="true"
             android:exported="false"
-            android:label="Monolith Uninstall Guard"
+            android:label="@string/uninstall_guard_label"
             android:permission="android.permission.BIND_DEVICE_ADMIN">
             <meta-data
                 android:name="android.app.device_admin"

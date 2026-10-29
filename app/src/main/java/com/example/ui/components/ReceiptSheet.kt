@@ -1,5 +1,8 @@
 package com.example.ui.components
 
+import androidx.compose.ui.res.stringResource
+import com.example.R
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -121,30 +124,30 @@ fun ReceiptSheet(
                     }
                 )
                 ReceiptMonoLine(
-                    text = "ENDED ${hhmm(receipt.endedAtWallMs)} · ${receipt.outcomeWord}"
+                    text = stringResource(R.string.receipt_ended, hhmm(receipt.endedAtWallMs), receipt.outcomeWord)
                 )
                 receipt.routineLabelWithin?.let { label ->
                     ReceiptMonoLine(text = label)
                 }
                 if (receipt.heldAppsAtSeal >= 0 && receipt.heldSitesAtSeal >= 0) {
                     ReceiptMonoLine(
-                        text = "HELD ${receipt.heldAppsAtSeal} APPS · ${receipt.heldSitesAtSeal} SITES"
+                        text = stringResource(R.string.receipt_held, receipt.heldAppsAtSeal, receipt.heldSitesAtSeal)
                     )
                 }
                 if (receipt.bankedBreakSeconds > 0) {
                     ReceiptMonoLine(
-                        text = "BREAK BANKED ${receipt.bankedBreakSeconds / 60} MIN"
+                        text = stringResource(R.string.receipt_break_banked, receipt.bankedBreakSeconds / 60)
                     )
                 }
                 receipt.deflections.forEach { d ->
                     ReceiptMonoLine(
-                        text = "${hhmm(d.atWallMillis)} · ${d.appName}",
+                        text = stringResource(R.string.deflection_line, hhmm(d.atWallMillis), d.appName),
                         dim = true
                     )
                 }
                 if (receipt.shieldWasOff) {
                     Text(
-                        text = "THE SHIELD WAS OFF FOR PART OF THAT SESSION",
+                        text = stringResource(R.string.receipt_shield_gap),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -156,7 +159,7 @@ fun ReceiptSheet(
                     // (build-ready §7.2) — it never prints on the
                     // imprint, the strip, or anywhere else.
                     Text(
-                        text = "SHIELD — STILL BLOCKED (SERVICE DIDN'T STOP)",
+                        text = stringResource(R.string.receipt_shield_still_blocked),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -173,7 +176,7 @@ fun ReceiptSheet(
                 // same quiet mono footer. Do not "restore" the
                 // 1.sp without re-measuring.
                 Text(
-                    text = "THE MACHINE KEEPS ITS OWN LOG · YOUR STUDY RECORD LIVES IN YPT",
+                    text = stringResource(R.string.receipt_footer_log),
                     fontFamily = AnonymousProFamily,
                     fontSize = 9.sp,
                     letterSpacing = 0.25.sp,

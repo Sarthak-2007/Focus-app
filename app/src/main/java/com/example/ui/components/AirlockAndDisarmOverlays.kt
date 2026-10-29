@@ -1,5 +1,8 @@
 package com.example.ui.components
 
+import androidx.compose.ui.res.stringResource
+import com.example.R
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -151,7 +154,7 @@ fun AlwaysOnDeskClockOverlay(
                 verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
                 Text(
-                    text = "NIGHTSTAND DESK CLOCK • TAP ANYWHERE TO EXIT",
+                    text = stringResource(R.string.nightstand_desk_clock_hint),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.sp,
@@ -349,7 +352,7 @@ fun CapturedNotificationsDigestSheet(
                             // frame with no stamp and no rows yet —
                             // never one frame of the live list.
                             Text(
-                                text = "HELD",
+                                text = stringResource(R.string.label_held),
                                 fontFamily = AtkinsonHyperlegibleFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp,
@@ -374,7 +377,7 @@ fun CapturedNotificationsDigestSheet(
                 }
                 if (frozenMode && frozenAtMillis != null) {
                     Text(
-                        text = "Everything here is as of the time above. Nothing here opens. Anything newer waits until the session ends.",
+                        text = stringResource(R.string.frozen_snapshot_note),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 13.sp,
                         color = scheme.onSurfaceVariant
@@ -428,7 +431,7 @@ fun CapturedNotificationsDigestSheet(
                                     )
                                     if (!frozenMode) {
                                         Text(
-                                            text = "DEL",
+                                            text = stringResource(R.string.key_del),
                                             fontFamily = AtkinsonHyperlegibleFamily,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 11.sp,
@@ -502,14 +505,14 @@ fun ShieldPermissionPrimerModal(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "SYSTEM GUARD PRE-FLIGHT",
+                    text = stringResource(R.string.guard_preflight_title),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
                     color = scheme.onBackground
                 )
                 Text(
-                    text = "Grant Accessibility & Usage Access so Monolith can intercept distracting apps, or arm the session immediately.",
+                    text = stringResource(R.string.guard_preflight_body),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontSize = 12.5.sp,
                     color = scheme.onSurfaceVariant
@@ -604,7 +607,7 @@ fun AirlockInterceptOverlay(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text(
-                    text = "AIRLOCK INTERCEPTION • ${state.interceptReasonBadge.uppercase(Locale.US)}",
+                    text = stringResource(R.string.airlock_interception_badge, state.interceptReasonBadge.uppercase(Locale.US)),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.5.sp,
@@ -645,7 +648,7 @@ fun AirlockInterceptOverlay(
                 // over a blank.
                 if (state.sessionIntention.isNotBlank()) {
                     Text(
-                        text = "ACTIVE INTENTION: ${state.sessionIntention}",
+                        text = stringResource(R.string.active_intention, state.sessionIntention),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 12.5.sp,
                         color = NightColorPrimary.copy(alpha = 0.8f)
@@ -696,13 +699,13 @@ fun AirlockInterceptOverlay(
                             color = NightColorPrimary.copy(alpha = 0.8f)
                         )
                         PeekWithheld.ALREADY_ACTIVE -> Text(
-                            text = "A PEEK IS ALREADY RUNNING",
+                            text = stringResource(R.string.peek_already_running),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontSize = 12.5.sp,
                             color = NightColorPrimary.copy(alpha = 0.8f)
                         )
                         PeekWithheld.PEEK_OFF -> Text(
-                            text = "PEEK IS OFF",
+                            text = stringResource(R.string.peek_off),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontSize = 12.5.sp,
                             color = NightColorPrimary.copy(alpha = 0.8f)
@@ -760,7 +763,7 @@ fun DisarmChallengeOverlay(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text(
-                    text = "EMERGENCY BREAK",
+                    text = stringResource(R.string.emergency_break),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
@@ -798,7 +801,7 @@ fun DisarmChallengeOverlay(
                     )
 
                     Text(
-                        text = "Hold to fill 60 seconds. Every 15 seconds banks. If your hand slips, what isn't banked drains away. The banked part stays.",
+                        text = stringResource(R.string.emergency_break_instructions),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 11.sp,
                         color = NightColorPrimary.copy(alpha = 0.75f)

@@ -1,5 +1,8 @@
 package com.example.ui.screens
 
+import androidx.compose.ui.res.stringResource
+import com.example.R
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -725,7 +728,7 @@ fun TactileDeckScreen(
                             .padding(horizontal = 10.dp, vertical = 5.dp)
                     ) {
                         Text(
-                            text = "FLOW",
+                            text = stringResource(R.string.deck_flow),
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.sp,
@@ -768,7 +771,7 @@ fun TactileDeckScreen(
                     horizontalArrangement = Arrangement.End
                 ) {
                     Text(
-                        text = "${(progressFraction * 100).toInt()}%",
+                        text = stringResource(R.string.deck_percent, (progressFraction * 100).toInt()),
                         fontFamily = AnonymousProFamily,
                         fontSize = 11.sp,
                         color = scheme.onSurfaceVariant
@@ -789,7 +792,7 @@ fun TactileDeckScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
-                        text = "NOW",
+                        text = stringResource(R.string.deck_now),
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 10.5.sp,
@@ -832,7 +835,7 @@ fun TactileDeckScreen(
                             .padding(horizontal = 10.dp, vertical = 5.dp)
                     ) {
                         Text(
-                            text = "DONE",
+                            text = stringResource(R.string.label_done),
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.sp,
@@ -841,7 +844,7 @@ fun TactileDeckScreen(
                         )
                     }
                     Text(
-                        text = "QUEUE ${queuedTasks.size}",
+                        text = stringResource(R.string.deck_queue, queuedTasks.size),
                         fontFamily = AnonymousProFamily,
                         fontSize = 11.sp,
                         color = scheme.onSurfaceVariant,
