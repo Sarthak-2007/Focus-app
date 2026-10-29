@@ -593,8 +593,32 @@ fun ParkDrawer(
                                                         amplitude01 = if (isNight) 0.06f else 0.1f,
                                                         pitchHz = 300f
                                                     )
-                                                    onFixClick(item)
-                                                    tryAwaitRelease()
+                                                    // Commit on RELEASE,
+                                                    // not on DOWN (Feel 1,
+                                                    // T-1): FIX costs a
+                                                    // trip to Settings, so
+                                                    // a scroll that merely
+                                                    // starts on the key —
+                                                    // or a press that
+                                                    // slides off — must
+                                                    // launch nothing. The
+                                                    // knock and the dip
+                                                    // stay on DOWN (they
+                                                    // cost nothing); a
+                                                    // cancelled press
+                                                    // releases the dip and
+                                                    // the matter ends.
+                                                    // CHECK's DOWN-commit
+                                                    // stands by the same
+                                                    // rule: its sweep is
+                                                    // idempotent and
+                                                    // costs nothing.
+                                                    if (tryAwaitRelease()) {
+                                                        onFixClick(item)
+                                                    } else {
+                                                        fixPressed = false
+                                                        fixPressedItem = null
+                                                    }
                                                 }
                                             )
                                         }
