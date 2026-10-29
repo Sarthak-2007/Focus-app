@@ -13,8 +13,9 @@ jobs:
           java-version: '17'
       - name: Install SDK platform 36.1
         run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platforms;android-36.1" "build-tools;36.1.0"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36.1" "build-tools;36.1.0"
       - name: Assemble debug
         run: |
           chmod +x gradlew
