@@ -228,6 +228,28 @@ class LauncherPartitionTest {
     }
 
     @Test
+    fun partition_appsSharingADisplayName_areAllKept() {
+        // Two different packages can present the same name (a
+        // browser and its beta, two "Files" builds): the partition
+        // groups rows, it never deduplicates them — every row must
+        // survive onto its shelf, because every row is a door that
+        // has to exist on the launcher.
+        val partition = launcherPartition(
+            listOf(
+                app("Files", AppBlockTier.OPEN.name, isBlocked = false, packageName = "com.test.files_a"),
+                app("Files", AppBlockTier.OPEN.name, isBlocked = false, packageName = "com.test.files_b"),
+                app("Files", AppBlockTier.LOCKED.name, isBlocked = true, packageName = "com.test.files_c")
+            )
+        )
+        assertEquals(2, partition.allowed.size)
+        assertEquals(1, partition.shut.size)
+        assertEquals(
+            setOf("com.test.files_a", "com.test.files_b"),
+            partition.allowed.map { it.packageName }.toSet()
+        )
+    }
+
+    @Test
     fun partition_doesNotReorderTheCallersList() {
         val apps = listOf(shut("YouTube"), open("Alarm"), peek("Gmail"))
         val before = apps.toList()
