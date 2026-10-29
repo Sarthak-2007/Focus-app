@@ -24,3 +24,24 @@ fun List<BlockedAppEntity>.groupedByRule(): AppRules = AppRules(
     shut = filter { it.resolvedTier == AppBlockTier.LOCKED }
         .sortedBy { it.appName.lowercase() }
 )
+
+/**
+ * THE CATALOGUE'S GROUPS (Shield audit R-1; issue #7 builder pass).
+ * The catalogue is the ONE enumeration of his rulings on Shield:
+ * the Standing Orders slip's per-app lines are retired, and the
+ * catalogue itself groups by ruling so a name appears exactly
+ * once on the screen. Group order is the slip's order — PEEK
+ * before SHUT (the holes are the urgent read), OPEN last — and
+ * alphabetical inside each group, the ledger's order. A ruling
+ * with no apps in this list contributes no group: its absence is
+ * printed once, by the tally's zero above the catalogue, never by
+ * an empty section here.
+ */
+fun List<BlockedAppEntity>.groupedForCatalogue():
+    List<Pair<AppBlockTier, List<BlockedAppEntity>>> =
+    listOf(AppBlockTier.PEEK_2M, AppBlockTier.LOCKED, AppBlockTier.OPEN)
+        .map { tier ->
+            tier to filter { it.resolvedTier == tier }
+                .sortedBy { it.appName.lowercase() }
+        }
+        .filter { it.second.isNotEmpty() }

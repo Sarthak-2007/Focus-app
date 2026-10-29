@@ -276,7 +276,7 @@ object RoutineDerive {
         for (routine in routines) {
             // UNA-09: the chain reads the ONE live definition
             // (RoutineSchedule.isLive) — the same predicate Shield's
-            // "n ACTIVE" count prints.
+            // "n ARMED" count prints (R-6 wording).
             if (!RoutineSchedule.isLive(routine)) continue
             offer(RoutineSchedule.windowContaining(routine, nowMillis)?.endMillis)
             offer(RoutineSchedule.nextStartMillis(routine, nowMillis))

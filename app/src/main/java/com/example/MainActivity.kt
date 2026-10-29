@@ -239,6 +239,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val disarmChallenge by viewModel.disarmChallenge.collectAsStateWithLifecycle()
     val weeklyEmergencyTokensRemaining by viewModel.weeklyEmergencyTokensRemaining.collectAsStateWithLifecycle()
     val ratchetWarningMessage by viewModel.ratchetWarningMessage.collectAsStateWithLifecycle()
+    // R-5 (issue #7): Shield's status sentence derivation.
+    val shieldBlockingStatus by viewModel.shieldBlockingStatus.collectAsStateWithLifecycle()
 
     val sealed = activeSession?.isActive == true
     // HB-1 / HB-2 (Truth Car 2; Band's header-band audit): ONE
@@ -559,6 +561,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     selectedProfileName = selectedProfileName,
                                     loadoutCapIndex = loadoutCapIndex,
                                     isSessionActive = sealed,
+                                    blockingStatus = shieldBlockingStatus,
                                     ratchetWarningMessage = ratchetWarningMessage,
                                     soundEngine = viewModel.soundEngine,
                                     isDarkTheme = effectiveNight,
