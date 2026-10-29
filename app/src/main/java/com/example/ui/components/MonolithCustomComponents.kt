@@ -312,7 +312,13 @@ fun MonolithPullDownHeader(
 @Composable
 fun inkControlFill(): Color {
     val scheme = MaterialTheme.colorScheme
-    return if (scheme.background.luminance() < 0.5f) Color(0xFF4A423C) else scheme.onBackground
+    // Issue #6 F12 (value half): night controls step DOWN to
+    // #2A2320 — at #4A423C the control fill (1.86:1) out-lit the
+    // hero card (1.35:1) and broke the Lamp order. Blast radius
+    // noted: slide cap + STOP chair share this fill — they are
+    // all controls, so the sharing is correct. Full tokenisation
+    // remains F17's table at merge.
+    return if (scheme.background.luminance() < 0.5f) Color(0xFF2A2320) else scheme.onBackground
 }
 
 @Composable

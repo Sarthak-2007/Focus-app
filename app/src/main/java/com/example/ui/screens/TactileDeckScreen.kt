@@ -67,7 +67,6 @@ import com.example.ui.components.endsAtText
 import com.example.ui.components.imprintTenantText
 import com.example.ui.components.jamSentenceFor
 import com.example.ui.components.refusalSentenceFor
-import com.example.ui.components.seamMarksFor
 import com.example.ui.components.inkControlFill
 import com.example.ui.components.onInkControlFill
 import com.example.ui.components.FullBleedSectionHeader
@@ -84,7 +83,8 @@ import java.util.Locale
 
 /**
  * TAB 0: FOCUS COMMAND CONSOLE (DEVELOPER-GUIDE.pdf §1–§11)
- * - Full-bleed stacked sections with 12dp universal spacing.
+ * - Full-bleed stacked sections. (Spacing is per-section;
+ *   the old '12dp universal spacing' promise was false — F21.)
  * - The Instrument: one raised panel holding the readout + RotaryWheelView (Ren).
  * - Pinned `SlideToStartView` commit bar below the scroll.
  * - When armed, transforms into the dark Armed Lockdown state with One-Way Ratchet enforcement.
@@ -531,7 +531,6 @@ fun TactileDeckScreen(
         pressLatch != null -> pressLatch!!.timeText to pressLatch!!.timeDensity
         else -> idleTimeCell
     }
-    val seamMarks = seamMarksFor(deckWarrant, nowMono)
     val imprintTenant = (if (!isSessionRunning) pressLatch?.tenant else null) ?: imprintTenantText(
         isSealed = isSessionRunning,
         shut = if (isSessionRunning) frozenShut else appsSplit?.shut,
@@ -594,7 +593,9 @@ fun TactileDeckScreen(
                             .graphicsLayer {
                                 scaleX = 1f - 0.06f * vt
                                 scaleY = 1f - 0.06f * vt
-                                translationY = -10.dp.toPx() * vt
+                                // Issue #6 F15: the ground rise is
+                                // DELETED, not moved (verdict) — the
+                                // page recedes, it does not climb.
                             }
                             .then(if (blurDp > 0.dp) Modifier.blur(blurDp) else Modifier)
                     } else {
@@ -617,14 +618,27 @@ fun TactileDeckScreen(
                     text = when {
                         isSessionRunning && activeSession.isInSafeBreak ->
                             "BREAK · ${(activeSession.safeBreakSecondsRemaining + 59) / 60} MIN"
-                        showRunningForm -> "SESSION RUNNING"
-                        else -> "TOTAL"
+                        // Issue #6 F4: SESSION RUNNING / TOTAL were
+                        // wallpaper and die. A routine-born session
+                        // prints its name; a hand-armed running
+                        // session needs no label over its countdown.
+                        showRunningForm ->
+                            if (activeSession?.routineId != null) {
+                                "${activeSession.intention.uppercase()} · ROUTINE"
+                            } else {
+                                ""
+                            }
+                        // Idle prints the recipe — the hero's
+                        // arithmetic, explained on the face that
+                        // charges it (audit §3).
+                        else -> "$studyBlocksCount × $dialMinutes + BREAKS"
                     },
                     fontFamily = AnonymousProFamily,
                     fontSize = 10.sp,
                     letterSpacing = 2.sp,
-                    color = scheme.onSurfaceVariant,
-                    style = androidx.compose.ui.text.TextStyle(shadow = if (groundNight) androidx.compose.ui.graphics.Shadow(color = androidx.compose.ui.graphics.Color.Transparent, offset = androidx.compose.ui.geometry.Offset.Zero, blurRadius = 0f) else androidx.compose.ui.graphics.Shadow(color = androidx.compose.ui.graphics.Color(0x66FFFFFF), offset = androidx.compose.ui.geometry.Offset(0f, 1f), blurRadius = 0f)),
+                    color = scheme.onSurfaceVariant
+                    // Issue #6 F10 family: the eyebrow's fake day
+                    // emboss (white 1dp shadow) dies — print is flat.
                 )
                 // The eyebrow's count is EVICTED (D9/A8): the app
                 // count's only homes are the strip's APPS cell and
@@ -656,20 +670,19 @@ fun TactileDeckScreen(
             val heroTracking = if (!showRunningForm && isStopwatchMode) (-0.5).sp else (-2.0).sp
             val heroGlyph = if (effectiveNight) Color(0xFFEDE3D8) else scheme.onBackground
             val heroShadowGhost = if (effectiveNight) Color(0x80000000) else Color(0x99D8D1CB)
-            val heroCatchGhost = if (effectiveNight) Color(0x594A423C) else Color(0xB3FAF6F0)
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = heroAnnotated,
-                    style = DialClockTextStyle.copy(color = heroShadowGhost, letterSpacing = heroTracking),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.offset(y = (-1).dp)
-                )
-                Text(
-                    text = heroAnnotated,
-                    style = DialClockTextStyle.copy(color = heroCatchGhost, letterSpacing = heroTracking),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.offset(y = 1.dp)
-                )
+                // Issue #6 F10 — SINGLE-PRESS: the catch ghost dies;
+                // ONE shadow ghost survives, and ghosts are OFF on
+                // FLOW and on the ticking readout (a press does not
+                // strike a moving target).
+                if (!showRunningForm && !isStopwatchMode) {
+                    Text(
+                        text = heroAnnotated,
+                        style = DialClockTextStyle.copy(color = heroShadowGhost, letterSpacing = heroTracking),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.offset(y = (-1).dp)
+                    )
+                }
                 Text(
                     text = heroAnnotated,
                     style = DialClockTextStyle.copy(color = heroGlyph, letterSpacing = heroTracking),
@@ -818,9 +831,9 @@ fun TactileDeckScreen(
                     // slide merge over this lane's older Deck.)
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(12.dp))
                             .background(scheme.surfaceVariant)
-                            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
                             // Input death (Zug-II §4.6): the task
                             // verbs' HANDLERS are removed by state
                             // during the shot — not greyed, gone.
@@ -936,7 +949,7 @@ fun TactileDeckScreen(
 
     }
         // =====================================================================
-        // SECTION 5: THE PINNED STACK (Slice D) — outside the scroll:
+        // SECTION 4: THE PINNED STACK (Slice D) — outside the scroll:
         // the proof strip, the slide's 72dp register, the reserved
         // sentence slot, and the imprint. The strip keeps its 53dp
         // address in every state; the slide zone holds the grace /
@@ -956,8 +969,12 @@ fun TactileDeckScreen(
                 appsDensity = appsCell.second,
                 timeText = timeCell.first,
                 timeDensity = timeCell.second,
-                stampLeft = seamMarks?.first,
-                stampRight = seamMarks?.second
+                // Issue #6 F8 (Deck half): the seam stamps leave
+                // the Deck — BIND/PROOF posology is the studio
+                // talking to itself in public; their receiving
+                // home is PARK (other cell, at merge).
+                stampLeft = null,
+                stampRight = null
             )
             Spacer(Modifier.height(6.dp))
             Box(
@@ -1035,7 +1052,7 @@ fun TactileDeckScreen(
                             onClick = onCancelWithinGraceWindow,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(58.dp),
+                                .height(72.dp), // Issue #6 F6: the chair fills its 72dp zone in every state
                             testTag = "grace_abort_button"
                         )
                     } else {
@@ -1046,7 +1063,7 @@ fun TactileDeckScreen(
                             onClick = onRequestDisarm,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(58.dp),
+                                .height(72.dp), // Issue #6 F6: the chair fills its 72dp zone in every state
                             testTag = "request_disarm_button"
                         )
                     }

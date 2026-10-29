@@ -182,3 +182,23 @@ struck pending his separate word.
 (4) No seat endorses calling #6 "finished" while F22 + C5's suspect
 running print stand — the report's wording already complies.
 — ANTLITZ, lead. DECLARED, uncompiled.
+
+## ADDENDUM 3 — finisher/feel cluster CODE-NOW pool, landed by the lead
+From the late finisher/feel cluster (all signed in the cluster record):
+F4 eyebrow (idle recipe `n × m + BREAKS`; SESSION RUNNING/TOTAL die;
+routine-born prints `NAME · ROUTINE`; break line unchanged), F10 hero
+single-press (catch ghost deleted; shadow ghost off on FLOW + ticking
+readout; fake day emboss on the eyebrow deleted), F12 value half
+(inkControlFill night #4A423C → #2A2320, blast radius noted in code),
+F13 DONE key-cap 8→12dp, F15 ground rise deleted, F6 grace/valve chips
+58→72dp (fill their zone), F8 Deck half (seam stamps no longer passed
+to the strip; PARK receiving home is the other cell at merge), F21
+comment truth (false 12dp promise struck; sections renumbered 1-2-3-4).
+NOT landed, with reasons: F5 break hero (Feel-3's spec is in the
+cluster record; it rewrites the hero's break clock and lands with
+F16/F18 sequencing, priced there), F2 FLOW-cap deletion (rides F4's
+recipe now printed — cap kill at merge with F16/F18 so the mode's
+print + control change land together), F14 scroll fade/spacing and
+knock-at-clamp additions (structure/haptic changes; merge-pass),
+F20/F19 (files outside this cell — MonolithRailView / ReceiptSheet).
+— ANTLITZ, lead. DECLARED, uncompiled.
