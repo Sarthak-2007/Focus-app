@@ -142,7 +142,7 @@ data class WatchSnapshot(
 
 /** What a permission line prints at a given instant (spec §4.2):
  *  never-measured, the measured value, or its stale derivative. */
-enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE }
+enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE, MISSING_STALE }
 
 object WatchStore {
 
@@ -350,15 +350,23 @@ object WatchStore {
     }
 
     /** The permission print at [nowMono]: staleness derived here,
-     *  never stored. A PASS older than [STALE_AFTER_MS] is STALE;
-     *  MISSING never stales. */
+     *  never stored. ANY measurement older than [STALE_AFTER_MS]
+     *  is stale — a PASS prints STALE and a denial prints
+     *  MISSING_STALE (issue #58 F1). The old asymmetry — GRANTED
+     *  expired after 45s while a MISSING measured hours ago printed
+     *  bare and current forever — presented an ancient denial as
+     *  current fact on the Guard line. MISSING_STALE stays a
+     *  distinct print, not a collapse into STALE, so consumers
+     *  that act on a lack (PARK's FIX key) still know the item is
+     *  missing, not merely old. */
     fun permPrintAt(snapshot: WatchSnapshot, item: WatchItemId, nowMono: Long): PermPrint {
         val m = snapshot.items[item] ?: return PermPrint.UNMEASURED
         val perm = m.perm ?: return PermPrint.UNMEASURED
+        val stale = nowMono - m.measuredMono > STALE_AFTER_MS
         return when {
-            perm == PermState.GRANTED && nowMono - m.measuredMono > STALE_AFTER_MS ->
-                PermPrint.STALE
+            perm == PermState.GRANTED && stale -> PermPrint.STALE
             perm == PermState.GRANTED -> PermPrint.GRANTED
+            stale -> PermPrint.MISSING_STALE
             else -> PermPrint.MISSING
         }
     }

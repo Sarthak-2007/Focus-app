@@ -285,11 +285,13 @@ fun ShieldMatrixScreen(
                 selectedIndex = selectedLoadoutIndex,
                 soundEngine = soundEngine,
                 onSelect = { level ->
-                    selectedLoadoutIndex = level
-                    when (level) {
-                        0 -> onApplySmartLoadout(SmartLoadout.STUDY)
-                        1 -> onApplySmartLoadout(SmartLoadout.WORK_SPRINT)
-                        else -> onApplySmartLoadout(SmartLoadout.SLEEP)
+                    // The ONE index↔loadout mapping (LoadoutStore,
+                    // #58 F6): an index that seats nothing applies
+                    // nothing — the old `else -> SLEEP` silently
+                    // meant SLEEP for any garbage index.
+                    com.example.data.LoadoutStore.loadoutAtCapIndex(level)?.let { loadout ->
+                        selectedLoadoutIndex = level
+                        onApplySmartLoadout(loadout)
                     }
                 }
             )
