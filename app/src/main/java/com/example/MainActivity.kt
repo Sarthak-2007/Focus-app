@@ -52,6 +52,7 @@ import com.example.ui.MonolithDestination
 import com.example.ui.ArmPhase
 import com.example.ui.MonolithViewModel
 import com.example.ui.components.AirlockInterceptOverlay
+import com.example.ui.components.BlockitActionChip
 import com.example.ui.components.AlwaysOnDeskClockOverlay
 import com.example.ui.components.LauncherBlockScreen
 import com.example.ui.components.LauncherPage
@@ -706,6 +707,32 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     )
                                 )
                             )
+                    )
+                }
+
+                // Issue #125 (armed-wrong F5): the grace abort does
+                // not live only on the Deck anymore. For the whole
+                // 10s window, every other tab carries the same chip
+                // above the rail — leaving the Deck to check what
+                // you armed wrong no longer burns the window
+                // invisibly. Same words, same badge, same call as
+                // the Deck's own chip.
+                val graceSession = activeSession
+                if (graceSession != null && graceSession.elapsedSeconds <= 10 &&
+                    currentDestination != MonolithDestination.DECK
+                ) {
+                    BlockitActionChip(
+                        wordLabel = "GRACE WINDOW ABORT",
+                        monoBadge = "${10 - graceSession.elapsedSeconds}s",
+                        isPrimaryInk = true,
+                        onClick = {
+                            viewModel.confirmDisarmSession("Accidental Start Grace Cancel")
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                            .height(58.dp),
+                        testTag = "grace_abort_button_off_deck"
                     )
                 }
 
