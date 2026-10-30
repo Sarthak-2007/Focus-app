@@ -271,7 +271,24 @@ class MonolithViewModel(
     val soundEngine: TactileSoundEngine
 ) : ViewModel() {
 
-    private val _currentDestination = MutableStateFlow(MonolithDestination.DECK)
+    // Issue #87 (process-death F3): the pre-arm configuration
+    // (destination / dial / blocks / preset / intention) rests on a
+    // stored fact (PreArmStore, on the LoadoutStore pattern), not on
+    // ViewModel memory \u2014 a process death in the background used to
+    // silently reset all five to their birth values, and the user
+    // could seal a session with a duration and an intention they
+    // never chose. Seeded from the store at birth; the five setters
+    // (navigateTo / setDialMinutes / setStudyBlocksCount /
+    // selectStudyPreset / setIntentionText) write through. Other
+    // writers (task collectors, profile application) keep their
+    // existing in-memory behaviour and do not move the store.
+    private val preArmStore = com.example.data.PreArmStore(appContext)
+
+    private val _currentDestination = MutableStateFlow(
+        runCatching {
+            MonolithDestination.valueOf(preArmStore.destinationName())
+        }.getOrNull() ?: MonolithDestination.DECK
+    )
     val currentDestination: StateFlow<MonolithDestination> = _currentDestination.asStateFlow()
 
     // The manual theme is DEAD (chrome C4): _darkTheme and
@@ -279,16 +296,16 @@ class MonolithViewModel(
     // is an evaluation — see themeEvaluation below (declared after
     // activeSession, which it reads).
 
-    private val _dialMinutes = MutableStateFlow(50)
+    private val _dialMinutes = MutableStateFlow(preArmStore.dialMinutes())
     val dialMinutes: StateFlow<Int> = _dialMinutes.asStateFlow()
 
-    private val _studyBlocksCount = MutableStateFlow(2)
+    private val _studyBlocksCount = MutableStateFlow(preArmStore.studyBlocksCount())
     val studyBlocksCount: StateFlow<Int> = _studyBlocksCount.asStateFlow()
 
-    private val _studyPreset = MutableStateFlow(StudyModePreset.POMODORO_25_5)
+    private val _studyPreset = MutableStateFlow(preArmStore.studyPreset())
     val studyPreset: StateFlow<StudyModePreset> = _studyPreset.asStateFlow()
 
-    private val _intentionText = MutableStateFlow("Finish Chapter 4 Problem Set")
+    private val _intentionText = MutableStateFlow(preArmStore.intentionText())
     val intentionText: StateFlow<String> = _intentionText.asStateFlow()
 
     private val _shortsReelsSniperEnabled = MutableStateFlow(true)
@@ -1533,6 +1550,7 @@ class MonolithViewModel(
         }
         soundEngine.playRotaryDetent(540.0)
         _currentDestination.value = destination
+        preArmStore.putDestinationName(destination.name)
         if (destination == MonolithDestination.VAULT) {
             refreshDrawer()
         }
@@ -1577,11 +1595,15 @@ class MonolithViewModel(
         _studyPreset.value = preset
         _dialMinutes.value = preset.workMinutes
         _studyBlocksCount.value = preset.defaultBlocks
+        preArmStore.putStudyPreset(preset)
+        preArmStore.putDialMinutes(preset.workMinutes)
+        preArmStore.putStudyBlocksCount(preset.defaultBlocks)
     }
 
     fun setStudyBlocksCount(blocks: Int) {
         soundEngine.playRotaryDetent(640.0)
         _studyBlocksCount.value = blocks.coerceIn(1, 8)
+        preArmStore.putStudyBlocksCount(_studyBlocksCount.value)
     }
 
     fun setDialMinutes(minutes: Int) {
@@ -1590,11 +1612,13 @@ class MonolithViewModel(
             val pitch = 440.0 + (clamped * 2.8)
             soundEngine.playRotaryDetent(pitch)
             _dialMinutes.value = clamped
+            preArmStore.putDialMinutes(clamped)
         }
     }
 
     fun setIntentionText(text: String) {
         _intentionText.value = text
+        preArmStore.putIntentionText(text)
     }
 
     fun toggleShortsReelsSniper() {
