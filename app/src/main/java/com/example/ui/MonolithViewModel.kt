@@ -82,22 +82,31 @@ enum class MonolithDestination(val route: String, val label: String) {
 /**
  * The theme evaluation (chrome C4, Sten's precedence, §8.10): ONE
  * evaluation drives both the colour scheme and PARK's printed
- * readout, so the two can never disagree. (1) a session is active →
- * NIGHT, the session owns it; (2) else an enabled, unpaused SLEEP
- * window is active → NIGHT, that routine owns it and is named as
- * printed on its Shield row; (3) else DAY, owned by nothing — and
- * the readout says so. Window state comes from the one derivation
- * (RoutineDerive), never a second computation.
+ * readout, so the two can never disagree. (1) a session is active
+ * AND its shot has GROUNDED → NIGHT, the session owns it (Issue
+ * #143: the caller passes the GROUNDED-stepped value — night
+ * never lands at the row's birth or during proving); (2) else a
+ * finish is being lived through (detention + receipt, until the
+ * finish state clears) → NIGHT, the finish holds it; (3) else an
+ * enabled, unpaused SLEEP window is active → NIGHT, that routine
+ * owns it and is named as printed on its Shield row; (4) else
+ * DAY, owned by nothing — and the readout says so. Window state
+ * comes from the one derivation (RoutineDerive), never a second
+ * computation.
  */
 data class ThemeEvaluation(val isNight: Boolean, val readout: String)
 
 fun evaluateTheme(
     sessionActive: Boolean,
     routines: List<com.example.data.RoutineEntity>,
-    nowMillis: Long
+    nowMillis: Long,
+    finishHeld: Boolean = false
 ): ThemeEvaluation {
     if (sessionActive) {
         return ThemeEvaluation(true, "AUTO · NIGHT — SESSION ACTIVE")
+    }
+    if (finishHeld) {
+        return ThemeEvaluation(true, "AUTO · NIGHT — FINISH HELD")
     }
     val owner = routines.firstOrNull { routine ->
         routine.loadoutName == SmartLoadout.SLEEP.name &&
@@ -564,20 +573,50 @@ class MonolithViewModel(
     val interceptLogs: StateFlow<List<InterceptLogEntity>> = repository.interceptLogsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // Issue #143: the finish + ground flows are declared BEFORE
+    // the theme evaluation on purpose — its combine reads them
+    // (below), and a flow declared under the combine is still
+    // null when the first transform can run (the Slice E lesson;
+    // see the note at _receiptState further down).
+    private val _finishState = MutableStateFlow<FinishState?>(null)
+    val finishState: StateFlow<FinishState?> = _finishState.asStateFlow()
+
+    /** F-Z1 (a) — the VM mirror of the shot's ground step, and
+     *  F23's pin in the same state: SEALED_PRE_GROUND is the
+     *  400ms where the scheme holds its day values while the
+     *  orange exits; GROUNDED is the step itself. */
+    enum class ShotGround { NOT_SEALED, SEALED_PRE_GROUND, GROUNDED }
+
+    private val _shotGround = MutableStateFlow(ShotGround.NOT_SEALED)
+    val shotGround: StateFlow<ShotGround> = _shotGround.asStateFlow()
+    private var shotGroundJob: Job? = null
+
     // ------------------------------------------------------------------
     // THE THEME EVALUATION (chrome C4). One evaluation, two readers:
     // the scheme (through darkTheme) and PARK's printed readout.
-    // Re-derived on a 1-second stamp so a routine boundary swaps the
-    // scheme on its frame — a 0ms cut, never a fade.
+    // Re-derived on a 1-second stamp. Issue #143: session-night is
+    // stepped by the GROUND (never at the row's birth, never
+    // during proving — the t=400ms pin MainActivity/Theme.kt
+    // always claimed), and a finish being lived through HOLDS
+    // the night until it clears, so the detention and the
+    // receipt are not spent under a day blast. The Deck and
+    // receipt surfaces animate the colour step (F6).
     // ------------------------------------------------------------------
     private val _themeNow = MutableStateFlow(System.currentTimeMillis())
 
     val themeEvaluation: StateFlow<ThemeEvaluation> = combine(
         routines,
         activeSession,
-        _themeNow
-    ) { routineList, session, now ->
-        evaluateTheme(session?.isActive == true, routineList, now)
+        _themeNow,
+        _shotGround,
+        _finishState
+    ) { routineList, session, now, ground, finish ->
+        evaluateTheme(
+            session?.isActive == true && ground == ShotGround.GROUNDED,
+            routineList,
+            now,
+            finishHeld = finish != null
+        )
     }.stateIn(
         viewModelScope, SharingStarted.Eagerly,
         ThemeEvaluation(false, "AUTO · DAY — NO ROUTINE OWNS IT")
@@ -850,9 +889,8 @@ class MonolithViewModel(
     // declared below init is still null at that moment (the
     // harness caught exactly that NPE). The data classes and the
     // machines themselves live further down; state lives here.
-    private val _finishState = MutableStateFlow<FinishState?>(null)
-    val finishState: StateFlow<FinishState?> = _finishState.asStateFlow()
-
+    // (_finishState and _shotGround moved ABOVE the theme
+    // evaluation under Issue #143 — its combine reads them.)
     private val _receiptState = MutableStateFlow<com.example.data.ReceiptState?>(null)
     val receiptState: StateFlow<com.example.data.ReceiptState?> = _receiptState.asStateFlow()
 
@@ -861,16 +899,6 @@ class MonolithViewModel(
      *  owns the firing. */
     internal val sledReturnGate = SledReturnGate()
     private var sledExpiryJob: Job? = null
-
-    /** F-Z1 (a) — the VM mirror of the shot's ground step, and
-     *  F23's pin in the same state: SEALED_PRE_GROUND is the
-     *  400ms where the scheme holds its day values while the
-     *  orange exits; GROUNDED is the step itself. */
-    enum class ShotGround { NOT_SEALED, SEALED_PRE_GROUND, GROUNDED }
-
-    private val _shotGround = MutableStateFlow(ShotGround.NOT_SEALED)
-    val shotGround: StateFlow<ShotGround> = _shotGround.asStateFlow()
-    private var shotGroundJob: Job? = null
 
     // Issue #28 (finding 4a): this set is touched from the
     // sessionHistory collector, onFinishE0's launched coroutines

@@ -631,13 +631,23 @@ fun TactileDeckScreen(
         wireNow = liveWarrantState
     )
 
+    // Issue #143 (F6): the day/night step cross-fades at the
+    // root instead of cutting in one frame — both flips (the
+    // ground step at session start, the release when the finish
+    // clears) pass through this one animated colour.
+    val animatedBackground by androidx.compose.animation.animateColorAsState(
+        targetValue = scheme.background,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 450),
+        label = "deckBackgroundNightFade"
+    )
+
     // Wrapper (Ren): the scroll column takes the flexible space and the
     // commit bar is PINNED beneath it — adding tasks can grow the content
     // forever and the start control can never be pushed off-screen again.
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(scheme.background)
+            .background(animatedBackground)
             .testTag("tactile_deck_screen")
     ) {
     val deckScrollState = rememberScrollState()

@@ -316,6 +316,29 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // Vault keep the immediate session-night above.
     val groundNight = darkTheme ||
         shotGround == com.example.ui.MonolithViewModel.ShotGround.GROUNDED
+    // Issue #143 (F5): the system bars follow the ground night.
+    // onCreate pins a light status bar exactly once; without this,
+    // dark status glyphs sat on the night ground for the whole
+    // session. Re-applied whenever the ground steps, and the day
+    // values are restored when it steps back.
+    LaunchedEffect(groundNight) {
+        enableEdgeToEdge(
+            statusBarStyle = if (groundNight) {
+                SystemBarStyle.dark(
+                    android.graphics.Color.TRANSPARENT,
+                    android.graphics.Color.TRANSPARENT
+                )
+            } else {
+                SystemBarStyle.light(
+                    android.graphics.Color.TRANSPARENT,
+                    android.graphics.Color.TRANSPARENT
+                )
+            },
+            navigationBarStyle = SystemBarStyle.dark(
+                android.graphics.Color.TRANSPARENT
+            )
+        )
+    }
     // The receipt sheet's dismissal is host state (F-B1): the
     // slip stands until the next DOWN anywhere, a navigation, or
     // PARK's invocation — it is never dismissed by a timer. (The
