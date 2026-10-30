@@ -34,6 +34,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.graphics.Color
@@ -308,8 +309,6 @@ fun TactileDeckScreen(
     // (stopwatch) has NO bar and NO fraction: NO END means no bar,
     // and the old /1200 denominator was invented by the mode that
     // denies it. Idle: no session exists, so no progress exists.
-    val progressIsFlow = finishState?.frozenIsStopwatch
-        ?: (isSessionRunning && activeSession.isStopwatchMode)
     val progressFraction = if (finishState != null) {
         if (finishState.frozenIsStopwatch) {
             0f
@@ -631,7 +630,15 @@ fun TactileDeckScreen(
                         // Idle prints the recipe — the hero's
                         // arithmetic, explained on the face that
                         // charges it (audit §3).
-                        else -> "$studyBlocksCount × $dialMinutes + BREAKS"
+                        else -> if (studyBlocksCount > 1) {
+                            "$studyBlocksCount × $dialMinutes + BREAKS"
+                        } else {
+                            // One block has no break (breaks live
+                            // BETWEEN blocks — totalSpanMinutes
+                            // prices (count − 1) × 10): the recipe
+                            // must not promise one (finisher pass).
+                            "$studyBlocksCount × $dialMinutes"
+                        }
                     },
                     fontFamily = AnonymousProFamily,
                     fontSize = 10.sp,
@@ -680,7 +687,7 @@ fun TactileDeckScreen(
                         text = heroAnnotated,
                         style = DialClockTextStyle.copy(color = heroShadowGhost, letterSpacing = heroTracking),
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.offset(y = (-1).dp)
+                        modifier = Modifier.offset(y = (-1).dp).clearAndSetSemantics {}
                     )
                 }
                 Text(
@@ -731,9 +738,9 @@ fun TactileDeckScreen(
                     // hairline edge reads pressable; active state = ink fill.
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(12.dp))
                             .background(if (isStopwatchMode) inkControlFill() else scheme.surfaceVariant)
-                            .border(1.dp, if (isStopwatchMode) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(8.dp))
+                            .border(1.dp, if (isStopwatchMode) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(12.dp))
                             .clickable {
                                 onSelectStudyPreset(StudyModePreset.STOPWATCH_FLOW)
                                 onDialMinutesChanged(5)
