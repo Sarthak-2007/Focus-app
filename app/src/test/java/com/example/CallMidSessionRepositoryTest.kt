@@ -15,6 +15,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 
 /**
  * W3 #134 (phone-call-mid-session, Audit R3b) at the repository —
@@ -57,6 +59,21 @@ class CallMidSessionRepositoryTest {
         currentBlockIndex: Int = 1,
         callExcludedSeconds: Int = 0
     ): FocusSessionEntity {
+        // Fixture correction (the requirement assertions below are
+        // unchanged): Robolectric's monotonic clock starts near
+        // zero, so building the row straight off it put the
+        // session's start anchor BEFORE boot (nowMono − span <= 0)
+        // — a row no real phone can hold, since a session is
+        // always started after boot, with uptime already past
+        // every span it will ever contain. The progress machine
+        // rightly reads a non-positive monotonic start anchor as
+        // a post-reboot row and re-bases verified elapsed on the
+        // stored figure, which silently ate the call exclusion
+        // (verified 60 − excluded 600 -> 0). Give the phone a
+        // realistic uptime first — six hours, comfortably past
+        // the largest span these scenarios construct (2,101s) —
+        // so the anchors model the phone the persona is on.
+        ShadowSystemClock.advanceBy(Duration.ofMillis(6 * 60 * 60 * 1000L))
         val nowMono = SystemClock.elapsedRealtime()
         val nowWall = System.currentTimeMillis()
         val spanMillis = (focusSecondsBeforeCall + callSeconds) * 1000L
