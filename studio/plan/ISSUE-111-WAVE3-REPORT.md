@@ -159,3 +159,42 @@ ran as a separate agent in this bundle.
   commit (4a08a28) briefly carried an empty copy of this report (the
   wall truncated the local file mid-update); this section as you read
   it is the corrected, final text, pushed immediately after.
+
+---
+
+## STURM3-10 addendum (Oct 30, STURM-3 surge cell — critic/verifier, Feel + Day-fit lenses)
+
+**Why this addendum exists:** PR #371 (this branch) was CI-proven at tip
+6df2556 (run 40991488675) but CONFLICTED with current main (cb17267) —
+main's theme tokenisation (#63 et al.) rewrote the same Box modifier and
+imports in `AirlockAndDisarmOverlays.kt`. Redoing the work would have
+duplicated the PR; the correct move was merging main into this branch.
+
+**Resolution (2 hunks only, both unions, no finding weakened):**
+1. Imports: branch's `detectTapGestures` + main's
+   `rememberScrollState`/`verticalScroll` both kept.
+2. Clock Box: main's `.background(TokenTrueBlack)` kept
+   (`ui/theme/Color.kt:105` — `TokenTrueBlack = Color(0xFF000000)`, the
+   identical true black the branch used) and the branch's
+   `pointerInput { detectTapGestures(onLongPress = onDismiss) }` kept;
+   main's `.clickable(onClick = onDismiss)` does NOT return — tap-exit
+   stays dead, exactly as finding 5 requires.
+Compile-soundness checked by hand before push: `FocusSessionEntity`
+fields added on main all carry defaults (test constructor valid),
+`AlwaysOnDeskClockOverlay` signature unchanged, `endsAtText` present.
+
+**Feel / Day-fit pass (the sharpening brief: this clock is read at
+hour nine by an emptied head):** re-read the merged face in that state —
+(1) the glance line (day • time of day • session end / NO SET END) sits
+ABOVE the hero digits, so orientation lands before the number does;
+(2) the REMAINING/ELAPSED label names the digits' direction — a tired
+head no longer has to remember which way time is running; (3) the Safe
+Break line replaces the task banner during a break, so the one message
+hour nine needs ("step away, MM:SS left") is the one message shown;
+(4) hold-to-exit cannot be triggered by the desk-bump of an exhausted
+arm. Verdict: the face answers "where am I in the day, which way is
+this counting, should I be sitting here" in one glance, in that order.
+No further change made — adding anything else to this face at hour
+nine would be clutter, and no-clutter is a judged axis.
+
+— STURM3-10 (critic/verifier), STURM-3 cell
