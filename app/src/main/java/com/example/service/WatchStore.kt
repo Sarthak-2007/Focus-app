@@ -164,6 +164,31 @@ enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE, MISSING_STALE }
 
 object WatchStore {
 
+    /**
+     * Issue #280 (R5 supplement): the one-line rationale the PARK
+     * board prints under the FIX key for the grant it targets —
+     * what the grant does, and what it never does — BEFORE the
+     * Settings trip fires. The original explains each grant before
+     * asking; Monolith's board fired a bare FIX key. Pure and
+     * total over the six PERMISSIONS; interceptor items and
+     * unknown items carry no rationale (null).
+     */
+    fun boardRationale(item: WatchItemId): String? = when (item) {
+        WatchItemId.ACCESSIBILITY ->
+            "ACCESSIBILITY — brings you back when a blocked app opens. It never reads what is on your screen."
+        WatchItemId.USAGE_ACCESS ->
+            "USAGE ACCESS — tells Monolith which app is in front, so the seal knows what to hold. It never leaves this phone."
+        WatchItemId.DEVICE_ADMIN ->
+            "DEVICE ADMIN — adds friction if the seal is switched off mid-session. It cannot stop you uninstalling, ever."
+        WatchItemId.NOTIFICATION_LISTENER ->
+            "NOTIFICATIONS ACCESS — holds a blocked app's notifications during a session and shows them to you after. Calls and alarms are never held."
+        WatchItemId.OVERLAY ->
+            "OVERLAY — lets the block surface stand over a blocked app. It draws nothing outside a session."
+        WatchItemId.BATTERY ->
+            "BATTERY EXEMPTION — keeps Android from sleeping the shield mid-session. Nothing else changes."
+        else -> null
+    }
+
     /** A PASS measurement older than this (monotonic) is stale. */
     const val STALE_AFTER_MS: Long = 45_000L
 
