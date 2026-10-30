@@ -171,6 +171,26 @@ object RoutineHeartbeat {
             MonolithShieldService.stopShield(appContext)
         }
 
+        // 4b. Shield resurrection (issue #81 F2): a session that is
+        //    still live after this pass but whose shield PROCESS is
+        //    gone gets its shield re-raised. The hole this closes:
+        //    force-stop/kill cancels the FGS and every alarm and
+        //    blocks all broadcasts until the user relaunches by
+        //    hand — and that manual relaunch (MainActivity →
+        //    ViewModel init → this funnel's RESUME tick) previously
+        //    reconciled routines and advanced the timer while never
+        //    restarting the shield, so the session ran out its clock
+        //    unprotected, indefinitely. Every recovery door (boot,
+        //    resume, chain alarm, opportunistic service ticks) runs
+        //    this same pass, so the resurrection lives here, once.
+        //    Guarded by the in-memory registry: a live shield is
+        //    never re-started — a second onStartCommand would reset
+        //    its protecting witness and prove nothing.
+        val sessionLiveAfter = materialised || (active != null && !activeFinalised)
+        if (sessionLiveAfter && MonolithShieldService.instance == null) {
+            MonolithShieldService.startShield(appContext)
+        }
+
         // 5. Rearm the chain when the boundary moved or the chain is
         //    missing entirely.
         val boundary = result.nextBoundaryMillis
