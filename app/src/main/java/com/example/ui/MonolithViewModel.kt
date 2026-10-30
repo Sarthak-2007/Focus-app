@@ -346,6 +346,13 @@ data class AirlockInterceptState(
      *  session): the door never invents one. */
     val sessionEndsAtMillis: Long? = null,
     val sessionIsStopwatch: Boolean = false,
+    /** Issue #325 (Audit R5, Zario visual): the stake, carried onto
+     *  the door itself — the week's emergency-break balance read
+     *  from the repository's spend ledger at the intercept instant
+     *  (the same flow the Deck renders). -1 = not carried (previews,
+     *  tests): the stake line prints nothing rather than inventing
+     *  a balance. */
+    val emergencyBreaksRemaining: Int = -1,
     /** Audit R3b #147: a stopwatch session has no set end, but it
      *  DOES have a floor moment — the wall instant its clean exit
      *  opens (start + the 20-minute floor, on the session's own
@@ -3499,6 +3506,10 @@ class MonolithViewModel(
                 ?.takeIf { !it.isStopwatchMode }
                 ?.let { System.currentTimeMillis() + it.spanRemainingSeconds * 1000L },
             sessionIsStopwatch = active?.isStopwatchMode == true,
+            // Issue #325: the stake rides onto the door — the
+            // ledger-derived balance at this instant, never a
+            // remembered or decremented-here copy.
+            emergencyBreaksRemaining = weeklyEmergencyTokensRemaining.value,
             stopwatchFloorAtMillis = active
                 ?.takeIf { it.isStopwatchMode }
                 ?.let {
