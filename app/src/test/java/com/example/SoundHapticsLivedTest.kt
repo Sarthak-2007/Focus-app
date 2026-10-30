@@ -36,7 +36,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowLooper
 
@@ -97,7 +96,11 @@ class SoundHapticsLivedTest {
 
     private fun setMusicVolume(volume: Int) {
         val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        Shadows.shadowOf(am).setStreamVolume(AudioManager.STREAM_MUSIC, volume)
+        // Public API only: ShadowAudioManager.setStreamVolume is
+        // protected in this Robolectric version (CI compile error,
+        // run 40986339981); the real call is intercepted by the
+        // shadow all the same.
+        am.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
     }
 
     // =================================================================
