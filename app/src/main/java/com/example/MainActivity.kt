@@ -143,6 +143,15 @@ class MainActivity : ComponentActivity() {
             viewModel.triggerAirlockIntercept(pkg, name, badge, path)
             intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
             intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
+        } else if (intent.getBooleanExtra(
+                MonolithShieldService.EXTRA_FROM_SHIELD_NOTIFICATION, false
+            )
+        ) {
+            // Issue #155 (F5): a tap on the shield notification is
+            // about the shield — land on SHIELD, not the default Deck.
+            // Intercept extras (handled above) take precedence.
+            viewModel.navigateTo(MonolithDestination.SHIELD)
+            intent.removeExtra(MonolithShieldService.EXTRA_FROM_SHIELD_NOTIFICATION)
         }
     }
 

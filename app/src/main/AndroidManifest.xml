@@ -111,6 +111,19 @@
             android:directBootAware="true"
             android:exported="false" />
 
+        <!-- Issue #155 (F1): the home-screen glance widget. -->
+        <receiver
+            android:name=".widget.MonolithWidgetProvider"
+            android:exported="false"
+            android:label="Monolith">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/monolith_widget_info" />
+        </receiver>
+
         <!-- Slice E (Draht): the release-retry cadence's hint. -->
         <receiver
             android:name=".service.ReleaseRetryReceiver"

@@ -18,6 +18,7 @@ import com.example.R
 import com.example.data.AppBlockTier
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
+import com.example.widget.MonolithWidgetProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -40,6 +41,7 @@ class MonolithShieldService : Service() {
             protectingMono = 0L
             WatchStore.onShieldIteration(protecting = false)
             stopForeground(STOP_FOREGROUND_REMOVE)
+            MonolithWidgetProvider.requestUpdate(applicationContext)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -59,10 +61,14 @@ class MonolithShieldService : Service() {
         } else {
             0
         }
+        // Issue #155 (F2): the initial card must not claim a lock that
+        // has not happened yet — `protecting` flips only after the
+        // monitor loop's first full iteration, and that same iteration
+        // overwrites this card with real session facts.
         ServiceCompat.startForeground(
             this,
             NOTIFICATION_ID,
-            buildNotification("Monolith Locked", "Protecting your focus session..."),
+            buildNotification("Monolith", "Arming shield\u2026"),
             fgsType
         )
         // Live Wire registry (Ines): the instance exists only once
@@ -96,6 +102,7 @@ class MonolithShieldService : Service() {
                 val activeSession = dao.getActiveSessionSnapshot()
                 if (activeSession == null || !activeSession.isActive) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
+                    MonolithWidgetProvider.requestUpdate(applicationContext)
                     stopSelf()
                     break
                 }
@@ -113,8 +120,19 @@ class MonolithShieldService : Service() {
                     RoutineHeartbeat.tickAsync(
                         applicationContext, RoutineHeartbeat.Source.SESSION_EDGE
                     )
-                    updateNotification("Session Complete", "Unlocked desk toy ready in your Break tab.")
+                    // Issue #155 (F3): the completion receipt stays
+                    // findable via DETACH, but it is no longer an
+                    // ongoing card — it dismisses on tap and expires
+                    // after 45 minutes instead of ghosting forever.
+                    updateNotification(
+                        "Session Complete",
+                        "Unlocked desk toy ready in your Break tab.",
+                        ongoing = false,
+                        autoCancel = true,
+                        timeoutAfterMs = COMPLETION_TIMEOUT_MS
+                    )
                     stopForeground(STOP_FOREGROUND_DETACH)
+                    MonolithWidgetProvider.requestUpdate(applicationContext)
                     stopSelf()
                     break
                 }
@@ -139,9 +157,59 @@ class MonolithShieldService : Service() {
                     }
                 }
 
+                // Issue #155 (F5): the expanded card carries the full
+                // status, and timed sessions get a SYSTEM chronometer
+                // (when = session end) instead of this loop's 2s text
+                // snapshot as the only timer. The end is derived from
+                // the same remaining-seconds math as the text above.
+                val timeLeftLabel = when {
+                    updated.isInSafeBreak -> {
+                        val bMin = updated.safeBreakSecondsRemaining / 60
+                        val bSec = updated.safeBreakSecondsRemaining % 60
+                        String.format("Safe Break %02d:%02d left", bMin, bSec)
+                    }
+                    updated.isStopwatchMode -> {
+                        val mins = updated.elapsedSeconds / 60
+                        val secs = updated.elapsedSeconds % 60
+                        String.format("Stopwatch +%02d:%02d elapsed", mins, secs)
+                    }
+                    else -> {
+                        val effectiveTarget = updated.targetDurationSeconds + updated.penaltySecondsAdded
+                        val remainingSec = (effectiveTarget - updated.elapsedSeconds).coerceAtLeast(0)
+                        val mins = remainingSec / 60
+                        val secs = remainingSec % 60
+                        String.format("%02d:%02d left", mins, secs)
+                    }
+                }
+                val chronometerEndMillis: Long? = when {
+                    updated.isStopwatchMode -> null
+                    updated.isInSafeBreak ->
+                        System.currentTimeMillis() + updated.safeBreakSecondsRemaining * 1000L
+                    else -> {
+                        val effectiveTarget = updated.targetDurationSeconds + updated.penaltySecondsAdded
+                        val remainingSec = (effectiveTarget - updated.elapsedSeconds).coerceAtLeast(0)
+                        System.currentTimeMillis() + remainingSec * 1000L
+                    }
+                }
+                // Issue #155 (F4): the badge's one number is the held
+                // (captured) notification count — the same count the
+                // Deck's HELD chip prints. If that read ever fails,
+                // fall back to this session's urges stopped.
+                val heldCount = runCatching {
+                    dao.getCapturedNotificationsSnapshot().size
+                }.getOrNull()
+                val badgeNumber = heldCount ?: updated.phantomReachesBlocked
+                val bigText = "${updated.intention} • $timeLeftLabel • " +
+                    "Block ${updated.currentBlockIndex}/${updated.totalStudyBlocks} • " +
+                    "${updated.phantomReachesBlocked} urges stopped • " +
+                    (if (heldCount != null) "$heldCount held" else "held count unavailable")
+
                 updateNotification(
                     title = "Monolith • ${updated.intention}",
-                    subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped"
+                    subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped",
+                    bigText = bigText,
+                    chronometerEndMillis = chronometerEndMillis,
+                    badgeNumber = badgeNumber
                 )
 
                 // Live Wire: the shield is PROTECTING only once a
@@ -155,6 +223,9 @@ class MonolithShieldService : Service() {
                     protectingSessionId = updated.id
                     protectingMono = SystemClock.elapsedRealtime()
                     WatchStore.poke()
+                    // Issue #155 (F1): a session is now live — refresh
+                    // the home-screen widget at the moment it matters.
+                    MonolithWidgetProvider.requestUpdate(applicationContext)
                 }
                 // Watch Store (chrome C3): ONE publication per
                 // iteration — the engine heartbeat plus a re-read of
@@ -198,41 +269,94 @@ class MonolithShieldService : Service() {
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            // Issue #155 (F4): channels are immutable on-device, so
+            // the badge fix cannot flip the legacy channel's
+            // setShowBadge(false) in place. Create the v2 channel
+            // with the badge ON and delete the legacy id — existing
+            // installs migrate on the shield's next start.
+            manager.deleteNotificationChannel(LEGACY_CHANNEL_ID)
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 getString(R.string.notification_channel_name),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = getString(R.string.notification_channel_desc)
-                setShowBadge(false)
+                setShowBadge(true)
             }
             manager.createNotificationChannel(channel)
         }
     }
 
-    private fun buildNotification(title: String, subtitle: String): Notification {
+    private fun buildNotification(
+        title: String,
+        subtitle: String,
+        ongoing: Boolean = true,
+        autoCancel: Boolean = false,
+        timeoutAfterMs: Long = 0,
+        bigText: String? = null,
+        chronometerEndMillis: Long? = null,
+        badgeNumber: Int? = null
+    ): Notification {
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,
             Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+                // Issue #155 (F5): a tap on the shield card lands on
+                // the SHIELD destination, not the default Deck —
+                // MainActivity routes on this extra when no intercept
+                // extras are present.
+                putExtra(EXTRA_FROM_SHIELD_NOTIFICATION, true)
             },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
             .setContentText(subtitle)
-            .setOngoing(true)
+            .setOngoing(ongoing)
+            .setAutoCancel(autoCancel)
             .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)
-            .build()
+        if (timeoutAfterMs > 0) {
+            builder.setTimeoutAfter(timeoutAfterMs)
+        }
+        if (bigText != null) {
+            builder.setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
+        }
+        if (chronometerEndMillis != null) {
+            // The countdown is the system's chronometer (real time),
+            // not the monitor loop's 2-second text snapshot.
+            builder.setUsesChronometer(true)
+            builder.setChronometerCountDown(true)
+            builder.setWhen(chronometerEndMillis)
+            builder.setShowWhen(true)
+        }
+        if (badgeNumber != null) {
+            builder.setNumber(badgeNumber)
+        }
+        return builder.build()
     }
 
-    private fun updateNotification(title: String, subtitle: String) {
+    private fun updateNotification(
+        title: String,
+        subtitle: String,
+        ongoing: Boolean = true,
+        autoCancel: Boolean = false,
+        timeoutAfterMs: Long = 0,
+        bigText: String? = null,
+        chronometerEndMillis: Long? = null,
+        badgeNumber: Int? = null
+    ) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, buildNotification(title, subtitle))
+        manager.notify(
+            NOTIFICATION_ID,
+            buildNotification(
+                title, subtitle, ongoing, autoCancel, timeoutAfterMs,
+                bigText, chronometerEndMillis, badgeNumber
+            )
+        )
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -277,8 +401,17 @@ class MonolithShieldService : Service() {
         @Volatile
         var protectingMono: Long = 0L
             internal set
-        const val CHANNEL_ID = "monolith_shield_channel"
+        // Issue #155 (F4): v2 carries setShowBadge(true); the legacy
+        // id is deleted in createNotificationChannel because channels
+        // are immutable once created on a device.
+        const val CHANNEL_ID = "monolith_shield_channel_v2"
+        const val LEGACY_CHANNEL_ID = "monolith_shield_channel"
         const val NOTIFICATION_ID = 4096
+        /** Issue #155 (F3): the detached completion card self-expires. */
+        const val COMPLETION_TIMEOUT_MS = 45 * 60 * 1000L
+        /** Issue #155 (F5): present (true) on the shield card's content
+         *  intent; MainActivity routes such a launch to SHIELD. */
+        const val EXTRA_FROM_SHIELD_NOTIFICATION = "com.example.EXTRA_FROM_SHIELD_NOTIFICATION"
         const val ACTION_START_SHIELD = "com.example.action.START_SHIELD"
         const val ACTION_STOP_SHIELD = "com.example.action.STOP_SHIELD"
         const val EXTRA_INTERCEPTED_PACKAGE = "extra_intercepted_package"
