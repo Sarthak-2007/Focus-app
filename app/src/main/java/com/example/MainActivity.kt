@@ -57,6 +57,7 @@ import com.example.ui.components.LauncherBlockScreen
 import com.example.ui.components.LauncherPage
 import com.example.ui.components.CapturedNotificationsDigestSheet
 import com.example.ui.components.DisarmChallengeOverlay
+import com.example.ui.components.PeekCountdownPill
 import com.example.ui.components.MonolithPullDownHeader
 import com.example.ui.components.ParkDrawer
 import com.example.ui.screens.DrawerScreen
@@ -238,6 +239,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val totalInterceptions by viewModel.totalInterceptions.collectAsStateWithLifecycle()
     val soundEnabled by viewModel.soundEnabled.collectAsStateWithLifecycle()
     val airlockState by viewModel.airlockState.collectAsStateWithLifecycle()
+    // Issue #114, finding 1: the peek pill's state finally has a
+    // collector — the in-app pill below, plus the floating
+    // overlay the ViewModel drives from the same flow.
+    val floatingPeekPill by viewModel.floatingPeekPill.collectAsStateWithLifecycle()
     val disarmChallenge by viewModel.disarmChallenge.collectAsStateWithLifecycle()
     val weeklyEmergencyTokensRemaining by viewModel.weeklyEmergencyTokensRemaining.collectAsStateWithLifecycle()
     val ratchetWarningMessage by viewModel.ratchetWarningMessage.collectAsStateWithLifecycle()
@@ -846,7 +851,19 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 state = airlockState,
                 onSelectReason = viewModel::selectDistractionReason,
                 onTransmuteParticleTap = viewModel::incrementAirlockParticlePulse,
-                onReturnToFocus = viewModel::transmuteImpulseAndReturn,
+                // Issue #114, finding 2: RETURN TO FOCUS now
+                // returns. The ViewModel closes the sheet and books
+                // the intercept; the host then sends Monolith's
+                // whole task to the back, so the user lands on
+                // whatever they were doing before the intercept
+                // yanked them in — not stranded on the Deck having
+                // to navigate back by hand for choosing the honest
+                // door. Blocking itself is untouched: the session
+                // stays sealed and the shield keeps enforcing.
+                onReturnToFocus = {
+                    viewModel.transmuteImpulseAndReturn()
+                    (context as? android.app.Activity)?.moveTaskToBack(true)
+                },
                 onTake2MinutePeek = viewModel::start2MinutePeek,
                 allowedAppsCount = allApps.count {
                     it.resolvedTier == com.example.data.AppBlockTier.OPEN
@@ -862,6 +879,21 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     launcherPage = LauncherPage.PEEK
                     launcherOpen = true
                 }
+            )
+
+            // Issue #114, finding 1: the peek pill's in-app face.
+            // While a peek runs and Monolith is in front (grant
+            // moment, hand-back moment, a failed app launch), the
+            // clock stands at the top of the screen with its END
+            // PEEK hand-back. Over the peeked app itself, the
+            // floating overlay face (PeekPillOverlay) carries the
+            // same state.
+            PeekCountdownPill(
+                state = floatingPeekPill,
+                onEndPeek = viewModel::end2MinutePeekEarly,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 12.dp)
             )
 
             DisarmChallengeOverlay(

@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.content.Context
+import android.content.Intent
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -27,6 +28,7 @@ import com.example.data.SystemGuardStatus
 import com.example.data.TaskQueueStatus
 import com.example.service.InterceptPath
 import com.example.service.MonolithShieldService
+import com.example.service.PeekPillOverlay
 import com.example.service.SoundEffectsSetting
 import com.example.service.TactileSoundEngine
 import com.example.service.Warrant
@@ -913,6 +915,24 @@ class MonolithViewModel(
                     _frozenDigest.value?.sessionId != session.id
                 ) {
                     mintFrozenDigest(session.id)
+                }
+            }
+        }
+        // Issue #114 finding 1: the peek pill finally gets a face.
+        // The overlay window (over the peeked app) and the in-app
+        // Compose pill both render THIS state; the overlay's END
+        // button routes back to the one hand-back verb, so state,
+        // lease row and faces retire together. Before this wiring
+        // the state was collected nowhere and the pill never drew.
+        PeekPillOverlay.onEndPeekRequest = { end2MinutePeekEarly() }
+        viewModelScope.launch {
+            _floatingPeekPill.collect { pill ->
+                if (pill.isActive) {
+                    PeekPillOverlay.showOrUpdate(
+                        appContext, pill.appName, pill.secondsRemaining
+                    )
+                } else {
+                    PeekPillOverlay.hide(appContext)
                 }
             }
         }
@@ -2378,8 +2398,21 @@ class MonolithViewModel(
     }
 
     /**
-     * Grants a 2-Minute Peek lease with the Draggable Edge-Snapping Countdown Pill
-     * and arms the mandatory 20-minute cooldown in Room storage immediately.
+     * Grants a 2-Minute Peek lease with its countdown pill — the
+     * floating overlay face (PeekPillOverlay, over the peeked app)
+     * plus the in-app PeekCountdownPill, both rendering
+     * [floatingPeekPill] — and arms the mandatory 20-minute
+     * cooldown in Room storage immediately.
+     *
+     * Issue #114 finding 1, second half: the grant now TAKES the
+     * user to the peeked app. Before, the lease anchored at
+     * tap-time while the user stood on the Deck and burned lease
+     * seconds navigating home and relaunching by hand. The launch
+     * fires only after the lease row is written (the coroutine
+     * below is queued first in practice by the shield's own read
+     * cadence; the accessibility door honours the lease by its
+     * stored end, and a failed launch simply leaves the user on
+     * the Deck with the in-app pill standing).
      */
     fun start2MinutePeek() {
         val state = _airlockState.value
@@ -2413,6 +2446,17 @@ class MonolithViewModel(
                 triggerReason = state.selectedReason.shortTag
             )
         }
+        // Take him to the app the lease is for (issue #114): the
+        // lease no longer burns on hand navigation. A missing or
+        // dead launch intent is not an error — he stays on the
+        // Deck, where the in-app pill still shows the clock.
+        runCatching {
+            val launch = appContext.packageManager.getLaunchIntentForPackage(pkg)
+            if (launch != null) {
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                appContext.startActivity(launch)
+            }
+        }
     }
 
     fun end2MinutePeekEarly() {
@@ -2425,6 +2469,15 @@ class MonolithViewModel(
         }
     }
 
+    /**
+     * The airlock's honest door (issue #114, finding 2): closes
+     * the sheet and books the stayed-focused intercept. The
+     * RETURN itself is the host's half — MainActivity calls
+     * moveTaskToBack(true) on this same tap, sending Monolith's
+     * task behind the task the intercept interrupted. This verb
+     * alone never claimed to move the user; the pair together
+     * are the return the chip's name promises.
+     */
     fun transmuteImpulseAndReturn() {
         val state = _airlockState.value
         soundEngine.playHarmonicSeal(arming = true)

@@ -93,6 +93,21 @@ import java.util.Locale
  * - When armed, transforms into the dark Armed Lockdown state with One-Way Ratchet enforcement.
  */
 @Composable
+/**
+ * The emergency break's price, printed under its Deck chip
+ * (issue #114, finding 5): the door ends the session and spends
+ * the week's only break — or, when the break is spent, it says
+ * so before the tap instead of after it. [tokensRemaining] is
+ * the live ledger-derived count the chip's badge already reads.
+ * Pure, tested.
+ */
+internal fun emergencyBreakPriceText(tokensRemaining: Int): String =
+    if (tokensRemaining > 0) {
+        "ENDS THIS SESSION · USES THIS WEEK'S ONLY EMERGENCY BREAK"
+    } else {
+        "THIS WEEK'S EMERGENCY BREAK IS ALREADY SPENT"
+    }
+
 fun TactileDeckScreen(
     activeSession: FocusSessionEntity?,
     dialMinutes: Int,
@@ -1044,7 +1059,14 @@ fun TactileDeckScreen(
                         )
                     } else {
                         BlockitActionChip(
-                            wordLabel = "EMERGENCY BREAK VALVE (60S HOLD)",
+                            // Issue #114, finding 5: one name for
+                            // the session-ending door — EMERGENCY
+                            // BREAK, the same words its own overlay
+                            // carries — and its price printed under
+                            // it at reading size, not only as a dim
+                            // badge: it ends the session and spends
+                            // the week's only break.
+                            wordLabel = "EMERGENCY BREAK (60S HOLD)",
                             monoBadge = "$weeklyEmergencyTokensRemaining/1 WEEK",
                             isPrimaryInk = true,
                             onClick = onRequestDisarm,
@@ -1052,6 +1074,13 @@ fun TactileDeckScreen(
                                 .fillMaxWidth()
                                 .height(58.dp),
                             testTag = "request_disarm_button"
+                        )
+                        Text(
+                            text = emergencyBreakPriceText(weeklyEmergencyTokensRemaining),
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+                            modifier = Modifier.testTag("emergency_break_price")
                         )
                     }
                 }

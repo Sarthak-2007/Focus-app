@@ -48,6 +48,7 @@ import com.example.service.TactileSoundEngine
 import com.example.data.MonolithRepository
 import com.example.ui.AirlockInterceptState
 import com.example.ui.DisarmChallengeState
+import com.example.ui.FloatingPeekPillState
 import com.example.ui.PeekWithheld
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.MonolithCurves
@@ -265,6 +266,94 @@ internal fun peekPriceText(cooldownMillis: Long): String {
     val minutes = cooldownMillis / 60_000L
     val unit = if (minutes == 1L) "MINUTE" else "MINUTES"
     return "TAKING THE PEEK STARTS A $minutes $unit COOLDOWN ON THIS APP"
+}
+
+/**
+ * The cooldown's SCOPE, printed beside its price (issue #114,
+ * finding 3): the cooldown is per app — this app's timer says
+ * nothing about any other peek app's. Until this line existed the
+ * scope was discoverable only by rotating to the next app and
+ * finding a fresh wall there. Pure text; the scope itself is a
+ * policy Sarthak has not ruled on changing (see the issue-114
+ * report's DECISION-NEEDED), so the surface's job is to state it,
+ * never to imply a global lock it does not deliver.
+ */
+internal fun peekCooldownScopeText(): String =
+    "THE COOLDOWN IS PER APP — OTHER PEEK APPS KEEP THEIR OWN TIMERS"
+
+/**
+ * What waits at the end of the breath, printed DURING the breath
+ * (issue #114, finding 3): the wall's whole exchange — wait, then
+ * one tap buys the lease — stated before the countdown reaches
+ * zero, not revealed by it. [durationSeconds] is the lease's own
+ * constant, read at the call site, never hardcoded here.
+ */
+internal fun peekOfferPreviewText(durationSeconds: Int): String {
+    val minutes = durationSeconds / 60
+    return "AFTER THE BREATH: ONE TAP OPENS THIS APP FOR $minutes MINUTES"
+}
+
+/**
+ * The in-app face of the peek pill (issue #114, finding 1): app
+ * name, the lease's remaining time as M:SS, an ENDING SOON
+ * warning inside the last 30 seconds, and the hand-back —
+ * END PEEK NOW, wired to the same verb the floating overlay's
+ * button calls. Renders nothing while no peek runs. The seconds
+ * arrive from the ViewModel state, which derives them from the
+ * Room lease end; this face never counts on its own.
+ */
+@Composable
+fun PeekCountdownPill(
+    state: FloatingPeekPillState,
+    onEndPeek: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (!state.isActive) return
+    val warning = com.example.service.peekPillWarning(state.secondsRemaining)
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(NightColorSurfaceBright)
+            .border(1.dp, NightColorPrimary.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .testTag("peek_countdown_pill"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Column {
+            Text(
+                text = if (warning) {
+                    "PEEK · ${state.appName.uppercase(Locale.US)} · ENDING SOON"
+                } else {
+                    "PEEK · ${state.appName.uppercase(Locale.US)}"
+                },
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.5.sp,
+                color = NightColorPrimary
+            )
+            Text(
+                text = "TAP END TO HAND IT BACK EARLY",
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontSize = 11.sp,
+                color = NightColorPrimary.copy(alpha = 0.8f)
+            )
+        }
+        Text(
+            text = com.example.service.peekPillClockText(state.secondsRemaining),
+            fontFamily = AnonymousProFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 22.sp,
+            color = NightColorPrimary,
+            modifier = Modifier.testTag("peek_countdown_clock")
+        )
+        BlockitActionChip(
+            wordLabel = "END PEEK",
+            isPrimaryInk = true,
+            onClick = onEndPeek,
+            testTag = "peek_end_button"
+        )
+    }
 }
 
 /** The capture's own time, for a frozen row: HH:mm when the
@@ -667,17 +756,20 @@ fun AirlockInterceptOverlay(
                     testTag = "airlock_return_button"
                 )
 
-                if (countdownSecs == 0 && state.canUse2MinutePeek) {
-                    BlockitActionChip(
-                        wordLabel = "EMERGENCY PEEK",
-                        // SIL-2 / W-29: the badge is the SET value,
-                        // read from the lease machinery's own
-                        // constant — no hardcoded minutes here.
-                        monoBadge = peekBadgeText(MonolithRepository.PEEK_DURATION_SECONDS),
-                        onClick = onTake2MinutePeek,
-                        modifier = Modifier.fillMaxWidth(),
-                        testTag = "airlock_peek_button"
-                    )
+                // Issue #114, finding 3: the whole exchange is
+                // printed DURING the breath, not revealed by it —
+                // what waits at zero, what it costs, and the
+                // cooldown's per-app scope all stand on the door
+                // from the first second.
+                if (state.canUse2MinutePeek) {
+                    if (countdownSecs > 0) {
+                        Text(
+                            text = peekOfferPreviewText(MonolithRepository.PEEK_DURATION_SECONDS),
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 12.5.sp,
+                            color = NightColorPrimary.copy(alpha = 0.8f)
+                        )
+                    }
                     // SIL-2 / W-29: the price stands on the offer,
                     // before the peek is taken — the cooldown the
                     // repository will arm, named in full.
@@ -686,6 +778,31 @@ fun AirlockInterceptOverlay(
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 12.5.sp,
                         color = NightColorPrimary.copy(alpha = 0.8f)
+                    )
+                    Text(
+                        text = peekCooldownScopeText(),
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f)
+                    )
+                }
+
+                if (countdownSecs == 0 && state.canUse2MinutePeek) {
+                    // Issue #114, finding 5: this door is NOT an
+                    // emergency — it is the routine, repeatable,
+                    // cooldown-priced peek. The EMERGENCY name now
+                    // belongs only to the session-ending weekly
+                    // break, so the two doors can never again be
+                    // confused at the moment of least capacity.
+                    BlockitActionChip(
+                        wordLabel = "2-MINUTE PEEK",
+                        // SIL-2 / W-29: the badge is the SET value,
+                        // read from the lease machinery's own
+                        // constant — no hardcoded minutes here.
+                        monoBadge = peekBadgeText(MonolithRepository.PEEK_DURATION_SECONDS),
+                        onClick = onTake2MinutePeek,
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "airlock_peek_button"
                     )
                 }
 
@@ -824,11 +941,16 @@ fun DisarmChallengeOverlay(
                             .testTag("emergency_60s_valve")
                     )
 
+                    // Issue #114, finding 5: the mechanics of the
+                    // week's only break are consequential print —
+                    // they stand at the same size and weight as the
+                    // consequence line above, not in the smallest,
+                    // dimmest type on the screen.
                     Text(
                         text = "Hold to fill 60 seconds. Every 15 seconds banks. If your hand slips, what isn't banked drains away. The banked part stays.",
                         fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 11.sp,
-                        color = NightColorPrimary.copy(alpha = 0.75f)
+                        fontSize = 13.sp,
+                        color = NightColorPrimary
                     )
                 }
 
