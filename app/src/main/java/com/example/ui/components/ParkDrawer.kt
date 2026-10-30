@@ -95,7 +95,10 @@ import kotlinx.coroutines.launch
  * press or cap drag out (the rail reports it), a sheet drag past
  * 40%, and a scrim tap or PARK re-tap. While sealed the drawer —
  * if open at the seal — is read-only: print and reading, no FIX,
- * no sled.
+ * no sled — and since issue #109 (F2) it PRINTS that state at its
+ * head instead of going silently inert. A second key, RE-CHECK,
+ * stands where FIX stands when the only lack is a STALE reading
+ * (issue #109, F3): it fires a fresh Watch sweep from the host.
  * ============================================================================
  */
 
@@ -136,6 +139,7 @@ fun ParkDrawer(
     parkReturnTick: Int,
     onDismiss: () -> Unit,
     onFixClick: (WatchItemId) -> Unit,
+    onRecheck: () -> Unit = {},
     onToggleSound: () -> Unit,
     onToggleShortsReelsSniper: () -> Unit,
     socialSitesEnabled: Boolean,
@@ -176,6 +180,25 @@ fun ParkDrawer(
         WatchItemId.PERMISSIONS.firstOrNull {
             WatchStore.permPrintAt(snap, it, nowMono) == PermPrint.MISSING
         }
+    }
+
+    // Issue #109, F3: STALE was a dead end — styled and named as a
+    // lack, with no remedy on the board. The first stale line (only
+    // when nothing is MISSING — a missing grant outranks a stale
+    // reading) gets the RE-CHECK key below: a fresh Watch sweep
+    // re-measures it on the spot.
+    val firstStale = snapshot?.let { snap ->
+        if (firstMissing != null) {
+            null
+        } else {
+            WatchItemId.PERMISSIONS.firstOrNull {
+                WatchStore.permPrintAt(snap, it, nowMono) == PermPrint.STALE
+            }
+        }
+    }
+    var recheckPressed by remember { mutableStateOf(false) }
+    LaunchedEffect(visible) {
+        if (!visible) recheckPressed = false
     }
 
     // The FIX key's dip: pressed on DOWN, held for the whole absence,
@@ -492,6 +515,63 @@ fun ParkDrawer(
                         ) {
                             Text(
                                 text = "FIX — ${item.boardName}",
+                                style = PrimaryButtonTextStyle,
+                                color = onInkControlFill()
+                            )
+                        }
+                    }
+                }
+
+                // (3b) The RE-CHECK key (issue #109, F3): STALE's
+                // remedy. Present only while a permission line is
+                // STALE and nothing is MISSING; a press fires a fresh
+                // Watch sweep from the host and the lines re-measure
+                // where he stands — no leaving the app and coming
+                // back. Sealed, it is absent like the FIX key: the
+                // drawer is read-only and prints so at its head.
+                AnimatedVisibility(
+                    visible = firstStale != null && !isSealed,
+                    enter = expandVertically(tween(MonolithKin.DRAWER_CLOSE_MS, easing = MonolithKin.EasingSeat)) +
+                        fadeIn(tween(MonolithKin.DRAWER_CLOSE_MS)),
+                    exit = shrinkVertically(tween(MonolithKin.DRAWER_CLOSE_MS, easing = MonolithKin.EasingThrow)) +
+                        fadeOut(tween(MonolithKin.DRAWER_CLOSE_MS))
+                ) {
+                    val item = firstStale ?: return@AnimatedVisibility
+                    Column {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .offset(y = if (recheckPressed) 1.dp else 0.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(inkControlFill())
+                                .then(
+                                    if (interactive) {
+                                        Modifier.pointerInput(item) {
+                                            detectTapGestures(
+                                                onPress = {
+                                                    recheckPressed = true
+                                                    // Same quiet seat knock
+                                                    // as the FIX key.
+                                                    soundEngine?.playSeatKnock(
+                                                        durationMs = 10,
+                                                        amplitude01 = if (isNight) 0.06f else 0.1f,
+                                                        pitchHz = 300f
+                                                    )
+                                                    onRecheck()
+                                                    tryAwaitRelease()
+                                                    recheckPressed = false
+                                                }
+                                            )
+                                        }
+                                    } else Modifier
+                                )
+                                .testTag("park_recheck_key"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "RE-CHECK — ${item.boardName}",
                                 style = PrimaryButtonTextStyle,
                                 color = onInkControlFill()
                             )

@@ -331,9 +331,16 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // board renders the Watch Store — unless a diagnostic line is
     // invoked; the sweep itself is the point (clock/HMAC/boot facts
     // stay warm for the day a diagnostic needs them).
+    // Issue #109, F3: opening PARK ALSO fires the real Watch sweep.
+    // Until now the board opened on whatever the last ON_RESUME /
+    // Deck-entry sweep left behind, and its own GRANTED lines aged
+    // into STALE in front of the reader with no re-measure anywhere
+    // on the surface. The sweep is the board's re-measure; the
+    // drawer's RE-CHECK key fires the same one on demand.
     LaunchedEffect(parkOpen) {
         if (parkOpen) {
             viewModel.refreshSystemGuard()
+            viewModel.runWatchSweep()
         }
     }
 
@@ -678,6 +685,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         parkReturnTick = parkReturnTick,
                         onDismiss = { closePark(dismissReceipt = false) },
                         onFixClick = { item -> openFixPane(item) },
+                        onRecheck = { viewModel.runWatchSweep() },
                         onToggleSound = { viewModel.toggleSound() },
                         onToggleShortsReelsSniper = { viewModel.toggleShortsReelsSniper() },
                         // Truth Car 3 (UNA-02): the SOCIAL SITES
