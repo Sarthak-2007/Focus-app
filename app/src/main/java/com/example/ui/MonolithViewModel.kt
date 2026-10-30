@@ -121,11 +121,15 @@ fun evaluateTheme(
 }
 
 /**
- * A FROZEN digest: the held notifications as they stood at one
- * instant, keyed to the session that froze them. While sealed, the
- * digest is this snapshot — never the live flow. Reopening inside
- * the same session reuses it (same rows, same stamp); a new session
- * arming under an open sheet remints it; it survives the session's
+ * The SEALED digest: the held notifications for one session, keyed
+ * to that session. While sealed, the digest renders through this
+ * holder in frozen MODE — read-only, no row opens, no delete — but
+ * the snapshot itself REFRESHES (issue #118, finding 3): opening the
+ * sheet remints it, and while the sheet stands open every new held
+ * item remints it again, so mid-session triage can see what has
+ * arrived since the session started. Refreshing what is SHOWN
+ * unlocks nothing: the repository's sealed gate still refuses every
+ * delete/clear while a session is active. It survives the session's
  * end until dismissed unsealed.
  */
 data class FrozenDigest(
@@ -1054,20 +1058,29 @@ class MonolithViewModel(
                 )
             }
         }
-        // THE FREEZE WATCH: while the digest sheet is visible, any
-        // session that becomes active with an id the holder doesn't
-        // carry (re)mints the freeze — a routine arming under an
-        // open live sheet (RoutineAlarmReceiver fires with no UI),
-        // or a new session replacing one that ended under a frozen
-        // sheet. Transitions to inactive are ignored on purpose:
-        // the freeze latches past the session's end until dismissed.
+        // THE DIGEST WATCH: while the digest sheet is visible under
+        // an active session, the sealed snapshot (re)mints whenever
+        // the session the holder carries changes — a routine arming
+        // under an open live sheet (RoutineAlarmReceiver fires with
+        // no UI), or a new session replacing one that ended under an
+        // open sheet — AND whenever a new notification is held
+        // (issue #118, finding 3: the sealed digest refreshes what it
+        // shows; it still opens and deletes nothing). Transitions to
+        // inactive are ignored on purpose: the holder latches past
+        // the session's end until dismissed unsealed.
         viewModelScope.launch {
-            combine(activeSession, showNotificationDigestSheet) { session, visible ->
-                session to visible
-            }.collect { (session, visible) ->
-                if (visible && session != null && session.isActive &&
-                    _frozenDigest.value?.sessionId != session.id
-                ) {
+            combine(activeSession, showNotificationDigestSheet, capturedNotifications) { session, visible, held ->
+                Triple(session, visible, held)
+            }.collect { (session, visible, held) ->
+                val holder = _frozenDigest.value
+                // A remint is owed when the holder belongs to another
+                // session, or when the live held list carries an item
+                // the holder has never shown (a new arrival). Ids, not
+                // list equality: the snapshot is uncapped, the flow is
+                // capped, and the two must not chase each other.
+                val owesMint = holder == null || holder.sessionId != session?.id ||
+                    held.any { item -> holder.items.none { it.id == item.id } }
+                if (visible && session != null && session.isActive && owesMint) {
                     mintFrozenDigest(session.id)
                 }
             }
@@ -1081,10 +1094,13 @@ class MonolithViewModel(
         runSliceERecovery()
     }
 
-    /** Take the one-shot snapshot for [sessionId] and hold it. The
-     *  write is guarded: if the session changed again while the
-     *  read was in flight, the stale mint is dropped and the freeze
-     *  watch will mint for the session that is actually active. */
+    /** Take a snapshot for [sessionId] and hold it. The write is
+     *  guarded: if the session changed again while the read was in
+     *  flight, the stale mint is dropped and the digest watch will
+     *  mint for the session that is actually active. Reminting for
+     *  the SAME session is the refresh path (issue #118, finding 3):
+     *  it replaces the holder's rows and stamp with the held world
+     *  as it stands now. */
     private fun mintFrozenDigest(sessionId: Int) {
         viewModelScope.launch {
             val items = repository.capturedNotificationsSnapshot()
@@ -1806,12 +1822,12 @@ class MonolithViewModel(
         if (visible) {
             val session = activeSession.value
             if (session != null && session.isActive) {
-                // Sealed open: freeze — reusing the holder when it
-                // already belongs to this session (same rows, same
-                // stamp; reopening pays nothing), minting otherwise.
-                if (_frozenDigest.value?.sessionId != session.id) {
-                    mintFrozenDigest(session.id)
-                }
+                // Sealed open: ALWAYS remint (issue #118, finding 3)
+                // — reopening the sheet shows the held world as it
+                // stands at this open, including everything held
+                // since the last look; the old reuse-the-holder path
+                // made reopening show the same frozen rows forever.
+                mintFrozenDigest(session.id)
             } else {
                 // Unsealed open is live mode; no holder may linger.
                 _frozenDigest.value = null
