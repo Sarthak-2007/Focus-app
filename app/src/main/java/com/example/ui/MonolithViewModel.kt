@@ -73,6 +73,10 @@ fun appMatchesQuery(app: BlockedAppEntity, query: String): Boolean {
 }
 
 enum class MonolithDestination(val route: String, val label: String) {
+    // Issue #115: ONE name per destination, everywhere — the labels
+    // here are the rail's printed words (DECK · SHIELD · TASKS ·
+    // LEDGER). The old second vocabulary (Focus / Receipts) meant
+    // the same screens answered to two names depending on the layer.
     DECK("deck", "Deck"),
     TASKS("tasks", "Tasks"),
     SHIELD("shield", "Shield"),
@@ -1114,10 +1118,13 @@ class MonolithViewModel(
      *  Store. The seal freeze is the band's fallback for the
      *  UNMEASURED case only — a live measured print outranks the
      *  captured one in both directions, so a permission revoked
-     *  mid-session drops the band off its frozen `GUARD 4/4` the
+     *  mid-session drops the band off its frozen whole print the
      *  moment the store measures the loss (Audit R3 #113,
-     *  finding 2; resolveGuardLinePrint carries the law). */
-    val guardLinePrint: StateFlow<com.example.ui.components.GuardLinePrint?> = combine(
+     *  finding 2; resolveGuardLinePrint carries the law). The
+     *  flow is never null (issue #9, P-6): before the first
+     *  measurement lands it carries the NOT CHECKED floor, so a
+     *  cold open prints `GUARD — NOT CHECKED`, never a blank. */
+    val guardLinePrint: StateFlow<com.example.ui.components.GuardLinePrint> = combine(
         com.example.service.WatchStore.snapshots,
         _sealFreeze,
         activeSession
@@ -1129,7 +1136,12 @@ class MonolithViewModel(
                 snap, android.os.SystemClock.elapsedRealtime()
             )
         )
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    }.stateIn(
+        viewModelScope, SharingStarted.Eagerly,
+        com.example.ui.components.GuardLinePrint(
+            com.example.ui.components.GUARD_NOT_CHECKED_TEXT
+        )
+    )
 
     // =========================================================================
     // THE CASCADE (Slice D step 4): the arm's proving controller.
