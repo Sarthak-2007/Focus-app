@@ -15,6 +15,12 @@ import kotlinx.coroutines.launch
  * in derive(); all hands are the heartbeat's. A stale, duplicated, or
  * mis-delivered fire reconciles against stored state and changes
  * nothing that isn't owed.
+ *
+ * Issue #323 F3: after the reconcile, the same fire runs the
+ * ShieldWatchdog — if a session is live but the shield service
+ * died underneath it (OEM kill, OOM, an unhonoured START_STICKY),
+ * the watchdog restarts it. The watchdog carries its own one-line
+ * law; this receiver only gives it the alarm's cadence.
  */
 class RoutineAlarmReceiver : BroadcastReceiver() {
 
@@ -24,6 +30,7 @@ class RoutineAlarmReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 RoutineHeartbeat.tick(appContext, RoutineHeartbeat.Source.CHAIN_ALARM, force = true)
+                ShieldWatchdog.runOnce(appContext)
             } finally {
                 pendingResult.finish()
             }

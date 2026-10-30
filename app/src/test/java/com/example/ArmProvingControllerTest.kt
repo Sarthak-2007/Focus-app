@@ -73,7 +73,7 @@ class ArmProvingControllerTest {
             .build()
         repository = MonolithRepository(context, db.monolithDao())
         engine = TactileSoundEngine(context)
-        context.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+        com.example.data.DeviceProtectedPrefs.get(context, MonolithRepository.SEAL_PREFS_NAME)
             .edit().clear().commit()
     }
 
@@ -418,7 +418,8 @@ class ArmProvingControllerTest {
         assertEquals(2, port.startShieldCalls)
         assertEquals(1, events.count { it == "jamhaptics" })
         val sentence = jamSentenceFor(jammed)
-        assertEquals("SHIELD DIDN'T ANSWER — STILL PROVING.", sentence?.text)
+        assertEquals(R.string.sentence_didnt_answer, sentence?.textRes)
+        assertEquals(listOf("SHIELD"), sentence?.args)
         assertNull(sentence?.action)
         // The retry answers: the attempt seals inside its window.
         witnesses.shieldMono = l + 700
@@ -450,7 +451,8 @@ class ArmProvingControllerTest {
         assertEquals(1, controller.annulCount.value)
         assertTrue(port.sealCalls.isEmpty())
         val sentence = controller.armSentence.value
-        assertEquals("NOT SEALED — THE SHIELD DIDN'T ANSWER.", sentence?.text)
+        assertEquals(R.string.sentence_not_sealed_named, sentence?.textRes)
+        assertEquals(listOf("THE SHIELD"), sentence?.args)
         assertNull(sentence?.action)
     }
 
@@ -479,8 +481,8 @@ class ArmProvingControllerTest {
             jammed.jamSet
         )
         assertEquals(
-            "SHIELD DIDN'T ANSWER — STILL PROVING.",
-            jamSentenceFor(jammed)?.text
+            R.string.sentence_didnt_answer,
+            jamSentenceFor(jammed)?.textRes
         )
     }
 
@@ -545,7 +547,7 @@ class ArmProvingControllerTest {
             lastVibrationPattern()?.contentEquals(TactileSoundEngine.SEAL_THROW_TIMINGS) == true
         )
         val sentence = controller.armSentence.value
-        assertEquals("NOT SEALED — THE SESSION DIDN'T ANSWER.", sentence?.text)
+        assertEquals(R.string.sentence_not_sealed_session, sentence?.textRes)
     }
 
     // =================================================================
@@ -674,10 +676,14 @@ class ArmProvingControllerTest {
         runCurrent()
         assertEquals(ArmPhase.Idle, controller.phase.value)
         assertEquals(1, controller.annulCount.value)
+        // The literal this asserted was re-ruled on main (#164 F5 merge
+        // note in ArmProvingController.annul): the annul sentence is now
+        // the named NOT SEALED form — res identity + args is the check.
         assertEquals(
-            "SESSION-ROW — NO PROOF. NOTHING WAS SEALED.",
-            controller.armSentence.value?.text
+            R.string.sentence_not_sealed_named,
+            controller.armSentence.value?.textRes
         )
+        assertEquals(listOf("THE SESSION"), controller.armSentence.value?.args)
     }
 
     @Test
@@ -779,9 +785,10 @@ class ArmProvingControllerTest {
         assertEquals(1, controller.annulCount.value)
         assertTrue(port.annulCalls.isEmpty())
         assertEquals(
-            "SESSION — NO PROOF. NOTHING WAS SEALED. ANY BLOCKING FROM THE WAIT IS OFF.",
-            controller.armSentence.value?.text
+            R.string.sentence_no_proof_blocking_off,
+            controller.armSentence.value?.textRes
         )
+        assertEquals(listOf("SESSION"), controller.armSentence.value?.args)
     }
 
     @Test
@@ -816,13 +823,14 @@ class ArmProvingControllerTest {
             jamSet = setOf(ArmLink.SHIELD_PROTECTING, ArmLink.A11Y_SESSION_ARMED),
             retryCount = 1
         )
-        assertEquals("ACCESS DIDN'T ANSWER — STILL PROVING.", jamSentenceFor(jammed)?.text)
+        assertEquals(R.string.sentence_didnt_answer, jamSentenceFor(jammed)?.textRes)
         // With a clock: the retry verb + the annulment countdown
         // (latch 1000 + ANNUL 1500 − now 1900 = 600ms → 1S).
         assertEquals(
-            "ACCESS STILL HASN'T ANSWERED — RETRYING · ANNULS IN 1S.",
-            jamSentenceFor(jammed, nowMono = 1_900L)?.text
+            R.string.sentence_still_hasnt_answered,
+            jamSentenceFor(jammed, nowMono = 1_900L)?.textRes
         )
+        assertEquals(listOf("ACCESS", 1L), jamSentenceFor(jammed, nowMono = 1_900L)?.args)
     }
 
     @Test
@@ -840,10 +848,13 @@ class ArmProvingControllerTest {
         assertEquals(2, proving.provenCount())
         // Issue #126 F2: PROVING speaks, counting its answered
         // links from the same derived count.
+        // Producer wording on main is the #98 form (see
+        // CascadeDeckRenderTest): res identity + args is the check.
         assertEquals(
-            "PROVING THE SEAL — 2 OF 3 LINKS ANSWERED.",
-            provingSentenceFor(proving)?.text
+            R.string.sentence_checking_seal,
+            provingSentenceFor(proving)?.textRes
         )
+        assertEquals(listOf(2), provingSentenceFor(proving)?.args)
         assertNull(provingSentenceFor(ArmPhase.Idle))
         assertNull(provingSentenceFor(ArmPhase.SealedRunning(7, 100)))
         assertNull(jamSentenceFor(proving))

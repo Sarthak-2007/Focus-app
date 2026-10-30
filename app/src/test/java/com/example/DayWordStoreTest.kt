@@ -61,6 +61,22 @@ class DayWordStoreTest {
     }
 
     @Test
+    fun put_recordsDeclarationZone_clearRemovesIt() {
+        // Issue #152: the declaration's zone is witnessed beside
+        // the word (never served as a word itself), and a clear
+        // takes the witness with it.
+        val store = DayWordStore(context)
+        assertTrue(store.put("2026-10-26", "REST"))
+        assertEquals(
+            java.time.ZoneId.systemDefault().id,
+            store.declaredZone("2026-10-26")
+        )
+        assertEquals(mapOf("2026-10-26" to "REST"), store.all())
+        assertTrue(store.put("2026-10-26", null))
+        assertEquals(null, store.declaredZone("2026-10-26"))
+    }
+
+    @Test
     fun put_refusesOutOfListWord() {
         val store = DayWordStore(context)
         assertFalse(store.put("2026-10-26", "TEST"))

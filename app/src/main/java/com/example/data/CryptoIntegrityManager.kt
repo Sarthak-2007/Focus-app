@@ -56,6 +56,7 @@ object CryptoIntegrityManager {
             val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
             val existing = ks.getEntry(HMAC_KEY_ALIAS, null) as? KeyStore.SecretKeyEntry
             if (existing != null) {
+                cachedHardwareKey = existing.secretKey
                 existing.secretKey
             } else {
                 val keyGen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_HMAC_SHA256, ANDROID_KEYSTORE)
@@ -72,11 +73,45 @@ object CryptoIntegrityManager {
         }
     }
 
-    /** VERIFY path: lookup ONLY — returns the existing key or null, never creates one. */
-    private fun getExistingHardwareHmacKeyOrNull(): SecretKey? {
+    // Audit R6 #341 F53: the key is cached after first load. Before
+    // this, every progress tick (1s ViewModel + 2s shield) re-ran
+    // KeyStore.getInstance + load(null) + getEntry — ~5,400 store
+    // round-trips per session-hour to re-prove a signature over
+    // four values that cannot change mid-session. A key deleted
+    // behind our back now fails verification conservatively (the
+    // cached key no longer matches a re-signed state) instead of
+    // being silently re-minted — the R1 #36 law still holds.
+    @Volatile
+    private var cachedHardwareKey: SecretKey? = null
+
+    /**
+     * Whether the HMAC key already exists in AndroidKeyStore —
+     * WITHOUT generating it (issue #81 F1). AndroidKeyStore entries
+     * are held by the system per app UID: `pm clear` / Clear-data
+     * does NOT delete them (uninstall and factory reset do). A
+     * pre-existing key under a virgin database is therefore the
+     * one residue that proves the install ran before its data was
+     * wiped. Returns false wherever the keystore is unreachable
+     * (JVM tests, TEE failure) — absence of proof, never proof of
+     * a wipe.
+     */
+    fun hmacKeyExists(): Boolean {
         return try {
             val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-            (ks.getEntry(HMAC_KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.secretKey
+            ks.containsAlias(HMAC_KEY_ALIAS)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** VERIFY path: lookup ONLY — returns the existing key or null, never creates one. */
+    private fun getExistingHardwareHmacKeyOrNull(): SecretKey? {
+        cachedHardwareKey?.let { return it }
+        return try {
+            val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            val key = (ks.getEntry(HMAC_KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.secretKey
+            if (key != null) cachedHardwareKey = key
+            key
         } catch (_: Exception) {
             null
         }

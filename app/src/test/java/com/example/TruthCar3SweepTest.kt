@@ -325,6 +325,8 @@ class TruthCar3SweepRoboTest {
                     onToggleSound = {},
                     shortsReelsSniperEnabled = true,
                     onToggleShortsReelsSniper = {},
+                    // Wave-2 premise: social pair is scaffolding here —
+                    // `true` is the persisted default; the toggle is not under test in this file.
                     socialSitesEnabled = true,
                     onToggleSocialSites = {}
                 )
@@ -361,6 +363,8 @@ class TruthCar3SweepRoboTest {
                     onToggleSound = {},
                     shortsReelsSniperEnabled = true,
                     onToggleShortsReelsSniper = {},
+                    // Wave-2 premise: social pair is scaffolding here —
+                    // `true` is the persisted default; the toggle is not under test in this file.
                     socialSitesEnabled = true,
                     onToggleSocialSites = {}
                 )
