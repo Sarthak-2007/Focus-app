@@ -135,6 +135,9 @@ fun TactileDeckScreen(
     // render harnesses that seat the Deck without a live break
     // keep composing; MainActivity wires the VM's verb.
     onEndSafeBreak: () -> Unit = {},
+    // Issue #283: the in-session extend verb — defaulted like
+    // onEndSafeBreak so render harnesses keep composing.
+    onExtendSession: () -> Unit = {},
     weeklyEmergencyTokensRemaining: Int = 1,
     // Slice D (the proof strip, the sentence slot, the imprint): the
     // host owns the wire; the screen renders its word.
@@ -1477,6 +1480,25 @@ fun TactileDeckScreen(
                     letterSpacing = 0.8.sp,
                     color = scheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+            // Issue #283 (R5 supplement): the extend verb. A running
+            // session used to offer only endings (grace abort, the
+            // valve); the original's +15 lives here, under the
+            // standing grace/valve line, at the same 72dp chair
+            // height as the other session verbs. The repository
+            // caps it (no sale at 60+ minutes remaining).
+            if (activeSession != null && !activeSession.isStopwatchMode) {
+                Spacer(Modifier.height(8.dp))
+                BlockitActionChip(
+                    wordLabel = "EXTEND SESSION",
+                    monoBadge = "+15 MIN",
+                    isPrimaryInk = false,
+                    onClick = onExtendSession,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(72.dp),
+                    testTag = "extend_session_button"
                 )
             }
             Spacer(Modifier.height(8.dp))
