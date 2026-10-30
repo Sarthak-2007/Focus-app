@@ -473,6 +473,20 @@ class MonolithViewModel(
     private val _loadoutCapIndex = MutableStateFlow(loadoutStore.capIndex())
     val loadoutCapIndex: StateFlow<Int> = _loadoutCapIndex.asStateFlow()
 
+    // Audit R1 #40: the receipt dismissal is persisted — the
+    // host's remember{} alone let process death resurrect a
+    // receipt he had already put away. MainActivity seeds its
+    // gate from here and writes every dismissal through.
+    private val receiptDismissalStore =
+        com.example.data.ReceiptDismissalStore(appContext)
+
+    fun dismissedReceiptSessionId(): Int =
+        receiptDismissalStore.dismissedSessionId()
+
+    fun persistReceiptDismissal(sessionId: Int) {
+        receiptDismissalStore.dismiss(sessionId)
+    }
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
@@ -1323,6 +1337,18 @@ class MonolithViewModel(
                         when {
                             ageMs <= 1_800L -> onFinishE0(row, kind, witnessed = true)
                             ageMs <= 600_000L -> onFinishE0(row, kind, witnessed = false)
+                            // Audit R1 #40: a SLEEP stand-down is
+                            // DISCOVERED, never witnessed — the
+                            // phone slept through the window's end
+                            // and the finish exists only when the
+                            // app next looks. The 10-minute discard
+                            // made exactly that booking vanish,
+                            // forever. Stand-downs are exempt from
+                            // the discard; every other kind keeps
+                            // it (a stale manual finish discovered
+                            // days late still books nothing).
+                            kind == com.example.data.FinishKind.ROUTINE_SLEEP_STANDDOWN ->
+                                onFinishE0(row, kind, witnessed = false)
                             else -> handledFinishIds += row.id
                         }
                     } else {

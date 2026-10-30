@@ -309,7 +309,15 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // plain remember — a rotation must not resurrect a dismissed
     // receipt, snap PARK shut mid-diagnosis, or restart the
     // return-tick diagnostic.
-    var dismissedReceiptSessionId by rememberSaveable { mutableStateOf(-1) }
+    // Audit R1 #40: the saveable is SEEDED from the persisted
+    // dismissal (ReceiptDismissalStore) — rememberSaveable covers
+    // rotation and state-restore, but a put-away receipt must
+    // also survive a cold process death with no saved state to
+    // restore; every dismissal below writes through to the store
+    // (viewModel.persistReceiptDismissal).
+    var dismissedReceiptSessionId by rememberSaveable {
+        mutableStateOf(viewModel.dismissedReceiptSessionId())
+    }
 
     // ------------------------------------------------------------------
     // PARK state (chrome C4). The drawer is invoked by arrival (the
@@ -357,7 +365,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // same input, and so does any navigation away from the Deck.
     LaunchedEffect(currentDestination, parkOpen) {
         if (currentDestination != MonolithDestination.DECK || parkOpen) {
-            receiptState?.let { dismissedReceiptSessionId = it.sessionId }
+            receiptState?.let {
+                dismissedReceiptSessionId = it.sessionId
+                viewModel.persistReceiptDismissal(it.sessionId)
+            }
         }
     }
 
@@ -964,7 +975,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             ) {
                 com.example.ui.components.ReceiptSheet(
                     receipt = standingReceipt,
-                    onDismiss = { dismissedReceiptSessionId = standingReceipt.sessionId }
+                    onDismiss = {
+                        dismissedReceiptSessionId = standingReceipt.sessionId
+                        viewModel.persistReceiptDismissal(standingReceipt.sessionId)
+                    }
                 )
             }
 
