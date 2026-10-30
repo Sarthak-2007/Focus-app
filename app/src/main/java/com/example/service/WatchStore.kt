@@ -27,7 +27,8 @@ import kotlinx.coroutines.launch
  *  - service lifecycle hooks stamp the two BIND items (accessibility,
  *    notification listener) and the device-admin GRANT CHECK;
  *  - the shield loop publishes ONE snapshot per iteration: the engine
- *    heartbeat plus a re-read of the two BIND items' present state;
+ *    heartbeat plus a re-read of the two BIND items' present state
+ *    (and, since issue #81 F4, the USAGE ACCESS grant it measured);
  *  - the grant-check sweep (Deck entry, Deck resume, FIX return)
  *    dispatches the six permission queries in parallel at t=0; each
  *    item re-stamps only when its own query lands.
@@ -109,14 +110,23 @@ enum class WatchItemId(val boardName: String, val counted: Boolean) {
     AUTOSTART("AUTOSTART", false);
 
     companion object {
-        /** The six permission-family items, board order. */
+        /** The six permission-family items, board order.
+         *  Issue #309 F5 (Audit R5, AppBlock second pass): the board
+         *  used to LEAD with its scariest grants (ACCESSIBILITY,
+         *  DEVICE ADMIN). The order is now cheapest-first — the
+         *  read-only USAGE ACCESS ask leads, the invasive grants
+         *  (ACCESSIBILITY, DEVICE ADMIN) close the board — so the
+         *  first thing a new user is asked for is the least
+         *  frightening one, and the "first missing" surfaces that
+         *  read this list meet the cheap asks before the dear ones. */
         val PERMISSIONS: List<WatchItemId> = listOf(
-            ACCESSIBILITY, USAGE_ACCESS, DEVICE_ADMIN,
-            NOTIFICATION_LISTENER, OVERLAY, BATTERY
+            USAGE_ACCESS, OVERLAY, NOTIFICATION_LISTENER,
+            ACCESSIBILITY, DEVICE_ADMIN, BATTERY
         )
-        /** The counted four, board order. */
+        /** The counted four, board order (same relative order as
+         *  [PERMISSIONS]). */
         val COUNTED: List<WatchItemId> = listOf(
-            ACCESSIBILITY, USAGE_ACCESS, DEVICE_ADMIN, NOTIFICATION_LISTENER
+            USAGE_ACCESS, NOTIFICATION_LISTENER, ACCESSIBILITY, DEVICE_ADMIN
         )
         /** The three derived interceptor items, board order. */
         val INTERCEPTORS: List<WatchItemId> = listOf(SHORTS_REELS, SOCIAL_SITES, NOTIFICATIONS)
@@ -173,14 +183,43 @@ data class WatchSnapshot(
 
 /** What a permission line prints at a given instant (spec §4.2):
  *  never-measured, the measured value, or its stale derivative.
- *  SWORN (Audit R6 #340 F44) is the third truth the funnel owed:
+ *  UNPROVED (issue #94): a measurement exists and reads granted, but
+ *  a fact the app cannot measure stands behind it — the BATTERY line
+ *  on an OEM-autostart-gated skin, where the AOSP exemption is only
+ *  half the survival fact and the autostart half is unreadable.
+ *  SWORN (Audit R6 #340 F44) is the further truth the funnel owed:
  *  "the OS cannot tell us — the user swears they did it." It is
  *  a PRINT only, never a PermState: an oath is not a measurement,
  *  is never counted as GRANTED anywhere, and dies on the events
  *  that could falsify it (reboot, app replacement). */
-enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE, MISSING_STALE, SWORN }
+enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE, MISSING_STALE, UNPROVED, SWORN }
 
 object WatchStore {
+
+    /**
+     * Issue #280 (R5 supplement): the one-line rationale the PARK
+     * board prints under the FIX key for the grant it targets —
+     * what the grant does, and what it never does — BEFORE the
+     * Settings trip fires. The original explains each grant before
+     * asking; Monolith's board fired a bare FIX key. Pure and
+     * total over the six PERMISSIONS; interceptor items and
+     * unknown items carry no rationale (null).
+     */
+    fun boardRationale(item: WatchItemId): String? = when (item) {
+        WatchItemId.ACCESSIBILITY ->
+            "ACCESSIBILITY — brings you back when a blocked app opens. It never reads what is on your screen."
+        WatchItemId.USAGE_ACCESS ->
+            "USAGE ACCESS — tells Monolith which app is in front, so the seal knows what to hold. It never leaves this phone."
+        WatchItemId.DEVICE_ADMIN ->
+            "DEVICE ADMIN — adds friction if the seal is switched off mid-session. It cannot stop you uninstalling, ever."
+        WatchItemId.NOTIFICATION_LISTENER ->
+            "NOTIFICATIONS ACCESS — holds a blocked app's notifications during a session and shows them to you after. Calls and alarms are never held."
+        WatchItemId.OVERLAY ->
+            "OVERLAY — lets the block surface stand over a blocked app. It draws nothing outside a session."
+        WatchItemId.BATTERY ->
+            "BATTERY EXEMPTION — keeps Android from sleeping the shield mid-session. Nothing else changes."
+        else -> null
+    }
 
     /** A PASS measurement older than this (monotonic) is stale. */
     const val STALE_AFTER_MS: Long = 45_000L
@@ -371,8 +410,17 @@ object WatchStore {
      * heartbeat (behind the strip, never a board line) plus a
      * re-read of the two BIND items' present state, stamped as
      * measurements of this instant.
+     *
+     * Issue #81 F4: the loop also hands over the USAGE ACCESS fact
+     * it measured this iteration ([usageGranted], null = not
+     * measured — the stop/destroy publications, which must not
+     * fabricate a reading while dying). Before this, USAGE_ACCESS
+     * was re-measured only by the Deck-triggered sweep, so a
+     * mid-session revocation stayed invisible to every surface
+     * while the shield kept beating; now the board re-reads it on
+     * the shield's own 2s cadence for as long as a session runs.
      */
-    fun onShieldIteration(protecting: Boolean) {
+    fun onShieldIteration(protecting: Boolean, usageGranted: Boolean? = null) {
         val mono = SystemClock.elapsedRealtime()
         val wall = System.currentTimeMillis()
         val a11y = MonolithAccessibilityService.instance != null
@@ -397,6 +445,15 @@ object WatchStore {
                     measuredMono = mono, measuredWall = wall
                 )
             )
+            if (usageGranted != null) {
+                next = next.withMeasurement(
+                    WatchMeasurement(
+                        WatchItemId.USAGE_ACCESS,
+                        perm = if (usageGranted) PermState.GRANTED else PermState.MISSING,
+                        measuredMono = mono, measuredWall = wall
+                    )
+                )
+            }
             next
         }
     }
@@ -409,8 +466,17 @@ object WatchStore {
      * advances to the set's completion instant.
      */
     fun runSweep(query: (WatchItemId) -> Boolean) {
-        val gen = ++sweepGen
-        pendingSweepStartWall = System.currentTimeMillis()
+        // Issue #77: sweepGen and pendingSweepStartWall are read and
+        // cleared by publish() under its @Synchronized monitor; they
+        // were written here OUTSIDE that monitor, so overlapping
+        // sweeps (Deck entry + ON_RESUME) could mix generations and
+        // complete each other's sets with stale stamps. The dispatch
+        // state now takes the same monitor publish() holds.
+        val gen: Int
+        synchronized(this) {
+            gen = ++sweepGen
+            pendingSweepStartWall = System.currentTimeMillis()
+        }
         for (item in WatchItemId.PERMISSIONS) {
             sweepScope.launch {
                 // Truth (issue #76): a query that THREW is not a
@@ -541,6 +607,15 @@ object WatchStore {
         if (m == null || perm == null) return PermPrint.UNMEASURED
         val stale = nowMono - m.measuredMono > STALE_AFTER_MS
         return when {
+            // Issue #94 (F1): on a skin whose OEM autostart toggle gates
+            // receiver restarts, a granted AOSP battery read never
+            // prints GRANTED — the toggle cannot be read back, so the
+            // honest word is UNPROVED. A missing AOSP read stays
+            // MISSING below: that half is known, not proved-absent.
+            item == WatchItemId.BATTERY && perm == PermState.GRANTED &&
+                !com.example.data.OemPolicy.batteryGrantedIsProved(
+                    com.example.data.OemPolicy.currentGate()
+                ) -> PermPrint.UNPROVED
             perm == PermState.GRANTED && stale -> PermPrint.STALE
             perm == PermState.GRANTED -> PermPrint.GRANTED
             stale -> PermPrint.MISSING_STALE

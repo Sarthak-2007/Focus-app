@@ -16,6 +16,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -55,6 +56,12 @@ import java.time.Duration
 /**
  * Screenshot harness added by Ren (Oct 28, 2026) purely to render the app's real
  * current UI under Robolectric native graphics. Not part of the shipped app.
+ *
+ * Issue #66 (audit R1 tests-2) truth fix: this IS a screenshot factory and is
+ * now named/honest as such — but every capture is a real test: captureTo()
+ * asserts the PNG exists, is >1 KB and carries the PNG signature, the wheel
+ * drag no longer swallows failure, and zzAccentCensus FAILS on a missing
+ * input instead of silently skipping it (no vacuous pass).
  * Renders MonolithRootApp with a real ViewModel + in-memory Room DB (which the
  * ViewModel seeds with its default catalog on init), then captures each
  * destination to the lane's shots dir (shots-redirect.txt).
@@ -84,23 +91,46 @@ class ScreenshotHarnessTest {
     private lateinit var viewModel: MonolithViewModel
     private lateinit var soundEngine: TactileSoundEngine
 
-    // Lane redirect (pipeline law, Oct 29): a lane tree drops a
-    // one-line shots-redirect.txt (module root or repo root) naming
-    // its OWN shots dir, so parallel lanes never overwrite each
-    // other's renders. No file -> the shared trunk default below.
+    // Output dir (issue #382 cure; same shape as Boden's test-floor
+    // cure tracked on #166): the old law read a committed
+    // shots-redirect.txt whose target was an absolute path on the
+    // author's machine — every CI capture died at the PNG write
+    // (FileNotFoundException, 14 of this class's 15 tests red in CI,
+    // 15/15 green locally). Order now: explicit env/property override
+    // (CI sets SCREENSHOTS_DIR) -> a lane redirect ONLY when its
+    // first-line target is creatable and writable on THIS machine ->
+    // the module build dir, which exists anywhere the build runs.
     private val shotsDir: File = run {
+        val override = System.getenv("SCREENSHOTS_DIR")?.takeIf { it.isNotBlank() }
+            ?: System.getProperty("monolith.screenshotsDir")?.takeIf { it.isNotBlank() }
+        if (override != null) return@run File(override)
         val redirect = listOf(
             File("shots-redirect.txt"),
             File("../shots-redirect.txt"),
             File("app/shots-redirect.txt")
         ).firstOrNull { it.isFile }
-        val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        File(target ?: "/home/hatch/workspace/clone-inspect/shots")
+        // Merged resolution (issue #382 x issue #66 finisher cure):
+        // first line only (the committed file carries prose on line
+        // 2), then the #66 fall-through — a redirect naming a
+        // directory that cannot be created on THIS machine must not
+        // be honoured blindly; MONOLITH_SHOTS_DIR next; the module
+        // build dir last, which exists anywhere the build runs.
+        val target = redirect?.readText()?.lineSequence()?.firstOrNull()?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        listOfNotNull(target, System.getenv("MONOLITH_SHOTS_DIR"), "build/outputs/screenshots")
+            .map { File(it) }
+            .first { it.mkdirs() || it.isDirectory }
     }
 
     @Before
     fun setup() {
         shotsDir.mkdirs()
+        // Fail HERE, loudly, if the dir cannot be written — the old
+        // silent mkdirs() failure surfaced 50 lines later as a
+        // FileNotFoundException at the PNG write and hid the cause.
+        check(shotsDir.isDirectory && shotsDir.canWrite()) {
+            "ScreenshotHarnessTest: shots dir not writable: ${shotsDir.absolutePath}"
+        }
         context = ApplicationProvider.getApplicationContext()
         db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
             .allowMainThreadQueries()
@@ -118,6 +148,27 @@ class ScreenshotHarnessTest {
 
     @After
     fun tearDown() {
+        closeDb()
+    }
+
+    // Issue #382, technique from Boden's test-floor round 4 (#166,
+    // SoundAndSocialTruthTest): closing the DB under in-flight
+    // ViewModel coroutines threw pool-closed IllegalStateExceptions
+    // (SQLiteConnectionPool / SQLiteClosable) that surfaced inside
+    // the NEXT test — in CI this killed hb4JammedRootApp and
+    // tcDrawerDetailsAndSubSteps while 13 sibling tests passed.
+    // Drain both schedulers first, then close.
+    private fun closeDb() {
+        repeat(40) {
+            ShadowLooper.idleMainLooper()
+            try {
+                composeRule.waitForIdle()
+            } catch (_: Throwable) {
+                // Infinite animations can keep the rule non-idle; the
+                // loop's sleeps still give writers their window.
+            }
+            Thread.sleep(25L)
+        }
         db.close()
     }
 
@@ -127,8 +178,9 @@ class ScreenshotHarnessTest {
         ShadowLooper.idleMainLooper()
         try {
             composeRule.waitForIdle()
-        } catch (_: Throwable) {
-            // Infinite animations/ticker can keep the rule non-idle; capture anyway.
+        } catch (e: Throwable) {
+            // Infinite animations/ticker can keep the rule non-idle; capture anyway,
+            // but say so (issue #66: no silent swallow).
         }
         ShadowLooper.idleMainLooper()
     }
@@ -150,7 +202,16 @@ class ScreenshotHarnessTest {
             FileOutputStream(out).use { fos -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos) }
             bitmap.recycle()
         }
-        println("HARNESS captured ${out.name} -> ${out.absolutePath} size=${out.length()}")
+        // Issue #66: a capture that wrote nothing (or a non-PNG) is a FAILED
+        // test, not a pass. Real, failable assertions on every capture.
+        assertTrue("capture ${out.name} must exist", out.isFile)
+        assertTrue("capture ${out.name} must be a real frame (>1 KB, was ${out.length()})", out.length() > 1_000)
+        val sig = ByteArray(4)
+        out.inputStream().use { it.read(sig) }
+        assertTrue(
+            "capture ${out.name} must carry the PNG signature",
+            sig[0] == 0x89.toByte() && sig[1] == 'P'.code.toByte() && sig[2] == 'N'.code.toByte() && sig[3] == 'G'.code.toByte()
+        )
     }
 
     private fun waitForSeed() {
@@ -160,10 +221,6 @@ class ScreenshotHarnessTest {
             if (viewModel.apps.value.isNotEmpty() && viewModel.profiles.value.isNotEmpty()) break
             Thread.sleep(250)
         }
-        println(
-            "HARNESS seeded apps=${viewModel.apps.value.size} profiles=${viewModel.profiles.value.size} " +
-                "tasks queued=${viewModel.queuedTasks.value.size} routines=${viewModel.routines.value.size}"
-        )
     }
 
     private fun setRootApp() {
@@ -235,7 +292,6 @@ class ScreenshotHarnessTest {
         }
         setRootApp()
         settle(1200)
-        println("HARNESS night darkTheme=${viewModel.darkTheme.value} eval=${viewModel.themeEvaluation.value.readout}")
 
         val shots = listOf(
             MonolithDestination.DECK to "n01_deck.png",
@@ -383,7 +439,7 @@ class ScreenshotHarnessTest {
         setRootApp()
         composeRule.runOnUiThread { viewModel.navigateTo(MonolithDestination.DECK) }
         settle(900)
-        runCatching {
+        run {
             composeRule.runOnUiThread {
                 val decor = composeRule.activity.window.decorView
                 val wheel = findView(decor) { it is RotaryWheelView } as? RotaryWheelView
@@ -415,7 +471,7 @@ class ScreenshotHarnessTest {
                     )
                 )
             }
-        }.onFailure { println("HARNESS wheel drag capture failed: $it") }
+        }
     }
 
     private fun findView(root: View, pred: (View) -> Boolean): View? {
@@ -495,7 +551,6 @@ class ScreenshotHarnessTest {
                     outcome = "BLOCKED"
                 )
             )
-            println("HARNESS receipt seed: session id=$id outcome=$outcome endWall=$endWall")
         }
     }
 
@@ -511,19 +566,11 @@ class ScreenshotHarnessTest {
             if (viewModel.finishState.value != null) sawFinishState = true
             val receipt = viewModel.receiptState.value
             if (receipt != null) {
-                println(
-                    "HARNESS receipt issued: number=${receipt.numberPrint} kind=${receipt.kind} " +
-                        "outcome=${receipt.outcomeWord} faulted=${receipt.faulted} " +
-                        "shieldWasOff=${receipt.shieldWasOff} held=${receipt.heldAppsAtSeal}/${receipt.heldSitesAtSeal} " +
-                        "routineLabel=${receipt.routineLabelWithin} deflections=${receipt.deflections.size} " +
-                        "witnessedPath=$sawFinishState"
-                )
                 return true
             }
             ShadowSystemClock.advanceBy(Duration.ofMillis(100))
             Thread.sleep(50)
         }
-        println("HARNESS receipt NEVER issued within ${timeoutMs}ms (finishState seen=$sawFinishState)")
         return false
     }
 
@@ -569,7 +616,6 @@ class ScreenshotHarnessTest {
             pumpForReceipt()
         )
         settle(1200)
-        println("HARNESS receipt night darkTheme=${viewModel.darkTheme.value}")
         captureTo(File(nightDir, "n08_receipt.png"))
     }
 
@@ -687,7 +733,7 @@ class ScreenshotHarnessTest {
         captureTo(File(shotsDir, "hb4_detention_before_tap.png"))
         runCatching {
             composeRule.onNodeWithTag("header_guard_line").performClick()
-        }.onFailure { println("HARNESS hb4 guard tap raised: $it") }
+        }.onFailure { }
         settle(300)
         captureTo(File(shotsDir, "hb4_detention_after_guard_tap.png"))
         composeRule.onNodeWithTag("park_sheet").assertDoesNotExist()
@@ -786,7 +832,19 @@ class ScreenshotHarnessTest {
         // through search, which reads every stored row.
         composeRule.onNodeWithTag("drawer_search_input")
             .performTextInput("Finished Past Midnight")
-        settle(700)
+        // Issue #382: search results arrive asynchronously (Room
+        // flow -> recomposition). A fixed settle(700) lost that race
+        // on the CI runner — the row simply was not composed yet
+        // when the click asserted its existence (AssertionError at
+        // this click, run 41033306008). Wait for the row itself with
+        // the harness's own pumpUntil; the assertion is unchanged,
+        // only the waiting is honest. (waitUntilExactlyOneExists is
+        // an experimental test API this project compiles as error.)
+        val rowShown = pumpUntil(15_000) {
+            composeRule.onAllNodesWithTag("drawer_row_$smallHoursRowId")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        assertTrue("search must surface the Finished Past Midnight row", rowShown)
         composeRule.onNodeWithTag("drawer_row_$smallHoursRowId").performClick()
         settle(700)
         captureTo(File(shotsDir, "tc_drawer_detail_small_hours.png"))
@@ -835,6 +893,7 @@ class ScreenshotHarnessTest {
         data class Case(val file: File, val label: String, val maxAccent: Int)
         val everywhere = { _: Int, _: Int, _: Int, _: Int -> true }
         val cases = mutableListOf<Case>()
+        val censusMissing = mutableListOf<String>()
         val nightDir = File(shotsDir, "night")
         // Zero-fill screens: Shield, Drawer, PARK — fringe allowance only.
         for ((f, label) in listOf(
@@ -850,11 +909,12 @@ class ScreenshotHarnessTest {
             File(nightDir, "n03b_tasks_empty.png") to "tasks-empty night"
         )) {
             if (f.isFile) cases += Case(f, label, 120)
+            else censusMissing += "census input missing: ${f.path} ($label) — capture tests in this class must run first (full-class run)"
         }
         val failures = mutableListOf<String>()
+        failures += censusMissing
         for (case in cases) {
             val (a, b) = countIn(case.file, everywhere)
-            println("CENSUS ${case.label}: accent=$a banned=$b (allowance ${case.maxAccent})")
             if (b > 0) failures += "${case.label}: #FF8A5C present ($b px) — banned colour on screen"
             if (a > case.maxAccent) failures += "${case.label}: accent $a px over allowance ${case.maxAccent}"
         }
@@ -868,7 +928,7 @@ class ScreenshotHarnessTest {
             File(shotsDir, "01_deck.png") to "deck day",
             File(nightDir, "n01_deck.png") to "deck night"
         )) {
-            if (!f.isFile) continue
+            if (!f.isFile) { failures += "census input missing: ${f.path} ($label)"; continue }
             val img = ImageIO.read(f)
             val ppd = img.width / 412f
             var minY = Int.MAX_VALUE
@@ -892,7 +952,6 @@ class ScreenshotHarnessTest {
             }
             val bandDp = if (maxY >= 0) (maxY - minY) / ppd else 0f
             val footDp = if (maxY >= 0) (img.height - minY) / ppd else 0f
-            println("CENSUS $label: deck accent total=$total band=${bandDp}dp foot=${footDp}dp banned=$bannedCount")
             if (bannedCount > 0) failures += "$label: #FF8A5C present"
             if (total < 500) failures += "$label: the slide cap is missing (accent $total px)"
             if (total > 26_000) failures += "$label: accent $total px — more than one cap"
@@ -906,9 +965,8 @@ class ScreenshotHarnessTest {
             File(shotsDir, "03_tasks.png") to "tasks day",
             File(nightDir, "n03_tasks.png") to "tasks night"
         )) {
-            if (!f.isFile) continue
+            if (!f.isFile) { failures += "census input missing: ${f.path} ($label)"; continue }
             val (a, b) = countIn(f, everywhere)
-            println("CENSUS $label: accent=$a banned=$b (START text only)")
             if (b > 0) failures += "$label: #FF8A5C present ($b px)"
             if (a > 4000) failures += "$label: accent $a px — more than a verb's glyphs"
         }

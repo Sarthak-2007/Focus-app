@@ -1,6 +1,7 @@
 package com.example.data
 
 import android.content.Context
+import android.os.SystemClock
 
 /**
  * The undo window's restore copy, persisted (Truth Car 2, G-03).
@@ -97,6 +98,9 @@ class UndoDeleteStore(context: Context) {
         prefs.edit().clear().commit()
     }
 
+    /** True while a restore copy is on disk (issue #83). */
+    fun hasPending(): Boolean = prefs.contains(KEY_ID)
+
     companion object {
         private const val PREFS_NAME = "monolith_undo_delete"
         private const val KEY_ID = "id"
@@ -117,6 +121,33 @@ class UndoDeleteStore(context: Context) {
         /** The undo window's length — one value, shared by the
          *  delete path and the rehydration path. */
         const val WINDOW_MILLIS = 5_000L
+
+        /**
+         * Issue #83: reap a restore copy whose undo window has
+         * closed. The copy is a deleted task's full contents in
+         * cleartext prefs; if the app is never relaunched through
+         * the ViewModel, nothing ever cleared it and it outlived
+         * its five-second window indefinitely. Any process start
+         * — ViewModel init, or a boot-started process via the
+         * boot receiver — calls this so the copy dies with its
+         * window regardless of which door started the process.
+         * Staleness is judged by [remainingMillis] — the store's
+         * one window law (monotonic when usable, wall fallback).
+         */
+        fun expireIfStale(context: Context) {
+            val store = UndoDeleteStore(context)
+            if (!store.hasPending()) return
+            val loaded = store.load() ?: return
+            val remaining = remainingMillis(
+                deletedAtWallMillis = loaded.second,
+                deletedAtElapsedMillis = loaded.third,
+                nowWallMillis = System.currentTimeMillis(),
+                nowElapsedMillis = SystemClock.elapsedRealtime()
+            )
+            if (remaining <= 0L) {
+                store.clear()
+            }
+        }
 
         /**
          * The window's remaining milliseconds (Audit R1 #41),

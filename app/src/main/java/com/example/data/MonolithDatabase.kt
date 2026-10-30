@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         EmergencyBreakSpendEntity::class,
         DayNoteEntity::class
     ],
-    version = 13,
+    version = 15,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -187,6 +187,28 @@ abstract class MonolithDatabase : RoomDatabase() {
          * NOT created, by name: testDateEpochDay — the test-date
          * predicate stays STRUCK (Ren), as at v9, v10 and v11.
          */
+        /**
+         * ISSUE #287 (12→13): schema only, zero data writes, no
+         * backfill — every default IS the truthful pre-v13 value
+         * ('' = no culprit recorded, '' = no reflection stored).
+         *
+         * focus_sessions +3 (Forest head-to-head F5/F8): the
+         * failure-cause pair (package + kind) stamped at the
+         * ending write by the disarm doors, and the one
+         * user-authored reflection line stored against the
+         * finished session.
+         *
+         * NOT created, by name: testDateEpochDay — the test-date
+         * predicate stays STRUCK (Ren), as at v9–v12.
+         */
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN failureCausePackage TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN failureCauseKind TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN reflectionNote TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         val MIGRATION_11_12 = object : Migration(11, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE guard_settings ADD COLUMN shortsReelsSniperEnabled INTEGER NOT NULL DEFAULT 1")
@@ -195,11 +217,38 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
-         * AUDIT R6 #340 (12→13): schema only, zero data writes, no
-         * backfill — every default IS the truthful pre-v13 value.
+         * Issue #10 (W-41): the seal's held count, split by tier.
+         * heldShutAtSeal / heldPeekAtSeal record how many of the
+         * apps held at a session's birth were SHUT and how many
+         * were on the 2-minute PEEK tier, so the receipt can print
+         * the two facts separately instead of one merged figure.
+         * (13→14, not 12→13: v13 was taken by the failure-cause
+         * columns above while this cure was in flight — the split
+         * chains after it, and both land.)
+         *
+         * There is NO backfill — a pre-v14 row's split was never
+         * recorded, and inventing one from today's tiers would
+         * fabricate history. Old rows keep -1 ("uncaptured"); the
+         * receipt prints their stored total and omits the split,
+         * the same omission law heldAppsAtSeal has always obeyed.
+         */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN heldShutAtSeal INTEGER NOT NULL DEFAULT -1")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN heldPeekAtSeal INTEGER NOT NULL DEFAULT -1")
+            }
+        }
+
+        /**
+         * AUDIT R6 #340 (14→15): schema only, zero data writes, no
+         * backfill — every default IS the truthful pre-v15 value.
+         * (14→15, not 12→13: this cure was authored against v12,
+         * but v13 was taken by the failure-cause columns and v14
+         * by the held-split above while it was in flight — the
+         * seal chains after both, and all land.)
          *
          * focus_sessions +2 (F5/F48): the finish seal and its chain
-         * link. '' = never sealed — every pre-v13 receipt stands
+         * link. '' = never sealed — every pre-v15 receipt stands
          * exactly as provable as it was the day it printed, and no
          * seal is ever minted retroactively over old claims.
          * blocked_sites +1 (F10): the per-site redirect target.
@@ -209,9 +258,9 @@ abstract class MonolithDatabase : RoomDatabase() {
          * kept — the private posture is the default posture.
          *
          * NOT created, by name: testDateEpochDay — the test-date
-         * predicate stays STRUCK (Ren), as at v9–v12.
+         * predicate stays STRUCK (Ren), as at v9–v14.
          */
-        val MIGRATION_12_13 = object : Migration(12, 13) {
+        val MIGRATION_14_15 = object : Migration(14, 15) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE focus_sessions ADD COLUMN finishSignature TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE focus_sessions ADD COLUMN prevFinishSignature TEXT NOT NULL DEFAULT ''")
@@ -252,6 +301,40 @@ abstract class MonolithDatabase : RoomDatabase() {
          * IllegalStateException in testing, never a silent wipe on his
          * phone.
          */
+        /**
+         * Issue #83 (storage-hygiene F4): space reclamation. Every
+         * erase in this app was a bare DELETE, so deleted rows' pages
+         * stayed in the file forever and monolith_tactile_db grew
+         * monotonically for the life of the install. This callback
+         * puts the file on INCREMENTAL auto-vacuum: the first open
+         * that finds the file not already incremental performs the
+         * one full VACUUM the mode change requires, and every open
+         * hands a bounded slice of free pages back to the device.
+         * Best-effort by construction — a pragma failure must never
+         * cost the app its database open.
+         */
+        private val RECLAIM_CALLBACK = object : RoomDatabase.Callback() {
+            override fun onOpen(db: SupportSQLiteDatabase) {
+                super.onOpen(db)
+                try {
+                    val cursor = db.query("PRAGMA auto_vacuum")
+                    val mode = try {
+                        if (cursor.moveToFirst()) cursor.getInt(0) else 0
+                    } finally {
+                        cursor.close()
+                    }
+                    // auto_vacuum: 0 = NONE, 1 = FULL, 2 = INCREMENTAL.
+                    if (mode != 2) {
+                        db.execSQL("PRAGMA auto_vacuum = INCREMENTAL")
+                        db.execSQL("VACUUM")
+                    }
+                    db.execSQL("PRAGMA incremental_vacuum(512)")
+                } catch (_: Exception) {
+                    // Contained: reclamation is hygiene, not function.
+                }
+            }
+        }
+
         fun getInstance(context: Context): MonolithDatabase {
             return INSTANCE ?: synchronized(this) {
                 val appCtx = context.applicationContext
@@ -265,7 +348,8 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+                    .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance
                 instance
