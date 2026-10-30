@@ -393,6 +393,13 @@ class TactileSoundEngine(private val context: Context) {
     private val sealBuffer = FloatArray(SEAL_SAMPLES)
     @Volatile
     private var sealTrack: AudioTrack? = null
+
+    /** Issue #77: guards sealTrack's check-then-act creation and its
+     *  teardown. Concurrent first use used to build two AudioTracks —
+     *  one overwritten, leaked, and never released; teardown nulling
+     *  the reference mid-creation handed the creator a released
+     *  instance. */
+    private val sealTrackLock = Any()
     @Volatile
     private var sealReady: Boolean = false
     @Volatile
@@ -456,7 +463,12 @@ class TactileSoundEngine(private val context: Context) {
 
     private fun ensureSealTrack(): AudioTrack? {
         sealTrack?.let { return it }
-        return try {
+        // Issue #77: double-checked under sealTrackLock — the render
+        // thread and playSealThrow's fallback both arrive here; only
+        // one may build the track.
+        return synchronized(sealTrackLock) {
+            sealTrack?.let { return@synchronized it }
+            try {
             val track = AudioTrack.Builder()
                 .setAudioAttributes(
                     AudioAttributes.Builder()
@@ -477,10 +489,11 @@ class TactileSoundEngine(private val context: Context) {
                 .setBufferSizeInBytes(SEAL_SAMPLES * 4 * 105 / 100)
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .build()
-            sealTrack = track
-            track
-        } catch (_: Exception) {
-            null
+                sealTrack = track
+                track
+            } catch (_: Exception) {
+                null
+            }
         }
     }
 
@@ -959,7 +972,14 @@ class TactileSoundEngine(private val context: Context) {
                     track.play()
                 } catch (_: Exception) {}
             } else {
-                renderSealBuffer(sealBuffer)
+                // Issue #77: this fallback used to render into the
+                // SAME sealBuffer the render thread streams from —
+                // two threads rendering into and reading from one
+                // array garble the bit-identical Throw (the golden
+                // hash exists precisely to forbid two voices). The
+                // fallback renders into its own buffer now.
+                val fallbackBuffer = FloatArray(SEAL_SAMPLES)
+                renderSealBuffer(fallbackBuffer)
                 try {
                     track.pause()
                     track.flush()
@@ -967,7 +987,7 @@ class TactileSoundEngine(private val context: Context) {
                     var off = 0
                     while (off < SEAL_SAMPLES) {
                         val n = track.write(
-                            sealBuffer, off, minOf(4096, SEAL_SAMPLES - off),
+                            fallbackBuffer, off, minOf(4096, SEAL_SAMPLES - off),
                             AudioTrack.WRITE_BLOCKING
                         )
                         if (n <= 0) break
@@ -1041,11 +1061,15 @@ class TactileSoundEngine(private val context: Context) {
             legacyTrack?.release()
         } catch (_: Exception) {}
         legacyTrack = null
-        try {
-            sealTrack?.stop()
-            sealTrack?.release()
-        } catch (_: Exception) {}
-        sealTrack = null
+        // Issue #77: teardown takes sealTrackLock too — nulling the
+        // track mid-creation handed the creator a released instance.
+        synchronized(sealTrackLock) {
+            try {
+                sealTrack?.stop()
+                sealTrack?.release()
+            } catch (_: Exception) {}
+            sealTrack = null
+        }
         try {
             resolveVibrator()?.cancel()
         } catch (_: Exception) {}
