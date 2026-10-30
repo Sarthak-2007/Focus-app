@@ -42,6 +42,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -70,6 +71,12 @@ import com.example.ui.theme.SequencerHairlineNight
 import com.example.ui.theme.TokenColorSecondaryContainer
 import com.example.ui.views.TaskHorizonBarView
 import kotlinx.coroutines.delay
+
+/** Issue #124 (typing-intention): the task-title box takes one
+ *  short line, capped like the intention — a pasted paragraph is
+ *  not a task title, and unbounded titles flooded every surface
+ *  that prints them. */
+private const val MAX_TASK_TITLE_CHARS = 80
 
 /**
  * TAB 2: HORIZON TASK QUEUE (DEVELOPER-GUIDE.pdf §1.1, §2, §3)
@@ -239,9 +246,15 @@ fun FocusSequencerScreen(
                     }
                     BasicTextField(
                         value = newTaskTitle,
-                        onValueChange = { newTaskTitle = it },
+                        // Issue #124: length cap at the keyboard
+                        // itself (submitTask already trims); the
+                        // keyboard opens sentences, not raw text.
+                        onValueChange = { newTaskTitle = it.take(MAX_TASK_TITLE_CHARS) },
                         singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardOptions = KeyboardOptions(
+                            imeAction = ImeAction.Done,
+                            capitalization = KeyboardCapitalization.Sentences
+                        ),
                         keyboardActions = KeyboardActions(onDone = { submitTask() }),
                         textStyle = TextStyle(
                             fontFamily = AtkinsonHyperlegibleFamily,
