@@ -5,6 +5,7 @@ import android.app.AlarmManager
 import android.app.admin.DevicePolicyManager
 import android.content.pm.PackageManager
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -37,6 +38,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -256,6 +258,54 @@ class MainActivity : ComponentActivity() {
     // onCleared(), the one true end of its life.
 }
 
+// ------------------------------------------------------------------
+// Issue #90 (complexity F3, hoist step): these four helpers used to
+// be nested funs inside MonolithRootApp — three of them named in
+// the audit finding itself. They are file-level now, with every
+// captured value passed explicitly; bodies are verbatim, so
+// behaviour is unchanged and each helper is testable in isolation.
+// ------------------------------------------------------------------
+
+private fun closePark(
+    parkOpenState: MutableState<Boolean>,
+    digestSheetVisible: Boolean,
+    viewModel: MonolithViewModel,
+    dismissReceipt: Boolean
+) {
+    parkOpenState.value = false
+    if (dismissReceipt && digestSheetVisible) {
+        viewModel.toggleNotificationDigestSheet(false)
+    }
+    // The intro bit is NOT spent here (issue-156, F3): a
+    // dismissal — above all a reflexive scrim tap before the
+    // sweep has printed a single word — spends nothing. The
+    // bit is spent on delivery, by the effect in the root, once
+    // the measured board is actually on screen.
+}
+
+private fun openPark(
+    parkOpenState: MutableState<Boolean>,
+    sealed: Boolean,
+    viewModel: MonolithViewModel
+) {
+    // HB-2: the tap-time read of the SAME doorLocked predicate —
+    // the synchronous backstop for a Guard tap landing inside
+    // the finish machine's detention window before the state
+    // collectors recompose. The predicate is evaluated HERE, at
+    // the tap: navigationLocked() reads the VM's flows directly,
+    // so the answer is true even while the composition's
+    // doorLocked still holds its pre-detention value. (The
+    // first form of this guard read the captured doorLocked
+    // val — a print, not a lock; hb4DetentionGuardTap caught
+    // it on the gate build's first full test run.)
+    if (!sealed && !viewModel.navigationLocked()) parkOpenState.value = true
+}
+
+// Issue #27 (finding 5): a FIX trip must never die silently.
+// Every Settings launch goes through here: the exact pane
+// first; if the OEM throws, the generic Settings home is the
+// fallback; if even that fails, the user is TOLD, in words,
+// instead of being stranded on a dead tap.
 @Composable
 fun MonolithRootApp(viewModel: MonolithViewModel) {
     val context = LocalContext.current
@@ -300,6 +350,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val allApps by viewModel.apps.collectAsStateWithLifecycle()
     val filteredApps by viewModel.filteredApps.collectAsStateWithLifecycle()
     val pruneNote by viewModel.pruneNote.collectAsStateWithLifecycle()
+    val unreviewedOpenNames by viewModel.unreviewedOpenNames.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val selectedCategory by viewModel.selectedCategoryFilter.collectAsStateWithLifecycle()
     val shortsReelsSniperEnabled by viewModel.shortsReelsSniperEnabled.collectAsStateWithLifecycle()
@@ -432,7 +483,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // by itself, once the first measured snapshot lands and the
     // door is open. While sealed it cannot be invoked at all.
     // ------------------------------------------------------------------
-    var parkOpen by rememberSaveable { mutableStateOf(false) }
+    // Issue #90 (complexity F3): the PARK open flag's state holder
+    // is named so the hoisted file-level closePark/openPark below
+    // can take it as an explicit parameter; every existing read and
+    // write of parkOpen goes through this same holder, unchanged.
+    val parkOpenState = rememberSaveable { mutableStateOf(false) }
+    var parkOpen by parkOpenState
     var parkReturnTick by rememberSaveable { mutableStateOf(0) }
 
     // THE LAUNCHER (Sarthak's ruling, Oct 30 04:29 IST): while the
@@ -447,31 +503,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     var launcherOpen by rememberSaveable { mutableStateOf(false) }
     var launcherPage by rememberSaveable { mutableStateOf(LauncherPage.HOME) }
 
-    fun closePark(dismissReceipt: Boolean) {
-        parkOpen = false
-        if (dismissReceipt && showNotificationDigestSheet) {
-            viewModel.toggleNotificationDigestSheet(false)
-        }
-        // The intro bit is NOT spent here (issue-156, F3): a
-        // dismissal — above all a reflexive scrim tap before the
-        // sweep has printed a single word — spends nothing. The
-        // bit is spent on delivery, by the effect below, once the
-        // measured board is actually on screen.
-    }
-
-    fun openPark() {
-        // HB-2: the tap-time read of the SAME doorLocked predicate —
-        // the synchronous backstop for a Guard tap landing inside
-        // the finish machine's detention window before the state
-        // collectors recompose. The predicate is evaluated HERE, at
-        // the tap: navigationLocked() reads the VM's flows directly,
-        // so the answer is true even while this composition's
-        // doorLocked still holds its pre-detention value. (The
-        // first form of this guard read the captured doorLocked
-        // val — a print, not a lock; hb4DetentionGuardTap caught
-        // it on the gate build's first full test run.)
-        if (!sealed && !viewModel.navigationLocked()) parkOpen = true
-    }
+    // closePark / openPark are file-level functions since the
+    // issue-90 F3 hoist (they were nested inside this composable);
+    // call sites pass parkOpenState, the digest-sheet visibility
+    // and the seal explicitly.
 
     // Issue #157: there is deliberately NO effect here dismissing
     // the receipt slip on navigation or on PARK's invocation —
@@ -585,7 +620,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     }
 
     if (parkOpen) {
-        BackHandler { closePark(dismissReceipt = false) }
+        BackHandler {
+            closePark(parkOpenState, showNotificationDigestSheet, viewModel, dismissReceipt = false)
+        }
     } else if (currentDestination != MonolithDestination.DECK) {
         BackHandler { viewModel.navigateTo(MonolithDestination.DECK) }
     }
@@ -756,14 +793,17 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     isSealed = doorLocked,
                     onGuardLineTap = {
                         when {
-                            parkOpen -> closePark(dismissReceipt = false)
+                            parkOpen -> closePark(
+                                parkOpenState, showNotificationDigestSheet, viewModel,
+                                dismissReceipt = false
+                            )
                             // While sealed, the Guard line opens the
                             // launcher — the sealed phone's home.
                             sealed -> {
                                 launcherPage = LauncherPage.HOME
                                 launcherOpen = true
                             }
-                            else -> openPark()
+                            else -> openPark(parkOpenState, sealed, viewModel)
                         }
                     }
                 )
@@ -963,7 +1003,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                         "${note.appsRemoved} APPS NOT ON THIS PHONE WERE TAKEN OFF THIS LIST" +
                                             if (note.rulesRemoved) " — AND THEIR RULES WITH THEM" else ""
                                     },
-                                    onPruneNoteDismissed = viewModel::dismissPruneNote
+                                    onPruneNoteDismissed = viewModel::dismissPruneNote,
+                                    unreviewedOpenText = unreviewedOpenNames.takeIf { it.isNotEmpty() }?.let { names ->
+                                        val shown = names.take(3).joinToString(", ") { it.uppercase() }
+                                        val more = if (names.size > 3) " +${names.size - 3} MORE" else ""
+                                        "${names.size} APPS ARE OPEN WITHOUT YOUR REVIEW: $shown$more — SET A RULE FOR EACH BELOW"
+                                    }
                                 )
                             }
 
@@ -1043,7 +1088,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         soundEngine = viewModel.soundEngine,
                         themeReadout = themeEvaluation.readout,
                         parkReturnTick = parkReturnTick,
-                        onDismiss = { closePark(dismissReceipt = false) },
+                        onDismiss = {
+                            closePark(
+                                parkOpenState, showNotificationDigestSheet, viewModel,
+                                dismissReceipt = false
+                            )
+                        },
                         onFixClick = { item -> openFixPane(item) },
                         onRecheck = { viewModel.runWatchSweep() },
                         onToggleSound = { viewModel.toggleSound() },
@@ -1126,7 +1176,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                             view.selectedTabIndex = selectedTabIndex
                         }
                         view.onTabSelected = { idx ->
-                            if (parkOpen) closePark(dismissReceipt = true)
+                            if (parkOpen) closePark(
+                                parkOpenState, showNotificationDigestSheet, viewModel,
+                                dismissReceipt = true
+                            )
                             val dest = when (idx) {
                                 0 -> MonolithDestination.DECK
                                 1 -> MonolithDestination.SHIELD
@@ -1137,9 +1190,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         }
                         view.onParkInvoked = {
                             if (parkOpen) {
-                                closePark(dismissReceipt = false)
+                                closePark(
+                                    parkOpenState, showNotificationDigestSheet, viewModel,
+                                    dismissReceipt = false
+                                )
                             } else {
-                                openPark()
+                                openPark(parkOpenState, sealed, viewModel)
                             }
                         }
                     },
@@ -1343,7 +1399,19 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 state = airlockState,
                 onSelectReason = viewModel::selectDistractionReason,
                 onTransmuteParticleTap = viewModel::incrementAirlockParticlePulse,
-                onReturnToFocus = viewModel::transmuteImpulseAndReturn,
+                // Issue #114, finding 2: RETURN TO FOCUS now
+                // returns. The ViewModel closes the sheet and books
+                // the intercept; the host then sends Monolith's
+                // whole task to the back, so the user lands on
+                // whatever they were doing before the intercept
+                // yanked them in — not stranded on the Deck having
+                // to navigate back by hand for choosing the honest
+                // door. Blocking itself is untouched: the session
+                // stays sealed and the shield keeps enforcing.
+                onReturnToFocus = {
+                    viewModel.transmuteImpulseAndReturn()
+                    (context as? android.app.Activity)?.moveTaskToBack(true)
+                },
                 onTake2MinutePeek = viewModel::start2MinutePeek,
                 allowedAppsCount = allApps.count {
                     it.resolvedTier == com.example.data.AppBlockTier.OPEN &&

@@ -104,6 +104,17 @@ data class AppCatalogPlan(
      *  stored ones — a sync never re-prices a ruling. */
     val usageUpdates: List<BlockedAppEntity>,
     val toPrune: List<String>,
+    /**
+     * Issue #129 (unlisted-distraction F1): the packages this sync
+     * is about to birth OPEN purely from the category guess — no
+     * factory preset, and the guessed category's default is OPEN.
+     * Nobody ruled on these apps; the guess did. The repository
+     * records them as UNREVIEWED so a surface can ask the man to
+     * rule on them, instead of the guess silently standing as his
+     * decision. A preset-born OPEN app (e.g. Chrome) is NOT in
+     * this list: a preset is a deliberate birth rule, not a guess.
+     */
+    val unreviewedOpenPackages: List<String> = emptyList(),
     /** Packages absent from THIS sync but not yet prunable (first
      *  absence). The caller persists this set and hands it back as
      *  `previouslyAbsent` on the next sync; only a package absent
@@ -208,19 +219,34 @@ object AppCategorizer {
             )
         ) return AppCategory.FINANCE
         return when {
-            matches("tiktok", "musically", "youtube", "instagram", "reel", "reels") ->
+            matches("tiktok", "musically", "youtube", "instagram", "reel", "reels",
+                "takatak", "moj") ->
                 AppCategory.SHORT_VIDEO
-            matches("twitter", "reddit", "snapchat", "facebook") ->
+            matches("twitter", "reddit", "snapchat", "facebook",
+                "threads", "mastodon", "bluesky", "bsky") ->
                 AppCategory.SOCIAL
+            // Issue #129 (widening ported at the STURM-4 merge): the
+            // big games whose names carried none of the old magic
+            // words, stated as token sequences in L2's discipline.
             matches(
                 "game", "games", "clash", "roblox", "minecraft",
-                "pubg", "candycrush", "play games"
+                "pubg", "candycrush", "play games", "bgmi", "freefire",
+                "free fire", "fortnite", "genshin", "candy crush",
+                "subway surfers", "call of duty", "valorant", "pokemon go"
             ) -> AppCategory.GAMES
             matches(
                 "whatsapp", "discord", "telegram", "message",
                 "messages", "messaging", "messenger"
             ) -> AppCategory.MESSAGING
-            matches("chrome", "browser", "browsers", "firefox", "brave") ->
+            // Issue #129/#130 (widening ported at the STURM-4 merge):
+            // second browsers are browsers — Opera, DuckDuckGo,
+            // Samsung Internet, Edge, Kiwi and UC were filed
+            // SHOPPING before this, outside the site blocker's
+            // category world entirely.
+            matches("chrome", "browser", "browsers", "firefox", "brave",
+                "opera", "duckduckgo", "sbrowser", "samsung internet",
+                "microsoft edge", "emmx", "kiwi", "ucbrowser",
+                "uc browser", "vivaldi", "yandex") ->
                 AppCategory.BROWSERS
             else -> AppCategory.SHOPPING
         }
@@ -378,6 +404,7 @@ object AppCatalogReconcile {
 
         val toInsert = mutableListOf<BlockedAppEntity>()
         val usageUpdates = mutableListOf<BlockedAppEntity>()
+        val unreviewedOpen = mutableListOf<String>()
         for ((pkg, info) in installedByPackage) {
             val current = existingByPackage[pkg]
             if (current == null) {
@@ -401,7 +428,28 @@ object AppCatalogReconcile {
                     // (5s wall, 2-minute lease) is exactly the
                     // ceremony an OTP or UPI approval needs.
                     AppCategory.MESSAGING, AppCategory.MUSIC, AppCategory.FINANCE -> AppBlockTier.PEEK_2M
-                    else -> AppBlockTier.OPEN
+                    // Issue #129 (unlisted-distraction, CRITICAL),
+                    // settled at the STURM-4 fix-forward: the safe
+                    // default for a BLOCKER is fail-closed. Every
+                    // other category — SOCIAL, BROWSERS, and
+                    // SHOPPING, where every UNRECOGNISED app lands —
+                    // was born OPEN on a keyword guess; a blocker
+                    // that defaults unknown apps to open fails its
+                    // one job. Unlisted is now born LOCKED: shut
+                    // until HE lists it otherwise in the catalogue.
+                    // Existing rows are never re-priced by a sync,
+                    // so his own OPEN rulings stand untouched.
+                    else -> AppBlockTier.LOCKED
+                }
+                // #129 F1: a guess-born OPEN app is named as such at
+                // birth, in the plan itself, so no caller can insert
+                // it and forget the guess happened. Under the
+                // fail-closed birth above, no app is guess-born
+                // OPEN any more, so this list stays empty — the
+                // naming machinery remains for any future birth
+                // rule that ever opens by guess again.
+                if (preset == null && tier == AppBlockTier.OPEN) {
+                    unreviewedOpen += pkg
                 }
                 toInsert += BlockedAppEntity(
                     packageName = pkg,
@@ -430,7 +478,7 @@ object AppCatalogReconcile {
                 }
             }
         }
-        return AppCatalogPlan(toInsert, usageUpdates, toPrune, pendingPrune)
+        return AppCatalogPlan(toInsert, usageUpdates, toPrune, unreviewedOpen, pendingPrune)
     }
 
     /** THE BORN CATEGORY (fresh-eyes L2). A newly-seen app's
@@ -458,4 +506,14 @@ object AppCatalogReconcile {
      *  the map is the "measured" witness reconcile trusts. */
     fun aggregateUsageMinutes(buckets: List<Pair<String, Int>>): Map<String, Int> =
         buckets.groupingBy { it.first }.fold(0) { acc, (_, minutes) -> acc + minutes }
+
+    /**
+     * Issue #129 F1: was this row born OPEN by the category guess
+     * alone (no preset, category default OPEN)? Kept for API
+     * compatibility with the #129 lane; since the fail-closed
+     * birth landed, no category's default is OPEN any more, so
+     * this answers false for every category by construction.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun isGuessBornOpen(category: AppCategory, hasPreset: Boolean): Boolean = false
 }

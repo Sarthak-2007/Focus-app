@@ -31,6 +31,7 @@ import com.example.data.SystemGuardStatus
 import com.example.data.TaskQueueStatus
 import com.example.service.InterceptPath
 import com.example.service.MonolithShieldService
+import com.example.service.PeekPillOverlay
 import com.example.service.SoundEffectsSetting
 import com.example.service.TactileSoundEngine
 import com.example.service.Warrant
@@ -720,6 +721,22 @@ class MonolithViewModel(
         repository.clearPruneNote()
     }
 
+    /** Issue #129 F1: the review prompt's content — the names of
+     *  apps the category guess birthed OPEN that the man has not
+     *  ruled on yet. There is NO dismiss: the list empties only
+     *  when a ruling lands on each app (the repository clears the
+     *  record at the tier commit), so the prompt cannot be tapped
+     *  away into the same silence the audit found. Refreshed after
+     *  the seed-sync and after every tier commit in this VM. */
+    private val _unreviewedOpenNames = MutableStateFlow<List<String>>(emptyList())
+    val unreviewedOpenNames: StateFlow<List<String>> = _unreviewedOpenNames.asStateFlow()
+
+    fun refreshUnreviewedOpen() {
+        viewModelScope.launch {
+            _unreviewedOpenNames.value = repository.unreviewedOpenApps().map { it.appName }
+        }
+    }
+
     val apps: StateFlow<List<BlockedAppEntity>> = repository.allAppsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -1038,20 +1055,24 @@ class MonolithViewModel(
     }
 
     /** The header's Guard line (chrome C2): derived from the Watch
-     *  Store; while a session seals the phone it prints the freeze's
-     *  captured line, untouched by anything the store does after. */
+     *  Store. The seal freeze is the band's fallback for the
+     *  UNMEASURED case only — a live measured print outranks the
+     *  captured one in both directions, so a permission revoked
+     *  mid-session drops the band off its frozen `GUARD 4/4` the
+     *  moment the store measures the loss (Audit R3 #113,
+     *  finding 2; resolveGuardLinePrint carries the law). */
     val guardLinePrint: StateFlow<com.example.ui.components.GuardLinePrint?> = combine(
         com.example.service.WatchStore.snapshots,
         _sealFreeze,
         activeSession
     ) { snap, freeze, session ->
-        if (session?.isActive == true && freeze?.guardLine != null) {
-            freeze.guardLine
-        } else {
-            com.example.ui.components.guardLineFor(
+        com.example.ui.components.resolveGuardLinePrint(
+            sessionActive = session?.isActive == true,
+            frozen = freeze?.guardLine,
+            live = com.example.ui.components.guardLineFor(
                 snap, android.os.SystemClock.elapsedRealtime()
             )
-        }
+        )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     // =========================================================================
@@ -1297,6 +1318,7 @@ class MonolithViewModel(
         viewModelScope.launch {
             repository.ensureSeededAndSyncPackages()
             _pruneNote.value = repository.pendingPruneNote()
+            refreshUnreviewedOpen()
             // Routines rebuild: no per-routine alarm arming — one
             // forced reconcile derives the truth and rearms the chain.
             com.example.service.RoutineHeartbeat.tick(
@@ -1482,6 +1504,24 @@ class MonolithViewModel(
                     held.any { item -> holder.items.none { it.id == item.id } }
                 if (visible && session != null && session.isActive && owesMint) {
                     mintFrozenDigest(session.id)
+                }
+            }
+        }
+        // Issue #114 finding 1: the peek pill finally gets a face.
+        // The overlay window (over the peeked app) and the in-app
+        // Compose pill both render THIS state; the overlay's END
+        // button routes back to the one hand-back verb, so state,
+        // lease row and faces retire together. Before this wiring
+        // the state was collected nowhere and the pill never drew.
+        PeekPillOverlay.onEndPeekRequest = { end2MinutePeekEarly() }
+        viewModelScope.launch {
+            _floatingPeekPill.collect { pill ->
+                if (pill.isActive) {
+                    PeekPillOverlay.showOrUpdate(
+                        appContext, pill.appName, pill.secondsRemaining
+                    )
+                } else {
+                    PeekPillOverlay.hide(appContext)
                 }
             }
         }
@@ -1760,9 +1800,15 @@ class MonolithViewModel(
      *
      * First-sighting rows are branch U: foregrounded ∧ within
      * 1800ms of the derived end ⇒ the witnessed path with
-     * E0 := discovery; within 10 minutes ⇒ claim + issue at
-     * discovery, no held frame, no pulse; older ⇒ the moment is
-     * gone — marked handled, never fabricated into a late №.
+     * E0 := discovery; older ⇒ claim + issue at discovery, no
+     * held frame, no pulse, at ANY age. The 10-minute discard
+     * this replaces (Audit R3 #113, finding 3) threw the finish
+     * away whole — no receipt, no notice, and the handled mark
+     * barred the publishReceipt facade from ever recovering it.
+     * Issuing late fabricates nothing: the slip's facts are the
+     * row's own (its stamped end, its sealed elapsed), and the
+     * № is minted at discovery, which is when it truthfully
+     * came into being.
      */
     private fun startFinishController() {
         if (finishControllerStarted) return
@@ -1783,20 +1829,7 @@ class MonolithViewModel(
                         val ageMs = nowWall - endWall
                         when {
                             ageMs <= 1_800L -> onFinishE0(row, kind, witnessed = true)
-                            ageMs <= 600_000L -> onFinishE0(row, kind, witnessed = false)
-                            // Audit R1 #40: a SLEEP stand-down is
-                            // DISCOVERED, never witnessed — the
-                            // phone slept through the window's end
-                            // and the finish exists only when the
-                            // app next looks. The 10-minute discard
-                            // made exactly that booking vanish,
-                            // forever. Stand-downs are exempt from
-                            // the discard; every other kind keeps
-                            // it (a stale manual finish discovered
-                            // days late still books nothing).
-                            kind == com.example.data.FinishKind.ROUTINE_SLEEP_STANDDOWN ->
-                                onFinishE0(row, kind, witnessed = false)
-                            else -> handledFinishIds += row.id
+                            else -> onFinishE0(row, kind, witnessed = false)
                         }
                     } else {
                         onFinishE0(row, kind, witnessed = true)
@@ -2639,7 +2672,7 @@ class MonolithViewModel(
      *  repository re-signs the row in the same write. */
     fun extendActiveSession(extraMinutes: Int = 10) {
         viewModelScope.launch {
-            repository.extendActiveSession(extraMinutes)
+            repository.extendActiveSessionReturningSession(extraMinutes)
         }
     }
 
@@ -3024,6 +3057,7 @@ class MonolithViewModel(
         soundEngine.playMechanicalLatch(true)
         viewModelScope.launch {
             repository.cycleAppBlockTier(app)
+            refreshUnreviewedOpen()
         }
     }
 
@@ -3080,6 +3114,7 @@ class MonolithViewModel(
         }
         viewModelScope.launch {
             repository.setAppBlockTier(app.packageName, tier)
+            refreshUnreviewedOpen()
         }
     }
 
@@ -3317,7 +3352,7 @@ class MonolithViewModel(
     /** Issue #283: +15 minutes on the running session — the cap
      *  and the HMAC re-sign live in the repository verb. */
     fun extendActiveSession() {
-        viewModelScope.launch { repository.extendActiveSession() }
+        viewModelScope.launch { repository.extendActiveSessionBySeconds() }
     }
 
     fun requestDisarmChallenge() {
@@ -3593,8 +3628,20 @@ class MonolithViewModel(
     }
 
     /**
-     * Grants a 2-Minute Peek lease with the Draggable Edge-Snapping Countdown Pill
-     * and arms the mandatory 20-minute cooldown in Room storage immediately.
+     * Grants a 2-Minute Peek lease with its countdown pill — the
+     * floating overlay face (PeekPillOverlay, over the peeked app)
+     * plus the in-app PeekCountdownPill, both rendering
+     * [floatingPeekPill] — and arms the mandatory 20-minute
+     * cooldown in Room storage immediately.
+     *
+     * Issue #114 finding 1, second half: the grant now TAKES the
+     * user to the peeked app. Before, the lease anchored at
+     * tap-time while the user stood on the Deck and burned lease
+     * seconds navigating home and relaunching by hand. The launch
+     * fires inside the lease coroutine, after the lease row is
+     * written — never before it; the accessibility door honours
+     * the lease by its stored end, and a failed launch simply
+     * leaves the user on the Deck with the in-app pill standing.
      */
     fun start2MinutePeek() {
         val state = _airlockState.value
@@ -3629,21 +3676,12 @@ class MonolithViewModel(
         val name = state.interceptedAppName.ifBlank { "2m Peek App" }
         soundEngine.playMechanicalLatch(true)
         _airlockState.value = state.copy(isVisible = false)
-        // Issue #99 F4 (HAND-MERGE: Konto batch-10 flag on this
-        // function — keep this block minimal): taking the peek takes
-        // you to the app. The lease no longer burns while the user
-        // navigates home and relaunches by hand.
-        runCatching {
-            appContext.packageManager.getLaunchIntentForPackage(pkg)?.let { launch ->
-                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                appContext.startActivity(launch)
-            }
-        }.onFailure {
-            // Issue #75 F1 wiring: the peek was granted and the
-            // pill armed, but the app launch itself failed —
-            // silently until now.
-            MLog.w("peek launch intent failed for $pkg", it)
-        }
+        // Issue #99 F4 + Issue #114 F1 (merge de-duplication by
+        // STURM3-11): the launch itself lives below, after
+        // startPeekLease writes the lease row — see the comment
+        // there. Main's synchronous copy of the same launch is
+        // removed so the app is launched exactly once, and never
+        // before the lease exists.
         _floatingPeekPill.value = FloatingPeekPillState(
             isActive = true,
             packageName = pkg,
@@ -3659,6 +3697,26 @@ class MonolithViewModel(
                 outcome = "Used 2m Peek",
                 triggerReason = state.selectedReason.shortTag
             )
+            // Take him to the app the lease is for (issue #114,
+            // merging issue #99 F4's identical cure): fired HERE,
+            // after startPeekLease has written the lease row —
+            // never synchronously before it — so the lease cannot
+            // burn on hand navigation and the door honours the
+            // stored lease from the first moment. A missing or
+            // dead launch intent is not an error — he stays on
+            // the Deck, where the in-app pill still shows the clock.
+            runCatching {
+                val launch = appContext.packageManager.getLaunchIntentForPackage(pkg)
+                if (launch != null) {
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    appContext.startActivity(launch)
+                }
+            }.onFailure {
+                // Issue #75 F1 wiring (preserved from main's removed
+                // duplicate block): a granted peek whose launch
+                // throws must not pass silently.
+                MLog.w("peek launch intent failed for $pkg", it)
+            }
         }
     }
 
@@ -3752,6 +3810,16 @@ class MonolithViewModel(
         requestDisarmChallenge()
     }
 
+
+    /**
+     * The airlock's honest door (issue #114, finding 2): closes
+     * the sheet and books the stayed-focused intercept. The
+     * RETURN itself is the host's half — MainActivity calls
+     * moveTaskToBack(true) on this same tap, sending Monolith's
+     * task behind the task the intercept interrupted. This verb
+     * alone never claimed to move the user; the pair together
+     * are the return the chip's name promises.
+     */
     fun transmuteImpulseAndReturn() {
         val state = _airlockState.value
         soundEngine.playHarmonicSeal(arming = true)

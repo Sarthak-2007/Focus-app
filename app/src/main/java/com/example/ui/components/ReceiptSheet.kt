@@ -214,9 +214,22 @@ fun ReceiptSheet(
                     ReceiptMonoLine(text = label)
                 }
                 if (receipt.heldAppsAtSeal >= 0 && receipt.heldSitesAtSeal >= 0) {
-                    ReceiptMonoLine(
-                        text = "HELD ${receipt.heldAppsAtSeal} APPS · ${receipt.heldSitesAtSeal} SITES ON THIS PHONE"
-                    )
+                    // W-41: SHUT and PEEK are different promises —
+                    // the line prints them as two counts, never
+                    // flattened into one (the split is a stored
+                    // seal fact since DB v14). A pre-v14 row's
+                    // split was never recorded, so it prints the
+                    // stored total exactly as sealed — a split is
+                    // never invented for a row that predates it.
+                    if (receipt.heldShutAtSeal >= 0 && receipt.heldPeekAtSeal >= 0) {
+                        ReceiptMonoLine(
+                            text = "HELD ${receipt.heldShutAtSeal} SHUT · ${receipt.heldPeekAtSeal} PEEK (2 MIN) · ${receipt.heldSitesAtSeal} WEBSITES"
+                        )
+                    } else {
+                        ReceiptMonoLine(
+                            text = "HELD ${receipt.heldAppsAtSeal} APPS · ${receipt.heldSitesAtSeal} SITES ON THIS PHONE"
+                        )
+                    }
                 }
                 // Audit R3b #145: the completion moment names its
                 // reward — the curio this finish forged, on the slip
@@ -288,6 +301,34 @@ fun ReceiptSheet(
                         color = scheme.onBackground
                     )
                 }
+                if (receipt.penaltySecondsAdded > 0) {
+                    // Audit R3 #113, finding 4: the penalty was
+                    // already inside the PLANNED figure above (the
+                    // span prices it in) — this line names what the
+                    // plan silently included, in the same bold
+                    // register as the shield-gap line.
+                    Text(
+                        text = "A ${receipt.penaltySecondsAdded / 60} MIN TAMPER PENALTY WAS ADDED TO THIS SESSION",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = scheme.onBackground
+                    )
+                }
+                if (receipt.openExposureApps.isNotEmpty()) {
+                    // Issue #129 F3: the slip names what was
+                    // actually used through the open door — a
+                    // session stamped OPEN APP USED never reads
+                    // as clean, and the names are the evidence.
+                    Text(
+                        text = "OPEN APPS USED IN THAT SESSION: " +
+                            receipt.openExposureApps.joinToString(", ") { it.uppercase() },
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = scheme.onBackground
+                    )
+                }
                 if (receipt.faulted) {
                     // The one lawful receipt-only fault line
                     // (build-ready §7.2) — it never prints on the
@@ -311,9 +352,14 @@ fun ReceiptSheet(
                 // 0.25.sp at the same 9.sp measures ~326dp — the
                 // whole sentence lands on one line, still the
                 // same quiet mono footer. Do not "restore" the
-                // 1.sp without re-measuring.
+                // 1.sp without re-measuring. W-43 (BELEG): the
+                // sentence itself — an acronym ("YPT") and then a
+                // product name ("YEOLPUMTA") both failed the
+                // fresh-reader test; the line now says the thing
+                // in plain words. 61 visible chars — inside the
+                // 62-char budget the 0.25.sp measurement allows.
                 Text(
-                    text = "THE MACHINE KEEPS ITS OWN LOG · STUDY HOURS LIVE IN YEOLPUMTA",
+                    text = "THIS APP KEEPS ITS OWN LOG · STUDY TIME IS IN THE STUDY TIMER",
                     fontFamily = AnonymousProFamily,
                     fontSize = 9.sp,
                     letterSpacing = 0.25.sp,
