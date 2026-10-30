@@ -674,16 +674,34 @@ object BlockedBrowserDomains {
     /**
      * Normalises free-typed input ("https://www.YouTube.com/shorts?x=1")
      * into a stored domain ("youtube.com/shorts"). Null = not a usable site.
+     *
+     * Issue #79 (Audit R2, url-blocker-bypasses #4): the authority is
+     * parsed, not just prefix-stripped — userinfo ("user:pass@"),
+     * ports (":8443") and trailing dots ("instagram.com.") are
+     * stripped, so an accepted entry can always match a real visit.
+     * Before this, all three were stored verbatim and could never be
+     * a substring of the real URL-bar text: a rule the user believed
+     * blocked a site that was wide open. The path is kept (the
+     * "youtube.com/shorts" form above is a real, shipped rule), with
+     * the same authority canonicalisation applied in front of it.
      */
     fun normalizeDomain(raw: String): String? {
         var d = raw.trim().lowercase()
-        if (d.isEmpty()) return null
-        d = d.removePrefix("https://").removePrefix("http://")
+        if (d.isEmpty() || d.contains(' ')) return null
+        d = d.removePrefix("https://").removePrefix("http://").removePrefix("//")
         d = d.substringBefore('?').substringBefore('#')
-        d = d.removePrefix("www.")
-        d = d.trim().trimEnd('/')
-        if (d.isEmpty() || !d.contains('.') || d.contains(' ')) return null
-        return d
+        if (d.isEmpty()) return null
+        val slash = d.indexOf('/')
+        val authority = if (slash >= 0) d.substring(0, slash) else d
+        val path = if (slash >= 0) d.substring(slash + 1).trim().trimEnd('/') else ""
+        // Authority canonicalisation: drop userinfo and port, then a
+        // trailing dot (FQDN root label), then one leading "www.".
+        var host = authority.substringAfterLast('@')
+        host = host.substringBefore(':')
+        host = host.trim().trimEnd('.').removePrefix("www.").trimEnd('.')
+        if (host.isEmpty() || !host.contains('.')) return null
+        if (host.split('.').any { it.isEmpty() }) return null
+        return if (path.isEmpty()) host else "$host/$path"
     }
 }
 
