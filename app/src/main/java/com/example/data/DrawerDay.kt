@@ -7,12 +7,15 @@ import java.time.ZoneId
 /**
  * The Drawer's one day rule: his day starts at 03:30 (he wakes at
  * 03:30), not at midnight. Every Drawer derivation of "which day /
- * which month" — the DAO months index, the repository month bounds,
- * the screen's grouping keys — goes through here or through the SQL
- * twin of this rule (the months index subtracts the same 210
- * minutes inside SQLite). Without it, a task finished at 00:02
- * files under the next day AND the next month, and a phantom month
- * appears in the index.
+ * which month" — the repository months index, the repository month
+ * bounds, the screen's grouping keys — goes through here, and ONLY
+ * here. A SQL twin of this rule used to compute the months index
+ * by subtracting 210 elapsed minutes inside SQLite; the two were
+ * different functions on DST days (Audit R1 #37, verified at the
+ * 2026-11-01 America/New_York fall-back boundary), so the twin is
+ * dead: the DAO returns raw instants and this object files them.
+ * Without the rule, a task finished at 00:02 files under the next
+ * day AND the next month, and a phantom month appears in the index.
  *
  * Row finish times are NEVER shifted: they print true clock. Only
  * the filing boundary moves.
@@ -22,7 +25,9 @@ object DrawerDay {
     /** 03:30 = 210 minutes after midnight. */
     const val DAY_START_OFFSET_MINUTES: Long = 210L
 
-    /** The same offset in seconds, for the SQLite months index. */
+    /** The same offset in seconds. Retained for callers that work
+     *  in epoch seconds; the months index no longer consumes it
+     *  (Audit R1 #37 killed the SQL twin — see class doc). */
     const val DAY_START_OFFSET_SECONDS: Long = 12_600L
 
     /** The filing date of an instant: the local date of (instant − 210 min). */
