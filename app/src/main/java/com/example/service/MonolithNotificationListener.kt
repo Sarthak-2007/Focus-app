@@ -238,7 +238,7 @@ class MonolithNotificationListener : NotificationListenerService() {
             // that arrived while the session was running.
             dao.getSessionCoveringInstant(postTimeMillis) ?: return@launch
 
-            val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
+            val appRule = dao.getAppByPackage(pkg)
             if (appRule != null && appRule.resolvedTier != AppBlockTier.OPEN) {
                 val storedTitle = title.ifEmpty { appRule.appName }
                 if (key != null) {
@@ -355,7 +355,7 @@ class MonolithNotificationListener : NotificationListenerService() {
         scope.launch {
             val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
             val target = seen ?: run {
-                val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
+                val appRule = dao.getAppByPackage(pkg)
                 SeenCapture(
                     fingerprint = NotificationCapturePolicy.contentFingerprint(rawTitle, text),
                     packageName = pkg,

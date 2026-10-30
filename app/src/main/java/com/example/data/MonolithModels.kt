@@ -746,12 +746,24 @@ object RoutineSchedule {
         (calendar.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
 
     private fun atMinutes(day: java.util.Calendar, minutes: Int): Long {
-        val c = day.clone() as java.util.Calendar
-        c.set(java.util.Calendar.HOUR_OF_DAY, minutes / 60)
-        c.set(java.util.Calendar.MINUTE, minutes % 60)
-        c.set(java.util.Calendar.SECOND, 0)
-        c.set(java.util.Calendar.MILLISECOND, 0)
-        return c.timeInMillis
+        // Audit R6 #341 F29: java.time resolution, the same rules
+        // MonolithWeek and DrawerDay already live by — this was the
+        // one schedule surface still on lenient Calendar, which
+        // silently shifted gap starts and dropped the second
+        // occurrence of repeated-hour windows without a word.
+        // Stated policy: a start inside a spring-forward gap fires
+        // at the first valid instant after the gap (atZone's forward
+        // shift); a start inside a fall-back repeated hour fires at
+        // its FIRST occurrence (atZone's earlier-offset choice) and
+        // the window's elapsed duration runs from there.
+        val zone = java.time.ZoneId.of(day.timeZone.id)
+        val date = java.time.LocalDate.of(
+            day.get(java.util.Calendar.YEAR),
+            day.get(java.util.Calendar.MONTH) + 1,
+            day.get(java.util.Calendar.DAY_OF_MONTH)
+        )
+        return date.atTime(minutes / 60, minutes % 60).atZone(zone)
+            .toInstant().toEpochMilli()
     }
 
     /** Next window start strictly after [nowMillis]; null if no days selected. */

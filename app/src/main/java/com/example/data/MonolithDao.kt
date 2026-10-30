@@ -16,6 +16,11 @@ interface MonolithDao {
     @Query("SELECT * FROM blocked_apps")
     suspend fun getAllAppsSnapshot(): List<BlockedAppEntity>
 
+    /** Audit R6 #341 F54: the notification listener's per-capture
+     *  lookup — one row, not a full catalogue materialisation. */
+    @Query("SELECT * FROM blocked_apps WHERE packageName = :packageName LIMIT 1")
+    suspend fun getAppByPackage(packageName: String): BlockedAppEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertApps(apps: List<BlockedAppEntity>)
 
