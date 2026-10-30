@@ -155,7 +155,17 @@ fun AlwaysOnDeskClockOverlay(
         }
         val mm = displaySecs / 60
         val ss = displaySecs % 60
-        val timeText = String.format(Locale.US, "%02d:%02d", mm, ss)
+        // Audit R3b #147: a stopwatch clock counts UP — the bare
+        // MM:SS was indistinguishable from a countdown at a glance.
+        // The + prefix is the direction marker, here and on the
+        // Deck's hero readout alike.
+        val timeText = if (activeSession != null && activeSession.isActive &&
+            activeSession.isStopwatchMode
+        ) {
+            String.format(Locale.US, "+%02d:%02d", mm, ss)
+        } else {
+            String.format(Locale.US, "%02d:%02d", mm, ss)
+        }
 
         // Issue #111 findings 3+4: the glance now NAMES what the
         // number is (REMAINING vs ELAPSED — the two directions were
@@ -468,8 +478,23 @@ internal fun peekUnlocked(
  * [endsAtText]'s instant; a stopwatch states that it has no set
  * end; no session, no line. The door never invents an end.
  */
-internal fun airlockSessionLine(endsAtMillis: Long?, isStopwatch: Boolean): String? = when {
+internal fun airlockSessionLine(
+    endsAtMillis: Long?,
+    isStopwatch: Boolean,
+    stopwatchFloorAtMillis: Long? = null
+): String? = when {
     endsAtMillis != null -> "SESSION " + endsAtText(endsAtMillis)
+    // Audit R3b #147: "NO SET END" was true and useless — a
+    // stopwatch session's one scheduled fact is its floor moment,
+    // when stopping becomes free. State it; once it has passed,
+    // state that the clean exit stands open.
+    isStopwatch && stopwatchFloorAtMillis != null &&
+        stopwatchFloorAtMillis > System.currentTimeMillis() ->
+        "SESSION RUNNING · CLEAN EXIT FROM " +
+            java.text.SimpleDateFormat("HH:mm", Locale.US)
+                .format(java.util.Date(stopwatchFloorAtMillis))
+    isStopwatch && stopwatchFloorAtMillis != null ->
+        "SESSION RUNNING · CLEAN EXIT OPEN"
     isStopwatch -> "SESSION RUNNING · NO SET END"
     else -> null
 }
@@ -913,7 +938,11 @@ fun AirlockInterceptOverlay(
                 // SIL-1 / Hale W-28: under the app name, the door
                 // states the session's end — its own statement,
                 // from the session's own numbers.
-                airlockSessionLine(state.sessionEndsAtMillis, state.sessionIsStopwatch)?.let { line ->
+                airlockSessionLine(
+                    state.sessionEndsAtMillis,
+                    state.sessionIsStopwatch,
+                    state.stopwatchFloorAtMillis
+                )?.let { line ->
                     Text(
                         text = line,
                         fontFamily = AtkinsonHyperlegibleFamily,
@@ -1268,6 +1297,24 @@ fun DisarmChallengeOverlay(
                     fontSize = 13.sp,
                     color = NightColorPrimary
                 )
+
+                // Audit R3b #147: below the stopwatch floor, the
+                // valve is not the only door — waiting is. The
+                // overlay names the floor, the minutes left to it,
+                // and that reaching it makes the stop free, so the
+                // token is never presented as the sole way out.
+                if (state.sessionIsStopwatch && state.remainingFloorSeconds > 0) {
+                    val floorMinutes =
+                        (state.remainingFloorSeconds + 59) / 60
+                    Text(
+                        text = "Or wait: this is a stopwatch session with a " +
+                            "20-minute floor. $floorMinutes more minutes and " +
+                            "stopping is free — no break spent.",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 13.sp,
+                        color = NightColorPrimary
+                    )
+                }
 
                 if (tokensRemaining > 0) {
                     AndroidView(
