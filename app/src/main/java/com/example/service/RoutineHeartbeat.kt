@@ -56,17 +56,31 @@ object RoutineHeartbeat {
     /** The suspending entry — callers with a coroutine use this. */
     suspend fun tick(context: Context, source: Source, force: Boolean = false) {
         val appContext = context.applicationContext
-        if (!gate.tryLock()) {
-            pendingAgain.set(true)
-            return
-        }
-        try {
-            do {
-                pendingAgain.set(false)
-                reconcileOnce(appContext)
-            } while (pendingAgain.get())
-        } finally {
-            gate.unlock()
+        // Issue #77: the coalescer had a lost-wakeup window — a
+        // trigger landing AFTER the do-while read pendingAgain=false
+        // but BEFORE gate.unlock() failed tryLock, set the flag, and
+        // returned; the holder then unlocked without re-checking and
+        // nobody ever consumed the flag. That reconcile was silently
+        // dropped until some unrelated future trigger. The outer
+        // loop closes the window: after unlocking, the flag is read
+        // once more — a trigger that landed in the exit window is
+        // consumed by looping back and taking the gate again (or, if
+        // another holder took it first, that holder's own loop sees
+        // the flag and consumes it).
+        while (true) {
+            if (!gate.tryLock()) {
+                pendingAgain.set(true)
+                return
+            }
+            try {
+                do {
+                    pendingAgain.set(false)
+                    reconcileOnce(appContext)
+                } while (pendingAgain.get())
+            } finally {
+                gate.unlock()
+            }
+            if (!pendingAgain.get()) return
         }
     }
 

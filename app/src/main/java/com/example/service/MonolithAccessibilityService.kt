@@ -136,8 +136,15 @@ class MonolithAccessibilityService : AccessibilityService() {
             dao.getActiveSessionFlow().collect { session ->
                 if (session != null && session.isActive) {
                     if (armedSessionId != session.id) {
-                        armedSessionId = session.id
+                        // Issue #77: write the mono BEFORE the id.
+                        // The old order published the new session id
+                        // while the previous session's mono still
+                        // stood, so a sampler pairing them mid-write
+                        // saw the NEW session wearing the DEAD
+                        // session's stamp — link L3 'confirmed' for
+                        // a session this gate never observed.
                         armedMono = SystemClock.elapsedRealtime()
+                        armedSessionId = session.id
                     }
                 } else if (armedSessionId != -1) {
                     armedSessionId = -1

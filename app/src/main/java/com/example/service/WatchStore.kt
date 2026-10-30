@@ -190,7 +190,11 @@ object WatchStore {
     /** A nudge with no data: forces a snapshot re-emission so derived
      *  readers (the Deck warrant) re-read the living facts. */
     fun poke() {
-        _snapshots.value = _snapshots.value.copy()
+        // Issue #77: this write used to bypass publish()'s lock —
+        // a poke interleaved with a publish could resurrect the
+        // pre-publish snapshot and discard a measurement. A poke is
+        // a publish with no transform; it takes the same lock now.
+        publish { it }
     }
 
     // ------------------------------------------------------------------
@@ -252,8 +256,17 @@ object WatchStore {
      * advances to the set's completion instant.
      */
     fun runSweep(query: (WatchItemId) -> Boolean) {
-        val gen = ++sweepGen
-        pendingSweepStartWall = System.currentTimeMillis()
+        // Issue #77: sweepGen and pendingSweepStartWall are state
+        // publish() reads and clears under its @Synchronized lock;
+        // they were written here OUTSIDE that lock, so overlapping
+        // sweeps (Deck entry + ON_RESUME) could mix generations and
+        // complete each other's sets with stale stamps. The write
+        // now takes the same monitor publish() holds.
+        val gen: Int
+        synchronized(this) {
+            gen = ++sweepGen
+            pendingSweepStartWall = System.currentTimeMillis()
+        }
         for (item in WatchItemId.PERMISSIONS) {
             sweepScope.launch {
                 val granted = runCatching { query(item) }.getOrDefault(false)
