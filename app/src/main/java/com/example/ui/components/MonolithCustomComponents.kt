@@ -505,15 +505,15 @@ internal fun refusalSentenceFor(warrant: Warrant?): RefusalSentence? {
     if (warrant == null) return null
     return when {
         !warrant.a11yBound ->
-            RefusalSentence(R.string.sentence_blocking_off, RefusalAction.FIX_ACCESSIBILITY)
+            RefusalSentence(R.string.sentence_blocking_off, action = RefusalAction.FIX_ACCESSIBILITY)
         warrant.state == WarrantState.UNPROVEN && !warrant.a11yStampedThisResidency ->
-            RefusalSentence(R.string.sentence_cant_check, RefusalAction.RETRY_CHECK)
+            RefusalSentence(R.string.sentence_cant_check, action = RefusalAction.RETRY_CHECK)
         warrant.usage == UsageAccess.DENIED ->
-            RefusalSentence(R.string.sentence_usage_off, RefusalAction.FIX_USAGE)
+            RefusalSentence(R.string.sentence_usage_off, action = RefusalAction.FIX_USAGE)
         warrant.usage == UsageAccess.UNSET ->
-            RefusalSentence(R.string.sentence_cant_check, RefusalAction.RETRY_CHECK)
+            RefusalSentence(R.string.sentence_cant_check, action = RefusalAction.RETRY_CHECK)
         warrant.state == WarrantState.OFF ->
-            RefusalSentence(R.string.sentence_blocking_off, RefusalAction.FIX_ACCESSIBILITY)
+            RefusalSentence(R.string.sentence_blocking_off, action = RefusalAction.FIX_ACCESSIBILITY)
         else -> null
     }
 }
