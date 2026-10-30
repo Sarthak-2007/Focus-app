@@ -76,9 +76,9 @@ class WatchStoreRobolectricTest {
     }
 
     @Test
-    fun interceptors_deriveFromSettingsParentsAndSuspension() {
+    fun interceptors_deriveFromSettingsAndParentsOnly() {
         // Parents unmeasured: the lines are unmeasured (name only).
-        WatchStore.updateInterceptorInputs(shortsOn = true, sitesOn = true, safeBreak = false)
+        WatchStore.updateInterceptorInputs(shortsOn = true, sitesOn = true)
         var snap = WatchStore.snapshots.value
         assertNull(snap.measurement(WatchItemId.SHORTS_REELS))
 
@@ -95,16 +95,17 @@ class WatchStoreRobolectricTest {
         assertEquals(InterceptorState.RUNNING, snap.measurement(WatchItemId.SOCIAL_SITES)?.interceptor)
         assertEquals(InterceptorState.RUNNING, snap.measurement(WatchItemId.NOTIFICATIONS)?.interceptor)
 
-        // His suspension (the Safe Break): the blocking pair PAUSES;
-        // the listener's capture has no suspension and keeps running.
-        WatchStore.updateInterceptorInputs(safeBreak = true)
-        snap = WatchStore.snapshots.value
-        assertEquals(InterceptorState.PAUSED, snap.measurement(WatchItemId.SHORTS_REELS)?.interceptor)
-        assertEquals(InterceptorState.PAUSED, snap.measurement(WatchItemId.SOCIAL_SITES)?.interceptor)
-        assertEquals(InterceptorState.RUNNING, snap.measurement(WatchItemId.NOTIFICATIONS)?.interceptor)
+        // Audit R3 (safe-break-lived #1): there is NO Safe Break
+        // suspension input to flip — the sniper and the site blocker
+        // are strictly active during Safe Breaks (the accessibility
+        // service's own class doc), so with settings on and parents
+        // granted the pair can only ever read RUNNING here; the old
+        // PAUSED-under-break derivation was a printed lie and its
+        // input is deleted. (The break truth is covered end-to-end
+        // in SafeBreakTruthTest.)
 
         // Setting off: OFF regardless of parents.
-        WatchStore.updateInterceptorInputs(shortsOn = false, safeBreak = false)
+        WatchStore.updateInterceptorInputs(shortsOn = false)
         snap = WatchStore.snapshots.value
         assertEquals(InterceptorState.OFF, snap.measurement(WatchItemId.SHORTS_REELS)?.interceptor)
 

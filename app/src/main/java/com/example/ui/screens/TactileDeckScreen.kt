@@ -86,6 +86,17 @@ import java.util.Date
 import java.util.Locale
 
 /**
+ * The Deck eyebrow's break print (Audit R3, safe-break-lived #3):
+ * the break's exact clock, second-precise — "BREAK · 1:01 LEFT",
+ * never a ceiling-rounded minute count that reads "1 MIN" for the
+ * entire final minute. Pure, so the print is unit-tested.
+ */
+internal fun breakEyebrowText(safeBreakSecondsRemaining: Int): String {
+    val s = safeBreakSecondsRemaining.coerceAtLeast(0)
+    return String.format(Locale.US, "BREAK · %d:%02d LEFT", s / 60, s % 60)
+}
+
+/**
  * TAB 0: FOCUS COMMAND CONSOLE (DEVELOPER-GUIDE.pdf §1–§11)
  * - Full-bleed stacked sections with 12dp universal spacing.
  * - The Instrument: one raised panel holding the readout + RotaryWheelView (Ren).
@@ -609,11 +620,17 @@ fun TactileDeckScreen(
                     // The Ellipsis fix (Wren): the engine runs the
                     // 10-minute Safe Breaks between blocks and no screen
                     // said so - the break was invisible. During a break
-                    // the eyebrow prints the word and the whole minutes
+                    // the eyebrow prints the word and the exact clock
                     // left; the break is a fact, so it renders.
                     text = when {
+                        // Exact seconds (Audit R3, safe-break-lived
+                        // #3): the old ceiling-minutes print read
+                        // "1 MIN" for the break's whole final minute
+                        // and then the next block had already
+                        // started — a countdown that cannot be used
+                        // to leave on time is decoration.
                         isSessionRunning && activeSession.isInSafeBreak ->
-                            "BREAK · ${(activeSession.safeBreakSecondsRemaining + 59) / 60} MIN"
+                            breakEyebrowText(activeSession.safeBreakSecondsRemaining)
                         showRunningForm -> "SESSION RUNNING"
                         else -> "TOTAL"
                     },

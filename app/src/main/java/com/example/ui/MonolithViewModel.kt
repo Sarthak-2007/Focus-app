@@ -817,11 +817,11 @@ class MonolithViewModel(
         // Strike never replays for it.
         viewModelScope.launch {
             activeSession.collect { session ->
-                // The Watch Store's suspension input: the Safe Break
-                // is his suspension of the blocking interceptors.
-                com.example.service.WatchStore.updateInterceptorInputs(
-                    safeBreak = session?.isInSafeBreak == true
-                )
+                // No Watch Store push here anymore: the store's old
+                // Safe Break "suspension" input made the guard board
+                // print PAUSED for interceptors that never pause
+                // (Audit R3, safe-break-lived #1) — deleted at the
+                // store, so nothing feeds it.
                 if (session == null) {
                     _sealFreeze.value = null
                 } else if (_sealFreeze.value?.sessionId != session.id) {

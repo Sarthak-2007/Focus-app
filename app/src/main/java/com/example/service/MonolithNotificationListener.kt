@@ -20,6 +20,20 @@ import kotlinx.coroutines.launch
  * - Saves captured notifications to Room persistent disk storage so they survive background
  *   restarts and can be read, cleared, or tapped to open after studying.
  */
+/**
+ * The hold rule (Audit R3, safe-break-lived #2): a notification is
+ * held — digested and cancelled — when its app's tier is not OPEN,
+ * EXCEPT that a Safe Break releases the apps the break itself
+ * unlocks: a PEEK-tier app is freely open for the break's length
+ * (the accessibility service's Safe Break rule), so holding its
+ * notifications while its owner chats inside it made the "unlock"
+ * half a lie — messages arrived silently into the HELD digest.
+ * LOCKED apps stay held through the break, exactly as they stay
+ * locked. Pure, so the rule is unit-tested without the service.
+ */
+internal fun notificationHeldDuringSession(isInSafeBreak: Boolean, tier: AppBlockTier): Boolean =
+    tier != AppBlockTier.OPEN && !(isInSafeBreak && tier == AppBlockTier.PEEK_2M)
+
 class MonolithNotificationListener : NotificationListenerService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -73,7 +87,9 @@ class MonolithNotificationListener : NotificationListenerService() {
             if (!activeSession.isActive) return@launch
 
             val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
-            if (appRule != null && appRule.resolvedTier != AppBlockTier.OPEN) {
+            if (appRule != null &&
+                notificationHeldDuringSession(activeSession.isInSafeBreak, appRule.resolvedTier)
+            ) {
                 dao.insertCapturedNotification(
                     CapturedNotificationEntity(
                         packageName = pkg,

@@ -32,6 +32,13 @@ class MonolithShieldService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var monitorJob: Job? = null
 
+    // The Safe Break's announcer (Audit R3, safe-break-lived
+    // #3/#4): fed the updated row every iteration; its alerts ride
+    // their own HIGH-importance channel — the persistent shield
+    // notification is IMPORTANCE_LOW + onlyAlertOnce by design and
+    // can never announce anything.
+    private val breakAnnouncer = BreakAnnouncer()
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
         if (action == ACTION_STOP_SHIELD) {
@@ -54,6 +61,7 @@ class MonolithShieldService : Service() {
         protectingMono = 0L
 
         createNotificationChannel()
+        createBreakAlertChannel()
         val fgsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
         } else {
@@ -106,6 +114,31 @@ class MonolithShieldService : Service() {
                 // persists, so the finish machine can later prove
                 // whether the shield was present or gone.
                 val updated = repository.updateSessionProgress(activeSession, stampShieldBeat = true)
+
+                // Break boundaries announce themselves from here —
+                // the loop that is alive in every app, screen on or
+                // off — never from a UI observer that may not exist
+                // mid-break (Audit R3, safe-break-lived #3/#4).
+                when (breakAnnouncer.onTick(updated.id, updated.isInSafeBreak, updated.safeBreakSecondsRemaining)) {
+                    BreakAlert.STARTED -> postBreakAlert(
+                        title = "SAFE BREAK STARTED",
+                        text = "Break clock ${breakClockText(updated.safeBreakSecondsRemaining)} — " +
+                            "PEEK apps are open. Locked apps, Shorts, Reels and blocked sites stay shut.",
+                        buzzMs = 180L
+                    )
+                    BreakAlert.FINAL_MINUTE -> postBreakAlert(
+                        title = "SAFE BREAK ENDING",
+                        text = "Under a minute left — finish up. Blocking resumes when the break clock hits 00:00.",
+                        buzzMs = 260L
+                    )
+                    BreakAlert.ENDED -> postBreakAlert(
+                        title = "SAFE BREAK OVER",
+                        text = "Block ${updated.currentBlockIndex} of ${updated.totalStudyBlocks} is live — blocking is back on.",
+                        buzzMs = 350L
+                    )
+                    null -> Unit
+                }
+
                 if (!updated.isActive) {
                     // Session-edge tick BEFORE standing down: a routine
                     // session that just timer-completed gets finalised
@@ -210,6 +243,82 @@ class MonolithShieldService : Service() {
         }
     }
 
+    private fun createBreakAlertChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val channel = NotificationChannel(
+                BREAK_ALERT_CHANNEL_ID,
+                "Safe Break announcements",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Heads-up alerts when a Safe Break starts, nears its end, and ends"
+                setShowBadge(false)
+            }
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun breakClockText(totalSeconds: Int): String {
+        val s = totalSeconds.coerceAtLeast(0)
+        return String.format("%d:%02d", s / 60, s % 60)
+    }
+
+    /**
+     * One heads-up break announcement: its own channel + id (it
+     * never touches the persistent shield notification), a buzz the
+     * latch knock never gave, auto-cancel and a 90 s timeout so a
+     * stale alert never lingers into the next block pretending to
+     * be news. Information only — tapping it opens the app; it is
+     * never an exit from anything.
+     */
+    private fun postBreakAlert(title: String, text: String, buzzMs: Long) {
+        try {
+            val pendingIntent = PendingIntent.getActivity(
+                this,
+                1,
+                Intent(this, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+                },
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val notification = NotificationCompat.Builder(this, BREAK_ALERT_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_STATUS)
+                .setAutoCancel(true)
+                .setTimeoutAfter(90_000L)
+                .setContentIntent(pendingIntent)
+                .build()
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(BREAK_ALERT_NOTIFICATION_ID, notification)
+        } catch (_: Exception) {
+            // Announcement is best-effort; protection never depends on it.
+        }
+        try {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager)?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+            }
+            if (vibrator?.hasVibrator() == true) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(
+                        android.os.VibrationEffect.createOneShot(
+                            buzzMs, android.os.VibrationEffect.DEFAULT_AMPLITUDE
+                        )
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(buzzMs)
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
     private fun buildNotification(title: String, subtitle: String): Notification {
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -279,6 +388,8 @@ class MonolithShieldService : Service() {
             internal set
         const val CHANNEL_ID = "monolith_shield_channel"
         const val NOTIFICATION_ID = 4096
+        const val BREAK_ALERT_CHANNEL_ID = "monolith_break_alert_channel"
+        const val BREAK_ALERT_NOTIFICATION_ID = 4097
         const val ACTION_START_SHIELD = "com.example.action.START_SHIELD"
         const val ACTION_STOP_SHIELD = "com.example.action.STOP_SHIELD"
         const val EXTRA_INTERCEPTED_PACKAGE = "extra_intercepted_package"

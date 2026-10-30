@@ -98,12 +98,22 @@ fun AlwaysOnDeskClockOverlay(
             }
         }
         val displaySecs = if (activeSession != null && activeSession.isActive) {
-            // Timed sessions read the SPAN remaining, never the
-            // per-block remaining: the block's remainder is 0 for
-            // the whole of a Safe Break, and this clock has no block
-            // context - it would read 00:00 (FINISH) through every
-            // break. The span counts the break as session time.
-            if (activeSession.isStopwatchMode) activeSession.elapsedSeconds else activeSession.spanRemainingSeconds
+            // During a Safe Break the hero IS the break clock
+            // (Audit R3, safe-break-lived #5): the desk clock is a
+            // kept study display — elapsed + remaining is its job —
+            // and a user who props the phone up as their break
+            // clock must be able to tell break from work and spot
+            // its end on THIS screen. Outside a break, timed
+            // sessions read the SPAN remaining, never the per-block
+            // remaining: the block's remainder is 0 for the whole
+            // of a Safe Break — it would read 00:00 (FINISH)
+            // through every break. The span counts the break as
+            // session time.
+            when {
+                activeSession.isInSafeBreak -> activeSession.safeBreakSecondsRemaining
+                activeSession.isStopwatchMode -> activeSession.elapsedSeconds
+                else -> activeSession.spanRemainingSeconds
+            }
         } else {
             dialMinutes * 60
         }
@@ -116,11 +126,13 @@ fun AlwaysOnDeskClockOverlay(
         // actually reads at night. Every branch below is a real
         // derivation from the session, or honestly empty.
         val progress = when {
-            // The desk clock tells SESSION time only, on the span
-            // derivation: a Safe Break earns no special rendering
-            // (Nacht's law - the break's one rendering is the Deck's
-            // BREAK eyebrow) and the bar never reads empty mid-
-            // session. The fabricated 0.65 constant stays dead.
+            // The desk clock's bar tells SESSION time on the span
+            // derivation, in and out of a break, and never reads
+            // empty mid-session. (The break itself is rendered by
+            // the hero clock + the SAFE BREAK line below — Audit R3
+            // safe-break-lived #5 struck the old "no special
+            // rendering" law that made the break invisible here.)
+            // The fabricated 0.65 constant stays dead.
             activeSession != null && activeSession.isActive && !activeSession.isStopwatchMode ->
                 (activeSession.spanElapsedSeconds.toFloat() / activeSession.spanTargetSeconds.coerceAtLeast(1)).coerceIn(0.04f, 1f)
             activeSession != null && activeSession.isActive ->
@@ -156,6 +168,34 @@ fun AlwaysOnDeskClockOverlay(
                     fontSize = 11.sp,
                     color = NightColorPrimary.copy(alpha = 0.6f)
                 )
+
+                // The break, named on the clock (Audit R3,
+                // safe-break-lived #5): while the hero below counts
+                // the break down, this line says WHAT is counting
+                // and what resumes at zero. The moment the break
+                // ends the line vanishes and the hero returns to the
+                // span — the change at the end is visible from
+                // across the room, which is the clock's whole job.
+                val breakLine = if (activeSession != null && activeSession.isActive) {
+                    deskClockBreakLine(
+                        isInSafeBreak = activeSession.isInSafeBreak,
+                        nextBlockIndex = activeSession.currentBlockIndex + 1,
+                        totalBlocks = activeSession.totalStudyBlocks
+                    )
+                } else {
+                    null
+                }
+                if (breakLine != null) {
+                    Text(
+                        text = breakLine,
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        letterSpacing = 3.sp,
+                        color = NightColorPrimary,
+                        modifier = Modifier.testTag("desk_clock_break_line")
+                    )
+                }
 
                 // Hero architectural Space Mono numerals (112sp)
                 Text(
@@ -223,6 +263,26 @@ fun AlwaysOnDeskClockOverlay(
  */
 internal fun deskClockBannerText(taskTitle: String?, intention: String?): String? =
     taskTitle?.takeIf { it.isNotBlank() } ?: intention?.takeIf { it.isNotBlank() }
+
+/**
+ * The desk clock's break line (Audit R3, safe-break-lived #5):
+ * during a Safe Break the clock names the break and the block
+ * that resumes when its countdown (the hero, in break state)
+ * hits zero; outside a break there is no line — the clock never
+ * prints a break that is not running. [nextBlockIndex] is the
+ * 1-based block the break hands over to, clamped to the session's
+ * own block count so the line can never promise a block the
+ * session does not have.
+ */
+internal fun deskClockBreakLine(
+    isInSafeBreak: Boolean,
+    nextBlockIndex: Int,
+    totalBlocks: Int
+): String? {
+    if (!isInSafeBreak) return null
+    val next = nextBlockIndex.coerceIn(1, totalBlocks.coerceAtLeast(1))
+    return "SAFE BREAK · BLOCK $next RESUMES AT 00:00"
+}
 
 /**
  * The withheld peek's cooldown print (Truth Car 3, SIL-3; Hale

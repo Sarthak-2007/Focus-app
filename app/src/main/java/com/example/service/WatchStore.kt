@@ -161,15 +161,21 @@ object WatchStore {
      *  from a fresher lifecycle/heartbeat stamp of the same era. */
     @Volatile private var pendingSweepStartWall: Long = 0L
 
-    // Interceptor inputs: the settings and the suspension, pushed by
-    // the ViewModel (the settings live in guard_settings; the
-    // suspension is the session's Safe Break). The notification
-    // capture has no setting — it is on by design — and no suspension
-    // input exists for it in the shipped app, so its PAUSED is
-    // unreachable by construction, not by omission.
+    // Interceptor inputs: the settings, pushed by the ViewModel
+    // (the settings live in guard_settings). There is NO suspension
+    // input — Audit R3 (safe-break-lived #1) proved the old one a
+    // lie: the derivation printed PAUSED for SHORTS + REELS and
+    // SOCIAL SITES during a Safe Break while the accessibility
+    // service kept intercepting both, exactly as its own class doc
+    // promises ("Remains strictly active even during Safe Breaks";
+    // a break unlocks only the per-app PEEK tier, enforcement-side).
+    // A board that prints a suspension enforcement never performs
+    // is a false warrant, so the input is deleted, not reworded.
+    // The notification capture likewise has no setting — it is on
+    // by design (its per-app release for break-unlocked PEEK apps
+    // lives in the listener, and does not pause the capture).
     @Volatile private var shortsSettingOn = true
     @Volatile private var sitesSettingOn = true
-    @Volatile private var safeBreakActive = false
 
     // The wire's residency machinery (moved whole from LiveWire):
     // a Deck residency starts when the Deck is entered; the wire can
@@ -267,13 +273,11 @@ object WatchStore {
      *  interceptor measurements. */
     fun updateInterceptorInputs(
         shortsOn: Boolean? = null,
-        sitesOn: Boolean? = null,
-        safeBreak: Boolean? = null
+        sitesOn: Boolean? = null
     ) {
         var changed = false
         if (shortsOn != null && shortsOn != shortsSettingOn) { shortsSettingOn = shortsOn; changed = true }
         if (sitesOn != null && sitesOn != sitesSettingOn) { sitesSettingOn = sitesOn; changed = true }
-        if (safeBreak != null && safeBreak != safeBreakActive) { safeBreakActive = safeBreak; changed = true }
         if (changed) publish { it }
     }
 
@@ -436,10 +440,16 @@ object WatchStore {
 
     /**
      * The interceptor derivation (§4.3), computed at every emission:
-     *  RUNNING — setting on, every parent currently-warranted, no
-     *            suspension in force;
-     *  PAUSED  — setting on, warranted, and HIS suspension in force
-     *            (the Safe Break, for the two blocking interceptors);
+     *  RUNNING — setting on, every parent currently-warranted;
+     *  PAUSED  — retained in the vocabulary for a suspension that is
+     *            ever REAL (measured at the enforcement door); no
+     *            current input derives it. The Safe Break is NOT a
+     *            suspension of either blocking interceptor — the
+     *            sniper and the site blocker are documented, in the
+     *            accessibility service's own class doc, as strictly
+     *            active during Safe Breaks, and Audit R3
+     *            (safe-break-lived #1) caught this derivation
+     *            printing PAUSED for them while they intercepted;
      *  OFF     — setting off, or any parent MISSING or STALE.
      * A parent never measured makes the line unmeasured (it prints
      * its name only) — OFF would be a claim nobody measured.
@@ -466,11 +476,12 @@ object WatchStore {
         val parentPrints = parents.map { permPrintAt(snapshot, it, nowMono) }
         if (parentPrints.any { it == PermPrint.UNMEASURED }) return null
         if (parentPrints.any { it != PermPrint.GRANTED }) return InterceptorState.OFF
-        val suspended = when (item) {
-            WatchItemId.NOTIFICATIONS -> false
-            else -> safeBreakActive
-        }
-        return if (suspended) InterceptorState.PAUSED else InterceptorState.RUNNING
+        // No suspension term: during a Safe Break all three
+        // interceptors keep doing exactly what they do in a block
+        // (the break's only unlock is the per-app PEEK tier, which
+        // is not an interceptor state), so RUNNING is the truth in
+        // and out of a break alike.
+        return InterceptorState.RUNNING
     }
 
     private fun WatchSnapshot.withMeasurement(m: WatchMeasurement): WatchSnapshot =
@@ -487,7 +498,6 @@ object WatchStore {
         pendingSweepStartWall = 0L
         shortsSettingOn = true
         sitesSettingOn = true
-        safeBreakActive = false
         residencyStartMono = 0L
     }
 }
