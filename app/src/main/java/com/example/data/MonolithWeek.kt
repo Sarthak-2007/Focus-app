@@ -30,6 +30,19 @@ object MonolithWeek {
         val monday = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         return monday.atStartOfDay(zone).toInstant().toEpochMilli()
     }
+
+    /**
+     * The anchor of the NEXT week: Monday 00:00 local, seven days
+     * after this week's anchor (issue #119, finding 1). This is the
+     * instant a spent emergency-break token returns — the SPENT face
+     * of the valve prints it, so the state the user is in and when
+     * it ends are both stated, never hidden.
+     */
+    fun nextWeekAnchorMillis(nowMillis: Long, zone: ZoneId = ZoneId.systemDefault()): Long {
+        val date = Instant.ofEpochMilli(nowMillis).atZone(zone).toLocalDate()
+        val nextMonday = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).plusWeeks(1)
+        return nextMonday.atStartOfDay(zone).toInstant().toEpochMilli()
+    }
 }
 
 /**
