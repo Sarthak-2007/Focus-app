@@ -1,4 +1,6 @@
 package com.example.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -458,7 +460,7 @@ fun DrawerScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "STORED",
+                        text = stringResource(R.string.drawer_stored),
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
@@ -466,7 +468,7 @@ fun DrawerScreen(
                         color = scheme.onSurfaceVariant
                     )
                     Text(
-                        text = "BACK",
+                        text = stringResource(R.string.label_back),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -511,7 +513,7 @@ fun DrawerScreen(
                     // line, never an invented "ESTIMATE 0 MIN".
                     if (detail.estimatedMinutes > 0) {
                         Text(
-                            text = "ESTIMATE ${detail.estimatedMinutes} MIN",
+                            text = stringResource(R.string.drawer_estimate, detail.estimatedMinutes),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontSize = 13.sp,
                             color = scheme.onBackground
@@ -590,7 +592,7 @@ fun DrawerScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "CABINET",
+                        text = stringResource(R.string.drawer_cabinet),
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
@@ -598,7 +600,7 @@ fun DrawerScreen(
                         color = scheme.onSurfaceVariant
                     )
                     Text(
-                        text = "BACK",
+                        text = stringResource(R.string.label_back),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -892,7 +894,7 @@ fun DrawerScreen(
                         color = scheme.onSurfaceVariant
                     )
                     Text(
-                        text = "BACK",
+                        text = stringResource(R.string.label_back),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -940,7 +942,7 @@ fun DrawerScreen(
     ) {
         item {
             Text(
-                text = "STORED",
+                text = stringResource(R.string.drawer_stored),
                 fontFamily = AnonymousProFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 13.sp,
@@ -969,7 +971,7 @@ fun DrawerScreen(
             ) {
                 if (drawerQuery.isEmpty()) {
                     Text(
-                        text = "TYPE TO FIND A TASK",
+                        text = stringResource(R.string.drawer_search_hint),
                         fontFamily = AnonymousProFamily,
                         fontSize = 12.sp,
                         letterSpacing = 1.sp,
@@ -1027,7 +1029,7 @@ fun DrawerScreen(
             if (searchGroups.isEmpty()) {
                 item {
                     Text(
-                        text = "NOTHING STORED UNDER “$drawerQuery”",
+                        text = stringResource(R.string.drawer_nothing_under, drawerQuery),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 13.sp,
                         color = scheme.onSurfaceVariant,
@@ -1169,7 +1171,7 @@ fun DrawerScreen(
                                 )
                             }
                             Text(
-                                text = "BACK",
+                                text = stringResource(R.string.label_back),
                                 fontFamily = AtkinsonHyperlegibleFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.sp,
@@ -1300,7 +1302,7 @@ fun DrawerScreen(
                 } else if (globallyEmpty) {
                     item {
                         Text(
-                            text = "NOTHING STORED YET",
+                            text = stringResource(R.string.drawer_nothing_yet),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontSize = 13.sp,
                             color = scheme.onSurfaceVariant,
@@ -1360,7 +1362,7 @@ fun DrawerScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "ALL MONTHS",
+                                text = stringResource(R.string.drawer_all_months),
                                 fontFamily = AnonymousProFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 11.sp,
@@ -1632,7 +1634,7 @@ private fun EarlierRow(onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = "EARLIER",
+            text = stringResource(R.string.drawer_earlier),
             fontFamily = AnonymousProFamily,
             fontWeight = FontWeight.Bold,
             fontSize = 11.sp,

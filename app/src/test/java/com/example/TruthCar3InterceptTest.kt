@@ -177,8 +177,8 @@ class TruthCar3InterceptTest {
         // A fix may only be demanded off a current read.
         val dead = warrant(WarrantState.OFF, readMono = 100_000L, bound = false)
         assertEquals(
-            "BLOCKING IS OFF — TAP TO FIX",
-            refusalSentenceFor(dead, 110_000L)?.text
+            R.string.sentence_blocking_off,
+            refusalSentenceFor(dead, 110_000L)?.textRes
         )
         assertNull(refusalSentenceFor(dead, 200_000L))
         assertNull(refusalSentenceFor(null, 200_000L))

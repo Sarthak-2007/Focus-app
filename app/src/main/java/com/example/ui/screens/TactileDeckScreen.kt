@@ -1,4 +1,6 @@
 package com.example.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -1046,7 +1048,7 @@ fun TactileDeckScreen(
                                 // padding on the box, an under-48dp
                                 // target under an 11sp label).
                                 modifier = Modifier.padding(vertical = 13.dp),
-                                text = "FLOW",
+                                text = stringResource(R.string.deck_flow),
                                 fontFamily = AnonymousProFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 11.sp,
@@ -1716,7 +1718,7 @@ private fun DeckTaskSection(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "NOW",
+                    text = stringResource(R.string.deck_now),
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 10.5.sp,
@@ -1773,7 +1775,7 @@ private fun DeckTaskSection(
                         .padding(horizontal = 10.dp, vertical = 5.dp)
                 ) {
                     Text(
-                        text = "DONE",
+                        text = stringResource(R.string.label_done),
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.sp,
@@ -1782,7 +1784,7 @@ private fun DeckTaskSection(
                     )
                 }
                 Text(
-                    text = "QUEUE ${queuedCount}",
+                    text = stringResource(R.string.deck_queue, queuedCount),
                     fontFamily = AnonymousProFamily,
                     fontSize = 11.sp,
                     color = scheme.onSurfaceVariant,
