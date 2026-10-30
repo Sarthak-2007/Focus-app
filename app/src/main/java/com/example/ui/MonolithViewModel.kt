@@ -2328,6 +2328,21 @@ class MonolithViewModel(
         }
     }
 
+    /** Issue #261: the Deck's TAKE SAFE BREAK chip — the entry
+     *  twin of [endSafeBreakEarly]. Starts a Safe Break mid-block
+     *  at the tap; the repository freezes the block (it does not
+     *  finish it) and every break exit resumes it. The boundary's
+     *  voice is NOT fired here either: it fires inside the
+     *  repository's entry itself, so a hand-entered break and a
+     *  flip-born one speak identically, exactly once. */
+    fun startSafeBreakMidBlock() {
+        val session = activeSession.value ?: return
+        if (!session.isActive || session.isInSafeBreak || session.isStopwatchMode) return
+        viewModelScope.launch {
+            repository.startSafeBreakMidBlock(session.id)
+        }
+    }
+
     fun selectStudyPreset(preset: StudyModePreset) {
         soundEngine.playMechanicalLatch(true)
         _studyPreset.value = preset
