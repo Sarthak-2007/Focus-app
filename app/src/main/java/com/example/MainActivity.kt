@@ -588,6 +588,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                             viewModel.setAppBlockTier(app, tier)
                                         }
                                     },
+                                    onCycleDailyLimit = viewModel::cycleAppDailyLimit,
                                     onApplySmartLoadout = viewModel::applySmartLoadout,
                                     onSelectProfile = viewModel::selectAndApplyProfile,
                                     onToggleShortsReelsSniper = viewModel::toggleShortsReelsSniper,

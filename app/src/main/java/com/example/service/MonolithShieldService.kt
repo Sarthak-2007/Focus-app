@@ -165,10 +165,20 @@ class MonolithShieldService : Service() {
                 val blockedPackages = dao.getAllAppsSnapshot()
                     .filter { app ->
                         val tier = app.resolvedTier
+                        // Issue #140: the daily limit is real. An app
+                        // whose today's usage has reached its limit is
+                        // blocked whatever its tier — except inside a
+                        // lawful peek already running (Safe Break or a
+                        // live 2-minute lease), which is never yanked
+                        // mid-peek. Usage is the reconciled
+                        // todayUsageMinutes on the row.
+                        val overLimit = app.dailyLimitMinutes > 0 &&
+                            app.todayUsageMinutes >= app.dailyLimitMinutes
                         when {
-                            tier == AppBlockTier.OPEN -> false
                             updated.isInSafeBreak && tier == AppBlockTier.PEEK_2M -> false
                             tier == AppBlockTier.PEEK_2M && nowMono < app.activePeekUntilElapsedRealtime -> false
+                            overLimit -> true
+                            tier == AppBlockTier.OPEN -> false
                             else -> true
                         }
                     }

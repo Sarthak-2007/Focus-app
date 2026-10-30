@@ -272,7 +272,13 @@ class MonolithAccessibilityService : AccessibilityService() {
             // 5. 3-Tier Per-App & Safe Break Blocking
             val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkgName } ?: return@launch
             val tier = appRule.resolvedTier
-            if (tier == AppBlockTier.OPEN) return@launch
+            // Issue #140: the daily limit binds every tier. An OPEN
+            // app whose today's usage reached its limit is
+            // intercepted like a blocked one; the peek exemptions
+            // below still protect a lawful peek already running.
+            val overLimit = appRule.dailyLimitMinutes > 0 &&
+                appRule.todayUsageMinutes >= appRule.dailyLimitMinutes
+            if (tier == AppBlockTier.OPEN && !overLimit) return@launch
 
             // Safe Break Rule: 2m Peek apps unlock freely during the 10-minute Safe Break, while Locked apps stay locked
             if (activeSession.isInSafeBreak && tier == AppBlockTier.PEEK_2M) {
@@ -288,7 +294,7 @@ class MonolithAccessibilityService : AccessibilityService() {
             launchInterceptScreen(
                 packageName = appRule.packageName,
                 appName = appRule.appName,
-                reasonBadge = tier.badge,
+                reasonBadge = if (overLimit && tier == AppBlockTier.OPEN) "Daily Limit" else tier.badge,
                 path = InterceptPath.APP_TIER
             )
         }

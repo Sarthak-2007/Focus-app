@@ -302,13 +302,32 @@ class MonolithViewModel(
         // finish's reserved voice — the ratchet warning's spend
         // of it dies here. The warning is a print; it sounds
         // nothing.
+        // Issue #140: the print used to live 3.6 seconds — a user
+        // who looked up a second too late got a tap that silently
+        // did nothing. Ten seconds is a readable sentence's life.
 
         _ratchetWarningMessage.value = msg
         ratchetBannerJob?.cancel()
         ratchetBannerJob = viewModelScope.launch {
-            delay(3600L)
+            delay(10_000L)
             _ratchetWarningMessage.value = null
         }
+    }
+
+    /**
+     * Issue #140: the session's end as the door itself derives it
+     * (the span law — whole-span remaining, never the per-block
+     * remainder). " (ENDS 18:00)" for a timed session, "" for a
+     * stopwatch or no session: a ratchet sentence may only promise
+     * what the model knows. The old sentence promised 00:00, which
+     * was false in both directions.
+     */
+    private fun sessionEndsSuffix(): String {
+        val session = activeSession.value ?: return ""
+        if (session.isStopwatchMode) return ""
+        val endsAt = System.currentTimeMillis() + session.spanRemainingSeconds * 1000L
+        return " (ENDS " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+            .format(java.util.Date(endsAt)) + ")"
     }
 
     val tasks: StateFlow<List<FocusTaskEntity>> = repository.allTasksFlow
@@ -2050,7 +2069,7 @@ class MonolithViewModel(
                 AppBlockTier.OPEN -> setAppBlockTier(app, AppBlockTier.PEEK_2M)
                 AppBlockTier.PEEK_2M -> setAppBlockTier(app, AppBlockTier.LOCKED)
                 AppBlockTier.LOCKED -> {
-                    triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT UNLOCK '${app.appName.uppercase()}' UNTIL 00:00")
+                    triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT UNLOCK '${app.appName.uppercase()}' UNTIL THIS SESSION ENDS${sessionEndsSuffix()}")
                 }
             }
             return
@@ -2076,7 +2095,7 @@ class MonolithViewModel(
                 AppBlockTier.LOCKED -> 2
             }
             if (targetRank < currentRank) {
-                triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT WEAKEN '${app.appName.uppercase()}' DURING ACTIVE VAULT")
+                triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT WEAKEN '${app.appName.uppercase()}' WHILE A SESSION RUNS — END THE SESSION TO CHANGE IT")
                 return
             }
         }
@@ -2121,13 +2140,29 @@ class MonolithViewModel(
     fun updateAppDailyLimit(app: BlockedAppEntity, minutes: Int) {
         val clamped = minutes.coerceIn(5, 240)
         if (activeSession.value?.isActive == true && clamped > app.dailyLimitMinutes) {
-            triggerRatchetWarning("ONE-WAY RATCHET • DAILY QUOTA CAN ONLY BE TIGHTENED DURING LOCKDOWN")
+            triggerRatchetWarning("ONE-WAY RATCHET • '${app.appName.uppercase()}' DAILY LIMIT IS ${app.dailyLimitMinutes} MIN — $clamped MIN WOULD LOOSEN IT; LIMITS ONLY TIGHTEN WHILE A SESSION RUNS")
             return
         }
         soundEngine.playRotaryDetent(600.0)
         viewModelScope.launch {
             repository.updateAppDailyLimit(app.packageName, clamped)
         }
+    }
+
+    /**
+     * Issue #140: step an app's daily limit up the ladder — the
+     * catalogue row's hold gesture. The limit used to be a number
+     * the user never chose, shown nowhere, changeable nowhere;
+     * now it is printed on the row and this steps it
+     * (15→20→30→45→60→90→120→180→240, wrapping to 15). The
+     * one-way ratchet in [updateAppDailyLimit] still governs
+     * mid-session loosening, so a hold during a session can only
+     * tighten or be refused with the reason printed.
+     */
+    fun cycleAppDailyLimit(app: BlockedAppEntity) {
+        val ladder = listOf(15, 20, 30, 45, 60, 90, 120, 180, 240)
+        val next = ladder.firstOrNull { it > app.dailyLimitMinutes } ?: ladder.first()
+        updateAppDailyLimit(app, next)
     }
 
     fun addCustomApp(appName: String, packageName: String, category: AppCategory) {
@@ -2149,7 +2184,7 @@ class MonolithViewModel(
 
     fun toggleProfileSchedule(profile: FocusProfileEntity) {
         if (activeSession.value?.isActive == true && profile.isScheduleEnabled) {
-            triggerRatchetWarning("ONE-WAY RATCHET • ACTIVE SCHEDULE CANNOT BE DISABLED DURING VAULT LOCKDOWN")
+            triggerRatchetWarning("ONE-WAY RATCHET • ACTIVE SCHEDULE CANNOT BE DISABLED WHILE A SESSION RUNS — END THE SESSION TO CHANGE IT")
             return
         }
         soundEngine.playMechanicalLatch(!profile.isScheduleEnabled)
