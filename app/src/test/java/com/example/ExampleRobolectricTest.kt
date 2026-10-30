@@ -278,7 +278,12 @@ class ExampleRobolectricTest {
         // seeds are what this line now counts.
         assertTrue("Default timeboxed tasks should be seeded in Room", initialTasks.size >= 3)
 
-        val firstActive = initialTasks.first { it.resolvedStatus == com.example.data.TaskQueueStatus.ACTIVE }
+        // Audit R2 #96: the seed is an honest QUEUED slate now —
+        // no fabricated ACTIVE row with spent seconds and a done
+        // substep. This story promotes the first seed itself,
+        // exactly as a user's tap would.
+        val firstSeed = initialTasks.first { it.queueOrder == 0 }
+        val firstActive = repository.promoteTaskToActive(firstSeed.id)!!
         assertEquals("Finish Chapter 4 Problem Set (#1–6)", firstActive.title)
 
         // Start an active session so completing tasks logs to the session receipt
