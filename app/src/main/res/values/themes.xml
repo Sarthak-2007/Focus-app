@@ -1,14 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.MyApplication" parent="android:Theme.DeviceDefault.NoActionBar" />
-
-    <!-- Issue #282 (R5 supplement): a real launch surface. Until now
-         the single DeviceDefault theme served every surface, so a
-         cold start flashed the system default before Compose drew.
-         The launcher activity opens on the app's own vellum ground
-         (the launcher background) and hands over to Compose. -->
-    <style name="Theme.MyApplication.Splash" parent="android:Theme.DeviceDefault.NoActionBar">
-        <item name="android:windowBackground">@drawable/ic_launcher_background</item>
+    <style name="Theme.MyApplication" parent="android:Theme.DeviceDefault.NoActionBar">
+        <!-- Issue #13, A-4 SEEDED (Glanz G-6, FINISH-glanz.md): the
+             window background on the seeded path is #000000 — frame
+             zero of a cold open is true black, never the platform
+             theme's default, so no pre-content flash can precede a
+             face that arrives at full lawful alpha. -->
+        <item name="android:windowBackground">@android:color/black</item>
     </style>
 </resources>
