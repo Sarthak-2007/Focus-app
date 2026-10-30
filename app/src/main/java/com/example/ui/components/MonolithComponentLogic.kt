@@ -46,13 +46,33 @@ import java.util.Locale
  *    dead signal, not on silence or timeout.
  *  - NONE: nothing has been proven yet either way.
  *  The grade is taken over the wire's legs only — the system's
- *  service list, a system-delivered root-stamp event, a live
- *  AppOps read. No leg is the service's self-assertion (the
- *  shield-protecting leg is excluded from the LIVE conjuncts for
- *  exactly this reason), so the per-link SELF-REPORT machinery
- *  the chair's F6 note imagined is not built (PLAN-AUDIT, Orig
- *  F6: unenforceable as written; Rosa's definition already
- *  solved it). `END-TO-END` stays forbidden.
+ *  service list, a system-answered root acquisition, a live
+ *  AppOps read. The stamp leg is that system answer:
+ *  rootInActiveWindow is the system's own reply about the
+ *  active window's root, whether it is read on the event path
+ *  (a system-delivered event whose root is then acquired) or
+ *  by the service's active self-probe. Amended in the open
+ *  (FIX-2, answering CRIT-1 C-1): this definition once named
+ *  only the event path, which forbade the probe the cold-start
+ *  cure runs on — the doctrine is the distinction below, not
+ *  the path the answer arrives by. What stays excluded,
+ *  exactly as before, is the service's own internal say-so:
+ *  no leg reads a flag the service merely sets about itself
+ *  (the shield-protecting leg is excluded from the LIVE
+ *  conjuncts for exactly this reason), so the per-link
+ *  SELF-REPORT machinery the chair's F6 note imagined is not
+ *  built (PLAN-AUDIT, Orig F6: unenforceable as written;
+ *  Rosa's definition already solved it). `END-TO-END` stays
+ *  forbidden.
+ *  The known limit, named rather than hidden: event DISPATCH
+ *  can wedge while the root API still answers, and a probe
+ *  stamp would then certify a pipeline that delivers nothing.
+ *  That residual is bounded by law, not trusted away — stamp
+ *  validity is freshness (45 s, [WatchStore.STAMP_FRESH_MS],
+ *  read via WatchStore.pipelineProvenFresh) and the bound
+ *  service re-probes every 15 s, so a wedged pipeline's proof
+ *  dies inside the freshness window instead of standing for
+ *  the residency's whole life.
  *  Two of Rosa's rows degrade honestly on this substrate, which
  *  records neither an ever-held bit nor a bind-loss instant:
  *  `BIND LOST HH:MM` and `BIND NEVER HELD` are NOT printed — the
@@ -84,6 +104,33 @@ internal fun seamMarksFor(warrant: Warrant?): Pair<String, String>? {
     }
 }
 
+/** The grace age at [nowMono] — the one anchor math every grace
+ *  judgement in this file shares (the seam below and the sentence
+ *  table). The anchor is the warrant's grace anchor when it
+ *  carries one, else its residency start (bind-epoch law,
+ *  FIX-1 Addendum 3 / DAY-1 D-2): derivation stamps
+ *  [Warrant.graceAnchorMono] with the bind epoch's first
+ *  unproven instant when a proof debt is inherited across
+ *  residencies, so Deck re-entry cannot mint fresh silence —
+ *  the debt's age rides through the residency change. A
+ *  hand-built warrant carrying anchor 0 falls back to its
+ *  residency start, exactly as before the anchor existed. Null
+ *  when neither is carried (both 0): age unknown, and age
+ *  unknown is never inside a grace. */
+private fun graceAgeMs(warrant: Warrant, nowMono: Long): Long? {
+    val anchor =
+        if (warrant.graceAnchorMono > 0L) warrant.graceAnchorMono
+        else warrant.residencyStartMono
+    return if (anchor > 0L) (nowMono - anchor).coerceAtLeast(0L) else null
+}
+
+/** Inside the cold-start grace: a carried anchor whose grace age
+ *  is at most [WatchStore.RESIDENCY_GRACE_MS]. */
+private fun inResidencyGrace(warrant: Warrant, nowMono: Long): Boolean {
+    val ageMs = graceAgeMs(warrant, nowMono) ?: return false
+    return ageMs <= WatchStore.RESIDENCY_GRACE_MS
+}
+
 /** The seam at a named instant (Truth Car 3, UNA2-03): while the
  *  read is fresh this is exactly [seamMarksFor]. Once the read is
  *  older than the board's own staleness threshold, the residency
@@ -91,16 +138,37 @@ internal fun seamMarksFor(warrant: Warrant?): Pair<String, String>? {
  *  stamp — but the PROOF does: the right mark admits the read's age
  *  ("PROOF: STALE") instead of claiming a currency it no longer
  *  holds. The warrant carries its read instant now; the print
- *  finally can tell. */
+ *  finally can tell.
+ *
+ *  One verdict per screen (FIX-2, answering CRIT-1 C-3): the
+ *  timed seam also ages the grace anchor. An UNPROVEN warrant, bound
+ *  but unstamped, INSIDE the grace still prints "PROOF: BIND
+ *  ONLY" — the sentence slot is silent then too, so the screen
+ *  speaks once. PAST the grace the sentence hardens to BLOCKING
+ *  IS OFF, and the seam must not keep certifying a bind proof
+ *  beside it: the left mark keeps the bound fact ("BIND HELD ·
+ *  UNSEEN") and the right mark dies to "PROOF: NONE" — nothing
+ *  has been proven, which is the whole verdict. The stale-read
+ *  STALE mark keeps its precedence over both: a dead read admits
+ *  its age before any grace arithmetic runs. */
 internal fun seamMarksFor(warrant: Warrant?, nowMono: Long): Pair<String, String>? {
     if (warrant == null) return null
-    if (!WatchStore.warrantStaleForPrint(warrant, nowMono)) return seamMarksFor(warrant)
-    val left = when {
-        !warrant.a11yBound -> "BIND NOT HELD"
-        warrant.a11yStampedThisResidency -> "BIND HELD · THIS VISIT"
-        else -> "BIND HELD · UNSEEN"
+    if (WatchStore.warrantStaleForPrint(warrant, nowMono)) {
+        val left = when {
+            !warrant.a11yBound -> "BIND NOT HELD"
+            warrant.a11yStampedThisResidency -> "BIND HELD · THIS VISIT"
+            else -> "BIND HELD · UNSEEN"
+        }
+        return left to "PROOF: STALE"
     }
-    return left to "PROOF: STALE"
+    if (warrant.state == WarrantState.UNPROVEN &&
+        warrant.a11yBound &&
+        !warrant.a11yStampedThisResidency &&
+        !inResidencyGrace(warrant, nowMono)
+    ) {
+        return "BIND HELD · UNSEEN" to "PROOF: NONE"
+    }
+    return seamMarksFor(warrant)
 }
 
 /** TIME's print (Uma): a pure function of a stored end-milli — the
@@ -171,40 +239,63 @@ private fun splitTenantText(shut: Int, peek: Int, sealed: Boolean): String? {
 }
 
 /** What the sentence slot's tap does (Suki): FIX goes to the pane
- *  that owns the lack; RETRY re-reads the wire. The cascade's
- *  sentences (step 4) carry a null action: a jam offers no verb —
- *  retry is the machine's, never his — and an annulment is a
- *  fact to read, not a door to tap. */
-enum class RefusalAction { FIX_ACCESSIBILITY, FIX_USAGE, RETRY_CHECK }
+ *  that owns the lack. There is no re-read action: the wire
+ *  re-reads itself — probe, poke, collector, the Deck's ticker —
+ *  faster than a tap ever did, so the fog's retry verb is
+ *  deleted outright (FIX-2, answering FEEL-1 F-5), not left
+ *  standing as a door no wall holds. The cascade's sentences
+ *  (step 4) carry a null action: a jam offers no verb — retry
+ *  is the machine's, never his — and an annulment is a fact to
+ *  read, not a door to tap. */
+enum class RefusalAction { FIX_ACCESSIBILITY, FIX_USAGE }
 
 data class RefusalSentence(val text: String, val action: RefusalAction?)
 
 /**
  * Suki's cause table, cured for the cold start (issue #7) — ONE
- * sentence, causal priority. The a11y row outranks the usage rows
- * because enforcement dies at the first leg; the usage rows outrank
- * the unstamped row because a known lack with a known owner must
- * never be masked by a transient state. The two standing sentences
- * are Ren's chair ruling #4 verbatim; the usage row is Suki's as
- * filed. Healthy (LIVE) → null: the slot renders its reserved
- * emptiness.
+ * sentence, causal priority. Row order as restructured by FIX-2
+ * (answering CRIT-1 C-5 / DAY-1 D-1 — the unbound grace): the
+ * usage rows claim FIRST, above even the unbound row, because a
+ * known lack with a known owner must never be masked — not by a
+ * transient state, and not by another leg's death either. Below
+ * them sits the UNPROVEN grace row, and it is bound-blind: an
+ * UNPROVEN warrant inside its residency grace is silent whether
+ * it is bound or not, because derivation now hands the table
+ * BOTH cold-open races in that one state (the stamp race, and
+ * the bind race — an enabled-but-unbound service inside grace
+ * derives UNPROVEN, per WatchStore.deriveWarrant's unbound
+ * grace). The two standing sentences are Ren's chair ruling #4
+ * verbatim; the usage row is Suki's as filed. Healthy (LIVE) →
+ * null: the slot renders its reserved emptiness.
  *
- * The cured table:
- *  - not bound → BLOCKING IS OFF (the guard is dead; observed, not
- *    inferred).
- *  - usage DENIED or UNSET → USAGE ACCESS IS OFF (issue #6 C3/F9:
- *    UNSET is a known lack with a known owner — the sentence names
- *    the door the hand opens). These rows stand ABOVE the
- *    unstamped row: the old table fired its fog row first for an
- *    unstamped DENIED warrant, hiding a fixable lack behind a
- *    retry that could never fix it.
- *  - UNPROVEN, unstamped, usage ALLOWED → the stamp race, below.
- *  - OFF → BLOCKING IS OFF (kept for totality: deriveWarrant only
- *    reaches OFF through the rows above, but this function stays
- *    truthful for any warrant handed to it).
+ * The cured table, in the order the rows claim:
+ *  - stale read → null (the guard above the table: a fix may
+ *    only be demanded off a current read; the seam carries the
+ *    STALE mark instead).
+ *  - usage DENIED or UNSET → USAGE ACCESS IS OFF (issue #6
+ *    C3/F9: UNSET is a known lack with a known owner — the
+ *    sentence names the door the hand opens). The old table
+ *    fired its fog row first for an unstamped DENIED warrant,
+ *    hiding a fixable lack behind a retry that could never
+ *    fix it; these rows have stood above the transient rows
+ *    ever since, and now above the unbound row too.
+ *  - UNPROVEN, grace age ≤ grace → null (bound or not): the
+ *    two cold-open races, below. Grace age is measured from
+ *    the warrant's grace anchor — the bind epoch's first
+ *    unproven instant when a proof debt is inherited across
+ *    residencies, else the residency start (bind-epoch law).
+ *  - not bound → BLOCKING IS OFF (the guard is dead; observed,
+ *    not inferred). An unbound warrant reaches this row only
+ *    past its grace or with no grant enabled — a grant-absent
+ *    unbound derives OFF and lands here at residency age 0.
+ *  - UNPROVEN past the grace (or with no residency carried) →
+ *    BLOCKING IS OFF: bound but blind, or bound-never-came —
+ *    off in fact either way.
+ *  - OFF → BLOCKING IS OFF (kept for totality: this function
+ *    stays truthful for any warrant handed to it).
  *  - LIVE → null.
  *
- * The stamp race (the cold-start bug this cure closes): on a cold
+ * The races (the cold-start bug this cure closes): on a cold
  * open the Deck is showing before the accessibility service has
  * bound, and a quiet Deck generates no a11y events — so the
  * residency stamp that proves the pipeline can rest UNPROVEN,
@@ -212,16 +303,18 @@ data class RefusalSentence(val text: String, val action: RefusalAction?)
  * ("can't check") at rest, as if checking were a thing the hand
  * must retry. It is not: the guard now self-probes at residency
  * start, again at +1500 ms, and on rebind, so a bound guard proves
- * itself within moments with no hand involved. The transient is
- * therefore SILENCE — the slot's reserved emptiness, the house
- * pattern for machine-working states — for the grace window
+ * itself within moments with no hand involved; and an
+ * enabled-but-unbound service is a bind still landing, not a
+ * death, for the same window. Both transients are therefore
+ * SILENCE — the slot's reserved emptiness, the house pattern for
+ * machine-working states — for the grace window
  * ([WatchStore.RESIDENCY_GRACE_MS] from the residency start the
  * warrant itself carries). Past the grace, or with no residency
  * carried at all (residencyStartMono 0: age unknown, never fresh),
- * bound-but-blind is off in fact and prints BLOCKING IS OFF; its
- * FIX door rebinds the service, which is the one act that can
- * change the fact. The fog sentence is deleted, not reworded:
- * there is no state left that it truthfully names.
+ * the verdict hardens and prints BLOCKING IS OFF; its FIX door
+ * rebinds the service, which is the one act that can change the
+ * fact. The fog sentence is deleted, not reworded: there is no
+ * state left that it truthfully names.
  *
  * This no-clock overload delegates to the timed one with the
  * process clock, so every caller walks the same cured table and
@@ -243,27 +336,32 @@ internal fun refusalSentenceFor(warrant: Warrant?, nowMono: Long): RefusalSenten
     if (warrant == null) return null
     if (WatchStore.warrantStaleForPrint(warrant, nowMono)) return null
     return when {
-        !warrant.a11yBound ->
-            RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
+        // The usage rows claim first (FIX-2 row order): a known
+        // lack with a known owner is never masked — not by the
+        // stamp race, not by the bind race, not by an unbound
+        // service either.
         warrant.usage == UsageAccess.DENIED ->
             RefusalSentence("USAGE ACCESS IS OFF — TAP TO FIX", RefusalAction.FIX_USAGE)
         warrant.usage == UsageAccess.UNSET ->
             RefusalSentence("USAGE ACCESS IS OFF — TAP TO FIX", RefusalAction.FIX_USAGE)
-        warrant.state == WarrantState.UNPROVEN && !warrant.a11yStampedThisResidency -> {
-            // Usage is ALLOWED here — DENIED and UNSET claimed
-            // their rows above. The residency's age decides:
-            // inside the grace the self-probe is still landing
-            // its proof, so the slot stays silent; past it (or
-            // with no residency carried) the guard is bound but
-            // blind, which is off in fact.
-            val start = warrant.residencyStartMono
-            val ageMs = if (start > 0L) (nowMono - start).coerceAtLeast(0L) else null
-            if (ageMs != null && ageMs <= WatchStore.RESIDENCY_GRACE_MS) {
-                null
-            } else {
-                RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
-            }
-        }
+        // The grace row, bound-blind (FIX-2, answering CRIT-1
+        // C-5 / DAY-1 D-1): UNPROVEN inside the residency grace
+        // is silent whether the warrant is bound or not. Usage
+        // is ALLOWED here — DENIED and UNSET claimed their rows
+        // above. Derivation hands this row both cold-open races
+        // in the one state: bound-but-unstamped (the self-probe
+        // is still landing its proof) and enabled-but-unbound
+        // (the bind is still landing). Inside the grace, silence
+        // is the machine working; the verdict hardens below.
+        warrant.state == WarrantState.UNPROVEN && inResidencyGrace(warrant, nowMono) ->
+            null
+        !warrant.a11yBound ->
+            RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
+        // UNPROVEN past the grace — or with no residency carried
+        // at all (age unknown, never fresh): bound but blind, or
+        // a bind that never came. Off in fact.
+        warrant.state == WarrantState.UNPROVEN ->
+            RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
         warrant.state == WarrantState.OFF ->
             RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
         else -> null

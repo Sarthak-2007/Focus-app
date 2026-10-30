@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -36,6 +37,9 @@ import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.graphics.Color
@@ -141,7 +145,6 @@ fun TactileDeckScreen(
     },
     onFixBlockingAccess: () -> Unit = {},
     onFixUsageAccess: () -> Unit = {},
-    onRetryBlockingCheck: () -> Unit = {},
     onHandBackTick: () -> Unit = {},
     // Slice D step 4 (the cascade): the host owns the attempt's
     // phase; the screen renders its word. Defaults keep every
@@ -1156,42 +1159,34 @@ fun TactileDeckScreen(
                 )
             }
             Spacer(Modifier.height(8.dp))
+            // The slot's tenant by phase (step 4): a JAMMED
+            // attempt names its unanswering link; PROVING names
+            // itself with its live proved count (issue #98 —
+            // the silent black box is closed: real blocking
+            // already runs during proving, so the frame must
+            // say the machine is checking, never render the
+            // idle form as if nothing had happened); an
+            // annulment's past-tense sentence stands until the
+            // controller clears it; a running session is
+            // silent; otherwise the wire's standing sentence.
+            val slotSentence = when {
+                armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase)
+                armPhase is ArmPhase.Proving -> provingSentenceFor(armPhase)
+                isSessionRunning -> null
+                armSentence != null -> armSentence
+                else -> refusalSentenceFor(deckWarrant, nowMono)
+            }
             RefusalSentenceSlot(
-                // The slot's tenant by phase (step 4): a JAMMED
-                // attempt names its unanswering link; PROVING names
-                // itself with its live proved count (issue #98 —
-                // the silent black box is closed: real blocking
-                // already runs during proving, so the frame must
-                // say the machine is checking, never render the
-                // idle form as if nothing had happened); an
-                // annulment's past-tense sentence stands until the
-                // controller clears it; a running session is
-                // silent; otherwise the wire's standing sentence.
-                sentence = when {
-                    armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase)
-                    armPhase is ArmPhase.Proving -> provingSentenceFor(armPhase)
-                    isSessionRunning -> null
-                    armSentence != null -> armSentence
-                    else -> refusalSentenceFor(deckWarrant, nowMono)
-                },
+                sentence = slotSentence,
                 onAction = { action ->
                     when (action) {
                         RefusalAction.FIX_ACCESSIBILITY -> onFixBlockingAccess()
                         RefusalAction.FIX_USAGE -> onFixUsageAccess()
-                        RefusalAction.RETRY_CHECK -> {
-                            // Suki: an UNSET usage grant makes "retry"
-                            // a lie — the tap routes to the pane that
-                            // owns the fact instead.
-                            if (deckWarrant?.usage == UsageAccess.UNSET) {
-                                onFixUsageAccess()
-                            } else {
-                                onRetryBlockingCheck()
-                            }
-                        }
                     }
                 },
                 onHandBackTick = onHandBackTick
             )
+            SettledSentenceAnnouncement(sentence = slotSentence)
             ImprintSlot(
                 tenantText = imprintTenant,
                 isSealed = isSessionRunning,
@@ -1201,6 +1196,44 @@ fun TactileDeckScreen(
             )
         }
     }
+}
+
+/**
+ * TalkBack's ear on the sentence slot (FEEL-1 §4, landed by FIX-2):
+ * a polite live region fed ONLY by a stability-gated copy of the
+ * slot's sentence. One law with the slot's own hand-back beat —
+ * nothing is said, in ink or in voice, until it has survived the
+ * same 500 ms — so a transient (the cold open's false verdicts,
+ * a flicker that dies inside the beat) is never announced, and a
+ * settled verdict is announced exactly once, politely, never
+ * assertively. A healthy wire's sentence is null, so the LIVE
+ * landing announces nothing: TalkBack's cold open is as silent
+ * as the sighted one. The proof strip's density flips stay
+ * unannounced — print, not voice (§4 point 4). The region is a
+ * zero-size text node beside the slot: it carries no ink, only
+ * the settled sentence's words.
+ */
+@Composable
+private fun SettledSentenceAnnouncement(sentence: RefusalSentence?) {
+    var settled by remember { mutableStateOf<RefusalSentence?>(null) }
+    LaunchedEffect(sentence) {
+        if (sentence == null) {
+            settled = null
+        } else {
+            // The slot's stability beat (RefusalSentenceSlot's
+            // 500 ms): the announcement waits for the sentence to
+            // prove it can stand, exactly as the hand-back does.
+            kotlinx.coroutines.delay(500L)
+            settled = sentence
+        }
+    }
+    val text = settled?.text ?: return
+    Text(
+        text = text,
+        modifier = Modifier
+            .size(0.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite }
+    )
 }
 
 /**

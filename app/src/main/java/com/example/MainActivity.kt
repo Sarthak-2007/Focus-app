@@ -688,7 +688,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                             "USAGE ACCESS"
                                         )
                                     },
-                                    onRetryBlockingCheck = viewModel::refreshDeckWarrant,
                                     onHandBackTick = viewModel::playHandBackTick,
                                 )
                             }
