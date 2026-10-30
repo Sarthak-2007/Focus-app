@@ -33,6 +33,14 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- Audit R6 #341 F03: OEM security centres are addressable
+             surfaces (tamper guard + FIX routing targets). -->
+        <package android:name="com.miui.securitycenter" />
+        <package android:name="com.miui.permcenter" />
+        <package android:name="com.coloros.safecenter" />
+        <package android:name="com.oppo.safe" />
+        <package android:name="com.iqoo.secure" />
+        <package android:name="com.vivo.permissionmanager" />
         <!-- Issue #121: structural time-critical classification —
              TimeCriticalApps resolves which packages answer the
              platform alarm intents and which declare/handle the
@@ -140,7 +148,7 @@
             android:directBootAware="true"
             android:enabled="true"
             android:exported="false"
-            android:label="Monolith Notification Catcher"
+            android:label="@string/notification_catcher_label"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
@@ -201,7 +209,7 @@
         <receiver
             android:name=".widget.MonolithWidgetProvider"
             android:exported="false"
-            android:label="Monolith">
+            android:label="@string/app_name">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
@@ -232,6 +240,14 @@
         <!-- Slice E (Draht): the release-retry cadence's hint. -->
         <receiver
             android:name=".service.ReleaseRetryReceiver"
+            android:exported="false" />
+
+        <!-- Issue #339 (Second-pass F3): the Safe Break's end is a
+             scheduled event — this receiver posts the deduped
+             'Break's over' notification from the exact alarm
+             BreakEndScheduler arms at break entry. -->
+        <receiver
+            android:name=".service.BreakEndReceiver"
             android:exported="false" />
 
         <!-- Device Admin (DeviceAdminReceiver): friction + a warning

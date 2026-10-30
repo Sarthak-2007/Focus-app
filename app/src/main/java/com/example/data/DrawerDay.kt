@@ -73,7 +73,21 @@ object DrawerDay {
      * DST shift inside the span).
      */
     fun nextBoundaryMillis(fromMillis: Long, zone: ZoneId = ZoneId.systemDefault()): Long {
-        val dayStart = filingDate(fromMillis, zone).atTime(3, 30).atZone(zone)
-        return dayStart.plusDays(1).toInstant().toEpochMilli()
+        val boundaryTime = filingDate(fromMillis, zone).plusDays(1).atTime(3, 30)
+        val resolved = boundaryTime.atZone(zone)
+        if (resolved.toLocalDateTime() == boundaryTime) {
+            return resolved.toInstant().toEpochMilli()
+        }
+        // Audit R6 #341 F69: 03:30 falls inside a spring-forward gap
+        // (EU rule: 03:00 -> 04:00). atZone shifts the nonexistent
+        // 03:30 forward by the gap, landing 30+ minutes AFTER the
+        // filing rule itself has already flipped (filingDate flips
+        // the instant the local clock first reads >= 03:30, which is
+        // the transition instant itself). Wake at the transition.
+        val transition = zone.rules.getTransition(boundaryTime)
+        if (transition != null && transition.isGap) {
+            return transition.instant.toEpochMilli()
+        }
+        return resolved.toInstant().toEpochMilli()
     }
 }

@@ -480,7 +480,23 @@ class MonolithShieldService : Service() {
                 // shieldLastBeatWallMillis into the row it already
                 // persists, so the finish machine can later prove
                 // whether the shield was present or gone.
-                val updated = repository.updateSessionProgress(activeSession, stampShieldBeat = true)
+                // Audit R6 #341 F31: a full disk must not kill the
+                // shield. Before this, an SQLiteFullException out of
+                // the tick's write escaped the loop and took the
+                // session's only protection (and its elapsed record)
+                // with it. On a full-disk tick we log, skip the
+                // persistence for this beat and keep shielding; the
+                // next tick retries the write.
+                val updated = try {
+                    repository.updateSessionProgress(activeSession, stampShieldBeat = true)
+                } catch (e: android.database.sqlite.SQLiteFullException) {
+                    android.util.Log.e("MonolithShield", "storage full: progress tick not persisted", e)
+                    null
+                }
+                if (updated == null) {
+                    delay(2000L)
+                    continue
+                }
                 if (!usageGranted) {
                     // Latched AFTER the progress write on purpose:
                     // updateSession is a full-row @Update, so a latch
@@ -805,6 +821,13 @@ class MonolithShieldService : Service() {
                     // app (the filter above), so a lease sold here
                     // is honoured (UNA2-01) — InterceptPath.SHIELD_APP,
                     // as before.
+                    // Issue #339 (Second-pass F2): eject first,
+                    // via the accessibility service when it is
+                    // bound (GLOBAL_ACTION_* exists only there);
+                    // unbound, this door cannot eject and the
+                    // launch below stands alone, as before.
+                    MonolithAccessibilityService.instance
+                        ?.ejectForShield(foregroundBlockedPkg)
                     // Issue #94 (F2): never a bare background launch —
                     // a dropped launch stamps itself and falls back
                     // to a tappable notification (InterceptLaunch).
