@@ -926,6 +926,7 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
                 heldMs = (segmentBaseMs + (now - segmentStartMs)).coerceAtMost(totalMs)
             }
             val bankIndex = (heldMs / bankIntervalMs).toInt().coerceAtMost(3)
+            var bankFiredThisPass = false
             if (bankIndex > lastBankIndex) {
                 lastBankIndex = bankIndex
                 bankedMs = bankIndex * bankIntervalMs
@@ -939,13 +940,24 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
                     2 -> 470f
                     else -> 390f
                 }
+                // Issue #103 (STURM3-20 Feel verdict, one voice per
+                // moment): the pitched detent is the SOLE bank voice.
+                // Every vibrate() cancels the previous one, so the old
+                // trailing fireFeel(8L) firm click erased the detent
+                // inside the same pass — a stutter, not the ceremony.
                 fireFeel(1L, pitch)
-                fireFeel(8L)
+                bankFiredThisPass = true
             }
             val sec = (heldMs / 1000L).toInt()
             if (sec != lastSecondTick) {
                 lastSecondTick = sec
-                fireFeel(if (sec % 5 == 0) 8L else 4L)
+                // Same law on the per-second tick: on a bank pass
+                // (15/30/45) the detent above already spoke, and on
+                // the completion pass the completion fireFeel(10L)
+                // below speaks — the tick stays silent on both.
+                if (!bankFiredThisPass && heldMs < totalMs) {
+                    fireFeel(if (sec % 5 == 0) 8L else 4L)
+                }
             }
             invalidate()
             if (heldMs >= totalMs) {
