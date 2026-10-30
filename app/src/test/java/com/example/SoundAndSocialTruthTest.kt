@@ -291,30 +291,24 @@ class SoundAndSocialTruthTest {
     // idiom): scroll the tagged node into view, walk the decorView
     // to the tagged SledSwitchView, dispatch DOWN+UP at its centre.
     private fun sledTap() {
-        composeRule.onNodeWithTag("park_social_sled").performScrollTo().assertIsDisplayed()
+        // Round 6's decor-tree walk keyed on View.tag found nothing:
+        // "park_social_sled" is a Compose testTag (ParkDrawer.kt:1267),
+        // a semantics identity that never lands in View.tag (run
+        // 41069616930, IllegalStateException at the walk's error()).
+        // Target by the semantics node's own window bounds instead —
+        // the identity is exact (this node, not a same-class sibling)
+        // and the dispatch convention is wheelMidDrag's: window
+        // coordinates onto the decorView, which sits at the window
+        // origin under Robolectric.
+        val node = composeRule.onNodeWithTag("park_social_sled").performScrollTo()
+        node.assertIsDisplayed()
+        val bounds = node.fetchSemanticsNode().boundsInWindow
         val activity = composeRule.activity
-        var target: View? = null
-        fun walk(v: View): Boolean {
-            if (v.tag == "park_social_sled") {
-                target = v
-                return true
-            }
-            if (v is android.view.ViewGroup) {
-                for (i in 0 until v.childCount) if (walk(v.getChildAt(i))) return true
-            }
-            return false
-        }
-        composeRule.runOnUiThread { walk(activity.window.decorView) }
-        val view = target ?: error("sled view not found in the decor tree")
-        val loc = IntArray(2)
-        view.getLocationOnScreen(loc)
-        val cx = loc[0] + view.width / 2f
-        val cy = loc[1] + view.height / 2f
-        val now = SystemClock.uptimeMillis()
         val root = activity.window.decorView
+        val now = SystemClock.uptimeMillis()
         composeRule.runOnUiThread {
             listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP).forEach { action ->
-                val ev = MotionEvent.obtain(now, now, action, cx, cy, 0)
+                val ev = MotionEvent.obtain(now, now, action, bounds.center.x, bounds.center.y, 0)
                 root.dispatchTouchEvent(ev)
                 ev.recycle()
             }
