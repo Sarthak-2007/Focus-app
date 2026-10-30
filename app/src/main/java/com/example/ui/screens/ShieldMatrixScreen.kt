@@ -368,6 +368,20 @@ fun ShieldMatrixScreen(
                     SlipHeaderRow(right = null)
                     Spacer(modifier = Modifier.height(8.dp))
                     StandingTallyLine(counts = tallyShown)
+                    // Issue #129 F5: the tally's OPEN figure is
+                    // exposure, and the slip now says so in words
+                    // — an open app is not bookkeeping, it is a
+                    // door nothing guards for a whole session.
+                    if (rules.unguardedCount > 0) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "${rules.unguardedCount} OPEN — NOT HELD. ANY OF THEM CAN BE USED FOR THE WHOLE SESSION.",
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("open_exposure_line")
+                        )
+                    }
                 }
             }
             val peekLines = slipLines(AppBlockTier.PEEK_2M)

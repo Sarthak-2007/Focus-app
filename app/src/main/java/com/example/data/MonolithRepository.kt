@@ -192,6 +192,14 @@ class MonolithRepository(
          *  pruned — never by dismissal, or the prompt would be
          *  silence with extra steps. */
         const val UNREVIEWED_OPEN_KEY = "unreviewed_open_packages"
+
+        /** Issue #129 F3: the reserved intercept-log package that
+         *  carries a session's open-exposure names (the exposed
+         *  app's real package rides in triggerReason, its label in
+         *  appName). Receipt assembly reads these rows back and
+         *  excludes them from deflections. */
+        const val EXPOSURE_LOG_PACKAGE = "com.monolith.exposure"
+        const val EXPOSURE_LOG_OUTCOME = "Open exposure"
     }
 
     /** The seal marker's session id, or -1 when no seal has ever
@@ -571,15 +579,31 @@ class MonolithRepository(
     private fun categorizePackage(pkg: String, label: String): AppCategory {
         val lower = "$pkg $label".lowercase()
         return when {
-            lower.contains("tiktok") || lower.contains("youtube") || lower.contains("instagram") || lower.contains("reel") ->
+            lower.contains("tiktok") || lower.contains("youtube") || lower.contains("instagram") || lower.contains("reel") ||
+                lower.contains("takatak") || lower.contains("moj") ->
                 AppCategory.SHORT_VIDEO
-            lower.contains("twitter") || lower.contains("reddit") || lower.contains("snapchat") || lower.contains("facebook") ->
+            lower.contains("twitter") || lower.contains("reddit") || lower.contains("snapchat") || lower.contains("facebook") ||
+                lower.contains("threads") || lower.contains("mastodon") || lower.contains("bluesky") || lower.contains("bsky") ->
                 AppCategory.SOCIAL
-            lower.contains("game") || lower.contains("clash") || lower.contains("roblox") || lower.contains("play") ->
+            lower.contains("game") || lower.contains("clash") || lower.contains("roblox") || lower.contains("play") ||
+                // Issue #129 F4: the big games whose names carried
+                // none of the old magic words — each of these was
+                // born "Other Apps" / OPEN before this widening.
+                lower.contains("pubg") || lower.contains("bgmi") || lower.contains("freefire") ||
+                lower.contains("free fire") || lower.contains("minecraft") || lower.contains("fortnite") ||
+                lower.contains("genshin") || lower.contains("candy crush") || lower.contains("subway surfers") ||
+                lower.contains("call of duty") || lower.contains("valorant") || lower.contains("pokemon go") ->
                 AppCategory.GAMES
             lower.contains("whatsapp") || lower.contains("discord") || lower.contains("telegram") || lower.contains("message") ->
                 AppCategory.MESSAGING
-            lower.contains("chrome") || lower.contains("browser") || lower.contains("firefox") || lower.contains("brave") ->
+            lower.contains("chrome") || lower.contains("browser") || lower.contains("firefox") || lower.contains("brave") ||
+                // Issue #129 F4: second browsers are browsers —
+                // Opera, DuckDuckGo, Samsung Internet, Edge, Kiwi
+                // and UC were all filed SHOPPING (born OPEN, and
+                // outside the site blocker's world) before this.
+                lower.contains("opera") || lower.contains("duckduckgo") || lower.contains("sbrowser") ||
+                lower.contains("samsung internet") || lower.contains("microsoft edge") || lower.contains("emmx") ||
+                lower.contains("kiwi") || lower.contains("ucbrowser") || lower.contains("uc browser") ->
                 AppCategory.BROWSERS
             else -> AppCategory.SHOPPING
         }
@@ -615,6 +639,52 @@ class MonolithRepository(
                 mode == AudioManager.MODE_IN_COMMUNICATION
         } catch (_: Exception) {
             false
+        }
+    }
+
+    /**
+     * Issue #129 F3: per-package foreground milliseconds inside
+     * one wall-clock window, from UsageStats EVENTS (resumed /
+     * paused pairs), not the whole-day totals the sync reads.
+     * This is the evidence the ending write judges "clean" by:
+     * what was actually in front of the man while the session
+     * ran. Empty when usage access is not granted — the caller
+     * can only judge from evidence it can see, and the warrant
+     * already prints that blindness elsewhere; it never invents
+     * exposure it cannot prove.
+     */
+    fun queryForegroundMillisInWindow(startWallMillis: Long, endWallMillis: Long): Map<String, Long> {
+        if (!hasUsageStatsPermission() || endWallMillis <= startWallMillis) return emptyMap()
+        return try {
+            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+                ?: return emptyMap()
+            val events = usm.queryEvents(startWallMillis, endWallMillis) ?: return emptyMap()
+            val event = android.app.usage.UsageEvents.Event()
+            val resumedAt = mutableMapOf<String, Long>()
+            val totals = mutableMapOf<String, Long>()
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                val pkg = event.packageName ?: continue
+                @Suppress("DEPRECATION")
+                when (event.eventType) {
+                    android.app.usage.UsageEvents.Event.MOVE_TO_FOREGROUND ->
+                        resumedAt[pkg] = event.timeStamp
+                    android.app.usage.UsageEvents.Event.MOVE_TO_BACKGROUND -> {
+                        val start = resumedAt.remove(pkg)
+                        if (start != null) {
+                            totals[pkg] = (totals[pkg] ?: 0L) + (event.timeStamp - start).coerceAtLeast(0L)
+                        }
+                    }
+                }
+            }
+            // A package still in the foreground at the window's
+            // end was used until the end — book the open span.
+            for ((pkg, start) in resumedAt) {
+                totals[pkg] = (totals[pkg] ?: 0L) + (endWallMillis - start).coerceAtLeast(0L)
+            }
+            totals
+        } catch (_: Exception) {
+            emptyMap()
         }
     }
 
@@ -1186,48 +1256,29 @@ class MonolithRepository(
      * - Sleep Loadout: Locks everything except Phone, Clock, and Maps.
      */
     suspend fun applySmartLoadout(loadout: SmartLoadout) = withContext(Dispatchers.IO) {
+        // Issue #129 F4/F2: resync FIRST, so the loadout derives
+        // over the phone's whole catalogue — an app installed
+        // after the last sync previously wasn't in this map at
+        // all, so the loadout passed over it and it stayed
+        // whatever (nothing) it was while the seal counted held.
+        ensureSeededAndSyncPackages()
         val allApps = dao.getAllAppsSnapshot()
         val updated = allApps.map { app ->
-            val lower = "${app.packageName} ${app.appName}".lowercase()
-            val tier = when (loadout) {
-                SmartLoadout.STUDY -> {
-                    when {
-                        lower.contains("youtube") || lower.contains("chrome") || app.category == AppCategory.MESSAGING.name ->
-                            AppBlockTier.PEEK_2M
-                        app.category == AppCategory.SHORT_VIDEO.name ||
-                            app.category == AppCategory.SOCIAL.name ||
-                            app.category == AppCategory.GAMES.name ->
-                            AppBlockTier.LOCKED
-                        else -> AppBlockTier.OPEN
-                    }
-                }
-                SmartLoadout.WORK_SPRINT -> {
-                    when {
-                        app.category == AppCategory.SHORT_VIDEO.name ||
-                            app.category == AppCategory.GAMES.name ->
-                            AppBlockTier.LOCKED
-                        app.category == AppCategory.SOCIAL.name ->
-                            AppBlockTier.PEEK_2M
-                        else -> AppBlockTier.OPEN
-                    }
-                }
-                SmartLoadout.SLEEP -> {
-                    if (lower.contains("dialer") || lower.contains("phone") ||
-                        lower.contains("clock") || lower.contains("alarm") ||
-                        lower.contains("maps")
-                    ) {
-                        AppBlockTier.OPEN
-                    } else {
-                        AppBlockTier.LOCKED
-                    }
-                }
-            }
+            val tier = LoadoutTiers.tierFor(loadout, app.packageName, app.appName, app.category)
             app.copy(
                 isBlocked = tier != AppBlockTier.OPEN,
                 blockTier = tier.name
             )
         }
         dao.insertApps(updated)
+        // Apps this loadout actually ruled (any non-OPEN landing)
+        // leave the unreviewed record (#129 F1): the loadout act
+        // is a ruling on them. Apps it left OPEN — the unknowns
+        // in SHOPPING above all — stay in the record, still
+        // awaiting his word.
+        clearUnreviewedOpen(
+            updated.filter { it.resolvedTier != AppBlockTier.OPEN }.map { it.packageName }
+        )
     }
 
     /**
@@ -1675,11 +1726,30 @@ class MonolithRepository(
         }
         val breakWindows = spends
             .map { it.spentAtWallMillis..(it.spentAtWallMillis + 60_000L) }
+        // Issue #129 F3: the exposure booking the ending write
+        // left for this session — the unguarded apps actually
+        // used in the window, by label. Read back here, and
+        // excluded from deflections below: an exposure is not a
+        // deflection, and must never inflate that list.
+        val openExposureApps = if (row.outcome == SessionOutcome.ELAPSED_OPEN_EXPOSURE) {
+            dao.getInterceptLogsBetween(row.startWallTimeMillis, windowEnd)
+                .filter { log ->
+                    log.packageName == EXPOSURE_LOG_PACKAGE &&
+                        log.outcome == EXPOSURE_LOG_OUTCOME &&
+                        log.sessionIntention == row.intention
+                }
+                .map { it.appName }
+                .distinct()
+        } else {
+            emptyList()
+        }
+
         val lastByPackage = mutableMapOf<String, Long>()
         val deflections = dao.getInterceptLogsBetween(row.startWallTimeMillis, windowEnd)
             .filter { log ->
                 log.sessionIntention == row.intention &&
                     log.packageName != "com.monolith.system" &&
+                    log.packageName != EXPOSURE_LOG_PACKAGE &&
                     breakWindows.none { log.timestampMillis in it }
             }
             .filter { log ->
@@ -1714,7 +1784,8 @@ class MonolithRepository(
             routineLabelWithin = routineLabel,
             bankedBreakSeconds = banked,
             shieldWasOff = row.outcome == SessionOutcome.ELAPSED_SHIELD_GAP,
-            deflections = deflections
+            deflections = deflections,
+            openExposureApps = openExposureApps
         )
     }
 
@@ -1756,7 +1827,12 @@ class MonolithRepository(
         FinishKind.ROUTINE_PARTIAL -> "PARTIAL"
         FinishKind.ROUTINE_SLEEP_STANDDOWN -> "SLEPT THROUGH"
         FinishKind.FLOW_FINISH -> "FLOW ENDED"
-        else -> if (row.outcome == SessionOutcome.ELAPSED_SHIELD_GAP) "ENDED · SHIELD GAP" else "ENDED"
+        else -> when (row.outcome) {
+            SessionOutcome.ELAPSED_SHIELD_GAP -> "ENDED · SHIELD GAP"
+            // #129 F3: never "ENDED" plain for an exposed session.
+            SessionOutcome.ELAPSED_OPEN_EXPOSURE -> "ENDED · OPEN APP USED"
+            else -> "ENDED"
+        }
     }
 
     /**
@@ -1801,6 +1877,7 @@ class MonolithRepository(
             shieldWasOff = pending.shieldWasOff,
             faulted = faulted,
             deflections = pending.deflections,
+            openExposureApps = pending.openExposureApps,
             restored = false,
             receiptPublishedMonoMs = 0L
         )
@@ -1853,6 +1930,7 @@ class MonolithRepository(
             shieldWasOff = pending.shieldWasOff,
             faulted = row.releaseFaultShield,
             deflections = pending.deflections,
+            openExposureApps = pending.openExposureApps,
             restored = true,
             receiptPublishedMonoMs = 0L
         )
@@ -2129,6 +2207,30 @@ class MonolithRepository(
         // (5 missed 2s beats) measured from the later of the beat
         // and the session's start. Routine rows keep '' — their
         // judgement is routineOutcome, booked by the funnel.
+        // Issue #129 F3: at the ending write, "clean" must also
+        // survive the usage evidence. The exposure test reads the
+        // session's own window (UsageStats events) against the
+        // catalogue as it stands at the end: an unguarded
+        // distraction door used for 30s+ inside the window means
+        // this session was NOT clean, whatever the shield's
+        // heartbeat says. The exposed names are booked as
+        // intercept-log rows under a system package the receipt's
+        // deflection filter excludes, so the slip can name them
+        // without ever counting them as deflections.
+        val exposedAtEnd: List<ExposedApp> = if (allBlocksCompleted && !isRoutineSession) {
+            val nowWall = System.currentTimeMillis()
+            OpenExposure.exposedApps(
+                foregroundMillisByPackage = queryForegroundMillisInWindow(
+                    session.startWallTimeMillis, nowWall
+                ),
+                apps = dao.getAllAppsSnapshot(),
+                unreviewedOpenPackages = unreviewedOpenPackages(),
+                ownPackage = context.packageName
+            )
+        } else {
+            emptyList()
+        }
+
         val outcomeStamp = if (!allBlocksCompleted) {
             session.outcome
         } else if (isRoutineSession) {
@@ -2138,6 +2240,8 @@ class MonolithRepository(
             val beatRef = maxOf(session.shieldLastBeatWallMillis, session.startWallTimeMillis)
             if (session.shieldGapSeen || nowWall - beatRef > SHIELD_GAP_THRESHOLD_MILLIS) {
                 SessionOutcome.ELAPSED_SHIELD_GAP
+            } else if (exposedAtEnd.isNotEmpty()) {
+                SessionOutcome.ELAPSED_OPEN_EXPOSURE
             } else {
                 SessionOutcome.ELAPSED_CLEAN
             }
@@ -2152,9 +2256,19 @@ class MonolithRepository(
             hmacSignature = newHmac,
             penaltySecondsAdded = penaltyAdd,
             isActive = !allBlocksCompleted,
-            completedSuccessfully = allBlocksCompleted && !isRoutineSession,
+            // #129 F3: an exposed session elapsed, but it did not
+            // succeed — no completion, no forged artifact for time
+            // spent in an unguarded app (TELL-THE-TRUTH).
+            completedSuccessfully = allBlocksCompleted && !isRoutineSession &&
+                outcomeStamp != SessionOutcome.ELAPSED_OPEN_EXPOSURE,
             tamperDetected = tamper,
-            forgedArtifactId = if (isRoutineSession) null else forgedId ?: session.forgedArtifactId,
+            forgedArtifactId = if (isRoutineSession ||
+                outcomeStamp == SessionOutcome.ELAPSED_OPEN_EXPOSURE
+            ) {
+                null
+            } else {
+                forgedId ?: session.forgedArtifactId
+            },
             shieldLastBeatWallMillis = beatWall,
             outcome = outcomeStamp,
             // Truth Car 2 (RC-01): the true end, stamped in the
@@ -2169,6 +2283,26 @@ class MonolithRepository(
             }
         )
         dao.updateSession(updated)
+        // #129 F3: book the exposure names at the stamping write
+        // (first stamp only — a re-tick of an ended row must not
+        // book them twice). The rows ride the intercept log under
+        // a reserved package, the same trick the Partial Stamp
+        // uses, so no schema change carries them; the receipt
+        // assembly reads them back by that package and NEVER
+        // counts them as deflections.
+        if (outcomeStamp == SessionOutcome.ELAPSED_OPEN_EXPOSURE && session.outcome.isEmpty()) {
+            for (exposed in exposedAtEnd) {
+                dao.insertInterceptLog(
+                    InterceptLogEntity(
+                        packageName = EXPOSURE_LOG_PACKAGE,
+                        appName = exposed.appName,
+                        sessionIntention = session.intention,
+                        outcome = EXPOSURE_LOG_OUTCOME,
+                        triggerReason = exposed.packageName
+                    )
+                )
+            }
+        }
         return updated
     }
 

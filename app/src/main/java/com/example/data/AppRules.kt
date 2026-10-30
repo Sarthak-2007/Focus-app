@@ -60,6 +60,14 @@ data class AppRules(
     val openCount: Int get() = open.size
     val corruptCount: Int get() = corrupt.size
 
+    /** Issue #129 F5: the OPEN count under its true name. An
+     *  OPEN app is an unguarded door — usable for a whole session
+     *  while the record counts only what was held. Surfaces that
+     *  print the tally as bookkeeping read [openCount]; surfaces
+     *  that speak to the man about risk read this, so the number
+     *  is framed as exposure, never as neutral completeness. */
+    val unguardedCount: Int get() = open.size
+
     /** Every de-duplicated input app, accounted for exactly once. */
     val accountedCount: Int get() = peekCount + shutCount + openCount + corruptCount
 

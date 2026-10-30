@@ -151,6 +151,20 @@ fun ReceiptSheet(
                         color = scheme.onBackground
                     )
                 }
+                if (receipt.openExposureApps.isNotEmpty()) {
+                    // Issue #129 F3: the slip names what was
+                    // actually used through the open door — a
+                    // session stamped OPEN APP USED never reads
+                    // as clean, and the names are the evidence.
+                    Text(
+                        text = "OPEN APPS USED IN THAT SESSION: " +
+                            receipt.openExposureApps.joinToString(", ") { it.uppercase() },
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = scheme.onBackground
+                    )
+                }
                 if (receipt.faulted) {
                     // The one lawful receipt-only fault line
                     // (build-ready §7.2) — it never prints on the

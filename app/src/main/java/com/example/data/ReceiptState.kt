@@ -33,6 +33,16 @@ object SessionOutcome {
      *  gone for part of it — the books are BROKEN (Nocke §5). */
     const val ELAPSED_SHIELD_GAP = "ELAPSED_SHIELD_GAP"
 
+    /** Issue #129 F3: a manual session whose span elapsed with
+     *  the shield beating, but where an unguarded distraction
+     *  app (OPEN tier in a distraction category, an unreviewed
+     *  auto-OPEN app, or an app with no catalogue row) was used
+     *  for 30s+ inside the window. The session elapsed; it was
+     *  NOT clean, and the record now says so. The exposed apps'
+     *  names are booked at the ending write (see
+     *  MonolithRepository.EXPOSURE_LOG_PACKAGE). */
+    const val ELAPSED_OPEN_EXPOSURE = "ELAPSED_OPEN_EXPOSURE"
+
     /** FLOW ended by its lawful door past the floor. */
     const val STOPWATCH_ENDED = "STOPWATCH_ENDED"
 
@@ -98,7 +108,8 @@ fun finishKindOf(row: FocusSessionEntity, isSleepLoadout: Boolean, nowWallMillis
         }
     }
     return when (row.outcome) {
-        SessionOutcome.ELAPSED_CLEAN, SessionOutcome.ELAPSED_SHIELD_GAP -> FinishKind.MANUAL_FINISH
+        SessionOutcome.ELAPSED_CLEAN, SessionOutcome.ELAPSED_SHIELD_GAP,
+        SessionOutcome.ELAPSED_OPEN_EXPOSURE -> FinishKind.MANUAL_FINISH
         SessionOutcome.STOPWATCH_ENDED ->
             if (row.completedSuccessfully) FinishKind.FLOW_FINISH else null
         else -> null
@@ -109,7 +120,10 @@ fun finishKindOf(row: FocusSessionEntity, isSleepLoadout: Boolean, nowWallMillis
  *  Death-booked finishes (ELAPSED_SHIELD_GAP) never pulse (B-12);
  *  PARTIAL never pulses; the rest of the publishable kinds do. */
 fun finishPulses(kind: String, row: FocusSessionEntity): Boolean = when (kind) {
-    FinishKind.MANUAL_FINISH -> row.outcome != SessionOutcome.ELAPSED_SHIELD_GAP
+    // An exposed finish is death-booked in the same sense as a
+    // shield gap (#129 F3): the record stands, the pulse does not.
+    FinishKind.MANUAL_FINISH -> row.outcome != SessionOutcome.ELAPSED_SHIELD_GAP &&
+        row.outcome != SessionOutcome.ELAPSED_OPEN_EXPOSURE
     FinishKind.FLOW_FINISH -> true
     FinishKind.ROUTINE_ATTENDED -> true
     FinishKind.ROUTINE_SLEEP_STANDDOWN -> true
@@ -150,7 +164,12 @@ data class PendingReceipt(
     val routineLabelWithin: String?,
     val bankedBreakSeconds: Int,
     val shieldWasOff: Boolean,
-    val deflections: List<ReceiptDeflection>
+    val deflections: List<ReceiptDeflection>,
+    /** Issue #129 F3: the unguarded apps actually used inside
+     *  this session's window (labels, longest-use first), read
+     *  back from the ending write's exposure booking. Empty for
+     *  every session not stamped ELAPSED_OPEN_EXPOSURE. */
+    val openExposureApps: List<String> = emptyList()
 )
 
 /**
@@ -182,7 +201,9 @@ data class ReceiptState(
     val faulted: Boolean,
     val deflections: List<ReceiptDeflection>,
     val restored: Boolean,
-    val receiptPublishedMonoMs: Long
+    val receiptPublishedMonoMs: Long,
+    /** Issue #129 F3: see [PendingReceipt.openExposureApps]. */
+    val openExposureApps: List<String> = emptyList()
 ) {
     /** The printed №: zero-padded to a minimum of 3, never
      *  truncated (№ 048 … № 1048). */
