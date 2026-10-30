@@ -179,7 +179,7 @@ fun AlwaysOnDeskClockOverlay(
         // row ticks every second; idle, the burn-in step still
         // steps every minute — the HH:mm print can never ride
         // more than a minute stale.
-        val glanceLine = deskClockGlanceLine(System.currentTimeMillis(), activeSession)
+        val glanceLine = deskClockGlanceLine(ClockText.is24Hour(LocalContext.current), System.currentTimeMillis(), activeSession)
 
         // Issue #111 finding 2: a real figure-8 (lemniscate) wander
         // in dp — see deskClockBurnInOffsetDp. The old 5x5 raster
@@ -367,12 +367,17 @@ internal fun deskClockModeLabel(session: FocusSessionEntity?): String = when {
  * stopwatch honestly states it has no set end; no session, no end
  * is invented.
  */
-internal fun deskClockGlanceLine(nowMillis: Long, session: FocusSessionEntity?): String {
-    val dayTime = java.text.SimpleDateFormat("EEE d MMM • HH:mm", Locale.US)
-        .format(java.util.Date(nowMillis)).uppercase(Locale.US)
+internal fun deskClockGlanceLine(is24Hour: Boolean, nowMillis: Long, session: FocusSessionEntity?): String {
+    // #88: the day names follow the device locale and the time the
+    // system 12/24-hour setting (ClockText's pure core) — this line
+    // landed via #111 with a pinned Locale.US "HH:mm".
+    val dayTime = java.text.SimpleDateFormat("EEE d MMM", Locale.getDefault())
+        .format(java.util.Date(nowMillis)).uppercase(Locale.getDefault()) +
+        " • " + ClockText.timeOfDay(is24Hour, nowMillis)
     return when {
         session != null && session.isActive && !session.isStopwatchMode ->
             dayTime + " • " + endsAtText(
+                is24Hour,
                 session.startWallTimeMillis + session.spanTargetSeconds * 1000L
             )
         session != null && session.isActive -> "$dayTime • NO SET END"
