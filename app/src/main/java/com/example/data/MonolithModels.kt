@@ -693,7 +693,12 @@ object BlockedBrowserDomains {
         "twitter.com",
         "facebook.com",
         "snapchat.com",
-        "youtube.com/shorts"
+        "youtube.com/shorts",
+        // W3 #130 (browser-as-loophole): the whole YouTube host, not
+        // only its /shorts path — the home/watch feed was the biggest
+        // unlisted feed. Enforced by the same site blocker; a needed
+        // video is reachable through the domain-scoped site peek.
+        "youtube.com"
     )
     // Issue #133 (finding 4): an "allowed study sites" example
     // list used to live here as dead decoration — no study-site
