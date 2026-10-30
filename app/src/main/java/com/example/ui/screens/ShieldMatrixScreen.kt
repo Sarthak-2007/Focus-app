@@ -123,6 +123,10 @@ fun ShieldMatrixScreen(
     // row. Default no-op for render harnesses and previews.
     onSetAppCategory: (String, AppCategory) -> Unit = { _, _ -> },
     onSelectProfile: (FocusProfileEntity) -> Unit = {},
+    // Issue #139 F4: the profile-undo door — stands only while a
+    // pre-apply snapshot exists to restore.
+    profileUndoAvailable: Boolean = false,
+    onUndoProfileApply: () -> Unit = {},
     onToggleShortsReelsSniper: () -> Unit,
     onToggleBrowserUrlBlocker: () -> Unit,
     routines: List<com.example.data.RoutineEntity> = emptyList(),
@@ -361,6 +365,30 @@ fun ShieldMatrixScreen(
                             )
                         }
                     }
+                }
+            }
+        }
+
+        // Issue #139 F4: the undo strip — a profile application
+        // overwrote the hand-set tiers; this restores them.
+        if (profileUndoAvailable) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(scheme.surfaceVariant)
+                        .clickable(onClick = onUndoProfileApply)
+                        .padding(12.dp)
+                        .testTag("profile_undo_strip")
+                ) {
+                    Text(
+                        text = "A LOADOUT OVERWROTE YOUR HAND-SET TIERS — TAP TO UNDO",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = scheme.onBackground
+                    )
                 }
             }
         }

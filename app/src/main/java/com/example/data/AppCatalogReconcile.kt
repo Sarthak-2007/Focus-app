@@ -73,6 +73,21 @@ data class InstalledPackage(
     val isMainActivity: Boolean = false
 )
 
+/**
+ * Issue #80 finding 1 (partial): one install of a package in one
+ * user profile. [profileKey] is the profile's UserHandle string —
+ * the only profile identity a normal app may read; Android exposes
+ * no public numeric user id, and no door (AccessibilityEvent,
+ * UsageStats, notifications) carries a UserHandle at all, which is
+ * why per-profile RULES stay blocked (see ISSUE-80 report) while
+ * per-profile DISCOVERY is possible and implemented.
+ */
+data class ProfiledInstalledPackage(
+    val packageName: String,
+    val label: String,
+    val profileKey: String
+)
+
 /** A birth rule for a package: the tier and daily limit it is
  *  discovered with IF it is actually installed. */
 data class AppRulePreset(
@@ -127,7 +142,18 @@ object AppCategorizer {
     private val DETERMINISTIC_HOMES: Map<String, AppCategory> = mapOf(
         // Anki — the spaced-repetition app (audit R3b, angle
         // study-on-phone-itself, names this exact package).
-        "com.ichi2.anki" to AppCategory.EDUCATION
+        "com.ichi2.anki" to AppCategory.EDUCATION,
+        // Finance (issue #120): the payment/authenticator packages
+        // whose identity is a fact, filed deterministically like
+        // Anki above — Google Pay (India), PhonePe, Paytm, BHIM,
+        // and the three authenticators.
+        "com.google.android.apps.nbu.paisa.user" to AppCategory.FINANCE,
+        "com.phonepe.app" to AppCategory.FINANCE,
+        "net.one97.paytm" to AppCategory.FINANCE,
+        "in.org.npci.upiapp" to AppCategory.FINANCE,
+        "com.google.android.apps.authenticator2" to AppCategory.FINANCE,
+        "com.microsoft.authenticator" to AppCategory.FINANCE,
+        "com.authy.authy" to AppCategory.FINANCE
     )
 
     private val MUSIC_TOKENS = setOf(
@@ -170,6 +196,17 @@ object AppCategorizer {
                 "education", "study"
             )
         ) return AppCategory.EDUCATION
+        // Finance (issue #120), in the same whole-token discipline,
+        // filed before the entertainment branches so a bank's name
+        // can never file it as a game or a shop. Bare "pay" is NOT
+        // a key — it fires inside too many unrelated names; the
+        // payment brands are stated whole.
+        if (matches(
+                "bank", "banking", "upi", "authenticator", "authy",
+                "gpay", "phonepe", "paytm", "bhim", "yono", "paypal",
+                "wallet", "google pay", "mobile banking"
+            )
+        ) return AppCategory.FINANCE
         return when {
             matches("tiktok", "musically", "youtube", "instagram", "reel", "reels") ->
                 AppCategory.SHORT_VIDEO
@@ -292,6 +329,26 @@ object AppCatalogReconcile {
         return elapsed >= 0L && elapsed < windowMillis
     }
 
+    /** Catalog view of profiled installs: one row per PACKAGE
+     *  (the table's primary key is still the bare package name),
+     *  first label seen wins. A package present in ANY profile is
+     *  installed for catalog purposes — it must not be pruned just
+     *  because the calling profile cannot launch it. */
+    fun mergeProfiledInstalls(
+        profiled: List<ProfiledInstalledPackage>
+    ): List<InstalledPackage> =
+        profiled.distinctBy { it.packageName }
+            .map { InstalledPackage(it.packageName, it.label) }
+
+    /** Which profiles each package is present in — the conflation
+     *  made visible: more than one key means one rule row is
+     *  standing for several installs. */
+    fun profilesByPackage(
+        profiled: List<ProfiledInstalledPackage>
+    ): Map<String, List<String>> =
+        profiled.groupBy({ it.packageName }, { it.profileKey })
+            .mapValues { it.value.distinct().sorted() }
+
     fun reconcile(
         existing: List<BlockedAppEntity>,
         installed: List<InstalledPackage>,
@@ -338,7 +395,12 @@ object AppCatalogReconcile {
                     // background playback was never blocked, so a
                     // 2-minute start window is all a player needs.
                     // Born LOCKED, a player got no peek at all.
-                    AppCategory.MESSAGING, AppCategory.MUSIC -> AppBlockTier.PEEK_2M
+                    // Issue #120: FINANCE is born PEEK_2M too —
+                    // a bank or authenticator born LOCKED has no
+                    // lawful mid-session door at all, and the peek
+                    // (5s wall, 2-minute lease) is exactly the
+                    // ceremony an OTP or UPI approval needs.
+                    AppCategory.MESSAGING, AppCategory.MUSIC, AppCategory.FINANCE -> AppBlockTier.PEEK_2M
                     else -> AppBlockTier.OPEN
                 }
                 toInsert += BlockedAppEntity(

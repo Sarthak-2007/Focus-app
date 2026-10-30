@@ -6,6 +6,7 @@ import android.app.usage.UsageStatsManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.LauncherApps
 import android.media.AudioManager
 import android.os.Build
 import android.os.Process
@@ -265,6 +266,9 @@ class MonolithRepository(
          *  Shield has shown it once. Prefs, not Room — announcing a
          *  table change needs no column in the table. */
         const val APP_LIST_PREFS_NAME = "monolith_app_list"
+        const val PROFILE_UNDO_KEY = "profile_undo_snapshot_v1"
+        const val PROFILE_UNDO_DIAL_KEY = "profile_undo_dial_minutes_v1"
+        const val PROFILE_UNDO_NAME_KEY = "profile_undo_name_v1"
         const val PRUNE_NOTE_COUNT_KEY = "prune_note_count"
         const val PRUNE_NOTE_RULES_KEY = "prune_note_rules_removed"
 
@@ -421,7 +425,7 @@ class MonolithRepository(
             // component), resolved once per package — the reconcile's
             // dedupe rule lets it win over shortcut activities.
             val mainActivityByPackage = mutableMapOf<String, String?>()
-            val installed = resolvedList.mapNotNull { resolveInfo ->
+            val installedFromPm = resolvedList.mapNotNull { resolveInfo ->
                 val pkg = resolveInfo.activityInfo?.packageName ?: return@mapNotNull null
                 if (pkg == context.packageName || pkg.startsWith("com.android.settings")) {
                     return@mapNotNull null
@@ -439,6 +443,57 @@ class MonolithRepository(
                         mainActivity == resolveInfo.activityInfo?.name
                 )
             }
+            // Issue #80 finding 1 (partial): the PackageManager
+            // query above only sees the CALLING profile. LauncherApps
+            // additionally enumerates the other profiles this user
+            // owns (work profile, dual-app/clone user), so a package
+            // installed only there is at least DISCOVERED and not
+            // pruned from the catalog. Per-profile rules remain
+            // impossible from one install — see the #80 report.
+            val profiled = installedFromPm.map {
+                ProfiledInstalledPackage(
+                    it.packageName, it.label, Process.myUserHandle().toString()
+                )
+            }.toMutableList()
+            try {
+                val launcherApps =
+                    context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as? LauncherApps
+                if (launcherApps != null) {
+                    for (profile in launcherApps.profiles) {
+                        val activities = try {
+                            launcherApps.getActivityList(null, profile)
+                        } catch (_: Exception) {
+                            null
+                        } ?: continue
+                        for (info in activities) {
+                            val pkg = info.componentName?.packageName ?: continue
+                            if (pkg == context.packageName ||
+                                pkg.startsWith("com.android.settings")
+                            ) {
+                                continue
+                            }
+                            val label = info.label?.toString()
+                                ?.takeIf { it.isNotBlank() } ?: continue
+                            profiled.add(
+                                ProfiledInstalledPackage(pkg, label, profile.toString())
+                            )
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                // Discovery stays exactly as complete as the old
+                // single-profile query when LauncherApps refuses.
+            }
+            // STURM3-13 port note: the calling-profile entries keep
+            // their isMainActivity flags (issue #34's dedupe rule
+            // depends on them), so the merged catalog is the PM list
+            // plus ONLY the packages other profiles add — the pure
+            // mergeProfiledInstalls view decides which those are.
+            val pmPackages = installedFromPm.map { it.packageName }.toSet()
+            val installed = installedFromPm +
+                AppCatalogReconcile.mergeProfiledInstalls(profiled)
+                    .filter { it.packageName !in pmPackages }
+
             // THE CATALOG IS THE PHONE'S TRUTH (Ordner lane, Sarthak's
             // complaint Oct 29 22:40: the list carried apps he never
             // installed). There is no blind factory seed any more:
@@ -512,11 +567,11 @@ class MonolithRepository(
                 FocusProfileEntity(
                     name = "Study Loadout",
                     codeName = "Study Mode",
-                    description = "Locks Social & Games, sets YouTube & Messaging to 2m Peek, arms Shorts Sniper.",
+                    description = "Locks Social, Games & short video (YouTube included), sets Messaging to 2m Peek, arms Shorts Sniper.",
                     defaultMinutes = 50,
                     blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES",
                     scheduleLabel = "09:00 – 13:00 • Weekdays",
-                    isScheduleEnabled = true,
+                    isScheduleEnabled = false,
                     startHour = 9,
                     startMinute = 0,
                     endHour = 13,
@@ -529,7 +584,7 @@ class MonolithRepository(
                     defaultMinutes = 90,
                     blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,MESSAGING,BROWSERS",
                     scheduleLabel = "14:00 – 18:00 • Exam Prep",
-                    isScheduleEnabled = true,
+                    isScheduleEnabled = false,
                     startHour = 14,
                     startMinute = 0,
                     endHour = 18,
@@ -540,9 +595,9 @@ class MonolithRepository(
                     codeName = "Sleep Guard",
                     description = "Locks every app except Phone, Clock, and Maps so you sleep on time.",
                     defaultMinutes = 60,
-                    blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS",
+                    blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS,MESSAGING",
                     scheduleLabel = "22:30 – 07:00 • Nightly",
-                    isScheduleEnabled = true,
+                    isScheduleEnabled = false,
                     startHour = 22,
                     startMinute = 30,
                     endHour = 7,
@@ -563,6 +618,37 @@ class MonolithRepository(
                 )
             )
             dao.insertProfiles(defaultProfiles)
+        }
+
+        // Issue #139 truth patches for rows seeded by older builds:
+        // the Sleep seed forgot MESSAGING (WhatsApp stayed open under
+        // a profile that promises to lock everything but Phone,
+        // Clock and Maps), the Study seed promised YouTube a 2m
+        // Peek the category system cannot give it, and every seed
+        // claimed an enabled schedule no engine has ever read.
+        // Patches bite only on rows still carrying the exact old
+        // seed values — a hand-edited profile is never rewritten.
+        val seededNames = setOf("Study Loadout", "Exam Lockdown", "Sleep Loadout", "Quick Homework")
+        existingProfiles.forEach { profile ->
+            var patched = profile
+            if (profile.name == "Sleep Loadout" &&
+                profile.blockedCategoriesCsv == "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS"
+            ) {
+                patched = patched.copy(
+                    blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS,MESSAGING"
+                )
+            }
+            if (profile.name == "Study Loadout" &&
+                profile.description == "Locks Social & Games, sets YouTube & Messaging to 2m Peek, arms Shorts Sniper."
+            ) {
+                patched = patched.copy(
+                    description = "Locks Social, Games & short video (YouTube included), sets Messaging to 2m Peek, arms Shorts Sniper."
+                )
+            }
+            if (profile.name in seededNames && profile.isScheduleEnabled) {
+                patched = patched.copy(isScheduleEnabled = false)
+            }
+            if (patched != profile) dao.updateProfile(patched)
         }
 
         // Fabricated demo history STRUCK in this lane too (Lie
@@ -1272,6 +1358,11 @@ class MonolithRepository(
     }
 
     suspend fun removeBlockedSite(domain: String) {
+        // Issue #304 F1: removing a blocked site loosens the seal —
+        // refused at the write boundary while a session is active
+        // (the ViewModel ratchet at #151 already warns on the hand
+        // path; this closes the verb itself for every caller).
+        if (dao.getActiveSessionSnapshot()?.isActive == true) return
         dao.deleteSite(domain)
     }
 
@@ -1630,12 +1721,33 @@ class MonolithRepository(
         // or telephony package can land on PEEK_2M, never on LOCKED,
         // so placing a call is always reachable.
         val nextTier = EssentialApps.floorTier(app.packageName, cycled)
+        // Issue #304 F1: the direction gate at the write boundary —
+        // while a session is sealed a cycle step that would loosen
+        // (LOCKED -> PEEK, PEEK -> OPEN) is refused here, not only
+        // in the ViewModel's ratchet, so no caller can weaken a
+        // sealed rule through this verb. OPEN -> LOCKED tightens
+        // and stays lawful mid-session.
+        if (dao.getActiveSessionSnapshot()?.isActive == true &&
+            SessionTierGate.loosens(app.resolvedTier, nextTier)
+        ) {
+            return app.resolvedTier
+        }
         val isBlockedFlag = nextTier != AppBlockTier.OPEN
         dao.setAppTier(app.packageName, isBlockedFlag, nextTier.name)
         return nextTier
     }
 
     suspend fun setAppBlockTier(packageName: String, tier: AppBlockTier) {
+        // Issue #304 F1: same gate — a direct tier write that would
+        // loosen a sealed app's rule is refused at the repository,
+        // whoever the caller is.
+        if (dao.getActiveSessionSnapshot()?.isActive == true) {
+            val current = dao.getAllAppsSnapshot()
+                .firstOrNull { it.packageName == packageName }
+            if (current != null && SessionTierGate.loosens(current.resolvedTier, tier)) {
+                return
+            }
+        }
         // Issue #119, finding 5: the dialler floor — no caller may
         // classify the default dialler / telephony stack LOCKED.
         val effectiveTier = EssentialApps.floorTier(packageName, tier)
@@ -1650,6 +1762,14 @@ class MonolithRepository(
      */
     suspend fun applySmartLoadout(loadout: SmartLoadout) = withContext(Dispatchers.IO) {
         val allApps = dao.getAllAppsSnapshot()
+        // Issue #304 F1: while a session is sealed the loadout lands
+        // tightening-only — each app keeps the stricter of its
+        // current tier and the preset's tier, so a mid-session
+        // loadout tap can never loosen every app at once (the exact
+        // hole the AppBlock head-to-head named). Unsealed, and at
+        // routine materialisation (which applies the loadout BEFORE
+        // its session starts), the preset lands whole, as before.
+        val sealed = dao.getActiveSessionSnapshot()?.isActive == true
         val updated = allApps.map { app ->
             // Issue #107: the tier rule is LoadoutRules.tierFor —
             // the same pure function the Shield preview prints its
@@ -1660,7 +1780,8 @@ class MonolithRepository(
             // Issue #119 F4/F5 ride inside LoadoutRules.tierFor itself
             // (SLEEP essentials by package + the dialler floor), so
             // preview and commit carry them identically.
-            val tier = LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category)
+            val desired = LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category)
+            val tier = SessionTierGate.clampWhileSealed(app.resolvedTier, desired, sealed)
             app.copy(blockTier = tier.name).normalized()
         }
         dao.insertApps(updated)
@@ -1783,6 +1904,73 @@ class MonolithRepository(
         )
     }
 
+    // Issue #139 F4: the pre-apply snapshot. Applying a profile
+    // bulk-rewrites every app's tier; before it does, the current
+    // hand-set tiers are persisted here so one undo restores them.
+    private fun profileUndoPrefs() =
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+
+    fun hasProfileUndoSnapshot(): Boolean =
+        profileUndoPrefs().contains(PROFILE_UNDO_KEY)
+
+    /** Issue #139 F4, process-death completion: the pre-tap dial
+     *  minutes and profile name, persisted in the same prefs entry
+     *  as the tiers snapshot, so an undo after process death
+     *  restores all three — not just the tiers. Written by the
+     *  view model at tap time; removed when the snapshot is
+     *  consumed by [restoreProfileUndoSnapshot]. */
+    fun saveProfileUndoContext(dialMinutes: Int, profileName: String) {
+        profileUndoPrefs().edit()
+            .putInt(PROFILE_UNDO_DIAL_KEY, dialMinutes)
+            .putString(PROFILE_UNDO_NAME_KEY, profileName)
+            .apply()
+    }
+
+    fun profileUndoDialMinutes(): Int? =
+        profileUndoPrefs().takeIf { it.contains(PROFILE_UNDO_DIAL_KEY) }
+            ?.getInt(PROFILE_UNDO_DIAL_KEY, 0)
+
+    fun profileUndoName(): String? =
+        profileUndoPrefs().getString(PROFILE_UNDO_NAME_KEY, null)
+
+    suspend fun restoreProfileUndoSnapshot(): Boolean {
+        val raw = profileUndoPrefs().getString(PROFILE_UNDO_KEY, null) ?: return false
+        val saved = raw.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .mapNotNull { line ->
+                val parts = line.split("|")
+                if (parts.size == 3) parts[0] to (parts[1] to (parts[2] == "1")) else null
+            }
+            .toMap()
+        if (saved.isEmpty()) return false
+        val restored = dao.getAllAppsSnapshot().map { app ->
+            val (tier, blocked) = saved[app.packageName] ?: return@map app
+            app.copy(blockTier = tier, isBlocked = blocked)
+        }
+        dao.insertApps(restored)
+        profileUndoPrefs().edit()
+            .remove(PROFILE_UNDO_KEY)
+            .remove(PROFILE_UNDO_DIAL_KEY)
+            .remove(PROFILE_UNDO_NAME_KEY)
+            .apply()
+        return true
+    }
+
+    /** The apps no profile may ever lock: the clock and maps are
+     *  how he wakes and gets home. Sleep's own description names
+     *  Phone, Clock, and Maps as its exceptions (issue #139 F2) —
+     *  the category system cannot express the exception, so it
+     *  lives here as an invariant. Membership is by EssentialApps'
+     *  exact package sets (issue #119) — never substring luck.
+     *  The dialer is NOT listed here on purpose: the dialler floor
+     *  (EssentialApps.floorTier, applied to every row inside
+     *  applyProfile) already guarantees no profile can lock the
+     *  phone either. */
+    private fun isProfileExempt(packageName: String): Boolean =
+        EssentialApps.isClockPackage(packageName) ||
+            EssentialApps.isNavigationPackage(packageName)
+
     suspend fun applyProfile(profile: FocusProfileEntity) = withContext(Dispatchers.IO) {
         val activeCategories = profile.blockedCategoriesCsv
             .split(",")
@@ -1791,11 +1979,30 @@ class MonolithRepository(
             .toSet()
 
         val currentApps = dao.getAllAppsSnapshot()
+        // Snapshot BEFORE the overwrite (issue #139 F4).
+        profileUndoPrefs().edit()
+            .putString(
+                PROFILE_UNDO_KEY,
+                currentApps.joinToString("\n") { app ->
+                    "${app.packageName}|${app.blockTier}|${if (app.isBlocked) "1" else "0"}"
+                }
+            )
+            .apply()
         val updated = currentApps.map { app ->
             val shouldBlock = app.category in activeCategories
             val rawTier = when {
+                // Issue #139 F2: clock + navigation are exempt — a
+                // profile can never lock how he wakes or gets home.
+                isProfileExempt(app.packageName) -> AppBlockTier.OPEN
                 !shouldBlock -> AppBlockTier.OPEN
                 app.category == AppCategory.MESSAGING.name -> AppBlockTier.PEEK_2M
+                // Issue #120: a profile can no more bulk-LOCK
+                // finance than it can lock the dialler (issue
+                // #119's floor) — even a profile that lists FINANCE
+                // applies it as PEEK_2M, so the mid-session OTP/UPI
+                // door stays lawful instead of leaving only the
+                // once-a-week emergency valve.
+                app.category == AppCategory.FINANCE.name -> AppBlockTier.PEEK_2M
                 else -> AppBlockTier.LOCKED
             }
             // Issue #32 F4: tier is the truth; isBlocked is derived
@@ -1818,13 +2025,20 @@ class MonolithRepository(
     suspend fun updateProfileTimeWindow(profile: FocusProfileEntity, startHour: Int, endHour: Int) {
         val safeStart = startHour.coerceIn(0, 23)
         val safeEnd = endHour.coerceIn(1, 24)
-        val scheduleStr = String.format(Locale.US, "%02d:00 – %02d:00 • Active Window", safeStart, safeEnd)
+        // Issue #139 F5: an hours-only edit must never destroy the
+        // minutes the profile already carries — Sleep's 22:30 start
+        // was silently rewritten to 22:00, and its "Nightly" label
+        // replaced. Minutes and the label's own suffix survive; the
+        // printed window shows the real minutes.
+        val suffix = profile.scheduleLabel.substringAfter(" • ", "Active Window")
+        val scheduleStr = String.format(
+            Locale.US, "%02d:%02d – %02d:%02d • %s",
+            safeStart, profile.startMinute, safeEnd, profile.endMinute, suffix
+        )
         dao.updateProfile(
             profile.copy(
                 startHour = safeStart,
-                startMinute = 0,
                 endHour = safeEnd,
-                endMinute = 0,
                 scheduleLabel = scheduleStr
             )
         )
@@ -1848,7 +2062,10 @@ class MonolithRepository(
                 defaultMinutes = minutes,
                 blockedCategoriesCsv = csv,
                 scheduleLabel = scheduleStr,
-                isScheduleEnabled = true,
+                // Issue #139 F1: no engine reads a profile schedule,
+                // so a new profile must not be born claiming one is
+                // enabled. The window is stored as a note only.
+                isScheduleEnabled = false,
                 startHour = startHour,
                 startMinute = 0,
                 endHour = endHour,
@@ -2715,6 +2932,40 @@ class MonolithRepository(
      * 2. Count-Up Stopwatch Mode (counts upward past the 20m minimum lock floor)
      * 3. Multi-Block Study Cycles (1 to 4 blocks) with automatic 10-minute Safe Breaks in between
      */
+    /**
+     * Issue #283 (R5 supplement): the in-session extend verb the
+     * original ships (+15 min) and Monolith lacked entirely — a
+     * running session could only end or be broken, never lengthened.
+     * Extends the ACTIVE session's target by [addSeconds]. The
+     * target is HMAC-covered (see CryptoIntegrityManager
+     * .signSessionState's payload), so the row is re-signed in the
+     * same write; an unsigned extension would read as tampering on
+     * the next verified tick. Capped the way the original caps it:
+     * while an hour or more remains, no further extension is sold
+     * (its 'still 60 min' refusal). Stopwatch sessions have no
+     * target to extend and refuse.
+     */
+    suspend fun extendActiveSession(addSeconds: Int = 900): Boolean {
+        val session = dao.getActiveSessionSnapshot() ?: return false
+        if (!session.isActive || session.isStopwatchMode) return false
+        val (verifiedElapsed, _) = computeVerifiedSessionElapsed(session)
+        val effectiveTarget = session.targetDurationSeconds + session.penaltySecondsAdded
+        if (effectiveTarget - verifiedElapsed >= 3600) return false
+        val newTarget = session.targetDurationSeconds + addSeconds
+        val reSigned = session.copy(
+            targetDurationSeconds = newTarget,
+            hmacSignature = CryptoIntegrityManager.signSessionState(
+                session.startWallTimeMillis,
+                session.startElapsedRealtimeMillis,
+                session.bootCount,
+                newTarget,
+                session.isStopwatchMode
+            )
+        )
+        dao.updateSession(reSigned)
+        return true
+    }
+
     suspend fun updateSessionProgress(
         session: FocusSessionEntity,
         stampShieldBeat: Boolean = false

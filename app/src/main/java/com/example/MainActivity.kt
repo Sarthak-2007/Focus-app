@@ -292,6 +292,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val deletedTaskForUndo by viewModel.deletedTaskForUndo.collectAsStateWithLifecycle()
     val totalQueueMinutes by viewModel.totalQueueMinutes.collectAsStateWithLifecycle()
     val selectedProfileName by viewModel.selectedProfileName.collectAsStateWithLifecycle()
+    val profileUndoAvailable by viewModel.profileUndoAvailable.collectAsStateWithLifecycle()
     val intentionText by viewModel.intentionText.collectAsStateWithLifecycle()
     val activeSession by viewModel.activeSession.collectAsStateWithLifecycle()
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
@@ -822,6 +823,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onOpenAlwaysOnDeskClock = { viewModel.toggleAlwaysOnDeskClock(true) },
                                     onOpenNotificationDigest = { viewModel.toggleNotificationDigestSheet(true) },
                                     onEndSafeBreak = { viewModel.endSafeBreakEarly() },
+                                    onExtendSession = viewModel::extendActiveSession,
                                     weeklyEmergencyTokensRemaining = weeklyEmergencyTokensRemaining,
                                     appsCellCount = appsCellCount,
                                     appsSplit = appsSplit,
@@ -888,6 +890,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onApplySmartLoadout = viewModel::applySmartLoadout,
                                     onSetAppCategory = viewModel::setAppCategory,
                                     onSelectProfile = viewModel::selectAndApplyProfile,
+                                    profileUndoAvailable = profileUndoAvailable,
+                                    onUndoProfileApply = viewModel::undoLastProfileApply,
                                     onToggleShortsReelsSniper = viewModel::toggleShortsReelsSniper,
                                     onToggleBrowserUrlBlocker = viewModel::toggleBrowserUrlBlocker,
                                     routines = routines,
