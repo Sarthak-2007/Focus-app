@@ -1,4 +1,6 @@
 package com.example.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -96,6 +99,40 @@ import java.util.Locale
  */
 
 private enum class DrawerView { LANDING, INDEX, MONTH, CABINET, RECEIPTS }
+
+/** Audit R3b #145, reopened defect A: the cabinet's standing forge
+ *  rule, as ONE named print so a test can pin the exact sentence.
+ *  The sentence is scoped to what the forge gates actually do
+ *  (MonolithRepository): MANUAL — a routine-born span forges
+ *  nothing (the finalise gate is `allBlocksCompleted &&
+ *  !isRoutineSession`, and the disarm door fences routine rows
+ *  too); IN FULL — a timed span hand-ended before all its blocks
+ *  complete forges nothing (at most a Partial Stamp), and a FLOW
+ *  span forges only at its completed hand finish. The earlier
+ *  print ("A SPAN YOU FINISH YOURSELF FORGES ONE") claimed both
+ *  exceptions away. */
+internal val CABINET_FORGE_RULE: String =
+    "A MANUAL SPAN YOU FINISH IN FULL FORGES ONE — THE FORGE CHOOSES WHICH."
+
+/** Audit R3b #145, reopened defect B: the provenance shield-gap
+ *  mark for one forge record, derived from the shield-gap FACT —
+ *  never from outcome precedence alone. A timed forge's gap is
+ *  stamped as its outcome (ELAPSED_SHIELD_GAP), but a FLOW forge's
+ *  outcome is always STOPWATCH_ENDED (the disarm when-chain's
+ *  completed-stopwatch branch wins regardless of shield state, and
+ *  that stamp must stay: finishKindOf requires it for a FLOW
+ *  finish). The gap fact a FLOW row still carries is its
+ *  shieldGapSeen latch — set when any observer saw the shield's
+ *  beat stale past the law or its sight revoked, and never
+ *  cleared. Either witness earns the mark; neither, no mark. */
+internal fun curioForgeGapMark(record: FocusSessionEntity): String =
+    if (record.outcome == SessionOutcome.ELAPSED_SHIELD_GAP ||
+        record.shieldGapSeen
+    ) {
+        " · SHIELD GAP"
+    } else {
+        ""
+    }
 
 private data class DrawerDayGroup(
     val date: LocalDate,
@@ -423,7 +460,7 @@ fun DrawerScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "STORED",
+                        text = stringResource(R.string.drawer_stored),
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
@@ -431,7 +468,7 @@ fun DrawerScreen(
                         color = scheme.onSurfaceVariant
                     )
                     Text(
-                        text = "BACK",
+                        text = stringResource(R.string.label_back),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -476,7 +513,7 @@ fun DrawerScreen(
                     // line, never an invented "ESTIMATE 0 MIN".
                     if (detail.estimatedMinutes > 0) {
                         Text(
-                            text = "ESTIMATE ${detail.estimatedMinutes} MIN",
+                            text = stringResource(R.string.drawer_estimate, detail.estimatedMinutes),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontSize = 13.sp,
                             color = scheme.onBackground
@@ -555,7 +592,7 @@ fun DrawerScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "CABINET",
+                        text = stringResource(R.string.drawer_cabinet),
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
@@ -563,7 +600,7 @@ fun DrawerScreen(
                         color = scheme.onSurfaceVariant
                     )
                     Text(
-                        text = "BACK",
+                        text = stringResource(R.string.label_back),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -673,19 +710,19 @@ fun DrawerScreen(
                 }
                 // DRW-01: the true rule, printed once as the
                 // cabinet's standing line — exactly what the
-                // forge does (Repository: a finished span forges
-                // one artifact, chosen at random; routine arms
-                // never forge). No per-artifact prices, no
-                // thresholds nothing enforces.
+                // forge does (Repository: a manual span finished
+                // in full forges one artifact, the forge chooses
+                // which; routine-born spans forge nothing). No
+                // per-artifact prices, no thresholds nothing
+                // enforces.
                 item {
                     Text(
-                        // Audit R3b #145: the rule, scoped to what
-                        // the code now actually does on every hand
-                        // finish (timed and FLOW alike). Routine-born
-                        // spans forge nothing — the fence stands
-                        // while the routines rethink owns them — and
-                        // the print no longer claims otherwise.
-                        text = "A SPAN YOU FINISH YOURSELF FORGES ONE — THE FORGE CHOOSES WHICH.",
+                        // Audit R3b #145, reopened defect A: the
+                        // sentence lives in CABINET_FORGE_RULE so
+                        // its exact wording is test-pinned; its
+                        // MANUAL / IN FULL scoping is the truth the
+                        // earlier unscoped print denied.
+                        text = CABINET_FORGE_RULE,
                         fontFamily = AnonymousProFamily,
                         fontSize = 10.5.sp,
                         letterSpacing = 1.sp,
@@ -798,13 +835,13 @@ fun DrawerScreen(
                             val forgeDay = java.text.SimpleDateFormat(
                                 "d MMM yyyy", Locale.US
                             ).format(java.util.Date(record.startWallTimeMillis))
-                            val gapMark = if (
-                                record.outcome == SessionOutcome.ELAPSED_SHIELD_GAP
-                            ) {
-                                " · SHIELD GAP"
-                            } else {
-                                ""
-                            }
+                            // Reopened defect B: the mark derives
+                            // from the shield-gap fact via
+                            // curioForgeGapMark — a FLOW forge's
+                            // outcome is STOPWATCH_ENDED even when
+                            // its shieldGapSeen latch is set, so an
+                            // outcome-only test marked nothing.
+                            val gapMark = curioForgeGapMark(record)
                             Text(
                                 text = "$forgeDay · ${record.intention}$gapMark",
                                 fontFamily = AnonymousProFamily,
@@ -857,7 +894,7 @@ fun DrawerScreen(
                         color = scheme.onSurfaceVariant
                     )
                     Text(
-                        text = "BACK",
+                        text = stringResource(R.string.label_back),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -905,7 +942,7 @@ fun DrawerScreen(
     ) {
         item {
             Text(
-                text = "STORED",
+                text = stringResource(R.string.drawer_stored),
                 fontFamily = AnonymousProFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 13.sp,
@@ -934,7 +971,7 @@ fun DrawerScreen(
             ) {
                 if (drawerQuery.isEmpty()) {
                     Text(
-                        text = "TYPE TO FIND A TASK",
+                        text = stringResource(R.string.drawer_search_hint),
                         fontFamily = AnonymousProFamily,
                         fontSize = 12.sp,
                         letterSpacing = 1.sp,
@@ -992,7 +1029,7 @@ fun DrawerScreen(
             if (searchGroups.isEmpty()) {
                 item {
                     Text(
-                        text = "NOTHING STORED UNDER “$drawerQuery”",
+                        text = stringResource(R.string.drawer_nothing_under, drawerQuery),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 13.sp,
                         color = scheme.onSurfaceVariant,
@@ -1102,12 +1139,12 @@ fun DrawerScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             if (olderMonth != null) {
-                                Text(
-                                    text = "‹",
-                                    fontFamily = AtkinsonHyperlegibleFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp,
-                                    color = scheme.onBackground,
+                                // #336: month paging glyphs are ICONS
+                                // from the one system, not text chars.
+                                androidx.compose.material3.Icon(
+                                    imageVector = com.example.ui.theme.MonolithIcons.ChevronLeft,
+                                    contentDescription = "Previous month",
+                                    tint = scheme.onBackground,
                                     modifier = Modifier
                                         .clickable(
                                             role = androidx.compose.ui.semantics.Role.Button
@@ -1115,15 +1152,14 @@ fun DrawerScreen(
                                         .sizeIn(minHeight = 48.dp, minWidth = 48.dp)
                                         .padding(vertical = 14.dp)
                                         .testTag("drawer_month_prev")
+                                        .size(16.dp)
                                 )
                             }
                             if (newerMonth != null) {
-                                Text(
-                                    text = "›",
-                                    fontFamily = AtkinsonHyperlegibleFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp,
-                                    color = scheme.onBackground,
+                                androidx.compose.material3.Icon(
+                                    imageVector = com.example.ui.theme.MonolithIcons.ChevronRight,
+                                    contentDescription = "Next month",
+                                    tint = scheme.onBackground,
                                     modifier = Modifier
                                         .clickable(
                                             role = androidx.compose.ui.semantics.Role.Button
@@ -1131,10 +1167,11 @@ fun DrawerScreen(
                                         .sizeIn(minHeight = 48.dp, minWidth = 48.dp)
                                         .padding(vertical = 14.dp)
                                         .testTag("drawer_month_next")
+                                        .size(16.dp)
                                 )
                             }
                             Text(
-                                text = "BACK",
+                                text = stringResource(R.string.label_back),
                                 fontFamily = AtkinsonHyperlegibleFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.sp,
@@ -1265,7 +1302,7 @@ fun DrawerScreen(
                 } else if (globallyEmpty) {
                     item {
                         Text(
-                            text = "NOTHING STORED YET",
+                            text = stringResource(R.string.drawer_nothing_yet),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontSize = 13.sp,
                             color = scheme.onSurfaceVariant,
@@ -1289,8 +1326,14 @@ fun DrawerScreen(
                         )
                     }
                     item {
+                        // Issue #115: the row prints the name of
+                        // the place it opens — CABINET, matching the
+                        // screen's own header. "CURIOS" (trinkets in
+                        // a shop) told a cold reader nothing about
+                        // earned records living behind it. The
+                        // testTag keeps its name (internal only).
                         DrawerNavRow(
-                            label = "CURIOS",
+                            label = "CABINET",
                             onClick = { viewName = DrawerView.CABINET.name },
                             modifier = Modifier.testTag("drawer_curios_row")
                         )
@@ -1319,18 +1362,18 @@ fun DrawerScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "ALL MONTHS",
+                                text = stringResource(R.string.drawer_all_months),
                                 fontFamily = AnonymousProFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 11.sp,
                                 letterSpacing = 1.sp,
                                 color = scheme.onBackground
                             )
-                            Text(
-                                text = "›",
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontSize = 14.sp,
-                                color = scheme.onSurfaceVariant
+                            androidx.compose.material3.Icon(
+                                imageVector = com.example.ui.theme.MonolithIcons.ChevronRight,
+                                contentDescription = null,
+                                tint = scheme.onSurfaceVariant,
+                                modifier = Modifier.size(14.dp)
                             )
                         }
                         HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
@@ -1339,14 +1382,14 @@ fun DrawerScreen(
                     // ALL MONTHS (chrome C10).
                     item {
                         DrawerNavRow(
-                            label = "CURIOS",
+                            label = "CABINET",
                             onClick = { viewName = DrawerView.CABINET.name },
                             modifier = Modifier.testTag("drawer_curios_row")
                         )
                         HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
                     }
                     // The receipts index's door: ONE furniture row
-                    // under CURIOS (issue #157) — this destination
+                    // under CABINET (issue #157) — this destination
                     // is named "Receipts"; the receipts are here.
                     item {
                         DrawerNavRow(
@@ -1591,7 +1634,7 @@ private fun EarlierRow(onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = "EARLIER",
+            text = stringResource(R.string.drawer_earlier),
             fontFamily = AnonymousProFamily,
             fontWeight = FontWeight.Bold,
             fontSize = 11.sp,

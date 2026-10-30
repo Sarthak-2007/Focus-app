@@ -156,7 +156,7 @@ object RoutineDerive {
             ) {
                 return RoutineDerivation(routine.id, WindowState.OPEN_RUNNING, window, null, finaliseDue, judgement)
             }
-            val claim = mine.firstOrNull { it.windowStartMillis == window.startMillis }
+            val claim = pickClaim(mine.filter { it.windowStartMillis == window.startMillis })
             if (claim != null) {
                 // The window was claimed and its session already
                 // ended: no second mint, ever (§1.5). If the claim
@@ -179,7 +179,14 @@ object RoutineDerive {
                     windowEndMillis = window.endMillis,
                     durationMinutes = window.remainderMinutes,
                     loadoutName = routine.loadoutName,
-                    intention = routine.name,
+                    // Issue #124: a routine arms the block, not
+                    // the words — the session's intention is what
+                    // the user declares, and an auto-armed session
+                    // was declared by nobody. The old value filed
+                    // the routine's NAME as the session intention,
+                    // where the receipt and airlock read it back as
+                    // the user's own declaration.
+                    intention = "",
                     profileName = "Routine: ${routine.name}"
                 )
             } else {
@@ -215,9 +222,9 @@ object RoutineDerive {
         val closed = RoutineSchedule.latestClosedWindow(routine, nowMillis) ?: return null
         // J6: a window the pause covered end-to-end never existed.
         if (routine.pausedUntilMillis >= closed.endMillis) return null
-        val claim = sessions.firstOrNull {
+        val claim = pickClaim(sessions.filter {
             it.routineId == routine.id && it.windowStartMillis == closed.startMillis
-        }
+        })
         if (claim != null) {
             // J1: a stamp IS the judgement; unstamped = pending, not judged here.
             return claim.routineOutcome?.let { stamp ->
@@ -234,6 +241,15 @@ object RoutineDerive {
         if (settings.lastBootAtMillis in closed.startMillis..closed.endMillis) {
             return WindowJudgement.NOT_DELIVERED
         }
+        // Issue #39 F3: a 0 stamp means NO edit was ever recorded
+        // under the new engine (migration default, MonolithDatabase
+        // 8→9) — it is not an edit at time zero. Without a recorded
+        // edit the row cannot prove the window was ever scheduled,
+        // so the judgement is UNKNOWN, never an invented MISSED
+        // (the law printed on RoutineEntity.scheduleEditedAtMillis).
+        if (routine.scheduleEditedAtMillis == 0L) {
+            return WindowJudgement.UNKNOWN
+        }
         // J4: MISSED if the window provably postdates the last edit,
         // so the current row proves it was scheduled.
         if (closed.startMillis > routine.scheduleEditedAtMillis) {
@@ -245,10 +261,28 @@ object RoutineDerive {
         return WindowJudgement.UNKNOWN
     }
 
+    /** Issue #39 F4: the claim of record for a window, chosen
+     *  deterministically — never by list order. Duplicate rows for
+     *  one window exist (races, restores); an unstamped row is the
+     *  live truth (work still owed / judgement still pending), so
+     *  it wins over any stamped duplicate that would mask it. Among
+     *  rows of the same stamped-ness, the lowest id (the earliest
+     *  written) wins. */
+    private fun pickClaim(candidates: List<FocusSessionEntity>): FocusSessionEntity? =
+        candidates.minWithOrNull(
+            compareBy<FocusSessionEntity> { it.routineOutcome != null }.thenBy { it.id }
+        )
+
     /** Does any session other than [exceptRoutineId]'s own rows
-     *  overlap [fromMillis, toMillis]? A session's span is estimated
-     *  as [startWallTimeMillis, start + elapsed] (live rows: to
-     *  now). Overlap needs positive length. */
+     *  overlap [fromMillis, toMillis]? A finished session's span is
+     *  [startWallTimeMillis, endWallMillis] when its v11 ending
+     *  stamp exists (Issue #39 F5 — the elapsed-seconds estimate
+     *  undercounts paused sessions, whose wall span runs long past
+     *  start + elapsed; the MonolithDao covering predicate reads
+     *  the same stamp the same way); legacy rows with no stamp
+     *  (endWallMillis == 0) fall back to the elapsed estimate.
+     *  Live rows span to Long.MAX_VALUE. Overlap needs positive
+     *  length. */
     internal fun overlapsAny(
         sessions: List<FocusSessionEntity>,
         fromMillis: Long,
@@ -260,10 +294,10 @@ object RoutineDerive {
             if (exceptRoutineId != null && s.routineId == exceptRoutineId) {
                 false
             } else {
-                val spanEnd = if (s.isActive) {
-                    Long.MAX_VALUE // still occupying; bounded by the caller's interval
-                } else {
-                    s.startWallTimeMillis + s.elapsedSeconds * 1000L
+                val spanEnd = when {
+                    s.isActive -> Long.MAX_VALUE // still occupying; bounded by the caller's interval
+                    s.endWallMillis > 0L -> s.endWallMillis
+                    else -> s.startWallTimeMillis + s.elapsedSeconds * 1000L
                 }
                 s.startWallTimeMillis < toMillis && spanEnd > fromMillis
             }

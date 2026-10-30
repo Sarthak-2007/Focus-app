@@ -1,4 +1,6 @@
 package com.example.ui.components
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExitTransition
@@ -299,6 +301,25 @@ fun ReceiptSheet(
                         text = "BREAK BANKED ${longSpan(receipt.bankedBreakSeconds)}"
                     )
                 }
+                // Issue #105 (F4): the Safe Breaks actually lived
+                // in this session, from its own taken ledger
+                // (breakTakenSeconds, threaded as safeBreakSeconds)
+                // — the valve-fed BREAK BANKED line above reads 0
+                // on every publishable slip and was the only break
+                // line, so the breaks the user lived never printed.
+                // Exact span via longSpan, never rounded.
+                if (receipt.safeBreakSeconds > 0) {
+                    ReceiptMonoLine(
+                        text = "BREAK TAKEN ${longSpan(receipt.safeBreakSeconds)}"
+                    )
+                }
+                // Issue #105 (F1): the tasks finished inside this
+                // session, in the order the session's own row
+                // booked them (completedTasksSummary) — the work
+                // the slip attests, named on the slip.
+                receipt.completedTasks.forEach { entry ->
+                    ReceiptMonoLine(text = "DONE · $entry")
+                }
                 // Nachdruck R2/R3/R4 (Finisher 3 §2.2/§3/§4,
                 // landed via WELLE-6 recovery, adapted to main's
                 // divider-less sheet): each deflection is a
@@ -330,7 +351,15 @@ fun ReceiptSheet(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "· " + d.appName + if (d.isSite) " · SITE" else "",
+                            // Issue #105 (F3, remainder): the
+                            // outcome word rides beside the attempt —
+                            // a turned-away attempt and a plain block
+                            // are different events and now print
+                            // differently. No outcome recorded, no
+                            // word printed (outcomePrint is empty).
+                            text = "· " + d.appName +
+                                (if (d.outcomePrint.isNotEmpty()) " · ${d.outcomePrint}" else "") +
+                                (if (d.isSite) " · SITE" else ""),
                             fontFamily = AnonymousProFamily,
                             fontSize = 11.sp,
                             letterSpacing = 1.sp,
@@ -341,7 +370,7 @@ fun ReceiptSheet(
                 }
                 if (receipt.shieldWasOff) {
                     Text(
-                        text = "THE SHIELD WAS OFF FOR PART OF THAT SESSION",
+                        text = stringResource(R.string.receipt_shield_gap),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -386,7 +415,7 @@ fun ReceiptSheet(
                     // (build-ready §7.2) — it never prints on the
                     // imprint, the strip, or anywhere else.
                     Text(
-                        text = "SHIELD — STILL BLOCKED (SERVICE DIDN'T STOP)",
+                        text = stringResource(R.string.receipt_shield_still_blocked),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,

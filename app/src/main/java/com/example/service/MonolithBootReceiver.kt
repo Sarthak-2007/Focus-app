@@ -3,6 +3,7 @@ package com.example.service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.PowerManager
 import android.util.Log
 import com.example.data.UndoDeleteStore
 import kotlinx.coroutines.CancellationException
@@ -57,6 +58,14 @@ class MonolithBootReceiver : BroadcastReceiver() {
         val action = intent?.action ?: return
         val appContext = context.applicationContext
         when (action) {
+            // Issue #122: the battery turned — the shield's
+            // standing notification must re-read it now (its own
+            // dynamic receiver usually beats this manifest one;
+            // both are idempotent re-posts of the same facts).
+            Intent.ACTION_BATTERY_LOW,
+            PowerManager.ACTION_POWER_SAVE_MODE_CHANGED -> {
+                MonolithShieldService.instance?.refreshBatteryNotification()
+            }
             Intent.ACTION_LOCKED_BOOT_COMPLETED,
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
@@ -128,6 +137,23 @@ class MonolithBootReceiver : BroadcastReceiver() {
         // and a failed reap must never cost the tick its run.
         runGuardedBootAction {
             UndoDeleteStore.expireIfStale(appContext)
+        }
+
+        // Group 1c — Issue #87 (process-death F1): a REAL boot resets
+        // SystemClock.elapsedRealtime() to ~0, so every persisted
+        // peek lease/cooldown anchor — written against the PREVIOUS
+        // boot's monotonic clock — would otherwise read as a
+        // far-future expiry and resurrect a 2-minute peek for
+        // hours-to-days. Zero both fields on every row, BEFORE the
+        // shield groups read them. A package replace is NOT a boot:
+        // the monotonic clock survives it, so leases stay valid and
+        // are left alone there. LOCKED_BOOT and BOOT both fire for
+        // one boot; the clear is idempotent.
+        runGuardedBootAction {
+            if (action != Intent.ACTION_MY_PACKAGE_REPLACED) {
+                com.example.AppContainer.dao(appContext)
+                    .clearAllPeekLeases()
+            }
         }
 
         // Group 2 — shield FIRST, before the slow reconcile: if a
