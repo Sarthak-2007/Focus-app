@@ -890,9 +890,17 @@ class MonolithViewModel(
         // process was dead, the snapshot is discarded — the delete
         // was booked at its tap and an expired reversal is not
         // revived by a relaunch.
-        undoDeleteStore.load()?.let { (snapshot, deletedAt) ->
-            val remaining = com.example.data.UndoDeleteStore.WINDOW_MILLIS -
-                (System.currentTimeMillis() - deletedAt)
+        undoDeleteStore.load()?.let { (snapshot, deletedAtWall, deletedAtElapsed) ->
+            // Audit R1 #41: judged on the monotonic stamp when
+            // it survives (same boot) — a wall-clock rollback no
+            // longer resurrects an expired undo, nor a forward
+            // jump steals a live one.
+            val remaining = com.example.data.UndoDeleteStore.remainingMillis(
+                deletedAtWallMillis = deletedAtWall,
+                deletedAtElapsedMillis = deletedAtElapsed,
+                nowWallMillis = System.currentTimeMillis(),
+                nowElapsedMillis = android.os.SystemClock.elapsedRealtime()
+            )
             if (remaining > 0L) {
                 _deletedTaskForUndo.value = snapshot
                 undoDismissJob = viewModelScope.launch {
@@ -1983,15 +1991,25 @@ class MonolithViewModel(
                 // BEFORE the banner presents the delete as
                 // reversible — the promise and its backing are
                 // never out of order.
-                undoDeleteStore.save(deleted, System.currentTimeMillis())
-                _deletedTaskForUndo.value = deleted
+                // Audit R1 #41: the banner is presented only when
+                // the copy actually landed. A failed commit used
+                // to leave the banner promising a reversal whose
+                // restore copy did not exist.
+                val persisted = undoDeleteStore.save(
+                    deleted,
+                    System.currentTimeMillis(),
+                    android.os.SystemClock.elapsedRealtime()
+                )
+                if (persisted) {
+                    _deletedTaskForUndo.value = deleted
+                    undoDismissJob = viewModelScope.launch {
+                        delay(com.example.data.UndoDeleteStore.WINDOW_MILLIS)
+                        _deletedTaskForUndo.value = null
+                        undoDeleteStore.clear()
+                    }
+                }
                 if (nextActive != null) {
                     _intentionText.value = nextActive.title
-                }
-                undoDismissJob = viewModelScope.launch {
-                    delay(com.example.data.UndoDeleteStore.WINDOW_MILLIS)
-                    _deletedTaskForUndo.value = null
-                    undoDeleteStore.clear()
                 }
             }
         }
@@ -2663,10 +2681,32 @@ class MonolithViewModel(
         reasonBadge: String = "Locked",
         path: InterceptPath = InterceptPath.UNKNOWN
     ) {
-        soundEngine.playMechanicalLatch(true)
+        // Issue #68 F5, Tier 1 — revalidation: an airlock is a
+        // claim about a live session. With no active session there
+        // is nothing to intercept, whoever asks; every lawful
+        // caller fires only inside one (the shield loop, the
+        // accessibility doors, the sealed launcher's peek key), so
+        // the gate costs them nothing and a fabricated call dies
+        // here, before even the latch sound.
         val active = activeSession.value
+        if (active?.isActive != true) return
 
         val appEntity = apps.value.find { it.packageName == packageName }
+        // On the two per-app doors (the only lease-honouring ones)
+        // the claim is about a ruled row: the row must exist, must
+        // not be OPEN, and the badge prints from the row — never
+        // from the caller's word. The guard, sniper and site doors
+        // legitimately name unlisted packages (Settings, a
+        // browser) with door-defined badges; their provenance is
+        // the Tier-2 nonce at the intent boundary, and the session
+        // gate above binds them too.
+        val effectiveBadge = if (path.canHonourPeekLease) {
+            if (appEntity == null || appEntity.resolvedTier == AppBlockTier.OPEN) return
+            appEntity.resolvedTier.badge
+        } else {
+            reasonBadge
+        }
+        soundEngine.playMechanicalLatch(true)
         val cooldownLeft = if (appEntity != null) repository.getPeekCooldownRemainingSeconds(appEntity) else 0
         val pillActive = _floatingPeekPill.value.isActive
         // UNA2-01: the offer is computed per-path by the one pure
@@ -2683,7 +2723,7 @@ class MonolithViewModel(
             isVisible = true,
             interceptedPackageName = packageName,
             interceptedAppName = appName,
-            interceptReasonBadge = reasonBadge,
+            interceptReasonBadge = effectiveBadge,
             sessionIntention = active?.intention ?: _intentionText.value,
             selectedReason = DistractionTriggerReason.MUSCLE_MEMORY,
             interceptInstanceId = ++airlockInstanceSeq,

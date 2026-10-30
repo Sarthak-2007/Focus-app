@@ -159,13 +159,13 @@ class TactileSoundEngine(private val context: Context) {
         val SEAL_THROW_TIMINGS = longArrayOf(0, 24, 38, 16)
         val SEAL_THROW_AMPLITUDES = intArrayOf(0, 255, 0, 175)
 
-        /** The Throw buffer's golden hash (Siegel T1): SHA-256 of
-         *  the PCM16-LE encoding, pinned from the first green
-         *  run's own output — any later drift in the render (a
-         *  constant nudged, a partial re-weighted) turns the
-         *  identity test red instead of shipping silently. */
-        const val SEAL_BUFFER_GOLDEN_SHA256 =
-            "d204b95a372942604d0a273b526a3b2ac857df80122f1dfbcc09680bf96bcde4"
+        // Issue #66 (audit R1 tests-2): the former
+        // SEAL_BUFFER_GOLDEN_SHA256 constant was removed — it was
+        // pinned from this code's own first output, so it could
+        // detect drift but never a wrong original render. The
+        // identity test now compares against a reference render
+        // typed independently from the spec constants (see
+        // SealThrowIdentityTest.referenceRender).
 
         /** One xorshift32 step. JVM Int overflow and shift
          *  semantics are spec-defined, so this sequence is
