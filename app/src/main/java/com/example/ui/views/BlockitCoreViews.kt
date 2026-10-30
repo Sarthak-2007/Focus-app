@@ -161,17 +161,14 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
         }
         return (0xFF shl 24) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
     }
-    protected fun tokOnAccent(): Int = if (isNightMode) NIGHT_ON_PRIMARY_CONTAINER else LIGHT_ON_PRIMARY_CONTAINER
     protected fun tokSecondaryContainer(): Int = if (isNightMode) NIGHT_SECONDARY_CONTAINER else LIGHT_SECONDARY_CONTAINER
     protected fun tokOnSecondaryContainer(): Int = if (isNightMode) NIGHT_ON_SECONDARY_CONTAINER else LIGHT_ON_SECONDARY_CONTAINER
     protected fun tokOnSurface(): Int = if (isNightMode) NIGHT_ON_SURFACE else LIGHT_ON_SURFACE
     protected fun tokOnSurfaceVariant(): Int = if (isNightMode) NIGHT_ON_SURFACE_VARIANT else LIGHT_ON_SURFACE_VARIANT
-    protected fun tokOutline(): Int = if (isNightMode) NIGHT_OUTLINE else LIGHT_OUTLINE
     protected fun tokHairline(): Int = if (isNightMode) NIGHT_OUTLINE_VARIANT else LIGHT_OUTLINE_VARIANT
     protected fun tokBlockBar(): Int = if (isNightMode) NIGHT_BLOCK_BAR else LIGHT_BLOCK_BAR
     protected fun tokTextPrimary(): Int = if (isNightMode) NIGHT_TEXT_PRIMARY else LIGHT_TEXT_PRIMARY
     protected fun tokTextSecondary(): Int = if (isNightMode) NIGHT_TEXT_SECONDARY else LIGHT_TEXT_SECONDARY
-    protected fun tokAlert(): Int = if (isNightMode) NIGHT_ALERT else LIGHT_ALERT
 
     // Pre-allocated Typefaces (§2: Words = Atkinson Hyperlegible, Numbers = Anonymous Pro)
     protected val wordTypefaceBold: Typeface by lazy {
@@ -324,44 +321,6 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
         }
     }
 
-    private val dotDigitMasks = intArrayOf(
-        0b111_101_101_101_111, // 0
-        0b010_110_010_010_111, // 1
-        0b111_001_111_100_111, // 2
-        0b111_001_111_001_111, // 3
-        0b101_101_111_001_001, // 4
-        0b111_100_111_001_111, // 5
-        0b111_100_111_101_111, // 6
-        0b111_001_001_001_001, // 7
-        0b111_101_111_101_111, // 8
-        0b111_101_111_001_111  // 9
-    )
-
-    /**
-     * Draws a 3x5 dot-matrix digit on the 4dp grid (§2 & §4.2 #8 TileNumberView).
-     */
-    protected fun drawDotMatrixDigit(
-        canvas: Canvas,
-        digit: Int,
-        left: Float,
-        top: Float,
-        tilePx: Float,
-        gapPx: Float,
-        onColor: Int,
-        offColor: Int
-    ) {
-        val mask = dotDigitMasks[digit.coerceIn(0, 9)]
-        val step = tilePx + gapPx
-        for (row in 0 until 5) {
-            for (col in 0 until 3) {
-                val bit = 1 shl (14 - (row * 3 + col))
-                paintFill.color = if ((mask and bit) != 0) onColor else offColor
-                val cx = left + col * step
-                val cy = top + row * step
-                canvas.drawRect(cx, cy, cx + tilePx, cy + tilePx, paintFill)
-            }
-        }
-    }
 }
 
 /**

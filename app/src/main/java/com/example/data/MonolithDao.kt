@@ -135,8 +135,6 @@ interface MonolithDao {
     @Query("SELECT * FROM focus_sessions WHERE id = :id LIMIT 1")
     suspend fun getSessionById(id: Int): FocusSessionEntity?
 
-    @Query("SELECT * FROM focus_sessions WHERE id = :id LIMIT 1")
-    fun getSessionByIdFlow(id: Int): Flow<FocusSessionEntity?>
 
     // The gap latch (Nocke §2.2): a targeted single-column UPDATE —
     // a latch write can never clobber a tick's row copy landing in
@@ -500,12 +498,6 @@ interface MonolithDao {
     @Query("SELECT * FROM focus_tasks WHERE completedInSessionId = :sessionId")
     suspend fun getTasksCompletedInSession(sessionId: Int): List<FocusTaskEntity>
 
-    // Day notes (F-SCH-1): declared day words (REST / ILL /
-    // FAMILY — never TEST), drained from the prefs capture into
-    // Room at the 8→9 window. One row per date, ever: the date
-    // is the primary key and a re-declaration replaces the word.
-    @Query("SELECT * FROM day_notes ORDER BY dateIso ASC")
-    fun getAllDayNotesFlow(): Flow<List<DayNoteEntity>>
 
     @Query("SELECT * FROM day_notes ORDER BY dateIso ASC")
     suspend fun getAllDayNotesSnapshot(): List<DayNoteEntity>

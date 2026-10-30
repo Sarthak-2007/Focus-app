@@ -378,8 +378,6 @@ class MonolithViewModel(
     private val _showNotificationDigestSheet = MutableStateFlow(false)
     val showNotificationDigestSheet: StateFlow<Boolean> = _showNotificationDigestSheet.asStateFlow()
 
-    private val _sevenDayStats = MutableStateFlow<List<DailyFocusStat>>(emptyList())
-    val sevenDayStats: StateFlow<List<DailyFocusStat>> = _sevenDayStats.asStateFlow()
 
 
     // Truth Car 3 (UNA-03): the printed state is born from the
@@ -688,6 +686,9 @@ class MonolithViewModel(
     val watchSnapshots: StateFlow<com.example.service.WatchSnapshot> =
         com.example.service.WatchStore.snapshots
 
+    /** Otis's heartbeat, exposed for the strip and the chrome line. */
+    val wireSnapshots: StateFlow<com.example.service.WatchSnapshot> = com.example.service.WatchStore.snapshots
+
     val capturedNotifications: StateFlow<List<CapturedNotificationEntity>> = repository.capturedNotificationsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -788,7 +789,6 @@ class MonolithViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** Otis's heartbeat, exposed for the strip and the chrome line. */
-    val wireSnapshots: StateFlow<com.example.service.WatchSnapshot> = com.example.service.WatchStore.snapshots
 
     /**
      * The standing Live Wire verdict for the Deck's print (the strip,
@@ -1026,7 +1026,6 @@ class MonolithViewModel(
             // flow is a print of the store, never the store.
             _shortsReelsSniperEnabled.value = repository.isShortsReelsSniperEnabled()
             refreshSystemGuard()
-            _sevenDayStats.value = repository.compute7DayHistory()
         }
         viewModelScope.launch {
             activeTask.collect { task ->
@@ -1520,7 +1519,6 @@ class MonolithViewModel(
             _isAlwaysOnDeskClockVisible.value = false
         }
         viewModelScope.launch {
-            _sevenDayStats.value = repository.compute7DayHistory()
             val pending = repository.assemblePendingReceipt(sessionId, kind, e0Wall)
             if (pending == null) {
                 handledFinishIds -= sessionId
@@ -1696,7 +1694,6 @@ class MonolithViewModel(
 
     fun tryStartSledReturn(sessionId: Int): Boolean = sledReturnGate.tryStart(sessionId)
 
-    fun voidSledReturn(sessionId: Int) = sledReturnGate.void(sessionId)
 
     /** The slide factory's fraction (Schlitten §2.3): seated
      *  while a session runs or a return is pending; home in
@@ -2079,17 +2076,6 @@ class MonolithViewModel(
         }
     }
 
-    fun simulateCapturedNotification() {
-        soundEngine.playRotaryDetent(700.0)
-        viewModelScope.launch {
-            repository.saveCapturedNotification(
-                packageName = "com.whatsapp",
-                appName = "WhatsApp",
-                senderTitle = "Lab Partner • CS 301",
-                messageBody = "Just pushed the test suite fix—check it after your focus block!"
-            )
-        }
-    }
 
     fun toggleChecklistItem(id: Int) {
         completeTaskAndAdvance(id)
@@ -2606,23 +2592,6 @@ class MonolithViewModel(
             activeTaskDayStore.taskIdOn(yesterdayIso) == task.id
     }
 
-    fun splitActiveTaskAndReturn(microStepTitle: String) {
-        if (midSeal()) return
-        soundEngine.playHarmonicSeal(arming = true)
-        val state = _airlockState.value
-        _airlockState.value = state.copy(isVisible = false)
-        viewModelScope.launch {
-            val microTask = repository.splitActiveTaskIntoMicroStep(microStepTitle)
-            _intentionText.value = microTask.title
-            repository.recordIntercept(
-                packageName = state.interceptedPackageName.ifBlank { "com.google.android.youtube" },
-                appName = state.interceptedAppName.ifBlank { "Blocked App" },
-                sessionIntention = microTask.title,
-                outcome = "Split Into 10m Micro-Step",
-                triggerReason = DistractionTriggerReason.STUCK_ON_PROBLEM.shortTag
-            )
-        }
-    }
 
     fun toggleTaskSubStep(taskId: Int, stepIndex: Int) {
         soundEngine.playRotaryDetent(640.0)
@@ -2892,19 +2861,6 @@ class MonolithViewModel(
         }
     }
 
-    fun createCustomProfile(
-        name: String,
-        minutes: Int,
-        categories: List<AppCategory>,
-        startHour: Int,
-        endHour: Int
-    ) {
-        if (name.isBlank()) return
-        soundEngine.playHarmonicSeal(true)
-        viewModelScope.launch {
-            repository.saveCustomProfile(name, minutes, categories, startHour, endHour)
-        }
-    }
 
     /** Suki's hand-back tick: one 5ms @ 0.4 seat-knock as the
      *  sentence slot returns to empty on the wire's recovery. Fired
@@ -2976,7 +2932,6 @@ class MonolithViewModel(
                 com.example.service.RoutineHeartbeat.tickAsync(
                     appContext, com.example.service.RoutineHeartbeat.Source.SESSION_EDGE
                 )
-                _sevenDayStats.value = repository.compute7DayHistory()
             }
             return
         }
@@ -3007,7 +2962,6 @@ class MonolithViewModel(
             com.example.service.RoutineHeartbeat.tickAsync(
                 appContext, com.example.service.RoutineHeartbeat.Source.SESSION_EDGE
             )
-            _sevenDayStats.value = repository.compute7DayHistory()
         }
     }
 
@@ -3032,7 +2986,6 @@ class MonolithViewModel(
                     com.example.service.RoutineHeartbeat.tickAsync(
                         appContext, com.example.service.RoutineHeartbeat.Source.SESSION_EDGE
                     )
-                    _sevenDayStats.value = repository.compute7DayHistory()
                 }
                 BreakResult.RefusedNoToken, BreakResult.NoActiveSession -> {
                     // Session stays sealed; the overlay remains open and
@@ -3316,7 +3269,6 @@ class MonolithViewModel(
         viewModelScope.launch {
             repository.ensureSeededAndSyncPackages()
             _systemGuardStatus.value = repository.getSystemGuardStatus()
-            _sevenDayStats.value = repository.compute7DayHistory()
         }
     }
 
