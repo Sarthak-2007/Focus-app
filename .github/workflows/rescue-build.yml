@@ -144,6 +144,25 @@ jobs:
           chmod +x gradlew
           ./gradlew --console=plain testDebugUnitTest
 
+      # Issue #166: the JUnit XML is the floor's eyes. Until now the
+      # per-name test results existed only in this job's condensed
+      # log (exception + one frame per failure); the full stacks in
+      # app/build/test-results die with the runner. Upload them on
+      # EVERY run - pass or fail - through the same artifact channel
+      # the lint report already proved egress-robust (proof job), so
+      # a floor-red head's failures can be dispositioned name-by-name
+      # from the XML instead of reconstructed from a log tail.
+      - name: Upload unit-test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unit-test-results-${{ github.sha }}
+          path: |
+            app/build/test-results/testDebugUnitTest/**
+            app/build/reports/tests/testDebugUnitTest/**
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: Assemble debug
         id: assemble
         run: ./gradlew --console=plain assembleDebug
