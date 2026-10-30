@@ -199,11 +199,13 @@ class MainActivity : ComponentActivity() {
             val path = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
                 ?.let { runCatching { InterceptPath.valueOf(it) }.getOrNull() }
                 ?: InterceptPath.UNKNOWN
-            // The site door's sub-line (FIX-6 name slot): the
-            // browser holds the name; the matched domain rides
-            // here. Absent on every other door.
-            val subLine = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_SUBLINE)
-            viewModel.triggerAirlockIntercept(pkg, name, badge, path, subLine)
+            // Merge disposition (issue #11): the branch's sub-line
+            // wire (FIX-6 name slot) is NOT carried — on main the
+            // site door's name slot already carries the matched
+            // domain itself (the accessibility service passes it
+            // as the app name), so the trigger keeps main's 4-arg
+            // form and no sub-line is read here.
+            viewModel.triggerAirlockIntercept(pkg, name, badge, path)
             intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
             intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
             intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_SUBLINE)
@@ -1093,6 +1095,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
 
             AirlockInterceptOverlay(
                 state = airlockState,
+                onSelectReason = viewModel::selectDistractionReason,
+                onTransmuteParticleTap = viewModel::incrementAirlockParticlePulse,
                 onReturnToFocus = viewModel::transmuteImpulseAndReturn,
                 onTake2MinutePeek = viewModel::start2MinutePeek,
                 // FIX-8 / P-2: the honest exit routes to the
@@ -1133,8 +1137,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 soundEngine = viewModel.soundEngine,
                 onDismissKeepFocusing = viewModel::dismissDisarmChallenge,
                 onCompleteDisarm = { viewModel.completeEmergencyBreakFromValve() },
-                onHoldStarted = viewModel::recordValveHoldStarted,
-                onCompleteCleanSession = viewModel::completeStopwatchCompletionFromDisarmFace
+                onHoldStarted = viewModel::recordValveHoldStarted
             )
 
         }
