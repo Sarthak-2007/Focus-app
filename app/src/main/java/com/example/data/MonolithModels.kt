@@ -465,7 +465,21 @@ data class FocusSessionEntity(
     // session can never mint a second №, whatever the settings
     // slot holds by then — replacing the single-slot arithmetic
     // coincidence the guarantee used to rest on.
-    val receiptNumber: Int = 0
+    val receiptNumber: Int = 0,
+    // Issue #287 (12→13, Forest head-to-head F5/F8): the session's
+    // own failure record and the user's own words about it.
+    // failureCausePackage names the blocked app whose reach the
+    // record blames for the break ('' = none recorded — a clean
+    // finish, a grace cancel, or a break with no deflection on
+    // record); failureCauseKind is the trigger vocabulary:
+    // EMERGENCY_VALVE / MANUAL_DISARM. Both are stamped once, at
+    // the ending write, by the disarm doors — never revised.
+    // reflectionNote is the one user-authored line stored against
+    // the finished session ('' = he said nothing); written only
+    // through MonolithRepository.setSessionReflection.
+    val failureCausePackage: String = "",
+    val failureCauseKind: String = "",
+    val reflectionNote: String = ""
 ) {
     // ONE derivation of session time (the Now Frame fix, Nadia x Freya):
     // every surface - Deck, desk clock, airlock, the enforcing service -
