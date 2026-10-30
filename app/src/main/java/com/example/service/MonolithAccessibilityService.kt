@@ -10,6 +10,7 @@ import android.os.SystemClock
 import android.telecom.TelecomManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import com.example.MainActivity
 import com.example.data.AppBlockTier
 import com.example.data.GuardSettingsEntity
@@ -193,9 +194,10 @@ internal fun shouldBypassForCall(
 
 /** Installer surfaces that can force-stop / uninstall Monolith
  *  (Wave-3 #42): the system package installers across OEMs. An
- *  installer window only exists during an install/uninstall flow,
- *  so presence alone is the signal (the pre-cure behaviour for the
- *  original four, kept). */
+ *  installer window only exists during an install/uninstall flow —
+ *  but R3b #162 F1 narrowed the trigger: presence alone fired on
+ *  ANY app's flow, so the guard now also requires the window to
+ *  name Monolith (see isPackageInstallerOrTamperSettings). */
 internal val INSTALLER_PACKAGES = setOf(
     "com.google.android.packageinstaller",
     "com.android.packageinstaller",
@@ -329,6 +331,23 @@ class MonolithAccessibilityService : AccessibilityService() {
         var armedMono: Long = 0L
             internal set
 
+        /** Foreground witness (issue #43, finding 2): the package
+         *  of the most recent TYPE_WINDOW_STATE_CHANGED event —
+         *  the package string ONLY, never window content — and the
+         *  monotonic instant it was stamped. This is real
+         *  foreground detection: the shield prefers this witness
+         *  over the UsageStats lastTimeUsed guess whenever this
+         *  service is bound. Null / 0 when no window event has
+         *  been seen under this binding; the stamp dies with the
+         *  binding (onUnbind / onDestroy), like lastRootMono. */
+        @Volatile
+        var foregroundPackage: String? = null
+            internal set
+
+        @Volatile
+        var foregroundMono: Long = 0L
+            internal set
+
         /** Truth Car 3 (UNA-01): the sniper's gate. The sniper
          *  fires only where its persisted switch says so — OFF
          *  means Shorts and Reels are left alone. A missing
@@ -422,8 +441,17 @@ class MonolithAccessibilityService : AccessibilityService() {
                 if (session != null && session.isActive) {
                     if (armedSessionId != session.id) {
                         val wasDisarmed = armedSessionId == -1
-                        armedSessionId = session.id
+                        // Issue #77: stamp the mono BEFORE publishing
+                        // the id. The old order let a sampler pair the
+                        // NEW session's id with the PREVIOUS session's
+                        // still-standing mono — link L3 'confirmed' for
+                        // a session this gate never observed. With
+                        // mono-first, a mid-write sampler sees either
+                        // the old id with a fresh mono (harmless: the
+                        // old session is gone) or the new id with its
+                        // own stamp — never the torn pair.
                         armedMono = SystemClock.elapsedRealtime()
+                        armedSessionId = session.id
                         if (wasDisarmed) {
                             // Catch-up scan (Verifier, Wave-3
                             // #42): events dropped while the gate
@@ -452,12 +480,28 @@ class MonolithAccessibilityService : AccessibilityService() {
             lastRootMono = 0L
             armedSessionId = -1
             armedMono = 0L
+            foregroundPackage = null
+            foregroundMono = 0L
             WatchStore.onAccessibilityBound(false)
         }
         return super.onUnbind(intent)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // Foreground witness (issue #43, finding 2), stamped BEFORE
+        // any early return below — including the own-package and
+        // systemui returns, so the witness always names the app
+        // actually in front (a stale witness naming the previous
+        // app would let the shield intercept an app the user has
+        // already left). Package string only; no window content
+        // is read or stored for this witness.
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val fgPkg = event.packageName?.toString()?.takeIf { it.isNotBlank() }
+            if (fgPkg != null) {
+                foregroundPackage = fgPkg
+                foregroundMono = SystemClock.elapsedRealtime()
+            }
+        }
         // Live Wire stamp, taken BEFORE any early return below
         // (Rosa's stamp-before-return ordering): the stamp proves
         // the event pipeline processed this foreground, not that a
@@ -528,6 +572,72 @@ class MonolithAccessibilityService : AccessibilityService() {
         } else {
             eventChannel.trySend(snapshot)
         }
+
+        // Interactive-window sweep (#92): the checks above police
+        // only the ACTIVE window. A blocked app in the non-active
+        // split-screen pane, or a feed playing in a picture-in-
+        // picture window, was never scanned at all — the config
+        // now grants flagRetrieveInteractiveWindows, so every
+        // other application window is judged too, through the
+        // same snapshot pipeline and the same doors.
+        sweepOtherWindows(pkgName)
+    }
+
+    /** #92: judge every OTHER application window on this event.
+     *  Facts are captured synchronously from each window's own
+     *  root, with captureEventFacts' needs-root discipline, and
+     *  dispatched exactly like the active window's snapshot —
+     *  tamper direct (never evicted by conflation), the rest via
+     *  the conflated channel. processEvent applies the same
+     *  session binding, call exemption, lease rules (#131: the
+     *  sniper is not lease-silenced; the site door is) and tier
+     *  door to a swept package as to the foreground one. */
+    private fun sweepOtherWindows(eventPkg: String) {
+        for (winRoot in interactiveWindowRoots()) {
+            val winPkg = winRoot.packageName?.toString() ?: continue
+            if (winPkg == eventPkg) continue
+            if (winPkg == applicationContext.packageName ||
+                winPkg.startsWith("com.android.systemui")
+            ) {
+                continue
+            }
+            val winFacts = captureEventFacts(winPkg, winRoot)
+            val winSnapshot = EventSnapshot(winPkg, winFacts, armedSessionId)
+            if (winFacts.tamperSurface) {
+                scope.launch {
+                    try {
+                        processEvent(winSnapshot)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // Same law as the worker: one bad event
+                        // must not kill enforcement.
+                    }
+                }
+            } else {
+                eventChannel.trySend(winSnapshot)
+            }
+        }
+    }
+
+    /**
+     * Roots of every TYPE_APPLICATION window the system exposes
+     * to this service — requires flagRetrieveInteractiveWindows
+     * in the service config (#92). Split-screen panes and
+     * picture-in-picture windows are application windows, so
+     * they arrive here even when they are not the active window.
+     * Any failure reads as an empty list: the sweep simply does
+     * not run, never a crash on the event path.
+     */
+    private fun interactiveWindowRoots(): List<AccessibilityNodeInfo> {
+        return try {
+            windows?.mapNotNull { window ->
+                if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) null
+                else try { window.root } catch (_: Exception) { null }
+            } ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     // ------------------------------------------------------------------
@@ -578,6 +688,17 @@ class MonolithAccessibilityService : AccessibilityService() {
      *  facts. All other packages need no content at all — the tier
      *  door works from the package name alone. */
     private fun captureEventFacts(pkgName: String): EventFacts {
+        val rootNode = try { rootInActiveWindow } catch (e: Exception) { noteDetectionFailure("rootInActiveWindow", e); null }
+            ?: return EventFacts()
+        return captureEventFacts(pkgName, rootNode)
+    }
+
+    /** The fact capture itself, against a GIVEN window's root —
+     *  the active window for the event's own snapshot, another
+     *  application window for the #92 sweep's snapshots. The same
+     *  needs-root discipline applies either way: packages whose
+     *  doors work from the name alone never have content read. */
+    private fun captureEventFacts(pkgName: String, rootNode: AccessibilityNodeInfo): EventFacts {
         val needsRoot = pkgName in INSTALLER_PACKAGES ||
             pkgName in MARKET_PACKAGES ||
             pkgName in SETTINGS_PACKAGES ||
@@ -585,8 +706,6 @@ class MonolithAccessibilityService : AccessibilityService() {
             pkgName == "com.instagram.android" ||
             isSupportedBrowser(pkgName)
         if (!needsRoot) return EventFacts()
-        val rootNode = try { rootInActiveWindow } catch (e: Exception) { noteDetectionFailure("rootInActiveWindow", e); null }
-            ?: return EventFacts()
         return EventFacts(
             tamperSurface = isPackageInstallerOrTamperSettings(pkgName, rootNode),
             sniperFeedVisible = detectShortsOrReelsFeed(rootNode),
@@ -697,7 +816,13 @@ class MonolithAccessibilityService : AccessibilityService() {
         // 5. 3-Tier Per-App & Safe Break Blocking
         val appRule = appsSnapshot.find { it.packageName == pkgName } ?: return
         val tier = appRule.resolvedTier
-        if (tier == AppBlockTier.OPEN) return
+        // Issue #140: the daily limit binds every tier. An OPEN
+        // app whose today's usage reached its limit is
+        // intercepted like a blocked one; the peek exemptions
+        // below still protect a lawful peek already running.
+        val overLimit = appRule.dailyLimitMinutes > 0 &&
+            appRule.todayUsageMinutes >= appRule.dailyLimitMinutes
+        if (tier == AppBlockTier.OPEN && !overLimit) return
 
         // Safe Break Rule: 2m Peek apps unlock freely during the 10-minute Safe Break, while Locked apps stay locked
         if (activeSession.isInSafeBreak && tier == AppBlockTier.PEEK_2M) {
@@ -713,7 +838,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         launchInterceptScreen(
             packageName = appRule.packageName,
             appName = appRule.appName,
-            reasonBadge = tier.badge,
+            reasonBadge = if (overLimit && tier == AppBlockTier.OPEN) "Daily Limit" else tier.badge,
             path = InterceptPath.APP_TIER
         )
     }
@@ -737,8 +862,56 @@ class MonolithAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * R3b #162 F3: words that appear ONLY inside a destructive
+     * CONFIRM dialog — never on the static App Info page. The old
+     * Settings test used the loose words printed permanently on
+     * that page (uninstall / force stop / deactivate / clear data /
+     * device admin), so merely OPENING App Info fired the guard:
+     * viewing was indistinguishable from tampering. These phrases
+     * are the dialogs' own sentences — the uninstall confirm asks
+     * its question, the force-stop confirm warns the app "may
+     * misbehave", the clear-data confirm promises data will "be
+     * deleted", the admin screen names the act itself.
+     */
+    private val destructiveDialogPhrases = listOf(
+        "do you want to uninstall",
+        "may misbehave",
+        "be deleted",
+        "deactivate this device admin"
+    )
+
+    /** R3b #162 F3, locale-independent leg: a confirm dialog is an
+     *  AlertDialog, and AlertDialogs carry framework button IDs
+     *  (android:id/button1 positive, button2 negative, button3
+     *  neutral) that do not translate and never appear on the
+     *  static App Info page. Dialog presence + the Monolith anchor
+     *  is dialog evidence in every locale Android ships. */
+    private fun hasAlertDialogButtons(node: AccessibilityNodeInfo?, depth: Int = 0): Boolean {
+        if (node == null || depth > 14) return false
+        val id = node.viewIdResourceName?.lowercase() ?: ""
+        if (id.endsWith("android:id/button1") || id.endsWith("android:id/button2") ||
+            id.endsWith("android:id/button3")
+        ) return true
+        for (i in 0 until node.childCount) {
+            if (hasAlertDialogButtons(node.getChild(i), depth + 1)) return true
+        }
+        return false
+    }
+
     private fun isPackageInstallerOrTamperSettings(pkgName: String, rootNode: AccessibilityNodeInfo?): Boolean {
-        if (pkgName in INSTALLER_PACKAGES) return true
+        if (pkgName in INSTALLER_PACKAGES) {
+            // R3b #162 F1: the installer package ALONE used to be
+            // enough — installing, updating or uninstalling ANY app
+            // mid-session fired the Uninstall Guard, even deleting
+            // the distracting app itself in a moment of resolve.
+            // The guard's charter is Monolith's own uninstall
+            // dialog, which always names Monolith; require the name
+            // on screen, and never fire blind when no window text
+            // can be read.
+            if (rootNode == null) return false
+            return collectWindowTextLowercase(rootNode).contains("monolith")
+        }
         if (rootNode == null) return false
 
         if (pkgName in MARKET_PACKAGES) {
@@ -756,17 +929,20 @@ class MonolithAccessibilityService : AccessibilityService() {
             val dump = collectWindowTextLowercase(rootNode)
             val mentionsMonolith = dump.contains("monolith")
             if (!mentionsMonolith) return false
-            // Primary evidence is locale-independent: the app-info
-            // action buttons' resource IDs. The English text match
-            // survives only as a fallback for OEM skins that rename
-            // the IDs — it is no longer the only door.
-            val mentionsTamperAction = dump.contains("force stop") ||
-                dump.contains("deactivate") ||
-                dump.contains("uninstall") ||
-                dump.contains("clear storage") ||
-                dump.contains("clear data") ||
-                dump.contains("device admin")
-            return hasTamperActionButton(rootNode) || mentionsTamperAction
+            // R3b #162 F3 supersedes the #42 static-page test for
+            // Settings: the app-info action buttons and their labels
+            // sit permanently on Monolith's App Info page, so the old
+            // rule fired on VIEWING alone — the owner could not even
+            // read Monolith's storage or permissions mid-session.
+            // The guard now fires only on a destructive CONFIRM: the
+            // dialog's own phrases (English leg), or framework
+            // AlertDialog buttons beside the Monolith anchor
+            // (locale-independent leg). Every destructive act still
+            // passes through its confirm dialog, so HOLD is kept —
+            // the bounce lands at the moment of the act, not at the
+            // moment of looking.
+            return destructiveDialogPhrases.any { dump.contains(it) } ||
+                hasAlertDialogButtons(rootNode)
         }
         return false
     }
@@ -957,8 +1133,15 @@ class MonolithAccessibilityService : AccessibilityService() {
             putExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME, appName)
             putExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE, reasonBadge)
             putExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH, path.name)
+            putExtra(
+                MonolithShieldService.EXTRA_INTERCEPT_NONCE,
+                InterceptNonce.mint(applicationContext)
+            )
         }
-        startActivity(interceptIntent)
+        // Issue #94 (F2): never a bare background launch — a dropped
+        // launch stamps itself and falls back to a tappable
+        // notification (InterceptLaunch).
+        InterceptLaunch.launch(applicationContext, interceptIntent, appName)
     }
 
     override fun onInterrupt() {}
@@ -969,6 +1152,8 @@ class MonolithAccessibilityService : AccessibilityService() {
             lastRootMono = 0L
             armedSessionId = -1
             armedMono = 0L
+            foregroundPackage = null
+            foregroundMono = 0L
             WatchStore.onAccessibilityBound(false)
         }
         scope.cancel()
