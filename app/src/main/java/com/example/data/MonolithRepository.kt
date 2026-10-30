@@ -2051,6 +2051,15 @@ class MonolithRepository(
         breakSoundEngine.playBreakWarningKnock()
     }
 
+    /** Audit R3b #148: the T-60 block warning — one latch knock,
+     *  fired by the countdown branch at the 60-seconds-left
+     *  crossing. Its own seam (tests and the summons work on the
+     *  #146 branch can re-voice it without touching the boundary
+     *  knock's contract). */
+    internal var blockWarningKnock: () -> Unit = {
+        breakSoundEngine.playMechanicalLatch(true)
+    }
+
     private val breakSoundEngine: TactileSoundEngine by lazy {
         TactileSoundEngine(context)
     }
@@ -2247,6 +2256,23 @@ class MonolithRepository(
                 dao.updateSession(updatedBreak)
                 updatedBreak
             }
+        }
+
+        // Audit R3b #148: the block's last minute announces
+        // itself. The flip into the break was the first signal a
+        // block was ending — this crossing (the row's own stamped
+        // elapsed passing the 60-seconds-left mark, read against
+        // this tick's verified elapsed) fires ONE warning knock,
+        // once per crossing; a penalty extension that pushes the
+        // deadline back out re-arms it, truthfully. The "+2 MIN"
+        // extension verb the persona asked for cannot live here:
+        // the target is inside the session's HMAC, and mutating it
+        // mid-session would invalidate the seal — that piece is
+        // priced and parked, not improvised.
+        val remainingNow = effectiveTarget - verifiedElapsed
+        val remainingPrev = effectiveTarget - session.elapsedSeconds
+        if (remainingPrev > 60 && remainingNow in 1..60) {
+            blockWarningKnock()
         }
 
         val blockFinished = verifiedElapsed >= effectiveTarget
