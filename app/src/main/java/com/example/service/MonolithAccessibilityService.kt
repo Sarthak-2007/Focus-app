@@ -11,6 +11,7 @@ import com.example.MainActivity
 import com.example.data.AppBlockTier
 import com.example.data.GuardSettingsEntity
 import com.example.data.MonolithDatabase
+import com.example.data.MonolithRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -270,6 +271,14 @@ class MonolithAccessibilityService : AccessibilityService() {
             }
 
             // 5. 3-Tier Per-App & Safe Break Blocking
+            // W3 #134: the dialer never takes this door. The call
+            // bypass above (step 1) covers calls that already
+            // exist; placing one starts in MODE_NORMAL, so a
+            // LOCKED Phone app was intercepted like any
+            // distraction and the user could not dial out
+            // mid-session. Telephony is a safety surface: the
+            // dialer package is exempt whatever its tier says.
+            if (MonolithRepository.isDialerPackage(applicationContext, pkgName)) return@launch
             val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkgName } ?: return@launch
             val tier = appRule.resolvedTier
             if (tier == AppBlockTier.OPEN) return@launch

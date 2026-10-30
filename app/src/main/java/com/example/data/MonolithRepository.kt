@@ -12,6 +12,7 @@ import android.os.Process
 import android.os.SystemClock
 import android.provider.Settings
 import android.os.PowerManager
+import android.telecom.TelecomManager
 import com.example.service.MonolithAccessibilityService
 import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithShieldService
@@ -119,6 +120,34 @@ class MonolithRepository(
         /** What a completed valve hold pays, in the valve's own terms
          *  (TOKEN-SPEC §2 — stored on the spend row). */
         const val EMERGENCY_BREAK_HELD_SECONDS = 60
+
+        /** W3 #134 (phone-call-mid-session): the telephony surface.
+         *  The call bypass has always covered calls that already
+         *  exist (AudioManager call modes); placing a call starts
+         *  in MODE_NORMAL inside the dialer, so a LOCKED Phone app
+         *  was intercepted like any distraction and the user could
+         *  not dial out mid-session. The dialer package is exempt
+         *  at every door, in every loadout: telephony is a safety
+         *  surface, not a distraction category. Identification is
+         *  the system's own default dialer where TelecomManager
+         *  names one, plus the stock dialer packages as the
+         *  fallback — package-scoped, never a name substring, so
+         *  no other app can wear the exemption. */
+        private val KNOWN_DIALER_PACKAGES = setOf(
+            "com.google.android.dialer",
+            "com.android.dialer",
+            "com.samsung.android.dialer"
+        )
+
+        fun isDialerPackage(context: Context, packageName: String): Boolean {
+            if (packageName in KNOWN_DIALER_PACKAGES) return true
+            return try {
+                val tm = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+                tm?.defaultDialerPackage == packageName
+            } catch (_: Exception) {
+                false
+            }
+        }
 
         /** The shipped routine-session recogniser (TOKEN-SPEC §4.1):
          *  a session started by a routine carries this profile prefix.
@@ -544,10 +573,31 @@ class MonolithRepository(
         }
     }
 
+    /** W3 #134: the progress machine reads the call signal through
+     *  this seam — the same test-seam shape as [breakBoundaryKnock]
+     *  — so the call-accounting tests can hold a call open without
+     *  a telephony stack. Production reads the AudioManager probe
+     *  itself, always. */
+    internal var callActiveProbe: () -> Boolean = { isPhoneOrVoipCallActive() }
+
+    /** The dialer exemption's instance door (W3 #134): the
+     *  companion holds the one identification; callers with a
+     *  repository at hand (the shield's blocked-set filter, the
+     *  loadouts) come through here. */
+    fun isDialerPackage(packageName: String): Boolean =
+        isDialerPackage(context, packageName)
+
     /**
      * Active Phone & VoIP Call Bypass:
      * Monitors AudioManager call states (MODE_RINGTONE, MODE_IN_CALL, MODE_IN_COMMUNICATION)
      * so incoming cellular, WhatsApp, or Telegram voice and video calls are never blocked mid-ring.
+     * W3 #134: this same signal now also drives the session clock —
+     * while it is active, [updateSessionProgress] excludes the
+     * tick's seconds from the booked elapsed (call time is not
+     * focus time), holds any finish or Safe Break flip until the
+     * call ends, and pauses the Safe Break countdown. Outgoing
+     * calls are covered separately: the dialer package itself is
+     * exempt at every door (see [isDialerPackage]).
      */
     fun isPhoneOrVoipCallActive(): Boolean {
         return try {
@@ -1127,7 +1177,14 @@ class MonolithRepository(
         val allApps = dao.getAllAppsSnapshot()
         val updated = allApps.map { app ->
             val lower = "${app.packageName} ${app.appName}".lowercase()
-            val tier = when (loadout) {
+            // W3 #134: telephony is a safety surface — every
+            // loadout leaves the dialer OPEN, so dialling out is
+            // never behind a lock. The doors exempt the package
+            // regardless of tier; the list must not claim
+            // otherwise.
+            val tier = if (isDialerPackage(app.packageName)) {
+                AppBlockTier.OPEN
+            } else when (loadout) {
                 SmartLoadout.STUDY -> {
                     when {
                         lower.contains("youtube") || lower.contains("chrome") || app.category == AppCategory.MESSAGING.name ->
@@ -1875,6 +1932,12 @@ class MonolithRepository(
             isInSafeBreak = false,
             safeBreakSecondsRemaining = 0,
             breakTakenSeconds = breakTakenSeconds,
+            // W3 #134: the call ledger is per-block, like the
+            // anchors this write re-bases — the next block's
+            // verified elapsed counts from the fresh anchor, so
+            // the exclusion must restart with it or one block's
+            // call would tax the next block's clock.
+            callExcludedSeconds = 0,
             elapsedSeconds = 0,
             startWallTimeMillis = wallNow,
             startElapsedRealtimeMillis = nowMono,
@@ -1930,6 +1993,9 @@ class MonolithRepository(
      * 1. Monotonic clock, reboot recovery & HMAC signature verification (+15m Penalty Lock on tamper)
      * 2. Count-Up Stopwatch Mode (counts upward past the 20m minimum lock floor)
      * 3. Multi-Block Study Cycles (1 to 4 blocks) with automatic 10-minute Safe Breaks in between
+     * 4. Call accounting (W3 #134): while the call bypass signal is active, tick seconds are
+     *    excluded from the booked elapsed (callExcludedSeconds), no finish or Safe Break flip
+     *    fires, and a running Safe Break's countdown holds — call time is never focus time.
      */
     suspend fun updateSessionProgress(
         session: FocusSessionEntity,
@@ -1965,11 +2031,34 @@ class MonolithRepository(
             session.hmacSignature
         }
 
-        accrueActiveTaskSeconds(session, nowMono)
+        // W3 #134 (phone-call-mid-session): the call bypass signal
+        // the doors already trust, read once per tick. While a
+        // call is live, the tick's wall seconds join the block's
+        // persisted exclusion ledger and every booking below runs
+        // on focusElapsed — call time is not focus time, so it
+        // cannot advance the block, complete the session, or be
+        // certified ELAPSED_CLEAN. Inside a Safe Break the ledger
+        // does not grow (break seconds are not focus seconds and
+        // the next block re-bases it anyway); the break branch
+        // below holds its countdown instead.
+        val callActive = callActiveProbe()
+        val callExcluded = if (callActive && !session.isInSafeBreak) {
+            callExcludedAfter(
+                storedExcludedSeconds = session.callExcludedSeconds,
+                lastTickMonoMillis = session.lastTickElapsedRealtimeMillis,
+                nowMonoMillis = nowMono
+            )
+        } else {
+            session.callExcludedSeconds
+        }
+        val focusElapsed = (verifiedElapsed - callExcluded).coerceAtLeast(0)
+
+        accrueActiveTaskSeconds(session, nowMono, accrue = !callActive)
 
         if (session.isStopwatchMode) {
             val updated = session.copy(
-                elapsedSeconds = verifiedElapsed,
+                elapsedSeconds = focusElapsed,
+                callExcludedSeconds = callExcluded,
                 startElapsedRealtimeMillis = newStartMono,
                 bootCount = newBootCount,
                 accumulatedBeforeRebootSeconds = newAccumulated,
@@ -1989,6 +2078,20 @@ class MonolithRepository(
         // two tickers drive this function, and a per-call decrement
         // drained a 600s break in ~400 wall seconds (Bus, 09:30 IST).
         if (session.isInSafeBreak) {
+            // W3 #134: a call that straddles the break must not
+            // spend it. The countdown is derived from the stored
+            // (remaining, lastTick) pair, so holding is one write:
+            // the remainder untouched, the tick anchor advanced —
+            // the drain resumes from exactly this remainder when
+            // the call ends.
+            if (callActive) {
+                val heldBreak = session.copy(
+                    lastTickElapsedRealtimeMillis = nowMono,
+                    shieldLastBeatWallMillis = beatWall
+                )
+                dao.updateSession(heldBreak)
+                return heldBreak
+            }
             val nextBreakRemaining = breakRemainingAfter(
                 storedRemaining = session.safeBreakSecondsRemaining,
                 lastTickMonoMillis = session.lastTickElapsedRealtimeMillis,
@@ -2019,10 +2122,36 @@ class MonolithRepository(
             }
         }
 
-        val blockFinished = verifiedElapsed >= effectiveTarget
+        val blockFinished = focusElapsed >= effectiveTarget
+        // W3 #134: the target was already met when the call began
+        // (focusElapsed crossed it in the cadence before the ring)
+        // — neither the Safe Break flip nor the finish may fire
+        // underneath the conversation. Book the frozen progress
+        // and stay in the block, active: the flip, the seal's
+        // release, the completion notification and the end stamp
+        // all wait for the first tick after hang-up, when the
+        // user can actually see the session change state. The
+        // shield loop reads isActive and keeps protecting.
+        if (callActive && blockFinished) {
+            val heldFinish = session.copy(
+                elapsedSeconds = focusElapsed.coerceAtMost(effectiveTarget),
+                callExcludedSeconds = callExcluded,
+                startElapsedRealtimeMillis = newStartMono,
+                bootCount = newBootCount,
+                accumulatedBeforeRebootSeconds = newAccumulated,
+                lastTickElapsedRealtimeMillis = nowMono,
+                hmacSignature = newHmac,
+                penaltySecondsAdded = penaltyAdd,
+                tamperDetected = tamper,
+                shieldLastBeatWallMillis = beatWall
+            )
+            dao.updateSession(heldFinish)
+            return heldFinish
+        }
         if (blockFinished && session.currentBlockIndex < session.totalStudyBlocks) {
             val safeBreakSession = session.copy(
                 elapsedSeconds = effectiveTarget,
+                callExcludedSeconds = callExcluded,
                 isInSafeBreak = true,
                 safeBreakSecondsRemaining = SAFE_BREAK_DURATION_SECONDS,
                 lastTickElapsedRealtimeMillis = nowMono,
@@ -2073,7 +2202,8 @@ class MonolithRepository(
         }
 
         val updated = session.copy(
-            elapsedSeconds = verifiedElapsed.coerceAtMost(effectiveTarget),
+            elapsedSeconds = focusElapsed.coerceAtMost(effectiveTarget),
+            callExcludedSeconds = callExcluded,
             startElapsedRealtimeMillis = newStartMono,
             bootCount = newBootCount,
             accumulatedBeforeRebootSeconds = newAccumulated,
@@ -2309,7 +2439,12 @@ class MonolithRepository(
         }
         val (verifiedElapsed, tamper) = computeVerifiedSessionElapsed(active)
         val isGraceCancel = outcomeReason.contains("Grace Cancel", ignoreCase = true)
-        val bankedElapsed = if (isGraceCancel) 0 else max(verifiedElapsed, active.elapsedSeconds)
+        // W3 #134: the disarm doors bank the same focus-only
+        // elapsed the progress machine books — the raw verified
+        // figure still contains any call minutes, and banking it
+        // here would re-certify them at the ending write.
+        val focusElapsed = (verifiedElapsed - active.callExcludedSeconds).coerceAtLeast(0)
+        val bankedElapsed = if (isGraceCancel) 0 else max(focusElapsed, active.elapsedSeconds)
         val partialStampId = if (!completed && !isGraceCancel && bankedElapsed >= 60) {
             "partial_stamp"
         } else {
@@ -2420,16 +2555,24 @@ class MonolithRepository(
      * During a Safe Break the anchor advances without crediting —
      * break minutes never land in a task's stored seconds.
      */
-    private suspend fun accrueActiveTaskSeconds(session: FocusSessionEntity, nowMono: Long) {
+    private suspend fun accrueActiveTaskSeconds(
+        session: FocusSessionEntity,
+        nowMono: Long,
+        accrue: Boolean = true
+    ) {
         val tasks = dao.getAllTasksSnapshot()
         val activeTask = tasks.firstOrNull { it.resolvedStatus == TaskQueueStatus.ACTIVE }
             ?: tasks.firstOrNull { it.resolvedStatus == TaskQueueStatus.QUEUED }
+        // W3 #134: a live call pauses the task's clock exactly as
+        // a Safe Break does — the anchor advances without
+        // crediting, so call minutes never land in a task's
+        // stored seconds either.
         val credit = taskAccrual.observe(
             sessionId = session.id,
-            accruingTaskId = if (session.isInSafeBreak) null else activeTask?.id,
+            accruingTaskId = if (!accrue || session.isInSafeBreak) null else activeTask?.id,
             nowMonoMillis = nowMono
         )
-        if (activeTask != null && !session.isInSafeBreak &&
+        if (activeTask != null && accrue && !session.isInSafeBreak &&
             (credit > 0 || activeTask.resolvedStatus != TaskQueueStatus.ACTIVE)
         ) {
             dao.updateTask(
