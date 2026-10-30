@@ -406,6 +406,12 @@ interface MonolithDao {
     @Query("UPDATE guard_settings SET shortsReelsSniperEnabled = :enabled WHERE id = 1")
     suspend fun updateShortsReelsSniperEnabled(enabled: Boolean)
 
+    // Audit R6 #340 F68: body-consent is its own consent, separate
+    // from notification-capture consent. Targeted UPDATE, same
+    // §7.5 discipline as the pairs above.
+    @Query("UPDATE guard_settings SET notificationBodyConsent = :consent WHERE id = 1")
+    suspend fun updateNotificationBodyConsent(consent: String)
+
     @Query("UPDATE guard_settings SET routineReseedV1Done = 1 WHERE id = 1")
     suspend fun markRoutineReseedV1Done()
 

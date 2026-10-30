@@ -308,6 +308,9 @@ class MonolithAccessibilityService : AccessibilityService() {
         internal fun noteDetectionFailure(where: String, e: Exception) {
             detectionFailures++
             Log.w("MonolithA11y", "detection query failed at $where (total $detectionFailures)", e)
+            // Audit R6 #340 F61: persist a scrubbed line too, so
+            // the failure survives logcat rotation.
+            FailureLog.record("accessibility", where, e)
         }
 
         /** Monotonic stamp of the last event whose root window was

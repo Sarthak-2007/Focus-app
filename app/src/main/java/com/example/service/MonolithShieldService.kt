@@ -21,6 +21,7 @@ import com.example.R
 import com.example.data.AppBlockTier
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -143,6 +144,7 @@ class MonolithShieldService : Service() {
         // startForeground has actually succeeded - no instance, no
         // flag, no rumour.
         instance = this
+        FailureLog.bind(applicationContext)
         WatchStore.bind(applicationContext)
         WatchStore.poke()
         blindEpisodeActive = false
@@ -157,7 +159,12 @@ class MonolithShieldService : Service() {
         val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
         val repository = MonolithRepository(applicationContext, dao)
 
-        monitorJob = serviceScope.launch {
+        // Audit R6 #340 F61: an uncaught death of the monitor loop
+        // leaves a scrubbed persistent line instead of vanishing.
+        val monitorFailureHandler = CoroutineExceptionHandler { _, e ->
+            FailureLog.record("shield", "monitorLoop", e)
+        }
+        monitorJob = serviceScope.launch(monitorFailureHandler) {
             var iteration = 0
             var parkedPasses = 0
             // Audit R3b #146: break-transition witness for the

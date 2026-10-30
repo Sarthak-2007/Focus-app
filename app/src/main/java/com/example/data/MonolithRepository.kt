@@ -13,6 +13,7 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.os.PowerManager
+import com.example.service.FailureLog
 import com.example.service.MonolithAccessibilityService
 import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithShieldService
@@ -753,6 +754,11 @@ class MonolithRepository(
      *  no' in logcat instead of being conflated with it. */
     private fun swallow(where: String, e: Exception) {
         Log.w(TAG, "$where failed; answering with the safe negative", e)
+        // Audit R6 #340 F61: the same failure also lands in the
+        // persistent scrubbed FailureLog (class-only, rate-limited)
+        // so it survives logcat rotation and can be handed over.
+        FailureLog.bind(context)
+        FailureLog.record("repository", where, e)
     }
 
     @WorkerThread
@@ -1180,6 +1186,19 @@ class MonolithRepository(
 
     suspend fun isShortsReelsSniperEnabled(): Boolean =
         dao.getGuardSettingsSnapshot()?.shortsReelsSniperEnabled ?: true
+
+    // Audit R6 #340 F68: notification BODY consent, separate from
+    // capture consent. Default is UNSET — the listener stores no
+    // body until the user grants body storage explicitly.
+    suspend fun setNotificationBodyConsent(granted: Boolean) {
+        if (dao.getGuardSettingsSnapshot() == null) {
+            dao.insertGuardSettings(GuardSettingsEntity())
+        }
+        dao.updateNotificationBodyConsent(if (granted) "GRANTED" else "DENIED")
+    }
+
+    suspend fun notificationBodyConsent(): String =
+        dao.getGuardSettingsSnapshot()?.notificationBodyConsent ?: "UNSET"
 
     suspend fun updateRoutine(routine: RoutineEntity) {
         // Issue #32 F2: THE routine write funnel (ViewModel's

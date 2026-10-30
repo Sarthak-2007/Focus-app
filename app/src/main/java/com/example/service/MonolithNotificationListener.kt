@@ -238,6 +238,14 @@ class MonolithNotificationListener : NotificationListenerService() {
             // that arrived while the session was running.
             dao.getSessionCoveringInstant(postTimeMillis) ?: return@launch
 
+            // Audit R6 #340 F68: capturing a notification and
+            // STORING ITS BODY are two different consents. Unless
+            // body consent stands GRANTED, the held copy keeps
+            // sender + title only — the body is blanked at the
+            // capture boundary, never stored-then-hidden.
+            val storedBody =
+                if (dao.getGuardSettingsSnapshot()?.notificationBodyConsent == "GRANTED") text else ""
+
             val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
             if (appRule != null && appRule.resolvedTier != AppBlockTier.OPEN) {
                 val storedTitle = title.ifEmpty { appRule.appName }
@@ -277,7 +285,7 @@ class MonolithNotificationListener : NotificationListenerService() {
                         // the title alone. The old fallback
                         // sentence was invented copy wearing the
                         // sender's name.
-                        messageBody = text
+                        messageBody = storedBody
                     )
                 )
                 pruneCaptured(postTimeMillis)
@@ -288,7 +296,7 @@ class MonolithNotificationListener : NotificationListenerService() {
                             fingerprint = fingerprint,
                             packageName = pkg,
                             senderTitle = storedTitle,
-                            messageBody = text,
+                            messageBody = storedBody,
                             postTimeMillis = postTimeMillis
                         )
                     )
@@ -360,7 +368,10 @@ class MonolithNotificationListener : NotificationListenerService() {
                     fingerprint = NotificationCapturePolicy.contentFingerprint(rawTitle, text),
                     packageName = pkg,
                     senderTitle = rawTitle.ifEmpty { appRule?.appName ?: rawTitle },
-                    messageBody = text,
+                    // F68: match the body AS STORED (blanked
+                    // without body consent), not the raw text.
+                    messageBody =
+                        if (dao.getGuardSettingsSnapshot()?.notificationBodyConsent == "GRANTED") text else "",
                     postTimeMillis = postTimeMillis
                 )
             }
