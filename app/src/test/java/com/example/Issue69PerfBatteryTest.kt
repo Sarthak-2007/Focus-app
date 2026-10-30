@@ -225,36 +225,44 @@ class Issue69PerfBatteryTest {
         val db = MonolithDatabase.getInstance(context)
         val dao = db.monolithDao()
         val repo = MonolithRepository(context, db.monolithDao())
-        val now = System.currentTimeMillis()
+        // Deterministic anchors (the first CI run's lesson): the
+        // law's reference includes the app's last-update time,
+        // which under Robolectric is the sandbox install instant
+        // — so every fabricated instant is anchored TO it, and
+        // the monotonic clock is set explicitly instead of read
+        // from the frozen shadow clock.
+        val appUpdate = runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
+        }.getOrDefault(0L)
+        org.robolectric.shadows.ShadowSystemClock.setElapsedRealtime(10_000_000L)
         val mono = SystemClock.elapsedRealtime()
-
-        suspend fun seed(beat: Long, startElapsed: Long) {
-            dao.insertSession(
-                FocusSessionEntity(
-                    intention = "Deep Study",
-                    profileName = "Default",
-                    targetDurationSeconds = 3000,
-                    elapsedSeconds = 0,
-                    startWallTimeMillis = now - (mono - startElapsed),
-                    startElapsedRealtimeMillis = startElapsed,
-                    isActive = true,
-                    completedSuccessfully = false,
-                    isStopwatchMode = false,
-                    outcome = "",
-                    shieldLastBeatWallMillis = beat,
-                    shieldGapSeen = false
-                )
+        // Session started (wall) at the update instant, 60
+        // monotonic seconds ago: the implied now is therefore
+        // appUpdate + 60 s, whatever the sandbox clock did.
+        val id = dao.insertSession(
+            FocusSessionEntity(
+                intention = "Deep Study",
+                profileName = "Default",
+                targetDurationSeconds = 3000,
+                elapsedSeconds = 0,
+                startWallTimeMillis = appUpdate,
+                startElapsedRealtimeMillis = mono - 60_000L,
+                isActive = true,
+                completedSuccessfully = false,
+                isStopwatchMode = false,
+                outcome = "",
+                shieldLastBeatWallMillis = appUpdate + 59_000L,
+                shieldGapSeen = false
             )
-        }
+        ).toInt()
 
-        // Fresh beat (2 monotonic seconds ago): the VM must NOT
-        // duplicate the shield's write.
-        seed(beat = now - 2_000L, startElapsed = mono - 2_000L)
+        // Beat 1 s behind the implied now: fresh — the VM must
+        // NOT duplicate the shield's write.
         assertFalse(repo.isShieldBeatStale(mono))
 
-        // Beat silent for 30 monotonic seconds: stale past the
-        // 10 s law — the VM fallback writer fires.
-        seed(beat = now - 30_000L, startElapsed = mono - 30_000L)
+        // Same row, beat moved to 59 s behind the implied now:
+        // stale past the 10 s law — the VM fallback writer fires.
+        dao.adoptShieldBeat(id, appUpdate + 1_000L)
         assertTrue(repo.isShieldBeatStale(mono))
     }
 
@@ -324,26 +332,34 @@ class Issue69PerfBatteryTest {
         // The screen's exact effect structure: snapshotFlow on
         // the rests map; the sweep body runs only while the map
         // is non-empty. With an empty map, zero sweeps — forever,
-        // not one 700 ms wakeup after another.
+        // not one 700 ms wakeup after another. (Deterministic
+        // harness, the first CI run's lesson: the collector runs
+        // on a real dispatcher, snapshot applies are flushed
+        // explicitly, and the prune clock is a fixed logical
+        // instant — Robolectric's shadow clock never advances on
+        // its own, so the first version's wall-clock ages were
+        // meaningless.)
         var rests by mutableStateOf<Map<String, RestingFlip>>(emptyMap())
         var sweepRuns = 0
-        val job = launch {
+        val job = launch(kotlinx.coroutines.Dispatchers.Default) {
             snapshotFlow { rests }.collect { flips ->
                 if (flips.isNotEmpty()) {
                     while (rests.isNotEmpty()) {
                         sweepRuns++
-                        rests = pruneRests(rests, SystemClock.elapsedRealtime())
-                        if (rests.isNotEmpty()) delay(50)
+                        rests = pruneRests(rests, 10_000L)
                     }
                 }
             }
         }
+        androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
         delay(300)
         assertEquals(0, sweepRuns)
 
-        // A rest lands: the sweep wakes, and retires it by age.
-        val now = SystemClock.elapsedRealtime()
-        rests = mapOf("a" to rest(now - 5_000L))
+        // A rest lands (created at logical 1,000; the sweep's
+        // logical now is 10,000 — long past the 1,200 age law):
+        // the sweep wakes and retires it.
+        rests = mapOf("a" to rest(1_000L))
+        androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
         delay(300)
         assertTrue(sweepRuns >= 1)
         assertTrue(rests.isEmpty())
