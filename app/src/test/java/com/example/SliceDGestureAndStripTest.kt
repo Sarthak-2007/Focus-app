@@ -137,7 +137,7 @@ class StripDerivationsTest {
         )
         // Room (i): held, unstamped.
         assertEquals(
-            "BIND HELD · UNSEEN" to "PROOF: BIND ONLY",
+            "BIND HELD · NOT SEEN" to "PROOF: BIND ONLY",
             seamMarksFor(warrant(WarrantState.UNPROVEN, stamped = false))
         )
         // Held and stamped, a grant unproven: still BIND ONLY,
@@ -150,7 +150,7 @@ class StripDerivationsTest {
         // NOTE (Rosa, review F1): this state is function-correct but
         // production-unreachable on the shipped substrate —
         // liveWarrant maps every !a11yBound to OFF, so the
-        // process-start window prints POSITIVE on mere absence
+        // process-start window prints OFF CONFIRMED on mere absence
         // until the substrate gains Rosa's tri-state bind leg.
         // Flagged to Ren with her evidence; the function is ready.
         assertEquals(
@@ -159,15 +159,15 @@ class StripDerivationsTest {
         )
         // OFF: the bind fact is stated truthfully from the legs.
         assertEquals(
-            "BIND NOT HELD" to "PROOF: POSITIVE",
+            "BIND NOT HELD" to "PROOF: OFF CONFIRMED",
             seamMarksFor(warrant(WarrantState.OFF, bound = false, stamped = false))
         )
         assertEquals(
-            "BIND HELD · THIS VISIT" to "PROOF: POSITIVE",
+            "BIND HELD · THIS VISIT" to "PROOF: OFF CONFIRMED",
             seamMarksFor(warrant(WarrantState.OFF, usage = UsageAccess.DENIED))
         )
         assertEquals(
-            "BIND HELD · UNSEEN" to "PROOF: POSITIVE",
+            "BIND HELD · NOT SEEN" to "PROOF: OFF CONFIRMED",
             seamMarksFor(warrant(WarrantState.OFF, stamped = false, usage = UsageAccess.DENIED))
         )
         assertNull(seamMarksFor(null))
