@@ -299,21 +299,19 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // PARK's invocation — it is never dismissed by a timer. (The
     // nav/PARK effect itself sits below, beside the PARK state
     // it reads.)
-<<<<<<< HEAD
-    // Audit R1 #40: seeded from the persisted dismissal — a
-    // receipt put away by hand stays put away across process
-    // death; every dismissal below also writes through to the
-    // store (viewModel.persistReceiptDismissal).
-    var dismissedReceiptSessionId by remember {
-        mutableStateOf(viewModel.dismissedReceiptSessionId())
-    }
-=======
     // Issue #27 (finding 4): host state is rememberSaveable, not
     // plain remember — a rotation must not resurrect a dismissed
     // receipt, snap PARK shut mid-diagnosis, or restart the
     // return-tick diagnostic.
-    var dismissedReceiptSessionId by rememberSaveable { mutableStateOf(-1) }
->>>>>>> origin/main
+    // Audit R1 #40: the saveable is SEEDED from the persisted
+    // dismissal (ReceiptDismissalStore) — rememberSaveable covers
+    // rotation and state-restore, but a put-away receipt must
+    // also survive a cold process death with no saved state to
+    // restore; every dismissal below writes through to the store
+    // (viewModel.persistReceiptDismissal).
+    var dismissedReceiptSessionId by rememberSaveable {
+        mutableStateOf(viewModel.dismissedReceiptSessionId())
+    }
 
     // ------------------------------------------------------------------
     // PARK state (chrome C4). The drawer is invoked by arrival (the
