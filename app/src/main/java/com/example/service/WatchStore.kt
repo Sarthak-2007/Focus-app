@@ -84,8 +84,10 @@ data class Warrant(
     val readMono: Long = 0L
 )
 
-/** The nine watch items, in board order (spec §4.1). Items 1–4 are
- *  the counted four of the header's Guard line. */
+/** The nine watch items, in board order (spec §4.1). The header's
+ *  Guard line counts all six PERMISSIONS (issue #109, F4);
+ *  [WatchItemId.COUNTED] survives as the original four the warrant
+ *  story was built on, no longer the header's denominator. */
 enum class WatchItemId(val boardName: String, val counted: Boolean) {
     ACCESSIBILITY("ACCESSIBILITY", true),
     USAGE_ACCESS("USAGE ACCESS", true),
@@ -223,12 +225,19 @@ object WatchStore {
     // Interceptor inputs: the settings and the suspension, pushed by
     // the ViewModel (the settings live in guard_settings; the
     // suspension is the session's Safe Break). The notification
-    // capture has no setting — it is on by design — and no suspension
-    // input exists for it in the shipped app, so its PAUSED is
-    // unreachable by construction, not by omission.
+    // capture has no setting — it is on by design — but it has one
+    // hard precondition the board used to ignore (issue #109, F1):
+    // the listener captures ONLY while a session is active
+    // (MonolithNotificationListener returns early otherwise), so a
+    // bound listener at rest holds nothing. [sessionCapturing] is
+    // that precondition, pushed from the same active-session flow
+    // that feeds the Safe Break input. NOTIFICATIONS may print
+    // RUNNING only when it is true; its PAUSED stays unreachable —
+    // the listener does not suspend during a Safe Break.
     @Volatile private var shortsSettingOn = true
     @Volatile private var sitesSettingOn = true
     @Volatile private var safeBreakActive = false
+    @Volatile private var sessionCapturing = false
 
     // The wire's residency machinery (moved whole from LiveWire):
     // a Deck residency starts when the Deck is entered; the wire can
@@ -333,12 +342,14 @@ object WatchStore {
     fun updateInterceptorInputs(
         shortsOn: Boolean? = null,
         sitesOn: Boolean? = null,
-        safeBreak: Boolean? = null
+        safeBreak: Boolean? = null,
+        sessionActive: Boolean? = null
     ) {
         var changed = false
         if (shortsOn != null && shortsOn != shortsSettingOn) { shortsSettingOn = shortsOn; changed = true }
         if (sitesOn != null && sitesOn != sitesSettingOn) { sitesSettingOn = sitesOn; changed = true }
         if (safeBreak != null && safeBreak != safeBreakActive) { safeBreakActive = safeBreak; changed = true }
+        if (sessionActive != null && sessionActive != sessionCapturing) { sessionCapturing = sessionActive; changed = true }
         if (changed) publish { it }
     }
 
@@ -437,9 +448,12 @@ object WatchStore {
     }
 
     /** "Currently warranted GRANTED" for the Guard line's count:
-     *  GRANTED and not stale (spec §2.3). */
+     *  GRANTED and not stale, over ALL SIX permission lines the
+     *  board prints (issue #109, F4 — the header used to count only
+     *  the four COUNTED and could print wholeness over a board
+     *  showing OVERLAY / BATTERY MISSING). */
     fun countedWarranted(snapshot: WatchSnapshot, nowMono: Long): Int =
-        WatchItemId.COUNTED.count { permPrintAt(snapshot, it, nowMono) == PermPrint.GRANTED }
+        WatchItemId.PERMISSIONS.count { permPrintAt(snapshot, it, nowMono) == PermPrint.GRANTED }
 
     // ------------------------------------------------------------------
     // Internals
@@ -525,7 +539,9 @@ object WatchStore {
      * Parents: SHORTS + REELS rides the accessibility binding (the
      * sniper is the a11y pipeline); SOCIAL SITES rides accessibility
      * + usage access (the browser watch reads the foreground through
-     * both); NOTIFICATIONS rides the listener binding alone.
+     * both); NOTIFICATIONS rides the listener binding AND an active
+     * capturing session — the listener holds nothing without one
+     * (issue #109, F1).
      */
     private fun deriveInterceptor(
         item: WatchItemId,
@@ -545,6 +561,14 @@ object WatchStore {
         val parentPrints = parents.map { permPrintAt(snapshot, it, nowMono) }
         if (parentPrints.any { it == PermPrint.UNMEASURED }) return null
         if (parentPrints.any { it != PermPrint.GRANTED }) return InterceptorState.OFF
+        // Issue #109, F1: the listener binding alone proves nothing
+        // is being held — the listener captures only inside an
+        // active session. Bound but no session capturing: the
+        // capture is OFF, and printing RUNNING here was the false
+        // print Sarthak caught on his own phone.
+        if (item == WatchItemId.NOTIFICATIONS && !sessionCapturing) {
+            return InterceptorState.OFF
+        }
         val suspended = when (item) {
             WatchItemId.NOTIFICATIONS -> false
             else -> safeBreakActive
@@ -568,6 +592,7 @@ object WatchStore {
         shortsSettingOn = true
         sitesSettingOn = true
         safeBreakActive = false
+        sessionCapturing = false
         residencyStartMono = 0L
     }
 }

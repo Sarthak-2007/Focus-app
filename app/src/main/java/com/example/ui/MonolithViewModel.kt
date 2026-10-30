@@ -929,8 +929,13 @@ class MonolithViewModel(
             activeSession.collect { session ->
                 // The Watch Store's suspension input: the Safe Break
                 // is his suspension of the blocking interceptors.
+                // Issue #109, F1: the same flow carries the session-
+                // active fact the NOTIFICATIONS line now requires —
+                // the listener captures only while a session is
+                // active, so the board may print RUNNING only then.
                 com.example.service.WatchStore.updateInterceptorInputs(
-                    safeBreak = session?.isInSafeBreak == true
+                    safeBreak = session?.isInSafeBreak == true,
+                    sessionActive = session?.isActive == true
                 )
                 if (session == null) {
                     _sealFreeze.value = null
