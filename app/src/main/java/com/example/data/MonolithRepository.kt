@@ -2700,7 +2700,13 @@ class MonolithRepository(
         appName: String,
         sessionIntention: String,
         outcome: String,
-        triggerReason: String = "Habit"
+        triggerReason: String = "Habit",
+        // R3b #162 F4: an uninstall attempt is not a "phantom reach"
+        // for a distraction app. Callers on the UNINSTALL_GUARD path
+        // pass false: the intercept is still logged (with its
+        // truthful outcome), but neither the per-app reach count nor
+        // the session's phantom-reach count is inflated by it.
+        countAsReach: Boolean = true
     ) {
         // Issue #33 (audit R1): count + log + phantom-reach increment
         // are ONE transaction — a kill between them used to leave the
@@ -2708,7 +2714,9 @@ class MonolithRepository(
         // re-read inside the transaction so the +1 never lands on a
         // stale whole-row copy.
         databaseProvider().withTransaction {
-            dao.incrementInterceptCount(packageName)
+            if (countAsReach) {
+                dao.incrementInterceptCount(packageName)
+            }
             dao.insertInterceptLog(
                 InterceptLogEntity(
                     packageName = packageName,
@@ -2718,9 +2726,11 @@ class MonolithRepository(
                     triggerReason = triggerReason
                 )
             )
-            val active = dao.getActiveSessionSnapshot()
-            if (active != null) {
-                dao.updateSession(active.copy(phantomReachesBlocked = active.phantomReachesBlocked + 1))
+            if (countAsReach) {
+                val active = dao.getActiveSessionSnapshot()
+                if (active != null) {
+                    dao.updateSession(active.copy(phantomReachesBlocked = active.phantomReachesBlocked + 1))
+                }
             }
         }
     }
