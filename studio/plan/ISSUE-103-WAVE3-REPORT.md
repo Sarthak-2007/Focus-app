@@ -175,3 +175,35 @@ Fix:
 Existing-behaviour guard: `EmergencyBreakRepositoryTest`'s §4.4
 grace case uses a 0-second session, so it still passes the new
 verified-elapsed gate.
+
+---
+
+## WELLE-3 re-verification addendum (Oct 30, 2026, cell under WELLE-3 lead)
+
+- Re-based onto CURRENT main: merge commit `6e2ee41` brings in local
+  origin/main `3ad6c43` (186 commits ahead of the original cell base
+  `0a00e95`). All 5 findings re-checked post-merge: fix symbols present
+  exactly once — `GRACE_WINDOW_SECONDS` (MonolithRepository.kt:116,
+  enforced :2334), `recordValveHoldBanked` (MonolithViewModel.kt:2245),
+  `refusalMessage` + REFUSAL_NO_TOKEN / REFUSAL_NO_SESSION
+  (MonolithViewModel.kt:202,2334,2341; rendered
+  AirlockAndDisarmOverlays.kt:816), Deck judged-routine + stopwatch-floor
+  chips (TactileDeckScreen.kt:1039-1086 region).
+- Merge conflicts: only 4 test files (ScreenshotHarnessTest,
+  ShortsToggleRenderTest, SoundAndSocialTruthTest, TruthCar3SweepTest) —
+  resolved to main side (main adds `shortsReelsSniperEnabled` param and
+  dropped the Wave-2 premise comment); this branch never touched them.
+- Findings: 5 total / 5 fixed / 0 struck / 0 blocked. No design-complaint
+  findings in this issue (all five are truth-of-behaviour findings on the
+  ending-early surface this issue owns) — nothing to re-route to #18 or
+  an owner issue.
+- Seats (this issue): Lead 1 · Builder 5 · Critics 5 · Verifiers 5 ·
+  Diagnosticians 5 · Finishers 5 · UX designers 5 · Day simulators 5 ·
+  Scouts 1 · Keepers of Record 1 · Methods 1 · Fresh-eyes 1 · Feel 1 ·
+  Small Things 1 · Flow 1 · Panel judges 1 · Intentionality designers 1 ·
+  Implementation-quality 1 · Technical execution 1 · Interaction-detail 1 ·
+  Purpose-questioner 1 · Consumer/Student/User lens seats LEAD-COVERED.
+  Total seated ≥ 48 type-seats (lens bundles run inside this cell).
+- Consultation: routed via WELLE-3 lead (per 09:57 correction, lead-routed
+  consultation preferred when faster); shared-root note — none for #103.
+Signed: WELLE-3 cell (issue-103 seat bundle).
