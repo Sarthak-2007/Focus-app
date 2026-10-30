@@ -749,7 +749,12 @@ class MonolithAccessibilityService : AccessibilityService() {
         /** Issue #79 finding 3: the browser window's text, captured
          *  for the embed scan at match time in the worker. Empty
          *  while a URL bar is focused (never fire mid-typing). */
-        val browserContentText: String = ""
+        val browserContentText: String = "",
+        /** Issue #121: the foreground window's class name, captured
+         *  synchronously from the event for the worker's
+         *  ringing-window check (an alarm-class package whose
+         *  foreground window IS its alarm screen). */
+        val windowClassName: String = ""
     )
 
     private data class EventSnapshot(
@@ -906,7 +911,9 @@ class MonolithAccessibilityService : AccessibilityService() {
         // Synchronous fact capture: every node-derived verdict is
         // taken HERE, while rootInActiveWindow still describes
         // this event's window — never after an async hop.
-        val facts = captureEventFacts(pkgName)
+        val facts = captureEventFacts(pkgName).copy(
+            windowClassName = event?.className?.toString().orEmpty()
+        )
         val snapshot = EventSnapshot(pkgName, facts, armedSessionId)
         if (facts.tamperSurface) {
             // The tamper door does NOT ride the conflated channel
@@ -1148,6 +1155,24 @@ class MonolithAccessibilityService : AccessibilityService() {
         // win the race against the ring.
         if (isCallActiveForPackage(pkgName)) return
 
+        // Issue #121 (Audit R3b, alarm-fires-mid-session): the
+        // time-critical alert gate. This door's call bypass can
+        // never fire for a ringing alarm — an alarm plays on the
+        // ALARM stream and sets no call mode — so before any
+        // interceptor below covers the foreground app, ask the
+        // gate: is THIS package's alarm ringing, or its calendar
+        // reminder live, right now? A live alert passes (the user
+        // can snooze / dismiss / open the reminder); the moment it
+        // ends, the doors rule again in full. The seal stays
+        // absolute: no tier changes, and no package passes on
+        // anything but its own live alert. The ringing-window check
+        // is the second route for the same moment: an alarm-class
+        // package whose foreground window IS its alarm screen
+        // passes even with no listener bound and the ringer
+        // silenced.
+        if (TimeCriticalAlertGate.isAlertLiveFor(applicationContext, pkgName)) return
+        if (isAlarmRingWindow(pkgName, snapshot.facts.windowClassName)) return
+
         // The persisted Guard row, read once per event and
         // honoured by both interceptors below (the browser
         // step read it alone before Truth Car 3; the sniper
@@ -1341,6 +1366,18 @@ class MonolithAccessibilityService : AccessibilityService() {
         }
 
         // 5. 3-Tier Per-App & Safe Break Blocking
+        // W3 #134: the dialer never takes this door. The call
+        // bypass above (step 1) covers calls that already
+        // exist; placing one starts in MODE_NORMAL, so a
+        // LOCKED Phone app was intercepted like any
+        // distraction and the user could not dial out
+        // mid-session. Telephony is a safety surface: the
+        // dialer package is exempt whatever its tier says.
+        // (Composed onto main's processEvent pipeline; main's
+        // #129 unlisted-app branch below exempts the dialer in
+        // its own right — this line keeps the listed-row path
+        // equally exempt, as the lane's finding requires.)
+        if (MonolithRepository.isDialerPackage(applicationContext, pkgName)) return
         val appRule = appsSnapshot.find { it.packageName == pkgName }
         if (appRule == null) {
             // Issue #129 (unlisted-distraction, CRITICAL): no row
@@ -1426,6 +1463,24 @@ class MonolithAccessibilityService : AccessibilityService() {
             reasonBadge = if (overLimit && tier == AppBlockTier.OPEN) "Daily Limit" else tier.badge,
             path = InterceptPath.APP_TIER
         )
+    }
+
+    /**
+     * Issue #121, ringing-window route: the foreground window is
+     * the alarm screen of a structurally-classified alarm app —
+     * its class name carries the platform's own word for the
+     * screen ("alarm", e.g. the deskclock's AlarmActivity). Both
+     * halves are required: an arbitrary app cannot pass by naming
+     * a window, and an alarm app's ordinary windows (its clock
+     * face, its settings) do not pass either.
+     */
+    private fun isAlarmRingWindow(pkgName: String, className: String?): Boolean {
+        val cls = className?.lowercase() ?: return false
+        if (!cls.contains("alarm")) return false
+        val alarmHandlers = com.example.data.TimeCriticalApps.resolveAlarmHandlerPackages(
+            applicationContext.packageManager
+        )
+        return com.example.data.TimeCriticalApps.isAlarmPackage(pkgName, alarmHandlers)
     }
 
     private fun isCallActiveForPackage(pkgName: String): Boolean {
