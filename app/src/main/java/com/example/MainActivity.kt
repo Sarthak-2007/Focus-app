@@ -45,6 +45,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
+import com.example.service.InterceptNonce
 import com.example.service.InterceptPath
 import com.example.service.MonolithShieldService
 import com.example.service.TactileSoundEngine
@@ -129,6 +130,19 @@ class MainActivity : ComponentActivity() {
         if (intent == null) return
         val pkg = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
         if (!pkg.isNullOrBlank()) {
+            // Issue #68 F5, Tier 2 — provenance before trust: this
+            // activity is exported (LAUNCHER), so any installed app
+            // can send these extras. Honour them only with the
+            // single-use nonce an in-app service minted moments ago
+            // (InterceptNonce); without one the extras are dropped
+            // here and never reach the airlock.
+            val nonce = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_NONCE)
+            if (!InterceptNonce.consume(applicationContext, nonce)) {
+                intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
+                intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
+                intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_NONCE)
+                return
+            }
             val name = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
                 ?: "Short-Form Feed"
             val badge = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)

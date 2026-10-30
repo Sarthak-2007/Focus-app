@@ -2318,10 +2318,32 @@ class MonolithViewModel(
         reasonBadge: String = "Locked",
         path: InterceptPath = InterceptPath.UNKNOWN
     ) {
-        soundEngine.playMechanicalLatch(true)
+        // Issue #68 F5, Tier 1 — revalidation: an airlock is a
+        // claim about a live session. With no active session there
+        // is nothing to intercept, whoever asks; every lawful
+        // caller fires only inside one (the shield loop, the
+        // accessibility doors, the sealed launcher's peek key), so
+        // the gate costs them nothing and a fabricated call dies
+        // here, before even the latch sound.
         val active = activeSession.value
+        if (active?.isActive != true) return
 
         val appEntity = apps.value.find { it.packageName == packageName }
+        // On the two per-app doors (the only lease-honouring ones)
+        // the claim is about a ruled row: the row must exist, must
+        // not be OPEN, and the badge prints from the row — never
+        // from the caller's word. The guard, sniper and site doors
+        // legitimately name unlisted packages (Settings, a
+        // browser) with door-defined badges; their provenance is
+        // the Tier-2 nonce at the intent boundary, and the session
+        // gate above binds them too.
+        val effectiveBadge = if (path.canHonourPeekLease) {
+            if (appEntity == null || appEntity.resolvedTier == AppBlockTier.OPEN) return
+            appEntity.resolvedTier.badge
+        } else {
+            reasonBadge
+        }
+        soundEngine.playMechanicalLatch(true)
         val cooldownLeft = if (appEntity != null) repository.getPeekCooldownRemainingSeconds(appEntity) else 0
         val pillActive = _floatingPeekPill.value.isActive
         // UNA2-01: the offer is computed per-path by the one pure
@@ -2350,7 +2372,7 @@ class MonolithViewModel(
             isVisible = true,
             interceptedPackageName = packageName,
             interceptedAppName = appName,
-            interceptReasonBadge = reasonBadge,
+            interceptReasonBadge = effectiveBadge,
             sessionIntention = active?.intention ?: _intentionText.value,
             selectedReason = DistractionTriggerReason.MUSCLE_MEMORY,
             transmutedParticles = 0,
