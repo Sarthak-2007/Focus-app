@@ -1104,6 +1104,22 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
                 startHold()
                 return true
             }
+            MotionEvent.ACTION_MOVE -> {
+                // Issue #117 (one-hand-commute): the hold is no
+                // longer position-blind. The old handler had no MOVE
+                // branch at all, so a press that started on the valve
+                // and slid off it (pocket fabric, a steadying thumb)
+                // kept accruing toward the full 60s and could spend
+                // the week's only emergency break with the finger
+                // nowhere near the valve. Leaving the valve's bounds
+                // now ends the hold exactly as a release does.
+                if (isHolding &&
+                    (event.x < 0f || event.x > width || event.y < 0f || event.y > height)
+                ) {
+                    releaseHold()
+                }
+                return true
+            }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (!a11yHoldActive) releaseHold()
                 return true
