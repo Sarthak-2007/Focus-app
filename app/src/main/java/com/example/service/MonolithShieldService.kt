@@ -167,6 +167,7 @@ internal fun shieldIterationApps(
         blockedPackages = blockedPackages,
         expiredPeeks = com.example.data.expiredPeekPackages(snapshot, nowMono)
     )
+}
 
 /** Issue #337 (Freedom, Platform F2): a grant whose absence the
  *  session notification can repair, with the label its action
