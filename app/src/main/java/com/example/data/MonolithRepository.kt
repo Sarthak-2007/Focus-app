@@ -4305,7 +4305,8 @@ class MonolithRepository(
     /** Remaining breaks for the week containing [nowMillis]. */
     suspend fun emergencyBreaksRemaining(nowMillis: Long = System.currentTimeMillis()): Int {
         val anchor = MonolithWeek.weekAnchorMillis(nowMillis)
-        return emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(anchor).size)
+        val nextAnchor = MonolithWeek.nextWeekAnchorMillis(nowMillis)
+        return emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(anchor, nextAnchor).size)
     }
 
     /**
@@ -4315,16 +4316,21 @@ class MonolithRepository(
      * must never render last week's count. The one-minute re-check also
      * picks up timezone changes on the same tick.
      */
-    private fun weekAnchorTickFlow(): Flow<Long> = flow {
+    private fun weekAnchorTickFlow(): Flow<Pair<Long, Long>> = flow {
         var lastAnchor: Long? = null
         while (true) {
             // Issue #82 (clock-attacks F3): the displayed week is
             // the honest week — date travel must not refresh the
             // token on any surface either.
-            val anchor = MonolithWeek.weekAnchorMillis(honestNowMillis())
+            val now = honestNowMillis()
+            val anchor = MonolithWeek.weekAnchorMillis(now)
             if (anchor != lastAnchor) {
                 lastAnchor = anchor
-                emit(anchor)
+                // Issue #39 F1: the week's end travels with its
+                // anchor — both bounds derive from the SAME honest
+                // instant, so the spends query never sees a pair
+                // straddling a rollover.
+                emit(anchor to MonolithWeek.nextWeekAnchorMillis(now))
             }
             delay(60_000L)
         }
@@ -4334,8 +4340,8 @@ class MonolithRepository(
     @OptIn(ExperimentalCoroutinesApi::class)
     fun observeEmergencyBreaksRemaining(): Flow<Int> =
         weekAnchorTickFlow()
-            .flatMapLatest { anchor ->
-                dao.observeSpendsForWeek(anchor).map { spends ->
+            .flatMapLatest { (anchor, nextAnchor) ->
+                dao.observeSpendsForWeek(anchor, nextAnchor).map { spends ->
                     emergencyBreaksRemainingFromSpendCount(spends.size)
                 }
             }
@@ -4366,7 +4372,8 @@ class MonolithRepository(
             // not travel, so the anchor stays in the real week.
             val now = honestNowMillis()
             val anchor = MonolithWeek.weekAnchorMillis(now)
-            if (dao.getSpendsForWeek(anchor).size >= 1) {
+            val nextAnchor = MonolithWeek.nextWeekAnchorMillis(now)
+            if (dao.getSpendsForWeek(anchor, nextAnchor).size >= 1) {
                 return@withTransaction BreakResult.RefusedNoToken
             }
             dao.insertEmergencyBreakSpend(
