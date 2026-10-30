@@ -1402,8 +1402,17 @@ fun TactileDeckScreen(
                             "GRACE ${graceLeft}S — ABORT IS BOOKED BY THE ROUTINE · AFTER: VALVE, 60S HOLD"
                         graceLeft > 0 ->
                             "GRACE ${graceLeft}S — CANCEL FREE, NOTHING BOOKED · AFTER: VALVE, 60S HOLD"
+                        // R3b #163 F4 (fix-forward): the spent state
+                        // names its wait here too, exactly as the
+                        // valve chip's badge does — the week turns
+                        // on Monday (MonolithWeek).
                         else ->
-                            "GRACE SPENT · VALVE: 60S HOLD · $weeklyEmergencyTokensRemaining/1 WEEK"
+                            "GRACE SPENT · VALVE: 60S HOLD · " +
+                                if (weeklyEmergencyTokensRemaining > 0) {
+                                    "$weeklyEmergencyTokensRemaining/1 WEEK"
+                                } else {
+                                    "0/1 WEEK · BACK MONDAY"
+                                }
                     },
                     fontFamily = AnonymousProFamily,
                     fontSize = 9.5.sp,
