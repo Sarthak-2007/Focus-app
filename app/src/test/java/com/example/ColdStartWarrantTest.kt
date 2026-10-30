@@ -785,14 +785,19 @@ class ColdStartResidencyStampTest {
     fun unboundWithGrantDerivesUnprovenInsideGraceAndOffOutsideIt() {
         // FIX-1's derivation half of the unbound grace (the
         // sentence-table half is the plain class's requirement
-        // 6a/6b): the residency age is readMono − residencyStart,
-        // read off the residency this call starts. (Clock
-        // advanced first so the residency start is positive —
-        // 0 is the no-residency sentinel and carries no grace.)
+        // 6a/6b): grace age is readMono − graceAnchor, and the
+        // anchor under the bind-epoch law is the first unproven
+        // observation — the loop's first read below starts the
+        // debt at exactly `start`, so ages measured from `start`
+        // are anchor ages. (Clock advanced first so the residency
+        // start is positive — 0 is the no-residency sentinel and
+        // carries no grace. The start is read off a STAMPED
+        // derive: a stamped read starts no debt, so it cannot
+        // poison the anchor the loop is about to set.)
         ShadowSystemClock.advanceBy(100L, TimeUnit.MILLISECONDS)
         WatchStore.noteResidencyStart()
         val start = WatchStore.deriveWarrant(
-            a11yBound = true, stamped = false,
+            a11yBound = true, stamped = true,
             usage = UsageAccess.ALLOWED, shieldProtecting = false,
             readMono = 1L
         ).residencyStartMono
