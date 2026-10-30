@@ -77,7 +77,6 @@ import com.example.data.LoadoutRules
 import com.example.data.MonolithRepository
 import com.example.data.SmartLoadout
 import com.example.data.groupedByRule
-import com.example.data.groupedForCatalogue
 import com.example.service.TactileSoundEngine
 import com.example.ui.ShieldBlockingProof
 import com.example.ui.ShieldBlockingStatus
@@ -269,15 +268,6 @@ fun ShieldMatrixScreen(
     val statusHeadline = blockingStatus?.headline
         ?: "CAN'T CHECK BLOCKING YET — GIVE IT A SECOND"
 
-    // R-1, second half (issue #7): the catalogue groups by ruling
-    // (see groupedForCatalogue) — PEEK before SHUT, OPEN last, a
-    // group header per ruling present, so the catalogue reads as
-    // the ledger of his decisions. (The audit's first half — the
-    // slip's retirement — did NOT land in this composition: the
-    // slip was afterwards invested in by issue #107 (its lines are
-    // toggles now, with the PEEK terms printed) and issue #141
-    // (the OPEN section), and that later work stands.)
-    val catalogueGroups = remember(filteredApps) { filteredApps.groupedForCatalogue() }
 
     val slipTap: (BlockedAppEntity) -> Unit = { app ->
         val pkg = app.packageName
@@ -735,16 +725,185 @@ fun ShieldMatrixScreen(
         }
 
         // =====================================================================
-        // SECTION 3.9: THE GUARDS + BLOCKED WEBSITES (issue #51 F1
-        // cure, moved by R-3 of issue #7) — the sniper, the browser
-        // blocker and the profiles were wired from MainActivity to
-        // real ViewModel functions and rendered NOWHERE; this is
-        // their UI. R-3's move: the pair sat below the whole
-        // catalogue (~6,100dp deep) — an editor nobody reaches does
-        // not exist — so both sections now stand above ALL APPS,
-        // the switches directly above BLOCKED WEBSITES, whose
-        // header claimed sites were blocked with no switch in
-        // reach.
+        // SECTION 4: SEARCH & CATEGORY FILTER STRIP
+        // =====================================================================
+        item {
+            FullBleedSectionHeader(
+                titleWord = "ALL APPS",
+                rightWordPrefix = "SHOWING ",
+                rightMonoNumber = filteredApps.size.toString()
+            )
+            Text(
+                text = "APPS ON THIS PHONE ONLY — NOTHING HERE CAN HOLD AN APP ON ANOTHER DEVICE",
+                fontFamily = AnonymousProFamily,
+                fontSize = 10.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.testTag("shield_catalog_scope_line")
+            )
+        }
+
+        // Issue #142: the search bar and the category chips PIN to
+        // the top of the list (stickyHeader). Finding an app used
+        // to start with scrolling back up the page; now the strip
+        // stays where the results are, and the query can be refined
+        // or cleared in place (the ✕ at the bar's end).
+        stickyHeader {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(scheme.background)
+                    .padding(vertical = 8.dp)
+            ) {
+            // Recessed 12dp search bar
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(scheme.surfaceVariant)
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        if (searchQuery.isEmpty()) {
+                            Text(
+                                text = "Filter apps by name or package…",
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 13.sp,
+                                color = scheme.onSurfaceVariant
+                            )
+                        }
+                        BasicTextField(
+                            value = searchQuery,
+                            onValueChange = onSearchQueryChanged,
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = scheme.onBackground
+                            ),
+                            // The accent law (chrome C7): a caret is furniture,
+                            // not a commit — it wears ink, never the accent.
+                            cursorBrush = SolidColor(scheme.onBackground),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("shield_search_input")
+                        )
+                    }
+                    if (searchQuery.isNotEmpty()) {
+                        Text(
+                            text = "✕",
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 13.sp,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clickable { onSearchQueryChanged("") }
+                                .padding(start = 8.dp)
+                                .testTag("shield_search_clear")
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            // Chips keep their natural width and the row scrolls — full words,
+            // never the old 3-letter truncations (Ren).
+            // Filters as words (S2/T8): state = ink + an underline bar —
+            // position and weight, not five bordered pills.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                FilterWord(
+                    label = "ALL",
+                    selected = selectedCategory == null,
+                    onClick = { onSelectCategory(null) }
+                )
+                AppCategory.entries.forEach { cat ->
+                    FilterWord(
+                        label = cat.label.uppercase(),
+                        selected = selectedCategory == cat,
+                        onClick = { onSelectCategory(if (selectedCategory == cat) null else cat) }
+                    )
+                }
+            }
+            // The zero-result line pins WITH the search strip
+            // (issue #142, closure fix): the answer stays on screen
+            // while the query is refined, instead of living in a
+            // list item the catalogue can scroll past. The line's
+            // semantics are unchanged - an empty list is answered
+            // in print, never with a void (Liv/Gust); a search hit
+            // under another category says exactly that (fresh-eyes
+            // L7); the existence check uses the SAME match as the
+            // filter (appMatchesQuery, #107/#142), and the search
+            // line never claims an app is absent from the phone.
+            if (filteredApps.isEmpty()) {
+                val existsOutsideFilter = searchQuery.isNotBlank() && allApps.any {
+                    com.example.ui.appMatchesQuery(it, searchQuery)
+                }
+                Text(
+                    text = when {
+                        searchQuery.isNotBlank() && existsOutsideFilter ->
+                            "THAT NAME IS ON THIS PHONE — NOT IN THIS CATEGORY"
+                        searchQuery.isNotBlank() && selectedCategory != null ->
+                            "NO MATCH FOR THAT SEARCH IN ${selectedCategory.label.uppercase()} — TRY THE APP'S NAME OR ITS PACKAGE NAME"
+                        searchQuery.isNotBlank() ->
+                            "NO MATCH FOR THAT SEARCH — TRY THE APP'S NAME OR ITS PACKAGE NAME"
+                        selectedCategory != null ->
+                            "NO APPS IN THIS CATEGORY ON THIS PHONE"
+                        else -> "NO APPS ON THIS PHONE"
+                    },
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .padding(top = 8.dp)
+                        .testTag("shield_no_match_line")
+                )
+            }
+            }
+        }
+
+        // Issue #107 (#2): the PEEK terms again directly above the
+        // sleds that sell it — the middle stop's contract, at the
+        // point of choice.
+        if (filteredApps.isNotEmpty()) {
+            item {
+                Text(
+                    text = PEEK_TERMS_LINE,
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("shield_peek_terms_catalogue")
+                )
+            }
+        }
+
+        // =====================================================================
+        // SECTION 5: ULTRA-MINIMAL 3-STOP APP SLED ROWS (Decision #14)
+        // =====================================================================
+        items(filteredApps, key = { it.packageName }) { app ->
+            CatalogueAppRow(
+                app = app,
+                effectiveNight = effectiveNight,
+                soundEngine = soundEngine,
+                onSetAppTier = onSetAppTier,
+                onCycleDailyLimit = onCycleDailyLimit,
+                onSetAppCategory = onSetAppCategory
+            )
+        }
+
+        // =====================================================================
+        // SECTION 5B: THE GUARDS (issue #51 F1 cure) — the sniper,
+        // the browser blocker and the profiles were wired from
+        // MainActivity to real ViewModel functions and rendered
+        // NOWHERE; this section is their UI. The switches sit
+        // directly above BLOCKED WEBSITES, whose header claimed
+        // sites were blocked with no switch in reach.
         // =====================================================================
         item {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -772,6 +931,19 @@ fun ShieldMatrixScreen(
                         testTag = "shield_sniper_toggle"
                     )
                 }
+                // #335 F5: the detector-health line — first/last
+                // node, stale and slow-scan states, printed from
+                // the DetectorHealth record the services write.
+                Text(
+                    text = com.example.ui.components.detectorLineFor(
+                        com.example.service.DetectorHealth.snapshot(),
+                        SystemClock.elapsedRealtime()
+                    ).text,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("shield_detector_health_line")
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -945,433 +1117,7 @@ fun ShieldMatrixScreen(
             }
         }
 
-        // =====================================================================
-        // SECTION 4: SEARCH & CATEGORY FILTER STRIP
-        // =====================================================================
-        item {
-            // Dens F6 (issue #7): SHOWING prints only when the
-            // catalogue is actually filtered — an unfiltered count
-            // here was a second home for the tally's numbers.
-            if (filteredApps.size != allApps.size) {
-                FullBleedSectionHeader(
-                    titleWord = "ALL APPS",
-                    rightWordPrefix = "SHOWING ",
-                    rightMonoNumber = filteredApps.size.toString()
-                )
-            } else {
-                FullBleedSectionHeader(titleWord = "ALL APPS")
-            }
-            Text(
-                text = "APPS ON THIS PHONE ONLY — NOTHING HERE CAN HOLD AN APP ON ANOTHER DEVICE",
-                fontFamily = AnonymousProFamily,
-                fontSize = 10.sp,
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.testTag("shield_catalog_scope_line")
-            )
-        }
-
-        // Issue #142: the search bar and the category chips PIN to
-        // the top of the list (stickyHeader). Finding an app used
-        // to start with scrolling back up the page; now the strip
-        // stays where the results are, and the query can be refined
-        // or cleared in place (the ✕ at the bar's end).
-        stickyHeader {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(scheme.background)
-                    .padding(vertical = 8.dp)
-            ) {
-            // Recessed 12dp search bar
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(scheme.surfaceVariant)
-                    .padding(horizontal = 12.dp),
-                contentAlignment = Alignment.CenterStart
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.weight(1f)) {
-                        if (searchQuery.isEmpty()) {
-                            Text(
-                                text = "Filter apps by name or package…",
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontSize = 13.sp,
-                                color = scheme.onSurfaceVariant
-                            )
-                        }
-                        BasicTextField(
-                            value = searchQuery,
-                            onValueChange = onSearchQueryChanged,
-                            singleLine = true,
-                            textStyle = TextStyle(
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                color = scheme.onBackground
-                            ),
-                            // The accent law (chrome C7): a caret is furniture,
-                            // not a commit — it wears ink, never the accent.
-                            cursorBrush = SolidColor(scheme.onBackground),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("shield_search_input")
-                        )
-                    }
-                    if (searchQuery.isNotEmpty()) {
-                        Text(
-                            text = "✕",
-                            fontFamily = AnonymousProFamily,
-                            fontSize = 13.sp,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .clickable { onSearchQueryChanged("") }
-                                .padding(start = 8.dp)
-                                .testTag("shield_search_clear")
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            // Chips keep their natural width and the row scrolls — full words,
-            // never the old 3-letter truncations (Ren).
-            // Filters as words (S2/T8): state = ink + an underline bar —
-            // position and weight, not five bordered pills.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                FilterWord(
-                    label = "ALL",
-                    selected = selectedCategory == null,
-                    onClick = { onSelectCategory(null) }
-                )
-                AppCategory.entries.forEach { cat ->
-                    FilterWord(
-                        label = cat.label.uppercase(),
-                        selected = selectedCategory == cat,
-                        onClick = { onSelectCategory(if (selectedCategory == cat) null else cat) }
-                    )
-                }
-            }
-            // The zero-result line pins WITH the search strip
-            // (issue #142, closure fix): the answer stays on screen
-            // while the query is refined, instead of living in a
-            // list item the catalogue can scroll past. The line's
-            // semantics are unchanged - an empty list is answered
-            // in print, never with a void (Liv/Gust); a search hit
-            // under another category says exactly that (fresh-eyes
-            // L7); the existence check uses the SAME match as the
-            // filter (appMatchesQuery, #107/#142), and the search
-            // line never claims an app is absent from the phone.
-            if (filteredApps.isEmpty()) {
-                val existsOutsideFilter = searchQuery.isNotBlank() && allApps.any {
-                    com.example.ui.appMatchesQuery(it, searchQuery)
-                }
-                Text(
-                    text = when {
-                        searchQuery.isNotBlank() && existsOutsideFilter ->
-                            "THAT NAME IS ON THIS PHONE — NOT IN THIS CATEGORY"
-                        searchQuery.isNotBlank() && selectedCategory != null ->
-                            "NO MATCH FOR THAT SEARCH IN ${selectedCategory.label.uppercase()} — TRY THE APP'S NAME OR ITS PACKAGE NAME"
-                        searchQuery.isNotBlank() ->
-                            "NO MATCH FOR THAT SEARCH — TRY THE APP'S NAME OR ITS PACKAGE NAME"
-                        selectedCategory != null ->
-                            "NO APPS IN THIS CATEGORY ON THIS PHONE"
-                        else -> "NO APPS ON THIS PHONE"
-                    },
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 11.sp,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .padding(top = 8.dp)
-                        .testTag("shield_no_match_line")
-                )
-            }
-            }
-        }
-
-        // Issue #107 (#2): the PEEK terms again directly above the
-        // sleds that sell it — the middle stop's contract, at the
-        // point of choice.
-        if (filteredApps.isNotEmpty()) {
-            item {
-                Text(
-                    text = PEEK_TERMS_LINE,
-                    fontFamily = AtkinsonHyperlegibleFamily,
-                    fontSize = 11.sp,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.testTag("shield_peek_terms_catalogue")
-                )
-            }
-        }
-
-        // =====================================================================
-        // SECTION 5: ULTRA-MINIMAL 3-STOP APP SLED ROWS (Decision #14),
-        // grouped by ruling (R-1, second half; issue #7): a group
-        // header per ruling present — PEEK before SHUT, OPEN last —
-        // the sled rows unchanged inside their groups.
-        // =====================================================================
-        catalogueGroups.forEach { (tier, groupApps) ->
-            item(key = "catalogue_group_${tier.name}") {
-                CatalogueGroupHeader(tier = tier)
-            }
-            items(groupApps, key = { it.packageName }) { app ->
-                CatalogueAppRow(
-                    app = app,
-                    effectiveNight = effectiveNight,
-                    soundEngine = soundEngine,
-                    onSetAppTier = onSetAppTier,
-                    onCycleDailyLimit = onCycleDailyLimit,
-                    onSetAppCategory = onSetAppCategory
-                )
-            }
-        }
-
-        // The first sentence the installed-only cure lets the app say
-        // honestly (Liv, adopted by Gust): an empty list is answered
-        // in print, never with a void. Fresh-eyes L7: the filtered
-        // list is query AND category chip, so a search hit that
-        // lives under another category must say exactly that — the
-        // phone fact is only claimed when the name matches NOTHING
-        // in the full catalog. Issue #51 F5 widened the trigger:
-        // the non-search empties (a category void, a whole-list
-        // void) print their fact too. (Union merged by STOSS-34:
-        // L7's cross-category case first, #107's never-deny search
-        // line second, #51's two void facts last.)
-        if (filteredApps.isEmpty()) {
-            item {
-                val existsOutsideFilter = allApps.any {
-                    it.appName.contains(searchQuery, ignoreCase = true)
-                }
-                Text(
-                    text = when {
-                        searchQuery.isNotBlank() && existsOutsideFilter ->
-                            "THAT NAME IS ON THIS PHONE — NOT IN THIS CATEGORY"
-                        searchQuery.isNotBlank() ->
-                            "NO MATCH FOR THAT SEARCH — TRY THE APP'S NAME OR ITS PACKAGE NAME"
-                        selectedCategory != null ->
-                            "NO APPS IN THIS CATEGORY ON THIS PHONE"
-                        else -> "NO APPS ON THIS PHONE"
-                    },
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 11.sp,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.testTag("shield_no_match_line")
-                )
-        // =====================================================================
-        // SECTION 5B: THE GUARDS (issue #51 F1 cure) — the sniper,
-        // the browser blocker and the profiles were wired from
-        // MainActivity to real ViewModel functions and rendered
-        // NOWHERE; this section is their UI. The switches sit
-        // directly above BLOCKED WEBSITES, whose header claimed
-        // sites were blocked with no switch in reach.
-        // =====================================================================
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                FullBleedSectionHeader(
-                    titleWord = "GUARDS",
-                    rightWordPrefix = "",
-                    rightMonoNumber = "",
-                    rightWordSuffix = ""
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "SHORTS & REELS SNIPER",
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        color = scheme.onBackground
-                    )
-                    BlockitActionChip(
-                        wordLabel = if (shortsReelsSniperEnabled) "ON" else "OFF",
-                        isPrimaryInk = shortsReelsSniperEnabled,
-                        onClick = onToggleShortsReelsSniper,
-                        testTag = "shield_sniper_toggle"
-                    )
-                }
-                // #335 F5: the detector-health line — first/last
-                // node, stale and slow-scan states, printed from
-                // the DetectorHealth record the services write.
-                Text(
-                    text = com.example.ui.components.detectorLineFor(
-                        com.example.service.DetectorHealth.snapshot(),
-                        SystemClock.elapsedRealtime()
-                    ).text,
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 11.sp,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.testTag("shield_detector_health_line")
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "BROWSER URL BLOCKER",
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        color = scheme.onBackground
-                    )
-                    BlockitActionChip(
-                        wordLabel = if (browserUrlBlockerEnabled) "ON" else "OFF",
-                        isPrimaryInk = browserUrlBlockerEnabled,
-                        onClick = onToggleBrowserUrlBlocker,
-                        testTag = "shield_browser_blocker_toggle"
-                    )
-                }
-                if (profiles.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        profiles.forEach { profile ->
-                            FilterWord(
-                                label = profile.name.uppercase(),
-                                selected = profile.name == selectedProfileName,
-                                onClick = { onSelectProfile(profile) }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // =====================================================================
-        // SECTION 6: BLOCKED WEBSITES — the editor transplanted from
-        // the dissolved Guard screen (chrome wave). The Guard
-        // screen's section, moved whole: same rows, same add field,
-        // same wiring — the list below is the list the blocker
-        // enforces (the plate in PARK says so: SITES: KEPT WITH
-        // APPS ON SHIELD).
-        // =====================================================================
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                FullBleedSectionHeader(
-                    titleWord = "BLOCKED WEBSITES",
-                    rightWordPrefix = "",
-                    rightMonoNumber = blockedSites.size.toString(),
-                    rightWordSuffix = " SITES"
-                )
-
-                blockedSites.forEach { domain ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = domain,
-                            fontFamily = AnonymousProFamily,
-                            fontSize = 14.sp,
-                            color = scheme.onBackground
-                        )
-                        BlockitActionChip(
-                            wordLabel = "REMOVE",
-                            onClick = { onRemoveSite(domain) }
-                        )
-                    }
-                }
-
-                // Issue #51 F3 cure: saveable — the draft is no
-                // longer destroyed when this LazyColumn item is
-                // disposed on scroll.
-                var newSiteText by rememberSaveable { mutableStateOf("") }
-                var siteError by rememberSaveable { mutableStateOf<String?>(null) }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(scheme.surfaceVariant)
-                            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
-                            .padding(horizontal = 12.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        if (newSiteText.isEmpty()) {
-                            Text(
-                                text = "Add a site — e.g. news.ycombinator.com",
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontSize = 13.sp,
-                                color = scheme.onSurfaceVariant
-                            )
-                        }
-                        BasicTextField(
-                            value = newSiteText,
-                            onValueChange = { newSiteText = it },
-                            singleLine = true,
-                            textStyle = TextStyle(
-                                fontFamily = AnonymousProFamily,
-                                fontSize = 14.sp,
-                                color = scheme.onBackground
-                            ),
-                            // The accent law (chrome C7): ink caret.
-                            cursorBrush = SolidColor(scheme.onBackground),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("shield_site_input")
-                        )
-                    }
-                    BlockitActionChip(
-                        wordLabel = "ADD",
-                        isPrimaryInk = true,
-                        onClick = {
-                            // Issue #51 F2 cure (ported from agent/issue-7's
-                            // R-3 truth fix): a rejected ADD PRINTS WHY and
-                            // KEEPS the text. The old form cleared the field
-                            // unconditionally — MonolithRepository.addBlockedSite
-                            // rejects an unnormalisable domain (returns false)
-                            // and the ViewModel swallows that Boolean, so
-                            // garbage vanished as if saved. The screen judges
-                            // with the repository's own normaliser, so the
-                            // verdict it prints is the verdict the store gives.
-                            val normalised = BlockedBrowserDomains.normalizeDomain(newSiteText)
-                            when {
-                                newSiteText.isBlank() -> Unit
-                                normalised == null -> siteError =
-                                    "NOT A SITE — CHECK THE ADDRESS AND TRY AGAIN"
-                                blockedSites.contains(normalised) -> siteError =
-                                    "ALREADY ON THE LIST"
-                                else -> {
-                                    onAddSite(newSiteText)
-                                    newSiteText = ""
-                                    siteError = null
-                                }
-                            }
-                        }
-                    )
-                }
-                val err = siteError
-                if (err != null) {
-                    Text(
-                        text = err,
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        color = scheme.onBackground,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("shield_site_error")
-                    )
-                }
-            }
-        }
-    }
+   }
 }
 
 
@@ -2266,37 +2012,6 @@ private fun SlipLineRow(
  *  only, in ink like the rules header above it. The group's COUNT
  *  does not print here — counts have one home on this screen, the
  *  tally, and a number with two homes is a duplication. */
-@Composable
-private fun CatalogueGroupHeader(tier: AppBlockTier) {
-    Column {
-        Text(
-            text = tierWord(tier),
-            fontFamily = AtkinsonHyperlegibleFamily,
-            fontWeight = FontWeight.Bold,
-            fontSize = 11.5.sp,
-            letterSpacing = 0.6.sp,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier
-                .padding(top = 4.dp)
-                .testTag("catalogue_group_${tier.name}")
-        )
-        if (tier == AppBlockTier.PEEK_2M) {
-            // R-6 (issue #7): PEEK's contract prints ONCE on this
-            // screen, here, derived from the constants — never
-            // hardcoded, so an editable-times change reprints the
-            // truth for free.
-            val peekMin = MonolithRepository.PEEK_DURATION_SECONDS / 60
-            val coolMin = (MonolithRepository.PEEK_COOLDOWN_MILLIS / 60_000L).toInt()
-            Text(
-                text = "PEEK — $peekMin MINUTES, THEN SHUT AGAIN · $coolMin MIN BETWEEN PEEKS",
-                fontFamily = AnonymousProFamily,
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag("peek_contract_line")
-            )
-        }
-    }
-}
 
 /** One catalogue row: the sled, hosted. The catalogue is where a
  *  ruling is made or revoked; the slip above is where it is read.
