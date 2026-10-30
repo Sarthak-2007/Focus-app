@@ -1574,6 +1574,19 @@ class MonolithViewModel(
     }
 
     fun removeBlockedSite(domain: String) {
+        // Issue #128 finding 2: REMOVE was the one unratcheted
+        // weakening on Shield — its neighbours (setAppBlockTier,
+        // updateAppDailyLimit, toggleProfileSchedule) all refuse
+        // mid-session, and the accessibility matcher enforces the
+        // stored list as-is, so this one tap opened the site in
+        // the live session at once. Adding a site stays free
+        // (tightening); removing one waits for the unsealed phone.
+        if (activeSession.value?.isActive == true) {
+            triggerRatchetWarning(
+                "ONE-WAY RATCHET ENGAGED • CANNOT UNBLOCK '${domain.uppercase()}' DURING ACTIVE VAULT"
+            )
+            return
+        }
         soundEngine.playMechanicalLatch(false)
         viewModelScope.launch { repository.removeBlockedSite(domain) }
     }
