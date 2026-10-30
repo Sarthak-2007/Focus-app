@@ -978,6 +978,30 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onUndoProfileApply = viewModel::undoLastProfileApply,
                                     onToggleShortsReelsSniper = viewModel::toggleShortsReelsSniper,
                                     onToggleBrowserUrlBlocker = viewModel::toggleBrowserUrlBlocker,
+                                    // #337 F1: shortcut binding state
+                                    // read live; the chip deep-links
+                                    // to the system's shortcut screen,
+                                    // falling back to Accessibility
+                                    // Settings where the ROM lacks it.
+                                    accessibilityShortcutSet =
+                                        com.example.service.AccessibilityShortcutSupport
+                                            .isMonolithShortcutTarget(context),
+                                    onOpenAccessibilityShortcutSettings = {
+                                        runCatching {
+                                            context.startActivity(
+                                                com.example.service.AccessibilityShortcutSupport
+                                                    .shortcutSettingsIntent()
+                                            )
+                                        }.getOrElse {
+                                            runCatching {
+                                                context.startActivity(
+                                                    com.example.service.AccessibilityShortcutSupport
+                                                        .accessibilitySettingsIntent()
+                                                )
+                                            }
+                                        }
+                                        Unit
+                                    },
                                     routines = routines,
                                     showResetNote = showRoutineResetNote,
                                     onDismissResetNote = viewModel::dismissRoutineResetNote,
