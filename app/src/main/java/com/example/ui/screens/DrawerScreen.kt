@@ -492,13 +492,18 @@ fun DrawerScreen(
                         fontSize = 17.sp,
                         color = scheme.onBackground
                     )
-                    Text(
-                        text = detail.categoryTag,
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        letterSpacing = 1.sp,
-                        color = scheme.onSurfaceVariant
-                    )
+                    // Issue #270: print a tag only when one exists —
+                    // a blank tag is nameless by the user's ruling,
+                    // never an empty line standing for a category.
+                    if (detail.categoryTag.isNotBlank()) {
+                        Text(
+                            text = detail.categoryTag,
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onSurfaceVariant
+                        )
+                    }
                     Text(
                         text = dateLine,
                         fontFamily = AnonymousProFamily,
@@ -1531,12 +1536,15 @@ private fun StoredRow(task: FocusTaskEntity, onClick: () -> Unit) {
             overflow = TextOverflow.Ellipsis
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = task.categoryTag,
-                fontFamily = AnonymousProFamily,
-                fontSize = 10.5.sp,
-                color = scheme.onSurfaceVariant
-            )
+            // Issue #270: a tag prints only when one exists.
+            if (task.categoryTag.isNotBlank()) {
+                Text(
+                    text = task.categoryTag,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 10.5.sp,
+                    color = scheme.onSurfaceVariant
+                )
+            }
             Text(
                 text = clockTime(LocalContext.current, task.completedAtMillis),
                 fontFamily = AnonymousProFamily,

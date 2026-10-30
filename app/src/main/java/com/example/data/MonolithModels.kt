@@ -114,7 +114,10 @@ data class FocusTaskEntity(
     // the >0 surfaces then printed as if the user had given it.
     val estimatedMinutes: Int = 0,
     val actualSecondsSpent: Int = 0,
-    val categoryTag: String = "Study",
+    // Issue #270: the default tag is "" — no category was given.
+    // (Was "Study": an app-assigned bucket on every construction,
+    // against Sarthak's 08:55 own-words-or-nameless ruling.)
+    val categoryTag: String = "",
     val queueOrder: Int = 0,
     val status: String = TaskQueueStatus.QUEUED.name,
     val completedAtMillis: Long = 0L,
