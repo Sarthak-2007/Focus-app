@@ -179,7 +179,13 @@ class MonolithShieldService : Service() {
                     .map { it.packageName }
                     .toSet()
 
-                val foregroundBlockedPkg = repository.queryForegroundBlockedApp(blockedPackages)
+                // Issue #99 F1: a package whose peek lease just
+                // expired is evicted on this poll even though its
+                // lastTimeUsed is minutes stale (stay-put user).
+                val expiredPeeks = com.example.data.expiredPeekPackages(
+                    dao.getAllAppsSnapshot(), nowMono
+                )
+                val foregroundBlockedPkg = repository.queryForegroundBlockedApp(blockedPackages, expiredPeeks)
                 if (foregroundBlockedPkg != null && foregroundBlockedPkg != applicationContext.packageName) {
                     val blockedApp = dao.getAllAppsSnapshot().find { it.packageName == foregroundBlockedPkg }
                     val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {

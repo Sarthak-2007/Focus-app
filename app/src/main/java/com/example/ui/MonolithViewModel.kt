@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.content.Context
+import android.content.Intent
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -232,6 +233,12 @@ data class AirlockInterceptState(
     /** Non-null only when this door could have honoured a peek
      *  and the tier owed one: the withheld line's reason. */
     val peekWithheld: PeekWithheld? = null,
+    /** Issue #99 F5: true when the intercepted app's tier is LOCKED.
+     *  For LOCKED apps the 5s wall gates RETURN TO FOCUS itself
+     *  (the delay is the point of the wall) — before this, the wall
+     *  counted down to nothing: RETURN was live from second 5 and
+     *  no option ever appeared at 00. */
+    val isLockedTier: Boolean = false,
     /** The session's span end (SIL-1, Hale W-28): the door states
      *  the end from the session's own numbers — the same
      *  now + remaining derivation the Deck's TIME cell prints.
@@ -472,6 +479,10 @@ class MonolithViewModel(
     val selectedCategoryFilter: StateFlow<AppCategory?> = _selectedCategoryFilter.asStateFlow()
 
     private var airlockInstanceSeq: Long = 0L
+    /** Issue #99 F3: the intercept instance whose dishonest exit
+     *  (Home/Recents while the Airlock stood) was last logged — one
+     *  trace per standing Airlock, never a duplicate per pause. */
+    private var airlockAbandonLoggedInstanceId: Long = 0L
     private val _airlockState = MutableStateFlow(AirlockInterceptState())
     val airlockState: StateFlow<AirlockInterceptState> = _airlockState.asStateFlow()
 
@@ -1090,7 +1101,7 @@ class MonolithViewModel(
                         ?.activePeekUntilElapsedRealtime ?: 0L
                     val nextSec = peekSecondsRemaining(leaseEnd, nowMono)
                     if (nextSec == null) {
-                        end2MinutePeekEarly()
+                        expirePeekAndEvict(peek)
                     } else {
                         if (nextSec % 15 == 0 && nextSec != peek.secondsRemaining) {
                             soundEngine.playRotaryDetent(760.0)
@@ -2532,6 +2543,7 @@ class MonolithViewModel(
             peekCooldownRemainingSeconds = cooldownLeft,
             interceptPath = path,
             peekWithheld = withheld,
+            isLockedTier = appEntity?.resolvedTier == AppBlockTier.LOCKED,
             // SIL-1 / W-28: the door states the session's end from
             // the session's own numbers — now + the WHOLE-SPAN
             // remaining (Tor FIX-2: the per-block remainingSeconds
@@ -2588,6 +2600,16 @@ class MonolithViewModel(
         val name = state.interceptedAppName.ifBlank { "2m Peek App" }
         soundEngine.playMechanicalLatch(true)
         _airlockState.value = state.copy(isVisible = false)
+        // Issue #99 F4 (HAND-MERGE: Konto batch-10 flag on this
+        // function — keep this block minimal): taking the peek takes
+        // you to the app. The lease no longer burns while the user
+        // navigates home and relaunches by hand.
+        runCatching {
+            appContext.packageManager.getLaunchIntentForPackage(pkg)?.let { launch ->
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                appContext.startActivity(launch)
+            }
+        }
         _floatingPeekPill.value = FloatingPeekPillState(
             isActive = true,
             packageName = pkg,
@@ -2613,6 +2635,67 @@ class MonolithViewModel(
         _floatingPeekPill.value = FloatingPeekPillState(isActive = false)
         viewModelScope.launch {
             repository.recordPeekEnded(peek.packageName)
+        }
+    }
+
+    /**
+     * Issue #99 F1: the ticker's expiry path — distinct from the
+     * pill's ✕ (that user is already in Monolith). Expiry closes the
+     * lease, then asks the foreground question with the staleness
+     * blindness waived for this package: if the user is still inside
+     * the peeked app, Monolith comes to the front and the Airlock
+     * stands again — a real eviction, not a paper lapse. If they
+     * already left, nothing fires.
+     */
+    private fun expirePeekAndEvict(peek: FloatingPeekPillState) {
+        val pkg = peek.packageName
+        val name = peek.appName
+        end2MinutePeekEarly()
+        if (pkg.isBlank()) return
+        viewModelScope.launch {
+            val foreground = repository.queryForegroundBlockedApp(setOf(pkg), setOf(pkg))
+            if (foreground == pkg) {
+                runCatching {
+                    appContext.startActivity(
+                        Intent(appContext, com.example.MainActivity::class.java).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        }
+                    )
+                }
+                val entity = apps.value.find { it.packageName == pkg }
+                triggerAirlockIntercept(
+                    pkg, name.ifBlank { entity?.appName ?: "Blocked App" },
+                    entity?.resolvedTier?.badge ?: "Locked",
+                    InterceptPath.SHIELD_APP
+                )
+            }
+        }
+    }
+
+    /**
+     * Issue #99 F3: the dishonest exit leaves a trace. Called when
+     * the host activity stops while an Airlock still stands
+     * unresolved (RETURN and peek both hide the Airlock before any
+     * stop, so a standing Airlock at stop time means Home/Recents).
+     * One log entry per intercept instance: the intercept log, the
+     * app's intercept count and the session's reaches counter all
+     * move — the escape is recorded, repeatable no longer for free.
+     * (A true lock-task needs device-owner; that remainder is named
+     * STANDS-BLOCKED in the issue-99 report.)
+     */
+    fun noteAirlockAbandonedIfStanding() {
+        val state = _airlockState.value
+        if (!state.isVisible) return
+        if (state.interceptInstanceId == airlockAbandonLoggedInstanceId) return
+        airlockAbandonLoggedInstanceId = state.interceptInstanceId
+        viewModelScope.launch {
+            repository.recordIntercept(
+                packageName = state.interceptedPackageName,
+                appName = state.interceptedAppName.ifBlank { "Blocked App" },
+                sessionIntention = state.sessionIntention.ifBlank { _intentionText.value },
+                outcome = "Left Airlock Without Choosing",
+                triggerReason = state.selectedReason.shortTag
+            )
         }
     }
 
