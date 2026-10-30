@@ -158,6 +158,26 @@ class CryptoIntegrityManagerTest {
     }
 
     @Test
+    fun `signature forged with the old shipped literal key fails verification`() {
+        // Issue #317 F3 regression pin: the pre-fix fallback key was a
+        // string literal in the APK ("Monolith_Hardware_HMAC_Fallback_32B!"),
+        // so a signature made with it offline MUST NOT verify any more.
+        val payload = "1700000000000|123456|3|1800|false"
+        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+        mac.init(
+            javax.crypto.spec.SecretKeySpec(
+                "Monolith_Hardware_HMAC_Fallback_32B!".toByteArray(Charsets.UTF_8),
+                "HmacSHA256"
+            )
+        )
+        val forged = Base64.encodeToString(mac.doFinal(payload.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
+        assertFalse(
+            "A signature forged with the formerly shipped literal key must fail",
+            CryptoIntegrityManager.verifySessionState(sessionWith(forged))
+        )
+    }
+
+    @Test
     fun `blank signature keeps current accepted semantics pending decision 21`() {
         // Documents finding-1 behaviour as it stands today (blank =
         // accepted). The rule is Sarthak's parked decision #21; this

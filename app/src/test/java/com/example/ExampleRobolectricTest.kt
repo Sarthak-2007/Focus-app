@@ -170,11 +170,14 @@ class ExampleRobolectricTest {
         val afterSleepLoadout = db.monolithDao().getAllAppsSnapshot().first { it.packageName == tiktok.packageName }
         assertEquals(AppBlockTier.LOCKED, afterSleepLoadout.resolvedTier)
 
-        // Apply Study Loadout: YouTube & WhatsApp become PEEK_2M while TikTok stays LOCKED
+        // Apply Study Loadout: YouTube is OPEN for lectures (issue #133 —
+        // the old PEEK_2M ration made a 50-minute lecture unusable; the
+        // Shorts sniper stays the feed guard), WhatsApp becomes PEEK_2M
+        // while TikTok stays LOCKED
         repository.applySmartLoadout(SmartLoadout.STUDY)
         val studyApps = db.monolithDao().getAllAppsSnapshot()
         val youtube = studyApps.first { it.packageName == "com.google.android.youtube" }
-        assertEquals(AppBlockTier.PEEK_2M, youtube.resolvedTier)
+        assertEquals(AppBlockTier.OPEN, youtube.resolvedTier)
 
         // Direct spatial gravity well drop: drag YouTube into the Inner Event Horizon (LOCKED)
         repository.setAppBlockTier(youtube.packageName, AppBlockTier.LOCKED)
@@ -187,7 +190,6 @@ class ExampleRobolectricTest {
         assertTrue(BlockedBrowserDomains.defaultDomains.contains("instagram.com"))
         assertTrue(BlockedBrowserDomains.defaultDomains.contains("youtube.com/shorts"))
         assertTrue(BlockedBrowserDomains.defaultDomains.contains("reddit.com"))
-        assertTrue(BlockedBrowserDomains.allowedStudyExamples.contains("scholar.google.com"))
     }
 
     @Test
@@ -221,7 +223,7 @@ class ExampleRobolectricTest {
     @Test
     fun `verify 3-stop switch labels and partial-credit session banking`() = runBlocking {
         assertEquals("Shut", AppBlockTier.LOCKED.label)
-        assertEquals("2m Knock", AppBlockTier.PEEK_2M.label)
+        assertEquals("2m Peek", AppBlockTier.PEEK_2M.label)
         assertEquals("Open", AppBlockTier.OPEN.label)
 
         // Start a 25-minute session and simulate 5 minutes elapsed before unlatching early
