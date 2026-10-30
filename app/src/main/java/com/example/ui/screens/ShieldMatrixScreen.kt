@@ -233,7 +233,7 @@ fun ShieldMatrixScreen(
                 while (restingFlips.isNotEmpty()) {
                     delay(700)
                     val now = SystemClock.elapsedRealtime()
-                    restingFlips = restingFlips.filterValues { now - it.createdAtMs <= 1200 }
+                    restingFlips = pruneRests(restingFlips, now)
                 }
             }
         }
@@ -1500,12 +1500,24 @@ private fun FilterWord(
  *  section, rests 300ms, then exits over 280ms and is present in its
  *  new section when next seen. [createdAtMs] lets the screen's
  *  sweeper retire an entry whose lifecycle was interrupted. */
-private data class RestingFlip(
+internal data class RestingFlip(
     val from: AppBlockTier,
     val to: AppBlockTier,
     val exiting: Boolean,
     val createdAtMs: Long
 )
+
+/** Issue #69 F5(a): the sweeper's prune law, pure — a rest
+ *  retires once it is older than [REST_MAX_AGE_MS]; younger
+ *  rests stay. The sweeper itself is demand-driven (it runs
+ *  only while the rests map is non-empty), so with no rests
+ *  there is no loop and nothing to prune. */
+internal const val REST_MAX_AGE_MS = 1200L
+internal fun pruneRests(
+    rests: Map<String, RestingFlip>,
+    nowMs: Long
+): Map<String, RestingFlip> =
+    rests.filterValues { nowMs - it.createdAtMs <= REST_MAX_AGE_MS }
 
 /** One printed line of the book: the app, the ruling word it wears
  *  right now, and its rest state when it is mid-flip. */

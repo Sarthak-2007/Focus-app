@@ -606,11 +606,11 @@ class MonolithRepository(
             // drain) is idempotent and still runs. A forced call,
             // and any call after the window, is a genuinely
             // separate look and reconciles normally.
-            val collapseRepeat = !forceCatalogSync &&
-                AppCatalogReconcile.isCollapseRepeat(
-                    lastSuccessfulSyncMillis = loadLastCatalogSyncMillis(),
-                    nowMillis = System.currentTimeMillis()
-                )
+            val collapseRepeat = AppCatalogReconcile.isEnumerationSkipped(
+                forceCatalogSync = forceCatalogSync,
+                lastSuccessfulSyncMillis = loadLastCatalogSyncMillis(),
+                nowMillis = System.currentTimeMillis()
+            )
             // Issue #69 F4 (startup half): the collapse check now
             // gates the ENUMERATION itself, not only the reconcile
             // after it. The ViewModel init pays this sync twice in

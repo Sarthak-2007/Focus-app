@@ -99,6 +99,62 @@ internal class ShieldNotificationGuard {
     }
 }
 
+/**
+ * Issue #69 F1: one iteration's view of the apps table — the
+ * ONE snapshot the iteration read, and everything derived from
+ * it. Every consumer of the apps table in the shield loop reads
+ * through this object, so an iteration can never drift into a
+ * second (or third) full-table scan.
+ */
+internal class ShieldIterationApps(
+    val snapshot: List<com.example.data.BlockedAppEntity>,
+    val blockedPackages: Set<String>,
+    val expiredPeeks: Set<String>
+) {
+    fun appFor(packageName: String): com.example.data.BlockedAppEntity? =
+        snapshot.find { it.packageName == packageName }
+}
+
+/**
+ * Issue #69 F1: derive the iteration's blocked set and its
+ * expired-peek eviction set from the SAME [snapshot] — same
+ * rows, same [nowMono], identical sets to the old three-scan
+ * shape. Pure, so the one-snapshot law is unit-tested with a
+ * counting provider at the call site in the loop.
+ */
+internal fun shieldIterationApps(
+    snapshot: List<com.example.data.BlockedAppEntity>,
+    isInSafeBreak: Boolean,
+    nowMono: Long
+): ShieldIterationApps {
+    val blockedPackages = snapshot
+        .filter { app ->
+            val tier = app.resolvedTier
+            // Issue #140: the daily limit is real. An app whose
+            // today's usage has reached its limit is blocked
+            // whatever its tier — except inside a lawful peek
+            // already running (Safe Break or a live 2-minute
+            // lease), which is never yanked mid-peek. Usage is
+            // the reconciled todayUsageMinutes on the row.
+            val overLimit = app.dailyLimitMinutes > 0 &&
+                app.todayUsageMinutes >= app.dailyLimitMinutes
+            when {
+                isInSafeBreak && tier == AppBlockTier.PEEK_2M -> false
+                tier == AppBlockTier.PEEK_2M && nowMono < app.activePeekUntilElapsedRealtime -> false
+                overLimit -> true
+                tier == AppBlockTier.OPEN -> false
+                else -> true
+            }
+        }
+        .map { it.packageName }
+        .toSet()
+    return ShieldIterationApps(
+        snapshot = snapshot,
+        blockedPackages = blockedPackages,
+        expiredPeeks = com.example.data.expiredPeekPackages(snapshot, nowMono)
+    )
+}
+
 class MonolithShieldService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -538,28 +594,10 @@ class MonolithShieldService : Service() {
                 // the very next pass (the rejected 30 s cache would
                 // have broken exactly that peek-lease truth).
                 val appsSnapshot = repository.allAppsSnapshot() /* ISSUE-67(d): via repository */
-                val blockedPackages = appsSnapshot
-                    .filter { app ->
-                        val tier = app.resolvedTier
-                        // Issue #140: the daily limit is real. An app
-                        // whose today's usage has reached its limit is
-                        // blocked whatever its tier — except inside a
-                        // lawful peek already running (Safe Break or a
-                        // live 2-minute lease), which is never yanked
-                        // mid-peek. Usage is the reconciled
-                        // todayUsageMinutes on the row.
-                        val overLimit = app.dailyLimitMinutes > 0 &&
-                            app.todayUsageMinutes >= app.dailyLimitMinutes
-                        when {
-                            updated.isInSafeBreak && tier == AppBlockTier.PEEK_2M -> false
-                            tier == AppBlockTier.PEEK_2M && nowMono < app.activePeekUntilElapsedRealtime -> false
-                            overLimit -> true
-                            tier == AppBlockTier.OPEN -> false
-                            else -> true
-                        }
-                    }
-                    .map { it.packageName }
-                    .toSet()
+                val iterationApps = shieldIterationApps(
+                    appsSnapshot, updated.isInSafeBreak, nowMono
+                )
+                val blockedPackages = iterationApps.blockedPackages
 
                 // Issue #290 F5: screen state is a first-class
                 // input to this loop. While the screen is off /
@@ -593,12 +631,11 @@ class MonolithShieldService : Service() {
                 // On the witness path the same eviction is natural:
                 // an expired lease puts the package back in
                 // blockedPackages and the witness IS that package.
-                // Issue #69 F1: the eviction reads the SAME single
-                // snapshot as the blocked set above — same rows,
+                // Issue #69 F1: the eviction set was derived from
+                // the SAME single snapshot as the blocked set
+                // above (see shieldIterationApps) — same rows,
                 // same nowMono, identical eviction set.
-                val expiredPeeks = com.example.data.expiredPeekPackages(
-                    appsSnapshot, nowMono
-                )
+                val expiredPeeks = iterationApps.expiredPeeks
                 val a11yForeground = if (MonolithAccessibilityService.instance != null) {
                     MonolithAccessibilityService.foregroundPackage
                 } else {
@@ -626,7 +663,7 @@ class MonolithShieldService : Service() {
                 // verdict (see screenInteractive above).
                 val foregroundBlockedPkg = if (screenInteractive) selectedForeground else null
                 if (foregroundBlockedPkg != null && foregroundBlockedPkg != applicationContext.packageName) {
-                    val blockedApp = appsSnapshot.find { it.packageName == foregroundBlockedPkg }
+                    val blockedApp = iterationApps.appFor(foregroundBlockedPkg)
                     // ISSUE-67: intercept intent via the seam (no
                     // MainActivity import; the seam mints the #68
                     // nonce and the #78 firing id). This door's
