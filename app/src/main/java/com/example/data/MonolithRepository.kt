@@ -174,6 +174,13 @@ class MonolithRepository(
         const val SEAL_MARKER_SESSION_KEY = "sealed_session_id"
         const val SEAL_MARKER_WALL_KEY = "sealed_wall_ms"
 
+        /** Issue #48: EVERY sealed session's id, as a string set.
+         *  The single int above is one slot — sealing a second
+         *  session used to erase the first session's only on-disk
+         *  proof. The int stays as the latest-seal witness (ESR-02,
+         *  older readers); this set is the complete record. */
+        const val SEAL_MARKER_SESSIONS_KEY = "sealed_session_ids"
+
         /** The prune note's prefs home (Ordner lane, Mikro M5): a
          *  record of what the catalog reconcile removed, kept until
          *  Shield has shown it once. Prefs, not Room — announcing a
@@ -199,6 +206,20 @@ class MonolithRepository(
     fun sealedSessionIdFromMarker(): Int =
         context.getSharedPreferences(SEAL_PREFS_NAME, Context.MODE_PRIVATE)
             .getInt(SEAL_MARKER_SESSION_KEY, -1)
+
+    /** Every session the seal marker testifies for (issue #48):
+     *  the persisted id set, unioned with the legacy single-slot
+     *  int, so a seal landed by an older build — which wrote only
+     *  the int — still testifies. */
+    fun sealedSessionIdsFromMarker(): Set<Int> {
+        val prefs = context.getSharedPreferences(SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+        val fromSet = prefs.getStringSet(SEAL_MARKER_SESSIONS_KEY, emptySet())
+            .orEmpty()
+            .mapNotNull { it.toIntOrNull() }
+            .toSet()
+        val legacy = prefs.getInt(SEAL_MARKER_SESSION_KEY, -1)
+        return if (legacy >= 0) fromSet + legacy else fromSet
+    }
 
     suspend fun ensureSeededAndSyncPackages() = withContext(Dispatchers.IO) {
         seedMutex.withLock {
@@ -1270,6 +1291,21 @@ class MonolithRepository(
         if (anchorEndMono <= 0L) return 0
         val remainingMs = (anchorEndMono + PEEK_COOLDOWN_MILLIS - nowMono).coerceAtMost(PEEK_COOLDOWN_MILLIS)
         return if (remainingMs > 0L) (remainingMs / 1000L).toInt() else 0
+    }
+
+    /**
+     * Issue #55: the cooldown's absolute deadline in the SAME
+     * monotonic domain the lease machinery uses
+     * (`SystemClock.elapsedRealtime()`), or 0 when no cooldown is
+     * armed. The airlock overlay derives its remaining time from
+     * this instant with ceiling math — never from a locally
+     * reconstructed wall-clock deadline, which could unlock the
+     * peek before this repository would grant it.
+     */
+    fun getPeekCooldownDeadlineMono(app: BlockedAppEntity): Long {
+        val anchorEndMono = max(app.lastPeekEndElapsedRealtime, app.activePeekUntilElapsedRealtime)
+        if (anchorEndMono <= 0L) return 0L
+        return anchorEndMono + PEEK_COOLDOWN_MILLIS
     }
 
     suspend fun getPeekCooldownRemainingSeconds(packageName: String): Int {

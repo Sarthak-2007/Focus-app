@@ -30,6 +30,12 @@ import org.robolectric.shadows.ShadowLooper
  * sheet and the sled present under its tag; stored ON → no OFF
  * anywhere and the sled still present.
  *
+ * The social-sites row, which joined the sheet after this header
+ * was written, contributes no "OFF" text node either: with a null
+ * snapshot its board word is null, and its sled is a canvas view
+ * in chrome mode that draws no text — the count still isolates
+ * the sniper sled's margin word alone.
+ *
  * The drive half of the standard (throwing the sled changes the
  * row, not a flow) is covered where the wiring lives:
  * ShortsSniperTruthTest.viewModel_printIsTheStore_toggleWritesTheStore
@@ -63,7 +69,11 @@ class ShortsToggleRenderTest {
                     onDismiss = {},
                     onFixClick = {},
                     onToggleSound = {},
-                    onToggleShortsReelsSniper = {}
+                    onToggleShortsReelsSniper = {},
+                    // Wave-2 premise: social pair is scaffolding here —
+                    // `true` is the persisted default; the toggle is not under test in this file.
+                    socialSitesEnabled = true,
+                    onToggleSocialSites = {}
                 )
             }
         }
