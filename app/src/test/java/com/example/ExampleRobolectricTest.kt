@@ -206,16 +206,10 @@ class ExampleRobolectricTest {
         assertTrue("Dialing < 10m should activate Stopwatch Mode", stopwatchSession.isStopwatchMode)
         assertEquals(2, stopwatchSession.totalStudyBlocks)
 
-        // Save a silent notification to the digest
-        val initialCount = db.monolithDao().getCapturedNotificationsFlow().first().size
-        repository.saveCapturedNotification(
-            packageName = "com.whatsapp",
-            appName = "WhatsApp",
-            senderTitle = "Study Group",
-            messageBody = "Meeting at library 4pm"
-        )
-        val notifications = db.monolithDao().getCapturedNotificationsFlow().first()
-        assertEquals(initialCount + 1, notifications.size)
+        // Issue #100 (storage CUT): there is no digest and no
+        // save-a-notification API to exercise here anymore — held
+        // means suppressed, and suppression is covered end-to-end
+        // by NotificationListenerCaptureTest.
 
         assertEquals(6, CurioCatalog.artifacts.size)
     }

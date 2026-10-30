@@ -14,7 +14,6 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FocusProfileEntity::class,
         FocusSessionEntity::class,
         InterceptLogEntity::class,
-        CapturedNotificationEntity::class,
         FocusTaskEntity::class,
         BlockedSiteEntity::class,
         GuardSettingsEntity::class,
@@ -22,7 +21,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         EmergencyBreakSpendEntity::class,
         DayNoteEntity::class
     ],
-    version = 14,
+    version = 15,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -232,6 +231,20 @@ abstract class MonolithDatabase : RoomDatabase() {
          * receipt prints their stored total and omits the split,
          * the same omission law heldAppsAtSeal has always obeyed.
          */
+        /**
+         * ISSUE #100 (14→15): notification-content storage is CUT
+         * (Sarthak's ruling, Oct 30). The captured_notifications
+         * table is DROPPED — every stored title/body copy is erased
+         * with it, by design: held now means suppressed, never
+         * transcribed, and no digest exists to read the rows back.
+         * Schema only besides the drop; zero other writes.
+         */
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS `captured_notifications`")
+            }
+        }
+
         val MIGRATION_13_14 = object : Migration(13, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE focus_sessions ADD COLUMN heldShutAtSeal INTEGER NOT NULL DEFAULT -1")
@@ -318,7 +331,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance

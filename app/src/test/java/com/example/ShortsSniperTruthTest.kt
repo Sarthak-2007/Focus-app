@@ -194,7 +194,7 @@ class ShortsSniperTruthTest {
     }
 
     @Test
-    fun v7EntitySchema_fullChain_roomValidatesAtV14_shortsDefaultsTrue_thenRoundTrips() {
+    fun v7EntitySchema_fullChain_roomValidatesAtV15_shortsDefaultsTrue_thenRoundTrips() {
         createV7EntityFile()
         val room = Room.databaseBuilder(context, MonolithDatabase::class.java, dbName)
             .addMigrations(
@@ -203,14 +203,14 @@ class ShortsSniperTruthTest {
                 MonolithDatabase.MIGRATION_9_10,
                 MonolithDatabase.MIGRATION_10_11,
                 MonolithDatabase.MIGRATION_11_12,
-                MonolithDatabase.MIGRATION_12_13, MonolithDatabase.MIGRATION_13_14
+                MonolithDatabase.MIGRATION_12_13, MonolithDatabase.MIGRATION_13_14, MonolithDatabase.MIGRATION_14_15
             )
             .build()
         runBlocking {
             val dao = room.monolithDao()
             // The read forces the open: Room has migrated
-            // 7→8→9→10→11→12→13→14 AND validated the result against
-            // every v14 entity.
+            // 7→8→9→10→11→12→13→14→15 AND validated the result against
+            // every v15 entity.
             val settings = dao.getGuardSettingsSnapshot()
             assertNotNull(settings)
             assertTrue(settings!!.shortsReelsSniperEnabled)

@@ -627,17 +627,6 @@ data class InterceptLogEntity(
     val triggerReason: String = "Habit"
 )
 
-@Entity(tableName = "captured_notifications")
-data class CapturedNotificationEntity(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val timestampMillis: Long = System.currentTimeMillis(),
-    val packageName: String,
-    val appName: String,
-    val senderTitle: String,
-    val messageBody: String,
-    val isRead: Boolean = false
-)
-
 data class DailyFocusStat(
     val dayLabel: String,
     val dateIso: String,

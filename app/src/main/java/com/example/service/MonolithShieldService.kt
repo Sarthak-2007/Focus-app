@@ -414,8 +414,11 @@ class MonolithShieldService : Service() {
                 // (captured) notification count — the same count the
                 // Deck's HELD chip prints. If that read ever fails,
                 // fall back to this session's urges stopped.
+                // Issue #100 (storage CUT): the held count is the
+                // listener's in-memory, session-scoped suppression
+                // counter — there is no captured table to count.
                 val heldCount = runCatching {
-                    dao.getCapturedNotificationsSnapshot().size
+                    HeldSuppressionCounter.countFor(updated.id)
                 }.getOrNull()
                 val badgeNumber = heldCount ?: updated.phantomReachesBlocked
                 val bigText = "${updated.intention} • $timeLeftLabel • " +

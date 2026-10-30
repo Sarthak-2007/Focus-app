@@ -2,15 +2,16 @@ package com.example
 
 import android.app.Notification
 import android.content.Context
+import android.os.Bundle
 import android.os.Process
 import android.os.SystemClock
-import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.AppBlockTier
 import com.example.data.BlockedAppEntity
 import com.example.data.FocusSessionEntity
 import com.example.data.MonolithDatabase
+import com.example.service.HeldSuppressionCounter
 import com.example.service.MonolithNotificationListener
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -23,14 +24,16 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Issue #45 (C5), end-to-end through the real listener and the
- * real Room database:
- * - an unchanged update of a held notification inserts nothing,
- * - a changed update replaces the held row (exactly one copy,
- *   current content),
- * - a removal for our own listener cancel keeps the held copy,
- * - a real removal (the sender recalled it) deletes the held row
- *   so the message cannot resurrect in the digest.
+ * Issue #100 (notification-content storage CUT), end-to-end through
+ * the real listener and the real Room database:
+ * - a blocked app's notification during a session is SUPPRESSED —
+ *   the only trace is the in-memory, session-scoped suppression
+ *   counter; no content is stored anywhere (there is no captured
+ *   table left to assert against — that absence is the cure),
+ * - a notification whose body lives OUTSIDE EXTRA_TEXT (big-text)
+ *   is suppressed too (finding 4),
+ * - a one-time code is never suppressed (issue #120),
+ * - the counter is session-scoped: another session id reads 0.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -41,34 +44,45 @@ class NotificationListenerCaptureTest {
 
     private val dao get() = MonolithDatabase.getInstance(context).monolithDao()
 
-    private fun sbn(title: String, text: String, postTime: Long): StatusBarNotification {
-        val notification = Notification.Builder(context, "c5")
+    private fun sbn(
+        title: String,
+        text: String?,
+        postTime: Long,
+        bigText: String? = null,
+        pkg: String = "com.example.chat"
+    ): StatusBarNotification {
+        val builder = Notification.Builder(context, "c5")
             .setContentTitle(title)
-            .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .build()
+        if (text != null) builder.setContentText(text)
+        val notification = builder.build()
+        if (bigText != null) {
+            val extras = Bundle()
+            extras.putCharSequence(Notification.EXTRA_TITLE, title)
+            extras.putCharSequence(Notification.EXTRA_BIG_TEXT, bigText)
+            notification.extras.putAll(extras)
+        }
         return StatusBarNotification(
-            "com.example.chat", "com.example.chat", 7, null,
+            pkg, pkg, 7, null,
             0, 0, 0, notification, Process.myUserHandle(), postTime
         )
     }
 
-    private suspend fun awaitRows(expected: (List<com.example.data.CapturedNotificationEntity>) -> Boolean) =
-        run {
-            var rows = dao.getCapturedNotificationsSnapshot()
-            var waitedMs = 0L
-            while (!expected(rows) && waitedMs < 5_000L) {
-                delay(100L)
-                waitedMs += 100L
-                rows = dao.getCapturedNotificationsSnapshot()
-            }
-            rows
+    private suspend fun awaitCount(sessionId: Int, expected: Int): Int {
+        var count = HeldSuppressionCounter.countFor(sessionId)
+        var waitedMs = 0L
+        while (count < expected && waitedMs < 5_000L) {
+            delay(100L)
+            waitedMs += 100L
+            count = HeldSuppressionCounter.countFor(sessionId)
         }
+        return count
+    }
 
-    /** Active session + a LOCKED chat app, then a fresh listener. */
-    private suspend fun armedListener(): MonolithNotificationListener {
-        dao.clearAllCapturedNotifications()
-        dao.insertSession(
+    /** Active session + a LOCKED chat app, then a fresh listener.
+     *  Returns the listener and the session id. */
+    private suspend fun armedListener(): Pair<MonolithNotificationListener, Int> {
+        val sessionId = dao.insertSession(
             FocusSessionEntity(
                 intention = "C5 listener test",
                 profileName = "C5",
@@ -79,7 +93,7 @@ class NotificationListenerCaptureTest {
                 isActive = true,
                 completedSuccessfully = false
             )
-        )
+        ).toInt()
         dao.insertApp(
             BlockedAppEntity(
                 packageName = "com.example.chat",
@@ -89,66 +103,49 @@ class NotificationListenerCaptureTest {
                 blockTier = AppBlockTier.LOCKED.name
             )
         )
-        return Robolectric.buildService(MonolithNotificationListener::class.java).create().get()
+        val listener = Robolectric.buildService(MonolithNotificationListener::class.java).create().get()
+        return listener to sessionId
     }
 
     @Test
-    fun unchangedUpdateInsertsNothingAndChangedUpdateReplaces() = runBlocking {
-        val listener = armedListener()
+    fun blockedNotificationIsSuppressedAndCounted_notStored() = runBlocking {
+        val (listener, sessionId) = armedListener()
         val postTime = System.currentTimeMillis()
 
         listener.onNotificationPosted(sbn("Mum", "hi", postTime))
-        var rows = awaitRows { it.isNotEmpty() }
-        assertTrue("the capture never landed", rows.isNotEmpty())
-        assertEquals(1, rows.size)
-        // Let the dedupe tracker settle (it records just after the
-        // insert lands) before replaying the update.
-        delay(300L)
-
-        // Identical update: no new row.
-        listener.onNotificationPosted(sbn("Mum", "hi", postTime))
-        delay(700L)
-        rows = dao.getCapturedNotificationsSnapshot()
-        assertEquals("an unchanged update must not duplicate the held copy", 1, rows.size)
-
-        // Changed content under the same key: the held row is
-        // replaced — still exactly one row, with the new body and
-        // the original postTime as its timestamp.
-        listener.onNotificationPosted(sbn("Mum", "edited", postTime))
-        rows = awaitRows { it.any { row -> row.messageBody == "edited" } }
-        assertEquals(1, rows.size)
-        assertEquals("edited", rows.single().messageBody)
-        assertEquals(postTime, rows.single().timestampMillis)
-    }
-
-    @Test
-    fun removalDeletesHeldCopyButOurOwnCancelDoesNot() = runBlocking {
-        val listener = armedListener()
-        val postTime = System.currentTimeMillis()
-        val posted = sbn("Mum", "hi", postTime)
-
-        listener.onNotificationPosted(posted)
-        val rows = awaitRows { it.isNotEmpty() }
-        assertTrue("the capture never landed", rows.isNotEmpty())
-        delay(300L)
-
-        // The listener's own suppression cancel echoes back as a
-        // removal — the held copy must survive it.
-        listener.onNotificationRemoved(
-            posted, null, NotificationListenerService.REASON_LISTENER_CANCEL
-        )
-        delay(700L)
         assertEquals(
-            "our own cancel must not delete the held copy",
-            1, dao.getCapturedNotificationsSnapshot().size
+            "a held notification must be counted as suppressed",
+            1, awaitCount(sessionId, 1)
         )
+        // Session scope (finding 3's replacement): any other
+        // session reads zero — the count is not a global pile.
+        assertEquals(0, HeldSuppressionCounter.countFor(sessionId + 999))
+    }
 
-        // A real removal (sender/app cancelled it): the held copy
-        // is deleted, so the message cannot resurrect in the digest.
-        listener.onNotificationRemoved(
-            posted, null, NotificationListenerService.REASON_CANCEL
+    @Test
+    fun bodyOutsideExtraTextIsSuppressedToo() = runBlocking {
+        val (listener, sessionId) = armedListener()
+        val postTime = System.currentTimeMillis()
+
+        // No EXTRA_TEXT at all — the body lives in EXTRA_BIG_TEXT.
+        listener.onNotificationPosted(sbn("Mum", null, postTime, bigText = "long message body"))
+        assertEquals(
+            "a big-text-only notification must not walk through",
+            1, awaitCount(sessionId, 1)
         )
-        val after = awaitRows { it.isEmpty() }
-        assertTrue("a recalled message must leave the digest", after.isEmpty())
+    }
+
+    @Test
+    fun oneTimeCodeIsNeverSuppressed() = runBlocking {
+        val (listener, sessionId) = armedListener()
+        val postTime = System.currentTimeMillis()
+
+        listener.onNotificationPosted(sbn("Bank", "Your OTP is 123456", postTime))
+        delay(900L)
+        assertEquals(
+            "a one-time code keeps its shade entry — never suppressed",
+            0, HeldSuppressionCounter.countFor(sessionId)
+        )
+        assertTrue(true)
     }
 }

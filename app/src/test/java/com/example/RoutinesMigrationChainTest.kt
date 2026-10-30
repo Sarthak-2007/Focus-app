@@ -332,15 +332,15 @@ class RoutinesMigrationChainTest {
             .addMigrations(
                 MonolithDatabase.MIGRATION_7_8, MonolithDatabase.MIGRATION_8_9,
                 MonolithDatabase.MIGRATION_9_10, MonolithDatabase.MIGRATION_10_11,
-                MonolithDatabase.MIGRATION_11_12, MonolithDatabase.MIGRATION_12_13, MonolithDatabase.MIGRATION_13_14
+                MonolithDatabase.MIGRATION_11_12, MonolithDatabase.MIGRATION_12_13, MonolithDatabase.MIGRATION_13_14, MonolithDatabase.MIGRATION_14_15
             )
             .build()
 
         runBlocking {
             val dao = room.monolithDao()
             // This read forces the open: Room has now migrated
-            // 7→8→9→10→11→12→13→14 AND validated the resulting schema
-            // against every v14 entity, day_notes included.
+            // 7→8→9→10→11→12→13→14→15 AND validated the resulting schema
+            // against every v15 entity, day_notes included.
             assertTrue(dao.getAllDayNotesSnapshot().isEmpty())
             dao.insertDayNotes(listOf(DayNoteEntity("2026-10-29", "REST")))
             assertEquals(
@@ -367,12 +367,15 @@ class RoutinesMigrationChainTest {
             tables.containsAll(
                 setOf(
                     "blocked_apps", "focus_profiles", "focus_sessions", "intercept_logs",
-                    "captured_notifications", "focus_tasks", "blocked_sites", "guard_settings",
+                    "focus_tasks", "blocked_sites", "guard_settings",
                     "routines", "emergency_break_spends", "day_notes"
                 )
             )
         )
         assertFalse(tables.contains("routine_attendance"))
+        // Issue #100 (14→15): the captured-content table is GONE —
+        // the storage cut drops it and every stored copy with it.
+        assertFalse(tables.contains("captured_notifications"))
 
         // The struck predicate exists NOWHERE — every table scanned.
         for (table in tables) {
