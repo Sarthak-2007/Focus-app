@@ -381,7 +381,12 @@ private fun LauncherHome(
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 17.sp,
                 color = NightColorPrimary,
-                textAlign = TextAlign.Center
+                textAlign = TextAlign.Center,
+                // Issue #124: bounded like the airlock line — the
+                // block screen is a temptation surface, and a
+                // legacy over-long intention must not flood it.
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
         }
         if (endsAtMs != null) {
