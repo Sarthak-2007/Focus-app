@@ -196,27 +196,80 @@ data class FocusTaskEntity(
             }
         }
 
+        /**
+         * SPLIT's steps (issue #106, finding 5). The old generator
+         * never read [title] at all: it switched on category alone,
+         * and every task the composer creates is category "Study",
+         * so every task — "Revise History dates", "Learn French
+         * verbs" — was stamped with the same three problem-set steps
+         * ("Sketch diagram & list known variables" …) and presented
+         * as that task's own breakdown. Now the task's OWN words
+         * decide, in this order:
+         *
+         * 1. A title that already lists its parts ("Read Ch.4; make
+         *    notes; self-test") is split on its own separators —
+         *    those parts ARE the steps, verbatim.
+         * 2. A title/category that names a kind of work (code,
+         *    writing, exam, a problem set, language drill, reading /
+         *    revision) gets the method steps for THAT kind — the
+         *    problem-set triple survives only where the task is
+         *    actually problem work, which is the one place it was
+         *    ever a deliberate template.
+         * 3. Anything else gets three phases of the task itself,
+         *    named with its own title — begin it, finish it, check
+         *    it — never a borrowed subject's steps.
+         */
         fun defaultSubStepsForCategory(title: String, category: String): List<TaskSubStep> {
-            return when (category.lowercase(java.util.Locale.ROOT)) {
-                "code" -> listOf(
+            val cleanTitle = title.trim()
+            val listedParts = cleanTitle
+                .split(';', '•', '|')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+            if (listedParts.size >= 2) {
+                return listedParts.take(5).mapIndexed { idx, part ->
+                    TaskSubStep(idx, part, false)
+                }
+            }
+            val words = cleanTitle.lowercase(java.util.Locale.ROOT)
+            fun mentions(vararg needles: String) = needles.any { it in words }
+            return when {
+                category.lowercase(java.util.Locale.ROOT) == "code" ||
+                    mentions("code", "coding", "debug", "program", "algorithm") -> listOf(
                     TaskSubStep(0, "Trace base cases & data invariants", false),
                     TaskSubStep(1, "Implement core algorithm logic", false),
                     TaskSubStep(2, "Verify edge cases & complexity", false)
                 )
-                "writing" -> listOf(
+                category.lowercase(java.util.Locale.ROOT) == "writing" ||
+                    mentions("write", "essay", "draft", "report") -> listOf(
                     TaskSubStep(0, "Draft 3-bullet structural outline", false),
                     TaskSubStep(1, "Write core synthesis section", false),
                     TaskSubStep(2, "Tighten key takeaways & citations", false)
                 )
-                "exam" -> listOf(
+                category.lowercase(java.util.Locale.ROOT) == "exam" ||
+                    mentions("exam", "mock test", "quiz") -> listOf(
                     TaskSubStep(0, "First pass without reference notes", false),
                     TaskSubStep(1, "Flag & drill missed concepts", false),
                     TaskSubStep(2, "Final rapid recall check", false)
                 )
-                else -> listOf(
+                mentions("problem", "equation", "numerical", "diagram", "units") -> listOf(
                     TaskSubStep(0, "Sketch diagram & list known variables", false),
                     TaskSubStep(1, "Solve core problem set step-by-step", false),
                     TaskSubStep(2, "Check units & boundary conditions", false)
+                )
+                mentions("verb", "vocab", "grammar", "spelling", "french", "spanish", "german", "language") -> listOf(
+                    TaskSubStep(0, "Go through the list once, saying each item aloud", false),
+                    TaskSubStep(1, "Drill only the items you missed", false),
+                    TaskSubStep(2, "Final recall pass from memory, no notes", false)
+                )
+                mentions("revise", "revision", "read", "learn", "memori", "chapter", "notes", "history", "dates", "theory", "recall") -> listOf(
+                    TaskSubStep(0, "First pass through the material, marking what is unclear", false),
+                    TaskSubStep(1, "Second pass on the marked parts only", false),
+                    TaskSubStep(2, "Close the material and recall the key points from memory", false)
+                )
+                else -> listOf(
+                    TaskSubStep(0, "Begin: $cleanTitle", false),
+                    TaskSubStep(1, "Continue and complete: $cleanTitle", false),
+                    TaskSubStep(2, "Review what you did for: $cleanTitle", false)
                 )
             }
         }

@@ -1013,17 +1013,35 @@ class MonolithRepository(
             if (!seedPrefs.getBoolean(SEED_TASKS_KEY, false)) {
                 seedPrefs.edit().putBoolean(SEED_TASKS_KEY, true).apply()
             }
-            // Deduplicate any duplicate tasks or sessions created by prior race conditions.
+            // Deduplicate ONLY true duplicates created by a prior
+            // double-insert race (issue #106, finding 1).
             // PERMANENCE GUARD: a COMPLETED task is a stored record (the
             // Drawer) — repeat-titled completions are the normal shape of
             // a year, and this pass must never delete one. Stored rows are
             // skipped entirely: not deleted, and not registered as a
             // dedup key against anything.
-            val seenTaskTitles = mutableSetOf<String>()
+            // The old key was title+status alone, so two DIFFERENT user
+            // tasks that happen to share a title ("Revision", "Read
+            // Chapter 4" for two subjects — both QUEUED) silently lost
+            // the later one at every launch, with no undo. A title is
+            // not an identity. A row is only a true duplicate when
+            // EVERY field that could distinguish two tasks matches an
+            // earlier row — title, status, category, sub-steps, estimate,
+            // seconds spent, queue order and completion stamps — i.e.
+            // the same insertion written twice, never two tasks the man
+            // wrote. Anything short of that is kept, both of them.
+            val seenExactTasks = mutableSetOf<String>()
             for (task in existingTasks.sortedBy { it.id }) {
                 if (task.resolvedStatus == TaskQueueStatus.COMPLETED) continue
-                val key = "${task.title.lowercase(java.util.Locale.ROOT)}|${task.status}"
-                if (!seenTaskTitles.add(key)) {
+                val key = listOf(
+                    task.title.lowercase(java.util.Locale.ROOT), task.status, task.categoryTag,
+                    task.notesOrSubsteps, task.estimatedMinutes.toString(),
+                    task.actualSecondsSpent.toString(), task.queueOrder.toString(),
+                    task.completedAtMillis.toString(),
+                    task.completedInSessionId.toString(),
+                    task.startedAtSessionElapsedSec?.toString() ?: "null"
+                ).joinToString("|")
+                if (!seenExactTasks.add(key)) {
                     dao.deleteTaskById(task.id)
                 }
             }
@@ -2129,6 +2147,9 @@ class MonolithRepository(
                         }
                     )
                 )
+                // #152 residue: witness the end zone at this
+                // ending write (see captureEndZone).
+                captureEndZone(session.endWallMillis, session.windowEndMillis)
             }
             return@withContext null
         }
@@ -2138,9 +2159,18 @@ class MonolithRepository(
         val remainderSec = ((session.windowEndMillis -
             maxOf(session.windowStartMillis, session.startWallTimeMillis)) / 1000L).coerceAtLeast(0L)
         val yardstickSec = if (lateFire) remainderSec else windowSec
+        // Issue #137, F1c/F5: a window on an excused date (its
+        // filing date carries ILL / REST / FAMILY) can never be
+        // stamped MISSED — the sub-floor arm books UNKNOWN, the
+        // existing "prints nothing, books nothing" judgement, so
+        // the durable row never contradicts the declared word.
+        // Attendance he actually gave still judges ATTENDED /
+        // PARTIAL on its own evidence.
+        val excused = session.windowStartMillis > 0L && isExcusedFilingDate(session.windowStartMillis)
         val outcome = when {
             attended < ATTENDANCE_FLOOR_SECONDS ->
-                if (lateFire) WindowJudgement.LATE_FIRE else WindowJudgement.MISSED
+                if (excused) WindowJudgement.UNKNOWN
+                else if (lateFire) WindowJudgement.LATE_FIRE else WindowJudgement.MISSED
             attended >= yardstickSec - ATTENDANCE_FLOOR_SECONDS -> WindowJudgement.ATTENDED
             else -> WindowJudgement.PARTIAL
         }
@@ -2164,7 +2194,17 @@ class MonolithRepository(
                 }
             )
         )
+        // #152 residue: witness the end zone at this ending write.
+        captureEndZone(session.endWallMillis, nowMillis)
         outcome.name
+    }
+
+    /** Issue #137, F1: true when the filing date of [millis]
+     *  (DrawerDay's 03:30 rule — the date the Drawer files words
+     *  under) carries an excuse word in either word store. */
+    suspend fun isExcusedFilingDate(millis: Long): Boolean {
+        val iso = DrawerDay.dateIso(DrawerDay.filingDate(millis))
+        return DayWordStore.isExcuse(allDayWords()[iso])
     }
 
     /**
@@ -2186,6 +2226,8 @@ class MonolithRepository(
                     }
                 )
             )
+            // #152 residue: witness the end zone at this ending write.
+            captureEndZone(session.endWallMillis, session.windowEndMillis)
         }
     }
 
@@ -3350,7 +3392,8 @@ class MonolithRepository(
             heldPeekAtSeal = pending.heldPeekAtSeal,
             armZoneId = armZoneStore.zoneFor(pending.armWallMs),
             completedTasks = pending.completedTasks,
-            safeBreakSeconds = pending.safeBreakSeconds
+            safeBreakSeconds = pending.safeBreakSeconds,
+            endZoneId = armZoneStore.endZoneFor(pending.endedAtWallMs)
         )
     }
 
@@ -3483,7 +3526,8 @@ class MonolithRepository(
             heldPeekAtSeal = pending.heldPeekAtSeal,
             armZoneId = armZoneStore.zoneFor(pending.armWallMs),
             completedTasks = pending.completedTasks,
-            safeBreakSeconds = pending.safeBreakSeconds
+            safeBreakSeconds = pending.safeBreakSeconds,
+            endZoneId = armZoneStore.endZoneFor(pending.endedAtWallMs)
         )
     }
 
@@ -3950,6 +3994,9 @@ class MonolithRepository(
                     }
                 )
                 dao.updateSession(capped)
+                // #152 residue: witness the end zone at this
+                // ending write (keyed by the stamped end itself).
+                captureEndZone(session.endWallMillis, capped.endWallMillis)
                 return capped
             }
             val updated = session.copy(
@@ -4199,6 +4246,9 @@ class MonolithRepository(
             }
         )
         dao.updateSession(updated)
+        // #152 residue: witness the end zone at this ending write
+        // (a no-op unless this tick first-stamped the end).
+        captureEndZone(session.endWallMillis, updated.endWallMillis)
         // #129 F3: book the exposure names at the stamping write
         // (first stamp only — a re-tick of an ended row must not
         // book them twice). The rows ride the intercept log under
@@ -4469,6 +4519,13 @@ class MonolithRepository(
             // Issue #287 F5: the routine-break door stamps the
             // culprit too — same ending-write law as the manual door.
             val (causePackage, causeKind) = failureCauseFor(active, "EMERGENCY_VALVE")
+            // #152 residue: the stamped end is computed once so
+            // the end-zone witness keys on the exact same instant.
+            val endStamp = if (active.endWallMillis == 0L) {
+                System.currentTimeMillis()
+            } else {
+                active.endWallMillis
+            }
             dao.updateSession(
                 active.copy(
                     elapsedSeconds = active.elapsedSeconds,
@@ -4480,13 +4537,10 @@ class MonolithRepository(
                     failureCauseKind = causeKind,
                     // RC-01: an ending write (unpublishable, but
                     // the row's end is the row's end).
-                    endWallMillis = if (active.endWallMillis == 0L) {
-                        System.currentTimeMillis()
-                    } else {
-                        active.endWallMillis
-                    }
+                    endWallMillis = endStamp
                 )
             )
+            captureEndZone(active.endWallMillis, endStamp)
             return
         }
         val routine = dao.getRoutineById(active.routineId)
@@ -4691,6 +4745,9 @@ class MonolithRepository(
                 )
             }
         }
+        // #152 residue: witness the end zone at this ending write
+        // (keyed by the disarmed row's stamped end itself).
+        captureEndZone(active.endWallMillis, disarmed.endWallMillis)
     }
 
     /**
@@ -4812,24 +4869,31 @@ class MonolithRepository(
     ) {
         seedAccrualFromDisk(nowMono)
         val tasks = dao.getAllTasksSnapshot()
+        // ONLY an ACTIVE task accrues (issue #106, finding 4). The old
+        // QUEUED fallback crowned the queue head on the next tick —
+        // status flipped to ACTIVE and seconds started landing on it —
+        // so a task merely jotted down mid-session (kept QUEUED by
+        // addTaskToQueue's session guard) was hijacked into NOW by the
+        // ticker itself. No ACTIVE task means no task is billed:
+        // WallAccrual's null id advances the anchor without crediting,
+        // exactly as it does for a Safe Break.
         val activeTask = tasks.firstOrNull { it.resolvedStatus == TaskQueueStatus.ACTIVE }
-            ?: tasks.firstOrNull { it.resolvedStatus == TaskQueueStatus.QUEUED }
         // W3 #134: a live call pauses the task's clock exactly as
         // a Safe Break does — the anchor advances without
         // crediting, so call minutes never land in a task's
-        // stored seconds either.
+        // stored seconds either. (The QUEUED fallback an earlier
+        // main revision carried at this spot is deliberately NOT
+        // restored: it crowned the queue head ACTIVE on the next
+        // tick and billed it — issue #106, finding 4.)
         val credit = taskAccrual.observe(
             sessionId = session.id,
             accruingTaskId = if (!accrue || session.isInSafeBreak) null else activeTask?.id,
             nowMonoMillis = nowMono
         )
         persistAccrualAnchor()
-        if (activeTask != null && accrue && !session.isInSafeBreak &&
-            (credit > 0 || activeTask.resolvedStatus != TaskQueueStatus.ACTIVE)
-        ) {
+        if (activeTask != null && accrue && !session.isInSafeBreak && credit > 0) {
             dao.updateTask(
                 activeTask.copy(
-                    status = TaskQueueStatus.ACTIVE.name,
                     actualSecondsSpent = activeTask.actualSecondsSpent + credit
                 )
             )
@@ -4855,7 +4919,20 @@ class MonolithRepository(
         val existing = dao.getAllTasksSnapshot()
         val hasActive = existing.any { it.resolvedStatus == TaskQueueStatus.ACTIVE }
 
-        val shouldBeActive = promoteToActive || !hasActive
+        // Issue #106, finding 4: "no ACTIVE row exists" is NOT by
+        // itself a reason to crown the new task. While a session is
+        // running, a task typed into the composer is a jot-down for
+        // later — crowning it would move NOW onto it, push its title
+        // into the session's intention (the ViewModel's activeTask
+        // collector) and start billing session time to it. So the
+        // no-active force-promotion applies only while NO session
+        // runs: a first task added to an empty queue outside a
+        // session still becomes ACTIVE, as it always has. An
+        // explicit promoteToActive (the Airlock micro-step verb,
+        // whose whole act is "promote this to #1 now") is honoured
+        // in both worlds.
+        val sessionRunning = dao.getActiveSessionSnapshot()?.isActive == true
+        val shouldBeActive = promoteToActive || (!hasActive && !sessionRunning)
         if (shouldBeActive && hasActive) {
             existing.filter { it.resolvedStatus == TaskQueueStatus.ACTIVE }.forEach { prevActive ->
                 dao.updateTask(
@@ -4984,6 +5061,9 @@ class MonolithRepository(
             // later airlock lines claimed the session was armed
             // with, and it ran with NO seal check at all (ESR-02's
             // exact charge against this function).
+            // Issue #106, finding 2 is cured HERE, in a stronger
+            // form than the Wave-3B sealed-only refusal: no advance
+            // — sealed or not — ever rewrites the intention.
             return@withContext promoted
         }
         null
@@ -5284,7 +5364,9 @@ class MonolithRepository(
     private val dayWordStore by lazy { DayWordStore(context) }
 
     /** Issue #152: the arm-zone capture for receipts (see
-     *  ArmZoneStore). Written at the one birth funnel below. */
+     *  ArmZoneStore). Written at the one birth funnel below.
+     *  Issue #152 residue: the same store's end slot carries the
+     *  end-zone witness — see [captureEndZone]. */
     private val armZoneStore by lazy { ArmZoneStore(context) }
 
     fun dayWords(): Map<String, String> = dayWordStore.all()
@@ -5305,6 +5387,22 @@ class MonolithRepository(
      *  never be undeclared. The table row is deleted only when the
      *  prefs removal committed — if that failed, nothing about the
      *  clear is presented as done. */
+    /** Issue #152 residue: capture the zone a session is ending
+     *  in, at the ending write itself — first stamp only, in the
+     *  same act that first stamps the row's endWallMillis. Every
+     *  ending write that stamps an end instant calls this with
+     *  the row's pre-write end (0 = unstamped) and the stamped
+     *  end, so the witness can never name a zone for an end that
+     *  was stamped earlier, in another zone. The witness lives
+     *  in the SAME store as the arm witness (ArmZoneStore's end
+     *  slot, keyed by the end instant) — no new store, no schema
+     *  change. */
+    private fun captureEndZone(endBefore: Long, stampedEnd: Long) {
+        if (endBefore == 0L && stampedEnd > 0L) {
+            armZoneStore.putEnd(stampedEnd, java.time.ZoneId.systemDefault().id)
+        }
+    }
+
     suspend fun declareDayWord(dateIso: String, word: String?): Boolean {
         // Issue #152 (honest-travel-day F1): never rewrite a past
         // day across a landing. Filing dates are local, so after a
@@ -5318,14 +5416,23 @@ class MonolithRepository(
         // as declared). Same-zone changes stay free all day, and
         // words with no zone witness (declared before the witness
         // existed) are not refused on a guess.
-        if (word != null) {
-            val existing = allDayWords()[dateIso]
-            val witnessedZone = dayWordStore.declaredZone(dateIso)
-            if (existing != null && existing != word && witnessedZone != null &&
-                witnessedZone != java.time.ZoneId.systemDefault().id
-            ) {
-                return false
-            }
+        //
+        // Issue #152 residue (reopened): the refusal covers a
+        // CLEAR too. The original guard fired only when
+        // `word != null`, so a witnessed past day's word could
+        // still be DELETED across a landing — a rewrite of the
+        // past day by erasure, the same lie by the other door.
+        // Clearing a witnessed past day from a different zone is
+        // refused identically. A same-word re-declare is NOT a
+        // rewrite and stays lawful — and DayWordStore.put now
+        // keeps the original witness for it, so it cannot launder
+        // the date into the arrival zone either.
+        val existing = allDayWords()[dateIso]
+        val witnessedZone = dayWordStore.declaredZone(dateIso)
+        val crossZone = witnessedZone != null &&
+            witnessedZone != java.time.ZoneId.systemDefault().id
+        if (existing != null && crossZone && word != existing) {
+            return false
         }
         val committed = dayWordStore.put(dateIso, word)
         if (committed && word == null) {
