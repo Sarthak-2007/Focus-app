@@ -157,6 +157,13 @@ class SetupMechanismsTest {
             "WENT OUT NOT SET · CAME BACK NOT SET. · NEXT — DEVICE ADMIN.",
             chitLineFor(chit(ReturnChitState.RETURNED_UNCHANGED, WatchItemId.DEVICE_ADMIN))
         )
+        // The residual S-1: UNCHANGED with no next door must NOT
+        // claim ALL FOUR SET — the visited door itself is the
+        // one not set (the host's search excludes it).
+        assertEquals(
+            "WENT OUT NOT SET · CAME BACK NOT SET.",
+            chitLineFor(chit(ReturnChitState.RETURNED_UNCHANGED))
+        )
         assertEquals(
             "WENT OUT NOT SET · CAME BACK NOT CHECKED.",
             chitLineFor(chit(ReturnChitState.RETURNED_UNREAD, WatchItemId.DEVICE_ADMIN))

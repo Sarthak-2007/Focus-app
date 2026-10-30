@@ -269,12 +269,20 @@ fun doorsMaskAt(snapshot: WatchSnapshot?, nowMono: Long): Int {
  *  line, in the visited card only. Null for DEPARTED (nothing
  *  prints until judged) and SPENT (nothing re-prints). The
  *  NEXT suffix rides only the two states where a next step is
- *  a known fact. */
+ *  a known fact. ALL FOUR SET rides only REPAIRED with no
+ *  next door: the host's next-door search excludes the visited
+ *  door itself, so a null next door proves only the OTHER
+ *  three — for UNCHANGED the visited door is itself not set,
+ *  and the suffix would contradict the line it closes (the
+ *  residual S-1, cured here: an UNCHANGED chit with no next
+ *  door prints no suffix; its own card is the next step). */
 fun chitLineFor(chit: ReturnChit): String? {
     val dep = receptionDoorWord(chit.departurePrint)
-    val suffix = when (chit.nextDoor) {
-        null -> " · ALL FOUR SET."
-        else -> " · NEXT — ${chit.nextDoor.boardName}."
+    val next = chit.nextDoor
+    val suffix = when {
+        next != null -> " · NEXT — ${next.boardName}."
+        chit.state == ReturnChitState.RETURNED_REPAIRED -> " · ALL FOUR SET."
+        else -> ""
     }
     return when (chit.state) {
         ReturnChitState.RETURNED_REPAIRED -> "WENT OUT $dep · CAME BACK SET.$suffix"
