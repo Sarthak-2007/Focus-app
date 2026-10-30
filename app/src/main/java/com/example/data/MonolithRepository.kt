@@ -1202,6 +1202,21 @@ class MonolithRepository(
         return if (remainingMs > 0L) (remainingMs / 1000L).toInt() else 0
     }
 
+    /**
+     * Issue #55: the cooldown's absolute deadline in the SAME
+     * monotonic domain the lease machinery uses
+     * (`SystemClock.elapsedRealtime()`), or 0 when no cooldown is
+     * armed. The airlock overlay derives its remaining time from
+     * this instant with ceiling math — never from a locally
+     * reconstructed wall-clock deadline, which could unlock the
+     * peek before this repository would grant it.
+     */
+    fun getPeekCooldownDeadlineMono(app: BlockedAppEntity): Long {
+        val anchorEndMono = max(app.lastPeekEndElapsedRealtime, app.activePeekUntilElapsedRealtime)
+        if (anchorEndMono <= 0L) return 0L
+        return anchorEndMono + PEEK_COOLDOWN_MILLIS
+    }
+
     suspend fun getPeekCooldownRemainingSeconds(packageName: String): Int {
         val app = dao.getAllAppsSnapshot().firstOrNull { it.packageName == packageName } ?: return 0
         return getPeekCooldownRemainingSeconds(app)
