@@ -11,9 +11,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: android-actions/setup-android@v3
       - name: Install SDK packages
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "build-tools;35.0.0"
+        run: |
+          export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "build-tools;35.0.0" || sdkmanager "platforms;android-36" "build-tools;36.0.0" "build-tools;35.0.0"
       - name: Assemble debug APK
         run: |
           chmod +x ./gradlew
