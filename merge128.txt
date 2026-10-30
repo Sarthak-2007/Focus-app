@@ -1,0 +1,5 @@
+Auto-merging app/src/main/java/com/example/MainActivity.kt
+Auto-merging app/src/main/java/com/example/ui/MonolithViewModel.kt
+CONFLICT (content): Merge conflict in app/src/main/java/com/example/ui/MonolithViewModel.kt
+Auto-merging app/src/main/java/com/example/ui/screens/TactileDeckScreen.kt
+Automatic merge failed; fix conflicts and then commit the result.
