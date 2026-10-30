@@ -219,12 +219,16 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
 
     // The throw (Vega P2 — shipped minus its overshoot keyframe, per
     // Gust's ruling: switches in this house seat, they don't bounce).
-    // The thumb drags 1:1; a release faster than ~800 dp/s carries to
-    // the far stop, a slow release snaps to the nearest. The plain
-    // tap on a stop is untouched.
+    // The thumb drags 1:1; a release faster than ~800 dp/s carries
+    // ONE stop from where the drag began (issue #141: the far-stop
+    // throw let a 7dp scroll nudge fling LOCKED straight to OPEN —
+    // the maximum weakening from the minimum gesture); a slow
+    // release snaps to the nearest. The plain tap on a stop is
+    // untouched.
     private var touchInRocker = false
     private var dragging = false
     private var downX = 0f
+    private var downY = 0f
     private var dragStartIndex = 0f
     private var velocityTracker: VelocityTracker? = null
 
@@ -324,8 +328,11 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
         // Left margin glyph (Liv Part 3, adopted for the catalogue by
         // Gust): the tier as a shape a tired eye reads without
         // decoding the rocker — a solid brick for SHUT, the same
-        // brick hollow for PEEK, nothing for OPEN. The rocker stays
-        // the control; the margin becomes the display.
+        // brick hollow for PEEK, and for OPEN the brick hollow in
+        // the secondary tone (issue #141: OPEN used to draw nothing,
+        // so a flipped app was discoverable only by its absence —
+        // the glyph scale now fades solid -> hollow -> dim hollow,
+        // every tier has a shape).
         val glyphSize = dp(8f)
         val glyphLeft = dp(8f)
         val glyphTop = h * 0.5f - glyphSize / 2f
@@ -339,7 +346,11 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
                 paintStroke.strokeWidth = dp(1.4f)
                 canvas.drawRect(glyphLeft, glyphTop, glyphLeft + glyphSize, glyphTop + glyphSize, paintStroke)
             }
-            AppBlockTier.OPEN -> Unit
+            AppBlockTier.OPEN -> {
+                paintStroke.color = tokTextSecondary()
+                paintStroke.strokeWidth = dp(1.4f)
+                canvas.drawRect(glyphLeft, glyphTop, glyphLeft + glyphSize, glyphTop + glyphSize, paintStroke)
+            }
         }
 
         // App name: a decided app speaks bold in ink; an OPEN app is
@@ -442,6 +453,7 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
                 touchInRocker = event.x >= rLeft
                 if (touchInRocker) {
                     downX = event.x
+                    downY = event.y
                     dragStartIndex = rockerIndex
                     dragging = false
                     rockerAnimator?.cancel()
@@ -453,6 +465,22 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
             MotionEvent.ACTION_MOVE -> {
                 if (!touchInRocker) return true
                 velocityTracker?.addMovement(event)
+                // Issue #141: a gesture travelling mostly vertically is
+                // the list trying to scroll, not a throw — the rocker
+                // used to judge UP on x alone, so an unabsorbed scroll
+                // (short filtered list, edge pull) committed whatever
+                // tier the thumb happened to lift over. Vertical travel
+                // past the slop cancels the gesture exactly like the
+                // parent's ACTION_CANCEL: reseat, commit nothing.
+                val dy = kotlin.math.abs(event.y - downY)
+                if (dy > dp(24f) && dy > kotlin.math.abs(event.x - downX)) {
+                    touchInRocker = false
+                    dragging = false
+                    velocityTracker?.recycle()
+                    velocityTracker = null
+                    animateRockerTo(tierToIndex(currentTier).toFloat())
+                    return true
+                }
                 if (!dragging && kotlin.math.abs(event.x - downX) > dp(6f)) {
                     dragging = true
                 }
@@ -469,13 +497,27 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
                 if (!touchInRocker) return true
                 touchInRocker = false
                 velocityTracker?.addMovement(event)
+                // Belt-and-braces for a fast vertical flick whose MOVE
+                // never crossed the slop: vertical travel still means
+                // scroll, never a commit (issue #141).
+                if (kotlin.math.abs(event.y - downY) > dp(24f)) {
+                    dragging = false
+                    velocityTracker?.recycle()
+                    velocityTracker = null
+                    animateRockerTo(tierToIndex(currentTier).toFloat())
+                    return true
+                }
                 if (dragging) {
                     dragging = false
                     velocityTracker?.computeCurrentVelocity(1000)
                     val velocityDpPerSec = (velocityTracker?.xVelocity ?: 0f) / density
+                    // Issue #141: a flick carries ONE stop from where
+                    // the drag began — never two. LOCKED can reach
+                    // PEEK on a wild release, never OPEN.
+                    val startIdx = dragStartIndex.roundToInt().coerceIn(0, 2)
                     val target = when {
-                        velocityDpPerSec > FLICK_DP_PER_SEC -> 2
-                        velocityDpPerSec < -FLICK_DP_PER_SEC -> 0
+                        velocityDpPerSec > FLICK_DP_PER_SEC -> (startIdx + 1).coerceIn(0, 2)
+                        velocityDpPerSec < -FLICK_DP_PER_SEC -> (startIdx - 1).coerceIn(0, 2)
                         else -> rockerIndex.roundToInt().coerceIn(0, 2)
                     }
                     velocityTracker?.recycle()
@@ -507,7 +549,8 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
 
     private companion object {
         /** Vega P2's throw threshold: a release faster than this
-         *  carries the rocker to the far stop. */
+         *  carries the rocker ONE stop from the drag's start
+         *  (issue #141 — the far-stop throw is dead). */
         const val FLICK_DP_PER_SEC = 800f
     }
 }

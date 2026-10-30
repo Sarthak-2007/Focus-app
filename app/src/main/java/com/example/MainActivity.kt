@@ -241,6 +241,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val disarmChallenge by viewModel.disarmChallenge.collectAsStateWithLifecycle()
     val weeklyEmergencyTokensRemaining by viewModel.weeklyEmergencyTokensRemaining.collectAsStateWithLifecycle()
     val ratchetWarningMessage by viewModel.ratchetWarningMessage.collectAsStateWithLifecycle()
+    val tierChangeForUndo by viewModel.tierChangeForUndo.collectAsStateWithLifecycle()
 
     val sealed = activeSession?.isActive == true
     // HB-1 / HB-2 (Truth Car 2; Band's header-band audit): ONE
@@ -578,6 +579,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     loadoutCapIndex = loadoutCapIndex,
                                     isSessionActive = sealed,
                                     ratchetWarningMessage = ratchetWarningMessage,
+                                    tierChangeForUndo = tierChangeForUndo,
+                                    onUndoTierChange = viewModel::undoLastTierChange,
                                     soundEngine = viewModel.soundEngine,
                                     isDarkTheme = effectiveNight,
                                     onSearchQueryChanged = viewModel::updateSearchQuery,
