@@ -60,7 +60,13 @@ class CascadeDeckRenderTest {
             File("app/shots-redirect.txt")
         ).firstOrNull { it.isFile }
         val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        if (target != null) return@run File(target)
+        if (target != null) {
+            val dir = File(target)
+            if (dir.mkdirs() || dir.isDirectory) return@run dir
+            // Unusable redirect (e.g. the dead-lane path committed to
+            // the repo in batch 9): fall through to the portable
+            // default — see ScreenshotHarnessTest, round 3.
+        }
         // Test-floor cure: see ScreenshotHarnessTest — the studio path
         // cannot be created on CI runners; fall back to a writable
         // temp dir there instead of dying at the capture write.

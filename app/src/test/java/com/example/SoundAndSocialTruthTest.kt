@@ -35,6 +35,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowLooper
 
 /**
@@ -58,6 +59,15 @@ import org.robolectric.shadows.ShadowLooper
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
+// Test-floor cure: the PARK sleds are raw AndroidViews whose switch
+// fires only on a real MotionEvent ACTION_UP. Under Robolectric's
+// LEGACY graphics mode, Compose-test touch injection into an
+// AndroidView interop surface never delivers that event, so the two
+// rendered-toggle tests timed out (30 s awaitTrue) and their leaked
+// scopes then poisoned the next tests with
+// UncaughtExceptionsBeforeTest. NATIVE graphics renders the interop
+// view for real, which is the mode this class always needed.
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class SoundAndSocialTruthTest {
 
     @get:Rule

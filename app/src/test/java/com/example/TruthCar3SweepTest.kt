@@ -80,10 +80,14 @@ class TruthCar3SweepTest {
         // The defaults are the SEEDED stored list, his to empty —
         // they enforce only when they are in the list passed in,
         // never by substitution upstream.
+        // Test-floor cure: the seeded defaults carry "youtube.com/shorts",
+        // never bare "youtube.com" — a /watch URL matches none of them and
+        // the matcher correctly returned null. Assert the default that
+        // actually exists, against the URL shape it was seeded for.
         assertEquals(
-            "youtube.com",
+            "youtube.com/shorts",
             matchBlockedDomain(
-                "https://www.youtube.com/watch?v=abc",
+                "https://www.youtube.com/shorts/abc",
                 BlockedBrowserDomains.defaultDomains
             )
         )
@@ -252,8 +256,16 @@ class TruthCar3SweepRoboTest {
                         section = parser.name
                     "exclude" -> {
                         val s = section
-                        val domain = parser.getAttributeValue(androidNs, "domain")
-                        val path = parser.getAttributeValue(androidNs, "path")
+                        // Test-floor cure: both rules files declare these
+                        // attributes WITHOUT a namespace; the namespaced
+                        // lookup returned null for every <exclude>, the
+                        // sections map stayed empty, and the test died on
+                        // its own error(). Null-namespace first, android
+                        // namespace as fallback.
+                        val domain = parser.getAttributeValue(null, "domain")
+                            ?: parser.getAttributeValue(androidNs, "domain")
+                        val path = parser.getAttributeValue(null, "path")
+                            ?: parser.getAttributeValue(androidNs, "path")
                         if (s != null && domain != null) {
                             result.getOrPut(s) { mutableMapOf() }[domain] = path
                         }

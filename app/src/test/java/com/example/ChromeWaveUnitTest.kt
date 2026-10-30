@@ -49,7 +49,12 @@ class ChromeWaveUnitTest {
             for (stamped in listOf(false, true)) {
                 for (usage in UsageAccess.entries) {
                     for (protecting in listOf(false, true)) {
-                        val w = WatchStore.deriveWarrant(bound, stamped, usage, protecting)
+                        // Test-floor cure: deriveWarrant's readMono default
+                        // calls SystemClock.elapsedRealtime() — an android
+                        // stub that throws in a plain JUnit test. Pass the
+                        // stamp explicitly (as TruthCar3InterceptTest does);
+                        // the production default stays untouched.
+                        val w = WatchStore.deriveWarrant(bound, stamped, usage, protecting, readMono = 0L)
                         assertEquals(
                             "bound=$bound stamped=$stamped usage=$usage",
                             referenceWarrantState(bound, stamped, usage),

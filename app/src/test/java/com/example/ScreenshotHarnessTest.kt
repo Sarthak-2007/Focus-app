@@ -95,7 +95,17 @@ class ScreenshotHarnessTest {
             File("app/shots-redirect.txt")
         ).firstOrNull { it.isFile }
         val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        if (target != null) return@run File(target)
+        if (target != null) {
+            val dir = File(target)
+            if (dir.mkdirs() || dir.isDirectory) return@run dir
+            // Test-floor cure, round 3: a redirect committed to the repo
+            // (batch 9) names a dead lane's /home/hatch path. On the
+            // studio box that path is creatable and the redirect wins,
+            // exactly as the lane law intends; on a CI runner it can
+            // never exist, so an unusable redirect must fall through
+            // to the portable default instead of killing every capture
+            // with FileNotFoundException at the write.
+        }
         // Test-floor cure: the studio default below only exists on the
         // studio box; on CI runners /home/hatch cannot be created and
         // every capture died with FileNotFoundException at the write.
