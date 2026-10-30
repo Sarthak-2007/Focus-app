@@ -338,6 +338,21 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
 
     var onTierSelected: ((AppBlockTier) -> Unit)? = null
 
+    /** Issue #140: the daily-limit line printed under the name —
+     *  "USED 12 OF 20 MIN TODAY". The limit used to exist only as
+     *  an invisible database column; null hides the line (render
+     *  harnesses that carry no usage). */
+    var usageCaption: String? = null
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+
+    /** Issue #140: hold the row to step the daily limit. */
+    var onDailyLimitLongPress: (() -> Unit)? = null
+
     init {
         // Issue-60 (finding 3): clickable, labelled, stateful.
         isClickable = true
@@ -395,6 +410,18 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
     private var downY = 0f
     private var dragStartIndex = 0f
     private var velocityTracker: VelocityTracker? = null
+
+    // Issue #140: the row's hold gesture steps the daily limit.
+    // The timer dies on any real travel (a drag or a scroll), on
+    // UP and on CANCEL; once fired, the rest of the gesture is
+    // swallowed so one hold can never also commit a tier.
+    private var longPressFired = false
+    private val longPressRunnable = Runnable {
+        if (!dragging) {
+            longPressFired = true
+            onDailyLimitLongPress?.invoke()
+        }
+    }
 
     private fun tierToIndex(tier: AppBlockTier): Int = when (tier) {
         AppBlockTier.LOCKED -> 0
@@ -527,10 +554,24 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
         namePaint.textAlign = Paint.Align.LEFT
         val nameX = dp(28f)
         val nameMaxWidth = (w - dp(168f)) - nameX - dp(10f)
+        val caption = usageCaption
         canvas.drawText(
             ellipsizeToWidth(appName, namePaint, nameMaxWidth),
-            nameX, h * 0.5f + dp(5f), namePaint
+            nameX, if (caption != null) h * 0.5f - dp(1f) else h * 0.5f + dp(5f), namePaint
         )
+        // Issue #140: the daily-limit line under the name — used of
+        // allowed, today, secondary tone. A number the user can see
+        // is a number the user can hold the app to.
+        if (caption != null) {
+            val captionPaint = paintWordSub
+            captionPaint.color = tokTextSecondary()
+            captionPaint.textSize = sp(9f)
+            captionPaint.textAlign = Paint.Align.LEFT
+            canvas.drawText(
+                ellipsizeToWidth(caption, captionPaint, nameMaxWidth),
+                nameX, h * 0.5f + dp(12f), captionPaint
+            )
+        }
 
         // Right 3-Stop Sled Rocker (168dp wide x 34dp tall, 12dp radius)
         val rockerW = dp(168f)
@@ -615,6 +656,13 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
                 // included, the strongest change on the screen on the
                 // weakest gesture. A touch that starts off the rocker
                 // now does nothing, on purpose.
+                // Issue #140: every touch on the row starts the
+                // hold timer (name side included — the limit lives
+                // under the name). Travel, UP or CANCEL kills it.
+                longPressFired = false
+                removeCallbacks(longPressRunnable)
+                postDelayed(longPressRunnable, 550L)
+                downY = event.y
                 touchInRocker = event.x >= rLeft
                 if (touchInRocker) {
                     downX = event.x
@@ -628,6 +676,14 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
+                // Issue #140: real travel in any direction is not a
+                // hold; and after a fired hold the gesture is spent.
+                if (kotlin.math.abs(event.x - downX) > dp(12f) ||
+                    kotlin.math.abs(event.y - downY) > dp(12f)
+                ) {
+                    removeCallbacks(longPressRunnable)
+                }
+                if (longPressFired) return true
                 if (!touchInRocker) return true
                 velocityTracker?.addMovement(event)
                 // Issue #141: a gesture travelling mostly vertically is
@@ -658,6 +714,17 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
                 return true
             }
             MotionEvent.ACTION_UP -> {
+                removeCallbacks(longPressRunnable)
+                if (longPressFired) {
+                    // The hold already did its work; the lift commits
+                    // nothing (issue #140).
+                    longPressFired = false
+                    touchInRocker = false
+                    dragging = false
+                    velocityTracker?.recycle()
+                    velocityTracker = null
+                    return true
+                }
                 if (!touchInRocker) return true
                 touchInRocker = false
                 velocityTracker?.addMovement(event)
@@ -698,6 +765,8 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
             MotionEvent.ACTION_CANCEL -> {
                 // The list scroller took the gesture: the rocker seats
                 // back on the tier that is actually committed.
+                removeCallbacks(longPressRunnable)
+                longPressFired = false
                 if (touchInRocker) {
                     touchInRocker = false
                     dragging = false
@@ -1102,6 +1171,22 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
             MotionEvent.ACTION_DOWN -> {
                 a11yHoldActive = false
                 startHold()
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                // Issue #117 (one-hand-commute): the hold is no
+                // longer position-blind. The old handler had no MOVE
+                // branch at all, so a press that started on the valve
+                // and slid off it (pocket fabric, a steadying thumb)
+                // kept accruing toward the full 60s and could spend
+                // the week's only emergency break with the finger
+                // nowhere near the valve. Leaving the valve's bounds
+                // now ends the hold exactly as a release does.
+                if (isHolding &&
+                    (event.x < 0f || event.x > width || event.y < 0f || event.y > height)
+                ) {
+                    releaseHold()
+                }
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {

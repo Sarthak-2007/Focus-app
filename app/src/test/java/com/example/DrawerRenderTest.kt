@@ -63,13 +63,13 @@ class DrawerRenderTest {
     // into its own shots-own dir, resolved from the lane's
     // shots-redirect.txt — never the shared shots folder.
     private val shotsDir: File = run {
-        val redirect = File("/home/hatch/workspace/clone-inspect/builds/drawer/Focus-app/shots-redirect.txt")
-        val target = if (redirect.exists()) {
-            redirect.readText().trim()
-        } else {
-            "/home/hatch/workspace/clone-inspect/builds/drawer/shots-own"
-        }
-        File(target).apply { mkdirs() }
+        val redirect = listOf(File("shots-redirect.txt"), File("../shots-redirect.txt"), File("app/shots-redirect.txt")).firstOrNull { it.isFile } // issue #66 cluster-priority: was a hardcoded author-machine path
+        val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
+        // Finisher cure (issue #66): a redirect target that cannot be created on this
+        // machine falls through to the next candidate instead of poisoning every capture.
+        listOfNotNull(target, System.getenv("MONOLITH_SHOTS_DIR"), "build/outputs/drawer-shots")
+            .map { File(it) }
+            .first { it.mkdirs() || it.isDirectory }
     }
 
     @Before
@@ -145,7 +145,6 @@ class DrawerRenderTest {
             FileOutputStream(out).use { fos -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos) }
             bitmap.recycle()
         }
-        println("DRAWER-RENDER captured $name size=${out.length()}")
     }
 
     private fun completed(

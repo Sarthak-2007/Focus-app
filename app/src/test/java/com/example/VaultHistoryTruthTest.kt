@@ -280,7 +280,7 @@ class VaultHistoryTruthTest {
         )
         val filing = DrawerDay.filingYearMonth(now)
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 DrawerScreen(
                     storedMonths = listOf(StoredMonth(filing.first, filing.second)),
                     drawerMonth = filing,
@@ -316,7 +316,7 @@ class VaultHistoryTruthTest {
         val stampLast = millis(LocalDate.of(2026, 10, 20), 10, 0)
         val filing = DrawerDay.filingYearMonth(System.currentTimeMillis())
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 DrawerScreen(
                     storedMonths = listOf(StoredMonth(filing.first, filing.second)),
                     drawerMonth = filing,
