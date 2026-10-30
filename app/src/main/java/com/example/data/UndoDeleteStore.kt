@@ -78,6 +78,9 @@ class UndoDeleteStore(context: Context) {
         prefs.edit().clear().commit()
     }
 
+    /** True while a restore copy is on disk (issue #83). */
+    fun hasPending(): Boolean = prefs.contains(KEY_ID)
+
     companion object {
         private const val PREFS_NAME = "monolith_undo_delete"
         private const val KEY_ID = "id"
@@ -97,5 +100,25 @@ class UndoDeleteStore(context: Context) {
         /** The undo window's length — one value, shared by the
          *  delete path and the rehydration path. */
         const val WINDOW_MILLIS = 5_000L
+
+        /**
+         * Issue #83: reap a restore copy whose undo window has
+         * closed. The copy is a deleted task's full contents in
+         * cleartext prefs; if the app is never relaunched through
+         * the ViewModel, nothing ever cleared it and it outlived
+         * its five-second window indefinitely. Any process start
+         * — ViewModel init, or a boot-started process via the
+         * boot receiver — calls this so the copy dies with its
+         * window regardless of which door started the process.
+         * Clears exactly when now − savedAt > [WINDOW_MILLIS].
+         */
+        fun expireIfStale(context: Context) {
+            val store = UndoDeleteStore(context)
+            if (!store.hasPending()) return
+            val savedAt = store.load()?.second ?: return
+            if (System.currentTimeMillis() - savedAt > WINDOW_MILLIS) {
+                store.clear()
+            }
+        }
     }
 }

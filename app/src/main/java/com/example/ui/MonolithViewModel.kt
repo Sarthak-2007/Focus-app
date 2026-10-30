@@ -838,6 +838,12 @@ class MonolithViewModel(
                 undoDeleteStore.clear()
             }
         }
+        // Issue #83: reap any stale undo copy on this process
+        // start as well — the rehydration above revives or drops
+        // the snapshot for the banner, and expireIfStale is the
+        // store-level guarantee that a copy whose window closed
+        // while no process lived does not linger in prefs.
+        com.example.data.UndoDeleteStore.expireIfStale(appContext)
         viewModelScope.launch {
             repository.ensureSeededAndSyncPackages()
             _pruneNote.value = repository.pendingPruneNote()
