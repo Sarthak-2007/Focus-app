@@ -30,7 +30,8 @@ import org.robolectric.annotation.Config
  * (Ordner lane — Sarthak's complaint, Oct 29 22:40 IST: the list
  * held apps he never installed):
  *
- * - after a sync the table equals the faked installed set exactly,
+ * - after two genuinely separate syncs (the two-strike law,
+ *   issue #34) the table equals the faked installed set exactly,
  *   including the stored-rule-for-an-uninstalled-app case;
  * - the man's own tier on a surviving app is never re-priced;
  * - an empty package query (the query failed) prunes NOTHING;
@@ -89,6 +90,21 @@ class AppListTruthTest {
         interceptCount = 0
     )
 
+    /** The persisted strike set (issue #34 two-strike law). */
+    private fun strikes(): Set<String> =
+        context.getSharedPreferences(MonolithRepository.APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .getStringSet(MonolithRepository.ABSENT_ONCE_KEY, emptySet())
+            ?: emptySet()
+
+    /** Make the next sync a genuinely separate look (L3): clear
+     *  the last-sync stamp so the collapse window cannot fold it
+     *  into the previous look. */
+    private fun nextGenuineLook() {
+        context.getSharedPreferences(
+            MonolithRepository.APP_LIST_PREFS_NAME, Context.MODE_PRIVATE
+        ).edit().putLong(MonolithRepository.LAST_CATALOG_SYNC_KEY, 0L).commit()
+    }
+
     @Test
     fun sync_tableEqualsInstalledSet_ghostPruned_userTierSurvives_pruneRecorded() = runBlocking {
         val dao = db.monolithDao()
@@ -106,14 +122,22 @@ class AppListTruthTest {
         )
         assertNull(repository.pendingPruneNote())
 
+        // REPAIR 2 (verifier) — the two-strike law, stated in the
+        // test instead of the old single-sync law it used to
+        // encode. RUN 1: the ghost earns a strike and is STILL
+        // LISTED; nothing is pruned, nothing is noted.
         repository.ensureSeededAndSyncPackages()
-        // Issue #34: a prune needs two GENUINELY separate looks —
-        // the first look above only noted the ghost (and a repeat
-        // inside the collapse window would still be the same
-        // look). Age the last-sync stamp away and look again.
-        context.getSharedPreferences(
-            MonolithRepository.APP_LIST_PREFS_NAME, Context.MODE_PRIVATE
-        ).edit().putLong(MonolithRepository.LAST_CATALOG_SYNC_KEY, 0L).commit()
+        assertEquals(
+            setOf("com.ghost.app", "com.keeper.app", "com.fresh.chat"),
+            dao.getAllAppsSnapshot().map { it.packageName }.toSet()
+        )
+        assertEquals(setOf("com.ghost.app"), strikes())
+        assertNull(repository.pendingPruneNote())
+
+        // RUN 2, a genuinely separate look (L3 window cleared):
+        // second consecutive absence — the ghost is pruned and
+        // the prune records itself.
+        nextGenuineLook()
         repository.ensureSeededAndSyncPackages()
 
         val table = dao.getAllAppsSnapshot()
@@ -152,16 +176,47 @@ class AppListTruthTest {
 
     @Test
     fun sync_secondRun_idempotent_noNewPruneRecord() = runBlocking {
+        // REPAIR 2 (verifier): this test's name states its truth
+        // intent — a settled catalog does not change or re-note
+        // on repeat syncs. Under the old single-sync law that
+        // settled state existed after run 1; under the two-strike
+        // law it exists after run 2 (run 1 only strikes the
+        // ghost, run 2 prunes it). The idempotence claim is
+        // therefore re-aimed at RUN 3, with runs 1–2 asserting
+        // the new law on the way — no assertion deleted, the
+        // intermediate law now pinned instead of assumed away.
         val dao = db.monolithDao()
         dao.insertApps(listOf(storedRow("com.ghost.app", "Ghost", AppBlockTier.LOCKED)))
         fakeInstalled("com.keeper.app" to "Keeper")
 
+        // Run 1: ghost still listed, strike recorded, no prune.
         repository.ensureSeededAndSyncPackages()
-        repository.clearPruneNote()
-        val afterFirst = dao.getAllAppsSnapshot().map { it.packageName }.toSet()
+        assertEquals(
+            setOf("com.ghost.app", "com.keeper.app"),
+            dao.getAllAppsSnapshot().map { it.packageName }.toSet()
+        )
+        assertEquals(setOf("com.ghost.app"), strikes())
+        assertNull(repository.pendingPruneNote())
 
+        // Run 2 (genuine second look): ghost pruned, note filed.
+        nextGenuineLook()
         repository.ensureSeededAndSyncPackages()
-        assertEquals(afterFirst, dao.getAllAppsSnapshot().map { it.packageName }.toSet())
+        assertEquals(
+            setOf("com.keeper.app"),
+            dao.getAllAppsSnapshot().map { it.packageName }.toSet()
+        )
+        assertEquals(
+            PruneNote(appsRemoved = 1, rulesRemoved = true),
+            repository.pendingPruneNote()
+        )
+
+        // Run 3 (another genuine look): the settled catalog is
+        // idempotent — same table, no new prune record.
+        repository.clearPruneNote()
+        val settled = dao.getAllAppsSnapshot().map { it.packageName }.toSet()
+        nextGenuineLook()
+        repository.ensureSeededAndSyncPackages()
+        assertEquals(settled, dao.getAllAppsSnapshot().map { it.packageName }.toSet())
         assertNull(repository.pendingPruneNote())
     }
 
