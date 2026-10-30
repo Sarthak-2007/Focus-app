@@ -1507,18 +1507,20 @@ class MonolithRepository(
                 return@withTransaction settings.receiptSequence
             }
             val next = settings.receiptSequence + 1
-            // Targeted write (§7.5) as the DAO's own @Transaction
-            // composite (issue #30 finding 3): the claim touches
-            // its four columns and no other, and the № is stamped
-            // on the session row inside the same composite
-            // (RC-04) — claim and stamp commit or roll back
-            // together, so a № can never exist without its row
-            // wearing it, for this caller and every future one.
-            dao.writeReceiptClaimAndStamp(
+            // Targeted write (§7.5): the claim touches its four
+            // columns and no other — a whole-row REPLACE here
+            // would clobber settings written since the read.
+            dao.writeReceiptClaim(
                 sessionId = sessionId,
                 outcome = outcomeWord,
-                sequence = next
+                sequence = next,
+                receiptSessionId = sessionId
             )
+            // The № is stamped on the session row in the SAME
+            // transaction (RC-04): claim and stamp commit or roll
+            // back together, so a № can never exist without its
+            // row wearing it.
+            dao.stampReceiptNumber(sessionId, next)
             next
         }
     }

@@ -4,7 +4,6 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
-import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
@@ -302,32 +301,6 @@ interface MonolithDao {
         sequence: Int,
         receiptSessionId: Int
     ): Int
-
-    // Issue #30 finding 3: the claim pair as ONE DAO composite.
-    // The invariant — a receipt № never exists without its
-    // session row wearing it — previously rested on every caller
-    // remembering to wrap writeReceiptClaim + stampReceiptNumber
-    // in a transaction. As a @Transaction composite the pairing
-    // is the DAO's own law: any future caller gets the atomicity
-    // by construction, not by discipline. (The session-birth
-    // pair, deactivateAll + insert, remains transactional at its
-    // only call site — MonolithRepository.startSession wraps it
-    // in withTransaction; folding its held-count reads into a
-    // DAO composite is priced for Konto's batch-10 train.)
-    @Transaction
-    suspend fun writeReceiptClaimAndStamp(
-        sessionId: Int,
-        outcome: String,
-        sequence: Int
-    ) {
-        writeReceiptClaim(
-            sessionId = sessionId,
-            outcome = outcome,
-            sequence = sequence,
-            receiptSessionId = sessionId
-        )
-        stampReceiptNumber(sessionId, sequence)
-    }
 
     // Targeted stamp writes (routines rebuild): single-column UPDATEs
     // so a stamp can never clobber another settings field written in
