@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -121,8 +122,18 @@ class HeldDoorStationarityTest {
     // same pairing the repo's other clock tests use.
     private fun travelPastWall() {
         ShadowSystemClock.advanceBy(Duration.ofSeconds(11))
-        composeRule.mainClock.advanceBy(11_000L)
         composeRule.waitForIdle()
+    }
+
+    // waitUntil pumps the compose test clock while polling, which
+    // is what runs the overlay ticker's delays until its
+    // recomputed countdown (now reading the advanced shadow
+    // clock) reaches zero and the offer chip composes.
+    private fun awaitPeekChip() {
+        composeRule.waitUntil(timeoutMillis = 10_000L) {
+            composeRule.onAllNodesWithTag("airlock_peek_button")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
     }
 
     private fun returnBounds(): Rect =
@@ -139,6 +150,7 @@ class HeldDoorStationarityTest {
         // OFFER: wall expired, the chip stands — RETURN unmoved.
         render(state(wallRunning = false, instance = 2L))
         travelPastWall()
+        awaitPeekChip()
         assertEquals(counting, returnBounds())
         composeRule.onNodeWithTag("airlock_peek_button").assertExists()
 
@@ -161,6 +173,7 @@ class HeldDoorStationarityTest {
     fun offerFramePrintsPeekNeverEmergencyPeek() {
         render(state(wallRunning = false, instance = 4L))
         travelPastWall()
+        awaitPeekChip()
         // The dead name exists in no frame of the merged face.
         composeRule.onNodeWithText("EMERGENCY PEEK").assertDoesNotExist()
         composeRule.onNodeWithTag("airlock_peek_button").assertExists()
