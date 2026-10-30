@@ -1,4 +1,6 @@
 package com.example.ui.components
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
@@ -804,7 +806,7 @@ fun CapturedNotificationsDigestSheet(
                             // frame with no stamp and no rows yet —
                             // never one frame of the live list.
                             Text(
-                                text = "HELD",
+                                text = stringResource(R.string.label_held),
                                 fontFamily = AtkinsonHyperlegibleFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp,
@@ -890,7 +892,7 @@ fun CapturedNotificationsDigestSheet(
                                     )
                                     if (!frozenMode) {
                                         Text(
-                                            text = "DEL",
+                                            text = stringResource(R.string.key_del),
                                             fontFamily = AtkinsonHyperlegibleFamily,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 11.sp,
@@ -1046,7 +1048,7 @@ fun AirlockInterceptOverlay(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text(
-                    text = "AIRLOCK INTERCEPTION • ${state.interceptReasonBadge.uppercase(Locale.US)}",
+                    text = stringResource(R.string.airlock_interception_badge, state.interceptReasonBadge.uppercase(Locale.US)),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.5.sp,
@@ -1113,7 +1115,7 @@ fun AirlockInterceptOverlay(
                 // over a blank.
                 if (state.sessionIntention.isNotBlank()) {
                     Text(
-                        text = "ACTIVE INTENTION: ${state.sessionIntention}",
+                        text = stringResource(R.string.active_intention, state.sessionIntention),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 12.5.sp,
                         color = NightColorPrimary.copy(alpha = 0.8f),
@@ -1299,13 +1301,13 @@ fun AirlockInterceptOverlay(
                             }
                         }
                         PeekWithheld.ALREADY_ACTIVE -> Text(
-                            text = "A PEEK IS ALREADY RUNNING",
+                            text = stringResource(R.string.peek_already_running),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontSize = 12.5.sp,
                             color = NightColorPrimary.copy(alpha = 0.8f)
                         )
                         PeekWithheld.PEEK_OFF -> Text(
-                            text = "PEEK IS OFF",
+                            text = stringResource(R.string.peek_off),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontSize = 12.5.sp,
                             color = NightColorPrimary.copy(alpha = 0.8f)
@@ -1508,7 +1510,7 @@ fun DisarmChallengeOverlay(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text(
-                    text = "EMERGENCY BREAK",
+                    text = stringResource(R.string.emergency_break),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,

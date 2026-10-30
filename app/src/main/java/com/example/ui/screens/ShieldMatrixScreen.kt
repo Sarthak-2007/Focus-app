@@ -1,4 +1,6 @@
 package com.example.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import android.graphics.Bitmap
 import android.os.SystemClock
@@ -1019,7 +1021,7 @@ fun ShieldMatrixScreen(
                     ) {
                         if (newSiteText.isEmpty()) {
                             Text(
-                                text = "Add a site — e.g. news.ycombinator.com",
+                                text = stringResource(R.string.shield_add_site_hint),
                                 fontFamily = AtkinsonHyperlegibleFamily,
                                 fontSize = 13.sp,
                                 color = scheme.onSurfaceVariant
@@ -1447,7 +1449,7 @@ private fun RoutineRow(
                     color = scheme.onBackground
                 )
                 Text(
-                    text = "→ " + fmtRoutineTime(draftEnd),
+                    text = stringResource(R.string.shield_routine_end, fmtRoutineTime(draftEnd)),
                     fontFamily = AnonymousProFamily,
                     fontSize = 11.sp,
                     color = scheme.onSurfaceVariant
@@ -1507,7 +1509,7 @@ private fun RoutineRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "START",
+                text = stringResource(R.string.label_start),
                 fontFamily = AnonymousProFamily,
                 fontSize = 11.sp,
                 color = scheme.onSurfaceVariant
@@ -1515,7 +1517,7 @@ private fun RoutineRow(
             BlockitActionChip(wordLabel = "−30", onClick = { draftAdjust(true, -30) })
             BlockitActionChip(wordLabel = "+30", onClick = { draftAdjust(true, 30) })
             Text(
-                text = "END",
+                text = stringResource(R.string.label_end),
                 fontFamily = AnonymousProFamily,
                 fontSize = 11.sp,
                 color = scheme.onSurfaceVariant
@@ -1757,7 +1759,7 @@ private fun SlipHeaderRow(right: AnnotatedString?) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "YOUR RULES",
+                text = stringResource(R.string.shield_your_rules),
                 fontFamily = AtkinsonHyperlegibleFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 11.5.sp,
@@ -1824,7 +1826,7 @@ private fun SlipNoneLine() {
         contentAlignment = Alignment.CenterStart
     ) {
         Text(
-            text = "NONE",
+            text = stringResource(R.string.label_none),
             fontFamily = AnonymousProFamily,
             fontSize = 11.sp,
             letterSpacing = 1.sp,
