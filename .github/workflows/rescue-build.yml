@@ -93,6 +93,42 @@ jobs:
           chmod +x gradlew
           ./gradlew --console=plain testDebugUnitTest
 
+      # D9-REVEAL (#166, W2 FLOOR): the cause of
+      # ShortsToggleRenderTest's UncaughtExceptionsBeforeTest is
+      # suppressed and lives only in the JUnit XML, which the
+      # mainline workflow never uploaded (D5, comment 6534279501)
+      # -- the XML died on the ephemeral runner. These three steps
+      # close that gap for this class: cat the suite-run XML into
+      # the job log, upload the full test-results, then re-run
+      # THIS CLASS ALONE (continue-on-error, so it can never
+      # change the job's verdict) and cat its XML too -- suite vs
+      # isolated is decided in the same run. Upload happens BEFORE
+      # the filtered re-run so the artifact holds the suite XML.
+      - name: D9-REVEAL - cat ShortsToggleRenderTest XML (suite run)
+        if: always()
+        run: |
+          echo "D9-REVEAL-XML-BEGIN class=ShortsToggleRenderTest"
+          cat app/build/test-results/testDebugUnitTest/TEST-com.example.ShortsToggleRenderTest.xml || echo "D9-REVEAL-XML-MISSING"
+          echo "D9-REVEAL-XML-END"
+      - name: D9-REVEAL - upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-results-${{ github.sha }}
+          path: |
+            app/build/test-results/**
+            app/build/reports/tests/**
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: D9-REVEAL - filtered re-run (ShortsToggleRenderTest alone)
+        if: always()
+        continue-on-error: true
+        run: |
+          echo "D9-REVEAL-FILTERED-BEGIN"
+          ./gradlew --console=plain testDebugUnitTest --tests "com.example.ShortsToggleRenderTest" || true
+          cat app/build/test-results/testDebugUnitTest/TEST-com.example.ShortsToggleRenderTest.xml || echo "D9-REVEAL-FILTERED-XML-MISSING"
+          echo "D9-REVEAL-FILTERED-END"
+
       - name: Assemble debug
         id: assemble
         run: ./gradlew --console=plain assembleDebug
