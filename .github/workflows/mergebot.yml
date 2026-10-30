@@ -1,0 +1,60 @@
+name: mergebot-s11
+
+on:
+  push:
+    branches: [mergebot/s11]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mergebot-s11
+  cancel-in-progress: false
+
+jobs:
+  merge113:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: agent/issue-113
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Merge main into agent/issue-113 (STURM3-11 surge port)
+        shell: bash
+        run: |
+          set +e
+          git config user.name "STURM3-11 mergebot"
+          git config user.email "mergebot@localhost"
+          git fetch origin main mergebot/s11
+          git show origin/mergebot/s11:mergebot/resolve113.py > /tmp/resolve113.py
+          git merge origin/main --no-edit -m "Merge main into agent/issue-113 (STURM3-11 surge port)"
+          MERGE_RC=$?
+          STATUS="clean"
+          if [ $MERGE_RC -ne 0 ]; then
+            python3 /tmp/resolve113.py
+            RES_RC=$?
+            if [ $RES_RC -ne 0 ]; then
+              git merge --abort
+              STATUS="aborted"
+              git diff --name-only --diff-filter=U > /tmp/conflicts.txt 2>/dev/null
+            else
+              git add -A
+              git commit --no-edit
+              STATUS="resolved"
+            fi
+          fi
+          if [ "$STATUS" != "aborted" ]; then
+            git push origin HEAD:agent/issue-113
+            PUSH_RC=$?
+            if [ $PUSH_RC -ne 0 ]; then STATUS="push-failed"; fi
+          fi
+          echo "status=$STATUS rc_merge=$MERGE_RC utc=$(date -u +%FT%TZ)" > /tmp/mbstatus.txt
+          cat /tmp/conflicts.txt >> /tmp/mbstatus.txt 2>/dev/null
+          git checkout -B mergebot/s11 origin/mergebot/s11
+          mkdir -p mergebot
+          cp /tmp/mbstatus.txt mergebot/status-113.txt
+          git add mergebot/status-113.txt
+          git commit -m "mergebot status 113: $STATUS [skip ci]" || true
+          git push origin HEAD:mergebot/s11
