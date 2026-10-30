@@ -902,22 +902,50 @@ class MonolithRepository(
         expiredPeekPackages: Set<String>
     ): String? {
         if (!hasUsageStatsPermission() || blockedPackages.isEmpty()) return null
-        if (isPhoneOrVoipCallActive()) return null
         return try {
             val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
                 ?: return null
             val end = System.currentTimeMillis()
-            val start = end - 15_000L
-            val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end)
+
+            // Issue #99 F1 (kept): the expired-peek waiver still
+            // rides the aggregate stats — a stay-put user's event
+            // stream holds no fresh foreground event to read.
+            if (expiredPeekPackages.isNotEmpty()) {
+                val stats = usm.queryUsageStats(
+                    UsageStatsManager.INTERVAL_DAILY, end - 15_000L, end
+                )
+                val expiredHit = stats
+                    ?.filter {
+                        it.packageName in expiredPeekPackages &&
+                            it.packageName in blockedPackages &&
+                            !SafetyFloor.isFloorPackage(it.packageName)
+                    }
+                    ?.maxByOrNull { it.lastTimeUsed }
+                if (expiredHit != null) return expiredHit.packageName
+            }
+
+            // Issue #332 F1: the door now reads the real UsageEvents
+            // stream on a 20-second window (the Flipd supplement's
+            // benchmark) instead of daily-aggregate lastTimeUsed
+            // with an 8-second cutoff, which went blind to a blocked
+            // app the moment it settled into use.
+            val usageEvents = usm.queryEvents(end - ForegroundDoor.WINDOW_MS, end)
                 ?: return null
-            val expiredHit = stats
-                .filter { it.packageName in expiredPeekPackages && it.packageName in blockedPackages }
-                .maxByOrNull { it.lastTimeUsed }
-            if (expiredHit != null) return expiredHit.packageName
-            val recent = stats
-                .filter { it.packageName in blockedPackages && it.lastTimeUsed >= (end - 8_000L) }
-                .maxByOrNull { it.lastTimeUsed }
-            recent?.packageName
+            val events = mutableListOf<ForegroundDoor.FgEvent>()
+            val event = android.app.usage.UsageEvents.Event()
+            while (usageEvents.hasNextEvent()) {
+                usageEvents.getNextEvent(event)
+                val pkg = event.packageName ?: continue
+                events.add(ForegroundDoor.FgEvent(pkg, event.eventType, event.timeStamp))
+            }
+            // Issue #332 F2: a live call no longer suspends this
+            // door wholesale (the pre-cure early return made every
+            // call a complete enforcement holiday, uninstall guard
+            // included). The call's own surfaces are exempt —
+            // the safety floor covers dialer / incallui / telecom —
+            // and every other blocked app stays blocked mid-call,
+            // which is exactly Flipd's per-package construction.
+            ForegroundDoor.foregroundBlocked(events, blockedPackages)
         } catch (e: Exception) {
             swallow("queryForegroundBlockedApp", e)
             null
