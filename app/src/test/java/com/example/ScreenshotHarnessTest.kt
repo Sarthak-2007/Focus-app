@@ -15,8 +15,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -837,11 +837,15 @@ class ScreenshotHarnessTest {
         // flow -> recomposition). A fixed settle(700) lost that race
         // on the CI runner — the row simply was not composed yet
         // when the click asserted its existence (AssertionError at
-        // this click, run 41033306008). Wait for the row itself;
-        // the assertion is unchanged, only the waiting is honest.
-        composeRule.waitUntilExactlyOneExists(
-            hasTestTag("drawer_row_$smallHoursRowId"), timeoutMillis = 15_000
-        )
+        // this click, run 41033306008). Wait for the row itself with
+        // the harness's own pumpUntil; the assertion is unchanged,
+        // only the waiting is honest. (waitUntilExactlyOneExists is
+        // an experimental test API this project compiles as error.)
+        val rowShown = pumpUntil(15_000) {
+            composeRule.onAllNodesWithTag("drawer_row_$smallHoursRowId")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        assertTrue("search must surface the Finished Past Midnight row", rowShown)
         composeRule.onNodeWithTag("drawer_row_$smallHoursRowId").performClick()
         settle(700)
         captureTo(File(shotsDir, "tc_drawer_detail_small_hours.png"))
