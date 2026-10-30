@@ -343,3 +343,157 @@ leaf under seal is a record, and records don't annotate themselves).
 No line on SLEEP, ever.
 
 *— STAFFEL, improver · Round 2*
+
+---
+
+## ROUND 3 — Finish pass: corrections, edges, acceptance, price
+
+*Improves Rounds 1–2 of this file (an improver's rounds improve his
+own output too), audit items 10 + 19, Weiss's night-plate cure,
+Feel-1's ≥48dp touch contracts, Feel-5 fights #1 + #6 closed out.*
+
+### 3.1 Correction to Round 1: keys at 48dp, not 44dp
+
+Round 1 specced ADD/FIRST at 44dp tall. Feel-1's touch contracts for
+this screen set ≥48dp (the same standard the audit gave TEAR), and a
+1 AM thumb is the design case, not the exception. **Both keys are
+48dp tall.** ADD's cap height is 48dp; FIRST's bare word rides a
+48dp touch row. Nothing else in §1.2 changes.
+
+### 3.2 Builder delta — the whole improvement, as a change list
+
+All in `FocusSequencerScreen.kt` unless named; no other production
+file changes except the one sound deletion's other half. No schema,
+no DAO, no derive() touch — F-1 machinery is read, never modified.
+
+- **C-1.** Screen root becomes `Column`: queue `LazyColumn`
+  (`weight(1f)`, existing content minus Section 1) + docked composer
+  leaf as a sibling below it, inside the floating band's clearance.
+- **C-2.** Section 1 (top composer) deleted whole: recessed field,
+  full-width `KeyCap` ADD, and the screen-side
+  `playMechanicalLatch` call in `submitTask()` (Feel-2's double-voice
+  cure, screen half; the ViewModel keeps the single S-3 voice).
+- **C-3.** Composer leaf built from leaf parts: `PerforationRow`,
+  plate row (`#NN` from `displayQueue.size + 1`), recessed field at
+  15sp with the new placeholder, key row (ADD cap 48dp ink-filled,
+  `add_task_button`; FIRST bare word 48dp, `first_task_button`).
+  Draft state (`newTaskTitle`) moves with it, unchanged in kind.
+- **C-4.** FIRST handler: add-then-promote via the existing funnels,
+  stay on Tasks, list scrolls to head on success; on refusal the
+  leaf remains an ordinary foot ADD (no sound, no line claim).
+- **C-5.** Empty state: the list's blank-leaf item is deleted; the
+  composer leaf takes the merged form of §1.4 (112dp, `NOTHING
+  QUEUED` plate print, `#01`, fallback line of §2.3 when a non-SLEEP
+  routine is upcoming). `task_blank_leaf` test tag moves to the
+  composer leaf's empty form.
+- **C-6.** Sealed state: composer leaf renders ADD only; FIRST not
+  composed (§1.5). Driven by the same `isSessionActive` the screen
+  already holds.
+- **C-7.** Leaf plate words deleted: the `ACTIVE`/`QUEUE` `Text` in
+  `TaskLeafItem` (§2.1). The 5dp running square stays as built.
+- **C-8.** Intention line composed in `TaskLeafItem` for `index == 0`
+  only, per the §2.2 state table. Inputs: next-routine (time + name +
+  isSleep) and, while sealed, the running session's `intention` —
+  both surfaced to the screen as plain parameters alongside the
+  existing `isSessionActive`; the composable compares strings, it
+  does not resolve heads (resolution stays F-1's, in the data layer).
+  Test tag `head_intention_line`.
+- **C-9.** Shield + receipt headline swap (§2.4): intention as the
+  Sora headline, routine provenance line beneath in Anonymous Pro.
+  Presentation-only edits on those two surfaces; stored strings
+  untouched.
+- **C-10.** Night plate cure applied to every new print in this file
+  (§3.4).
+
+### 3.3 Edge states — closed out
+
+| Case | Behaviour under this spec |
+|---|---|
+| DEFERRED-only queue | No head exists (resolver excludes DEFERRED; deferred leaves aren't rendered on this screen — audit escalation 5, cross-screen, untouched). Merged blank shows; fallback line prints (§2.3) — true, because the seal *will* use the routine name. |
+| Head title very long | Title wraps in full on the leaf (as shipped — no maxLines on leaf titles); the intention line carries no user words, so nothing of his truncates. Shield headline wraps 3 lines, then visual ellipsis only; storage verbatim (§2.4). |
+| Duplicate titles at head + #02 | Line sits on #01 only; snapshot is a string, twins need no disambiguation (Designer §6.14). |
+| Head torn mid-window, pre-seal | Next leaf rises with the line; seal reads the new head (F-1). The line's movement *is* the teaching. |
+| Routine edited / deleted pre-seal | Line re-points or vanishes with routine state; a cancelled routine seals nothing and claims nothing (Designer §6.11). |
+| Routine fires while Tasks is open | Seal lands; header gains `· SEALED`, head leaf's line flips to its sealed state or vanishes per §2.2, FIRST leaves the composer. No dialog, no scroll jump — the screen he is looking at simply becomes true. |
+| Composer draft unsubmitted at seal | Draft is not queue truth (Designer §6.15); seal reads saved queue. The draft survives in the docked leaf — he can still ADD it for the *next* block. |
+| Count tone | `N TASKS` stays exactly as F-3 built it: flat, quiet, no colour states, never paired with a second number (Feel-5 fight #6). Nothing in Rounds 1–2 adds a tone, a total, or a streak to it. |
+
+### 3.4 Night contrast — Weiss's cure, applied to the new print
+
+Audit item 19: night plate/index print at 3.51:1 fails a tired eye;
+the ruled cure is leaf-local `#9C8E84` (5.78:1). Every plate-class
+print this file introduces follows it at night — the intention line,
+the composer placeholder, the composer's `#NN`, the empty form's
+fallback line — via the same leaf-local token, not the failing
+default variant. Day values stay on the standard tokens. `#9C8E84`
+is a warm grey-brown, nowhere near green; no new colour enters the
+palette.
+
+### 3.5 Accessibility
+
+- ADD, FIRST: 48dp targets (§3.1). The intention line is print,
+  never a target.
+- Head leaf semantics group as one announcement: title, then the
+  intention line read as its consequence ("…, head of queue. Names
+  the 05:00 FASTED BLOCK when it seals") — a screen-reader user gets
+  the same teaching the line gives a sighted one.
+- Composer leaf is labelled as the queue's next leaf; its empty form
+  announces `NOTHING QUEUED` + the fallback line as one group.
+- All states in §2.2 are conveyed in words, never by colour or
+  position alone (the line's presence/absence is itself backed by
+  the header's `SEALED` word and the leaf's raised paper).
+
+### 3.6 Acceptance — phone-verifiable, in walk order
+
+- [ ] Night, queue of 5: Tasks opens at the head; composer leaf is
+      visible at the foot without scrolling; writing appears at
+      15sp on the leaf; ADD settles the leaf at the foot with one
+      knock and the field stays focused.
+- [ ] FIRST lands the leaf at #01, screen stays on Tasks, intention
+      line appears on it naming the correct next routine + time.
+- [ ] CUE a different leaf to head pre-seal: the line moves to it;
+      the old head loses it. Nothing navigates away.
+- [ ] Empty the queue: one blank only — composer leaf at 112dp,
+      `NOTHING QUEUED`, fallback line naming the routine; no second
+      blank in the list.
+- [ ] 05:00 seal with a head queued: Shield headline is his title
+      verbatim in Sora; Tasks head leaf reads `THIS LEAF NAMED THE
+      RUNNING BLOCK · SEALED 05:00`; FIRST is absent from the
+      composer; ADD still queues a leaf behind the seal.
+- [ ] Seal with empty queue: no intention line anywhere on Tasks;
+      session seals under the routine name; nothing prints
+      `No task queued` on Shield, receipt, or Drawer.
+- [ ] SLEEP as next routine: no intention line, no fallback line.
+- [ ] Night mode: intention line + placeholder legible at arm's
+      length in a dark room (the #9C8E84 cure, §3.4).
+- [ ] One ADD tap = exactly one sound transient (S-3 regression
+      line); blank ADD/FIRST = silence.
+
+### 3.7 Price
+
+**SMALL — ≈ ½–1 builder-day**, inside the recomposition F-2 already
+priced; this file is F-2's composer half + F-4's head half, specced
+to buildable depth. Zero machinery, zero migration, one deleted
+sound call, two surfaces' headline swap. Tests: screenshot-harness
+rows for the five §2.2 line states + two composer forms (standard /
+empty-merged), and the one-transient ADD assertion in the existing
+sound-truth shape. DECLARED, uncompiled — nobody compiled; CI is
+the verdict, as with the cell's wave-2 work.
+
+### 3.8 Kill-list compliance (stated once, for the record)
+
+Nothing in Rounds 1–3 revives the Horizon bar (no proportion, no
+segment, no minute total — the composer's `#NN` and the header's
+count are addresses, not measures), the SPLIT generator (HAND-SPLIT
+as shipped is untouched; the composer writes tasks, never steps),
+the NEXT marker, the Eve Snapshot, the provenance column, or any
+form of green. F-1's machinery, the ESR-02 merge condition from the
+wave-2 panel, and every Amt ruling cited are left exactly as found
+— improved only where presentation was the gap.
+
+**STAFFEL closes this lane DECLARED.** The cell's machinery kept the
+promise in wave 1–2; these three rounds make the screen *say* so —
+at the foot where he writes, on the head where it matters, and in
+his own words where the morning answers.
+
+*— STAFFEL, improver · Round 3 (final)*
