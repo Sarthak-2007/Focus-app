@@ -3740,7 +3740,14 @@ class MonolithViewModel(
             // same one the desk clock reads) — never for a stopwatch.
             sessionEndsAtMillis = active
                 ?.takeIf { !it.isStopwatchMode }
-                ?.let { System.currentTimeMillis() + it.spanRemainingSeconds * 1000L },
+                // #127 finding 3: the shared derivation the Deck strip
+                // also calls, so Airlock and Deck can never print ENDS
+                // times a minute apart for the same session again.
+                ?.let {
+                    com.example.ui.components.sessionEndsAtMillis(
+                        System.currentTimeMillis(), it.spanRemainingSeconds
+                    )
+                },
             sessionIsStopwatch = active?.isStopwatchMode == true,
             // Issue #325: the stake rides onto the door — the
             // ledger-derived balance at this instant, never a

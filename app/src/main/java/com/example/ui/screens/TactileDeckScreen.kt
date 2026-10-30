@@ -75,6 +75,7 @@ import com.example.ui.components.RefusalSentenceSlot
 import com.example.ui.components.StripDensity
 import com.example.ui.components.RefusalSentence
 import com.example.ui.components.endsAtText
+import com.example.ui.components.sessionEndsAtMillis
 import com.example.ui.components.imprintTenantText
 import com.example.ui.components.jamSentenceFor
 import com.example.ui.components.provingSentenceFor
@@ -479,7 +480,7 @@ fun TactileDeckScreen(
         // its PASS tone is a claim the wire stands behind — beside
         // a warrant that is not freshly LIVE the end prints at
         // UNKNOWN density, never PASS beside BLOCK OFF.
-        else -> endsAtText(ClockText.is24Hour(LocalContext.current), nowFrame + totalSpanMinutes * 60_000L) to
+        else -> endsAtText(ClockText.is24Hour(LocalContext.current), sessionEndsAtMillis(System.currentTimeMillis(), totalSpanMinutes * 60)) to
             if (warrantPrintState == WarrantState.LIVE) StripDensity.PASS
             else StripDensity.UNKNOWN
     }
@@ -667,7 +668,12 @@ fun TactileDeckScreen(
             if (activeSession.isStopwatchMode) {
                 "NO END" to StripDensity.PASS
             } else {
-                endsAtText(ClockText.is24Hour(LocalContext.current), nowFrame + activeSession.spanRemainingSeconds * 1000L) to StripDensity.PASS
+                // #127 finding 3: fresh wall clock at THIS composition
+                // (the session flow re-emits every second), never the
+                // minute-boundary nowFrame — mixing a minute-stale
+                // clock with a per-second countdown drifted ENDS up
+                // to a minute early and disagreed with the Airlock.
+                endsAtText(ClockText.is24Hour(LocalContext.current), sessionEndsAtMillis(System.currentTimeMillis(), activeSession.spanRemainingSeconds)) to StripDensity.PASS
             }
         }
         pressLatchLive != null -> pressLatchLive.timeText to pressLatchLive.timeDensity
