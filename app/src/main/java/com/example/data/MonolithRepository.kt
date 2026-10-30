@@ -3002,6 +3002,28 @@ class MonolithRepository(
         )
     }
 
+    /** Word-aware Drawer search (#158 F2): the day words a query
+     *  names. A query names a word when its trimmed, upper-cased
+     *  form equals a word in the closed list (DayWordStore.WORDS /
+     *  [DAY_WORDS]) or is a prefix of one ("IL" names ILL). Pure —
+     *  the matching rule lives in one place, shared by the
+     *  suspend read below and any caller already holding the
+     *  words map. */
+    fun dayWordsMatching(query: String, allWords: Map<String, String>): Map<String, String> {
+        val q = query.trim().uppercase(Locale.US)
+        if (q.isEmpty()) return emptyMap()
+        val matched = DAY_WORDS.filter { word -> word == q || word.startsWith(q) }
+        if (matched.isEmpty()) return emptyMap()
+        return allWords.filterValues { it in matched }
+    }
+
+    /** Every declared date carrying a word [query] names, from
+     *  [allDayWords] — prefs ∪ day_notes, so a word-only day (no
+     *  stored task on it) is found too. Empty when the query names
+     *  no day word. */
+    suspend fun searchDayWords(query: String): Map<String, String> =
+        dayWordsMatching(query, allDayWords())
+
     // Declared day words (REST / ILL / FAMILY) live in TWO stores
     // by design of the two builds that carry them: DayWordStore
     // (SharedPreferences — the Drawer's capture surface writes

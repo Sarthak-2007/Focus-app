@@ -2005,6 +2005,15 @@ class MonolithViewModel(
     private val _drawerSearchHasEarlier = MutableStateFlow(false)
     val drawerSearchHasEarlier: StateFlow<Boolean> = _drawerSearchHasEarlier.asStateFlow()
 
+    /** #158 F2: the day words the current Drawer search stands on —
+     *  every date carrying a word the query names (from
+     *  allDayWords(), word-only days included), merged with the
+     *  declared words of the dates the task hits file under, so a
+     *  found day keeps its word in the search rendering. Empty
+     *  exactly when neither a word nor a task-hit date has one. */
+    private val _drawerSearchDayWords = MutableStateFlow<Map<String, String>>(emptyMap())
+    val drawerSearchDayWords: StateFlow<Map<String, String>> = _drawerSearchDayWords.asStateFlow()
+
     private val _dayWords = MutableStateFlow<Map<String, String>>(emptyMap())
     val dayWords: StateFlow<Map<String, String>> = _dayWords.asStateFlow()
 
@@ -2012,14 +2021,40 @@ class MonolithViewModel(
     private var drawerSearchOffset = 0
     private var drawerSearchJob: Job? = null
 
+    /** #158 F3: true once a Drawer month has been selected (by a
+     *  first refreshDrawer or by hand). refreshDrawer may default
+     *  the month only before that — afterwards the place the user
+     *  is reading is theirs, and re-entering the Drawer reloads
+     *  THAT month instead of resetting to the current one. */
+    private var drawerMonthSelected = false
+
+    /** The declared words of the filing dates [rows] sit on, read
+     *  from the already-loaded day-words map. */
+    private fun dayWordsForRows(
+        rows: List<FocusTaskEntity>,
+        source: Map<String, String>
+    ): Map<String, String> {
+        if (rows.isEmpty() || source.isEmpty()) return emptyMap()
+        val isos = rows.mapTo(HashSet()) {
+            com.example.data.DrawerDay.dateIso(
+                com.example.data.DrawerDay.filingDate(it.completedAtMillis)
+            )
+        }
+        return source.filterKeys { it in isos }
+    }
+
     /** Refresh everything the Drawer renders from. Called when the
-     *  VAULT destination opens: the landing is always the CURRENT
-     *  filing month (the ruling's default view), with the months
-     *  index and day words re-read. Day words read through
-     *  allDayWords() — the union of the prefs capture and the
-     *  drained day_notes table, so a word survives its own drain. */
+     *  VAULT destination opens: on FIRST entry the month defaults
+     *  to the CURRENT filing month (the ruling's default view);
+     *  once a month is selected, refresh keeps it (#158 F3) and
+     *  reloads that month, with the months index and day words
+     *  re-read. Day words read through allDayWords() — the union
+     *  of the prefs capture and the drained day_notes table, so a
+     *  word survives its own drain. */
     fun refreshDrawer() {
-        _drawerMonth.value = com.example.data.DrawerDay.filingYearMonth(System.currentTimeMillis())
+        if (!drawerMonthSelected) {
+            _drawerMonth.value = com.example.data.DrawerDay.filingYearMonth(System.currentTimeMillis())
+        }
         viewModelScope.launch {
             _storedMonths.value = repository.storedMonths()
             _dayWords.value = repository.allDayWords()
@@ -2030,6 +2065,7 @@ class MonolithViewModel(
     }
 
     fun selectDrawerMonth(year: Int, month: Int) {
+        drawerMonthSelected = true
         _drawerMonth.value = year to month
         drawerOffset = 0
         _drawerRows.value = emptyList()
@@ -2065,15 +2101,30 @@ class MonolithViewModel(
         _drawerQuery.value = query
         drawerSearchJob?.cancel()
         if (query.isBlank()) {
+            // The blank path still clears synchronously (#158 F4) —
+            // no debounce stands between clearing and a blank field.
             _drawerResults.value = emptyList()
+            _drawerSearchDayWords.value = emptyMap()
             _drawerSearchHasEarlier.value = false
             drawerSearchOffset = 0
             return
         }
         drawerSearchJob = viewModelScope.launch {
+            // #158 F4: settle before scanning. The job above is
+            // cancelled by the next keystroke, so intermediate
+            // keystrokes never reach the leading-wildcard LIKE
+            // scan at all; only the query that survives 300 ms
+            // of quiet runs it.
+            delay(300)
             val page = repository.searchStoredTasks(query, 0)
+            // #158 F2: a query naming a day word also stands for
+            // every date carrying that word (word-only days
+            // included); task-hit dates keep their own words.
+            val wordDays = repository.searchDayWords(query)
             if (_drawerQuery.value == query) {
                 _drawerResults.value = page.rows
+                _drawerSearchDayWords.value =
+                    dayWordsForRows(page.rows, _dayWords.value) + wordDays
                 drawerSearchOffset = page.rows.size
                 _drawerSearchHasEarlier.value = page.hasEarlier
             }
@@ -2088,6 +2139,9 @@ class MonolithViewModel(
             val page = repository.searchStoredTasks(query, offset)
             if (_drawerQuery.value == query) {
                 _drawerResults.value = _drawerResults.value + page.rows
+                // Later pages can file under further worded dates.
+                _drawerSearchDayWords.value = _drawerSearchDayWords.value +
+                    dayWordsForRows(page.rows, _dayWords.value)
                 drawerSearchOffset += page.rows.size
                 _drawerSearchHasEarlier.value = page.hasEarlier
             }

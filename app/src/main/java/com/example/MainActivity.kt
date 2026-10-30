@@ -247,6 +247,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val drawerQuery by viewModel.drawerQuery.collectAsStateWithLifecycle()
     val drawerResults by viewModel.drawerResults.collectAsStateWithLifecycle()
     val drawerSearchHasEarlier by viewModel.drawerSearchHasEarlier.collectAsStateWithLifecycle()
+    val drawerSearchDayWords by viewModel.drawerSearchDayWords.collectAsStateWithLifecycle()
     val dayWords by viewModel.dayWords.collectAsStateWithLifecycle()
     val forgedArtifactIds by viewModel.forgedArtifactIds.collectAsStateWithLifecycle()
     val forgeStats by viewModel.forgeStats.collectAsStateWithLifecycle()
@@ -776,6 +777,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     drawerQuery = drawerQuery,
                                     drawerResults = drawerResults,
                                     drawerSearchHasEarlier = drawerSearchHasEarlier,
+                                    drawerSearchDayWords = drawerSearchDayWords,
                                     dayWords = dayWords,
                                     isSealed = sealed,
                                     isDarkTheme = effectiveNight,
