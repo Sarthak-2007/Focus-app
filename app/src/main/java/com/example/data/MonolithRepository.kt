@@ -52,7 +52,12 @@ data class SystemGuardStatus(
     val isHmacSignatureValid: Boolean = true,
     val clockDriftSeconds: Long = 0L,
     val systemBootCount: Int = 1,
-    val installedLauncherAppsCount: Int = 12
+    val installedLauncherAppsCount: Int = 12,
+    /** Issue #81 F1: this install was resurrected after a data
+     *  wipe (virgin DB + pre-existing keystore key). The guard
+     *  status must carry it: a wiped install is UNPROVEN, and no
+     *  surface may read its all-green rows as a clean history. */
+    val installProvenanceUnproven: Boolean = false
 ) {
     val readinessCount: Int
         get() = listOf(
@@ -181,6 +186,16 @@ class MonolithRepository(
         const val APP_LIST_PREFS_NAME = "monolith_app_list"
         const val PRUNE_NOTE_COUNT_KEY = "prune_note_count"
         const val PRUNE_NOTE_RULES_KEY = "prune_note_rules_removed"
+
+        /** Issue #81 F1: the resurrection witness's prefs home.
+         *  Written once, at seed time, when a virgin database meets
+         *  a pre-existing AndroidKeyStore HMAC key — the residue
+         *  `pm clear` cannot wipe (see TamperWitness). The prefs
+         *  file itself dies with the NEXT clear, which is fine:
+         *  that clear resurrects the same way and re-stamps it. */
+        const val PROVENANCE_PREFS_NAME = "monolith_provenance"
+        const val PROVENANCE_UNPROVEN_KEY = "resurrected_unproven"
+        const val PROVENANCE_DETECTED_WALL_KEY = "resurrected_detected_wall_ms"
     }
 
     /** The seal marker's session id, or -1 when no seal has ever
@@ -189,8 +204,43 @@ class MonolithRepository(
         context.getSharedPreferences(SEAL_PREFS_NAME, Context.MODE_PRIVATE)
             .getInt(SEAL_MARKER_SESSION_KEY, -1)
 
+    /** Issue #81 F1: true when this install has reported itself
+     *  resurrected-after-wipe (see [ensureSeededAndSyncPackages]).
+     *  Sticky for the life of the (new) data: nothing that happens
+     *  afterwards can retroactively prove the wiped past clean. */
+    fun provenanceUnproven(): Boolean =
+        context.getSharedPreferences(PROVENANCE_PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(PROVENANCE_UNPROVEN_KEY, false)
+
+    /** The resurrection check, run inside the seed lock BEFORE any
+     *  seeding write, so "virgin" is measured on the database as
+     *  found. Must also run before anything can sign session state
+     *  (signing generates the keystore key on first use — after
+     *  that, the residue exists by our own hand and proves
+     *  nothing). Seeding is the first repository act of every
+     *  launch path that can later sign, so this is the one place
+     *  the measurement is honest. */
+    private suspend fun recordProvenanceIfResurrected() {
+        val dbVirgin = dao.getAllSitesSnapshot().isEmpty() &&
+            dao.getGuardSettingsSnapshot() == null &&
+            dao.getAllRoutinesSnapshot().isEmpty() &&
+            dao.getSessionHistorySnapshot().isEmpty()
+        val provenance = TamperWitness.classifyProvenance(
+            dbVirgin = dbVirgin,
+            keystoreKeyPreExisted = CryptoIntegrityManager.hmacKeyExists()
+        )
+        if (provenance == TamperWitness.InstallProvenance.RESURRECTED_UNPROVEN) {
+            context.getSharedPreferences(PROVENANCE_PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(PROVENANCE_UNPROVEN_KEY, true)
+                .putLong(PROVENANCE_DETECTED_WALL_KEY, System.currentTimeMillis())
+                .apply()
+        }
+    }
+
     suspend fun ensureSeededAndSyncPackages() = withContext(Dispatchers.IO) {
         seedMutex.withLock {
+        recordProvenanceIfResurrected()
         if (dao.getAllSitesSnapshot().isEmpty()) {
             dao.insertSites(BlockedBrowserDomains.defaultDomains.map { BlockedSiteEntity(it) })
         }
@@ -784,7 +834,8 @@ class MonolithRepository(
             isHmacSignatureValid = hmacIntact,
             clockDriftSeconds = driftSeconds,
             systemBootCount = querySystemBootCount(),
-            installedLauncherAppsCount = appsCount
+            installedLauncherAppsCount = appsCount,
+            installProvenanceUnproven = provenanceUnproven()
         )
     }
 
