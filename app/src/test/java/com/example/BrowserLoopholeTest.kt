@@ -4,6 +4,7 @@ import com.example.data.AppBlockTier
 import com.example.data.BlockedAppEntity
 import com.example.data.BlockedBrowserDomains
 import com.example.data.heldSitesCount
+import com.example.data.youtubeHostSeedUpgrade
 import com.example.service.InterceptPath
 import com.example.service.SitePeekStore
 import com.example.service.isSupportedBrowserPackage
@@ -126,6 +127,42 @@ class BrowserLoopholeTest {
         assertEquals(
             "youtube.com",
             matchBlockedDomain("https://www.youtube.com/shorts/xyz", BlockedBrowserDomains.defaultDomains)
+        )
+    }
+
+    // Finding 2, delivery (verifier correction, DURCH-D): the seed
+    // is once-ever, so existing installs need the upgrade decision
+    // to deliver the host rule — and ONLY where the legacy factory
+    // entry proves the seed stands unedited.
+    @Test
+    fun youtubeHostSeedUpgradeReachesExistingInstallsOnly() {
+        // An existing install carrying the legacy v1 seed list:
+        // the host is delivered.
+        val legacySeed = listOf(
+            "instagram.com", "tiktok.com", "reddit.com", "x.com",
+            "twitter.com", "facebook.com", "snapchat.com", "youtube.com/shorts"
+        )
+        assertEquals(listOf("youtube.com"), youtubeHostSeedUpgrade(legacySeed))
+        // Already delivered (or a fresh install's current list):
+        // nothing to add.
+        assertEquals(
+            emptyList<String>(),
+            youtubeHostSeedUpgrade(legacySeed + "youtube.com")
+        )
+        // The user deleted the Shorts rule himself — a deletion is
+        // a ruling; the upgrade resurrects nothing.
+        assertEquals(
+            emptyList<String>(),
+            youtubeHostSeedUpgrade(legacySeed - "youtube.com/shorts")
+        )
+        // The user emptied the list entirely (Audit R2 #96):
+        // honoured, never refilled.
+        assertEquals(emptyList<String>(), youtubeHostSeedUpgrade(emptyList()))
+        // A hand-built list that never carried the factory seed:
+        // untouched.
+        assertEquals(
+            emptyList<String>(),
+            youtubeHostSeedUpgrade(listOf("example.com", "news.ycombinator.com"))
         )
     }
 

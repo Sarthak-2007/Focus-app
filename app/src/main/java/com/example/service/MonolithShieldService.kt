@@ -69,6 +69,31 @@ internal fun shieldDispatchFor(
     else -> if (monitorRunning) ShieldDispatch.KEEP_RUNNING else ShieldDispatch.STOP_SELF
 }
 
+/** Issue #337 (Freedom, Platform F2): a grant whose absence the
+ *  session notification can repair, with the label its action
+ *  button carries and the settings screen it opens. Accessibility
+ *  is the fatal one (Freedom's taxonomy: only Accessibility is
+ *  'disabled'; anything else missing is 'restricted') — its label
+ *  is Freedom's own: 'Enable blocking'. */
+enum class RepairAction(val label: String) {
+    ACCESSIBILITY("Enable blocking"),
+    USAGE_ACCESS("Usage access")
+}
+
+/** Which repair actions a notification rendered RIGHT NOW must
+ *  carry: one per missing grant, fatal first. Empty when every
+ *  grant the shield depends on is present — the notification then
+ *  stays the plain session announcement it always was. */
+internal fun missingRepairActions(
+    accessibilityBound: Boolean,
+    usageAccessGranted: Boolean
+): List<RepairAction> {
+    val missing = mutableListOf<RepairAction>()
+    if (!accessibilityBound) missing += RepairAction.ACCESSIBILITY
+    if (!usageAccessGranted) missing += RepairAction.USAGE_ACCESS
+    return missing
+}
+
 class MonolithShieldService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -345,7 +370,23 @@ class MonolithShieldService : Service() {
                 // shieldLastBeatWallMillis into the row it already
                 // persists, so the finish machine can later prove
                 // whether the shield was present or gone.
-                val updated = repository.updateSessionProgress(activeSession, stampShieldBeat = true)
+                // Audit R6 #341 F31: a full disk must not kill the
+                // shield. Before this, an SQLiteFullException out of
+                // the tick's write escaped the loop and took the
+                // session's only protection (and its elapsed record)
+                // with it. On a full-disk tick we log, skip the
+                // persistence for this beat and keep shielding; the
+                // next tick retries the write.
+                val updated = try {
+                    repository.updateSessionProgress(activeSession, stampShieldBeat = true)
+                } catch (e: android.database.sqlite.SQLiteFullException) {
+                    android.util.Log.e("MonolithShield", "storage full: progress tick not persisted", e)
+                    null
+                }
+                if (updated == null) {
+                    delay(2000L)
+                    continue
+                }
                 if (!usageGranted) {
                     // Latched AFTER the progress write on purpose:
                     // updateSession is a full-row @Update, so a latch
@@ -537,6 +578,14 @@ class MonolithShieldService : Service() {
                 val nowMono = SystemClock.elapsedRealtime()
                 val blockedPackages = repository.allAppsSnapshot() /* ISSUE-67(d): via repository */
                     .filter { app ->
+                        // W3 #134: the dialer is never in the
+                        // blocked set — this door's usage-stats
+                        // sweep would otherwise intercept the
+                        // Phone app mid-dial (MODE_NORMAL, before
+                        // any call mode exists), locking the user
+                        // out of placing a call exactly as the
+                        // accessibility door did.
+                        if (repository.isDialerPackage(app.packageName)) return@filter false
                         val tier = app.resolvedTier
                         // Issue #140: the daily limit is real. An app
                         // whose today's usage has reached its limit is
@@ -628,6 +677,13 @@ class MonolithShieldService : Service() {
                     // app (the filter above), so a lease sold here
                     // is honoured (UNA2-01) — InterceptPath.SHIELD_APP,
                     // as before.
+                    // Issue #339 (Second-pass F2): eject first,
+                    // via the accessibility service when it is
+                    // bound (GLOBAL_ACTION_* exists only there);
+                    // unbound, this door cannot eject and the
+                    // launch below stands alone, as before.
+                    MonolithAccessibilityService.instance
+                        ?.ejectForShield(foregroundBlockedPkg)
                     // Issue #94 (F2): never a bare background launch —
                     // a dropped launch stamps itself and falls back
                     // to a tappable notification (InterceptLaunch).
@@ -748,6 +804,47 @@ class MonolithShieldService : Service() {
         }
     }
 
+    /** #337 F2: is Usage Access granted to this app right now?
+     *  (AppOps verdict, the same probe the repository uses.) */
+    private fun hasUsageAccessNow(): Boolean {
+        return try {
+            val appOps = getSystemService(Context.APP_OPS_SERVICE) as? android.app.AppOpsManager
+                ?: return false
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                appOps.unsafeCheckOpNoThrow(
+                    android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(),
+                    packageName
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                appOps.checkOpNoThrow(
+                    android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(),
+                    packageName
+                )
+            }
+            mode == android.app.AppOpsManager.MODE_ALLOWED
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun repairPendingIntent(action: RepairAction): PendingIntent {
+        val intent = when (action) {
+            RepairAction.ACCESSIBILITY ->
+                Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            RepairAction.USAGE_ACCESS ->
+                Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS)
+        }.apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+        return PendingIntent.getActivity(
+            this,
+            10 + action.ordinal,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+    }
+
     private fun buildNotification(
         title: String,
         subtitle: String,
@@ -811,6 +908,37 @@ class MonolithShieldService : Service() {
         }
         if (badgeNumber != null) {
             builder.setNumber(badgeNumber)
+        }
+
+        // #337 F2: when a grant the session depends on is missing
+        // MID-SESSION, the one surface the user can always reach —
+        // this notification — becomes the repair tool: a big-text
+        // warning naming what is missing plus one action button
+        // per grant, deep-linking to the exact settings screen.
+        // Grants are probed at render time, so the actions appear
+        // and disappear with the truth.
+        val missing = missingRepairActions(
+            accessibilityBound = MonolithAccessibilityService.instance != null,
+            usageAccessGranted = hasUsageAccessNow()
+        )
+        if (missing.isNotEmpty()) {
+            val warning = buildString {
+                append(subtitle)
+                append(" — Missing: ")
+                append(
+                    missing.joinToString(", ") {
+                        when (it) {
+                            RepairAction.ACCESSIBILITY -> "Accessibility (blocking is OFF)"
+                            RepairAction.USAGE_ACCESS -> "Usage access (detector degraded)"
+                        }
+                    }
+                )
+            }
+            builder.setStyle(NotificationCompat.BigTextStyle().bigText(warning))
+            builder.setContentText(warning)
+            for (action in missing) {
+                builder.addAction(0, action.label, repairPendingIntent(action))
+            }
         }
         return builder.build()
     }

@@ -21,7 +21,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         EmergencyBreakSpendEntity::class,
         DayNoteEntity::class
     ],
-    version = 15,
+    version = 16,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -239,6 +239,27 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
+         * W3 #134, DURCH-D closure recomposition (14→15; renumbered
+         * again at landing — main took 13→14 itself for issue #10's
+         * held-split while this lane was in flight, exactly as it
+         * had taken 12→13 for #287 before that): schema only, zero
+         * data writes, no backfill — the default IS the truthful
+         * pre-v15 value (0 = no call seconds were ever excluded;
+         * before this column the progress machine never looked, so
+         * no past row can claim any).
+         *
+         * focus_sessions +1: callExcludedSeconds — the per-block
+         * seconds the call bypass was active, excluded from the
+         * booked elapsed by updateSessionProgress so call time
+         * is never certified as focus time.
+         */
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN callExcludedSeconds INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
          * Issue #100 (notifications-lived) — Sarthak's ruling:
          * notification-content storage is CUT. The captured
          * notifications table (plaintext message bodies, stored
@@ -246,8 +267,14 @@ abstract class MonolithDatabase : RoomDatabase() {
          * are now snoozes of the originals held by the system;
          * Monolith keeps no copy, so there is nothing to migrate
          * the rows into — dropping is the whole migration.
+         *
+         * DURCH-C composition note (Oct 31): authored as 14→15 on
+         * the CUT branch, renumbered to 15→16 at landing — main
+         * took 14→15 itself for #134's callExcludedSeconds above
+         * while this lane was in flight. Same drop, same ruling;
+         * only the number moved.
          */
-        val MIGRATION_14_15 = object : Migration(14, 15) {
+        val MIGRATION_15_16 = object : Migration(15, 16) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("DROP TABLE IF EXISTS captured_notifications")
             }
@@ -341,7 +368,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance

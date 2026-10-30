@@ -332,16 +332,17 @@ class RoutinesMigrationChainTest {
             .addMigrations(
                 MonolithDatabase.MIGRATION_7_8, MonolithDatabase.MIGRATION_8_9,
                 MonolithDatabase.MIGRATION_9_10, MonolithDatabase.MIGRATION_10_11,
-                MonolithDatabase.MIGRATION_11_12, MonolithDatabase.MIGRATION_12_13, MonolithDatabase.MIGRATION_13_14,
-                MonolithDatabase.MIGRATION_14_15
+                MonolithDatabase.MIGRATION_11_12, MonolithDatabase.MIGRATION_12_13,
+                MonolithDatabase.MIGRATION_13_14,
+                MonolithDatabase.MIGRATION_14_15, MonolithDatabase.MIGRATION_15_16
             )
             .build()
 
         runBlocking {
             val dao = room.monolithDao()
             // This read forces the open: Room has now migrated
-            // 7→8→9→10→11→12→13→14 AND validated the resulting schema
-            // against every v14 entity, day_notes included.
+            // 7→8→9→10→11→12→13→14→15 AND validated the resulting
+            // schema against every v15 entity, day_notes included.
             assertTrue(dao.getAllDayNotesSnapshot().isEmpty())
             dao.insertDayNotes(listOf(DayNoteEntity("2026-10-29", "REST")))
             assertEquals(
@@ -375,7 +376,7 @@ class RoutinesMigrationChainTest {
         )
         assertFalse(tables.contains("routine_attendance"))
         // Issue #100 CUT: the notification-content store is GONE at
-        // v15 — MIGRATION_14_15 dropped the table the v7 fixture
+        // v16 — MIGRATION_15_16 dropped the table the v7 fixture
         // created; no content store may stand at the latest schema.
         assertFalse(tables.contains("captured_notifications"))
 
