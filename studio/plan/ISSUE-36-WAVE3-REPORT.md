@@ -96,7 +96,7 @@ only in the one keystore-less case documented there — see Finding 5).
 The payload (`CryptoIntegrityManager.kt:60` pre-fix) is exactly:
 `startWallTimeMillis | startElapsedRealtimeMillis | bootCount | targetDurationSeconds | isStopwatchMode`
 — 5 signed fields. `FocusSessionEntity` (`MonolithModels.kt:268-371`) carries
-42 fields. Full census of the **36 unsigned fields** (line refs to
+43 fields. Full census of the **37 unsigned fields** (line refs to
 MonolithModels.kt):
 
 | Field | Line | Trusted by |
@@ -130,9 +130,9 @@ MonolithModels.kt):
 | taskId | 323 | Arm Ticket bond |
 | heldAppsAtSeal | 332 | seal record (receipt omits -1) |
 | heldSitesAtSeal | 333 | seal record |
-| releaseFaultShield | 341 | release-fault record |
-| releaseRetriesDone | 342 | release-fault record |
-| releaseFaultedAtWallMillis | 343 | release-fault record |
+| releaseFaultShield | 339 | release-fault record |
+| releaseRetriesDone | 340 | release-fault record |
+| releaseFaultedAtWallMillis | 341 | release-fault record |
 | outcome | 346 | session ending classification |
 | shieldLastBeatWallMillis | 351 | shield-gap classification (Repository :2067) |
 | shieldGapSeen | 355 | shield-gap latch |
@@ -231,7 +231,7 @@ Robolectric, sdk 36), 8 tests:
 - **Improver:** `payloadBytesFor` shared by sign+verify kills a whole class of future payload drift between the two paths. — *Improver*
 - **Designer:** No surface touched; the only user-visible artefact is a doc comment that finally tells the truth. — *Designer*
 - **Consumer:** As the phone's owner: if my keystore key dies, sessions now flag tamper instead of quietly healing — that's the behaviour I'd want, and it's the one the brief ordered. — *Consumer*
-- **Student:** The census table is the teachable artefact: 36 unsigned fields, three of which the verifier itself eats. — *Student*
+- **Student:** The census table is the teachable artefact: 37 unsigned fields, three of which the verifier itself eats. — *Student*
 - **User:** Nothing about my timer changes today; the fix is invisible unless someone tampers — correct shape for a security fix. — *User*
 - **User-experience:** Zero UX delta by design; a false "tamper" on keystore-less runtimes would have been the UX bug, and the mirror avoids it. — *User-experience*
 - **Purpose-questioning:** Reviewed the classifications as ordered: is finding 5 truly decision-independent? Yes — constant-time compare and no-mutation-on-read are hygiene under ANY design #21 could pick, including abolishing HMAC entirely. Is the doc cure prejudging? No — it removes a claim; every ruling stays open. No conviction. — *Purpose-questioning*
@@ -243,7 +243,7 @@ Robolectric, sdk 36), 8 tests:
 - **Intentionality designer:** Every changed line traces to finding 5 or the permitted doc cure; zero scope creep into coverage, provenance, or blank semantics. — *Intentionality designer*
 - **Synchronous collaboration:** Evidence slices, census, and downgrade paths are written so the #21 ruling session needs no re-verification pass. — *Synchronous collaboration*
 - **Implementation-quality:** Sign path is byte-identical in behaviour (same lookup body, renamed); verify's happy path returns the same verdicts for every honestly-signed row. — *Implementation-quality*
-- **Technical execution:** `MessageDigest.isEqual` on decoded bytes; malformed/empty/truncated inputs all funnel to `false` before any key work. — *Technical execution*
+- **Technical execution:** `MessageDigest.isEqual` on decoded bytes; malformed/empty inputs funnel to `false` before any key work; truncated (well-formed) MACs proceed through key resolution and fail at `isEqual`. — *Technical execution*
 - **Interaction-detail:** The deleted-key test asserts the post-condition (alias still absent), not just the verdict — the side effect was the bug, so the test hunts the side effect. — *Interaction-detail*
 
 (Thin lenses above are LEAD-COVERED by the bundle lead where a seat's pass
@@ -261,3 +261,12 @@ was a confirmation rather than new evidence; no seat dropped.)
 
 Issue stays OPEN for the #21 ruling. CI verdict for this branch is recorded
 in the bundle's delivery note to HERZ (run list pulled after push).
+
+---
+
+**Correction pass (HERZ, on the independent Verifier's proof-check, Oct 30):**
+- Census totals corrected: FocusSessionEntity carries **43 fields; 37 are unsigned** (the table above always listed 37 rows; the prose totals said 42/36).
+- Line refs for releaseFaultShield / releaseRetriesDone / releaseFaultedAtWallMillis corrected to MonolithModels.kt:339/340/341.
+- Finding 1's writer census was incomplete: the full `dao.updateSession` copy-write sites also include MonolithRepository.kt:2123, :2271, :2328, :2564, :2584, :2654, :2697. All are `.copy()` writes of loaded rows; the conclusion (no app write path persists a fresh blank signature) is unchanged.
+- Test-strength qualification: the deleted-key / no-creation behaviour (tests 6–7) is **code-proven**; in a keystore-less (Robolectric) runtime test 7 skips via `assumeTrue`, and test 6 cannot isolate the keystore-present-key-absent branch. The branch's CI also remains blocked at test-compile by the repo-wide pre-existing stale-test wall, so no executed-test verdict exists yet.
+- Verify-side provenance note: verify's inherited fallback routes were **narrowed, never widened** (keystore present but key absent → `false` without trying the fallback; fallback retained only where no keystore can exist). Sign-side provenance — what creates signatures — is untouched. If decision #21 is read as freezing verify's key provenance too, this narrowing is the one deviation to rule on.
