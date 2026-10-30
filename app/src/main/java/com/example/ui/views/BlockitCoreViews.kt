@@ -1456,7 +1456,8 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
     var onPressEnd: (() -> Unit)? = null
 
     /** The Live Wire verdict, read synchronously. Null = no provider
-     *  wired (preview): the wire reads LIVE so the surface still works. */
+     *  wired (preview): the wire reads UNPROVEN (issue #6 F11b) —
+     *  an unwired surface must never default to claiming proof. */
     var warrantProvider: (() -> Warrant)? = null
 
     var isArmedState: Boolean = false
@@ -1725,7 +1726,11 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
     }
 
     private fun readWarrant(): WarrantState =
-        warrantProvider?.invoke()?.state ?: WarrantState.LIVE
+        // Issue #6 F11b (critic C11): an unwired slide is
+        // UNMEASURED, never LIVE — a default that claims proof
+        // inverts the truth law. Production wires the provider;
+        // previews now render honestly unproven.
+        warrantProvider?.invoke()?.state ?: WarrantState.UNPROVEN
 
     private fun insetPx(): Float = dp(8f)
     private fun capWPx(): Float = dp(84f)
