@@ -511,7 +511,7 @@ class MonolithViewModel(
     // merge (Ren's lean, E-1 as amended).
     private var nightReturn: NightReturnState = NightReturnState()
     private val _nightReturnPhase = MutableStateFlow(NightReturnPhase.OPEN)
-    val nightReturnPhase: StateFlow<NightReturnPhase> = _nightReturnPhase.asStateFlow()
+    internal val nightReturnPhase: StateFlow<NightReturnPhase> = _nightReturnPhase.asStateFlow()
     /** Whether the CURRENT phase was entered by snap (covered
      *  veil entry, hand-dismissal Landing entry, expiry clear)
      *  rather than by the 520 Curve C animation — written
