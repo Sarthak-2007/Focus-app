@@ -570,6 +570,20 @@ class MonolithRailView(context: Context) : BlockitCanvasView(context) {
         }
     }
 
+    /** Settle the cap onto [stop] (0..3) or the PARK zone (4) —
+     *  the host's truth-telling move after it REFUSES a seat the
+     *  cap already travelled to (issues #128 findings 1 + 4): the
+     *  committed stop never changed, so without this the cap would
+     *  stand over a destination the phone is not on and the band
+     *  would lie about where you are. No seat callback fires: this
+     *  is a return, not a navigation. */
+    fun settleCapTo(stop: Int) {
+        val target = stop.coerceIn(0, RailGeometry.PARK_INDEX).toFloat()
+        if (kotlin.math.abs(capPos - target) > 0.001f) {
+            animateCapTo(target, null)
+        }
+    }
+
     /** A drag's seat: the nearest stop, PARK included. */
     private fun commitStop(stop: Int) {
         when {

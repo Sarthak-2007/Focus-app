@@ -739,6 +739,22 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                 else -> MonolithDestination.VAULT
                             }
                             viewModel.navigateTo(dest)
+                            // Issue #128 finding 1: a refused
+                            // navigation (e.g. any rail travel
+                            // while sealed) changes no state, so
+                            // no recomposition would ever re-seat
+                            // the cap — settle it back onto the
+                            // destination the phone is actually
+                            // on, or the band lies.
+                            if (viewModel.currentDestination.value != dest) {
+                                val actualIdx = when (viewModel.currentDestination.value) {
+                                    MonolithDestination.DECK -> 0
+                                    MonolithDestination.SHIELD -> 1
+                                    MonolithDestination.TASKS -> 2
+                                    MonolithDestination.VAULT -> 3
+                                }
+                                view.settleCapTo(actualIdx)
+                            }
                         }
                         view.onParkInvoked = {
                             if (parkOpen) {

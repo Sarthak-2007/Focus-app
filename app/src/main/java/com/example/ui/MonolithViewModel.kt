@@ -1385,7 +1385,7 @@ class MonolithViewModel(
      *  the seal shot runs (t0 → t0+1050), and while a finish
      *  detains the Deck (E0 → issuance). The refusal precedes the
      *  detent sound: a refused tap must not sound like travel. */
-    fun navigationLocked(): Boolean {
+    private fun hardNavigationLocked(): Boolean {
         val phase = armProving.phase.value
         if (phase is ArmPhase.Proving || phase is ArmPhase.Jammed) return true
         if (phase is ArmPhase.SealedRunning &&
@@ -1398,10 +1398,28 @@ class MonolithViewModel(
         return false
     }
 
+    /** The full lock: the hard locks above, plus the seal itself
+     *  (issue #128 finding 1). A live session holds the phone on
+     *  the Deck for its whole life — not just the shot's first
+     *  1050ms — so one stray tap on the rail cannot walk away
+     *  mid-session into screens full of live controls. PARK's
+     *  tap-time guard (MainActivity.openPark) already read the
+     *  seal; the rail destinations never did. */
+    fun navigationLocked(): Boolean =
+        hardNavigationLocked() || activeSession.value?.isActive == true
+
     private var lastNavRefusalMono = 0L
 
     fun navigateTo(destination: MonolithDestination) {
-        if (destination != _currentDestination.value && navigationLocked()) {
+        // Sealed return: travelling TO the Deck under a seal is
+        // not an escape, it is the way back — the seal alone never
+        // refuses it. The hard locks refuse even that, exactly as
+        // before.
+        val refused = destination != _currentDestination.value &&
+            (hardNavigationLocked() ||
+                (activeSession.value?.isActive == true &&
+                    destination != MonolithDestination.DECK))
+        if (refused) {
             val now = SystemClock.elapsedRealtime()
             if (now - lastNavRefusalMono >= 250L) {
                 lastNavRefusalMono = now
