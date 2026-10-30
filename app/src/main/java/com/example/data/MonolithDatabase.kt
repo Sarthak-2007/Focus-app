@@ -216,6 +216,7 @@ abstract class MonolithDatabase : RoomDatabase() {
             }
         }
 
+        /**
          * Issue #10 (W-41): the seal's held count, split by tier.
          * heldShutAtSeal / heldPeekAtSeal record how many of the
          * apps held at a session's birth were SHUT and how many
@@ -235,6 +236,8 @@ abstract class MonolithDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE focus_sessions ADD COLUMN heldShutAtSeal INTEGER NOT NULL DEFAULT -1")
                 db.execSQL("ALTER TABLE focus_sessions ADD COLUMN heldPeekAtSeal INTEGER NOT NULL DEFAULT -1")
+            }
+        }
 
         /**
          * W3 #134, DURCH-D closure recomposition (14→15; renumbered
@@ -254,8 +257,6 @@ abstract class MonolithDatabase : RoomDatabase() {
         val MIGRATION_14_15 = object : Migration(14, 15) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE focus_sessions ADD COLUMN callExcludedSeconds INTEGER NOT NULL DEFAULT 0")
-            }
-        }
             }
         }
 
