@@ -167,7 +167,13 @@ fun DrawerScreen(
     // removed with DRW-01/06/07 — each printed a fact the app does
     // not hold.)
     artifacts: List<KineticArtifact> = CurioCatalog.artifacts,
-    forgedArtifactIds: Set<String> = emptySet()
+    forgedArtifactIds: Set<String> = emptySet(),
+    // Issue #52 F3 cure: the month read's state, from the
+    // ViewModel — loading while a page is in flight, an error
+    // line when the read failed. An empty month, a loading
+    // month and a broken month are three different prints.
+    drawerLoading: Boolean = false,
+    drawerError: String? = null
 ) {
     val scheme = MaterialTheme.colorScheme
     // Issue #52 F1 cure: the navigation stack is saveable.
@@ -268,7 +274,11 @@ fun DrawerScreen(
                         fontSize = 12.sp,
                         color = scheme.onBackground,
                         modifier = Modifier
-                            .clickable { selectedTaskId = -1 }
+                            .clickable(
+                                role = androidx.compose.ui.semantics.Role.Button
+                            ) { selectedTaskId = -1 }
+                            .sizeIn(minHeight = 48.dp)
+                            .padding(vertical = 14.dp)
                             .testTag("drawer_detail_back")
                     )
                 }
@@ -392,13 +402,17 @@ fun DrawerScreen(
                         fontSize = 12.sp,
                         color = scheme.onBackground,
                         modifier = Modifier
-                            .clickable {
+                            .clickable(
+                                role = androidx.compose.ui.semantics.Role.Button
+                            ) {
                                 if (cabinetArtifact != null) {
                                     cabinetArtifactId = ""
                                 } else {
                                     viewName = DrawerView.LANDING.name
                                 }
                             }
+                            .sizeIn(minHeight = 48.dp)
+                            .padding(vertical = 14.dp)
                             .testTag("cabinet_back")
                     )
                 }
@@ -409,7 +423,10 @@ fun DrawerScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { cabinetArtifactId = item.id }
+                            .clickable(
+                                role = androidx.compose.ui.semantics.Role.Button
+                            ) { cabinetArtifactId = item.id }
+                            .sizeIn(minHeight = 48.dp)
                             .padding(vertical = 6.dp)
                             .testTag("cabinet_row_${item.id}"),
                         verticalArrangement = Arrangement.spacedBy(3.dp)
@@ -564,9 +581,13 @@ fun DrawerScreen(
         // Search — one field. While sealed it is composed but
         // input-disabled: reading is free, typing is an edit.
         item {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .weight(1f)
                     .height(48.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(scheme.surfaceVariant)
@@ -599,24 +620,30 @@ fun DrawerScreen(
                         .fillMaxWidth()
                         .testTag("drawer_search_input")
                 )
-                // Issue #52 F2 cure: the escape from search is
-                // always live — clearing is not editing, so the
-                // seal does not gate it. A sealed user with a
-                // query set is no longer trapped in the results.
-                if (searching) {
-                    Text(
-                        text = "CLEAR SEARCH",
-                        fontFamily = AnonymousProFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp,
-                        letterSpacing = 1.sp,
-                        color = scheme.onBackground,
-                        modifier = Modifier
-                            .clickable { onQueryChange("") }
-                            .padding(vertical = 10.dp)
-                            .testTag("drawer_search_clear")
-                    )
-                }
+            }
+            // Issue #52 F2 cure, placement corrected by the C7
+            // art panel: the escape sits BESIDE the field as a
+            // Row sibling — never over the query it rescues —
+            // at the full 48dp target with a Button role. The
+            // escape is always live: clearing is not editing,
+            // so the seal does not gate it.
+            if (searching) {
+                Text(
+                    text = "CLEAR SEARCH",
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onBackground,
+                    modifier = Modifier
+                        .clickable(
+                            role = androidx.compose.ui.semantics.Role.Button
+                        ) { onQueryChange("") }
+                        .sizeIn(minHeight = 48.dp)
+                        .padding(horizontal = 4.dp, vertical = 14.dp)
+                        .testTag("drawer_search_clear")
+                )
+            }
             }
         }
 
@@ -680,10 +707,13 @@ fun DrawerScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
+                            .clickable(
+                                role = androidx.compose.ui.semantics.Role.Button
+                            ) {
                                 onSelectMonth(month.year, month.month)
                                 viewName = DrawerView.MONTH.name
                             }
+                            .sizeIn(minHeight = 48.dp)
                             .padding(vertical = 10.dp)
                             .testTag("drawer_month_${month.year}_${month.month}"),
                         verticalAlignment = Alignment.CenterVertically
@@ -722,10 +752,16 @@ fun DrawerScreen(
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
                             color = scheme.onBackground,
-                            modifier = Modifier.clickable {
-                                onSelectMonth(currentYearMonth.first, currentYearMonth.second)
-                                viewName = DrawerView.LANDING.name
-                            }
+                            modifier = Modifier
+                                .clickable(
+                                    role = androidx.compose.ui.semantics.Role.Button
+                                ) {
+                                    onSelectMonth(currentYearMonth.first, currentYearMonth.second)
+                                    viewName = DrawerView.LANDING.name
+                                }
+                                .sizeIn(minHeight = 48.dp)
+                                .padding(vertical = 14.dp)
+                                .testTag("drawer_month_back")
                         )
                     }
                 }
@@ -738,16 +774,42 @@ fun DrawerScreen(
                     today = today
                 )
                 if (groups.isEmpty()) {
+                    // Issue #52 F3 cure: three different prints for
+                    // three different facts — a read that FAILED, a
+                    // read still IN FLIGHT, and a month that is
+                    // genuinely EMPTY. Never a blank screen.
                     item {
-                        Text(
-                            text = "NOTHING FILED IN " +
-                                monthLabel(drawerMonth.first, drawerMonth.second),
-                            fontFamily = AnonymousProFamily,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 24.dp)
-                        )
+                        when {
+                            drawerError != null -> Text(
+                                text = drawerError,
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.error,
+                                modifier = Modifier
+                                    .padding(vertical = 24.dp)
+                                    .testTag("drawer_error")
+                            )
+                            drawerLoading -> Text(
+                                text = "READING THE DRAWER…",
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .padding(vertical = 24.dp)
+                                    .testTag("drawer_loading")
+                            )
+                            else -> Text(
+                                text = "NOTHING FILED IN " +
+                                    monthLabel(drawerMonth.first, drawerMonth.second),
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 24.dp)
+                            )
+                        }
                     }
                 }
                 groups.forEach { group ->
@@ -763,6 +825,18 @@ fun DrawerScreen(
                         StoredRow(task = task, onClick = { selectedTaskId = task.id })
                     }
                 }
+                if (drawerError != null && groups.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = drawerError,
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.error,
+                            modifier = Modifier.testTag("drawer_error")
+                        )
+                    }
+                }
                 if (drawerHasEarlier) {
                     item { EarlierRow(onClick = onLoadEarlier) }
                 }
@@ -770,7 +844,36 @@ fun DrawerScreen(
 
             DrawerView.LANDING -> {
                 // ---------- LANDING: ALL MONTHS + current month ----------
-                if (globallyEmpty) {
+                // Issue #52 F3: while the first read is in flight,
+                // or when it failed, the landing prints that fact
+                // instead of a premature "NOTHING STORED YET".
+                if (drawerError != null && drawerRows.isEmpty()) {
+                    item {
+                        Text(
+                            text = drawerError,
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.error,
+                            modifier = Modifier
+                                .padding(vertical = 24.dp)
+                                .testTag("drawer_error")
+                        )
+                    }
+                } else if (drawerLoading && drawerRows.isEmpty()) {
+                    item {
+                        Text(
+                            text = "READING THE DRAWER…",
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .padding(vertical = 24.dp)
+                                .testTag("drawer_loading")
+                        )
+                    }
+                } else if (globallyEmpty) {
                     item {
                         Text(
                             text = "NOTHING STORED YET",
@@ -810,7 +913,10 @@ fun DrawerScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { viewName = DrawerView.INDEX.name }
+                                .clickable(
+                                    role = androidx.compose.ui.semantics.Role.Button
+                                ) { viewName = DrawerView.INDEX.name }
+                                .sizeIn(minHeight = 48.dp)
                                 .padding(vertical = 6.dp)
                                 .testTag("drawer_all_months"),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -957,7 +1063,10 @@ private fun StoredRow(task: FocusTaskEntity, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
+            .clickable(
+                role = androidx.compose.ui.semantics.Role.Button
+            ) { onClick() }
+            .sizeIn(minHeight = 48.dp)
             .padding(vertical = 6.dp)
             .testTag("drawer_row_${task.id}"),
         verticalArrangement = Arrangement.spacedBy(3.dp)
@@ -1001,10 +1110,14 @@ private fun EarlierRow(onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
+            .clickable(
+                role = androidx.compose.ui.semantics.Role.Button
+            ) { onClick() }
+            .sizeIn(minHeight = 48.dp)
             .padding(vertical = 10.dp)
             .testTag("drawer_earlier"),
-        horizontalArrangement = Arrangement.Center
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = "EARLIER",

@@ -1851,6 +1851,16 @@ class MonolithViewModel(
     private val _drawerHasEarlier = MutableStateFlow(false)
     val drawerHasEarlier: StateFlow<Boolean> = _drawerHasEarlier.asStateFlow()
 
+    // Issue #52 F3 cure: a month read is a state, not a void.
+    // Loading runs from the select tap until the page lands or
+    // fails; a failure lands in drawerError instead of leaving a
+    // blank screen indistinguishable from an empty month.
+    private val _drawerLoading = MutableStateFlow(false)
+    val drawerLoading: StateFlow<Boolean> = _drawerLoading.asStateFlow()
+
+    private val _drawerError = MutableStateFlow<String?>(null)
+    val drawerError: StateFlow<String?> = _drawerError.asStateFlow()
+
     private val _drawerQuery = MutableStateFlow("")
     val drawerQuery: StateFlow<String> = _drawerQuery.asStateFlow()
 
@@ -1876,10 +1886,25 @@ class MonolithViewModel(
     fun refreshDrawer() {
         _drawerMonth.value = com.example.data.DrawerDay.filingYearMonth(System.currentTimeMillis())
         viewModelScope.launch {
-            _storedMonths.value = repository.storedMonths()
-            _dayWords.value = repository.allDayWords()
-            _forgedArtifactIds.value = repository.forgedArtifactIds()
+            var indexFailed = false
+            try {
+                _storedMonths.value = repository.storedMonths()
+                _dayWords.value = repository.allDayWords()
+                _forgedArtifactIds.value = repository.forgedArtifactIds()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                indexFailed = true
+            }
             selectDrawerMonth(_drawerMonth.value.first, _drawerMonth.value.second)
+            if (indexFailed) {
+                // Issue #52 F3: a failed index read prints as an
+                // error on the Drawer, never as a silent empty room.
+                // Set after selectDrawerMonth, whose start clears
+                // the previous error; the page read's own failure
+                // path writes the same line.
+                _drawerError.value = "THE DRAWER COULD NOT BE READ — TRY AGAIN"
+            }
         }
     }
 
@@ -1888,15 +1913,27 @@ class MonolithViewModel(
         drawerOffset = 0
         _drawerRows.value = emptyList()
         _drawerHasEarlier.value = false
+        _drawerLoading.value = true
+        _drawerError.value = null
         viewModelScope.launch {
-            val page = repository.storedPage(year, month, 0)
-            // Guard: the month may have changed again mid-read.
-            if (_drawerMonth.value == (year to month)) {
-                _drawerRows.value = page.rows
-                drawerOffset = page.rows.size
-                // DRW-04: the repository's probe row decides —
-                // never the returned page's size.
-                _drawerHasEarlier.value = page.hasEarlier
+            try {
+                val page = repository.storedPage(year, month, 0)
+                // Guard: the month may have changed again mid-read.
+                if (_drawerMonth.value == (year to month)) {
+                    _drawerRows.value = page.rows
+                    drawerOffset = page.rows.size
+                    // DRW-04: the repository's probe row decides —
+                    // never the returned page's size.
+                    _drawerHasEarlier.value = page.hasEarlier
+                    _drawerLoading.value = false
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (_drawerMonth.value == (year to month)) {
+                    _drawerError.value = "THE DRAWER COULD NOT BE READ — TRY AGAIN"
+                    _drawerLoading.value = false
+                }
             }
         }
     }
@@ -1906,11 +1943,19 @@ class MonolithViewModel(
         val (year, month) = _drawerMonth.value
         val offset = drawerOffset
         viewModelScope.launch {
-            val page = repository.storedPage(year, month, offset)
-            if (_drawerMonth.value == (year to month)) {
-                _drawerRows.value = _drawerRows.value + page.rows
-                drawerOffset += page.rows.size
-                _drawerHasEarlier.value = page.hasEarlier
+            try {
+                val page = repository.storedPage(year, month, offset)
+                if (_drawerMonth.value == (year to month)) {
+                    _drawerRows.value = _drawerRows.value + page.rows
+                    drawerOffset += page.rows.size
+                    _drawerHasEarlier.value = page.hasEarlier
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (_drawerMonth.value == (year to month)) {
+                    _drawerError.value = "THE DRAWER COULD NOT BE READ — TRY AGAIN"
+                }
             }
         }
     }
