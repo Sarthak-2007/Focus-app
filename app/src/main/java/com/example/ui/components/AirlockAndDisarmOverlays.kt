@@ -214,18 +214,22 @@ fun AlwaysOnDeskClockOverlay(
         } else {
             dialMinutes * 60
         }
-        val mm = displaySecs / 60
-        val ss = displaySecs % 60
         // Audit R3b #147: a stopwatch clock counts UP — the bare
         // MM:SS was indistinguishable from a countdown at a glance.
         // The + prefix is the direction marker, here and on the
         // Deck's hero readout alike.
+        // #127 finding 4 (format half): the digits ride the shared
+        // duration print — H:MM:SS past an hour, so a 170-minute span
+        // no longer prints as "170:00". The label half is already
+        // cured on main by #111 (deskClockModeLabel above the digits);
+        // the branch's deskClockLabel/EXIT-tap mechanism is NOT
+        // restored over it.
         val timeText = if (activeSession != null && activeSession.isActive &&
             activeSession.isStopwatchMode
         ) {
-            String.format(Locale.US, "+%02d:%02d", mm, ss)
+            "+" + com.example.data.formatSessionDuration(displaySecs)
         } else {
-            String.format(Locale.US, "%02d:%02d", mm, ss)
+            com.example.data.formatSessionDuration(displaySecs)
         }
 
         // Issue #111 findings 3+4: the glance now NAMES what the
