@@ -1081,7 +1081,7 @@ fun TactileDeckScreen(
                 // controller clears it; a running session is
                 // silent; otherwise the wire's standing sentence.
                 sentence = when {
-                    armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase)
+                    armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase, nowMono)
                     armPhase is ArmPhase.Proving -> provingSentenceFor(armPhase)
                     isSessionRunning -> null
                     armSentence != null -> armSentence

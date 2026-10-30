@@ -509,6 +509,33 @@ class ArmProvingControllerTest {
     }
 
     @Test
+    fun jamSentenceNamesTheLivePendingLinkNotTheFrozenJamSet() {
+        // Issue #126 F4: SHIELD was in the deadline's jamSet but
+        // answered during the retry window (its mark is Confirmed
+        // in links); ACCESS is the link still pending. The old
+        // sentence kept accusing SHIELD; the live one names ACCESS.
+        val jammed = ArmPhase.Jammed(
+            attemptId = 1,
+            latchMono = 1_000L,
+            sessionId = 7,
+            links = mapOf(
+                ArmLink.SESSION_ROW to LinkMark.Confirmed(1_010L),
+                ArmLink.SHIELD_PROTECTING to LinkMark.Confirmed(1_700L),
+                ArmLink.A11Y_SESSION_ARMED to LinkMark.Pending
+            ),
+            jamSet = setOf(ArmLink.SHIELD_PROTECTING, ArmLink.A11Y_SESSION_ARMED),
+            retryCount = 1
+        )
+        assertEquals("ACCESS DIDN'T ANSWER — STILL PROVING.", jamSentenceFor(jammed)?.text)
+        // With a clock: the retry verb + the annulment countdown
+        // (latch 1000 + ANNUL 1500 − now 1900 = 600ms → 1S).
+        assertEquals(
+            "ACCESS STILL HASN'T ANSWERED — RETRYING · ANNULS IN 1S.",
+            jamSentenceFor(jammed, nowMono = 1_900L)?.text
+        )
+    }
+
+    @Test
     fun jamSentenceAndProvenCountArePhasePure() {
         val proving = ArmPhase.Proving(
             attemptId = 1,
