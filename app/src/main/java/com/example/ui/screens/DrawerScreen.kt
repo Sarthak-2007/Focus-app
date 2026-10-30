@@ -1290,7 +1290,7 @@ fun DrawerScreen(
                     }
                     item {
                         DrawerNavRow(
-                            label = "CURIOS",
+                            label = "CABINET",
                             onClick = { viewName = DrawerView.CABINET.name },
                             modifier = Modifier.testTag("drawer_curios_row")
                         )
@@ -1339,14 +1339,14 @@ fun DrawerScreen(
                     // ALL MONTHS (chrome C10).
                     item {
                         DrawerNavRow(
-                            label = "CURIOS",
+                            label = "CABINET",
                             onClick = { viewName = DrawerView.CABINET.name },
                             modifier = Modifier.testTag("drawer_curios_row")
                         )
                         HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
                     }
                     // The receipts index's door: ONE furniture row
-                    // under CURIOS (issue #157) — this destination
+                    // under CABINET (issue #157) — this destination
                     // is named "Receipts"; the receipts are here.
                     item {
                         DrawerNavRow(
