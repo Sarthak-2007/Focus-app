@@ -95,7 +95,15 @@ class ScreenshotHarnessTest {
             File("app/shots-redirect.txt")
         ).firstOrNull { it.isFile }
         val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        File(target ?: System.getProperty("java.io.tmpdir") + "/monolith-shots")
+        // KONTO-2 round 5 (lettered from run 40995686279): the
+        // committed redirect names a lane-box path; on the CI runner
+        // that path cannot be created and every capture died
+        // FileNotFound. Honour the redirect only where it can
+        // actually be written; otherwise the tmpdir default.
+        val dir = File(target ?: System.getProperty("java.io.tmpdir") + "/monolith-shots")
+        dir.mkdirs()
+        if (dir.isDirectory && dir.canWrite()) dir
+        else File(System.getProperty("java.io.tmpdir") + "/monolith-shots").also { it.mkdirs() }
     }
 
     @Before
@@ -123,7 +131,12 @@ class ScreenshotHarnessTest {
 
     @After
     fun tearDown() {
-        db.close()
+        // KONTO-2 round 5: the in-memory DB is deliberately NOT
+        // closed. The view model's immortal DAO collectors re-query
+        // after a close and the escape ("connection pool has been
+        // closed") lands as UncaughtExceptionsBeforeTest on the
+        // fork's next test (zzAccentCensus, run 40995686279). The
+        // sandbox owns this DB's lifetime.
     }
 
     private fun settle(millis: Long = 700) {

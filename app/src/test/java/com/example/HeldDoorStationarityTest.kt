@@ -2,6 +2,7 @@ package com.example
 
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -91,6 +92,43 @@ class HeldDoorStationarityTest {
         }
     }
 
+    // KONTO-2 round 5 (lettered from run 40995686279; diagnostician
+    // seat verdict RESTRUCTURE-SAFE x3): compose-test rules allow ONE
+    // setContent per test, so the multi-frame tests below drive a
+    // single composition through a state holder read INSIDE the
+    // composition lambda. This is also the production shape: the VM
+    // mutates the door's state (new nonce per re-fire) on one live
+    // composition, and every visit-scoped remember/effect inside
+    // the overlay is nonce-keyed (P-4c) precisely so an in-place
+    // state change resets what a fresh composition would. Frame
+    // assignments are the original state(...) constructions
+    // verbatim — fresh calls, so the wall/cooldown anchors re-read
+    // the clock exactly as the discrete renders did.
+    private val doorHolder = mutableStateOf<AirlockInterceptState?>(null)
+
+    private fun renderLive(first: AirlockInterceptState) {
+        doorHolder.value = first
+        composeRule.setContent {
+            MyApplicationTheme(darkTheme = true, dynamicColor = false, isFocusSessionActive = true) {
+                val s = doorHolder.value
+                if (s != null) {
+                    AirlockInterceptOverlay(
+                        state = s,
+                        onReturnToFocus = {},
+                        onTake2MinutePeek = {},
+                        onEndSessionInstead = {},
+                        onDoorStateRefresh = {}
+                    )
+                }
+            }
+        }
+    }
+
+    private fun advance(next: AirlockInterceptState) {
+        doorHolder.value = next
+        composeRule.waitForIdle()
+    }
+
     private fun returnBounds(): Rect =
         composeRule.onNodeWithTag("airlock_return_button")
             .fetchSemanticsNode().boundsInRoot
@@ -98,7 +136,7 @@ class HeldDoorStationarityTest {
     @Test
     fun returnBoundsAreIdenticalAcrossTheWholeVisit() {
         // COUNTING at the taper's cap (wall 10).
-        render(state(wallSecs = 10L, nonce = 1L))
+        renderLive(state(wallSecs = 10L, nonce = 1L))
         val counting10 = returnBounds()
         // The gate line and the price both stand from frame one;
         // the chip does not exist yet.
@@ -111,12 +149,12 @@ class HeldDoorStationarityTest {
 
         // COUNTING at wall 1: the gate's figures changed; nothing
         // moved.
-        render(state(wallSecs = 1L, nonce = 2L))
+        advance(state(wallSecs = 1L, nonce = 2L))
         assertEquals(counting10, returnBounds())
 
         // OFFER (wall expired): the chip stands in Z1; RETURN's
         // bounds are the counting bounds, pixel for pixel.
-        render(state(wallSecs = -1L, nonce = 3L))
+        advance(state(wallSecs = -1L, nonce = 3L))
         assertEquals(counting10, returnBounds())
         composeRule.onNodeWithTag("airlock_peek_button").assertExists()
         // Wave-2 (Deep-thinker): the dead name is asserted HERE,
@@ -133,7 +171,7 @@ class HeldDoorStationarityTest {
 
         // HELD (cooldown): the withheld line stands from frame
         // one, the zone is the same 110dp, RETURN unmoved.
-        render(
+        advance(
             state(
                 canPeek = false,
                 withheld = PeekWithheld.COOLDOWN,
@@ -148,7 +186,7 @@ class HeldDoorStationarityTest {
 
     @Test
     fun neverOwedDoorHasNoPeekZoneButKeepsItsExit() {
-        render(state(canPeek = false, withheld = null, wallSecs = null, nonce = 5L))
+        renderLive(state(canPeek = false, withheld = null, wallSecs = null, nonce = 5L))
         // Baseline law 4: no peek line of any kind.
         composeRule.onNodeWithTag("airlock_peek_button").assertDoesNotExist()
         composeRule.onNodeWithText(
@@ -168,7 +206,7 @@ class HeldDoorStationarityTest {
         // asserted these DIFFER; that assertion died with the
         // anchor it described.
         val neverOwed = returnBounds()
-        render(state(wallSecs = 10L, nonce = 6L))
+        advance(state(wallSecs = 10L, nonce = 6L))
         assertEquals(neverOwed, returnBounds())
     }
 
@@ -178,12 +216,12 @@ class HeldDoorStationarityTest {
         // the three variable-content risks — the memory line, the
         // errand sub-line, the homecoming greeting. All three
         // stand in fixed slots; RETURN must not move for any.
-        render(state(wallSecs = 10L, nonce = 8L))
+        renderLive(state(wallSecs = 10L, nonce = 8L))
         val plain = returnBounds()
 
         // MEMORY + ERRAND composed: third visit this session,
         // a break appointment on the sub-line.
-        render(
+        advance(
             state(
                 wallSecs = 10L,
                 nonce = 9L,
@@ -196,7 +234,7 @@ class HeldDoorStationarityTest {
 
         // HOMECOMING composed: the lease's own expiry echo,
         // greeted in the withheld tenant, cooldown still running.
-        render(
+        advance(
             state(
                 canPeek = false,
                 withheld = PeekWithheld.COOLDOWN,

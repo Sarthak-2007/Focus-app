@@ -20,10 +20,16 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         GuardSettingsEntity::class,
         RoutineEntity::class,
         EmergencyBreakSpendEntity::class,
-        DayNoteEntity::class
+        DayNoteEntity::class,
+        TaskAccrualSegmentEntity::class
     ],
     version = 13,
-    exportSchema = false
+    // MOTOR #31 F3 (train inheritance): schema export ON — the
+    // migrations are verifiable against a canonical schema from
+    // this version forward. The schema directory is set in
+    // app/build.gradle.kts (room.schemaLocation); the generated
+    // 13.json is committed alongside this composition.
+    exportSchema = true
 )
 abstract class MonolithDatabase : RoomDatabase() {
     abstract fun monolithDao(): MonolithDao
@@ -204,7 +210,12 @@ abstract class MonolithDatabase : RoomDatabase() {
          * default -1 = not recorded, by analogy to the seal-count
          * columns, so pre-split rows can never print a false HELD
          * line). ADD COLUMN order mirrors the entity append order
-         * per table exactly.
+         * per table exactly. The one CREATE TABLE below is #110's
+         * accrual-segment table (REISE's cure, folded in by the
+         * batch-10 train): not a column delta but a new table,
+         * riding this migration because v13 is the first version
+         * that can capture accrual history at all — and history
+         * cannot be backfilled later.
          */
         val MIGRATION_12_13 = object : Migration(12, 13) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -216,6 +227,39 @@ abstract class MonolithDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE focus_sessions ADD COLUMN withinLabel TEXT")
                 db.execSQL("ALTER TABLE focus_sessions ADD COLUMN heldShutAtSeal INTEGER NOT NULL DEFAULT -1")
                 db.execSQL("ALTER TABLE focus_sessions ADD COLUMN heldPeekAtSeal INTEGER NOT NULL DEFAULT -1")
+                // #110 (REISE's priced cure, folded into this same
+                // composed migration by the batch-10 train): the
+                // accrual-segment table — one row per (task, session,
+                // filing day), so a task's stored seconds can be
+                // split truthfully over the days they accrued on
+                // instead of dumping the lifetime total on the
+                // completion day. NO backfill: accrual from before
+                // v13 has no segments and stays lifetime-only
+                // (printed TOTAL) forever — inventing a split for it
+                // would be a fabricated record.
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `task_accrual_segments` (" +
+                    "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`taskId` INTEGER NOT NULL, " +
+                    "`sessionId` INTEGER NOT NULL, " +
+                    "`dateIso` TEXT NOT NULL, " +
+                    "`seconds` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_task_accrual_segments_taskId_sessionId_dateIso` " +
+                    "ON `task_accrual_segments` (`taskId`, `sessionId`, `dateIso`)"
+                )
+                // #30 F1 (MOTOR's price, train inheritance): the
+                // four secondary indices — the hot filter/sort
+                // paths stop being full table scans. They ride
+                // this migration because v13 is the open schema
+                // window; the entity declarations carry the same
+                // indices so fresh installs and Room's schema
+                // validation agree with the migrated shape.
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_focus_tasks_completedAtMillis` ON `focus_tasks` (`completedAtMillis`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_focus_sessions_routineId` ON `focus_sessions` (`routineId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_focus_sessions_windowEndMillis` ON `focus_sessions` (`windowEndMillis`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_intercept_logs_timestampMillis` ON `intercept_logs` (`timestampMillis`)")
             }
         }
 
@@ -253,6 +297,14 @@ abstract class MonolithDatabase : RoomDatabase() {
          */
         fun getInstance(context: Context): MonolithDatabase {
             return INSTANCE ?: synchronized(this) {
+                // MOTOR #31 (train inheritance, bench-verified on
+                // agent/issue-31): the second null-check inside the
+                // lock. Without it, two racing callers (boot
+                // receivers + the activity's first read are the
+                // realistic pair) could each build a database, the
+                // second overwriting INSTANCE and orphaning the
+                // first's open instance. Textbook DCL.
+                INSTANCE?.let { return@synchronized it }
                 val appCtx = context.applicationContext
                 val storageContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     appCtx.createDeviceProtectedStorageContext() ?: appCtx
@@ -268,6 +320,21 @@ abstract class MonolithDatabase : RoomDatabase() {
                     .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        /**
+         * MOTOR #31 (train inheritance): the test-only escape
+         * hatch — closes the singleton and nulls it under the same
+         * lock getInstance builds under, so tests can start from a
+         * cold database. Production paths never call it; production
+         * immortality is deliberate (Direct-Boot enforcement reads
+         * the singleton from boot receivers).
+         */
+        fun closeAndResetForTests() {
+            synchronized(this) {
+                INSTANCE?.close()
+                INSTANCE = null
             }
         }
     }

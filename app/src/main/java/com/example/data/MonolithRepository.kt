@@ -2720,6 +2720,21 @@ class MonolithRepository(
                     actualSecondsSpent = activeTask.actualSecondsSpent + credit
                 )
             )
+            if (credit > 0) {
+                // #110: the same observed credit, filed as an
+                // accrual segment under the day it was observed —
+                // the per-day split the lifetime scalar above can
+                // never reconstruct after the fact. Capture cannot
+                // wait for the Drawer's grouping read to land:
+                // every day without this write is accrual history
+                // lost permanently.
+                dao.addTaskAccrualSegment(
+                    taskId = activeTask.id,
+                    sessionId = session.id,
+                    dateIso = DrawerDay.filingDate(System.currentTimeMillis()).toString(),
+                    seconds = credit
+                )
+            }
         }
     }
 

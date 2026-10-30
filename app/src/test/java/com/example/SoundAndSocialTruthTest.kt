@@ -114,7 +114,11 @@ class SoundAndSocialTruthTest {
             )
             assertFalse(vm.soundEngine.soundEnabled)
         } finally {
-            db.close()
+            // KONTO-2 round 5: DB deliberately NOT closed — the VM's
+            // immortal DAO collectors re-query after a close and the
+            // escape poisons the fork's next test
+            // (UncaughtExceptionsBeforeTest, run 40995686279). The
+            // sandbox owns this in-memory DB's lifetime.
         }
     }
 
@@ -153,7 +157,11 @@ class SoundAndSocialTruthTest {
             assertFalse(vmEngine.soundEnabled)
             assertFalse("PARK's word (the VM flow) must agree", vm.soundEnabled.value)
         } finally {
-            db.close()
+            // KONTO-2 round 5: DB deliberately NOT closed — the VM's
+            // immortal DAO collectors re-query after a close and the
+            // escape poisons the fork's next test
+            // (UncaughtExceptionsBeforeTest, run 40995686279). The
+            // sandbox owns this in-memory DB's lifetime.
         }
     }
 
@@ -258,7 +266,11 @@ class SoundAndSocialTruthTest {
                     vm.browserUrlBlockerEnabled.value
             }
         } finally {
-            db.close()
+            // KONTO-2 round 5: DB deliberately NOT closed — the VM's
+            // immortal DAO collectors re-query after a close and the
+            // escape poisons the fork's next test
+            // (UncaughtExceptionsBeforeTest, run 40995686279). The
+            // sandbox owns this in-memory DB's lifetime.
         }
     }
 
@@ -295,7 +307,11 @@ class SoundAndSocialTruthTest {
                 runBlocking { repository.isBrowserBlockerEnabled() }
             }
         } finally {
-            db.close()
+            // KONTO-2 round 5: DB deliberately NOT closed — the VM's
+            // immortal DAO collectors re-query after a close and the
+            // escape poisons the fork's next test
+            // (UncaughtExceptionsBeforeTest, run 40995686279). The
+            // sandbox owns this in-memory DB's lifetime.
         }
     }
 
@@ -350,7 +366,11 @@ class SoundAndSocialTruthTest {
             settlePark()
             composeRule.onNodeWithText("OFF").assertExists()
         } finally {
-            db.close()
+            // KONTO-2 round 5: DB deliberately NOT closed — the VM's
+            // immortal DAO collectors re-query after a close and the
+            // escape poisons the fork's next test
+            // (UncaughtExceptionsBeforeTest, run 40995686279). The
+            // sandbox owns this in-memory DB's lifetime.
         }
     }
 

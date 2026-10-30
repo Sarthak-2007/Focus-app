@@ -264,8 +264,17 @@ class TruthCar3SweepRoboTest {
                         section = parser.name
                     "exclude" -> {
                         val s = section
-                        val domain = parser.getAttributeValue(androidNs, "domain")
-                        val path = parser.getAttributeValue(androidNs, "path")
+                        // KONTO-2 round 5: the rules files carry
+                        // domain/path as UN-namespaced attributes
+                        // (the Android backup-rules format); reading
+                        // them under the android namespace returned
+                        // null for every exclude, so una04 reported
+                        // its own sections missing. Plain attribute
+                        // first, namespace as fallback.
+                        val domain = parser.getAttributeValue(null, "domain")
+                            ?: parser.getAttributeValue(androidNs, "domain")
+                        val path = parser.getAttributeValue(null, "path")
+                            ?: parser.getAttributeValue(androidNs, "path")
                         if (s != null && domain != null) {
                             result.getOrPut(s) { mutableMapOf() }[domain] = path
                         }

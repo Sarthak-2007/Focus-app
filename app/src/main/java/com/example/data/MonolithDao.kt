@@ -140,6 +140,23 @@ interface MonolithDao {
     @Query("SELECT * FROM emergency_break_spends ORDER BY spentAtWallMillis DESC")
     suspend fun getAllSpendsSnapshot(): List<EmergencyBreakSpendEntity>
 
+    // Task Accrual Segments (#110 — how a task's stored seconds
+    // distribute over days; the lifetime scalar on focus_tasks stays
+    // the total of record, and post-v13 the segments sum to it by
+    // construction: both are written from the same observed credit)
+    @Query(
+        "INSERT INTO task_accrual_segments (taskId, sessionId, dateIso, seconds) " +
+        "VALUES (:taskId, :sessionId, :dateIso, :seconds) " +
+        "ON CONFLICT(taskId, sessionId, dateIso) DO UPDATE SET seconds = seconds + excluded.seconds"
+    )
+    suspend fun addTaskAccrualSegment(taskId: Int, sessionId: Int, dateIso: String, seconds: Int)
+
+    @Query("SELECT * FROM task_accrual_segments WHERE taskId = :taskId ORDER BY dateIso ASC")
+    suspend fun getAccrualSegmentsForTask(taskId: Int): List<TaskAccrualSegmentEntity>
+
+    @Query("SELECT * FROM task_accrual_segments WHERE dateIso = :dateIso ORDER BY taskId ASC")
+    suspend fun getAccrualSegmentsForDate(dateIso: String): List<TaskAccrualSegmentEntity>
+
     // Intercept Logs
     @Query("SELECT * FROM intercept_logs ORDER BY timestampMillis DESC")
     fun getInterceptLogsFlow(): Flow<List<InterceptLogEntity>>

@@ -136,3 +136,9 @@ dependencies {
   "ksp"(libs.androidx.room.compiler)
   // "ksp"(libs.moshi.kotlin.codegen)
 }
+
+// MOTOR #31 F3 (train inheritance): Room schema export location —
+// pairs with exportSchema = true on MonolithDatabase (DB v13).
+ksp {
+  arg("room.schemaLocation", "$projectDir/schemas")
+}

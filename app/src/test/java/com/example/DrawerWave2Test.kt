@@ -1,6 +1,9 @@
 package com.example
 
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -98,7 +101,13 @@ class DrawerWave2Test {
 
     @Test
     fun search_liveUnderSeal_rescopedEmptyLine_andBackClears() {
-        var query = ""
+        // KONTO-2 round 5 (lettered from run 40995686279;
+        // diagnostician seat verdict RESTRUCTURE-SAFE): the query
+        // is Compose state — as the VM holds it in production — so
+        // typing recomposes the screen by itself. The original
+        // plain var + second setContent was both unlawful under
+        // the one-setContent rule and less faithful than this.
+        var query by mutableStateOf("")
         composeRule.setContent {
             MyApplicationTheme {
                 DrawerScreen(
@@ -123,27 +132,8 @@ class DrawerWave2Test {
         composeRule.onNodeWithTag("drawer_search_input")
             .performTextInput("optics")
         assertEquals("optics", query)
-        // Recompose with the query standing: the empty line is re-scoped.
-        composeRule.setContent {
-            MyApplicationTheme {
-                DrawerScreen(
-                    storedMonths = listOf(StoredMonth(today.year, today.monthValue)),
-                    drawerMonth = today.year to today.monthValue,
-                    drawerRows = emptyList(),
-                    drawerHasEarlier = false,
-                    drawerQuery = "optics",
-                    drawerResults = emptyList(),
-                    drawerSearchHasEarlier = false,
-                    dayWords = emptyMap(),
-                    isSealed = true,
-                    onSelectMonth = { _, _ -> },
-                    onLoadEarlier = {},
-                    onQueryChange = { query = it },
-                    onLoadEarlierSearch = {},
-                    onDeclareDayWord = { _, _ -> }
-                )
-            }
-        }
+        // The query stands (state-driven recomposition): the
+        // empty line is re-scoped.
         composeRule.onNodeWithText("NO STORED TASK UNDER “optics”").assertIsDisplayed()
         composeRule.onNodeWithTag("drawer_search_back").performClick()
         assertTrue(query.isEmpty())

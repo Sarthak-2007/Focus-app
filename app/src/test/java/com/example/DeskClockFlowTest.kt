@@ -460,14 +460,14 @@ class DeskClockFlowTest {
         // Wave-2 (Daemmer DAE-1): a routine row whose span
         // arithmetic says 30 s remain (target built from floored
         // minutes) while its frozen window ends 75 s from now —
-        // the hero must read the window's end (1:15), the same
+        // the hero must read the window's end (01:15), the same
         // instant ENDS prints, never the span's early 00:30.
         val now = wallAt(3, 28, 45)
         val s = session(
             targetDurationSeconds = 3600, elapsedSeconds = 3570,
             routineId = 3, windowEndMillis = now + 75_000L
         )
-        assertEquals("1:15", deskClockHeroText(s, now))
+        assertEquals("01:15", deskClockHeroText(s, now))
         assertEquals("ENDS 03:30", deskClockEndsLine(s, now))
     }
 
@@ -633,7 +633,7 @@ class DeskClockFlowTest {
             FaceCase(
                 state = "RUNNING TIMED",
                 session = session(elapsedSeconds = 0), now = t2147,
-                hero = "60:00", subLine = "NOW 21:47 · ENDS 22:47",
+                hero = "1:00", subLine = "NOW 21:47 · ENDS 22:47",
                 blockLine = null, banner = "STUDY"
             ),
             FaceCase(
@@ -643,7 +643,7 @@ class DeskClockFlowTest {
                     totalStudyBlocks = 3, currentBlockIndex = 1
                 ),
                 now = wallAt(21, 0),
-                hero = "85:00", subLine = "NOW 21:00 · ENDS 22:25",
+                hero = "1:25", subLine = "NOW 21:00 · ENDS 22:25",
                 blockLine = "BLOCK 1 OF 3 · UNTIL 21:15", banner = "STUDY"
             ),
             FaceCase(

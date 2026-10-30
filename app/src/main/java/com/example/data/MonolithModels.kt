@@ -1,6 +1,7 @@
 package com.example.data
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
@@ -97,7 +98,12 @@ enum class TaskQueueStatus(val label: String) {
  */
 data class StoredMonth(val year: Int, val month: Int)
 
-@Entity(tableName = "focus_tasks")
+@Entity(
+    tableName = "focus_tasks",
+    // #30 F1 (train inheritance): the Drawer's hot sort — tasks
+    // by completion instant — stops being a full table scan.
+    indices = [Index(value = ["completedAtMillis"])]
+)
 data class FocusTaskEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val title: String,
@@ -232,7 +238,12 @@ data class FocusProfileEntity(
     val endMinute: Int
 )
 
-@Entity(tableName = "focus_sessions")
+@Entity(
+    tableName = "focus_sessions",
+    // #30 F1 (train inheritance): sessions are read by routine
+    // and by window end on the hot paths — both stop scanning.
+    indices = [Index(value = ["routineId"]), Index(value = ["windowEndMillis"])]
+)
 data class FocusSessionEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val intention: String,
@@ -440,7 +451,40 @@ data class EmergencyBreakSpendEntity(
     val heldSeconds: Int
 )
 
-@Entity(tableName = "intercept_logs")
+/**
+ * #110 (REISE's priced cure, folded into MIGRATION_12_13 by the
+ * batch-10 train): one accrual segment of a task — [seconds] of
+ * wall time credited to [taskId] during [sessionId], filed under
+ * [dateIso], the Drawer's filing day (DrawerDay) on which the
+ * credit was observed. Segments are append-only sums: repeated
+ * credits for the same (task, session, day) accumulate into one
+ * row (the DAO's upsert). The credit a segment records is the
+ * SAME observed credit that lands in FocusTaskEntity's lifetime
+ * scalar, written in the same branch of accrueActiveTaskSeconds —
+ * so for accrual after v13 the segments sum to the scalar by
+ * construction. Accrual from before v13 has NO segments and can
+ * never get any: it stays lifetime-only (printed TOTAL), never
+ * retro-split. A credit whose span straddles midnight files
+ * whole under its observation day.
+ */
+@Entity(
+    tableName = "task_accrual_segments",
+    indices = [Index(value = ["taskId", "sessionId", "dateIso"], unique = true)]
+)
+data class TaskAccrualSegmentEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val taskId: Int,
+    val sessionId: Int,
+    val dateIso: String,
+    val seconds: Int
+)
+
+@Entity(
+    tableName = "intercept_logs",
+    // #30 F1 (train inheritance): intercept history reads are
+    // time-ordered — the timestamp stops being a full scan.
+    indices = [Index(value = ["timestampMillis"])]
+)
 data class InterceptLogEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val timestampMillis: Long = System.currentTimeMillis(),
