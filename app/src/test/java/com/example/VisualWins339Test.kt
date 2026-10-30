@@ -18,10 +18,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Issue #339 (Audit R5 supplement — Freedom, Wins): the visual
- * wins, pinned.
+ * Retained from this branch's first cut (it was written against a
+ * misattributed findings set and its claims were struck from the
+ * issue — see #339's correction comment). What it pins is real
+ * and stays guarded on its own merits:
  *
- * F4 — the type ladder: Monolith's theme carries SIX sizes only
+ * The type ladder: Monolith's theme carries SIX sizes only
  * (104 / 72 / 50 / 22 / 15 / 10 — the TYPE-RAMP-TABLE in Type.kt),
  * where Freedom's block screen alone uses 76 arbitrary per-call
  * sizes. This test reads the actual Typography object: if a

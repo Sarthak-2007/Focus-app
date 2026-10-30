@@ -136,6 +136,14 @@
             android:name=".service.ReleaseRetryReceiver"
             android:exported="false" />
 
+        <!-- Issue #339 (Second-pass F3): the Safe Break's end is a
+             scheduled event — this receiver posts the deduped
+             'Break's over' notification from the exact alarm
+             BreakEndScheduler arms at break entry. -->
+        <receiver
+            android:name=".service.BreakEndReceiver"
+            android:exported="false" />
+
         <!-- Device Admin (DeviceAdminReceiver): friction + a warning
              on deactivation only — it does not prevent deactivation
              or uninstall (issue #44). -->

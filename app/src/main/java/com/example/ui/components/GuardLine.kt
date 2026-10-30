@@ -71,3 +71,50 @@ fun guardLineFor(snapshot: WatchSnapshot?, nowMono: Long): GuardLinePrint? {
     }
     return GuardLinePrint("GUARD $warranted/$total — $name")
 }
+
+/**
+ * Issue #339 (Second-pass F4): the permission-criticality
+ * taxonomy. Freedom's engine publishes availability as a
+ * first-class state — 'active', 'disabled' (ONLY when
+ * Accessibility is missing), 'restricted' (anything else
+ * missing) — while Monolith's Guard count conflated critical and
+ * cosmetic grants into one number, so the board could not say
+ * which single grant kills blocking.
+ *
+ * The taxonomy, over the Watch Store's prints:
+ *  - DISABLED: Accessibility is KNOWN missing (MISSING /
+ *    MISSING_STALE) — blocking's fatal grant is gone.
+ *  - RESTRICTED: Accessibility stands granted and at least one
+ *    other permission is KNOWN missing — blocking lives, degraded.
+ *  - ACTIVE: Accessibility granted, no known lack anywhere.
+ *  - null (no claim): Accessibility's own state is unmeasured or
+ *    merely stale — the board prints nothing rather than guess,
+ *    the guard line's UNMEASURED rule. STALE and UNPROVED prints
+ *    on other items are not known lacks and never force RESTRICTED.
+ */
+enum class BlockingAvailability { ACTIVE, RESTRICTED, DISABLED }
+
+fun blockingAvailabilityFor(snapshot: WatchSnapshot?, nowMono: Long): BlockingAvailability? {
+    if (snapshot == null) return null
+    val a11y = WatchStore.permPrintAt(snapshot, WatchItemId.ACCESSIBILITY, nowMono)
+    if (a11y == PermPrint.UNMEASURED || a11y == PermPrint.STALE) return null
+    if (a11y == PermPrint.MISSING || a11y == PermPrint.MISSING_STALE) {
+        return BlockingAvailability.DISABLED
+    }
+    val knownLack = WatchItemId.PERMISSIONS.any { item ->
+        item != WatchItemId.ACCESSIBILITY &&
+            WatchStore.permPrintAt(snapshot, item, nowMono).let {
+                it == PermPrint.MISSING || it == PermPrint.MISSING_STALE
+            }
+    }
+    return if (knownLack) BlockingAvailability.RESTRICTED else BlockingAvailability.ACTIVE
+}
+
+/** The taxonomy as board print (PARK), one honest line. */
+fun availabilityLineFor(snapshot: WatchSnapshot?, nowMono: Long): GuardLinePrint? =
+    when (blockingAvailabilityFor(snapshot, nowMono)) {
+        null -> null
+        BlockingAvailability.ACTIVE -> GuardLinePrint("BLOCKING — ACTIVE")
+        BlockingAvailability.RESTRICTED -> GuardLinePrint("BLOCKING — RESTRICTED")
+        BlockingAvailability.DISABLED -> GuardLinePrint("BLOCKING — DISABLED · ACCESSIBILITY MISSING")
+    }

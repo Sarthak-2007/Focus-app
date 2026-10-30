@@ -798,15 +798,29 @@ class MonolithAccessibilityService : AccessibilityService() {
         // host-exact (Wave-3 #42).
         if (!leaseLive && (guardSettings?.browserBlockerEnabled ?: true) && isSupportedBrowser(pkgName)) {
             val userDomains = dao.getAllSitesSnapshot().map { it.domain }
-            val matchedDomain = snapshot.facts.browserUrlTexts.firstNotNullOfOrNull { urlText ->
-                matchBlockedDomain(urlText, userDomains)
+            // Issue #339 (Second-pass F1): the Web Gate — with
+            // block-all armed, the web is closed except the user's
+            // allowed hosts; the stored list keeps its force in
+            // both modes. The ejection (BACK, escalating) is owned
+            // by launchInterceptScreen for every door (#339 F2);
+            // this door no longer fires its own.
+            val webGate = com.example.data.WebGateStore(applicationContext)
+            val gateHit = snapshot.facts.browserUrlTexts.firstNotNullOfOrNull { urlText ->
+                when (val verdict = com.example.data.webGateVerdict(
+                    urlText, webGate.blockAll(), webGate.allowedHosts(), userDomains
+                )) {
+                    com.example.data.WebGateVerdict.ALLOW -> null
+                    com.example.data.WebGateVerdict.BLOCK_LISTED ->
+                        (matchBlockedDomain(urlText, userDomains) ?: urlText) to "Site Blocked"
+                    com.example.data.WebGateVerdict.BLOCK_ALL ->
+                        (extractUrlHost(urlText) ?: urlText) to "Web Blocked — Allowlist"
+                }
             }
-            if (matchedDomain != null) {
-                performGlobalAction(GLOBAL_ACTION_BACK)
+            if (gateHit != null) {
                 launchInterceptScreen(
                     packageName = pkgName,
-                    appName = matchedDomain,
-                    reasonBadge = "Site Blocked",
+                    appName = gateHit.first,
+                    reasonBadge = gateHit.second,
                     path = InterceptPath.SITE
                 )
                 return
@@ -1127,6 +1141,14 @@ class MonolithAccessibilityService : AccessibilityService() {
         reasonBadge: String,
         path: InterceptPath
     ) {
+        // Issue #339 (Second-pass F2): EJECT FIRST. The intercept
+        // activity is the explanation, not the enforcement — the
+        // enforcement is leaving the blocked app: BACK on a first
+        // offence, escalating to HOME on a repeat offence against
+        // the same package inside the tracker's window (Freedom's
+        // escalation, which Monolith's doors previously never did
+        // at all on the app-tier path).
+        ejectForShield(packageName)
         val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             putExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE, packageName)
@@ -1144,6 +1166,19 @@ class MonolithAccessibilityService : AccessibilityService() {
         InterceptLaunch.launch(applicationContext, interceptIntent, appName)
     }
 
+    /** Issue #339 (Second-pass F2): the ejection itself, shared
+     *  with the shield door — GLOBAL_ACTION_* exists only on an
+     *  accessibility service, so the shield service (a plain
+     *  foreground service) delegates here when this service is
+     *  bound; unbound, it cannot eject and its intercept launch
+     *  stands alone, exactly as before. */
+    fun ejectForShield(packageName: String) {
+        when (EjectionTracker.recordAndDecide(packageName, SystemClock.elapsedRealtime())) {
+            EjectionAction.BACK -> performGlobalAction(GLOBAL_ACTION_BACK)
+            EjectionAction.HOME -> performGlobalAction(GLOBAL_ACTION_HOME)
+        }
+    }
+
     override fun onInterrupt() {}
 
     override fun onDestroy() {
@@ -1158,5 +1193,42 @@ class MonolithAccessibilityService : AccessibilityService() {
         }
         scope.cancel()
         super.onDestroy()
+    }
+}
+
+/** Issue #339 (Second-pass F2): the ejection escalation. */
+enum class EjectionAction { BACK, HOME }
+
+/**
+ * Tracks the last ejected package so a REPEAT offence escalates:
+ * BACK on a first offence, HOME when the same package offends
+ * again inside [REPEAT_WINDOW_MS]. A different package, or a
+ * repeat after the window, starts the ladder over. In-memory
+ * only — escalation is a within-session pressure, not a record.
+ */
+object EjectionTracker {
+
+    const val REPEAT_WINDOW_MS: Long = 10 * 60 * 1000L
+
+    @Volatile
+    private var lastPackage: String? = null
+
+    @Volatile
+    private var lastMono: Long = 0L
+
+    @Synchronized
+    fun recordAndDecide(packageName: String, nowMono: Long): EjectionAction {
+        val repeat = packageName == lastPackage &&
+            lastMono > 0L &&
+            nowMono - lastMono < REPEAT_WINDOW_MS
+        lastPackage = packageName
+        lastMono = nowMono
+        return if (repeat) EjectionAction.HOME else EjectionAction.BACK
+    }
+
+    @Synchronized
+    fun reset() {
+        lastPackage = null
+        lastMono = 0L
     }
 }

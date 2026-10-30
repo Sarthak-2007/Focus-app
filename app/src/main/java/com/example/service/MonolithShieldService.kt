@@ -314,6 +314,13 @@ class MonolithShieldService : Service() {
                         putExtra(EXTRA_INTERCEPT_PATH, InterceptPath.SHIELD_APP.name)
                         putExtra(EXTRA_INTERCEPT_NONCE, InterceptNonce.mint(applicationContext))
                     }
+                    // Issue #339 (Second-pass F2): eject first,
+                    // via the accessibility service when it is
+                    // bound (GLOBAL_ACTION_* exists only there);
+                    // unbound, this door cannot eject and the
+                    // launch below stands alone, as before.
+                    MonolithAccessibilityService.instance
+                        ?.ejectForShield(foregroundBlockedPkg)
                     // Issue #94 (F2): never a bare background launch —
                     // a dropped launch stamps itself and falls back
                     // to a tappable notification (InterceptLaunch).
