@@ -258,11 +258,11 @@ assigns the chain test (step 11) and the reconciliation table
 falsified.**
 Issue body: "per the merge map (plan/TRUTH3-MERGE-MAP.md)".
 That map's §2 composed a FOUR-column 11→12 (peek, break,
-breakSeconds, shorts). What actually landed in batch 9: TWO of
-the four (shorts, breakSeconds' siblings aside — peekMinutes,
-breakMinutes and breakSeconds themselves never landed), plus
-breakTakenSeconds, a column §2's table never listed — Ed2's
-header concedes this in one sentence
+breakSeconds, shorts). What actually landed in batch 9: ONE of
+the four — shorts alone. peekMinutes, breakMinutes and
+breakSeconds never landed; breakTakenSeconds, a column §2's
+table never listed, landed in their place. Ed2's header
+concedes the shape of this in one sentence
 ("batch 9's actual 11→12 took only two of its four listed
 columns, plus breakTakenSeconds, which §2 never listed").
 Half the map's migration was wrong in both directions —
