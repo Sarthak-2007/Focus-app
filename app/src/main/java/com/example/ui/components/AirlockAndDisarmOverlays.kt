@@ -815,15 +815,24 @@ fun AirlockInterceptOverlay(
                     testTag = "airlock_return_button"
                 )
 
-                if (countdownSecs == 0 && peekReady) {
+                if (peekReady) {
+                    // Audit R6 #341 F60: composed from the FIRST frame,
+                    // disabled and priced while the countdown runs.
+                    // Before this the chip (and its price line) only
+                    // appeared at second 0's end — the card grew
+                    // mid-decision, switch scanners restarted their
+                    // scan, and the offer could not even be READ
+                    // before the timer ran out.
                     BlockitActionChip(
                         wordLabel = "EMERGENCY PEEK",
                         // SIL-2 / W-29: the badge is the SET value,
                         // read from the lease machinery's own
                         // constant — no hardcoded minutes here.
                         monoBadge = peekBadgeText(MonolithRepository.PEEK_DURATION_SECONDS),
-                        onClick = onTake2MinutePeek,
-                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { if (countdownSecs == 0) onTake2MinutePeek() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (countdownSecs == 0) Modifier else Modifier.alpha(0.45f)),
                         testTag = "airlock_peek_button"
                     )
                     // SIL-2 / W-29: the price stands on the offer,

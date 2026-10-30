@@ -665,6 +665,7 @@ fun ParkDrawer(
                                     if (interactive) {
                                         Modifier.pointerInput(item) {
                                             detectTapGestures(
+                                                onTap = { onFixClick(item) },
                                                 onPress = {
                                                     fixPressed = true
                                                     fixPressedItem = item
@@ -682,7 +683,17 @@ fun ParkDrawer(
                                                         amplitude01 = if (isNight) 0.06f else 0.1f,
                                                         pitchHz = 300f
                                                     )
-                                                    onFixClick(item)
+                                                    // Audit R6 #341 F24: the
+                                                    // Settings trip used to
+                                                    // commit HERE, on
+                                                    // finger-down — a tremor
+                                                    // landing ejected the
+                                                    // user before they could
+                                                    // slide off. The commit
+                                                    // now lives in onTap
+                                                    // below (release inside
+                                                    // bounds); onPress only
+                                                    // dips the key and knocks.
                                                     // Issue #56, fresh-eyes A:
                                                     // a press INTERRUPTED before
                                                     // release (gesture stolen by

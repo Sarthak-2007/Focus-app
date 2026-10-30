@@ -223,6 +223,16 @@ fun TactileDeckScreen(
         }
     }
     val shot = sealShot
+    // Audit R6 #341 F65: the seal shot's live blur is the single
+    // most GPU-expensive frame in the app, spent on the weakest
+    // GPUs. On a low-RAM device the shot keeps its scale/rise (near
+    // free) and drops the blur entirely instead of frame-dropping
+    // the signature moment.
+    val deckContext = androidx.compose.ui.platform.LocalContext.current
+    val lowRamDevice = remember {
+        (deckContext.getSystemService(android.content.Context.ACTIVITY_SERVICE)
+            as? android.app.ActivityManager)?.isLowRamDevice == true
+    }
     LaunchedEffect(shot) {
         if (shot == null || shot.preExisting) return@LaunchedEffect
         // The ghosts take their posts before the first shot frame.
@@ -674,7 +684,7 @@ fun TactileDeckScreen(
                             if (android.os.Build.VERSION.SDK_INT >=
                                 android.os.Build.VERSION_CODES.S
                             ) {
-                                val b = 24f * shot.blurT * (1f - shot.blurT)
+                                val b = if (lowRamDevice) 0f else 24f * shot.blurT * (1f - shot.blurT)
                                 renderEffect = if (b > 0f) {
                                     android.graphics.RenderEffect
                                         .createBlurEffect(
@@ -691,7 +701,7 @@ fun TactileDeckScreen(
                                 android.os.Build.VERSION_CODES.S
                             ) {
                                 val blurDp =
-                                    (6f * 4f * shot.blurT * (1f - shot.blurT)).dp
+                                    (if (lowRamDevice) 0f else 6f * 4f * shot.blurT * (1f - shot.blurT)).dp
                                 if (blurDp > 0.dp) Modifier.blur(blurDp)
                                 else Modifier
                             } else {

@@ -133,7 +133,11 @@ class AirlockOverlayIssue55RenderTest {
                 interceptedAtMonoMillis = SystemClock.elapsedRealtime()
             )
         )
-        composeRule.onNodeWithTag("airlock_peek_button").assertDoesNotExist()
+        // Audit R6 #341 F60: the peek offer is composed from the
+        // first frame (disabled during the countdown) so the card
+        // never grows mid-decision — it EXISTS here now; what the
+        // countdown still withholds is the spend, not the sight.
+        composeRule.onNodeWithTag("airlock_peek_button").assertIsDisplayed()
         composeRule.onNodeWithText("05").assertIsDisplayed()
     }
 }
