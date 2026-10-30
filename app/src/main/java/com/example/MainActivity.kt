@@ -1256,6 +1256,22 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                 else -> MonolithDestination.VAULT
                             }
                             viewModel.navigateTo(dest)
+                            // Issue #128 finding 1: a refused
+                            // navigation (e.g. any rail travel
+                            // while sealed) changes no state, so
+                            // no recomposition would ever re-seat
+                            // the cap — settle it back onto the
+                            // destination the phone is actually
+                            // on, or the band lies.
+                            if (viewModel.currentDestination.value != dest) {
+                                val actualIdx = when (viewModel.currentDestination.value) {
+                                    MonolithDestination.DECK -> 0
+                                    MonolithDestination.SHIELD -> 1
+                                    MonolithDestination.TASKS -> 2
+                                    MonolithDestination.VAULT -> 3
+                                }
+                                view.settleCapTo(actualIdx)
+                            }
                         }
                         view.onParkInvoked = {
                             if (parkOpen) {
@@ -1265,6 +1281,23 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                 )
                             } else {
                                 openPark(parkOpenState, sealed, viewModel)
+                                // Issue #128 finding 4: the cap
+                                // travelled into the PARK zone
+                                // BEFORE this ask, and a refusal
+                                // (sealed / navigation-locked)
+                                // changes no state — no
+                                // recomposition would ever re-seat
+                                // it, so the band stood over the
+                                // blank zone printing a selection
+                                // that does not exist. On refusal:
+                                // the refusal knock (the same
+                                // voice as a refused navigation)
+                                // and the cap settles back onto
+                                // the committed stop.
+                                if (!parkOpen) {
+                                    viewModel.soundEngine.playSeatKnock(6, 0.2f, 320f)
+                                    view.settleCapTo(view.selectedTabIndex)
+                                }
                             }
                         }
                     },

@@ -138,5 +138,21 @@ class ForestComparativeWinsTest {
         ).readText()
         assertTrue(source.contains("site door"))
         assertTrue(source.contains("blocked site"))
+        // Behavioural pins alongside the vocabulary pins above
+        // (BODEN-2 DIAG-DRIFT §3 strengthening, priced on #166).
+        // The two string assertions alone produced a phantom floor
+        // failure in run 41035049533: issue #79's matcher rewrite
+        // (aa14063b, PR #383) reworded the one comment carrying
+        // "blocked site" while strengthening the door itself, and
+        // issue #80's step-4b comment (80aca4c3) restored the phrase
+        // on main. The win is the door, not its description — so the
+        // door's own machinery is pinned here too: both intercept
+        // branches end at InterceptPath.SITE, the browser URL-bar
+        // door matches through matchBlockedDomain, and the any-host
+        // loaded-URL door (#80 step 4b) matches through
+        // matchBlockedDomainInLoadedUrl.
+        assertTrue(source.contains("InterceptPath.SITE"))
+        assertTrue(source.contains("matchBlockedDomain("))
+        assertTrue(source.contains("matchBlockedDomainInLoadedUrl"))
     }
 }
