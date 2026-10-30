@@ -1038,7 +1038,10 @@ class MonolithAccessibilityService : AccessibilityService() {
                 InterceptNonce.mint(applicationContext)
             )
         }
-        startActivity(interceptIntent)
+        // Issue #94 (F2): never a bare background launch — a dropped
+        // launch stamps itself and falls back to a tappable
+        // notification (InterceptLaunch).
+        InterceptLaunch.launch(applicationContext, interceptIntent, appName)
     }
 
     override fun onInterrupt() {}

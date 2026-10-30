@@ -236,6 +236,15 @@ class MonolithRepository(
          *  older readers); this set is the complete record. */
         const val SEAL_MARKER_SESSIONS_KEY = "sealed_session_ids"
 
+        /** The seeded-ever flags (Audit R2 #96): emptiness is not
+         *  freshness. Each flag is set the first time its store
+         *  carries content — seeded or the user's own — and from
+         *  then on an empty store is the user's own emptying,
+         *  which the seed must never resurrect. */
+        const val SEED_PREFS_NAME = "monolith_seed"
+        const val SEED_SITES_KEY = "seeded_sites_v1"
+        const val SEED_TASKS_KEY = "seeded_tasks_v1"
+
         /** The prune note's prefs home (Ordner lane, Mikro M5): a
          *  record of what the catalog reconcile removed, kept until
          *  Shield has shown it once. Prefs, not Room — announcing a
@@ -291,8 +300,17 @@ class MonolithRepository(
         forceCatalogSync: Boolean = false
     ) = withContext(Dispatchers.IO) {
         seedMutex.withLock {
-        if (dao.getAllSitesSnapshot().isEmpty()) {
-            dao.insertSites(BlockedBrowserDomains.defaultDomains.map { BlockedSiteEntity(it) })
+        // Audit R2 #96: seed only a store that has never carried
+        // content. Once content exists (seeded or the user's own)
+        // the seeded-ever flag is set, and a later empty store is
+        // the user's own emptying — honoured, never resurrected.
+        val seedPrefs = context.getSharedPreferences(SEED_PREFS_NAME, Context.MODE_PRIVATE)
+        val sitesNow = dao.getAllSitesSnapshot()
+        if (!seedPrefs.getBoolean(SEED_SITES_KEY, false)) {
+            if (sitesNow.isEmpty()) {
+                dao.insertSites(BlockedBrowserDomains.defaultDomains.map { BlockedSiteEntity(it) })
+            }
+            seedPrefs.edit().putBoolean(SEED_SITES_KEY, true).apply()
         }
         if (dao.getGuardSettingsSnapshot() == null) {
             dao.insertGuardSettings(GuardSettingsEntity())
@@ -302,7 +320,16 @@ class MonolithRepository(
         // reset note); an existing install runs the version-blind
         // reseed transform once (Sten §2).
         if (dao.getAllRoutinesSnapshot().isEmpty()) {
-            dao.insertRoutines(routineTargets())
+            // Audit R2 #96: the fresh seed stamps its edit horizon,
+            // exactly as the reseed path does. With the default 0,
+            // every window that ended before the install would be
+            // judged MISSED — the derive law's own rule ("before
+            // that horizon judgement is UNKNOWN, never an invented
+            // MISSED") defeated by the seed itself.
+            val seededAtMillis = System.currentTimeMillis()
+            dao.insertRoutines(
+                routineTargets().map { it.copy(scheduleEditedAtMillis = seededAtMillis) }
+            )
             // R3b #161 (update-day): an empty routines table means
             // this install has never seeded — a first install, a
             // wiped phone and a new phone are indistinguishable from
@@ -501,22 +528,29 @@ class MonolithRepository(
         // now start with an empty, true history.
 
         val existingTasks = dao.getAllTasksSnapshot()
-        if (existingTasks.isEmpty()) {
+        // Audit R2 #96: the same seeded-ever law as the sites —
+        // an emptied queue is the user's own, never refilled.
+        if (existingTasks.isEmpty() && !seedPrefs.getBoolean(SEED_TASKS_KEY, false)) {
+            // Audit R2 #96: the starter slate is honest — QUEUED,
+            // zero seconds spent, no substep pre-done. The previous
+            // seed fabricated work history (an ACTIVE first task
+            // with 420s spent and a substep already done) that a
+            // fresh install never did.
             val defaultTasks = listOf(
                 FocusTaskEntity(
                     title = "Finish Chapter 4 Problem Set (#1–6)",
                     notesOrSubsteps = FocusTaskEntity.serializeSubSteps(
                         listOf(
-                            TaskSubStep(0, "Draw free-body diagrams for problems #1–3", true),
+                            TaskSubStep(0, "Draw free-body diagrams for problems #1–3", false),
                             TaskSubStep(1, "Solve equilibrium equations for #1–3", false),
                             TaskSubStep(2, "Complete problems #4–6 & verify units", false)
                         )
                     ),
                     estimatedMinutes = 25,
-                    actualSecondsSpent = 420,
+                    actualSecondsSpent = 0,
                     categoryTag = "Study",
                     queueOrder = 0,
-                    status = TaskQueueStatus.ACTIVE.name
+                    status = TaskQueueStatus.QUEUED.name
                 ),
                 FocusTaskEntity(
                     title = "Synthesize Lecture 9 Architecture Notes",
@@ -550,7 +584,14 @@ class MonolithRepository(
                 )
             )
             dao.insertTasks(defaultTasks)
+            seedPrefs.edit().putBoolean(SEED_TASKS_KEY, true).apply()
         } else {
+            // Content exists — seeded or the user's own. Record
+            // seeded-ever (an install predating the flag counts as
+            // seeded) so a later emptying is honoured as his own.
+            if (!seedPrefs.getBoolean(SEED_TASKS_KEY, false)) {
+                seedPrefs.edit().putBoolean(SEED_TASKS_KEY, true).apply()
+            }
             // Deduplicate any duplicate tasks or sessions created by prior race conditions.
             // PERMANENCE GUARD: a COMPLETED task is a stored record (the
             // Drawer) — repeat-titled completions are the normal shape of
@@ -1488,25 +1529,32 @@ class MonolithRepository(
     suspend fun daoSnapshotRoutines(): List<RoutineEntity> = dao.getAllRoutinesSnapshot()
 
     suspend fun cycleAppBlockTier(app: BlockedAppEntity): AppBlockTier {
-        val nextTier = when (app.resolvedTier) {
+        val cycled = when (app.resolvedTier) {
             AppBlockTier.LOCKED -> AppBlockTier.PEEK_2M
             AppBlockTier.PEEK_2M -> AppBlockTier.OPEN
             AppBlockTier.OPEN -> AppBlockTier.LOCKED
         }
+        // Issue #119, finding 5: the dialler floor — cycling a dialler
+        // or telephony package can land on PEEK_2M, never on LOCKED,
+        // so placing a call is always reachable.
+        val nextTier = EssentialApps.floorTier(app.packageName, cycled)
         val isBlockedFlag = nextTier != AppBlockTier.OPEN
         dao.setAppTier(app.packageName, isBlockedFlag, nextTier.name)
         return nextTier
     }
 
     suspend fun setAppBlockTier(packageName: String, tier: AppBlockTier) {
-        val isBlockedFlag = tier != AppBlockTier.OPEN
-        dao.setAppTier(packageName, isBlockedFlag, tier.name)
+        // Issue #119, finding 5: the dialler floor — no caller may
+        // classify the default dialler / telephony stack LOCKED.
+        val effectiveTier = EssentialApps.floorTier(packageName, tier)
+        val isBlockedFlag = effectiveTier != AppBlockTier.OPEN
+        dao.setAppTier(packageName, isBlockedFlag, effectiveTier.name)
     }
 
     /**
      * 1-Tap Smart Loadouts:
      * - Study Loadout: Locks Social & Games, sets YouTube & Messaging to 2m Peek, leaves Utility/Docs Open.
-     * - Sleep Loadout: Locks everything except Phone, Clock, and Maps.
+     * - Sleep Loadout: Locks everything except Phone, Clock, Maps, Camera, and navigation (EssentialApps, by package).
      */
     suspend fun applySmartLoadout(loadout: SmartLoadout) = withContext(Dispatchers.IO) {
         val allApps = dao.getAllAppsSnapshot()
@@ -1517,6 +1565,9 @@ class MonolithRepository(
             // (its rules are the exact rules this function used to
             // inline). Issue #32 F4: set the tier ONLY; normalized()
             // derives isBlocked from it at the single derivation point.
+            // Issue #119 F4/F5 ride inside LoadoutRules.tierFor itself
+            // (SLEEP essentials by package + the dialler floor), so
+            // preview and commit carry them identically.
             val tier = LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category)
             app.copy(blockTier = tier.name).normalized()
         }
@@ -1636,7 +1687,7 @@ class MonolithRepository(
         val currentApps = dao.getAllAppsSnapshot()
         val updated = currentApps.map { app ->
             val shouldBlock = app.category in activeCategories
-            val tier = when {
+            val rawTier = when {
                 !shouldBlock -> AppBlockTier.OPEN
                 app.category == AppCategory.MESSAGING.name -> AppBlockTier.PEEK_2M
                 else -> AppBlockTier.LOCKED
@@ -1645,6 +1696,10 @@ class MonolithRepository(
             // by normalized() — note shouldBlock (category match) and
             // tier != OPEN can differ for MESSAGING (PEEK), and the
             // tier is what enforcement reads, so the tier wins.
+            // Issue #119, finding 5: the dialler floor binds bulk
+            // profile writes too — a profile can never lock the
+            // dialler, so the floor applies before the copy.
+            val tier = EssentialApps.floorTier(app.packageName, rawTier)
             app.copy(blockTier = tier.name).normalized()
         }
         dao.insertApps(updated)

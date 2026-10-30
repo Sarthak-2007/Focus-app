@@ -1663,10 +1663,17 @@ class MonolithViewModel(
     }
 
     fun setDialMinutes(minutes: Int) {
+        // Issue #123 (finding 4): the wheel is the SINGLE voice for a
+        // dial change — it already fired its detent on
+        // DialPrecision's one pitch ladder before invoking this. This
+        // setter used to fire a SECOND playRotaryDetent at an
+        // unrelated pitch (440 + value x 2.8), so every detent
+        // sounded twice and the ladder contradicted itself. It now
+        // records the value in silence. Non-wheel callers (FLOW pill,
+        // precise-entry steppers) sound their own single effect at
+        // their own call sites, as they always have.
         val clamped = minutes.coerceIn(3, 180)
         if (clamped != _dialMinutes.value) {
-            val pitch = 440.0 + (clamped * 2.8)
-            soundEngine.playRotaryDetent(pitch)
             _dialMinutes.value = clamped
         }
     }
@@ -2098,6 +2105,16 @@ class MonolithViewModel(
     private val _drawerHasEarlier = MutableStateFlow(false)
     val drawerHasEarlier: StateFlow<Boolean> = _drawerHasEarlier.asStateFlow()
 
+    // Issue #52 F3 cure: a month read is a state, not a void.
+    // Loading runs from the select tap until the page lands or
+    // fails; a failure lands in drawerError instead of leaving a
+    // blank screen indistinguishable from an empty month.
+    private val _drawerLoading = MutableStateFlow(false)
+    val drawerLoading: StateFlow<Boolean> = _drawerLoading.asStateFlow()
+
+    private val _drawerError = MutableStateFlow<String?>(null)
+    val drawerError: StateFlow<String?> = _drawerError.asStateFlow()
+
     private val _drawerQuery = MutableStateFlow("")
     val drawerQuery: StateFlow<String> = _drawerQuery.asStateFlow()
 
@@ -2158,12 +2175,27 @@ class MonolithViewModel(
             _drawerMonth.value = com.example.data.DrawerDay.filingYearMonth(System.currentTimeMillis())
         }
         viewModelScope.launch {
-            _storedMonths.value = repository.storedMonths()
-            _dayWords.value = repository.allDayWords()
-            _forgedArtifactIds.value = repository.forgedArtifactIds()
-            _curioForgeRecords.value = repository.curioForgeRecords()
-            _forgeStats.value = repository.forgeStats()
+            var indexFailed = false
+            try {
+                _storedMonths.value = repository.storedMonths()
+                _dayWords.value = repository.allDayWords()
+                _forgedArtifactIds.value = repository.forgedArtifactIds()
+                _curioForgeRecords.value = repository.curioForgeRecords()
+                _forgeStats.value = repository.forgeStats()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                indexFailed = true
+            }
             selectDrawerMonth(_drawerMonth.value.first, _drawerMonth.value.second)
+            if (indexFailed) {
+                // Issue #52 F3: a failed index read prints as an
+                // error on the Drawer, never as a silent empty room.
+                // Set after selectDrawerMonth, whose start clears
+                // the previous error; the page read's own failure
+                // path writes the same line.
+                _drawerError.value = "THE DRAWER COULD NOT BE READ — TRY AGAIN"
+            }
         }
     }
 
@@ -2173,15 +2205,27 @@ class MonolithViewModel(
         drawerOffset = 0
         _drawerRows.value = emptyList()
         _drawerHasEarlier.value = false
+        _drawerLoading.value = true
+        _drawerError.value = null
         viewModelScope.launch {
-            val page = repository.storedPage(year, month, 0)
-            // Guard: the month may have changed again mid-read.
-            if (_drawerMonth.value == (year to month)) {
-                _drawerRows.value = page.rows
-                drawerOffset = page.rows.size
-                // DRW-04: the repository's probe row decides —
-                // never the returned page's size.
-                _drawerHasEarlier.value = page.hasEarlier
+            try {
+                val page = repository.storedPage(year, month, 0)
+                // Guard: the month may have changed again mid-read.
+                if (_drawerMonth.value == (year to month)) {
+                    _drawerRows.value = page.rows
+                    drawerOffset = page.rows.size
+                    // DRW-04: the repository's probe row decides —
+                    // never the returned page's size.
+                    _drawerHasEarlier.value = page.hasEarlier
+                    _drawerLoading.value = false
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (_drawerMonth.value == (year to month)) {
+                    _drawerError.value = "THE DRAWER COULD NOT BE READ — TRY AGAIN"
+                    _drawerLoading.value = false
+                }
             }
         }
     }
@@ -2191,11 +2235,19 @@ class MonolithViewModel(
         val (year, month) = _drawerMonth.value
         val offset = drawerOffset
         viewModelScope.launch {
-            val page = repository.storedPage(year, month, offset)
-            if (_drawerMonth.value == (year to month)) {
-                _drawerRows.value = _drawerRows.value + page.rows
-                drawerOffset += page.rows.size
-                _drawerHasEarlier.value = page.hasEarlier
+            try {
+                val page = repository.storedPage(year, month, offset)
+                if (_drawerMonth.value == (year to month)) {
+                    _drawerRows.value = _drawerRows.value + page.rows
+                    drawerOffset += page.rows.size
+                    _drawerHasEarlier.value = page.hasEarlier
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (_drawerMonth.value == (year to month)) {
+                    _drawerError.value = "THE DRAWER COULD NOT BE READ — TRY AGAIN"
+                }
             }
         }
     }
@@ -2902,6 +2954,20 @@ class MonolithViewModel(
                 triggerReason = state.selectedReason.shortTag
             )
         }
+    }
+
+    /**
+     * Issue #119, finding 2: the Airlock's own emergency-break entry.
+     * The airlock closes and the SAME disarm challenge the Deck chip
+     * opens takes its place — identical token cost, identical 60s
+     * continuous hold, identical session-ending effect, decided by
+     * the same repository path. No new exit machinery: placement
+     * only. (No "Stayed Focused" intercept is recorded — the user
+     * did not stay; the break's own ledger records what happened.)
+     */
+    fun requestDisarmFromAirlock() {
+        _airlockState.value = _airlockState.value.copy(isVisible = false)
+        requestDisarmChallenge()
     }
 
     fun transmuteImpulseAndReturn() {
