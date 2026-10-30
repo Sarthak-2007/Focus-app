@@ -27,7 +27,8 @@ import kotlinx.coroutines.launch
  *  - service lifecycle hooks stamp the two BIND items (accessibility,
  *    notification listener) and the device-admin GRANT CHECK;
  *  - the shield loop publishes ONE snapshot per iteration: the engine
- *    heartbeat plus a re-read of the two BIND items' present state;
+ *    heartbeat plus a re-read of the two BIND items' present state
+ *    (and, since issue #81 F4, the USAGE ACCESS grant it measured);
  *  - the grant-check sweep (Deck entry, Deck resume, FIX return)
  *    dispatches the six permission queries in parallel at t=0; each
  *    item re-stamps only when its own query lands.
@@ -328,8 +329,17 @@ object WatchStore {
      * heartbeat (behind the strip, never a board line) plus a
      * re-read of the two BIND items' present state, stamped as
      * measurements of this instant.
+     *
+     * Issue #81 F4: the loop also hands over the USAGE ACCESS fact
+     * it measured this iteration ([usageGranted], null = not
+     * measured — the stop/destroy publications, which must not
+     * fabricate a reading while dying). Before this, USAGE_ACCESS
+     * was re-measured only by the Deck-triggered sweep, so a
+     * mid-session revocation stayed invisible to every surface
+     * while the shield kept beating; now the board re-reads it on
+     * the shield's own 2s cadence for as long as a session runs.
      */
-    fun onShieldIteration(protecting: Boolean) {
+    fun onShieldIteration(protecting: Boolean, usageGranted: Boolean? = null) {
         val mono = SystemClock.elapsedRealtime()
         val wall = System.currentTimeMillis()
         val a11y = MonolithAccessibilityService.instance != null
@@ -354,6 +364,15 @@ object WatchStore {
                     measuredMono = mono, measuredWall = wall
                 )
             )
+            if (usageGranted != null) {
+                next = next.withMeasurement(
+                    WatchMeasurement(
+                        WatchItemId.USAGE_ACCESS,
+                        perm = if (usageGranted) PermState.GRANTED else PermState.MISSING,
+                        measuredMono = mono, measuredWall = wall
+                    )
+                )
+            }
             next
         }
     }
