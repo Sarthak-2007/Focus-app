@@ -67,6 +67,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -145,6 +146,14 @@ internal fun gripDraggedFraction(current: Float, dragAmountPx: Float, sheetHeigh
  * replaces the item), and the first trip's timer must then stand
  * down — it neither judges nor clears the newer press.
  */
+/**
+ * Issue #56, fresh-eyes A: the FIX dip holds for the return
+ * verdict ONLY when the press completed with a clean release.
+ * An interrupted press (tryAwaitRelease() == false) clears its
+ * state at once — it must never be judged by a later return tick.
+ */
+internal fun fixPressHoldsForReturn(released: Boolean): Boolean = released
+
 internal fun fixReturnStillOwns(
     capturedTrip: Int,
     capturedItem: WatchItemId?,
@@ -574,7 +583,38 @@ fun ParkDrawer(
                                                         pitchHz = 300f
                                                     )
                                                     onFixClick(item)
-                                                    tryAwaitRelease()
+                                                    // Issue #56, fresh-eyes A:
+                                                    // a press INTERRUPTED before
+                                                    // release (gesture stolen by
+                                                    // the sheet's scroll/drag, or
+                                                    // the composition tearing
+                                                    // down) must not leave the
+                                                    // dip armed — otherwise the
+                                                    // next unrelated return tick
+                                                    // (every ON_RESUME bumps it)
+                                                    // would judge a press that
+                                                    // never completed. A clean
+                                                    // release keeps the state:
+                                                    // the Settings absence is
+                                                    // the hold, and the return
+                                                    // effect is its only judge.
+                                                    // This composes with
+                                                    // issue-9's release-commit:
+                                                    // there a cancelled press
+                                                    // never fires onFixClick,
+                                                    // and this cleanup is what
+                                                    // guarantees its state.
+                                                    val released = try {
+                                                        tryAwaitRelease()
+                                                    } catch (ce: CancellationException) {
+                                                        fixPressed = false
+                                                        fixPressedItem = null
+                                                        throw ce
+                                                    }
+                                                    if (!fixPressHoldsForReturn(released)) {
+                                                        fixPressed = false
+                                                        fixPressedItem = null
+                                                    }
                                                 }
                                             )
                                         }
@@ -633,6 +673,10 @@ fun ParkDrawer(
                                     // key — no toggle mid-rise,
                                     // mid-throw, or while closing.
                                     onToggleRequested = { if (interactiveState.value) onToggleSound() }
+                                    // Fresh-eyes B: the view itself
+                                    // consults this before any haptic,
+                                    // so a gated press stays silent.
+                                    gateCheck = { interactiveState.value }
                                 }
                             },
                             update = { view ->
@@ -641,6 +685,7 @@ fun ParkDrawer(
                                     view.isChecked = soundEnabled
                                 }
                                 view.onToggleRequested = { if (interactiveState.value) onToggleSound() }
+                                view.gateCheck = { interactiveState.value }
                             },
                             modifier = Modifier
                                 .width(76.dp)
@@ -706,6 +751,7 @@ fun ParkDrawer(
                                     // Issue #56, finding 1: same gate
                                     // as the Sound sled and FIX key.
                                     onToggleRequested = { if (interactiveState.value) onToggleShortsReelsSniper() }
+                                    gateCheck = { interactiveState.value }
                                 }
                             },
                             update = { view ->
@@ -714,6 +760,7 @@ fun ParkDrawer(
                                     view.isChecked = shortsReelsSniperEnabled
                                 }
                                 view.onToggleRequested = { if (interactiveState.value) onToggleShortsReelsSniper() }
+                                view.gateCheck = { interactiveState.value }
                             },
                             modifier = Modifier
                                 .width(76.dp)
@@ -879,6 +926,7 @@ private fun ParkSocialSitesRow(
                             this.soundEngine = soundEngine
                             isChecked = enabled
                             onToggleRequested = { if (interactiveState.value) onToggle() }
+                            gateCheck = { interactiveState.value }
                         }
                     },
                     update = { view ->
@@ -887,6 +935,7 @@ private fun ParkSocialSitesRow(
                             view.isChecked = enabled
                         }
                         view.onToggleRequested = { if (interactiveState.value) onToggle() }
+                        view.gateCheck = { interactiveState.value }
                     },
                     modifier = Modifier
                         .width(76.dp)

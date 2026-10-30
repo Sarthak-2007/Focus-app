@@ -6,6 +6,7 @@ import android.view.View
 import androidx.test.core.app.ApplicationProvider
 import com.example.service.WatchItemId
 import com.example.ui.components.PARK_DISMISS_FRACTION
+import com.example.ui.components.fixPressHoldsForReturn
 import com.example.ui.components.fixReturnStillOwns
 import com.example.ui.components.gripDraggedFraction
 import com.example.ui.views.SledSwitchView
@@ -86,6 +87,17 @@ class ParkFixReturnBindingTest {
         // timer fired: the timer must neither judge nor clear it.
         assertFalse(fixReturnStillOwns(1, itemA, 2, itemA, stillPressed = true))
         assertFalse(fixReturnStillOwns(1, itemA, 2, itemB, stillPressed = true))
+    }
+
+    @Test
+    fun freshEyesA_onlyACleanReleaseHoldsThePressForItsVerdict() {
+        // A completed press (clean release) keeps the dip armed for
+        // the return effect — the Settings absence IS the hold.
+        assertTrue(fixPressHoldsForReturn(released = true))
+        // An interrupted press (gesture stolen, tryAwaitRelease
+        // false) clears at once: no later ON_RESUME tick may judge
+        // a press the user never completed.
+        assertFalse(fixPressHoldsForReturn(released = false))
     }
 
     @Test
@@ -173,5 +185,54 @@ class SledSwitchPressDisciplineTest {
         send(view, MotionEvent.ACTION_DOWN, x = -20f)
         send(view, MotionEvent.ACTION_UP, x = 20f)
         assertEquals(0, toggles)
+    }
+
+    @Test
+    fun freshEyesB_gateRejectsSilently_gateAcceptsToggles() {
+        // The gate (Park's `interactive`) rejecting a complete
+        // press: no toggle — and in production no haptic either,
+        // since fireFeel sits behind the same check in the view.
+        var toggles = 0
+        val rejected = laidOutSled { toggles++ }
+        rejected.gateCheck = { false }
+        send(rejected, MotionEvent.ACTION_DOWN)
+        send(rejected, MotionEvent.ACTION_UP)
+        assertEquals(0, toggles)
+
+        val accepted = laidOutSled { toggles++ }
+        accepted.gateCheck = { true }
+        send(accepted, MotionEvent.ACTION_DOWN)
+        send(accepted, MotionEvent.ACTION_UP)
+        assertEquals(1, toggles)
+
+        // No gate seated (Shield's usage): original behaviour.
+        val ungated = laidOutSled { toggles++ }
+        send(ungated, MotionEvent.ACTION_DOWN)
+        send(ungated, MotionEvent.ACTION_UP)
+        assertEquals(2, toggles)
+    }
+
+    @Test
+    fun freshEyesB_gateIsConsultedOnlyByACompletePress_exactlyOnce() {
+        // Event order: the gate must not be polled by stray UPs,
+        // cancelled presses, or slide-offs — only a complete press
+        // consults it, and exactly once (at its UP).
+        var consultations = 0
+        var toggles = 0
+        val view = laidOutSled { toggles++ }
+        view.gateCheck = { consultations++; true }
+        send(view, MotionEvent.ACTION_UP)
+        assertEquals(0, consultations)
+        send(view, MotionEvent.ACTION_DOWN)
+        send(view, MotionEvent.ACTION_CANCEL)
+        send(view, MotionEvent.ACTION_UP)
+        assertEquals(0, consultations)
+        send(view, MotionEvent.ACTION_DOWN, x = 20f)
+        send(view, MotionEvent.ACTION_UP, x = 500f)
+        assertEquals(0, consultations)
+        send(view, MotionEvent.ACTION_DOWN)
+        send(view, MotionEvent.ACTION_UP)
+        assertEquals(1, consultations)
+        assertEquals(1, toggles)
     }
 }

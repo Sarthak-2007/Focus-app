@@ -357,6 +357,101 @@ the test-compile unblock, which touches no gesture path.
 
 ---
 
+## Fresh-eyes items A–F (05:36 order — items NOT on the finding list)
+
+- **A) FIX press state can stick — FIXED-IN-CODE.** Verified: the
+  press handler read `tryAwaitRelease()`'s result into the void, so
+  an interrupted press left `fixPressed`/`fixPressedItem` armed for
+  the next unrelated return tick (MainActivity bumps
+  `parkReturnTick` on every ON_RESUME). Cure: a clean release is
+  now the only thing that holds the dip for its verdict
+  (`fixPressHoldsForReturn`, pure + tested); a cancelled release
+  clears both fields at once, and a `CancellationException` clears
+  them before propagating. Composes with issue-9's release-commit
+  (there, this cleanup is what guarantees a cancelled press's state).
+- **B) Sleds haptically lie when gated — FIXED-IN-CODE.**
+  Verified: `SledSwitchView` fired `fireFeel(8L)` before Park's
+  callback-side guard could reject, so a gated complete press felt
+  "thrown" and did nothing. Cure: the view now takes an optional
+  `gateCheck`, consulted only by a complete press, before any
+  feedback — a rejected press is silent (no haptic, no toggle);
+  Park wires it to the same `interactive` state on all three sleds,
+  Shield leaves it null and is unchanged. Proven by event-order
+  tests (gate consulted exactly once, only at a complete press's
+  UP; never by stray UPs, cancels, or slide-offs).
+  *Sub-note, recorded:* the ON/OFF margin word still flips after
+  the 260ms throw, not at press. KEPT, deliberately — it is Park's
+  own printed law ("the state's one rendering — it flips on
+  arrival, when the throw lands, never mid-throw"), and the moving
+  thumb is the in-flight feedback; flipping the word at press
+  would print a state the sled hasn't reached. Not a downgrade, no
+  decision needed: the spec already rules this surface.
+- **C) FIX failure feedback — FIXED-ELSEWHERE (`agent/issue-9`).**
+  Verified on that branch: its ParkDrawer carries a printed return
+  verdict (`fixVerdict` → a board row printing FIXED / STILL OPEN
+  naming the door; commit cc662da, the wave-2 §4 pass). On main the
+  silent verdict stands until that branch lands — pre-existing,
+  not introduced or worsened here. COMPOSITION note for the train:
+  #9's verdict print and this branch's trip binding are
+  complements, not rivals — the merged file must keep both (the
+  verdict belongs to the trip `fixReturnStillOwns` admits).
+- **D) Social Sites word vs sled — VERIFIED, not a defect.**
+  The word prints the *measured* interceptor state (WatchStore's
+  derivation: setting + parent warrants + suspension); the sled
+  prints/writes the *persisted setting*. Right after toggling OFF
+  the word can still read RUNNING until the next sweep re-measures
+  — that lag is the honest print, documented in the row's own doc
+  ("two facts share the line and neither impersonates the other").
+  A word that instantly mirrored the sled would be claiming a
+  measurement nobody took. No change.
+- **E) Grip's two pointerInputs — VERIFIED, recorded.** Both
+  detectors write only `gripPressed` (the 24→28dp grip width, a
+  visual), and they agree on its lifecycle (true at press/drag
+  start, false at any end). The drag's functional state lives
+  separately in `gripDragFraction` (finding 2's cure) and is
+  covered by `ParkGripDragMathTest`. No competing writer touches
+  position, dismissal, or state. No change.
+- **F) Record-only for Ren — recorded by name, no fixes invented:**
+  (i) Park reads as a status board yet carries three live
+  protection sleds whenever unsealed — a standing tension in the
+  surface's purpose, surfaced for Ren's ruling, not resolved here;
+  (ii) pull-down on the sheet's *content* never dismisses — the
+  header spec's three lawful dismissal inputs are the rail, the
+  scrim, and the grip drag past 40%; recorded as-is;
+  (iii) first-run auto-open sets `parkOpen` directly, bypassing
+  `openPark()`'s sealed/navigationLocked guard (MainActivity) —
+  COMPOSITION / cross-branch flag for Ren and Konto's train,
+  deliberately not touched by this issue;
+  (iv) zero semantics (TalkBack) in ParkDrawer.kt on main —
+  cross-reference issue #70 by name; note issue-9's branch adds
+  `contentDescription` to the FIX and CHECK keys, a partial cure
+  elsewhere.
+
+## Finisher hold (05:28 amendment) — attribution, from the run logs
+
+The failing step in both branch runs is identified — it is the
+**Unit tests** step ( Assemble debug is green in both):
+
+- Run **40973510133** (5c0f0a9): unit tests failed at
+  **compilation**, every error in five pre-existing test files,
+  zero in #56's tests — the breakage exists on main itself.
+- Run **40975044540** (24b982b): unit tests **executed** — 148
+  completed, 114 passed, 34 failed, all attributed: 32 Robolectric
+  `classMethod` environment failures
+  (`UnsupportedOperationException at DefaultSdkProvider.java:170`)
+  spanning 31 pre-existing classes plus this issue's
+  SledSwitchPressDisciplineTest (its pure siblings passed), and 2
+  pre-existing assertion failures in non-Park code
+  (ChromeWaveUnitTest warrant derivation; TruthCar3SweepTest
+  una06 browser-domain matching).
+
+That meets the amendment's alternative gate: the red is proven
+solely pre-existing other-scope **with tests executing**. The
+final branch tip's CI run is cited in the closing evidence
+comment on issue #56.
+
+---
+
 ## Keeper of Record — record check (every item accounted for by name)
 
 **Findings (5/5 dispositioned):**
