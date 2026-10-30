@@ -636,6 +636,7 @@ class MonolithViewModel(
         // count unknown (0) until refreshSystemGuard measures.
         SystemGuardStatus(
             hasUsageStatsPermission = false,
+            hasOverlayPermission = false,
             isAccessibilityServiceEnabled = false,
             isNotificationListenerEnabled = false,
             isDeviceAdminEnabled = false,

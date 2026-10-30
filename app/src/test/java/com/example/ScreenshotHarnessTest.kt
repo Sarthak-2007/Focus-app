@@ -373,7 +373,7 @@ class ScreenshotHarnessTest {
                 WatchItemId.USAGE_ACCESS to m(WatchItemId.USAGE_ACCESS, PermState.GRANTED),
                 WatchItemId.DEVICE_ADMIN to m(WatchItemId.DEVICE_ADMIN, PermState.MISSING),
                 WatchItemId.NOTIFICATION_LISTENER to m(WatchItemId.NOTIFICATION_LISTENER, PermState.GRANTED),
-                WatchItemId.POST_NOTIFICATIONS to m(WatchItemId.POST_NOTIFICATIONS, PermState.GRANTED),
+                WatchItemId.OVERLAY to m(WatchItemId.OVERLAY, PermState.GRANTED),
                 WatchItemId.BATTERY to m(WatchItemId.BATTERY, PermState.MISSING)
             ),
             engineHeartbeatMono = mono,

@@ -1,9 +1,10 @@
 # Monolith — Privacy Policy
 
-_Last updated: 2026-10-30. This policy describes the Monolith app
-(package `com.example`, distributed as "Monolith") exactly as the
-shipped code behaves. Every claim below is traceable to a source
-file, cited in `docs/DATA_SAFETY.md`._
+_Last updated: 2026-10-30 (re-verified line-by-line against
+`main` @ `2531c84` at issue-#86 closure, 2026-10-30). This policy
+describes the Monolith app (package `com.example`, distributed as
+"Monolith") exactly as the shipped code behaves. Every claim below
+is traceable to a source file, cited in `docs/DATA_SAFETY.md`._
 
 **Contact:** [Sarthak to fill: name + email address for privacy
 questions. Google Play requires a monitored address here before
@@ -65,7 +66,8 @@ backup of app data is disabled (`android:allowBackup="false"`).
   recognise blocked sites, Shorts/Reels surfaces, and attempts to
   force-stop or uninstall Monolith.
   (`service/MonolithAccessibilityService.kt` —
-  `detectBlockedBrowserUrl`, `collectWindowTextLowercase`.)
+  `extractBrowserUrlTexts`, `collectUrlBarTexts`,
+  `matchBlockedDomain`, `collectWindowTextLowercase`.)
 - **Why:** Blocking happens where blocking is possible: the URL bar
   is the only place a blocked site is visible, and Shorts/Reels are
   surfaces inside other apps.
@@ -84,6 +86,15 @@ Focus sessions, tasks, routines, blocked-site lists, per-app rules
 and settings are stored in the app's private on-device database
 and `SharedPreferences`. This is your own configuration, created by
 you, used only to run the app.
+
+### 6. Display over other apps (peek countdown pill)
+When you take a timed "peek" at a blocked app, Monolith draws a
+small countdown pill over that app (the `SYSTEM_ALERT_WINDOW`
+permission; `service/PeekPillOverlay.kt`). The pill only *displays*
+the peek's remaining time and an END PEEK button — it reads no
+content from the app underneath and collects nothing. If the
+draw-over-apps permission is not granted, the pill simply does not
+draw and the countdown shows inside Monolith instead.
 
 ## Data sharing and sale
 
