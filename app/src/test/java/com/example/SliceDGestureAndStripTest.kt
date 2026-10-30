@@ -194,6 +194,12 @@ class StripDerivationsTest {
         val unsetSentence = refusalSentenceFor(warrant(WarrantState.UNPROVEN, usage = UsageAccess.UNSET))
         assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", unsetSentence?.text)
         assertEquals(RefusalAction.FIX_USAGE, unsetSentence?.action)
+        // UNSET + unstamped + UNPROVEN (the C3 lie's other door): the
+        // RETRY row must not claim this warrant — its tap opens the
+        // Usage pane, so the Usage sentence is the only honest print.
+        val unsetUnstamped = refusalSentenceFor(warrant(WarrantState.UNPROVEN, stamped = false, usage = UsageAccess.UNSET))
+        assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", unsetUnstamped?.text)
+        assertEquals(RefusalAction.FIX_USAGE, unsetUnstamped?.action)
         // Healthy wire: the slot stands empty.
         assertNull(refusalSentenceFor(warrant(WarrantState.LIVE)))
         assertNull(refusalSentenceFor(null))

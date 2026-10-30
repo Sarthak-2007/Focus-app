@@ -509,7 +509,13 @@ internal fun refusalSentenceFor(warrant: Warrant?): RefusalSentence? {
     return when {
         !warrant.a11yBound ->
             RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
-        warrant.state == WarrantState.UNPROVEN && !warrant.a11yStampedThisResidency ->
+        warrant.state == WarrantState.UNPROVEN && !warrant.a11yStampedThisResidency &&
+            warrant.usage != UsageAccess.UNSET ->
+            // The UNSET exclusion is the C3 lie's other door (finisher
+            // pass, fresh-eyes catch): with usage UNSET this row's
+            // "TAP TO RETRY" printed while the Deck's RETRY handler
+            // rerouted the tap to the Usage pane. UNSET falls through
+            // to its own row below and names the pane it opens.
             RefusalSentence("CAN'T CHECK BLOCKING — TAP TO RETRY", RefusalAction.RETRY_CHECK)
         warrant.usage == UsageAccess.DENIED ->
             RefusalSentence("USAGE ACCESS IS OFF — TAP TO FIX", RefusalAction.FIX_USAGE)
