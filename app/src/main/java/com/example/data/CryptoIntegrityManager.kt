@@ -72,6 +72,26 @@ object CryptoIntegrityManager {
         }
     }
 
+    /**
+     * Whether the HMAC key already exists in AndroidKeyStore —
+     * WITHOUT generating it (issue #81 F1). AndroidKeyStore entries
+     * are held by the system per app UID: `pm clear` / Clear-data
+     * does NOT delete them (uninstall and factory reset do). A
+     * pre-existing key under a virgin database is therefore the
+     * one residue that proves the install ran before its data was
+     * wiped. Returns false wherever the keystore is unreachable
+     * (JVM tests, TEE failure) — absence of proof, never proof of
+     * a wipe.
+     */
+    fun hmacKeyExists(): Boolean {
+        return try {
+            val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            ks.containsAlias(HMAC_KEY_ALIAS)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     /** VERIFY path: lookup ONLY — returns the existing key or null, never creates one. */
     private fun getExistingHardwareHmacKeyOrNull(): SecretKey? {
         return try {

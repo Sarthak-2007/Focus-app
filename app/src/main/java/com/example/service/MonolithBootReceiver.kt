@@ -85,6 +85,23 @@ class MonolithBootReceiver : BroadcastReceiver() {
                     }
                 }
             }
+            // Issue #81 F5: a package's component set changed —
+            // reconcile; the pass re-reads Monolith's own critical
+            // components' enabled states (RoutineHeartbeat step 4c)
+            // and latches the live session's gap if one was
+            // disabled out from under it.
+            Intent.ACTION_PACKAGE_CHANGED -> {
+                val pendingResult = goAsync()
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        RoutineHeartbeat.tick(
+                            appContext, RoutineHeartbeat.Source.PACKAGE_REPLACED, force = true
+                        )
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
+            }
         }
     }
 
