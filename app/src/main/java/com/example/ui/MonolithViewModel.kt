@@ -11,7 +11,6 @@ import com.example.data.AppCategory
 import com.example.data.BreakResult
 import com.example.data.BlockedAppEntity
 import com.example.data.CapturedNotificationEntity
-import com.example.data.CurioCatalog
 import com.example.data.DailyFocusStat
 import com.example.data.FocusProfileEntity
 import com.example.data.FocusSessionEntity
@@ -2524,10 +2523,13 @@ class MonolithViewModel(
     private val _storedMonths = MutableStateFlow<List<com.example.data.StoredMonth>>(emptyList())
     val storedMonths: StateFlow<List<com.example.data.StoredMonth>> = _storedMonths.asStateFlow()
 
-    /** The Drawer cabinet's forged state (chrome C10): the artifact
-     *  ids real sessions actually forged, re-read with the Drawer. */
-    private val _forgedArtifactIds = MutableStateFlow<Set<String>>(emptySet())
-    val forgedArtifactIds: StateFlow<Set<String>> = _forgedArtifactIds.asStateFlow()
+    // SPITZ Charge 5 (closer, issue #8): the cabinet's forged-state
+    // flow that stood here had ZERO consumers after the cabinet's
+    // eviction from the Drawer — zombie plumbing wearing
+    // preservation's name. Deleted. The preserved read for the
+    // cabinet's future home (#21) is the repository/DAO pair:
+    // MonolithRepository.forgedArtifactIds() over
+    // MonolithDao.getForgedArtifactIds().
 
     private val _drawerMonth = MutableStateFlow(
         com.example.data.DrawerDay.filingYearMonth(System.currentTimeMillis())
@@ -2567,7 +2569,6 @@ class MonolithViewModel(
         viewModelScope.launch {
             _storedMonths.value = repository.storedMonths()
             _dayWords.value = repository.allDayWords()
-            _forgedArtifactIds.value = repository.forgedArtifactIds()
             selectDrawerMonth(_drawerMonth.value.first, _drawerMonth.value.second)
         }
     }

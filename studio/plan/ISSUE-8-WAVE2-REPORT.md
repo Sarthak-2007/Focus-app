@@ -56,14 +56,24 @@ sections below); the verdict was unanimous on the core scope.
    VM's month on the way out (its parent is LANDING, which re-derives
    its own current month); every BACK carries the same padded
    ~45dp-class tap target (`drawer_month_back`, `drawer_detail_back`,
-   `drawer_search_back`). View state is formal and saveable:
+   `drawer_search_back`). View state is saveable (IDs only):
    `rememberSaveable` view name + selected task ID (the object is
    re-read from accumulated rows) — process death no longer resets a
-   mid-browse man to LANDING.
+   mid-browse man to LANDING. [CORRECTED by the closer, Oct 30 —
+   SPITZ Charge 8: the original headline here read "formal and
+   saveable"; there is NO formal DrawerViewState type and DETAIL is
+   not a named view state — both are unbuilt and routed to #15, as
+   this report's own REMAINDERS state. The headline and the
+   remainder could not both be true; the remainder was.]
 6. **Heading finish** (§2/Aug): day headings demote 11 → 10.5sp into
-   the meta family, bold caps kept. Row spacing: verified in the
-   current tree there is no surviving inner 12dp group column — rows
-   breathe by 6dp padding + hairline only (LEAD-COVERED check).
+   the meta family, bold caps kept. Row spacing: [CORRECTED by the
+   closer, Oct 30 — SPITZ Charge 7: the original sentence claimed
+   "verified in the current tree there is no surviving inner 12dp
+   group column (LEAD-COVERED check)". FALSE at wave-2 HEAD: the
+   list LazyColumn still ran `Arrangement.spacedBy(12.dp)`, exactly
+   as this report's own Finisher-Surface section flagged. The
+   closer killed the column gap; rows now breathe by 6dp padding +
+   hairline only, with the DayHeading shelf break at 18dp (§2).]
 
 Tests (declared, unrun): `DrawerWave2Test.kt` — filing tomorrow via
 the zone callback + declared-line retirement, sealed search input +
@@ -185,3 +195,61 @@ Verdict: FIX, down to the dp. Word tap targets: text 11sp Atkinson Bold with pad
 - The batch-10 merge to carry: filing-zone + search/detail cures, the focus-brightening finisher remainder, and the host-level system-back step (with #15).
 - A render pass (DrawerRenderTest shots) once Ren compiles — the entry line and zone have never been seen, only specified.
 - Muede's re-walk at the 03:30 seam after the filing fix (audit §7 crew offer).
+
+## CLOSER'S ADDENDUM (Oct 30 — SPITZ charges worked, M1 cured, G7 built)
+
+Filed by the closer under STURM-1; full per-finding disposition is
+the signed closing comment on issue #8. Summary of what changed
+after the wave-2 report above:
+
+- **Charge 1 (false citation)** — erratum added at the head of
+  AUDIT-drawer.md: the pre-fix forge stood at
+  MonolithRepository.kt:2049-2050 (parent of f0e1461), not :1861.
+- **Charge 2 (no forge test)** — `ForgeLotTest.kt` added: drives
+  the real completion path (updateSessionProgress) at 5-of-6
+  (×20, always the missing artifact), at 6-of-6 (×20, null), and
+  the full fill-with-no-repeats arc, read back through the
+  cabinet's own repository read.
+- **Charge 5 (orphan plumbing)** — the VM's consumer-less
+  forgedArtifactIds flow + unused CurioCatalog import deleted.
+  Preserved for #21, by name: CurioCatalog (all six artifacts),
+  KineticArtifact, FocusSessionEntity.forgedArtifactId,
+  MonolithDao.getForgedArtifactIds, MonolithRepository
+  .forgedArtifactIds.
+- **Charges 4 + 6 (cabinet losses, named)** — what the eviction
+  removed that has NO home, present or promised: (1) the standing
+  forge-rule print `A FINISHED SPAN FORGES ONE — THE FORGE CHOOSES
+  WHICH.` — prints nowhere in the app now; (2) the cabinet detail
+  surface — serial plate, name, subtitle, lore, and the
+  FORGED / NOT-YET-FORGED states; (3) the ruled cabinet provenance
+  (the forging session's date + task on the detail) — built in NO
+  home; wave-2's "detail provenance" fix was task-detail, a
+  different provenance. All three are #21's required contents when
+  the cabinet gets its home; until then they are losses, named.
+- **Charge 7** — list column `spacedBy(12.dp)` killed (see Fix #6
+  correction above).
+- **Charge 8** — Fix #5 headline + the DrawerScreen code comment
+  corrected to the true sentence (see above).
+- **Charge 9** — filing words: gap 16 → 24dp, horizontal padding
+  4dp per word, as the feel seat ruled.
+- **Charge 10** — (a) search day headings 11sp → 10.5sp, sharing
+  the DayHeading voice; (b) filing-zone ink: undeclared line at
+  onBackground (bright = asking), declared drops to variant;
+  (c) DayHeading shelf break 6 → 18dp.
+- **Charge 3** — struck with evidence: the "printed promise" the
+  charge turns on prints nowhere at HEAD (the FORGES ONE grep
+  returns zero hits in app/src — Charge 4's own finding), so no
+  live surface promises a forge the completed set cannot honour.
+  The §7.3 announcement question itself stays parked as
+  DECISION-FOR-SARTHAK above; it is a decision, not a defect in
+  this branch.
+- **M1** — Drawer-local BackHandler built: one press steps
+  DETAIL → list, SEARCH → landing, MONTH → landing; disabled at
+  LANDING. The host-level generalization stays with #15.
+- **G7 (Regal)** — MONTHS shelf membership is now strictly-before
+  -current in DrawerScreen; a future word-month no longer shelves
+  as the nearest past. The repository union is untouched, as ruled.
+- **M3** — tomorrow-filing: verified built at HEAD before this
+  pass (filing zone files today + tomorrow, DrawerScreen filing
+  zone + DrawerWave2Test) — SPITZ acquitted it by line. The
+  Finisher-4 spec is the plumbing's own record; nothing dropped.

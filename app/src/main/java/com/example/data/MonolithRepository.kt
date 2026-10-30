@@ -726,7 +726,11 @@ class MonolithRepository(
     }
 
     /** The artifact ids actually forged by real sessions — the
-     *  Drawer cabinet's forged state (chrome C10). */
+     *  cabinet's forged state (chrome C10). No live consumer since
+     *  the cabinet's eviction from the Drawer (#8): this read, the
+     *  DAO query under it and CurioCatalog are the preserved code
+     *  the cabinet's future home (#21) builds on. The VM flow that
+     *  merely mirrored it was deleted (SPITZ Charge 5). */
     suspend fun forgedArtifactIds(): Set<String> =
         dao.getForgedArtifactIds().toSet()
 

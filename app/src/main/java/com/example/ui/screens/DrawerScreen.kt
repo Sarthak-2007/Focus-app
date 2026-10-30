@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -148,15 +149,21 @@ fun DrawerScreen(
     // Issue #8 (AUDIT-drawer §2A): the cabinet is EVICTED from the
     // Drawer — no CURIOS row, no cabinet view, no cabinet params.
     // Its data stays in code (CurioCatalog, the DISTINCT forged-id
-    // read, the VM's forged flow) for its future home (issue #21);
-    // nothing is deleted — it simply has no Drawer address.
+    // read in repository/DAO) for its future home (issue #21);
+    // nothing is deleted — it simply has no Drawer address. (The
+    // VM's consumer-less forged flow was deleted by the closer,
+    // SPITZ Charge 5: plumbing with no reader is not preservation.)
 ) {
     val scheme = MaterialTheme.colorScheme
-    // AUDIT-drawer §2 (wave-2): view state is FORMAL and saveable —
+    // AUDIT-drawer §2 (wave-2): view + selection IDs are saveable —
     // the view name and the selected task's ID survive process
     // death; a mid-browse man is no longer reset to LANDING by the
     // OS. The task object itself is re-read from the accumulated
-    // rows at composition, never stored in the bundle.
+    // rows at composition, never stored in the bundle. TRUE SCOPE
+    // (closer correction, SPITZ Charge 8): these are two
+    // rememberSaveable scalars — there is NO formal DrawerViewState
+    // type and DETAIL is not a named view state; both are unbuilt
+    // and routed to #15, as the wave-2 report's own REMAINDERS say.
     var viewName by rememberSaveable { mutableStateOf(DrawerView.LANDING.name) }
     val view = runCatching { DrawerView.valueOf(viewName) }.getOrDefault(DrawerView.LANDING)
     var selectedTaskId by rememberSaveable { mutableStateOf(-1) }
@@ -189,6 +196,26 @@ fun DrawerScreen(
     // DETAIL — one stored task, read-only. BACK is the only action.
     // ------------------------------------------------------------------
     val detail = selectedTask
+
+    // M1 (closer, issue #8): one system press steps ONE level —
+    // DETAIL → list, SEARCH → landing, MONTH → landing. The Drawer
+    // had no BackHandler at all: one press in DETAIL or MONTH
+    // ejected the man to the DECK, two rooms away from the page he
+    // was reading, on the exact night-walk the audit priced (end of
+    // day, tired thumb, re-reading a stored task). At LANDING the
+    // handler disables and the press belongs to the host again.
+    // (The app-wide back-stack generalization stays with #15, per
+    // the wave-2 REMAINDERS; this is the Drawer-local cure.)
+    BackHandler(
+        enabled = detail != null || searching || view == DrawerView.MONTH
+    ) {
+        when {
+            detail != null -> selectedTaskId = -1
+            searching -> onQueryChange("")
+            else -> viewName = DrawerView.LANDING.name
+        }
+    }
+
     if (detail != null) {
         // DRW-03 (Truth Car 2): the detail's date-line derives
         // from the finish's own instant — its true calendar date
@@ -329,13 +356,18 @@ fun DrawerScreen(
     // ------------------------------------------------------------------
     // LIST VIEWS — landing (current month + MONTHS shelf) / one month / search results.
     // ------------------------------------------------------------------
+    // SPITZ Charge 7 (closer): NO column gap in the list — the
+    // audit ruled rows breathe by their own padding + hairline
+    // only, and the wave-2 report's claim that the 12dp group
+    // column was already dead was false at HEAD. Killed here;
+    // day-group separation is the DayHeading's 18dp shelf break.
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .background(scheme.background)
             .padding(horizontal = 12.dp, vertical = 8.dp)
             .testTag("drawer_screen"),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.Top,
         contentPadding = PaddingValues(bottom = 100.dp)
     ) {
         item {
@@ -470,11 +502,14 @@ fun DrawerScreen(
                 )
                 groups.forEach { group ->
                     item(key = "search-head-${group.date}") {
+                        // SPITZ Charge 10a (closer): the search day
+                        // headings share the DayHeading constant —
+                        // 10.5sp meta voice, not a surviving 11sp.
                         Text(
                             text = headingLabel(group.date, withYear = true),
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
+                            fontSize = 10.5.sp,
                             letterSpacing = 1.sp,
                             color = scheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 6.dp)
@@ -619,9 +654,20 @@ fun DrawerScreen(
                     // The current month is the landing's own body
                     // above, never a shelf row. A word-only month is
                     // still an address and still shelves.
-                    val earlierMonths = storedMonths.filterNot {
-                        it.year == currentYearMonth.first &&
-                            it.month == currentYearMonth.second
+                    // Shelf membership is STRICTLY BEFORE the
+                    // current month (Regal's G7 ruling, closer-built):
+                    // the old filterNot(current) also shelved a
+                    // FUTURE month — file tomorrow's word on the
+                    // 31st and next month stood at the top of the
+                    // "earlier months" shelf tonight, a future month
+                    // presented as the nearest past. The repository
+                    // union keeps returning the future word-month
+                    // (the filing zone needs it); the shelf is the
+                    // wrong consumer, so the shelf is what changes.
+                    val earlierMonths = storedMonths.filter {
+                        it.year < currentYearMonth.first ||
+                            (it.year == currentYearMonth.first &&
+                                it.month < currentYearMonth.second)
                     }
                     if (earlierMonths.isNotEmpty()) {
                         item {
@@ -689,16 +735,19 @@ private fun DayHeading(group: DrawerDayGroup) {
         fontSize = 10.5.sp,
         letterSpacing = 1.sp,
         color = scheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 6.dp)
+        // SPITZ Charge 10c (closer): the audit's shelf-break cure —
+        // day groups separate by an 18dp break above the heading,
+        // not the 6dp that stood at HEAD.
+        modifier = Modifier.padding(top = 18.dp)
     )
 }
 
 /**
  * One filing-zone day-line (AUDIT-drawer §2/§4, wave-2): a date and
- * its three words. Undeclared and unsealed: the words are tappable
- * (tapping the active word clears it). Declared: the line retires
- * to pure print — date · WORD, read-only, exactly the DayHeading
- * voice. Sealed: print only; filing is an edit.
+ * its three words. Undeclared and unsealed: the words are tappable;
+ * a tap files that word and the line retires. Declared: the line
+ * retires to pure print — date · WORD, read-only, exactly the
+ * DayHeading voice. Sealed: print only; filing is an edit.
  */
 @Composable
 private fun FilingDayLine(
@@ -723,27 +772,35 @@ private fun FilingDayLine(
         return
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        // SPITZ Charges 9 + 10b (closer): the UNDECLARED line prints
+        // at full ink (onBackground — bright = asking); once a word
+        // is declared the line drops to variant print above. And the
+        // mis-tap mitigations the feel seat priced are built as
+        // ruled: word gap 16 → 24dp, 4dp horizontal padding per
+        // word — an ILL filed as REST is a false record, not a
+        // typo, in the one room whose law is that its record is
+        // true.
         Text(
             text = headingLabel(date, withYear = false),
             fontFamily = AnonymousProFamily,
             fontWeight = FontWeight.Bold,
             fontSize = 10.5.sp,
             letterSpacing = 1.sp,
-            color = scheme.onSurfaceVariant,
+            color = scheme.onBackground,
             modifier = Modifier.padding(top = 6.dp)
         )
         if (!isSealed) {
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                 DayWordStore.WORDS.forEach { w ->
                     Text(
                         text = w,
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.sp,
-                        color = scheme.onSurfaceVariant,
+                        color = scheme.onBackground,
                         modifier = Modifier
                             .clickable { onDeclare(w) }
-                            .padding(vertical = 6.dp)
+                            .padding(horizontal = 4.dp, vertical = 6.dp)
                             .testTag("filing_word_${DrawerDay.dateIso(date)}_${w.lowercase()}")
                     )
                 }
