@@ -101,10 +101,20 @@ enum class WatchItemId(val boardName: String, val counted: Boolean) {
     NOTIFICATIONS("NOTIFICATIONS", false);
 
     companion object {
-        /** The six permission-family items, board order. */
+        /** The six permission-family items, board order.
+         *  Issue #313 F4 (Audit R5 · Opal second pass): the board
+         *  used to lead with ACCESSIBILITY — the scariest grant,
+         *  asked cold. Board order is now value order: USAGE ACCESS
+         *  first (the benefit the user can see — their own app/time
+         *  picture), ACCESSIBILITY second (the blocking engine,
+         *  asked once the point is proven), then the listener, the
+         *  device-admin uninstall guard, overlay and battery. This
+         *  list IS the render order (GuardLine prints, PARK board)
+         *  and the next-fix suggestion order in ParkDrawer, so the
+         *  FIX trips now fire in this order too. */
         val PERMISSIONS: List<WatchItemId> = listOf(
-            ACCESSIBILITY, USAGE_ACCESS, DEVICE_ADMIN,
-            NOTIFICATION_LISTENER, OVERLAY, BATTERY
+            USAGE_ACCESS, ACCESSIBILITY, NOTIFICATION_LISTENER,
+            DEVICE_ADMIN, OVERLAY, BATTERY
         )
         /** The counted four, board order. */
         val COUNTED: List<WatchItemId> = listOf(
