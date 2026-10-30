@@ -33,6 +33,31 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+/** Issue #337 (Freedom, Platform F2): a grant whose absence the
+ *  session notification can repair, with the label its action
+ *  button carries and the settings screen it opens. Accessibility
+ *  is the fatal one (Freedom's taxonomy: only Accessibility is
+ *  'disabled'; anything else missing is 'restricted') — its label
+ *  is Freedom's own: 'Enable blocking'. */
+enum class RepairAction(val label: String) {
+    ACCESSIBILITY("Enable blocking"),
+    USAGE_ACCESS("Usage access")
+}
+
+/** Which repair actions a notification rendered RIGHT NOW must
+ *  carry: one per missing grant, fatal first. Empty when every
+ *  grant the shield depends on is present — the notification then
+ *  stays the plain session announcement it always was. */
+internal fun missingRepairActions(
+    accessibilityBound: Boolean,
+    usageAccessGranted: Boolean
+): List<RepairAction> {
+    val missing = mutableListOf<RepairAction>()
+    if (!accessibilityBound) missing += RepairAction.ACCESSIBILITY
+    if (!usageAccessGranted) missing += RepairAction.USAGE_ACCESS
+    return missing
+}
+
 class MonolithShieldService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -420,6 +445,47 @@ class MonolithShieldService : Service() {
         }
     }
 
+    /** #337 F2: is Usage Access granted to this app right now?
+     *  (AppOps verdict, the same probe the repository uses.) */
+    private fun hasUsageAccessNow(): Boolean {
+        return try {
+            val appOps = getSystemService(Context.APP_OPS_SERVICE) as? android.app.AppOpsManager
+                ?: return false
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                appOps.unsafeCheckOpNoThrow(
+                    android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(),
+                    packageName
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                appOps.checkOpNoThrow(
+                    android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(),
+                    packageName
+                )
+            }
+            mode == android.app.AppOpsManager.MODE_ALLOWED
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun repairPendingIntent(action: RepairAction): PendingIntent {
+        val intent = when (action) {
+            RepairAction.ACCESSIBILITY ->
+                Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            RepairAction.USAGE_ACCESS ->
+                Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS)
+        }.apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+        return PendingIntent.getActivity(
+            this,
+            10 + action.ordinal,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+    }
+
     private fun buildNotification(title: String, subtitle: String): Notification {
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -443,7 +509,7 @@ class MonolithShieldService : Service() {
             .setOngoing(true)
             .setContentIntent(pendingIntent)
             .build()
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
             .setContentText(subtitle)
@@ -452,7 +518,38 @@ class MonolithShieldService : Service() {
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setPublicVersion(publicVersion)
             .setContentIntent(pendingIntent)
-            .build()
+
+        // #337 F2: when a grant the session depends on is missing
+        // MID-SESSION, the one surface the user can always reach —
+        // this notification — becomes the repair tool: a big-text
+        // warning naming what is missing plus one action button
+        // per grant, deep-linking to the exact settings screen.
+        // Grants are probed at render time, so the actions appear
+        // and disappear with the truth.
+        val missing = missingRepairActions(
+            accessibilityBound = MonolithAccessibilityService.instance != null,
+            usageAccessGranted = hasUsageAccessNow()
+        )
+        if (missing.isNotEmpty()) {
+            val warning = buildString {
+                append(subtitle)
+                append(" — Missing: ")
+                append(
+                    missing.joinToString(", ") {
+                        when (it) {
+                            RepairAction.ACCESSIBILITY -> "Accessibility (blocking is OFF)"
+                            RepairAction.USAGE_ACCESS -> "Usage access (detector degraded)"
+                        }
+                    }
+                )
+            }
+            builder.setStyle(NotificationCompat.BigTextStyle().bigText(warning))
+            builder.setContentText(warning)
+            for (action in missing) {
+                builder.addAction(0, action.label, repairPendingIntent(action))
+            }
+        }
+        return builder.build()
     }
 
     private fun updateNotification(title: String, subtitle: String) {
