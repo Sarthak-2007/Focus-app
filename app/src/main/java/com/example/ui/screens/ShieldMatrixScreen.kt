@@ -76,6 +76,7 @@ import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.theme.MonolithCurves
 import com.example.ui.theme.SoraFamily
+import com.example.ui.theme.TokenColorOnPrimary
 import com.example.ui.views.AppRowSledToggleView
 import com.example.ui.views.SledSwitchView
 import kotlinx.coroutines.delay
@@ -301,7 +302,7 @@ fun ShieldMatrixScreen(
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
-                        color = Color(0xFFFBF1EC)
+                        color = TokenColorOnPrimary
                     )
                 }
             }
@@ -362,11 +363,14 @@ fun ShieldMatrixScreen(
                 selectedIndex = selectedLoadoutIndex,
                 soundEngine = soundEngine,
                 onSelect = { level ->
-                    // Stage, never apply (issue #107 #1).
-                    pendingLoadout = when (level) {
-                        0 -> SmartLoadout.STUDY
-                        1 -> SmartLoadout.WORK_SPRINT
-                        else -> SmartLoadout.SLEEP
+                    // Stage, never apply (issue #107 #1) — resolved
+                    // through the ONE index↔loadout mapping
+                    // (LoadoutStore, #58 F6): an index that seats
+                    // nothing stages nothing — the hand-written
+                    // `else -> SLEEP` silently meant SLEEP for any
+                    // garbage index and stays deleted.
+                    com.example.data.LoadoutStore.loadoutAtCapIndex(level)?.let { loadout ->
+                        pendingLoadout = loadout
                     }
                 }
             )
@@ -377,11 +381,10 @@ fun ShieldMatrixScreen(
                         LoadoutRules.preview(loadout, allApps)
                     },
                     onApply = {
-                        selectedLoadoutIndex = when (loadout) {
-                            SmartLoadout.STUDY -> 0
-                            SmartLoadout.WORK_SPRINT -> 1
-                            SmartLoadout.SLEEP -> 2
-                        }
+                        // Reverse direction of the same ONE mapping
+                        // (#58 F6) — no second hand-written table.
+                        selectedLoadoutIndex =
+                            com.example.data.LoadoutStore.capIndexOf(loadout)
                         pendingLoadout = null
                         onApplySmartLoadout(loadout)
                     },
@@ -580,6 +583,13 @@ fun ShieldMatrixScreen(
                 titleWord = "ALL APPS",
                 rightWordPrefix = "SHOWING ",
                 rightMonoNumber = filteredApps.size.toString()
+            )
+            Text(
+                text = "APPS ON THIS PHONE ONLY — NOTHING HERE CAN HOLD AN APP ON ANOTHER DEVICE",
+                fontFamily = AnonymousProFamily,
+                fontSize = 10.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.testTag("shield_catalog_scope_line")
             )
             Spacer(modifier = Modifier.height(8.dp))
 

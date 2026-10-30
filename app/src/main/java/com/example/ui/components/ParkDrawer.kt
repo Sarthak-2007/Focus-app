@@ -58,6 +58,7 @@ import com.example.service.WatchStore
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AppTitleTextStyle
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
+import com.example.ui.theme.BodyTextStyle
 import com.example.ui.theme.DrawerHeaderTextStyle
 import com.example.ui.theme.MonolithKin
 import com.example.ui.theme.PillBadgeTextStyle
@@ -167,6 +168,7 @@ internal fun fixReturnStillOwns(
 fun ParkDrawer(
     visible: Boolean,
     snapshot: WatchSnapshot?,
+    introPending: Boolean = false,
     isSealed: Boolean,
     isNight: Boolean,
     soundEnabled: Boolean,
@@ -237,7 +239,11 @@ fun ParkDrawer(
 
     val firstMissing = snapshot?.let { snap ->
         WatchItemId.PERMISSIONS.firstOrNull {
-            WatchStore.permPrintAt(snap, it, nowMono) == PermPrint.MISSING
+            // A stale denial is still a denial (#58 F1): the FIX
+            // key keeps targeting it, it just no longer PRINTS as
+            // current on the board below.
+            val print = WatchStore.permPrintAt(snap, it, nowMono)
+            print == PermPrint.MISSING || print == PermPrint.MISSING_STALE
         }
     }
 
@@ -293,7 +299,7 @@ fun ParkDrawer(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.32f * (1f - effectiveFraction)))
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f * (1f - effectiveFraction)))
                 .then(
                     // Issue #56, finding 5: the scrim blocks for as
                     // long as it is DRAWN — the old `if (visible)`
@@ -433,6 +439,27 @@ fun ParkDrawer(
                     .verticalScroll(rememberScrollState())
                     .padding(PaddingValues(start = 20.dp, end = 20.dp, bottom = 100.dp))
             ) {
+                // First-run intro (issue-156, F5): plain words at
+                // the TOP of the board, only while the intro is
+                // pending — what PARK is and what FIX does, in the
+                // board's normal title/body type. The spec plate
+                // at the foot stays untouched.
+                if (introPending) {
+                    Text(
+                        text = "PARK — THE MACHINE'S OWN REPORT CARD.",
+                        style = AppTitleTextStyle,
+                        color = scheme.onBackground
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Every line names a guard and whether it is SET or MISSING. " +
+                            "FIX takes you to the first one that is missing.",
+                        style = BodyTextStyle,
+                        color = scheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                }
+
                 // (1) Header + the LAST PROVED telltale. The instant
                 // lives HERE and nowhere else; the slot is blank
                 // until the first complete set lands.
@@ -474,6 +501,7 @@ fun ParkDrawer(
                                 PermPrint.GRANTED -> "GRANTED"
                                 PermPrint.MISSING -> "MISSING"
                                 PermPrint.STALE -> "STALE"
+                                PermPrint.MISSING_STALE -> "STALE"
                                 PermPrint.UNMEASURED -> null
                             },
                             wordIsLack = when (WatchStore.permPrintAt(snapshot, item, nowMono)) {
@@ -516,19 +544,28 @@ fun ParkDrawer(
                         }
                     }
                 } else {
-                    // Never measured: the board prints its names only.
+                    // Never measured: the board prints its names
+                    // only — except the two sled-backed rows
+                    // (SHORTS + REELS, SOCIAL SITES), whose sleds
+                    // stand on persisted settings even here. Those
+                    // rows print SETTING (issue-156, F4): a
+                    // persisted fact, not a measurement, so the
+                    // board never presents a default as a measured
+                    // state. Print only — no default or enforcement
+                    // changes.
                     WatchItemId.entries.forEachIndexed { idx, item ->
                         if (idx == WatchItemId.PERMISSIONS.size) {
                             Spacer(modifier = Modifier.height(16.dp))
                         }
                         if (item == WatchItemId.SOCIAL_SITES) {
                             // Never measured: the line prints its
-                            // name and its switch — the setting is
-                            // a persisted fact, not a measurement,
-                            // so the sled stands even here (UNA-02).
+                            // name, its SETTING word, and its
+                            // switch — the setting is a persisted
+                            // fact, not a measurement, so the sled
+                            // stands even here (UNA-02).
                             ParkSocialSitesRow(
                                 name = item.boardName,
-                                word = null,
+                                word = "SETTING",
                                 wordIsLack = true,
                                 enabled = socialSitesEnabled,
                                 soundEngine = soundEngine,
@@ -536,7 +573,11 @@ fun ParkDrawer(
                                 onToggle = onToggleSocialSites
                             )
                         } else {
-                            ParkBoardRow(name = item.boardName, word = null, wordIsLack = true)
+                            ParkBoardRow(
+                                name = item.boardName,
+                                word = if (item == WatchItemId.SHORTS_REELS) "SETTING" else null,
+                                wordIsLack = true
+                            )
                         }
                     }
                 }
@@ -837,7 +878,9 @@ fun ParkDrawer(
 }
 
 /** One board line: name plate left, state word right, ruled under.
- *  A never-measured line prints its NAME ONLY — no word, no fill. */
+ *  A never-measured line prints its NAME ONLY — no word, no fill —
+ *  except a sled-backed row's SETTING word, which names a persisted
+ *  setting, never a measurement (issue-156, F4). */
 @Composable
 private fun ParkBoardRow(name: String, word: String?, wordIsLack: Boolean) {
     val scheme = MaterialTheme.colorScheme

@@ -58,6 +58,7 @@ import com.example.ui.PeekWithheld
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.MonolithCurves
 import com.example.ui.theme.NightBlockBarSurface
+import com.example.ui.theme.TokenTrueBlack
 import com.example.ui.theme.NightColorBackground
 import com.example.ui.theme.NightColorPrimary
 import com.example.ui.theme.NightColorPrimaryContainer
@@ -142,7 +143,7 @@ fun AlwaysOnDeskClockOverlay(
                 .fillMaxSize()
                 // AOD ground is true black (Round 1a) — OLED pixels off,
                 // not the block-bar tone.
-                .background(Color.Black)
+                .background(TokenTrueBlack)
                 .clickable(onClick = onDismiss)
                 .padding(24.dp)
                 .testTag("always_on_desk_clock_overlay"),
@@ -366,7 +367,7 @@ fun CapturedNotificationsDigestSheet(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.65f))
+                .background(scheme.scrim.copy(alpha = 0.65f))
                 .clickable(onClick = onDismiss)
                 .padding(12.dp),
             contentAlignment = Alignment.BottomCenter
@@ -435,7 +436,7 @@ fun CapturedNotificationsDigestSheet(
                 }
                 if (frozenMode && frozenAtMillis != null) {
                     Text(
-                        text = "Everything here is as of the time above. Nothing here opens. Anything newer waits until the session ends.",
+                        text = "Everything here is as of the time above. Nothing here opens. Anything newer waits here until the session ends — it does not wait on your other screens.",
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 13.sp,
                         color = scheme.onSurfaceVariant
@@ -547,7 +548,7 @@ fun ShieldPermissionPrimerModal(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.7f))
+                .background(scheme.scrim.copy(alpha = 0.7f))
                 .clickable(onClick = onDismiss)
                 .padding(12.dp),
             contentAlignment = Alignment.BottomCenter

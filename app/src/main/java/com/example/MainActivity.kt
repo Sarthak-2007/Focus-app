@@ -130,7 +130,6 @@ class MainActivity : ComponentActivity() {
 
             MyApplicationTheme(
                 darkTheme = darkTheme,
-                dynamicColor = false,
                 // Slice E (F-Z1 + Zug-II §5.1): the scheme pin —
                 // session-night applies only once the ground has
                 // STEPPED (t=0 + 400ms), never at the row's birth
@@ -308,9 +307,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
 
     // ------------------------------------------------------------------
     // PARK state (chrome C4). The drawer is invoked by arrival (the
-    // rail), by the Guard line's tap, and — on the first run only,
-    // while the store has never measured — by itself at first
-    // composition. While sealed it cannot be invoked at all.
+    // rail), by the Guard line's tap, and — on the first run only —
+    // by itself, once the first measured snapshot lands and the
+    // door is open. While sealed it cannot be invoked at all.
     // ------------------------------------------------------------------
     var parkOpen by rememberSaveable { mutableStateOf(false) }
     var parkReturnTick by rememberSaveable { mutableStateOf(0) }
@@ -327,9 +326,11 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         if (dismissReceipt && showNotificationDigestSheet) {
             viewModel.toggleNotificationDigestSheet(false)
         }
-        if (viewModel.parkIntroPending()) {
-            viewModel.markParkIntroDone()
-        }
+        // The intro bit is NOT spent here (issue-156, F3): a
+        // dismissal — above all a reflexive scrim tap before the
+        // sweep has printed a single word — spends nothing. The
+        // bit is spent on delivery, by the effect below, once the
+        // measured board is actually on screen.
     }
 
     fun openPark() {
@@ -354,12 +355,43 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         }
     }
 
-    // First run (§5.7): the store has never measured — PARK opens
-    // directly at first composition. The persisted bit keeps a cold
-    // start's unmeasured instant from re-inviting on later runs.
-    LaunchedEffect(Unit) {
-        if (viewModel.parkIntroPending()) {
+    // First run (§5.7, issue-156 F1+F2): the auto-open obeys the
+    // SAME door predicate as openPark() — a seal defers the intro,
+    // never burns it — and it waits for the first measured
+    // snapshot, so the board never rises blank: it arrives with
+    // state words and, if a lack exists, the FIX key. Keyed on
+    // doorLocked and the snapshot, so it re-fires the moment the
+    // seal lifts or the first measurement lands while the intro
+    // is still pending. The persisted bit keeps a cold start's
+    // unmeasured instant from re-inviting on later runs.
+    LaunchedEffect(doorLocked, watchSnapshot) {
+        if (!sealed && !viewModel.navigationLocked() &&
+            viewModel.parkIntroPending() &&
+            watchSnapshot.items.isNotEmpty()
+        ) {
             parkOpen = true
+        }
+    }
+
+    // The intro header's latch for the current opening (issue-156,
+    // F5): pending is read at the moment PARK opens, BEFORE the
+    // delivery-spend below can land, and held for that whole
+    // opening — the spend must not unprint the header mid-reading
+    // on the next snapshot emission.
+    var parkIntroForOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(parkOpen) {
+        parkIntroForOpen = parkOpen && viewModel.parkIntroPending()
+    }
+
+    // The intro is spent on DELIVERY, not on dismissal (issue-156,
+    // F3): once PARK stands open over a measured board, the intro
+    // has been delivered — mark it done. Declared after the latch
+    // above so the latch reads the pending bit first.
+    LaunchedEffect(parkOpen, watchSnapshot) {
+        if (parkOpen && watchSnapshot.items.isNotEmpty() &&
+            viewModel.parkIntroPending()
+        ) {
+            viewModel.markParkIntroDone()
         }
     }
 
@@ -744,6 +776,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     ParkDrawer(
                         visible = parkOpen,
                         snapshot = watchSnapshot,
+                        introPending = parkIntroForOpen,
                         isSealed = sealed,
                         isNight = effectiveNight,
                         soundEnabled = soundEnabled,

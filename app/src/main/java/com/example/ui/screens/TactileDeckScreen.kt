@@ -75,6 +75,12 @@ import com.example.ui.components.FullBleedSectionHeader
 import com.example.ui.components.rememberMixedTypographyText
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.DialClockTextStyle
+import com.example.ui.theme.DisplayUnitTextStyle
+import com.example.ui.theme.NightColorOnSurface
+import com.example.ui.theme.NightColorSurfaceSheet
+import com.example.ui.theme.TokenColorSurfaceBright
+import com.example.ui.theme.TokenColorSurfaceVariant
+import com.example.ui.theme.TokenTrueBlack
 import com.example.ui.theme.MonolithCurves
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.views.RotaryWheelView
@@ -730,18 +736,18 @@ fun TactileDeckScreen(
                 isStopwatchMode -> buildAnnotatedString { append("FLOW") }
                 totalSpanMinutes < 60 -> buildAnnotatedString {
                     append(totalSpanMinutes.toString())
-                    withStyle(SpanStyle(fontSize = 50.sp, letterSpacing = (-1.5).sp)) { append(" MIN") }
+                    withStyle(SpanStyle(fontSize = DisplayUnitTextStyle.fontSize, letterSpacing = DisplayUnitTextStyle.letterSpacing)) { append(" MIN") }
                 }
                 else -> buildAnnotatedString {
                     append((totalSpanMinutes / 60).toString())
-                    withStyle(SpanStyle(fontSize = 50.sp, letterSpacing = (-1.5).sp)) { append("H ") }
+                    withStyle(SpanStyle(fontSize = DisplayUnitTextStyle.fontSize, letterSpacing = DisplayUnitTextStyle.letterSpacing)) { append("H ") }
                     append(String.format(Locale.US, "%02d", totalSpanMinutes % 60))
-                    withStyle(SpanStyle(fontSize = 50.sp, letterSpacing = (-1.5).sp)) { append("M") }
+                    withStyle(SpanStyle(fontSize = DisplayUnitTextStyle.fontSize, letterSpacing = DisplayUnitTextStyle.letterSpacing)) { append("M") }
                 }
             }
             val heroTracking = if (!showRunningForm && isStopwatchMode) (-0.5).sp else (-2.0).sp
-            val heroGlyph = if (effectiveNight) Color(0xFFEDE3D8) else scheme.onBackground
-            val heroShadowGhost = if (effectiveNight) Color(0x80000000) else Color(0x99D8D1CB)
+            val heroGlyph = if (effectiveNight) NightColorOnSurface else scheme.onBackground
+            val heroShadowGhost = if (effectiveNight) TokenTrueBlack.copy(alpha = 0.5f) else TokenColorSurfaceVariant.copy(alpha = 0.6f)
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 // Issue #6 F10 — SINGLE-PRESS: the catch ghost dies;
                 // ONE shadow ghost survives, and ghosts are OFF on
