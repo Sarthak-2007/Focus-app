@@ -129,7 +129,10 @@ class MonolithShieldService : Service() {
                         "SESSION COMPLETE",
                         "Your session has ended. The receipt is on the Deck."
                     )
-                    updateNotification("Session Complete", "Unlocked desk toy ready in your Break tab.")
+                    // R3b #164 F2: the low notification's old line
+                    // promised an "Unlocked desk toy" in a "Break
+                    // tab" — neither exists anywhere in the app.
+                    updateNotification("Session Complete", "Your receipt is waiting in the Ledger.")
                     stopForeground(STOP_FOREGROUND_DETACH)
                     stopSelf()
                     break
@@ -232,7 +235,7 @@ class MonolithShieldService : Service() {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                         putExtra(EXTRA_INTERCEPTED_PACKAGE, foregroundBlockedPkg)
                         putExtra(EXTRA_INTERCEPTED_APP_NAME, blockedApp?.appName ?: "Blocked App")
-                        putExtra(EXTRA_INTERCEPT_BADGE, blockedApp?.resolvedTier?.badge ?: "Locked")
+                        putExtra(EXTRA_INTERCEPT_BADGE, blockedApp?.resolvedTier?.badge ?: "Shut")
                         // This door's blocked set already excludes a leased PEEK app
                         // (the filter above), so a lease sold here is honoured (UNA2-01).
                         putExtra(EXTRA_INTERCEPT_PATH, InterceptPath.SHIELD_APP.name)
