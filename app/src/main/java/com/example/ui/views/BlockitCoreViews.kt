@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.res.ResourcesCompat
 import com.example.R
+import com.example.service.MonolithAccessibilityService
 import com.example.service.TactileSoundEngine
 import com.example.service.Warrant
 import com.example.service.WarrantState
@@ -1735,6 +1736,18 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         // previews now render honestly unproven.
         warrantProvider?.invoke()?.state ?: WarrantState.UNPROVEN
 
+    /** Probe at the slide's reads (FIX-1 Addendum 1, MAX-1 3b):
+     *  fired at exactly two touch points — the DOWN read in
+     *  beginAttempt and the gate-crossing re-read in
+     *  applyDragPosition. Async and fire-and-forget
+     *  (requestPipelineProbe launches on the service's own scope):
+     *  the slide never waits on it and no slide math changes. A
+     *  stamp it lands mid-throw is then converted by the gesture's
+     *  own in-flight re-reads, with no re-gesture. */
+    private fun probePipelineAtSlideRead() {
+        MonolithAccessibilityService.instance?.requestPipelineProbe()
+    }
+
     private fun insetPx(): Float = dp(8f)
     private fun capWPx(): Float = dp(84f)
 
@@ -1912,6 +1925,8 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         parent?.requestDisallowInterceptTouchEvent(true)
         springBackAnimator?.cancel()
         stopIntegrator()
+        // MAX-1 3b touch point 1 of 2: probe at the DOWN read.
+        probePipelineAtSlideRead()
         attemptWarrant = readWarrant()
         refusalFired = false
         gateArmed = false
@@ -2018,6 +2033,10 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         // gesture alone (retreat if above the stop, clamp below it).
         val (newArmed, fired) = SlideGestureMath.schmitt(gateArmed, next)
         if (fired != 0) {
+            // MAX-1 3b touch point 2 of 2: probe at the gate-crossing
+            // re-read (a retreat-touched attempt makes no read — its
+            // wire is pinned OFF — so it fires no probe either).
+            if (!retreatTouched) probePipelineAtSlideRead()
             // The pin binds the gate's re-read too (CHARGE 1-B): a
             // retreat-touched attempt never sees a revived wire.
             val gateRead = if (retreatTouched) WarrantState.OFF else readWarrant()

@@ -20,6 +20,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -305,11 +307,42 @@ class MonolithAccessibilityService : AccessibilityService() {
             Log.w("MonolithA11y", "detection query failed at $where (total $detectionFailures)", e)
         }
 
+        /** Counted failure with no throwable in hand (FIX-1,
+         *  answering CRIT-1 C-4): a probe whose root query answered
+         *  null failed just as surely as one that threw, and the
+         *  old code counted only the thrown path — the null miss
+         *  was silent and invisible in this counter. Every failed
+         *  probe is counted now, none silent. */
+        internal fun noteDetectionFailure(where: String) {
+            detectionFailures++
+            Log.w("MonolithA11y", "detection query failed at $where (total $detectionFailures)")
+        }
+
         /** Monotonic stamp of the last event whose root window was
          *  successfully acquired. Pipeline proof (the service is
          *  bound and processing this foreground), not session proof. */
         @Volatile
         var lastRootMono: Long = 0L
+            internal set
+
+        /** Binding generation (FIX-1 Addendum 2, answering TECH-1
+         *  MAJOR-1 — probe stamp resurrection across unbind):
+         *  incremented in onUnbind and onDestroy. A probe captures
+         *  this generation (and instance identity) BEFORE its root
+         *  query — a query that can wait on the binder for seconds —
+         *  and stamps ONLY if the generation is unchanged and
+         *  instance === the probing service on completion. Without
+         *  it, a probe launched before unbind could stamp AFTER
+         *  onUnbind zeroed lastRootMono, laundering the dead
+         *  binding's proof into the next binding, whose freshness
+         *  window would read it as its own. This guard is
+         *  load-bearing for the freshness doctrine's
+         *  anti-inheritance claim (WatchStore.pipelineProvenFresh).
+         *  The scope is cancelled only in onDestroy, NOT onUnbind —
+         *  which is exactly why the generation, not the scope, has
+         *  to carry this. */
+        @Volatile
+        var bindingGeneration: Long = 0L
             internal set
 
         /** Cascade witness (Slice D step 4, Opal L3): the session
@@ -344,14 +377,15 @@ class MonolithAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        // Cold-start cure (issue #7): a rebind mid-residency
-        // re-proves itself. The stamp died with the old binding
-        // (onUnbind zeroes lastRootMono), so a residency that is
-        // already in force would rest UNPROVEN until some event
-        // happened to fire — probe actively instead of waiting.
-        if (WatchStore.residencyActive()) {
-            requestPipelineProbe()
-        }
+        // Probe on connect is UNCONDITIONAL (FIX-1 Addendum 1,
+        // MAX-1 4a — the residencyActive() conditional is dropped):
+        // every bind proves itself at once, residency or not. This
+        // covers a rebind mid-residency (the stamp died with the old
+        // binding — onUnbind zeroes lastRootMono) and bind-with-
+        // active-session after process death, plus every other bind:
+        // a bound pipeline that has never answered is unproven, and
+        // the cheapest moment to learn otherwise is the bind itself.
+        requestPipelineProbe()
         // Watch Store bind (issue #48): restore the persisted LAST
         // PROVED into the fresh process's store.
         WatchStore.bind(applicationContext)
@@ -359,7 +393,35 @@ class MonolithAccessibilityService : AccessibilityService() {
         // the measurement; the store stamps it.
         WatchStore.onAccessibilityBound(true)
         startSessionArmedCollector()
+        startPipelineRenewalLoop()
         startEventWorker()
+    }
+
+    /** Renewal cadence (FIX-1, answering CRIT-1 C-2/C-4): while
+     *  this binding lives, re-probe the pipeline every 15 s. Under
+     *  the freshness doctrine (WatchStore.STAMP_FRESH_MS) a healthy
+     *  bound pipeline therefore keeps its stamp perpetually fresh,
+     *  and a dead one ages out within STAMP_FRESH_MS instead of
+     *  reading LIVE forever on a stamp minted once at residency
+     *  start. Lifecycle is guarded exactly like
+     *  [startSessionArmedCollector]: it runs on this instance's
+     *  per-instance scope, which is cancelled in onDestroy — a
+     *  rebind creates a new service instance and a new scope with
+     *  it, so the loop dies with its binding. */
+    private fun startPipelineRenewalLoop() {
+        // Binding-generation guard (FIX-1 Addendum 2, TECH-1
+        // MAJOR-1): the loop captures its binding's generation and
+        // exits the moment that generation ends — a stale
+        // generation's renewal probes no-op instead of running on
+        // a dead binding's scope (cancelled only at onDestroy).
+        val myGeneration = bindingGeneration
+        scope.launch {
+            while (isActive && bindingGeneration == myGeneration) {
+                delay(15_000L)
+                if (bindingGeneration != myGeneration) break
+                probePipelineNow()
+            }
+        }
     }
 
     /**
@@ -372,15 +434,35 @@ class MonolithAccessibilityService : AccessibilityService() {
      * pipeline actively. A live root stamps [lastRootMono] and pokes
      * the store, exactly as an event would; a null root or a thrown
      * query stamps NOTHING and returns false — the wire reads dead,
-     * which is the truth.
+     * which is the truth. Both failure paths are counted alike
+     * (FIX-1, C-4): the null-root miss used to return silently,
+     * invisible in [detectionFailures]; it counts now, like a throw.
      */
     fun probePipelineNow(): Boolean {
+        // Binding-generation guard (FIX-1 Addendum 2, TECH-1
+        // MAJOR-1): capture generation + identity BEFORE the root
+        // query, which can wait on the binder for up to ~5 s. The
+        // stamp lands ONLY if both are unchanged on completion —
+        // a probe that outlives its binding stamps nothing, so a
+        // dead binding's proof can never resurrect into the next
+        // binding (see bindingGeneration's doc).
+        val generationAtStart = bindingGeneration
         return try {
             if (rootInActiveWindow != null) {
-                lastRootMono = SystemClock.elapsedRealtime()
-                WatchStore.poke()
-                true
+                if (bindingGeneration != generationAtStart || instance !== this) {
+                    // Guard abort, not a detection failure: the
+                    // query answered, but for a binding that no
+                    // longer exists. No stamp, not counted.
+                    false
+                } else {
+                    lastRootMono = SystemClock.elapsedRealtime()
+                    WatchStore.poke()
+                    true
+                }
             } else {
+                // No stamp — and (FIX-1, C-4) the miss is counted,
+                // exactly like the thrown path below, never silent.
+                noteDetectionFailure("pipelineProbeNullRoot")
                 false
             }
         } catch (e: Exception) {
@@ -490,6 +572,12 @@ class MonolithAccessibilityService : AccessibilityService() {
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        // Binding-generation guard (FIX-1 Addendum 2, TECH-1
+        // MAJOR-1): every unbind ends a generation, unconditionally
+        // — any probe still waiting on the binder for THIS binding
+        // must find the generation changed when it completes and
+        // stamp nothing.
+        bindingGeneration++
         if (instance === this) {
             instance = null
             // The stamp dies with the binding (Register 3 Z-1): a
@@ -1010,6 +1098,9 @@ class MonolithAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onDestroy() {
+        // Binding-generation guard (FIX-1 Addendum 2, TECH-1
+        // MAJOR-1): destroy ends a generation too — see onUnbind.
+        bindingGeneration++
         if (instance === this) {
             instance = null
             lastRootMono = 0L

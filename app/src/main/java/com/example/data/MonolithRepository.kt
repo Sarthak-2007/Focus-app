@@ -682,7 +682,7 @@ class MonolithRepository(
      * THE STANDING WARRANT (chrome C3, spec §4.5): the wire verdict
      * re-based on the Watch Store. The inputs are the same living
      * facts the deleted liveWarrant() read — accessibility bound,
-     * the residency stamp, usage access, shield-protecting — but the
+     * the fresh pipeline stamp, usage access, shield-protecting — but the
      * state logic is the store's one derivation
      * ([WatchStore.deriveWarrant]); this function only gathers.
      * Synchronous, no coroutine, no deadline: the slide reads it at
@@ -691,14 +691,38 @@ class MonolithRepository(
      */
     fun standingWarrant(): Warrant {
         val a11yBound = MonolithAccessibilityService.instance != null
-        val stamped = a11yBound && WatchStore.stampedThisResidency()
+        // Freshness doctrine (FIX-1, C-2/D-2): the stamp input is
+        // WatchStore.pipelineProvenFresh() — a stamp counts while
+        // it is fresh, never by residency comparison.
+        val stamped = a11yBound && WatchStore.pipelineProvenFresh()
         return WatchStore.deriveWarrant(
             a11yBound = a11yBound,
             stamped = stamped,
             usage = usageAccess(),
-            shieldProtecting = MonolithShieldService.protecting
+            shieldProtecting = MonolithShieldService.protecting,
+            // Unbound grace (FIX-1, D-1/F-1/C-5): the grant fact
+            // that lets deriveWarrant read an enabled-but-unbound
+            // service inside the residency grace as UNPROVEN
+            // (binding-in-progress), not OFF. Warrant.a11yBound
+            // stays the raw bound fact; this is only the grant.
+            a11yGrantEnabled = accessibilityGrantEnabled()
         )
     }
+
+    /**
+     * Whether the accessibility GRANT for this app's service is
+     * enabled — the Settings.Secure ENABLED_ACCESSIBILITY_SERVICES
+     * listing — regardless of whether the service is currently
+     * bound (FIX-1, answering DAY-1 D-1 / FEEL-1 F-1 / CRIT-1
+     * C-5). This is the read that distinguishes "grant on, binding
+     * still in progress" from "grant off": the former earns the
+     * residency grace in [WatchStore.deriveWarrant], the latter
+     * is OFF at once. Reuses the repo's existing grant helper
+     * [isAccessibilityEnabled], which already reads that setting
+     * for this app (try/catch → false there); this name states
+     * the warrant's use of the fact.
+     */
+    fun accessibilityGrantEnabled(): Boolean = isAccessibilityEnabled()
 
     /**
      * One grant-check query for the Watch Store's sweep (chrome C3):

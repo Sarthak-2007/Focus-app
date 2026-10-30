@@ -49,6 +49,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
 import com.example.service.InterceptPath
+import com.example.service.MonolithAccessibilityService
 import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithShieldService
 import com.example.service.WatchStore
@@ -71,6 +72,7 @@ import com.example.ui.screens.ShieldMatrixScreen
 import com.example.ui.screens.TactileDeckScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.views.MonolithRailView
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
@@ -195,8 +197,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val currentDestination by viewModel.currentDestination.collectAsStateWithLifecycle()
 
     // Watch Store residency (chrome C3): entering the Deck starts a
-    // residency — the accessibility pipeline must stamp an event at
-    // or after this instant before the wire can read LIVE — and
+    // residency — the probe trigger and the grace anchor (stamp
+    // validity itself is freshness now, FIX-1 C-2/D-2) — and
     // fires the grant-check sweep (Deck entry is a §4.4 trigger).
     LaunchedEffect(currentDestination) {
         if (currentDestination == MonolithDestination.DECK) {
@@ -205,6 +207,16 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             // Draht's third trigger (Slice E): a faulted release
             // whose retry cadence is due heals on Deck entry.
             viewModel.onDeckOpenRetry()
+            // Boundary poke (FIX-1, answering FEEL-1 F-2): the Deck's
+            // 5 s ticker observes the 4 s grace boundary up to a
+            // second late, so the sentence re-reads on the ticker's
+            // grid instead of the law's number. This one-shot poke
+            // at grace + 250 ms forces the re-read at the boundary
+            // itself. It runs on this effect's scope, so leaving the
+            // Deck cancels the delay — and a poke is harmless anyway:
+            // it carries no data, it only re-emits the store.
+            delay(com.example.service.WatchStore.RESIDENCY_GRACE_MS + 250L)
+            com.example.service.WatchStore.poke()
         }
     }
 
@@ -677,10 +689,30 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     },
                                     warrantProvider = viewModel::armWarrantNow,
                                     onFixBlockingAccess = {
-                                        launchSettings(
-                                            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
-                                            "ACCESSIBILITY"
-                                        )
+                                        // FIX door truth (FIX-1, answering
+                                        // CRIT-1 C-6): the cure's doc claimed
+                                        // this door rebinds/re-proves, but it
+                                        // only opened Settings — where, in the
+                                        // transient cases, the grant is already
+                                        // ON and there is nothing to fix. Now:
+                                        // if the service is BOUND (the past-grace
+                                        // blind case), the tap re-proves in
+                                        // place — fire a pipeline probe and poke
+                                        // the store — and does NOT navigate.
+                                        // Only when nothing is bound does it
+                                        // open the accessibility Settings pane,
+                                        // the one place that can change that fact.
+                                        val boundService =
+                                            MonolithAccessibilityService.instance
+                                        if (boundService != null) {
+                                            boundService.requestPipelineProbe()
+                                            com.example.service.WatchStore.poke()
+                                        } else {
+                                            launchSettings(
+                                                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
+                                                "ACCESSIBILITY"
+                                            )
+                                        }
                                     },
                                     onFixUsageAccess = {
                                         launchSettings(

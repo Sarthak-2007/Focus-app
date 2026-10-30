@@ -91,7 +91,18 @@ data class Warrant(
      *  the residency's age from the warrant itself, with no live
      *  store access. 0 = no residency carried (a warrant built by
      *  hand: a test, a preview default), never a fresh residency. */
-    val residencyStartMono: Long = 0L
+    val residencyStartMono: Long = 0L,
+    /** The grace anchor (FIX-1 Addendum 3, bind-epoch law, DAY-1
+     *  D-2): stamped by [WatchStore.deriveWarrant] — the one
+     *  construction site — as the store's graceDebtStartMono when
+     *  a bind-epoch grace debt is running, else residencyStartMono.
+     *  Grace age is measured from THIS instant, never from the
+     *  current residency alone: the debt is inherited across
+     *  consecutive unstamped residencies of the same bind epoch,
+     *  so Deck re-entry cannot mint fresh silence. 0 = no anchor
+     *  carried (a warrant built by hand); readers fall back to
+     *  residencyStartMono when this is 0. */
+    val graceAnchorMono: Long = 0L
 )
 
 /** The nine watch items, in board order (spec §4.1). The header's
@@ -185,6 +196,15 @@ object WatchStore {
      *  active self-probe this window to land its proof. */
     const val RESIDENCY_GRACE_MS: Long = 4_000L
 
+    /** Freshness doctrine (FIX-1, answering CRIT-1 C-2 + DAY-1 D-2):
+     *  a pipeline stamp proves the wire only while it is FRESH —
+     *  at most this old. Aligned with [STALE_AFTER_MS] on purpose:
+     *  one staleness law for the whole store, not two clocks. A
+     *  stamp older than this is no proof at all, however it was
+     *  minted; the bound service's 15 s renewal loop (C-2/C-4)
+     *  keeps a healthy pipeline's stamp perpetually inside it. */
+    const val STAMP_FRESH_MS: Long = 45_000L
+
     // Issue #48: LAST PROVED's durable home — a tiny wall-clock
     // fact needs no table (the seal marker's SharedPreferences
     // precedent, MonolithRepository SEAL_PREFS).
@@ -259,10 +279,23 @@ object WatchStore {
     @Volatile private var sessionCapturing = false
 
     // The wire's residency machinery (moved whole from LiveWire):
-    // a Deck residency starts when the Deck is entered; the wire can
-    // read LIVE only when the accessibility pipeline has stamped an
-    // event at or after that instant — proof it processed THIS visit.
+    // a Deck residency starts when the Deck is entered. Residency
+    // start is now ONLY the probe trigger and the grace anchor —
+    // stamp validity is freshness, not residency comparison
+    // (FIX-1, C-2/D-2: see [pipelineProvenFresh]).
     @Volatile private var residencyStartMono: Long = 0L
+
+    // Bind-epoch grace debt (FIX-1 Addendum 3, DAY-1 D-2): the
+    // first instant THIS BIND EPOCH was observed unproven. The
+    // grace age is inherited across consecutive unstamped
+    // residencies of the same bind epoch — per-residency grace
+    // let tab-bouncing mint a fresh 4 s of silence on every Deck
+    // re-entry and mask the OFF verdict indefinitely. Set/cleared
+    // ONLY in deriveWarrant (observed proof clears it, observed
+    // unproof starts it) and at the epoch boundary
+    // onAccessibilityBound(false). Deliberately NOT cleared in
+    // noteResidencyStart — that is the entire point.
+    @Volatile private var graceDebtStartMono: Long = 0L
 
     /** Whether a Deck residency is in force in this process. */
     fun residencyActive(): Boolean = residencyStartMono > 0L
@@ -278,26 +311,62 @@ object WatchStore {
         // forever. Probe the pipeline NOW instead of waiting for
         // an event that may never come.
         MonolithAccessibilityService.instance?.requestPipelineProbe()
-        // One delayed re-probe at +1500 ms: the first probe can
-        // still lose the race when the service binds just after
-        // residency start. It fires only if this same residency is
-        // still unstamped — a stamp that already landed (event path
-        // or first probe) needs no second proof, and a superseded
-        // residency (start changed since scheduling) is never
-        // probed on its predecessor's schedule.
+        // Decaying re-probe series (FIX-1 Addendum 1, MAX-1 ADOPT-NOW —
+        // replaces the single +1500 ms re-probe): further probes at
+        // +600 / +1500 / +3000 ms, stop-on-stamp. The old landed pair
+        // (0, +1500) could both lose to a root-null transient; the
+        // series makes a false past-grace OFF on a healthy phone
+        // near-impossible. Each step checks fresh proof FIRST and
+        // does not fire if already proven; the residency-identity
+        // guard is unchanged (a superseded residency is never probed
+        // on its predecessor's schedule), and the binding-generation
+        // guard (FIX-1 Addendum 2, TECH-1 MAJOR-1) stops the series
+        // when the binding it was scheduled under has died — a stale
+        // generation's scheduled probes no-op.
         val scheduledStartMono = residencyStartMono
+        val scheduledBindingGen = MonolithAccessibilityService.bindingGeneration
         sweepScope.launch {
-            delay(1_500L)
-            if (residencyStartMono == scheduledStartMono && !stampedThisResidency()) {
+            var waitedMs = 0L
+            for (stepMs in listOf(600L, 1_500L, 3_000L)) {
+                delay(stepMs - waitedMs)
+                waitedMs = stepMs
+                if (residencyStartMono != scheduledStartMono) return@launch
+                if (MonolithAccessibilityService.bindingGeneration != scheduledBindingGen) {
+                    return@launch
+                }
+                if (pipelineProvenFresh()) return@launch
                 MonolithAccessibilityService.instance?.requestPipelineProbe()
             }
         }
     }
 
-    /** The stamp test, exactly as the wire has always run it. */
-    fun stampedThisResidency(): Boolean =
-        residencyStartMono > 0L &&
-            MonolithAccessibilityService.lastRootMono >= residencyStartMono
+    /**
+     * The stamp test under the freshness doctrine (FIX-1, answering
+     * CRIT-1 C-2 + DAY-1 D-2 — replaces stampedThisResidency):
+     * the pipeline is proven when its last root stamp exists and is
+     * no older than [STAMP_FRESH_MS] right now. Validity is the
+     * stamp's AGE, never a comparison against residency start —
+     * the old residency comparison minted a stamp once and trusted
+     * it for the residency's whole life (a zombie-bound service
+     * read LIVE all day, C-2) and re-opened the fog race on every
+     * Deck re-entry (D-2). Anti-inheritance survives by
+     * construction: onUnbind zeroes lastRootMono, and the stamp is
+     * process-lifetime state, so no predecessor's proof can be
+     * inherited — fresh or otherwise. That claim is load-bearing
+     * on the service's binding-generation guard (FIX-1 Addendum 2,
+     * TECH-1 MAJOR-1): a probe launched before an unbind can
+     * complete its binder wait after onUnbind zeroed the stamp and
+     * would otherwise resurrect the dead binding's proof into the
+     * next binding, where this freshness window would read it as
+     * the new binding's own. The generation guard in
+     * probePipelineNow is what makes "no inheritance" true.
+     */
+    fun pipelineProvenFresh(): Boolean {
+        val last = MonolithAccessibilityService.lastRootMono
+        if (last <= 0L) return false
+        val age = SystemClock.elapsedRealtime() - last
+        return age in 0L..STAMP_FRESH_MS
+    }
 
     /** A nudge with no data: forces a snapshot re-emission so derived
      *  readers (the Deck warrant) re-read the living facts. Routed
@@ -316,8 +385,15 @@ object WatchStore {
     // ------------------------------------------------------------------
 
     /** Accessibility BIND hook (service onServiceConnected/onUnbind/onDestroy). */
-    fun onAccessibilityBound(bound: Boolean) =
+    fun onAccessibilityBound(bound: Boolean) {
+        // Bind-epoch boundary (FIX-1 Addendum 3, D-2): an unbind
+        // ends the bind epoch, so its grace debt dies with it — a
+        // rebind earns a fresh grace honestly. A bind (true)
+        // clears nothing: the debt is the epoch's, from its first
+        // unproven observation.
+        if (!bound) graceDebtStartMono = 0L
         stampPermission(WatchItemId.ACCESSIBILITY, bound)
+    }
 
     /** Notification-listener BIND hook (onListenerConnected/Disconnected). */
     fun onNotificationListenerBound(bound: Boolean) =
@@ -414,23 +490,74 @@ object WatchStore {
     /**
      * THE warrant derivation — the only place the verdict's state
      * logic exists (the repository's liveWarrant() is deleted; it
-     * read the same three inputs and ran this same table). Pure:
-     * same inputs, same verdict, always.
+     * read the same three inputs and ran this same table). The
+     * state table itself is a pure function of its inputs; the one
+     * side effect is the bind-epoch grace debt below, which is a
+     * store observation, recorded here because this is the one
+     * place every verdict passes through.
      *
-     * Conjuncts: accessibility bound AND stamped from this Deck
-     * residency AND usage ALLOWED. Shield-protecting rides along as
-     * a fact for the cascade and the strip but is NOT a conjunct —
-     * the shield starts with the session, so requiring it first
-     * would be circular.
+     * Conjuncts: accessibility bound AND pipeline proven fresh
+     * ([pipelineProvenFresh], passed in as [stamped]) AND usage
+     * ALLOWED. Shield-protecting rides along as a fact for the
+     * cascade and the strip but is NOT a conjunct — the shield
+     * starts with the session, so requiring it first would be
+     * circular.
+     *
+     * Unbound grace (FIX-1, answering DAY-1 D-1 / FEEL-1 F-1 /
+     * CRIT-1 C-5): !bound is OFF, EXCEPT when the accessibility
+     * grant is enabled ([a11yGrantEnabled] — the grant fact
+     * gathered via MonolithRepository.isAccessibilityEnabled(),
+     * DAY-1's named helper, Addendum 3 item 1) and the grace age
+     * is still inside [RESIDENCY_GRACE_MS] — a binding-in-progress
+     * is a checking state (UNPROVEN), not a death. Past grace, or
+     * with no grant at all, unbound is OFF as it always was. Every
+     * other row is unchanged.
+     *
+     * Bind-epoch grace (FIX-1 Addendum 3, answering DAY-1 D-2):
+     * the grace age is measured from the EFFECTIVE ANCHOR —
+     * graceDebtStartMono when a debt is running, else
+     * residencyStartMono — never from the current residency alone.
+     * An unbound-granted read inherits the debt exactly as a
+     * bound-but-unstamped read does. No anchor carried (both 0)
+     * means no grace.
      */
     fun deriveWarrant(
         a11yBound: Boolean,
         stamped: Boolean,
         usage: UsageAccess,
         shieldProtecting: Boolean,
-        readMono: Long = SystemClock.elapsedRealtime()
+        readMono: Long = SystemClock.elapsedRealtime(),
+        a11yGrantEnabled: Boolean = false
     ): Warrant {
+        // Bind-epoch debt bookkeeping (Addendum 3, D-2), before the
+        // table so this very read is judged by the debt it starts:
+        //  - observes fresh proof (stamped) → the epoch is proven;
+        //    the debt clears.
+        //  - observes bound-but-unstamped, or unbound-granted-
+        //    unstamped, with no debt running → the debt starts at
+        //    this read instant.
+        // An unbound read with NO grant starts no debt: it is OFF
+        // at once, a fact with a door, not a grace consumer.
+        if (stamped) {
+            graceDebtStartMono = 0L
+        } else if ((a11yBound || a11yGrantEnabled) && graceDebtStartMono == 0L) {
+            graceDebtStartMono = readMono
+        }
+        // The effective grace anchor: the debt's start when a debt
+        // is running, else this residency's start.
+        val graceAnchorMono: Long =
+            if (graceDebtStartMono > 0L) graceDebtStartMono else residencyStartMono
+        val graceAgeMs: Long? =
+            if (graceAnchorMono > 0L) {
+                (readMono - graceAnchorMono).coerceAtLeast(0L)
+            } else {
+                null
+            }
+        val unboundWithinGrace =
+            a11yGrantEnabled && graceAgeMs != null &&
+                graceAgeMs <= RESIDENCY_GRACE_MS
         val state = when {
+            !a11yBound && unboundWithinGrace -> WarrantState.UNPROVEN
             !a11yBound -> WarrantState.OFF
             usage == UsageAccess.DENIED -> WarrantState.OFF
             !stamped -> WarrantState.UNPROVEN
@@ -447,7 +574,13 @@ object WatchStore {
             // Cold-start cure (issue #7): the warrant carries the
             // residency it was derived under, so its age is readable
             // from the warrant itself.
-            residencyStartMono = residencyStartMono
+            residencyStartMono = residencyStartMono,
+            // Bind-epoch law (Addendum 3, D-2): the warrant carries
+            // the effective grace anchor it was judged under, so
+            // pure readers (sentence/seam) measure grace age from
+            // the anchor — falling back to residencyStartMono only
+            // when a hand-built warrant carries anchor 0.
+            graceAnchorMono = graceAnchorMono
         )
     }
 
@@ -652,5 +785,6 @@ object WatchStore {
         safeBreakActive = false
         sessionCapturing = false
         residencyStartMono = 0L
+        graceDebtStartMono = 0L
     }
 }
