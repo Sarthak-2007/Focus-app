@@ -6,6 +6,7 @@ import android.app.usage.UsageStatsManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.os.Build
 import android.os.Process
@@ -13,7 +14,9 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.os.PowerManager
 import com.example.service.MonolithAccessibilityService
+import com.example.service.MonolithBootReceiver
 import com.example.service.MonolithDeviceAdminReceiver
+import com.example.service.MonolithNotificationListener
 import com.example.service.MonolithShieldService
 import com.example.service.RoutineScheduler
 import com.example.service.TactileSoundEngine
@@ -761,6 +764,33 @@ class MonolithRepository(
             dpm.isAdminActive(adminComponent)
         } catch (_: Exception) {
             false
+        }
+    }
+
+    /**
+     * Issue #81 F5: Monolith's own critical components, by simple
+     * name, whose PackageManager enabled-state is DISABLED —
+     * the `adb shell pm disable` / component-surgery route, which
+     * shows no Settings window for the accessibility text guard to
+     * see and (before this check existed) was reported by no
+     * surface at all. Read fresh on every call; callers are the
+     * heartbeat reconcile (which latches the session's gap when a
+     * component is down mid-session) and any future surface. A
+     * component whose state cannot be read counts as enabled —
+     * an unreadable state is no evidence of surgery.
+     */
+    fun disabledCriticalComponents(): List<String> {
+        val pm = context.packageManager
+        val critical = listOf(
+            "MonolithShieldService" to ComponentName(context, MonolithShieldService::class.java),
+            "MonolithAccessibilityService" to ComponentName(context, MonolithAccessibilityService::class.java),
+            "MonolithNotificationListener" to ComponentName(context, MonolithNotificationListener::class.java),
+            "MonolithBootReceiver" to ComponentName(context, MonolithBootReceiver::class.java)
+        )
+        return critical.mapNotNull { (name, component) ->
+            val state = runCatching { pm.getComponentEnabledSetting(component) }
+                .getOrDefault(PackageManager.COMPONENT_ENABLED_STATE_DEFAULT)
+            if (TamperWitness.componentDisabled(state)) name else null
         }
     }
 

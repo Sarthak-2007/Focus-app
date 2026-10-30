@@ -191,6 +191,21 @@ object RoutineHeartbeat {
             MonolithShieldService.startShield(appContext)
         }
 
+        // 4c. Component-surgery witness (issue #81 F5): if a
+        //    critical component (shield, accessibility, listener,
+        //    boot receiver) has been disabled — the adb / pm-disable
+        //    route, invisible to the Settings text guard — while a
+        //    session is live, the session's gap is latched in this
+        //    same pass. The loss is thereby on the session's own
+        //    record (the finish can never certify it clean), not
+        //    discovered later as a generic "service not bound".
+        //    Re-latched by every pass for as long as the component
+        //    stays down, so a tick's full-row write landing between
+        //    passes cannot quietly erase it.
+        if (sessionLiveAfter && repository.disabledCriticalComponents().isNotEmpty()) {
+            repository.latchShieldGapNow()
+        }
+
         // 5. Rearm the chain when the boundary moved or the chain is
         //    missing entirely.
         val boundary = result.nextBoundaryMillis

@@ -104,6 +104,17 @@
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
             </intent-filter>
+            <!-- Issue #81 F5: a component state change anywhere
+                 (including Monolith's own components via adb /
+                 pm disable) prompts a heartbeat reconcile, whose
+                 pass re-reads the critical components' enabled
+                 states and latches the live session's gap if one
+                 was disabled. The poll in the pass is the proof;
+                 this receiver only shortens the time to notice. -->
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_CHANGED" />
+                <data android:scheme="package" />
+            </intent-filter>
         </receiver>
 
         <receiver

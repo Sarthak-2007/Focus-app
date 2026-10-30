@@ -82,4 +82,21 @@ class TamperWitnessTest {
     fun unwitnessedBoot_counterMovedBackwards_neverConvicts() {
         assertEquals(false, TamperWitness.unwitnessedBoot(anchoredBootCount = 9, currentBootCount = 3))
     }
+
+    // F5 — component enabled-state (PackageManager constants:
+    // DEFAULT=0, ENABLED=1, DISABLED=2, DISABLED_USER=3,
+    // DISABLED_UNTIL_USED=4).
+
+    @Test
+    fun componentDisabled_defaultAndEnabled_areNotDisabled() {
+        assertEquals(false, TamperWitness.componentDisabled(0))
+        assertEquals(false, TamperWitness.componentDisabled(1))
+    }
+
+    @Test
+    fun componentDisabled_allDisabledStates_count() {
+        assertEquals(true, TamperWitness.componentDisabled(2))
+        assertEquals(true, TamperWitness.componentDisabled(3))
+        assertEquals(true, TamperWitness.componentDisabled(4))
+    }
 }

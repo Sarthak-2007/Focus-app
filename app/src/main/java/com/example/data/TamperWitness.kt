@@ -61,4 +61,19 @@ object TamperWitness {
      */
     fun unwitnessedBoot(anchoredBootCount: Int, currentBootCount: Int): Boolean =
         anchoredBootCount > 0 && currentBootCount - anchoredBootCount >= 2
+
+    /**
+     * The component-state law (issue #81 F5): a critical component
+     * counts as disabled in every PackageManager state except
+     * DEFAULT (the manifest state, enabled for all of Monolith's
+     * components) and ENABLED. DISABLED, DISABLED_USER and
+     * DISABLED_UNTIL_USED (2/3/4) are the states `pm disable` /
+     * `adb` component surgery lands in. The caller passes the raw
+     * getComponentEnabledSetting value; the constants are
+     * compile-time ints, inlined, so this stays JVM-testable.
+     */
+    fun componentDisabled(enabledSetting: Int): Boolean =
+        enabledSetting == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED ||
+            enabledSetting == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER ||
+            enabledSetting == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED
 }
