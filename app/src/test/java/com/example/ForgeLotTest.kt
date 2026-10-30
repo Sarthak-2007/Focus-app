@@ -19,6 +19,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 
 /**
  * THE FORGE LOT (AUDIT-drawer §2A; SPITZ Charge 2 — the fix shipped
@@ -47,6 +49,9 @@ class ForgeLotTest {
 
     @Before
     fun setup() {
+        // Shadow mono clock starts near zero: advance past the 61s
+        // anchor offset in completingSpan() so it is not clamped to 1.
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(120))
         db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
             .allowMainThreadQueries()
             .build()
