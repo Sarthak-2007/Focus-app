@@ -30,8 +30,11 @@ import org.robolectric.annotation.Config
  * (Ordner lane — Sarthak's complaint, Oct 29 22:40 IST: the list
  * held apps he never installed):
  *
- * - after a sync the table equals the faked installed set exactly,
- *   including the stored-rule-for-an-uninstalled-app case;
+ * - the table converges to the faked installed set: a stored row
+ *   for an absent app is pruned only on its SECOND consecutive
+ *   absence (issue #34 — one launcher query's say-so never deletes
+ *   a ruling), and a pruned ruling is remembered and restored if
+ *   the app returns;
  * - the man's own tier on a surviving app is never re-priced;
  * - an empty package query (the query failed) prunes NOTHING;
  * - the prune records itself for the one-time strip (Mikro M5);
@@ -90,7 +93,7 @@ class AppListTruthTest {
     )
 
     @Test
-    fun sync_tableEqualsInstalledSet_ghostPruned_userTierSurvives_pruneRecorded() = runBlocking {
+    fun sync_ghostPrunedOnSecondAbsence_userTierSurvives_pruneRecorded_rebirthRestoresRule() = runBlocking {
         val dao = db.monolithDao()
         // The rot, staged: a rule for an app that is not on the
         // phone, and his own SHUT on an app that is.
@@ -106,6 +109,17 @@ class AppListTruthTest {
         )
         assertNull(repository.pendingPruneNote())
 
+        // FIRST absence: the ghost is only noted, never deleted —
+        // one launcher query cannot destroy a ruling (issue #34).
+        repository.ensureSeededAndSyncPackages()
+        assertEquals(
+            setOf("com.ghost.app", "com.keeper.app", "com.fresh.chat"),
+            dao.getAllAppsSnapshot().map { it.packageName }.toSet()
+        )
+        assertNull(repository.pendingPruneNote())
+
+        // SECOND consecutive absence: corroborated — the ghost is
+        // pruned and the table equals the installed set.
         repository.ensureSeededAndSyncPackages()
 
         val table = dao.getAllAppsSnapshot()
@@ -125,6 +139,15 @@ class AppListTruthTest {
         // The prune recorded itself — one app, and a ruling went
         // with it (the ghost was SHUT).
         assertEquals(PruneNote(appsRemoved = 1, rulesRemoved = true), repository.pendingPruneNote())
+
+        // The ghost returns: it is reborn with its REMEMBERED
+        // ruling (SHUT), never a silent OPEN (issue #34).
+        fakeInstalled("com.ghost.app" to "Ghost")
+        repository.ensureSeededAndSyncPackages()
+        assertEquals(
+            AppBlockTier.LOCKED,
+            dao.getAllAppsSnapshot().first { it.packageName == "com.ghost.app" }.resolvedTier
+        )
     }
 
     @Test
@@ -143,17 +166,23 @@ class AppListTruthTest {
     }
 
     @Test
-    fun sync_secondRun_idempotent_noNewPruneRecord() = runBlocking {
+    fun sync_steadyState_idempotent_noNewPruneRecord() = runBlocking {
         val dao = db.monolithDao()
         dao.insertApps(listOf(storedRow("com.ghost.app", "Ghost", AppBlockTier.LOCKED)))
         fakeInstalled("com.keeper.app" to "Keeper")
 
+        // Two syncs carry the ghost through note -> corroborated
+        // prune; the prune records itself exactly once.
         repository.ensureSeededAndSyncPackages()
+        repository.ensureSeededAndSyncPackages()
+        assertEquals(PruneNote(appsRemoved = 1, rulesRemoved = true), repository.pendingPruneNote())
         repository.clearPruneNote()
-        val afterFirst = dao.getAllAppsSnapshot().map { it.packageName }.toSet()
+        val afterPrune = dao.getAllAppsSnapshot().map { it.packageName }.toSet()
 
+        // From there the sync is a steady state: same table, and
+        // no new prune record is ever written.
         repository.ensureSeededAndSyncPackages()
-        assertEquals(afterFirst, dao.getAllAppsSnapshot().map { it.packageName }.toSet())
+        assertEquals(afterPrune, dao.getAllAppsSnapshot().map { it.packageName }.toSet())
         assertNull(repository.pendingPruneNote())
     }
 

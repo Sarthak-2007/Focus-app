@@ -12,8 +12,9 @@ import org.junit.Test
 
 /**
  * The catalog reconcile and the rules grouping, proven as pure
- * derivations (Ordner lane): the table ends a sync equal to the
- * installed set, and the slip's groups are the stored tiers.
+ * derivations (Ordner lane): the table converges to the installed
+ * set — a row leaves only on a corroborated (second consecutive)
+ * absence, issue #34 — and the slip's groups are the stored tiers.
  */
 class AppCatalogReconcileTest {
 
@@ -209,11 +210,14 @@ class AppCatalogReconcileTest {
     @Test
     fun reconcile_unmeasuredPackageKeepsItsFigure() {
         // Absent from the usage map = unmeasured (e.g. no usage
-        // permission), NOT a proven zero: the figure stands.
+        // permission), NOT a proven zero: the figure stands. A
+        // facts refresh may still be written (this row's stored
+        // category is stale), but it must carry the stored figure
+        // with it — never a zero invented from silence.
         val existing = listOf(row("com.keeper", "Keeper", AppBlockTier.OPEN, usage = 9))
         val installed = listOf(InstalledPackage("com.keeper", "Keeper"))
         val plan = AppCatalogReconcile.reconcile(existing, installed, emptyMap(), categorize)
-        assertTrue(plan.usageUpdates.isEmpty())
+        assertTrue(plan.usageUpdates.all { it.todayUsageMinutes == 9 })
     }
 
     @Test
