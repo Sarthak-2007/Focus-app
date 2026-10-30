@@ -545,6 +545,35 @@ fun ParkDrawer(
                                 PermPrint.UNMEASURED -> ParkWordInk.QUIET
                                 PermPrint.STALE -> ParkWordInk.HALF
                                 PermPrint.MISSING -> ParkWordInk.FULL
+                            },
+                            subLine = if (
+                                setupStampMask != null &&
+                                item in WatchItemId.COUNTED &&
+                                setupStampMask and
+                                    (1 shl WatchItemId.COUNTED.indexOf(item)) != 0 &&
+                                print == PermPrint.MISSING
+                            ) {
+                                // The Setup Ledger's PARK print
+                                // (Proposal 2): MISSING only -
+                                // STALE is aged proof, not loss,
+                                // and the board already prints it
+                                // as the word. Standing print while
+                                // the regression stands; no date,
+                                // no count - capability memory. The
+                                // mask itself is fresh-GRANTED-only
+                                // by construction (doorsMaskAt), so
+                                // this line can never testify to a
+                                // loss nobody measured (C-14).
+                                // Ported from agent/issue-14 lane
+                                // tip beb8ace9 (GAP-2): the train
+                                // had the plumbing and the param
+                                // but no producing call site. The
+                                // check reads the row's single
+                                // derived print (F-B3), not a
+                                // fresh permPrintAt call.
+                                "WAS SET AT SETUP — SINCE LOST"
+                            } else {
+                                null
                             }
                         )
                     }
