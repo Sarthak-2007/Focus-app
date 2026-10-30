@@ -4,11 +4,14 @@ import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.SweepGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Build
+import android.os.Parcel
+import android.os.Parcelable
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -54,7 +57,10 @@ import kotlin.math.sqrt
  *   registers for Compose; an older comment here promised Google Sans /
  *   Space Mono fonts the app never shipped — corrected, issue #282).
  * - Only two corner radii exist app-wide: 12dp (small) and 24dp (large), with 12dp universal gap.
- * - Pre-allocated final Paint, final RectF, final Path fields — zero allocation in onDraw().
+ * - Pre-allocated final Paint, final RectF, final Path fields — no per-frame allocation
+ *   in onDraw() in steady state (Issue #59 F2/F3: the graded socket/chamfer rings are cached
+ *   SweepGradient shaders rebuilt only on size/night change; tables and numeral strings
+ *   are built once, never per frame).
  * - Every animation uses Curve A, B, C or OvershootInterpolator and durations {180, 260, 280, 420, 520}ms.
  * - Every haptic is a 1/4/8/10ms VibrationEffect.createOneShot(ms, DEFAULT_AMPLITUDE) paired with
  *   Float-PCM synth transients from the exact same call site.
@@ -159,36 +165,56 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
         }
         return (0xFF shl 24) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
     }
-    protected fun tokOnAccent(): Int = if (isNightMode) NIGHT_ON_PRIMARY_CONTAINER else LIGHT_ON_PRIMARY_CONTAINER
     protected fun tokSecondaryContainer(): Int = if (isNightMode) NIGHT_SECONDARY_CONTAINER else LIGHT_SECONDARY_CONTAINER
     protected fun tokOnSecondaryContainer(): Int = if (isNightMode) NIGHT_ON_SECONDARY_CONTAINER else LIGHT_ON_SECONDARY_CONTAINER
     protected fun tokOnSurface(): Int = if (isNightMode) NIGHT_ON_SURFACE else LIGHT_ON_SURFACE
     protected fun tokOnSurfaceVariant(): Int = if (isNightMode) NIGHT_ON_SURFACE_VARIANT else LIGHT_ON_SURFACE_VARIANT
-    protected fun tokOutline(): Int = if (isNightMode) NIGHT_OUTLINE else LIGHT_OUTLINE
     protected fun tokHairline(): Int = if (isNightMode) NIGHT_OUTLINE_VARIANT else LIGHT_OUTLINE_VARIANT
     protected fun tokBlockBar(): Int = if (isNightMode) NIGHT_BLOCK_BAR else LIGHT_BLOCK_BAR
     protected fun tokTextPrimary(): Int = if (isNightMode) NIGHT_TEXT_PRIMARY else LIGHT_TEXT_PRIMARY
     protected fun tokTextSecondary(): Int = if (isNightMode) NIGHT_TEXT_SECONDARY else LIGHT_TEXT_SECONDARY
-    protected fun tokAlert(): Int = if (isNightMode) NIGHT_ALERT else LIGHT_ALERT
+
+    /**
+     * #88: the bundled faces carry zero Devanagari and zero Arabic
+     * glyphs, and a bare Canvas [Typeface] draws .notdef boxes for
+     * them — Hindi/Arabic app names and task titles broke on every
+     * Canvas surface. On API 29+ the face is rebuilt through
+     * [Typeface.CustomFallbackBuilder], which keeps the bundled face
+     * for every glyph it has and falls back to the system font only
+     * for glyphs it lacks. Latin rendering is the same face, byte for
+     * byte. Below API 29 (or if the resource is a family XML the
+     * [android.graphics.fonts.Font.Builder] cannot take) the plain
+     * face is returned, exactly as before.
+     */
+    private fun fontWithFallback(resId: Int): Typeface? {
+        val base = runCatching { ResourcesCompat.getFont(context, resId) }.getOrNull() ?: return null
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return base
+        return runCatching {
+            val family = android.graphics.fonts.FontFamily.Builder(
+                android.graphics.fonts.Font.Builder(resources, resId).build()
+            ).build()
+            Typeface.CustomFallbackBuilder(family).build()
+        }.getOrDefault(base)
+    }
 
     // Pre-allocated Typefaces (§2: Words = Atkinson Hyperlegible, Numbers = Anonymous Pro)
     protected val wordTypefaceBold: Typeface by lazy {
         // The REAL Bold file (Round 0b fix) — Typeface.create(base, BOLD) on
         // the Regular file was synthesized smear across every Canvas view.
-        runCatching { ResourcesCompat.getFont(context, R.font.atkinson_hyperlegible_bold) }.getOrNull()
-            ?: runCatching { ResourcesCompat.getFont(context, R.font.atkinson_hyperlegible) }.getOrNull()
+        fontWithFallback(R.font.atkinson_hyperlegible_bold)
+            ?: fontWithFallback(R.font.atkinson_hyperlegible)
             ?: Typeface.SANS_SERIF
     }
     protected val wordTypefaceRegular: Typeface by lazy {
-        runCatching { ResourcesCompat.getFont(context, R.font.atkinson_hyperlegible) }.getOrNull() ?: Typeface.SANS_SERIF
+        fontWithFallback(R.font.atkinson_hyperlegible) ?: Typeface.SANS_SERIF
     }
     protected val monoTypefaceBold: Typeface by lazy {
-        runCatching { ResourcesCompat.getFont(context, R.font.anonymous_pro_bold) }.getOrNull()
-            ?: runCatching { ResourcesCompat.getFont(context, R.font.anonymous_pro) }.getOrNull()
+        fontWithFallback(R.font.anonymous_pro_bold)
+            ?: fontWithFallback(R.font.anonymous_pro)
             ?: Typeface.MONOSPACE
     }
     protected val monoTypefaceRegular: Typeface by lazy {
-        runCatching { ResourcesCompat.getFont(context, R.font.anonymous_pro) }.getOrNull() ?: Typeface.MONOSPACE
+        fontWithFallback(R.font.anonymous_pro) ?: Typeface.MONOSPACE
     }
 
     // Pre-allocated final Paints, RectFs, Paths (§4.1: zero allocation inside onDraw)
@@ -322,44 +348,6 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
         }
     }
 
-    private val dotDigitMasks = intArrayOf(
-        0b111_101_101_101_111, // 0
-        0b010_110_010_010_111, // 1
-        0b111_001_111_100_111, // 2
-        0b111_001_111_001_111, // 3
-        0b101_101_111_001_001, // 4
-        0b111_100_111_001_111, // 5
-        0b111_100_111_101_111, // 6
-        0b111_001_001_001_001, // 7
-        0b111_101_111_101_111, // 8
-        0b111_101_111_001_111  // 9
-    )
-
-    /**
-     * Draws a 3x5 dot-matrix digit on the 4dp grid (§2 & §4.2 #8 TileNumberView).
-     */
-    protected fun drawDotMatrixDigit(
-        canvas: Canvas,
-        digit: Int,
-        left: Float,
-        top: Float,
-        tilePx: Float,
-        gapPx: Float,
-        onColor: Int,
-        offColor: Int
-    ) {
-        val mask = dotDigitMasks[digit.coerceIn(0, 9)]
-        val step = tilePx + gapPx
-        for (row in 0 until 5) {
-            for (col in 0 until 3) {
-                val bit = 1 shl (14 - (row * 3 + col))
-                paintFill.color = if ((mask and bit) != 0) onColor else offColor
-                val cx = left + col * step
-                val cy = top + row * step
-                canvas.drawRect(cx, cy, cx + tilePx, cy + tilePx, paintFill)
-            }
-        }
-    }
 }
 
 /**
@@ -423,6 +411,79 @@ internal object DialPrecision {
 }
 
 /**
+ * Issue #59: alpha-scale a packed colour by [frac] — formerly a
+ * capturing local fun inside RotaryWheelView.onDraw (rebuilt every
+ * frame); now a plain top-level function.
+ */
+internal fun inkWithAlpha(color: Int, frac: Float): Int {
+    val a = ((color ushr 24) * frac).toInt().coerceIn(0, 255)
+    return (a shl 24) or (color and 0x00FFFFFF)
+}
+
+/**
+ * Issue #59: the rotary lamp curve, pure. [dAz] is azimuth distance
+ * from the lamp at 245.2 degrees.
+ */
+internal object RotaryGradientMath {
+    /** Normalised lamp curve s in 0..1 (the socket shading curve). */
+    fun socketSN(dAz: Float): Float {
+        val curve = if (abs(dAz) <= 90f) {
+            val c = cos(dAz * (PI.toFloat() / 180f))
+            0.16f + 0.66f * c * c * c
+        } else 0.16f
+        return (curve / 0.82f).coerceIn(0f, 1f)
+    }
+    fun socketBlackAlpha(dAz: Float): Int = kotlin.math.round(42f * (1f - socketSN(dAz))).toInt()
+    fun socketWhiteAlpha(dAz: Float): Int = kotlin.math.round(36f * socketSN(dAz)).toInt()
+    /** Chamfer catch alpha (0..255) at canvas angle [thetaDeg]. */
+    fun chamferAlpha(thetaDeg: Float): Int {
+        val dAz = thetaDeg + 90f - 245.2f
+        if (abs(dAz) > 93f) return 0
+        val c = cos(dAz * (PI.toFloat() / 180f))
+        val alphaF = 0.16f + 0.66f * c * c * c
+        return (255f * alphaF).toInt().coerceIn(0, 255)
+    }
+}
+
+/**
+ * Issue #59 Tier-1: pure grouping math for the batched knurl / tick /
+ * hub-fan draws. Grouping keys are EXACT colours/alphas from the
+ * original per-segment formulas — no quantisation — so a batch
+ * renders identically to the loop it replaces.
+ */
+internal object RotaryBatchMath {
+    fun tickClass(m: Int): Int = when {
+        m % 30 == 0 -> 2
+        m % 15 == 0 -> 1
+        else -> 0
+    }
+
+    fun knurlOddAlpha(toothDeg: Float, night: Boolean, flare: Float): Int {
+        val toothAz = (toothDeg + 90f) % 360f
+        var dAz = toothAz - 245.2f
+        if (dAz > 180f) dAz -= 360f
+        if (dAz < -180f) dAz += 360f
+        val t = max(0f, cos(dAz * (PI.toFloat() / 180f)))
+        val spec = 0.16f + 0.66f * t * t * t * flare
+        return (255f * spec * if (night) 0.10f else 0.17f).toInt().coerceIn(0, 255)
+    }
+
+    fun coreAlpha(coreDeg: Float, night: Boolean): Int {
+        val lift = if (night) 0.08f else 0.10f
+        val dAz = abs(coreDeg - 315f)
+        val f = when {
+            dAz <= 9f -> 1f
+            else -> {
+                val c = cos((dAz - 9f) / 25f * (PI.toFloat() / 2f))
+                c * c
+            }
+        }
+        if (f <= 0.003f) return 0
+        return (255f * lift * f).toInt().coerceIn(0, 255)
+    }
+}
+
+/**
  * ============================================================================
  * 2. ROTARY WHEEL VIEW (DEVELOPER-GUIDE.pdf §4.1 & §4.2 #1 RotaryWheel.java)
  * ============================================================================
@@ -437,6 +498,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
             val clamped = value.coerceIn(5, 180)
             if (field != clamped) {
                 field = clamped
+                refreshAccessibilityLabel()
                 if (!isDragging && !inPhysics) {
                     wheelAngleDeg = minutesToAngle(clamped)
                 }
@@ -448,6 +510,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         set(value) {
             if (field != value) {
                 field = value.coerceIn(1, 8)
+                refreshAccessibilityLabel()
                 // Tetrad closure (Vega): landing on 4 or 8 joins four
                 // wells into one bar; the bar lands at 88% ink and
                 // settles to full over 160ms - the one place the hub
@@ -472,6 +535,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         set(value) {
             if (field != value) {
                 field = value
+                refreshAccessibilityLabel()
                 if (value) {
                     // Zug-II §4.2's freezeAtSeal completion: the
                     // wheel's physics HALTS at the seal — no coast
@@ -518,11 +582,97 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
     internal val hubPressAnimatorForTest: ValueAnimator? get() = hubPressAnimator
 
     companion object {
+        /** Issue #59: built ONCE, shared — never allocated per frame. */
+        internal val WELL_AZIMUTHS =
+            floatArrayOf(-67.5f, -22.5f, 22.5f, 67.5f, 112.5f, 157.5f, 202.5f, 247.5f)
+        internal val NUMERAL_TEXT: Array<String> = Array(181) { it.toString() }
+
         /** E5a device-pass gate (Nabe §6): 1 = the core's travel
          *  ships, 0 = travel dead, the rest core ships alone.
          *  Flipped ONLY on the DEVICE_PASS_E5A result — never on
          *  a render, a screenshot, or taste. */
         const val CORE_TRAVEL_GATE = 1
+    }
+
+    init {
+        // Issue #59 (finding 4): not a touch-only black box.
+        isClickable = true
+        isFocusable = true
+        refreshAccessibilityLabel()
+    }
+
+    private fun refreshAccessibilityLabel() {
+        contentDescription = if (isLockedSession) {
+            "Rotary wheel, locked"
+        } else if (minutesValue < 10) {
+            "Rotary wheel, open flow, $studyBlocksCount blocks. Activate to cycle blocks."
+        } else {
+            "Rotary wheel, $minutesValue minutes, $studyBlocksCount blocks. Activate to cycle blocks."
+        }
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val desired = dp(288f).toInt()
+        setMeasuredDimension(
+            resolveSize(desired, widthMeasureSpec),
+            resolveSize(desired, heightMeasureSpec)
+        )
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        if (isLockedSession) return true
+        if (minutesValue >= 10) {
+            fireFeel(4L)
+            onCycleBlocksCount?.invoke()
+        }
+        return true
+    }
+
+    override fun onSaveInstanceState(): Parcelable {
+        val ss = SavedState(super.onSaveInstanceState())
+        ss.minutes = minutesValue
+        ss.blocks = studyBlocksCount
+        ss.locked = isLockedSession
+        return ss
+    }
+
+    override fun onRestoreInstanceState(state: Parcelable?) {
+        if (state !is SavedState) {
+            super.onRestoreInstanceState(state)
+            return
+        }
+        super.onRestoreInstanceState(state.superState)
+        minutesValue = state.minutes
+        studyBlocksCount = state.blocks
+        isLockedSession = state.locked
+        invalidate()
+    }
+
+    class SavedState : BaseSavedState {
+        var minutes: Int = 50
+        var blocks: Int = 2
+        var locked: Boolean = false
+
+        constructor(superState: Parcelable?) : super(superState)
+
+        private constructor(parcel: Parcel) : super(parcel) {
+            minutes = parcel.readInt()
+            blocks = parcel.readInt()
+            locked = parcel.readInt() == 1
+        }
+
+        override fun writeToParcel(out: Parcel, flags: Int) {
+            super.writeToParcel(out, flags)
+            out.writeInt(minutes)
+            out.writeInt(blocks)
+            out.writeInt(if (locked) 1 else 0)
+        }
+
+        companion object CREATOR : Parcelable.Creator<SavedState> {
+            override fun createFromParcel(parcel: Parcel): SavedState = SavedState(parcel)
+            override fun newArray(size: Int): Array<SavedState?> = arrayOfNulls(size)
+        }
     }
 
     private fun startHubDip() {
@@ -635,6 +785,174 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         }
     }
 
+    // Issue #59 (finding 2): the socket ring (was 120x2 drawArc) and
+    // the chamfer catch (was ~90 drawArc) are SweepGradient shaders,
+    // sampled at 1-degree granularity (finer than the original 3/2-degree
+    // segments) from the SAME lamp curve (RotaryGradientMath), rebuilt
+    // only when centre/radius or night mode changes — zero steady-state
+    // per-frame cost. Keys are plain floats: no string keys, no map
+    // iterators, nothing allocated by the ensure* calls at rest.
+    private var shaderCx = Float.NaN
+    private var shaderCy = Float.NaN
+    private var shaderSocketR = Float.NaN
+    private var shaderChamferR = Float.NaN
+    private var shaderNight = false
+    private var socketBlackShader: SweepGradient? = null
+    private var socketWhiteShader: SweepGradient? = null
+    private var chamferShader: SweepGradient? = null
+    private val hubClipPath = Path()
+
+    // Tier-1 batched geometry: prebuilt Paths, rebuilt only when
+    // their key changes — never per frame at rest.
+    private val tickPaths = arrayOf(Path(), Path(), Path())
+    private val microTickPath = Path()
+    private var tickCx = Float.NaN
+    private var tickCy = Float.NaN
+    private var tickOuterR = Float.NaN
+    private var knurlColors = IntArray(0)
+    private var knurlPaths = arrayOf<Path>()
+    private var knurlCount = 0
+    private var knurlCx = Float.NaN
+    private var knurlCy = Float.NaN
+    private var knurlOuterR = Float.NaN
+    private var knurlNight = false
+    private var coreColors = IntArray(0)
+    private var corePaths = arrayOf<Path>()
+    private var coreCount = 0
+    private var coreHubR = Float.NaN
+    private var coreNight = false
+
+    private fun ensureTickPaths(cx: Float, cy: Float, outerR: Float) {
+        if (cx == tickCx && cy == tickCy && outerR == tickOuterR) return
+        tickCx = cx; tickCy = cy; tickOuterR = outerR
+        for (path in tickPaths) path.reset()
+        microTickPath.reset()
+        val rOuter = outerR - dp(11f)
+        for (m in 10..180 step 5) {
+            val cls = RotaryBatchMath.tickClass(m)
+            val rad = minutesToAngle(m) * (PI.toFloat() / 180f)
+            val rInner = when (cls) {
+                2 -> outerR - dp(21f)
+                1 -> outerR - dp(18.5f)
+                else -> outerR - dp(16f)
+            }
+            val path = tickPaths[cls]
+            path.moveTo(cx + cos(rad) * rInner, cy + sin(rad) * rInner)
+            path.lineTo(cx + cos(rad) * rOuter, cy + sin(rad) * rOuter)
+        }
+        // #123 micro-ticks: every whole minute that is not a 5-minute
+        // stop, from outerR-13.5dp to outerR-11dp (the #123 geometry).
+        for (m in 10..180) {
+            if (m % 5 == 0) continue
+            val rad = minutesToAngle(m) * (PI.toFloat() / 180f)
+            microTickPath.moveTo(cx + cos(rad) * (outerR - dp(13.5f)), cy + sin(rad) * (outerR - dp(13.5f)))
+            microTickPath.lineTo(cx + cos(rad) * rOuter, cy + sin(rad) * rOuter)
+        }
+    }
+
+    private fun ensureKnurlPaths(cx: Float, cy: Float, outerR: Float) {
+        if (cx == knurlCx && cy == knurlCy && outerR == knurlOuterR && isNightMode == knurlNight) return
+        knurlCx = cx; knurlCy = cy; knurlOuterR = outerR; knurlNight = isNightMode
+        val colors = IntArray(128)
+        val paths = Array(128) { Path() }
+        var count = 0
+        val rIn = outerR - dp(4.5f)
+        val rOut = outerR - dp(1f)
+        var toothIdx = 0
+        var toothDeg = 0f
+        while (toothDeg < 360f) {
+            if (toothDeg > 94.5f && toothDeg < 126f) {
+                toothIdx++
+                toothDeg += 3f
+                continue
+            }
+            val rad = toothDeg * (PI.toFloat() / 180f)
+            val color = if (toothIdx % 2 == 0) {
+                0x2E000000
+            } else {
+                (RotaryBatchMath.knurlOddAlpha(toothDeg, isNightMode, toothFlare[toothIdx]) shl 24) or 0x00FFFFFF
+            }
+            var g = -1
+            for (i in 0 until count) if (colors[i] == color) { g = i; break }
+            if (g < 0) { g = count; colors[g] = color; count++ }
+            val path = paths[g]
+            path.moveTo(cx + cos(rad) * rIn, cy + sin(rad) * rIn)
+            path.lineTo(cx + cos(rad) * rOut, cy + sin(rad) * rOut)
+            toothIdx++
+            toothDeg += 3f
+        }
+        knurlColors = colors; knurlPaths = paths; knurlCount = count
+    }
+
+    private fun ensureCorePaths(innerHubR: Float) {
+        // Geometry is built around the ORIGIN and the caller translates
+        // the canvas to the (possibly press-shifted) core centre — so a
+        // hub press, which moves the centre every animation frame,
+        // never invalidates these paths and never re-allocates.
+        if (innerHubR == coreHubR && isNightMode == coreNight) return
+        coreHubR = innerHubR; coreNight = isNightMode
+        val colors = IntArray(64)
+        val paths = Array(64) { Path() }
+        var count = 0
+        var coreDeg = 315f - 34f
+        while (coreDeg < 315f + 34f) {
+            val a = RotaryBatchMath.coreAlpha(coreDeg, isNightMode)
+            if (a > 0) {
+                val r0 = (coreDeg - 90f) * (PI.toFloat() / 180f)
+                val r1 = (coreDeg + 2f - 90f) * (PI.toFloat() / 180f)
+                var g = -1
+                for (i in 0 until count) if (colors[i] == a) { g = i; break }
+                if (g < 0) { g = count; colors[g] = a; count++ }
+                val path = paths[g]
+                path.moveTo(0f, 0f)
+                path.lineTo(cos(r0) * innerHubR, sin(r0) * innerHubR)
+                path.lineTo(cos(r1) * innerHubR, sin(r1) * innerHubR)
+                path.close()
+            }
+            coreDeg += 2f
+        }
+        coreColors = colors; corePaths = paths; coreCount = count
+    }
+
+    private fun drawStraitEdge(canvas: Canvas, cx: Float, cy: Float, outerR: Float, deg: Float, color: Int) {
+        val er = deg * (PI.toFloat() / 180f)
+        paintStroke.color = color
+        canvas.drawLine(
+            cx + cos(er) * (outerR - dp(4.5f)), cy + sin(er) * (outerR - dp(4.5f)),
+            cx + cos(er) * (outerR - dp(1f)), cy + sin(er) * (outerR - dp(1f)),
+            paintStroke
+        )
+    }
+
+    private fun ensureRotaryShaders(cx: Float, cy: Float, socketR: Float, chamferR: Float) {
+        if (cx == shaderCx && cy == shaderCy && socketR == shaderSocketR &&
+            chamferR == shaderChamferR && isNightMode == shaderNight &&
+            socketBlackShader != null
+        ) return
+        shaderCx = cx; shaderCy = cy; shaderSocketR = socketR; shaderChamferR = chamferR
+        shaderNight = isNightMode
+        // Sampled at 1 degree — FINER than both original segment
+        // steps (socket 3, chamfer 2): fidelity is preserved or
+        // better by construction, never a downgrade.
+        val stops = 360
+        val positions = FloatArray(stops + 1) { it.toFloat() / stops }
+        val black = IntArray(stops + 1)
+        val white = IntArray(stops + 1)
+        val chamfer = IntArray(stops + 1)
+        for (i in 0..stops) {
+            val theta = i * 1f
+            var dAz = (theta + 90f - 245.2f) % 360f
+            if (dAz > 180f) dAz -= 360f
+            if (dAz < -180f) dAz += 360f
+            black[i] = (RotaryGradientMath.socketBlackAlpha(dAz) shl 24) or 0x000000
+            white[i] = (RotaryGradientMath.socketWhiteAlpha(dAz) shl 24) or 0x00FFFFFF
+            chamfer[i] = (RotaryGradientMath.chamferAlpha(theta) shl 24) or 0x00FFF6EC
+        }
+        socketBlackShader = SweepGradient(cx, cy, black, positions)
+        socketWhiteShader = SweepGradient(cx, cy, white, positions)
+        chamferShader = SweepGradient(cx, cy, chamfer, positions)
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val w = width.toFloat()
@@ -660,26 +978,19 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         // lamp curve — segmented, 3dp uniform, no step anywhere:
         // s follows 0.16 + 0.66 cos^3(azimuth - 245.2) normalised;
         // white rides at 36s, black at 42(1-s), black under white.
-        boundsRect.set(cx - socketR + dp(1.5f), cy - socketR + dp(1.5f), cx + socketR - dp(1.5f), cy + socketR - dp(1.5f))
+        // Issue #59 F2: the segmented loop (120 steps x 2 drawArc)
+        // is now two full shader circles — black under white, the
+        // same layering — with the lamp curve sampled at 1 degree
+        // by the cached SweepGradients (ensureRotaryShaders). The
+        // stroke band is unchanged: 3dp wide, centred on socketR-1.5dp.
+        ensureRotaryShaders(cx, cy, socketR, outerR - dp(10f))
         paintStroke.strokeWidth = dp(3f)
         paintStroke.strokeCap = Paint.Cap.BUTT
-        var socketDeg = 0f
-        while (socketDeg < 360f) {
-            val az = socketDeg + 90f
-            var dAz = (az - 245.2f) % 360f
-            if (dAz > 180f) dAz -= 360f
-            if (dAz < -180f) dAz += 360f
-            val cosAz = cos(dAz * (PI.toFloat() / 180f))
-            val curve = if (kotlin.math.abs(dAz) <= 90f) {
-                0.16f + 0.66f * cosAz * cosAz * cosAz
-            } else 0.16f
-            val sN = (curve / 0.82f).coerceIn(0f, 1f)
-            paintStroke.color = (kotlin.math.round(42f * (1f - sN)).toInt() shl 24) or 0x000000
-            canvas.drawArc(boundsRect, socketDeg, 3.5f, false, paintStroke)
-            paintStroke.color = (kotlin.math.round(36f * sN).toInt() shl 24) or 0x00FFFFFF
-            canvas.drawArc(boundsRect, socketDeg, 3.5f, false, paintStroke)
-            socketDeg += 3f
-        }
+        paintStroke.shader = socketBlackShader
+        canvas.drawCircle(cx, cy, socketR - dp(1.5f), paintStroke)
+        paintStroke.shader = socketWhiteShader
+        canvas.drawCircle(cx, cy, socketR - dp(1.5f), paintStroke)
+        paintStroke.shader = null
 
         paintFill.color = tokSurface()
         canvas.drawCircle(cx, cy, outerR, paintFill)
@@ -696,17 +1007,12 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         // where the lamp is, and nowhere else.
         paintStroke.strokeWidth = dp(2f)
         paintStroke.strokeCap = Paint.Cap.BUTT
-        var chamferDeg = 65.2f
-        while (chamferDeg < 245.2f) {
-            val az = chamferDeg + 90f
-            val dAz = az - 245.2f
-            val cosAz = cos(dAz * (PI.toFloat() / 180f))
-            val alphaF = 0.16f + 0.66f * cosAz * cosAz * cosAz
-            val a = (255f * alphaF).toInt().coerceIn(0, 255)
-            paintStroke.color = (a shl 24) or 0x00FFF6EC
-            canvas.drawArc(boundsRect, chamferDeg, 2.5f, false, paintStroke)
-            chamferDeg += 2f
-        }
+        // Issue #59 F2: one shader arc replaces the ~90 segmented
+        // drawArc. Sweep 180.5 degrees ends at 245.7 — exactly the
+        // end of the old loop's last segment (start 243.2 + 2.5).
+        paintStroke.shader = chamferShader
+        canvas.drawArc(boundsRect, 65.2f, 180.5f, false, paintStroke)
+        paintStroke.shader = null
 
         // The Strait's channel floor (Vega): across the strait the rim
         // drops one tone step to recess and goes smooth - a cut through
@@ -722,15 +1028,9 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         paintStroke.strokeCap = Paint.Cap.BUTT
         canvas.drawArc(boundsRect, 117f, 9f, false, paintStroke)
         paintStroke.strokeWidth = dp(1f)
-        for ((edgeDeg, edgeColor) in listOf(117f to 0x33FFFFFF, 126f to 0x2E000000)) {
-            val er = edgeDeg * (PI.toFloat() / 180f)
-            paintStroke.color = edgeColor
-            canvas.drawLine(
-                cx + cos(er) * (outerR - dp(4.5f)), cy + sin(er) * (outerR - dp(4.5f)),
-                cx + cos(er) * (outerR - dp(1f)), cy + sin(er) * (outerR - dp(1f)),
-                paintStroke
-            )
-        }
+        // Issue #59 F3: was a listOf(Pair, Pair) allocated every frame.
+        drawStraitEdge(canvas, cx, cy, outerR, 117f, 0x33FFFFFF)
+        drawStraitEdge(canvas, cx, cy, outerR, 126f, 0x2E000000)
 
         // Knurled rim (T1 + Mara's light + the Broken Flare): fine
         // radial teeth at the filed 3-degree pitch on the disc's outer
@@ -743,42 +1043,17 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         // integral lands the day the rim itself rotates. Teeth are CUT
         // across FLOW's basin (+/-13.5 of the FLOW seat) and the whole
         // strait - inside the break there is no grip, no tick, no value.
+        // Issue #59 F2 (Tier-1 batching): the ~110 individual
+        // drawLine teeth are prebuilt into one Path per EXACT colour
+        // (ensureKnurlPaths) — same segments, same voices, a handful
+        // of drawPath calls. Cap stated explicitly: BUTT, as inherited
+        // from the strait floor above in the loop form.
+        ensureKnurlPaths(cx, cy, outerR)
         paintStroke.strokeWidth = dp(1.3f)
-        var tooth = 0
-        var toothDeg = 0f
-        while (toothDeg < 360f) {
-            if (toothDeg > 94.5f && toothDeg < 126f) {
-                tooth++
-                toothDeg += 3f
-                continue
-            }
-            val rad = toothDeg * (PI.toFloat() / 180f)
-            paintStroke.color = if (tooth % 2 == 0) {
-                0x2E000000
-            } else {
-                // One lamp (chrome C8): the specular re-centres from
-                // the old canvas-220 light to Mara's lamp at azimuth
-                // 245.2 (azimuth = canvas angle + 90 in this view's
-                // convention). Same cos^3 curve, same compile-time
-                // flare (teeth 17/83 stay broken); the peak is capped
-                // at 14% by day, 8% by night — the alpha factor is
-                // 0.17 / 0.10 against the curve's 0.82 maximum.
-                val toothAz = (toothDeg + 90f) % 360f
-                var dAz = toothAz - 245.2f
-                if (dAz > 180f) dAz -= 360f
-                if (dAz < -180f) dAz += 360f
-                val t = max(0f, cos(dAz * (PI.toFloat() / 180f)))
-                val spec = 0.16f + 0.66f * t * t * t * toothFlare[tooth]
-                val a = (255f * spec * if (isNightMode) 0.10f else 0.17f).toInt().coerceIn(0, 255)
-                (a shl 24) or 0x00FFFFFF
-            }
-            canvas.drawLine(
-                cx + cos(rad) * (outerR - dp(4.5f)), cy + sin(rad) * (outerR - dp(4.5f)),
-                cx + cos(rad) * (outerR - dp(1f)), cy + sin(rad) * (outerR - dp(1f)),
-                paintStroke
-            )
-            tooth++
-            toothDeg += 3f
+        paintStroke.strokeCap = Paint.Cap.BUTT
+        for (g in 0 until knurlCount) {
+            paintStroke.color = knurlColors[g]
+            canvas.drawPath(knurlPaths[g], paintStroke)
         }
 
         // 2. Active arc track on the wheel rim
@@ -816,63 +1091,34 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         // every 15). Inside the strait there is no tick at all: the
         // break in the scale is a break in the print too. FLOW prints
         // as a word in the hero, never as a tick or a number here.
+        // Issue #59 F2 (Tier-1 batching): both tick loops are
+        // prebuilt Paths (ensureTickPaths) — the #123 micro-ticks as
+        // ONE drawPath (was ~136 drawLine), the 5-minute ticks as one
+        // drawPath per voice class (minor/mid/major keep their exact
+        // widths and colours below). Cap stated explicitly: ROUND,
+        // inherited from the sweep arc above in the loop form.
+        ensureTickPaths(cx, cy, outerR)
+        paintStroke.strokeCap = Paint.Cap.ROUND
         paintStroke.strokeWidth = dp(0.7f)
         paintStroke.color = (0x59 shl 24) or (tokTextSecondary() and 0x00FFFFFF)
-        for (m in 10..180) {
-            if (m % 5 == 0) continue
-            val deg = minutesToAngle(m)
-            val rad = deg * (PI.toFloat() / 180f)
-            canvas.drawLine(
-                cx + cos(rad) * (outerR - dp(13.5f)),
-                cy + sin(rad) * (outerR - dp(13.5f)),
-                cx + cos(rad) * (outerR - dp(11f)),
-                cy + sin(rad) * (outerR - dp(11f)),
-                paintStroke
-            )
-        }
-        for (m in 10..180 step 5) {
-            val deg = minutesToAngle(m)
-            val rad = deg * (PI.toFloat() / 180f)
-            val isMajor = m % 30 == 0
-            val isMid = m % 15 == 0
-            val rOuter = outerR - dp(11f)
-            val rInner = when {
-                isMajor -> outerR - dp(21f)
-                isMid -> outerR - dp(18.5f)
-                else -> outerR - dp(16f)
-            }
-            paintStroke.strokeWidth = when {
-                isMajor -> dp(1.8f)
-                isMid -> dp(1.3f)
+        canvas.drawPath(microTickPath, paintStroke)
+        for (cls in 0..2) {
+            paintStroke.strokeWidth = when (cls) {
+                2 -> dp(1.8f)
+                1 -> dp(1.3f)
                 else -> dp(1f)
             }
-            // Print voices (BEYOND D9): ticks speak by class, never by
-            // sweep - the rim arc carries the sweep. Majors: ink / night
-            // secondary. Mediums: secondary / night muted. Minors: one
-            // engraved step off the disc (surfaceVariant; D9's literal
-            // ground-on-recess assumes a recess disc - ours is surface-
-            // toned by the locked staircase, so the step goes down).
-            // Tick voices (chrome C8): majors at night take the
-            // glyph at 80% (they were text-2, reading as minor);
-            // minors take text-2 at 55% in BOTH modes (day was the
-            // recess tone — a tick the same tone as the socket).
-            // Canvas token note: this family's text-2 IS #615B5A
-            // (LIGHT_TEXT_SECONDARY); the spec's #5F5856 is the
-            // Compose scheme's spelling of the same tier.
-            paintStroke.color = when {
-                isMajor -> if (isNightMode) {
+            // Print voices (BEYOND D9 + chrome C8), unchanged from the
+            // loop form: majors ink / night glyph at 80%; mids
+            // secondary / night surface-variant; minors text-2 at 55%.
+            paintStroke.color = when (cls) {
+                2 -> if (isNightMode) {
                     (0xCC shl 24) or (tokOnSurface() and 0x00FFFFFF)
                 } else tokPrimary()
-                isMid -> if (isNightMode) tokOnSurfaceVariant() else tokTextSecondary()
+                1 -> if (isNightMode) tokOnSurfaceVariant() else tokTextSecondary()
                 else -> (0x8C shl 24) or (tokTextSecondary() and 0x00FFFFFF)
             }
-            canvas.drawLine(
-                cx + cos(rad) * rInner,
-                cy + sin(rad) * rInner,
-                cx + cos(rad) * rOuter,
-                cy + sin(rad) * rOuter,
-                paintStroke
-            )
+            canvas.drawPath(tickPaths[cls], paintStroke)
         }
 
         // Rim numerals at the majors only (Anonymous Pro 15): the scale
@@ -889,7 +1135,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         for (m in 30..180 step 30) {
             val a = minutesToAngle(m) * (PI.toFloat() / 180f)
             canvas.drawText(
-                m.toString(),
+                NUMERAL_TEXT[m],
                 cx + cos(a) * numeralR,
                 cy + sin(a) * numeralR + sp(5f),
                 paintMono
@@ -958,7 +1204,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         // toward #FFF6EC, on the hub disc only — drawn before the
         // guide ring and wells so the tetrad paints over it.
         run {
-            val lift = if (isNightMode) 0.08f else 0.10f
+            // (lift lives in RotaryBatchMath.coreAlpha — Tier-1.)
             // E5a's roll (Nabe §5): the light travels a further
             // depth x 2dp toward bearing 135 (canvas (+0.7071,
             // +0.7071)) relative to the cap — the wedge fan's
@@ -969,33 +1215,22 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
             val offMag = hubPressDepth * dp(2f) * CORE_TRAVEL_GATE
             val ccx = cx + offMag * 0.7071f
             val ccy = cy + offMag * 0.7071f
-            val corePath = android.graphics.Path()
+            // Issue #59 F3: the clip Path is a reused field, not a
+            // fresh Path() per frame.
+            val corePath = hubClipPath
+            corePath.reset()
             corePath.addCircle(cx, cy, innerHubR, android.graphics.Path.Direction.CW)
             canvas.save()
             canvas.clipPath(corePath)
-            var coreDeg = 315f - 34f
-            while (coreDeg < 315f + 34f) {
-                val dAz = kotlin.math.abs(coreDeg - 315f)
-                val f = when {
-                    dAz <= 9f -> 1f
-                    else -> {
-                        val c = cos((dAz - 9f) / 25f * (PI.toFloat() / 2f))
-                        c * c
-                    }
-                }
-                if (f > 0.003f) {
-                    val a = (255f * lift * f).toInt().coerceIn(0, 255)
-                    paintFill.color = (a shl 24) or 0x00FFF6EC
-                    val r0 = (coreDeg - 90f) * (PI.toFloat() / 180f)
-                    val r1 = (coreDeg + 2f - 90f) * (PI.toFloat() / 180f)
-                    vectorPath.reset()
-                    vectorPath.moveTo(ccx, ccy)
-                    vectorPath.lineTo(ccx + cos(r0) * innerHubR, ccy + sin(r0) * innerHubR)
-                    vectorPath.lineTo(ccx + cos(r1) * innerHubR, ccy + sin(r1) * innerHubR)
-                    vectorPath.close()
-                    canvas.drawPath(vectorPath, paintFill)
-                }
-                coreDeg += 2f
+            // Issue #59 F2 (Tier-1 batching): the ~34 wedge fans are
+            // prebuilt Paths grouped by EXACT alpha, built around the
+            // origin (ensureCorePaths); translating to (ccx, ccy)
+            // lands every vertex where the loop form put it.
+            ensureCorePaths(innerHubR)
+            canvas.translate(ccx, ccy)
+            for (g in 0 until coreCount) {
+                paintFill.color = (coreColors[g] shl 24) or 0x00FFF6EC
+                canvas.drawPath(corePaths[g], paintFill)
             }
             canvas.restore()
         }
@@ -1018,15 +1253,15 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         // catch logged with her seat for her re-seat.
         val isFlow = minutesValue < 10
         val ringR = dp(40f)
-        val wellAzimuths = floatArrayOf(-67.5f, -22.5f, 22.5f, 67.5f, 112.5f, 157.5f, 202.5f, 247.5f)
-        fun inkWith(color: Int, frac: Float): Int {
-            val a = ((color ushr 24) * frac).toInt().coerceIn(0, 255)
-            return (a shl 24) or (color and 0x00FFFFFF)
-        }
+        // Issue #59 F3: the well table is the shared companion
+        // constant and inkWith is the top-level inkWithAlpha — the
+        // loop form allocated a floatArrayOf and a capturing local
+        // fun on every frame.
+        val wellAzimuths = WELL_AZIMUTHS
         // Guide ring first (under everything): two arcs, breaks at the
         // tetrad boundaries. FLOW dims the whole assembly to ~40%.
         boundsRect.set(cx - ringR, cy - ringR, cx + ringR, cy + ringR)
-        paintStroke.color = inkWith(tokHairline(), if (isFlow) 0.4f else 1f)
+        paintStroke.color = inkWithAlpha(tokHairline(), if (isFlow) 0.4f else 1f)
         paintStroke.strokeWidth = dp(1f)
         paintStroke.strokeCap = Paint.Cap.BUTT
         canvas.drawArc(boundsRect, -174f, 168f, false, paintStroke)
@@ -1037,10 +1272,10 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
             paintStroke.strokeWidth = dp(10f)
             paintStroke.strokeCap = Paint.Cap.ROUND
             val bar0Frac = if (studyBlocksCount == 4) barInkFraction else 1f
-            paintStroke.color = inkWith(tokPrimary(), bar0Frac)
+            paintStroke.color = inkWithAlpha(tokPrimary(), bar0Frac)
             canvas.drawArc(boundsRect, -157.5f, 135f, false, paintStroke)
             if (studyBlocksCount >= 8) {
-                paintStroke.color = inkWith(tokPrimary(), barInkFraction)
+                paintStroke.color = inkWithAlpha(tokPrimary(), barInkFraction)
                 canvas.drawArc(boundsRect, 22.5f, 135f, false, paintStroke)
             }
         }
@@ -1056,7 +1291,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
             // well radius steps 5 -> 4dp. Closure bars (above) keep
             // tokPrimary by the same ruling — bars are structure,
             // wells are print.
-            paintFill.color = inkWith(
+            paintFill.color = inkWithAlpha(
                 when {
                     filled && isNightMode -> tokOnSurface()
                     filled -> tokPrimary()
@@ -1113,7 +1348,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
                     }
                     if (minutesValue >= 10) {
                         val ringR = dp(40f)
-                        val wellAz = floatArrayOf(-67.5f, -22.5f, 22.5f, 67.5f, 112.5f, 157.5f, 202.5f, 247.5f)
+                        val wellAz = WELL_AZIMUTHS // Issue #59 F3: shared constant, was a per-touch floatArrayOf
                         var bestWell = -1
                         var bestDist = dp(14f)
                         for (i in 0 until 8) {
@@ -1724,6 +1959,61 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
     private var frozenPlayTimeMs: Long = 0L
     private var resumeUsed: Boolean = false
     private var pendingResume: Boolean = false
+
+    init {
+        // Issue #59 (finding 4): labelled, clickable, focusable —
+        // not a touch-only black box.
+        isClickable = true
+        isFocusable = true
+        contentDescription = "Slide or tap to start"
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        setMeasuredDimension(
+            resolveSize(dp(280f).toInt(), widthMeasureSpec),
+            resolveSize(dp(72f).toInt(), heightMeasureSpec)
+        )
+    }
+
+    /** Accessibility activation = a classified tap (the same
+     *  warrant-owned outcome as the tap path's UP frame): OFF earns
+     *  the refusal, UNPROVEN drives only to the catch, LIVE runs
+     *  the mesh to the seat doorstep. No commit dispatches here —
+     *  enforcement still dispatches only at the latch frame. */
+    override fun performClick(): Boolean {
+        super.performClick()
+        if (sealedGate || isReturning || mode != Mode.REST) return true
+        // Attempt start, under beginAttempt's per-attempt law: a
+        // fresh warrant read and a clean refusal latch (without the
+        // latch reset, a repeat activation after a refusal would
+        // die silently inside startRefusal's already-fired guard).
+        attemptWarrant = readWarrant()
+        refusalFired = false
+        onPressStart?.invoke(attemptWarrant)
+        if (attemptWarrant == WarrantState.OFF) {
+            startRefusal(knockFirst = true)
+        } else {
+            startMesh(
+                target = if (attemptWarrant == WarrantState.UNPROVEN) {
+                    SlideGestureMath.CATCH
+                } else {
+                    0.92f
+                }
+            )
+        }
+        return true
+    }
+
+    // Issue #59 (finding 4), the deliberate omission: this view
+    // carries NO SavedState. Its posture is transient-by-law —
+    // detach resets the machine to REST, displayed home, refusal
+    // latch clean (Schlitten §4.5 + the detach-reset ruling in
+    // onDetachedFromWindow below), and the gate's factory rule
+    // rebuilds the posture from initialFraction on the next attach
+    // (§2.3). A framework-saved `displayed` would resurrect
+    // mid-gesture travel the detach law annulled. The durable
+    // state — minutes, blocks, lock — lives on the wheel and the
+    // host, never on this gesture surface.
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()

@@ -33,8 +33,25 @@ object SessionOutcome {
      *  gone for part of it — the books are BROKEN (Nocke §5). */
     const val ELAPSED_SHIELD_GAP = "ELAPSED_SHIELD_GAP"
 
+    /** Issue #129 F3: a manual session whose span elapsed with
+     *  the shield beating, but where an unguarded distraction
+     *  app (OPEN tier in a distraction category, an unreviewed
+     *  auto-OPEN app, or an app with no catalogue row) was used
+     *  for 30s+ inside the window. The session elapsed; it was
+     *  NOT clean, and the record now says so. The exposed apps'
+     *  names are booked at the ending write (see
+     *  MonolithRepository.EXPOSURE_LOG_PACKAGE). */
+    const val ELAPSED_OPEN_EXPOSURE = "ELAPSED_OPEN_EXPOSURE"
+
     /** FLOW ended by its lawful door past the floor. */
     const val STOPWATCH_ENDED = "STOPWATCH_ENDED"
+
+    /** Issue #290 F1: FLOW stopped by hand UNDER its 20-minute
+     *  floor — the withered record (Forest books a sub-minimum
+     *  stopwatch stop as a withered tree). Distinct from
+     *  ENDED_EARLY so the record names what actually happened;
+     *  never a finish (FLOW_FINISH requires STOPWATCH_ENDED). */
+    const val STOPWATCH_WITHERED = "STOPWATCH_WITHERED"
 
     /** The 60s valve was held to completion: the token was spent
      *  and the session BROKE. No receipt, no №, ever. */
@@ -106,7 +123,8 @@ fun finishKindOf(row: FocusSessionEntity, isSleepLoadout: Boolean, nowWallMillis
         }
     }
     return when (row.outcome) {
-        SessionOutcome.ELAPSED_CLEAN, SessionOutcome.ELAPSED_SHIELD_GAP -> FinishKind.MANUAL_FINISH
+        SessionOutcome.ELAPSED_CLEAN, SessionOutcome.ELAPSED_SHIELD_GAP,
+        SessionOutcome.ELAPSED_OPEN_EXPOSURE -> FinishKind.MANUAL_FINISH
         SessionOutcome.STOPWATCH_ENDED ->
             if (row.completedSuccessfully) FinishKind.FLOW_FINISH else null
         else -> null
@@ -117,7 +135,10 @@ fun finishKindOf(row: FocusSessionEntity, isSleepLoadout: Boolean, nowWallMillis
  *  Death-booked finishes (ELAPSED_SHIELD_GAP) never pulse (B-12);
  *  PARTIAL never pulses; the rest of the publishable kinds do. */
 fun finishPulses(kind: String, row: FocusSessionEntity): Boolean = when (kind) {
-    FinishKind.MANUAL_FINISH -> row.outcome != SessionOutcome.ELAPSED_SHIELD_GAP
+    // An exposed finish is death-booked in the same sense as a
+    // shield gap (#129 F3): the record stands, the pulse does not.
+    FinishKind.MANUAL_FINISH -> row.outcome != SessionOutcome.ELAPSED_SHIELD_GAP &&
+        row.outcome != SessionOutcome.ELAPSED_OPEN_EXPOSURE
     FinishKind.FLOW_FINISH -> true
     FinishKind.ROUTINE_ATTENDED -> true
     FinishKind.ROUTINE_SLEEP_STANDDOWN -> true
@@ -171,6 +192,26 @@ object InterceptOutcome {
 fun isBlockedInterceptOutcome(outcome: String): Boolean =
     InterceptOutcome.BLOCKED_OUTCOMES.any { it.equals(outcome.trim(), ignoreCase = true) }
 
+
+/** One row of the Vault's receipts index (issue #157): the facts
+ *  a claimed session's own row proves, nothing more — its №, its
+ *  session id, the instant it ended, its outcome word, and the
+ *  two warning facts the row itself carries (the release-fault
+ *  stamp and the shield-gap outcome). The slip is NOT stored; a
+ *  tap on this row re-derives it via the repository. */
+data class ReceiptIndexEntry(
+    val sessionId: Int,
+    val number: Int,
+    val endedAtWallMs: Long,
+    val outcomeWord: String,
+    val releaseFaultShield: Boolean,
+    val shieldWasOff: Boolean
+) {
+    /** The printed №, the slip's own voice: zero-padded to a
+     *  minimum of 3, never truncated. */
+    val numberPrint: String get() = "№ " + number.toString().padStart(3, '0')
+}
+
 /** One deflection on the slip: a blocked attempt the machine
  *  turned away during the session, reduced at assembly (window
  *  ∩ intention match ∩ 30s-per-package dedupe, first kept).
@@ -220,11 +261,26 @@ data class PendingReceipt(
     val bankedBreakSeconds: Int,
     val shieldWasOff: Boolean,
     val deflections: List<ReceiptDeflection>,
+    // Audit R3 #113, finding 4: the tamper penalty the row carries,
+    // threaded so the slip can NAME it — before this the penalty
+    // silently stretched the plan (it is inside spanTargetSeconds)
+    // and no surface ever mentioned it.
+    val penaltySecondsAdded: Int = 0,
+    /** Issue #129 F3: the unguarded apps actually used inside
+     *  this session's window (labels, longest-use first), read
+     *  back from the ending write's exposure booking. Empty for
+     *  every session not stamped ELAPSED_OPEN_EXPOSURE. */
+    val openExposureApps: List<String> = emptyList(),
     // Audit R3b #145: the curio this finish forged, by name — the
     // completion moment must not be silent about its own reward.
     // Null when the span forged nothing (routine-born rows, valve
     // breaks publish nothing at all); the sheet omits the line.
-    val forgedArtifactName: String? = null
+    val forgedArtifactName: String? = null,
+    // W-41: the seal's held split, read off the row (see
+    // FocusSessionEntity.heldShutAtSeal). -1 on a pre-v14 row:
+    // the sheet falls back to the stored total.
+    val heldShutAtSeal: Int = -1,
+    val heldPeekAtSeal: Int = -1
 )
 
 /**
@@ -257,8 +313,23 @@ data class ReceiptState(
     val deflections: List<ReceiptDeflection>,
     val restored: Boolean,
     val receiptPublishedMonoMs: Long,
+    // Audit R3 #113, finding 4: see PendingReceipt — the slip
+    // prints the penalty its plan silently included.
+    val penaltySecondsAdded: Int = 0,
+    /** Issue #129 F3: see [PendingReceipt.openExposureApps]. */
+    val openExposureApps: List<String> = emptyList(),
     // Audit R3b #145: see PendingReceipt.forgedArtifactName.
-    val forgedArtifactName: String? = null
+    val forgedArtifactName: String? = null,
+    // W-41: see PendingReceipt.heldShutAtSeal.
+    val heldShutAtSeal: Int = -1,
+    val heldPeekAtSeal: Int = -1,
+    // Issue #152: the IANA zone the session was ARMED in, captured
+    // at the birth funnel (ArmZoneStore). Null when unknown (a
+    // session armed before the capture existed). The slip renders
+    // ARMED in this zone — with its offset printed — whenever it
+    // differs from the zone in force at render; a receipt's times
+    // must say where they live.
+    val armZoneId: String? = null
 ) {
     /** The printed №: zero-padded to a minimum of 3, never
      *  truncated (№ 048 … № 1048). */
