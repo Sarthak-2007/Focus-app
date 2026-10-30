@@ -17,12 +17,16 @@ import javax.crypto.spec.SecretKeySpec
  * state to detect local DB/SharedPreferences tampering and trigger a
  * penalty lock. Keys are REQUESTED from the AndroidKeyStore; hardware/TEE
  * backing is not verified (no StrongBox request, no KeyInfo security-level
- * check), and when the KeyStore is unavailable signing falls back to a
- * built-in software key — so a valid signature proves consistency with
- * whatever key signed, not hardware custody of that key. (The AES-GCM
- * backup export that used to live here was killed Oct 29, 2026: its
- * payload had no egress and no restore - theatre, not a backup. Critics
- * Phase-3, caller-verified.)
+ * check). Issue #317 F3: there is NO built-in key — the old fallback was a
+ * string literal shipped in the APK, so anyone could forge a "valid"
+ * signature offline. Where no KeyStore exists at all, signing falls back
+ * to a random per-process software key (generated at first use, never
+ * shipped, never persisted): a valid signature then proves consistency
+ * only within the signing process, and signatures made under it fail
+ * closed after process death instead of verifying forever under a
+ * public key. (The AES-GCM backup export that used to live here was
+ * killed Oct 29, 2026: its payload had no egress and no restore -
+ * theatre, not a backup. Critics Phase-3, caller-verified.)
  */
 object CryptoIntegrityManager {
 
@@ -30,11 +34,16 @@ object CryptoIntegrityManager {
     private const val HMAC_KEY_ALIAS = "monolith_hmac_timer_guard_v1"
     private const val HMAC_ALGO = "HmacSHA256"
 
-    // Deterministic 256-bit fallback keys used when AndroidKeyStore hardware TEE is unavailable (e.g., local JVM tests)
-    private val fallbackHmacKey = SecretKeySpec(
-        "Monolith_Hardware_HMAC_Fallback_32B!".toByteArray(StandardCharsets.UTF_8),
-        HMAC_ALGO
-    )
+    // Issue #317 F3: the fallback key is RANDOM PER PROCESS — generated
+    // at first use, held only in memory, never shipped in the APK and
+    // never persisted. The previous literal string key let anyone with
+    // the APK forge signatures; this one is unknowable outside the
+    // process, and its signatures die with the process (fail-closed).
+    private val processFallbackKey: SecretKey by lazy {
+        val bytes = ByteArray(32)
+        java.security.SecureRandom().nextBytes(bytes)
+        SecretKeySpec(bytes, HMAC_ALGO)
+    }
 
     /**
      * SIGN path only: returns the AndroidKeyStore key, CREATING and
@@ -130,16 +139,16 @@ object CryptoIntegrityManager {
                 try {
                     mac.init(hwKey)
                 } catch (_: Exception) {
-                    mac.init(fallbackHmacKey)
+                    mac.init(processFallbackKey)
                 }
             } else {
-                mac.init(fallbackHmacKey)
+                mac.init(processFallbackKey)
             }
             val sig = mac.doFinal(payloadBytes)
             Base64.encodeToString(sig, Base64.NO_WRAP)
         } catch (_: Exception) {
             val mac = Mac.getInstance(HMAC_ALGO)
-            mac.init(fallbackHmacKey)
+            mac.init(processFallbackKey)
             Base64.encodeToString(mac.doFinal(payloadBytes), Base64.NO_WRAP)
         }
     }
@@ -178,7 +187,7 @@ object CryptoIntegrityManager {
         val expectedBytes = when {
             existingKey != null -> hmacSha256OrNull(existingKey, payloadBytes) ?: return false
             canHoldHardwareKey() -> return false
-            else -> hmacSha256OrNull(fallbackHmacKey, payloadBytes) ?: return false
+            else -> hmacSha256OrNull(processFallbackKey, payloadBytes) ?: return false
         }
         return MessageDigest.isEqual(expectedBytes, storedBytes)
     }

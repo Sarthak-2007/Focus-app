@@ -64,6 +64,9 @@ fun guardLineFor(snapshot: WatchSnapshot?, nowMono: Long): GuardLinePrint? {
         // issue #58 F1) both print with the STALE suffix — neither
         // is presented as current fact.
         PermPrint.STALE, PermPrint.MISSING_STALE -> "${firstLack.first.boardName} STALE"
+        // Issue #94: an UNPROVED line names its doubt on the Guard
+        // line too — never a bare name that reads as an ordinary lack.
+        PermPrint.UNPROVED -> "${firstLack.first.boardName} UNPROVED"
         else -> firstLack.first.boardName
     }
     return GuardLinePrint("GUARD $warranted/$total — $name")

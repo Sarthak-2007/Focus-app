@@ -239,6 +239,26 @@ class SessionSealTransitionImpl(
         t0Mono: Long,
         sealRow: suspend () -> Boolean,
         publish: () -> Unit
+    ): Boolean = executeSealProvenance(sessionId, t0Mono, sealRow, publish, unattended = false)
+
+    /**
+     * Issue #150 (recovery closure): provenance for the Throw.
+     * The interface's [executeSeal] is the Deck door — the user is
+     * present, hand on the phone, arming their own block — so its
+     * Throw is an attended voice. The proving doors ([prove],
+     * reached from the routine heartbeat's proveAndSeal and from
+     * relaunch recovery) fire with nobody touching the phone:
+     * their Throw is unattended, and Do Not Disturb must bind it
+     * in the engine exactly as it binds the break boundaries and
+     * the finish cascade. The interface signature is unchanged
+     * (test fakes override it); provenance travels on this impl.
+     */
+    private suspend fun executeSealProvenance(
+        sessionId: Int,
+        t0Mono: Long,
+        sealRow: suspend () -> Boolean,
+        publish: () -> Unit,
+        unattended: Boolean
     ): Boolean {
         if (!claim(sessionId)) return false
         val ok = runCatching { sealRow() }.getOrDefault(false)
@@ -262,7 +282,7 @@ class SessionSealTransitionImpl(
             clearSealMarker(sessionId)
             return false
         }
-        engine.playSealThrow()
+        engine.playSealThrow(unattended = unattended)
         return true
     }
 
@@ -348,11 +368,12 @@ class SessionSealTransitionImpl(
                     val lastConfirm = maxOf(l1, l2, l3)
                     val t0 = maxOf(lastConfirm, latchMono + DWELL_MS)
                     if (now >= t0) {
-                        val sealedOk = executeSeal(
+                        val sealedOk = executeSealProvenance(
                             sessionId = sessionId,
                             t0Mono = t0,
                             sealRow = { repository.sealSession(sessionId, t0) },
-                            publish = {}
+                            publish = {},
+                            unattended = true
                         )
                         return if (sealedOk) SealVerdict.SEALED else SealVerdict.ANNULLED
                     }
