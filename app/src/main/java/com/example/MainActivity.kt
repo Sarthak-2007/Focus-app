@@ -1185,7 +1185,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     launcherPage = LauncherPage.PEEK
                     launcherOpen = true
                 },
-                onRequestEmergencyBreak = viewModel::requestDisarmFromAirlock
+                onRequestEmergencyBreak = viewModel::requestDisarmFromAirlock,
+                // Issue #318 F4: the wall breathes for the stored,
+                // configured length — not a composable-local 5.
+                breathSeconds = remember {
+                    com.example.data.AirlockBreathStore(context).breathSeconds()
+                }
             )
 
             // Issue #99 F2: the peek countdown pill — the one
