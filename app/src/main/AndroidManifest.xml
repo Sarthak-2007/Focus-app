@@ -15,6 +15,11 @@
     <!-- Declared so MainActivity can fire Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS directly (issue #26) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Issue #309 F2: lets the routine chain alarm fire exactly at
+         its boundary instead of Doze-late, when the user grants it
+         (Android 12+); RoutineScheduler falls back to the inexact
+         arm whenever the grant is absent. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
@@ -118,6 +123,17 @@
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
             </intent-filter>
+            <!-- Issue #81 F5: a component state change anywhere
+                 (including Monolith's own components via adb /
+                 pm disable) prompts a heartbeat reconcile, whose
+                 pass re-reads the critical components' enabled
+                 states and latches the live session's gap if one
+                 was disabled. The poll in the pass is the proof;
+                 this receiver only shortens the time to notice. -->
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_CHANGED" />
+                <data android:scheme="package" />
+            </intent-filter>
         </receiver>
 
         <!-- Issue #281 (R5 supplement): directBootAware is kept ONLY on
@@ -131,6 +147,25 @@
         <receiver
             android:name=".service.RoutineAlarmReceiver"
             android:exported="false" />
+
+        <!-- Issue #309 F7: package added/removed/replaced/changed —
+             reconcile the app catalogue at install time instead of
+             discovering installs on the next UI-driven sync. These
+             are protected system broadcasts; exported=false still
+             receives them. -->
+        <receiver
+            android:name=".service.MonolithPackageReceiver"
+            android:directBootAware="true"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_ADDED" />
+                <action android:name="android.intent.action.PACKAGE_REMOVED" />
+                <action android:name="android.intent.action.PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.PACKAGE_CHANGED" />
+                <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
 
         <!-- Slice E (Draht): the release-retry cadence's hint. -->
         <receiver

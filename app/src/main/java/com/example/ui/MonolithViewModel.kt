@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.util.Log
+import com.example.MLog
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
@@ -92,9 +93,19 @@ enum class MonolithDestination(val route: String, val label: String) {
  * finish state clears) → NIGHT, the finish holds it; (3) else an
  * enabled, unpaused SLEEP window is active → NIGHT, that routine
  * owns it and is named as printed on its Shield row; (4) else
- * DAY, owned by nothing — and the readout says so. Window state
- * comes from the one derivation (RoutineDerive), never a second
- * computation.
+ * CLOCK/SYSTEM night → NIGHT, the night itself owns it (Audit
+ * R3b #116: darkness was hostage to accepting a blocking
+ * routine — pausing or disabling SLEEP to stop its blocking also
+ * cost the dark UI, and at 04:00 the app opened in full light;
+ * the one [com.example.service.NightSignal] now owns this step,
+ * the same signal the desk clock, the seal shot and the sound
+ * engine read); (5) else DAY, owned by nothing — and the
+ * readout says so. Window state comes from the one
+ * derivation (RoutineDerive), never a second computation.
+ *
+ * Because step (4) holds night until 06:00, a session or SLEEP
+ * window ending at night can no longer cut to the light scheme in
+ * a dark room: night is held till morning by construction.
  */
 data class ThemeEvaluation(val isNight: Boolean, val readout: String)
 
@@ -102,6 +113,7 @@ fun evaluateTheme(
     sessionActive: Boolean,
     routines: List<com.example.data.RoutineEntity>,
     nowMillis: Long,
+    systemNight: Boolean = false,
     finishHeld: Boolean = false
 ): ThemeEvaluation {
     if (sessionActive) {
@@ -121,14 +133,19 @@ fun evaluateTheme(
                 com.example.data.WindowState.OPEN_HELD
             )
     }
-    return if (owner != null) {
+    if (owner != null) {
         val start = String.format(
             Locale.US, "%02d:%02d", owner.startMinutes / 60, owner.startMinutes % 60
         )
-        ThemeEvaluation(true, "AUTO · NIGHT — ${owner.name} $start")
-    } else {
-        ThemeEvaluation(false, "AUTO · DAY — NO ROUTINE OWNS IT")
+        return ThemeEvaluation(true, "AUTO · NIGHT — ${owner.name} $start")
     }
+    if (systemNight) {
+        return ThemeEvaluation(true, "AUTO · NIGHT — SYSTEM DARK MODE")
+    }
+    if (com.example.service.NightSignal.isNightAt(nowMillis)) {
+        return ThemeEvaluation(true, "AUTO · NIGHT — CLOCK 20:00–06:00")
+    }
+    return ThemeEvaluation(false, "AUTO · DAY — NO ROUTINE OWNS IT")
 }
 
 /**
@@ -182,12 +199,22 @@ internal fun peekOfferFor(
     entity: BlockedAppEntity?,
     cooldownLeftSeconds: Int,
     pillActive: Boolean
-): Boolean =
-    path.canHonourPeekLease &&
-        entity != null &&
-        entity.resolvedTier == AppBlockTier.PEEK_2M &&
-        cooldownLeftSeconds == 0 &&
-        !pillActive
+): Boolean {
+    if (!path.canHonourPeekLease || entity == null || pillActive) return false
+    // Issue #120 (otp-banking-mid-session): FINANCE is essential
+    // infrastructure. A LOCKED bank/UPI/authenticator still offers
+    // the peek — the alternative was ending the session through
+    // the once-a-week emergency valve to approve one payment —
+    // and the 20-minute cooldown never rations a finance peek: a
+    // second OTP inside the window (login, then payment) is the
+    // normal case, not abuse. The 5s wall and the 2-minute lease
+    // still gate every finance peek exactly as before.
+    if (entity.category == AppCategory.FINANCE.name) {
+        return entity.resolvedTier != AppBlockTier.OPEN
+    }
+    return entity.resolvedTier == AppBlockTier.PEEK_2M &&
+        cooldownLeftSeconds == 0
+}
 
 /**
  * Issue #78 (Audit R2, ipc-intents): may an Airlock raised from an
@@ -244,7 +271,10 @@ internal fun peekWithheldFor(
 ): PeekWithheld? = when {
     canPeek -> null
     !path.canHonourPeekLease -> null
-    appEntity?.resolvedTier != AppBlockTier.PEEK_2M -> null
+    // Issue #120: a finance row owes the withheld reason too —
+    // its tier may be LOCKED while the peek is still on the table.
+    appEntity?.resolvedTier != AppBlockTier.PEEK_2M &&
+        appEntity?.category != AppCategory.FINANCE.name -> null
     // Hale W-30: a peek length of zero is its own reason — the peek
     // is OFF, not cooling down.
     MonolithRepository.PEEK_DURATION_SECONDS <= 0 -> PeekWithheld.PEEK_OFF
@@ -548,6 +578,15 @@ class MonolithViewModel(
     private val _selectedProfileName = MutableStateFlow("Study Loadout")
     val selectedProfileName: StateFlow<String> = _selectedProfileName.asStateFlow()
 
+    // Issue #139 F4: applying a profile rewrites the dial and every
+    // per-app tier in one tap. The dial/name from before the tap are
+    // kept here (the tiers themselves are snapshotted by the
+    // repository) so one undo restores the setup he had by hand.
+    private var preProfileDialMinutes: Int? = null
+    private var preProfileName: String? = null
+    private val _profileUndoAvailable = MutableStateFlow(false)
+    val profileUndoAvailable: StateFlow<Boolean> = _profileUndoAvailable.asStateFlow()
+
     // UNA-07 (Truth Car 3): the Shield LOADOUT cap rests on the
     // stored fact of his last HAND pick (LoadoutStore), never on a
     // composable's remember. Seeded from the store at birth; written
@@ -625,6 +664,22 @@ class MonolithViewModel(
         repository.clearPruneNote()
     }
 
+    /** Issue #129 F1: the review prompt's content — the names of
+     *  apps the category guess birthed OPEN that the man has not
+     *  ruled on yet. There is NO dismiss: the list empties only
+     *  when a ruling lands on each app (the repository clears the
+     *  record at the tier commit), so the prompt cannot be tapped
+     *  away into the same silence the audit found. Refreshed after
+     *  the seed-sync and after every tier commit in this VM. */
+    private val _unreviewedOpenNames = MutableStateFlow<List<String>>(emptyList())
+    val unreviewedOpenNames: StateFlow<List<String>> = _unreviewedOpenNames.asStateFlow()
+
+    fun refreshUnreviewedOpen() {
+        viewModelScope.launch {
+            _unreviewedOpenNames.value = repository.unreviewedOpenApps().map { it.appName }
+        }
+    }
+
     val apps: StateFlow<List<BlockedAppEntity>> = repository.allAppsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -647,6 +702,13 @@ class MonolithViewModel(
 
     val sessionHistory: StateFlow<List<FocusSessionEntity>> = repository.sessionHistoryFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Issue #135 F2: the most recent session that claimed a receipt
+     *  № (history is start-DESC) — the Deck's LAST RECEIPT door
+     *  stands on this, even after arming cleared the standing slip. */
+    val lastReceiptSessionId: StateFlow<Int?> = sessionHistory.map { rows ->
+        rows.firstOrNull { it.receiptNumber > 0 }?.id
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val interceptLogs: StateFlow<List<InterceptLogEntity>> = repository.interceptLogsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -686,13 +748,19 @@ class MonolithViewModel(
     // ------------------------------------------------------------------
     // THE THEME EVALUATION (chrome C4). One evaluation, two readers:
     // the scheme (through darkTheme) and PARK's printed readout.
-    // Re-derived on a 1-second stamp. Issue #143: session-night is
+    // Re-derived on a 1-second stamp so a boundary swaps the scheme
+    // within a second of its frame. Issue #143: session-night is
     // stepped by the GROUND (never at the row's birth, never
     // during proving — the t=400ms pin MainActivity/Theme.kt
     // always claimed), and a finish being lived through HOLDS
     // the night until it clears, so the detention and the
     // receipt are not spent under a day blast. The Deck and
     // receipt surfaces animate the colour step (F6).
+    // (Audit R3b #116: the old note here boasted "a 0ms cut, never
+    // a fade" — that cut, fired when a session/SLEEP window ended
+    // at night, floodlit a half-asleep user. Clock night in the
+    // evaluation now holds the night scheme until 06:00, so no
+    // boundary inside the night can cut to light at all.)
     // ------------------------------------------------------------------
     private val _themeNow = MutableStateFlow(System.currentTimeMillis())
 
@@ -703,10 +771,16 @@ class MonolithViewModel(
         _shotGround,
         _finishNightHold
     ) { routineList, session, now, ground, finishHold ->
+        // The system signal, read live at each derivation: the
+        // phone's own dark mode is a night witness beside the clock.
+        val systemNight = (appContext.resources.configuration.uiMode and
+            android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
         evaluateTheme(
             session?.isActive == true && ground == ShotGround.GROUNDED,
             routineList,
             now,
+            systemNight = systemNight,
             finishHeld = finishHold
         )
     }.stateIn(
@@ -924,20 +998,24 @@ class MonolithViewModel(
     }
 
     /** The header's Guard line (chrome C2): derived from the Watch
-     *  Store; while a session seals the phone it prints the freeze's
-     *  captured line, untouched by anything the store does after. */
+     *  Store. The seal freeze is the band's fallback for the
+     *  UNMEASURED case only — a live measured print outranks the
+     *  captured one in both directions, so a permission revoked
+     *  mid-session drops the band off its frozen `GUARD 4/4` the
+     *  moment the store measures the loss (Audit R3 #113,
+     *  finding 2; resolveGuardLinePrint carries the law). */
     val guardLinePrint: StateFlow<com.example.ui.components.GuardLinePrint?> = combine(
         com.example.service.WatchStore.snapshots,
         _sealFreeze,
         activeSession
     ) { snap, freeze, session ->
-        if (session?.isActive == true && freeze?.guardLine != null) {
-            freeze.guardLine
-        } else {
-            com.example.ui.components.guardLineFor(
+        com.example.ui.components.resolveGuardLinePrint(
+            sessionActive = session?.isActive == true,
+            frozen = freeze?.guardLine,
+            live = com.example.ui.components.guardLineFor(
                 snap, android.os.SystemClock.elapsedRealtime()
             )
-        }
+        )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     // =========================================================================
@@ -1006,7 +1084,9 @@ class MonolithViewModel(
     fun presentReceipt(sessionId: Int) {
         viewModelScope.launch {
             _presentedReceipt.value =
-                runCatching { repository.rehydrateReceipt(sessionId) }.getOrNull()
+                runCatching { repository.rehydrateReceipt(sessionId) }
+                    .onFailure { MLog.w("rehydrateReceipt($sessionId) failed; receipt not presented", it) }
+                    .getOrNull()
         }
     }
 
@@ -1031,6 +1111,17 @@ class MonolithViewModel(
     private var finishControllerStarted = false
 
     init {
+        // Issue #139 F4: a profile-undo snapshot survives process
+        // death in prefs; if one is on disk, the undo door stands.
+        _profileUndoAvailable.value = repository.hasProfileUndoSnapshot()
+        // Rehydrate the pre-tap dial + name from the same prefs
+        // entry (issue #139 F4): without this, an undo after
+        // process death restored the tiers but silently kept the
+        // applied profile's dial and name.
+        if (_profileUndoAvailable.value) {
+            preProfileDialMinutes = repository.profileUndoDialMinutes()
+            preProfileName = repository.profileUndoName()
+        }
         // G-03 rehydration: a delete taken just before process
         // death left its restore copy on disk. If its five-second
         // window is still open, the banner returns with a working
@@ -1060,6 +1151,12 @@ class MonolithViewModel(
                 undoDeleteStore.clear()
             }
         }
+        // Issue #83: reap any stale undo copy on this process
+        // start as well — the rehydration above revives or drops
+        // the snapshot for the banner, and expireIfStale is the
+        // store-level guarantee that a copy whose window closed
+        // while no process lived does not linger in prefs.
+        com.example.data.UndoDeleteStore.expireIfStale(appContext)
         // Issue #143: latch "this session is being lived in night"
         // while it runs — E0 reads the latch, because by then the
         // evaluation has already flipped back to day.
@@ -1081,6 +1178,7 @@ class MonolithViewModel(
         viewModelScope.launch {
             repository.ensureSeededAndSyncPackages()
             _pruneNote.value = repository.pendingPruneNote()
+            refreshUnreviewedOpen()
             // Routines rebuild: no per-routine alarm arming — one
             // forced reconcile derives the truth and rearms the chain.
             com.example.service.RoutineHeartbeat.tick(
@@ -1100,6 +1198,31 @@ class MonolithViewModel(
                     seedDialFromTask(task)
                 }
                 refreshActiveTaskCarryover(task)
+            }
+        }
+        // Issue #135 F1: the arm setup (dial, loadout/profile, block
+        // count, intention) lived only in this VM's memory — a
+        // process death during the break silently re-armed session 2
+        // with factory parameters. When NO session is active, restore
+        // the setup from the most recent finished session's persisted
+        // row (it stores profileName, targetDurationSeconds,
+        // totalStudyBlocks, intention). Routine rows are skipped:
+        // their profile/duration are the window's, not his hand's.
+        // A FLOW (stopwatch) row's stored target is its floor, not
+        // the dial, so the dial is left alone for those.
+        viewModelScope.launch {
+            if (repository.activeSessionSnapshot() == null) {
+                repository.lastFinishedSessionSnapshot()?.let { last ->
+                    if (last.routineId == null) {
+                        if (!last.isStopwatchMode) {
+                            _dialMinutes.value =
+                                (last.targetDurationSeconds / 60).coerceIn(5, 180)
+                        }
+                        _studyBlocksCount.value = last.totalStudyBlocks.coerceIn(1, 8)
+                        _selectedProfileName.value = last.profileName
+                        _intentionText.value = last.intention
+                    }
+                }
             }
         }
         // The Watch Store's emissions are a bus, never a verdict:
@@ -1299,7 +1422,10 @@ class MonolithViewModel(
                 // The theme evaluation's clock stamp (chrome C4):
                 // a routine boundary re-derives the evaluation —
                 // and with it the scheme — within a second of its
-                // frame, as a cut.
+                // frame. Inside clock night the evaluation holds
+                // NIGHT (see evaluateTheme step 3), so a boundary
+                // at night changes the readout's owner, never the
+                // scheme: no floodlight cut in a dark room.
                 _themeNow.value = System.currentTimeMillis()
                 // Shift Always-On Desk Clock figure-8 coordinates every 60 seconds to prevent OLED burn-in
                 if (tickSecondCounter % 60 == 0) {
@@ -1446,10 +1572,14 @@ class MonolithViewModel(
      *  NOT called for it, and E6 never arms from it). */
     private fun runSliceERecovery() {
         viewModelScope.launch {
-            runCatching { repository.rehydrateReceipt() }.getOrNull()?.let { restored ->
+            runCatching { repository.rehydrateReceipt() }
+                .onFailure { MLog.w("Slice-E receipt rehydrate failed", it) }
+                .getOrNull()?.let { restored ->
                 if (_receiptState.value == null) _receiptState.value = restored
             }
-            val active = runCatching { repository.activeSessionSnapshot() }.getOrNull()
+            val active = runCatching { repository.activeSessionSnapshot() }
+                .onFailure { MLog.w("Slice-E active-session snapshot failed; recovery skipped this launch", it) }
+                .getOrNull()
             if (active != null && armProving.phase.value == ArmPhase.Idle) {
                 // Issue #126 F1: gate the Deck on the recovery's
                 // verdict for exactly the rows recover() will
@@ -1530,9 +1660,15 @@ class MonolithViewModel(
      *
      * First-sighting rows are branch U: foregrounded ∧ within
      * 1800ms of the derived end ⇒ the witnessed path with
-     * E0 := discovery; within 10 minutes ⇒ claim + issue at
-     * discovery, no held frame, no pulse; older ⇒ the moment is
-     * gone — marked handled, never fabricated into a late №.
+     * E0 := discovery; older ⇒ claim + issue at discovery, no
+     * held frame, no pulse, at ANY age. The 10-minute discard
+     * this replaces (Audit R3 #113, finding 3) threw the finish
+     * away whole — no receipt, no notice, and the handled mark
+     * barred the publishReceipt facade from ever recovering it.
+     * Issuing late fabricates nothing: the slip's facts are the
+     * row's own (its stamped end, its sealed elapsed), and the
+     * № is minted at discovery, which is when it truthfully
+     * came into being.
      */
     private fun startFinishController() {
         if (finishControllerStarted) return
@@ -1553,20 +1689,7 @@ class MonolithViewModel(
                         val ageMs = nowWall - endWall
                         when {
                             ageMs <= 1_800L -> onFinishE0(row, kind, witnessed = true)
-                            ageMs <= 600_000L -> onFinishE0(row, kind, witnessed = false)
-                            // Audit R1 #40: a SLEEP stand-down is
-                            // DISCOVERED, never witnessed — the
-                            // phone slept through the window's end
-                            // and the finish exists only when the
-                            // app next looks. The 10-minute discard
-                            // made exactly that booking vanish,
-                            // forever. Stand-downs are exempt from
-                            // the discard; every other kind keeps
-                            // it (a stale manual finish discovered
-                            // days late still books nothing).
-                            kind == com.example.data.FinishKind.ROUTINE_SLEEP_STANDDOWN ->
-                                onFinishE0(row, kind, witnessed = false)
-                            else -> handledFinishIds += row.id
+                            else -> onFinishE0(row, kind, witnessed = false)
                         }
                     } else {
                         onFinishE0(row, kind, witnessed = true)
@@ -1758,8 +1881,18 @@ class MonolithViewModel(
      */
     fun publishReceipt(sessionId: Int) {
         if (_receiptState.value?.sessionId == sessionId) return
-        if (sessionId in handledFinishIds) return
         viewModelScope.launch {
+            // Issue #135 F2 re-issue: a session that already claimed
+            // its № rebuilds SETTLED from its row (repository
+            // receiptForSession) — it never re-claims and never
+            // re-enters the finish controller's handled set. This is
+            // the door the Deck's LAST RECEIPT opens after the next
+            // arm cleared the standing slip from memory.
+            repository.receiptForSession(sessionId)?.let { reissued ->
+                _receiptState.value = reissued
+                return@launch
+            }
+            if (sessionId in handledFinishIds) return@launch
             val row = repository.sessionById(sessionId) ?: return@launch
             val kind = com.example.data.finishKindOf(
                 row, isSleepLoadout(row.routineId), System.currentTimeMillis()
@@ -2149,6 +2282,11 @@ class MonolithViewModel(
             if (repository.clearAllCapturedNotifications()) {
                 soundEngine.playMechanicalLatch(false)
             }
+            // Issue #83: the same erasure clears the intercept
+            // behaviour log — it had no production delete path at
+            // all, so a "clear" that left it standing was not an
+            // erasure.
+            repository.clearInterceptLogs()
         }
     }
 
@@ -2387,7 +2525,7 @@ class MonolithViewModel(
      *  repository re-signs the row in the same write. */
     fun extendActiveSession(extraMinutes: Int = 10) {
         viewModelScope.launch {
-            repository.extendActiveSession(extraMinutes)
+            repository.extendActiveSessionReturningSession(extraMinutes)
         }
     }
 
@@ -2772,6 +2910,7 @@ class MonolithViewModel(
         soundEngine.playMechanicalLatch(true)
         viewModelScope.launch {
             repository.cycleAppBlockTier(app)
+            refreshUnreviewedOpen()
         }
     }
 
@@ -2828,6 +2967,7 @@ class MonolithViewModel(
         }
         viewModelScope.launch {
             repository.setAppBlockTier(app.packageName, tier)
+            refreshUnreviewedOpen()
         }
     }
 
@@ -2947,10 +3087,40 @@ class MonolithViewModel(
 
     fun selectAndApplyProfile(profile: FocusProfileEntity) {
         soundEngine.playHarmonicSeal(true)
+        // Snapshot the dial + name before the tap overwrites them
+        // (issue #139 F4); the repository snapshots the tiers.
+        preProfileDialMinutes = _dialMinutes.value
+        preProfileName = _selectedProfileName.value
+        // Capture for the persist below (issue #139 F4): the vars
+        // themselves are read again at undo time in-session.
+        val undoDial = preProfileDialMinutes
+        val undoName = preProfileName
         _selectedProfileName.value = profile.name
         _dialMinutes.value = profile.defaultMinutes
         viewModelScope.launch {
+            // Persist the pre-tap dial + name next to the tiers
+            // snapshot, so undo after process death restores all
+            // three, not just the tiers.
+            if (undoDial != null && undoName != null) {
+                repository.saveProfileUndoContext(undoDial, undoName)
+            }
             repository.applyProfile(profile)
+            _profileUndoAvailable.value = repository.hasProfileUndoSnapshot()
+        }
+    }
+
+    /** Issue #139 F4: one-tap undo of the last profile application —
+     *  restores the hand-set per-app tiers and the dial he had. */
+    fun undoLastProfileApply() {
+        viewModelScope.launch {
+            if (repository.restoreProfileUndoSnapshot()) {
+                preProfileDialMinutes?.let { _dialMinutes.value = it }
+                preProfileName?.let { _selectedProfileName.value = it }
+                preProfileDialMinutes = null
+                preProfileName = null
+                _profileUndoAvailable.value = false
+                soundEngine.playMechanicalLatch(false)
+            }
         }
     }
 
@@ -3035,7 +3205,7 @@ class MonolithViewModel(
     /** Issue #283: +15 minutes on the running session — the cap
      *  and the HMAC re-sign live in the repository verb. */
     fun extendActiveSession() {
-        viewModelScope.launch { repository.extendActiveSession() }
+        viewModelScope.launch { repository.extendActiveSessionBySeconds() }
     }
 
     fun requestDisarmChallenge() {
@@ -3133,8 +3303,12 @@ class MonolithViewModel(
         path: InterceptPath = InterceptPath.UNKNOWN
     ) {
         viewModelScope.launch {
-            val session = runCatching { repository.activeSessionSnapshot() }.getOrNull()
-            val entity = runCatching { repository.appsSnapshot() }.getOrNull()
+            val session = runCatching { repository.activeSessionSnapshot() }
+                .onFailure { MLog.w("intercept-from-intent: session snapshot read failed; Airlock dropped", it) }
+                .getOrNull()
+            val entity = runCatching { repository.appsSnapshot() }
+                .onFailure { MLog.w("intercept-from-intent: apps snapshot read failed; Airlock dropped", it) }
+                .getOrNull()
                 ?.find { it.packageName == packageName }
             val leaseLive = entity != null &&
                 entity.resolvedTier == AppBlockTier.PEEK_2M &&
@@ -3310,6 +3484,21 @@ class MonolithViewModel(
         val name = state.interceptedAppName.ifBlank { "2m Peek App" }
         soundEngine.playMechanicalLatch(true)
         _airlockState.value = state.copy(isVisible = false)
+        // Issue #99 F4 (HAND-MERGE: Konto batch-10 flag on this
+        // function — keep this block minimal): taking the peek takes
+        // you to the app. The lease no longer burns while the user
+        // navigates home and relaunches by hand.
+        runCatching {
+            appContext.packageManager.getLaunchIntentForPackage(pkg)?.let { launch ->
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                appContext.startActivity(launch)
+            }
+        }.onFailure {
+            // Issue #75 F1 wiring: the peek was granted and the
+            // pill armed, but the app launch itself failed —
+            // silently until now.
+            MLog.w("peek launch intent failed for $pkg", it)
+        }
         _floatingPeekPill.value = FloatingPeekPillState(
             isActive = true,
             packageName = pkg,
@@ -3376,6 +3565,11 @@ class MonolithViewModel(
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                         }
                     )
+                }.onFailure {
+                    // Issue #75 F1 wiring: the post-peek eviction
+                    // relaunch failed — the intercept below still
+                    // fires, but the failed relaunch now speaks.
+                    MLog.w("expirePeekAndEvict relaunch failed for $pkg", it)
                 }
                 val entity = apps.value.find { it.packageName == pkg }
                 triggerAirlockIntercept(
@@ -3456,6 +3650,27 @@ class MonolithViewModel(
                 outcome = if (uninstallAttempt) "Uninstall Attempt — Returned" else "Stayed Focused",
                 triggerReason = state.selectedReason.shortTag,
                 countAsReach = !uninstallAttempt
+            )
+        }
+    }
+
+    /** The launcher doors on the Airlock (design-revamp salvage,
+     *  D-02): the user leaves the intercept through a launcher door,
+     *  so the intercept record says exactly that. Never "Stayed
+     *  Focused" — that would be a lie — and never silence, which
+     *  would erase an attempt that did happen. Ported from
+     *  agent/design-revamp 2dac73e (REVAMP-CRITIC2 D-02). */
+    fun leaveAirlockViaLauncherDoors() {
+        val state = _airlockState.value
+        if (!state.isVisible) return
+        _airlockState.value = state.copy(isVisible = false)
+        viewModelScope.launch {
+            repository.recordIntercept(
+                packageName = state.interceptedPackageName.ifBlank { "com.zhiliaoapp.musically" },
+                appName = state.interceptedAppName.ifBlank { "Blocked App" },
+                sessionIntention = state.sessionIntention.ifBlank { _intentionText.value },
+                outcome = "Opened Launcher",
+                triggerReason = state.selectedReason.shortTag
             )
         }
     }
