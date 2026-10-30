@@ -225,7 +225,11 @@ fun TactileDeckScreen(
             if (sealShot?.sessionId != session.id) {
                 val t0 = sealT0MonoMs
                 sealShot = if (t0 != null) {
-                    SealShotState(session.id, t0, preExisting = false)
+                    SealShotState(
+                        session.id, t0, preExisting = false,
+                        nightCalm = com.example.service.NightSignal
+                            .isNightAt(System.currentTimeMillis())
+                    )
                 } else {
                     exitPhase = 3
                     SealShotState(session.id, 0L, preExisting = true)
@@ -244,12 +248,18 @@ fun TactileDeckScreen(
         while (!shot.heroLanded) {
             withFrameMillis { }
             val e = SystemClock.elapsedRealtime() - shot.t0Mono
-            shot.vertigoT = MonolithCurves.VertigoTransformEasing.transform(
-                (e / 1050f).coerceIn(0f, 1f)
-            )
-            shot.blurT = MonolithCurves.VertigoBlurEasing.transform(
-                (e / 1050f).coerceIn(0f, 1f)
-            )
+            // Night calm (#116 finding 4): at night the easings are
+            // never driven — vertigoT/blurT stay at rest (0), so the
+            // hero neither recedes nor blurs. The phase latches
+            // below still advance on the same 1050ms clock.
+            if (!shot.nightCalm) {
+                shot.vertigoT = MonolithCurves.VertigoTransformEasing.transform(
+                    (e / 1050f).coerceIn(0f, 1f)
+                )
+                shot.blurT = MonolithCurves.VertigoBlurEasing.transform(
+                    (e / 1050f).coerceIn(0f, 1f)
+                )
+            }
             if (e >= 180L) shot.departed = true
             if (e >= 400L) shot.groundStepped = true
             val phase = (e / 50L).toInt().coerceIn(0, 3)
@@ -584,7 +594,7 @@ fun TactileDeckScreen(
                 // the blur on its own re-ease, peaking mid-shot and
                 // gone at Settle. At rest every term is identity.
                 .then(
-                    if (shotActive && shot != null) {
+                    if (shotActive && shot != null && !shot.nightCalm) {
                         val vt = shot.vertigoT
                         val blurDp = (6f * 4f * shot.blurT * (1f - shot.blurT)).dp
                         Modifier
@@ -1115,7 +1125,16 @@ fun TactileDeckScreen(
 class SealShotState(
     val sessionId: Int,
     val t0Mono: Long,
-    val preExisting: Boolean
+    val preExisting: Boolean,
+    /**
+     * Night calm (Audit R3b #116, finding 4): true when the seal
+     * was armed inside clock night (the one NightSignal). A night
+     * seal runs the shot's TIMING — departure, ground step, settle
+     * — but never its vertigo or blur: a half-asleep user in bed
+     * gets a still room, not a receding, blurring one. Daytime
+     * seals keep the full shot, exactly as shipped.
+     */
+    val nightCalm: Boolean = false
 ) {
     var vertigoT: Float by mutableStateOf(if (preExisting) 1f else 0f)
     var blurT: Float by mutableStateOf(if (preExisting) 1f else 0f)
