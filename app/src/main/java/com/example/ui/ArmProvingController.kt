@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.util.Log
+import com.example.MLog
 import android.content.Context
 import android.os.SystemClock
 import android.view.Choreographer
@@ -365,7 +366,9 @@ class ArmProvingController(
                     studyBlocksCount = studyBlocksCount
                 )
                 onSessionRowInserted(attemptId, id)
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                // Issue #75 F1 wiring: the failed insert now speaks.
+                MLog.e("startSession insert failed; L1 stays pending", e)
                 // The insert never returned: L1 stays pending and
                 // the clocks judge it. Annulment with no row is
                 // stopShield + attempt discard only.
@@ -390,7 +393,9 @@ class ArmProvingController(
         // L1's second half: a snapshot read returns the latched
         // id as the active row. The stamp is read on the
         // snapshot's return, per the link's definition.
-        val snapshotId = runCatching { port.activeSnapshotId() }.getOrNull()
+        val snapshotId = runCatching { port.activeSnapshotId() }
+            .onFailure { MLog.w("activeSnapshotId read failed after session insert", it) }
+            .getOrNull()
         if (snapshotId == sessionId) {
             // The snapshot read suspended: the attempt may have
             // been annulled or superseded while it was in flight.
@@ -402,6 +407,7 @@ class ArmProvingController(
             // attempt that died during the read).
             if (attemptId in deadAttempts) {
                 runCatching { port.annulProvingSession(sessionId) }
+                    .onFailure { MLog.e("annul of superseded attempt's session $sessionId failed", it) }
                 return
             }
             if (_phase.value.attemptIdOrNull() != attemptId) return
@@ -553,7 +559,9 @@ class ArmProvingController(
                 // the link's definition is a state of the world,
                 // not of one read. Held marks flush on its landing.
                 if (current.linksOrNull()?.get(ArmLink.SESSION_ROW) is LinkMark.Pending) {
-                    val snap = runCatching { port.activeSnapshotId() }.getOrNull()
+                    val snap = runCatching { port.activeSnapshotId() }
+                        .onFailure { MLog.d("sampler activeSnapshotId read failed: ${it.message}") }
+                        .getOrNull()
                     if (snap == sessionId) {
                         applyMark(attemptId, ArmLink.SESSION_ROW, clock())
                         flushHeldMarks(attemptId)
@@ -677,7 +685,9 @@ class ArmProvingController(
             if (current.attemptIdOrNull() != attemptId) return@launch
             val sessionId = current.sessionIdOrNull()
             if (sessionId != null && transition.isSealed(sessionId)) {
-                val rowT0 = runCatching { port.sealedRowT0Mono(sessionId) }.getOrNull()
+                val rowT0 = runCatching { port.sealedRowT0Mono(sessionId) }
+                .onFailure { MLog.d("sealedRowT0Mono($sessionId) read failed: ${it.message}") }
+                .getOrNull()
                 _phase.value = ArmPhase.SealedRunning(
                     sessionId = sessionId,
                     t0Mono = rowT0 ?: candidate
@@ -740,7 +750,10 @@ class ArmProvingController(
                     )
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    // Issue #75 F1 wiring: a thrown seal attempt read
+                    // as a plain false — it speaks now.
+                    MLog.e("executeSeal threw for session $sessionId; treating as not sealed", e)
                     false
                 }
                 if (!sealedOk) {
@@ -754,7 +767,9 @@ class ArmProvingController(
                         // invented t0 misstated when the session
                         // actually began whenever the other door
                         // sealed at a different instant).
-                        val rowT0 = runCatching { port.sealedRowT0Mono(sessionId) }.getOrNull()
+                        val rowT0 = runCatching { port.sealedRowT0Mono(sessionId) }
+                .onFailure { MLog.d("sealedRowT0Mono($sessionId) read failed: ${it.message}") }
+                .getOrNull()
                         _phase.value = ArmPhase.SealedRunning(
                             sessionId = sessionId,
                             t0Mono = rowT0 ?: t0

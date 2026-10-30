@@ -1,6 +1,7 @@
 package com.example.service
 
 import android.content.Context
+import android.content.SharedPreferences
 
 /**
  * Truth Car 3 (UNA-03): SOUND EFFECTS as a persisted FACT.
@@ -40,11 +41,48 @@ object SoundEffectsSetting {
     internal const val KEY_ENABLED = "sound_effects_enabled"
     internal const val KEY_HAPTICS_ENABLED = "haptics_enabled"
 
+    /** One-shot guard for the credential→device-protected
+     *  migration in [prefs] (issue #83). */
+    @Volatile
+    private var hasMigratedSoundSetting = false
+
+    /**
+     * The one accessor for the fact's prefs file (issue #83).
+     *
+     * The file lives in DEVICE-PROTECTED storage: a process born
+     * through direct boot (routine heartbeat before first unlock)
+     * binds an engine and reads this fact pre-unlock, where a
+     * credential-protected file is unreadable and the read fell
+     * back to the ON default — a seal could sound over an OFF
+     * fact (the split-brain the Room DB already avoided by living
+     * in device-protected storage). The first access migrates the
+     * legacy credential-protected file across
+     * ([Context.moveSharedPreferencesFrom], guarded one-shot by
+     * [hasMigratedSoundSetting]) so a stored OFF survives the
+     * move; the move is best-effort — on a fresh install there is
+     * nothing to move and the device-protected file is the fact
+     * from birth.
+     */
+    private fun prefs(context: Context): SharedPreferences {
+        val appContext = context.applicationContext
+        val deviceContext = appContext.createDeviceProtectedStorageContext() ?: appContext
+        if (!hasMigratedSoundSetting) {
+            synchronized(this) {
+                if (!hasMigratedSoundSetting) {
+                    runCatching {
+                        deviceContext.moveSharedPreferencesFrom(appContext, PREFS_NAME)
+                    }
+                    hasMigratedSoundSetting = true
+                }
+            }
+        }
+        return deviceContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
     /** The fact. Default ON — the shipped behaviour before the
      *  setting existed, and the value a fresh install prints. */
     fun isEnabled(context: Context): Boolean =
-        context.applicationContext
-            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs(context)
             .getBoolean(KEY_ENABLED, true)
 
     /** Write the fact and make every live engine agree with it in
@@ -59,8 +97,7 @@ object SoundEffectsSetting {
      *  silently reverting at process death). Returns true only
      *  when the fact landed AND was pushed. */
     fun setEnabled(context: Context, enabled: Boolean): Boolean {
-        val committed = context.applicationContext
-            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val committed = prefs(context)
             .edit()
             .putBoolean(KEY_ENABLED, enabled)
             .commit()
@@ -72,15 +109,13 @@ object SoundEffectsSetting {
     /** The haptics fact (issue #49). Default ON — the shipped
      *  behaviour while `hapticsEnabled` was an unpersisted stub. */
     fun isHapticsEnabled(context: Context): Boolean =
-        context.applicationContext
-            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs(context)
             .getBoolean(KEY_HAPTICS_ENABLED, true)
 
     /** Write the haptics fact with the same commit law as sound:
      *  a failed commit pushes nothing and returns false. */
     fun setHapticsEnabled(context: Context, enabled: Boolean): Boolean {
-        val committed = context.applicationContext
-            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val committed = prefs(context)
             .edit()
             .putBoolean(KEY_HAPTICS_ENABLED, enabled)
             .commit()

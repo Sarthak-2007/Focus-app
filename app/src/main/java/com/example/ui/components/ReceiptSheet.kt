@@ -82,7 +82,15 @@ import java.util.Locale
 @Composable
 fun ReceiptSheet(
     receipt: ReceiptState,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    // Issue #135 F3: the one door out of the gate that leads
+    // somewhere — dismisses the slip and returns to the Deck ready
+    // to arm the next session. Null = no door (previews/tests).
+    onNextSession: (() -> Unit)? = null,
+    // Issue #135 F4: completes the session's still-active task via
+    // the host's existing completion path, then dismisses. Null =
+    // the session's task is not still active, so no door prints.
+    onDoneWithTask: (() -> Unit)? = null
 ) {
     // #57: the enter fade actually runs — the state starts
     // false and targets true, where a hardcoded `visible = true`
@@ -206,9 +214,22 @@ fun ReceiptSheet(
                     ReceiptMonoLine(text = label)
                 }
                 if (receipt.heldAppsAtSeal >= 0 && receipt.heldSitesAtSeal >= 0) {
-                    ReceiptMonoLine(
-                        text = "HELD ${receipt.heldAppsAtSeal} APPS · ${receipt.heldSitesAtSeal} SITES ON THIS PHONE"
-                    )
+                    // W-41: SHUT and PEEK are different promises —
+                    // the line prints them as two counts, never
+                    // flattened into one (the split is a stored
+                    // seal fact since DB v14). A pre-v14 row's
+                    // split was never recorded, so it prints the
+                    // stored total exactly as sealed — a split is
+                    // never invented for a row that predates it.
+                    if (receipt.heldShutAtSeal >= 0 && receipt.heldPeekAtSeal >= 0) {
+                        ReceiptMonoLine(
+                            text = "HELD ${receipt.heldShutAtSeal} SHUT · ${receipt.heldPeekAtSeal} PEEK (2 MIN) · ${receipt.heldSitesAtSeal} WEBSITES"
+                        )
+                    } else {
+                        ReceiptMonoLine(
+                            text = "HELD ${receipt.heldAppsAtSeal} APPS · ${receipt.heldSitesAtSeal} SITES ON THIS PHONE"
+                        )
+                    }
                 }
                 // Audit R3b #145: the completion moment names its
                 // reward — the curio this finish forged, on the slip
@@ -294,6 +315,20 @@ fun ReceiptSheet(
                         color = scheme.onBackground
                     )
                 }
+                if (receipt.openExposureApps.isNotEmpty()) {
+                    // Issue #129 F3: the slip names what was
+                    // actually used through the open door — a
+                    // session stamped OPEN APP USED never reads
+                    // as clean, and the names are the evidence.
+                    Text(
+                        text = "OPEN APPS USED IN THAT SESSION: " +
+                            receipt.openExposureApps.joinToString(", ") { it.uppercase() },
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = scheme.onBackground
+                    )
+                }
                 if (receipt.faulted) {
                     // The one lawful receipt-only fault line
                     // (build-ready §7.2) — it never prints on the
@@ -317,16 +352,71 @@ fun ReceiptSheet(
                 // 0.25.sp at the same 9.sp measures ~326dp — the
                 // whole sentence lands on one line, still the
                 // same quiet mono footer. Do not "restore" the
-                // 1.sp without re-measuring.
+                // 1.sp without re-measuring. W-43 (BELEG): the
+                // sentence itself — an acronym ("YPT") and then a
+                // product name ("YEOLPUMTA") both failed the
+                // fresh-reader test; the line now says the thing
+                // in plain words. 61 visible chars — inside the
+                // 62-char budget the 0.25.sp measurement allows.
                 Text(
-                    text = "THE MACHINE KEEPS ITS OWN LOG · STUDY HOURS LIVE IN YEOLPUMTA",
+                    text = "THIS APP KEEPS ITS OWN LOG · STUDY TIME IS IN THE STUDY TIMER",
                     fontFamily = AnonymousProFamily,
                     fontSize = 9.sp,
                     letterSpacing = 0.25.sp,
                     color = scheme.onSurfaceVariant
                 )
+                // Issue #135 F3/F4 doors: the slip was a zero-action
+                // gate — the only way out was a scrim tap that led
+                // nowhere in particular, and the task the session was
+                // for never advanced. Two plain doors, nothing else:
+                // the ceremony (detention, sled) is untouched.
+                if (onDoneWithTask != null || onNextSession != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (onDoneWithTask != null) {
+                            ReceiptDoor(
+                                text = "DONE WITH THIS TASK",
+                                modifier = Modifier.weight(1f),
+                                onClick = onDoneWithTask
+                            )
+                        }
+                        if (onNextSession != null) {
+                            ReceiptDoor(
+                                text = "NEXT SESSION",
+                                modifier = Modifier.weight(1f),
+                                onClick = onNextSession
+                            )
+                        }
+                    }
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun ReceiptDoor(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            fontFamily = AtkinsonHyperlegibleFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp,
+            letterSpacing = 1.sp,
+            color = scheme.onBackground
+        )
     }
 }
 

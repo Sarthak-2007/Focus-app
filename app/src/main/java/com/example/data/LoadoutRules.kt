@@ -17,7 +17,8 @@ object LoadoutRules {
         loadout: SmartLoadout,
         packageName: String,
         appName: String,
-        categoryName: String
+        categoryName: String,
+        currentTier: AppBlockTier? = null
     ): AppBlockTier {
         val lower = "$packageName $appName".lowercase(Locale.ROOT)
         val rawTier = when (loadout) {
@@ -39,6 +40,13 @@ object LoadoutRules {
                     AppBlockTier.OPEN
                 categoryName == AppCategory.MESSAGING.name ->
                     AppBlockTier.PEEK_2M
+                // Issue #129 F4 (ported from the earlier lane):
+                // EVERY browser is a corridor, not just Chrome by
+                // name — a browser lands on PEEK_2M, so the one
+                // honest search gets a knock and the open corridor
+                // does not stand for the whole session.
+                categoryName == AppCategory.BROWSERS.name ->
+                    AppBlockTier.PEEK_2M
                 categoryName == AppCategory.SHORT_VIDEO.name ||
                     categoryName == AppCategory.SOCIAL.name ||
                     categoryName == AppCategory.GAMES.name ->
@@ -49,7 +57,8 @@ object LoadoutRules {
                 categoryName == AppCategory.SHORT_VIDEO.name ||
                     categoryName == AppCategory.GAMES.name ->
                     AppBlockTier.LOCKED
-                categoryName == AppCategory.SOCIAL.name ->
+                categoryName == AppCategory.SOCIAL.name ||
+                    categoryName == AppCategory.BROWSERS.name ->
                     AppBlockTier.PEEK_2M
                 else -> AppBlockTier.OPEN
             }
@@ -62,10 +71,35 @@ object LoadoutRules {
                 EssentialApps.sleepLoadoutTierFor(packageName, appName)
             }
         }
+        // Issue #129 (unlisted-distraction, HIGH): a loadout NEVER
+        // loosens LOCKED -> OPEN on a category guess. The guessed
+        // category is exactly what mis-files an unlisted app;
+        // before this law, STUDY/WORK_SPRINT re-derived
+        // `else -> OPEN` from that same guess, so the one-tap fix
+        // silently re-opened the very app the fail-closed birth
+        // had shut, while the seal's held count excluded it. A
+        // loadout may tighten or keep a tier; opening a shut app
+        // is HIS hand on the catalogue sled, never a guess.
+        val tier = if (rawTier == AppBlockTier.OPEN && currentTier == AppBlockTier.LOCKED) {
+            AppBlockTier.LOCKED
+        } else {
+            rawTier
+        }
         // Issue #119, finding 5: the dialler floor binds every
         // loadout — the dialler can never be classified LOCKED.
-        return EssentialApps.floorTier(packageName, rawTier)
+        return EssentialApps.floorTier(packageName, tier)
     }
+
+    /** Issue #304 F1: would applying [loadout] loosen ANY app's
+     *  current tier? The hand loadout tap uses this to surface the
+     *  one-way ratchet honestly instead of silently clamping. */
+    fun anyLoosening(loadout: SmartLoadout, apps: List<BlockedAppEntity>): Boolean =
+        apps.any { app ->
+            SessionTierGate.loosens(
+                app.resolvedTier,
+                tierFor(loadout, app.packageName, app.appName, app.category)
+            )
+        }
 
     /** How many of [apps] would change tier if [loadout] applied,
      *  and the SHUT / PEEK / OPEN counts the phone would land on. */
@@ -77,7 +111,7 @@ object LoadoutRules {
         var peek = 0
         var open = 0
         for (app in apps) {
-            val tier = tierFor(loadout, app.packageName, app.appName, app.category)
+            val tier = tierFor(loadout, app.packageName, app.appName, app.category, app.resolvedTier)
             if (tier != app.resolvedTier) changed++
             when (tier) {
                 AppBlockTier.LOCKED -> shut++
@@ -87,4 +121,46 @@ object LoadoutRules {
         }
         return Preview(changed, shut, peek, open)
     }
+}
+
+/**
+ * Issue #304 F1 (Audit R5, AppBlock head-to-head): the one-way
+ * ratchet as a pure, repository-level direction gate.
+ *
+ * AppBlock's Strict Mode makes edits tightening-only while it is
+ * active ("Changes can only tighten the rules"). Monolith already
+ * ratcheted the hand tier taps and site removals in the ViewModel
+ * (cycleAppBlockTier / setAppBlockTier / removeBlockedSite there),
+ * but the rule-WRITING layer itself knew no direction: a mid-session
+ * Smart Loadout tap rewrote every app's tier from the preset —
+ * loosening LOCKED apps to OPEN in one tap — and any future caller
+ * of the repository verbs would have bypassed the ViewModel's
+ * ratchet entirely. The invariant now lives at the write boundary:
+ * while a session is sealed, NO repository tier/site write may move
+ * protection toward OPEN. Tightening is always lawful.
+ */
+object SessionTierGate {
+
+    /** Strictness rank: LOCKED seals hardest, OPEN not at all. */
+    fun strictness(tier: AppBlockTier): Int = when (tier) {
+        AppBlockTier.OPEN -> 0
+        AppBlockTier.PEEK_2M -> 1
+        AppBlockTier.LOCKED -> 2
+    }
+
+    /** True when moving [from] -> [to] weakens protection. */
+    fun loosens(from: AppBlockTier, to: AppBlockTier): Boolean =
+        strictness(to) < strictness(from)
+
+    /**
+     * The tier a write may land on: while [sealed], a loosening
+     * desire is clamped to the current tier (the write becomes a
+     * tightening-only no-op for that app); unsealed, [desired]
+     * always lands.
+     */
+    fun clampWhileSealed(
+        current: AppBlockTier,
+        desired: AppBlockTier,
+        sealed: Boolean
+    ): AppBlockTier = if (sealed && loosens(current, desired)) current else desired
 }
