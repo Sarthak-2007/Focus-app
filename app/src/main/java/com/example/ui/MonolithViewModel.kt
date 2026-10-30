@@ -173,7 +173,13 @@ data class AirlockInterceptState(
      *  Null when there is no timed end to state (stopwatch, or no
      *  session): the door never invents one. */
     val sessionEndsAtMillis: Long? = null,
-    val sessionIsStopwatch: Boolean = false
+    val sessionIsStopwatch: Boolean = false,
+    /** Audit R3b #147: a stopwatch session has no set end, but it
+     *  DOES have a floor moment — the wall instant its clean exit
+     *  opens (start + the 20-minute floor, on the session's own
+     *  banked elapsed). The door states it instead of the bare
+     *  "NO SET END". Null for timed sessions and no session. */
+    val stopwatchFloorAtMillis: Long? = null
 )
 
 /**
@@ -192,7 +198,15 @@ internal fun peekSecondsRemaining(leaseEndMono: Long, nowMono: Long): Int? {
 
 data class DisarmChallengeState(
     val isVisible: Boolean = false,
-    val requiredHoldSeconds: Int = 60
+    val requiredHoldSeconds: Int = 60,
+    // Audit R3b #147: the stopwatch floor, carried into the valve
+    // overlay so it can state the wait-to-free path instead of
+    // presenting the token as the only door. These two are FACTS
+    // about the session at open time (its mode, its banked
+    // distance to the floor) — not a token count; the count rule
+    // below stands untouched.
+    val sessionIsStopwatch: Boolean = false,
+    val remainingFloorSeconds: Int = 0
     // No token count lives here (TOKEN-SPEC §5, Amendment A): a count
     // copied into this state at open time is a snapshot that can lie
     // for the visit's whole life. The overlay derives its count from
@@ -2256,7 +2270,9 @@ class MonolithViewModel(
         soundEngine.playMechanicalLatch(false)
         _disarmChallenge.value = DisarmChallengeState(
             isVisible = true,
-            requiredHoldSeconds = 60
+            requiredHoldSeconds = 60,
+            sessionIsStopwatch = current.isStopwatchMode,
+            remainingFloorSeconds = if (current.isStopwatchMode) remainingFloor else 0
         )
     }
 
@@ -2368,7 +2384,14 @@ class MonolithViewModel(
             sessionEndsAtMillis = active
                 ?.takeIf { !it.isStopwatchMode }
                 ?.let { System.currentTimeMillis() + it.spanRemainingSeconds * 1000L },
-            sessionIsStopwatch = active?.isStopwatchMode == true
+            sessionIsStopwatch = active?.isStopwatchMode == true,
+            stopwatchFloorAtMillis = active
+                ?.takeIf { it.isStopwatchMode }
+                ?.let {
+                    System.currentTimeMillis() +
+                        (MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS - it.elapsedSeconds)
+                            .coerceAtLeast(0) * 1000L
+                }
         )
     }
 
