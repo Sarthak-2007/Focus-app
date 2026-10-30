@@ -332,7 +332,8 @@ class RoutinesMigrationChainTest {
             .addMigrations(
                 MonolithDatabase.MIGRATION_7_8, MonolithDatabase.MIGRATION_8_9,
                 MonolithDatabase.MIGRATION_9_10, MonolithDatabase.MIGRATION_10_11,
-                MonolithDatabase.MIGRATION_11_12, MonolithDatabase.MIGRATION_12_13, MonolithDatabase.MIGRATION_13_14
+                MonolithDatabase.MIGRATION_11_12, MonolithDatabase.MIGRATION_12_13, MonolithDatabase.MIGRATION_13_14,
+                MonolithDatabase.MIGRATION_14_15
             )
             .build()
 
@@ -367,12 +368,16 @@ class RoutinesMigrationChainTest {
             tables.containsAll(
                 setOf(
                     "blocked_apps", "focus_profiles", "focus_sessions", "intercept_logs",
-                    "captured_notifications", "focus_tasks", "blocked_sites", "guard_settings",
+"focus_tasks", "blocked_sites", "guard_settings",
                     "routines", "emergency_break_spends", "day_notes"
                 )
             )
         )
         assertFalse(tables.contains("routine_attendance"))
+        // Issue #100 CUT: the notification-content store is GONE at
+        // v15 — MIGRATION_14_15 dropped the table the v7 fixture
+        // created; no content store may stand at the latest schema.
+        assertFalse(tables.contains("captured_notifications"))
 
         // The struck predicate exists NOWHERE — every table scanned.
         for (table in tables) {

@@ -72,7 +72,6 @@ import com.example.ui.components.AlwaysOnDeskClockOverlay
 import com.example.ui.components.LauncherBlockScreen
 import com.example.ui.components.PeekCountdownPill
 import com.example.ui.components.LauncherPage
-import com.example.ui.components.CapturedNotificationsDigestSheet
 import com.example.ui.components.DisarmChallengeOverlay
 import com.example.ui.components.MonolithPullDownHeader
 import com.example.ui.components.ParkDrawer
@@ -285,14 +284,9 @@ class MainActivity : ComponentActivity() {
 
 private fun closePark(
     parkOpenState: MutableState<Boolean>,
-    digestSheetVisible: Boolean,
-    viewModel: MonolithViewModel,
-    dismissReceipt: Boolean
+    viewModel: MonolithViewModel
 ) {
     parkOpenState.value = false
-    if (dismissReceipt && digestSheetVisible) {
-        viewModel.toggleNotificationDigestSheet(false)
-    }
     // The intro bit is NOT spent here (issue-156, F3): a
     // dismissal — above all a reflexive scrim tap before the
     // sweep has printed a single word — spends nothing. The
@@ -381,7 +375,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val activeTaskFromYesterday by viewModel.activeTaskFromYesterday.collectAsStateWithLifecycle()
     val freshStartNoteVisible by viewModel.freshStartNoteVisible.collectAsStateWithLifecycle()
     val updateNoteVisible by viewModel.updateNoteVisible.collectAsStateWithLifecycle()
-    val frozenDigest by viewModel.frozenDigest.collectAsStateWithLifecycle()
     val storedMonths by viewModel.storedMonths.collectAsStateWithLifecycle()
     val drawerMonth by viewModel.drawerMonth.collectAsStateWithLifecycle()
     val drawerRows by viewModel.drawerRows.collectAsStateWithLifecycle()
@@ -413,8 +406,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val lastReceiptSessionId by viewModel.lastReceiptSessionId.collectAsStateWithLifecycle()
     val isAlwaysOnDeskClockVisible by viewModel.isAlwaysOnDeskClockVisible.collectAsStateWithLifecycle()
     val burnInFigure8MinuteStep by viewModel.burnInFigure8MinuteStep.collectAsStateWithLifecycle()
-    val showNotificationDigestSheet by viewModel.showNotificationDigestSheet.collectAsStateWithLifecycle()
-    val capturedNotifications by viewModel.capturedNotifications.collectAsStateWithLifecycle()
     val totalFocusedMinutes by viewModel.totalFocusedMinutes.collectAsStateWithLifecycle()
     val totalInterceptions by viewModel.totalInterceptions.collectAsStateWithLifecycle()
     val soundEnabled by viewModel.soundEnabled.collectAsStateWithLifecycle()
@@ -638,7 +629,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
 
     if (parkOpen) {
         BackHandler {
-            closePark(parkOpenState, showNotificationDigestSheet, viewModel, dismissReceipt = false)
+            closePark(parkOpenState, viewModel)
         }
     } else if (currentDestination != MonolithDestination.DECK) {
         BackHandler { viewModel.navigateTo(MonolithDestination.DECK) }
@@ -657,14 +648,13 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         currentDestination == MonolithDestination.DECK
     BackHandler(
         enabled = airlockState.isVisible || disarmChallenge.isVisible ||
-            isAlwaysOnDeskClockVisible || showNotificationDigestSheet ||
+            isAlwaysOnDeskClockVisible ||
             receiptStandingForBack
     ) {
         when {
             airlockState.isVisible -> Unit // the door holds; Back is not an exit
             disarmChallenge.isVisible -> viewModel.dismissDisarmChallenge()
             isAlwaysOnDeskClockVisible -> viewModel.toggleAlwaysOnDeskClock(false)
-            showNotificationDigestSheet -> viewModel.toggleNotificationDigestSheet(false)
             receiptStandingForBack -> dismissedReceiptSessionId = receiptState!!.sessionId
         }
     }
@@ -810,10 +800,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     isSealed = doorLocked,
                     onGuardLineTap = {
                         when {
-                            parkOpen -> closePark(
-                                parkOpenState, showNotificationDigestSheet, viewModel,
-                                dismissReceipt = false
-                            )
+                            parkOpen -> closePark(parkOpenState, viewModel)
                             // While sealed, the Guard line opens the
                             // launcher — the sealed phone's home.
                             sealed -> {
@@ -865,7 +852,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     activeTask = activeTask,
                                     activeTaskFromYesterday = activeTaskFromYesterday,
                                     queuedTasks = queuedTasks,
-                                    capturedNotificationsCount = capturedNotifications.size,
                                     soundEngine = viewModel.soundEngine,
                                     // Zug-II §5.1: the Deck receives
                                     // the RAW system theme — its
@@ -885,7 +871,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                         viewModel.confirmDisarmSession("Accidental Start Grace Cancel")
                                     },
                                     onOpenAlwaysOnDeskClock = { viewModel.toggleAlwaysOnDeskClock(true) },
-                                    onOpenNotificationDigest = { viewModel.toggleNotificationDigestSheet(true) },
                                     onEndSafeBreak = { viewModel.endSafeBreakEarly() },
                                     onExtendSession = viewModel::extendActiveSession,
                                     weeklyEmergencyTokensRemaining = weeklyEmergencyTokensRemaining,
@@ -1098,10 +1083,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         themeReadout = themeEvaluation.readout,
                         parkReturnTick = parkReturnTick,
                         onDismiss = {
-                            closePark(
-                                parkOpenState, showNotificationDigestSheet, viewModel,
-                                dismissReceipt = false
-                            )
+                            closePark(parkOpenState, viewModel)
                         },
                         onFixClick = { item -> openFixPane(item) },
                         onRecheck = { viewModel.runWatchSweep() },
@@ -1185,10 +1167,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                             view.selectedTabIndex = selectedTabIndex
                         }
                         view.onTabSelected = { idx ->
-                            if (parkOpen) closePark(
-                                parkOpenState, showNotificationDigestSheet, viewModel,
-                                dismissReceipt = true
-                            )
+                            if (parkOpen) closePark(parkOpenState, viewModel)
                             val dest = when (idx) {
                                 0 -> MonolithDestination.DECK
                                 1 -> MonolithDestination.SHIELD
@@ -1199,10 +1178,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         }
                         view.onParkInvoked = {
                             if (parkOpen) {
-                                closePark(
-                                    parkOpenState, showNotificationDigestSheet, viewModel,
-                                    dismissReceipt = false
-                                )
+                                closePark(parkOpenState, viewModel)
                             } else {
                                 openPark(parkOpenState, sealed, viewModel)
                             }
@@ -1225,27 +1201,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 dialMinutes = dialMinutes,
                 burnInStep = burnInFigure8MinuteStep,
                 onDismiss = { viewModel.toggleAlwaysOnDeskClock(false) }
-            )
-
-            // The digest renders the sealed snapshot whenever a
-            // freeze exists or a session is sealing the phone — the
-            // snapshot refreshes on open and on new arrivals (issue
-            // #118, finding 3) but renders in frozen MODE: read-only,
-            // nothing opens. The live list is passed only when
-            // unsealed and unfrozen.
-            val digestFrozen = frozenDigest != null || sealed
-            CapturedNotificationsDigestSheet(
-                visible = showNotificationDigestSheet,
-                notifications = when {
-                    frozenDigest != null -> frozenDigest!!.items
-                    digestFrozen -> emptyList()
-                    else -> capturedNotifications
-                },
-                frozenAtMillis = frozenDigest?.frozenAtMillis,
-                frozenMode = digestFrozen,
-                onClearAll = viewModel::clearAllCapturedNotifications,
-                onDeleteItem = viewModel::deleteCapturedNotification,
-                onDismiss = { viewModel.toggleNotificationDigestSheet(false) }
             )
 
             // THE RECEIPT SLIP (Slice E, F-L1/F-B1): viewport-

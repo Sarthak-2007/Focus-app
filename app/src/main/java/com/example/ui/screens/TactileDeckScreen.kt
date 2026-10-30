@@ -132,7 +132,6 @@ fun TactileDeckScreen(
     // yesterday's active task (the ViewModel's day-boundary note).
     activeTaskFromYesterday: Boolean = false,
     queuedTasks: List<FocusTaskEntity>,
-    capturedNotificationsCount: Int,
     soundEngine: TactileSoundEngine? = null,
     isDarkTheme: Boolean = false,
     onDialMinutesChanged: (Int) -> Unit,
@@ -145,7 +144,6 @@ fun TactileDeckScreen(
     onRequestDisarm: () -> Unit,
     onCancelWithinGraceWindow: () -> Unit,
     onOpenAlwaysOnDeskClock: () -> Unit,
-    onOpenNotificationDigest: () -> Unit,
     // ST-02 (Truth Car 3): the break's own verb — defaulted so
     // render harnesses that seat the Deck without a live break
     // keep composing; MainActivity wires the VM's verb.
@@ -1279,7 +1277,7 @@ fun TactileDeckScreen(
         }
 
         // =====================================================================
-        // SECTION 3: ARMED — session utilities (desk clock, held notifications)
+        // SECTION 3: ARMED — session utilities (desk clock)
         // =====================================================================
         // F-Z3: the utilities row takes its place at Settle — during
         // the shot's detention the row is absent, not disabled.
@@ -1294,12 +1292,6 @@ fun TactileDeckScreen(
                     onClick = onOpenAlwaysOnDeskClock,
                     modifier = Modifier.weight(1f),
                     testTag = "open_desk_clock_button"
-                )
-                BlockitActionChip(
-                    wordLabel = "HELD",
-                    monoBadge = capturedNotificationsCount.toString(),
-                    onClick = onOpenNotificationDigest,
-                    modifier = Modifier.weight(1f)
                 )
             }
             // ST-02 (Truth Car 3): the break's own verb, seated in
@@ -1321,27 +1313,6 @@ fun TactileDeckScreen(
                     testTag = "end_break_button"
                 )
             }
-        }
-
-        // Audit R3 #113, finding 1: the HELD door outlives the
-        // session. The chip above is seated only while a session
-        // runs, so the moment a session ended — watched or not —
-        // the captured notifications became unreachable: no screen
-        // could open the digest again, and even its clear/delete
-        // verbs live inside that sheet. On the idle Deck, when
-        // anything stands captured, the same chip stands here
-        // alone: the count is the fact, the tap opens the same
-        // digest (unsealed opens are live mode — the VM clears
-        // any latched freeze — and the repository's sealed gate
-        // no longer refuses the verbs). An empty capture earns no
-        // chip: a door to nothing would be its own small lie.
-        if (!isSessionRunning && capturedNotificationsCount > 0) {
-            BlockitActionChip(
-                wordLabel = "HELD",
-                monoBadge = capturedNotificationsCount.toString(),
-                onClick = onOpenNotificationDigest,
-                modifier = Modifier.fillMaxWidth()
-            )
         }
 
     }

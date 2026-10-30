@@ -14,7 +14,6 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FocusProfileEntity::class,
         FocusSessionEntity::class,
         InterceptLogEntity::class,
-        CapturedNotificationEntity::class,
         FocusTaskEntity::class,
         BlockedSiteEntity::class,
         GuardSettingsEntity::class,
@@ -22,7 +21,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         EmergencyBreakSpendEntity::class,
         DayNoteEntity::class
     ],
-    version = 14,
+    version = 15,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -240,6 +239,21 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
+         * Issue #100 (notifications-lived) — Sarthak's ruling:
+         * notification-content storage is CUT. The captured
+         * notifications table (plaintext message bodies, stored
+         * since v1-era) is dropped outright. Held notifications
+         * are now snoozes of the originals held by the system;
+         * Monolith keeps no copy, so there is nothing to migrate
+         * the rows into — dropping is the whole migration.
+         */
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS captured_notifications")
+            }
+        }
+
+        /**
          * TOKEN-SPEC §6: the spend ledger arrives as an explicit
          * migration. There is NO backfill — today's in-memory spends
          * were never recorded, so v8 truthfully starts with an empty
@@ -327,7 +341,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance

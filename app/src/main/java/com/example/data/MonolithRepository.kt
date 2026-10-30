@@ -232,7 +232,6 @@ class MonolithRepository(
     val activeSessionFlow: Flow<FocusSessionEntity?> = dao.getActiveSessionFlow()
     val sessionHistoryFlow: Flow<List<FocusSessionEntity>> = dao.getSessionHistoryFlow()
     val interceptLogsFlow: Flow<List<InterceptLogEntity>> = dao.getInterceptLogsFlow()
-    val capturedNotificationsFlow: Flow<List<CapturedNotificationEntity>> = dao.getCapturedNotificationsFlow()
     val allTasksFlow: Flow<List<FocusTaskEntity>> = dao.getAllTasksFlow()
     val allSitesFlow: Flow<List<BlockedSiteEntity>> = dao.getAllSitesFlow()
     val allRoutinesFlow: Flow<List<RoutineEntity>> = dao.getAllRoutinesFlow()
@@ -3963,52 +3962,6 @@ class MonolithRepository(
         }
     }
 
-    suspend fun saveCapturedNotification(
-        packageName: String,
-        appName: String,
-        senderTitle: String,
-        messageBody: String
-    ) {
-        dao.insertCapturedNotification(
-            CapturedNotificationEntity(
-                packageName = packageName,
-                appName = appName,
-                senderTitle = senderTitle,
-                messageBody = messageBody
-            )
-        )
-    }
-
-    /** One-shot snapshot for the FROZEN digest (see the DAO). */
-    suspend fun capturedNotificationsSnapshot(): List<CapturedNotificationEntity> =
-        dao.getCapturedNotificationsSnapshot()
-
-    /**
-     * THE SEALED GATE for digest acts. While a session is active,
-     * the held world can be read but never acted on — so both
-     * delete paths refuse here, at the repository, regardless of
-     * what any surface asks. A hidden chip was never the
-     * requirement; a dead chain is. Returns false (and touches
-     * nothing) while sealed; runs and returns true otherwise.
-     */
-    suspend fun deleteCapturedNotification(id: Int): Boolean {
-        if (dao.getActiveSessionSnapshot()?.isActive == true) return false
-        dao.deleteCapturedNotification(id)
-        return true
-    }
-
-    suspend fun clearAllCapturedNotifications(): Boolean {
-        if (dao.getActiveSessionSnapshot()?.isActive == true) return false
-        dao.clearAllCapturedNotifications()
-        return true
-    }
-
-    /** Issue #83: erase the intercept behaviour log — the delete
-     *  path intercept_logs never had. Called by the digest clear
-     *  so a user erasure covers the log as well as the digests. */
-    suspend fun clearInterceptLogs() {
-        dao.deleteAllInterceptLogs()
-    }
 
     // =========================================================================
     // WEEKLY EMERGENCY BREAK — THE TOKEN (TOKEN-SPEC §§2–5)

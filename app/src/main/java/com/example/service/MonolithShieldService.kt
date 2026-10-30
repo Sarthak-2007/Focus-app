@@ -460,18 +460,19 @@ class MonolithShieldService : Service() {
                         System.currentTimeMillis() + remainingSec * 1000L
                     }
                 }
-                // Issue #155 (F4): the badge's one number is the held
-                // (captured) notification count — the same count the
-                // Deck's HELD chip prints. If that read ever fails,
-                // fall back to this session's urges stopped.
-                val heldCount = runCatching {
-                    dao.getCapturedNotificationsSnapshot().size
-                }.getOrNull()
-                val badgeNumber = heldCount ?: updated.phantomReachesBlocked
+                // Issue #155 (F4) as amended by Issue #100's CUT:
+                // the badge's held number is the notification
+                // listener's IN-MEMORY snooze count — the only held
+                // count that still exists now that notification
+                // content storage is gone. It counts this process's
+                // snoozes and dies with it; it never pretends to be
+                // a stored total.
+                val heldCount = MonolithNotificationListener.snoozedCount
+                val badgeNumber = heldCount
                 val bigText = "${updated.intention} • $timeLeftLabel • " +
                     "Block ${updated.currentBlockIndex}/${updated.totalStudyBlocks} • " +
                     "${updated.phantomReachesBlocked} urges stopped • " +
-                    (if (heldCount != null) "$heldCount held" else "held count unavailable")
+                    "$heldCount held"
 
                 // Audit R3b #149 (from main): the grace window exists
                 // off the Deck too. During the window the shield's own
