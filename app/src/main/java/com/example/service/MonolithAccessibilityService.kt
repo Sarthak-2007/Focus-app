@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.util.Log
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
@@ -9,6 +10,7 @@ import android.os.SystemClock
 import android.telecom.TelecomManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import com.example.MainActivity
 import com.example.data.AppBlockTier
 import com.example.data.GuardSettingsEntity
@@ -289,6 +291,21 @@ class MonolithAccessibilityService : AccessibilityService() {
         var instance: MonolithAccessibilityService? = null
             internal set
 
+        /** Truth (issue #76): detection queries that THREW, counted
+         *  and logged instead of silently masquerading as "evidence
+         *  absent". The fail directions themselves are unchanged
+         *  (enforcement fails open, the call bypass fails closed) —
+         *  what changed is that the failure is no longer invisible:
+         *  a rising count on a healthy phone is itself the signal. */
+        @Volatile
+        var detectionFailures: Int = 0
+            internal set
+
+        internal fun noteDetectionFailure(where: String, e: Exception) {
+            detectionFailures++
+            Log.w("MonolithA11y", "detection query failed at $where (total $detectionFailures)", e)
+        }
+
         /** Monotonic stamp of the last event whose root window was
          *  successfully acquired. Pipeline proof (the service is
          *  bound and processing this foreground), not session proof. */
@@ -454,8 +471,9 @@ class MonolithAccessibilityService : AccessibilityService() {
                 lastRootMono = SystemClock.elapsedRealtime()
                 WatchStore.poke()
             }
-        } catch (_: Exception) {
-            // No stamp.
+        } catch (e: Exception) {
+            // No stamp — and (issue #76) the failure is counted, not silent.
+            noteDetectionFailure("rootStamp", e)
         }
 
         val pkgName = event?.packageName?.toString() ?: return
@@ -511,6 +529,72 @@ class MonolithAccessibilityService : AccessibilityService() {
         } else {
             eventChannel.trySend(snapshot)
         }
+
+        // Interactive-window sweep (#92): the checks above police
+        // only the ACTIVE window. A blocked app in the non-active
+        // split-screen pane, or a feed playing in a picture-in-
+        // picture window, was never scanned at all — the config
+        // now grants flagRetrieveInteractiveWindows, so every
+        // other application window is judged too, through the
+        // same snapshot pipeline and the same doors.
+        sweepOtherWindows(pkgName)
+    }
+
+    /** #92: judge every OTHER application window on this event.
+     *  Facts are captured synchronously from each window's own
+     *  root, with captureEventFacts' needs-root discipline, and
+     *  dispatched exactly like the active window's snapshot —
+     *  tamper direct (never evicted by conflation), the rest via
+     *  the conflated channel. processEvent applies the same
+     *  session binding, call exemption, lease rules (#131: the
+     *  sniper is not lease-silenced; the site door is) and tier
+     *  door to a swept package as to the foreground one. */
+    private fun sweepOtherWindows(eventPkg: String) {
+        for (winRoot in interactiveWindowRoots()) {
+            val winPkg = winRoot.packageName?.toString() ?: continue
+            if (winPkg == eventPkg) continue
+            if (winPkg == applicationContext.packageName ||
+                winPkg.startsWith("com.android.systemui")
+            ) {
+                continue
+            }
+            val winFacts = captureEventFacts(winPkg, winRoot)
+            val winSnapshot = EventSnapshot(winPkg, winFacts, armedSessionId)
+            if (winFacts.tamperSurface) {
+                scope.launch {
+                    try {
+                        processEvent(winSnapshot)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // Same law as the worker: one bad event
+                        // must not kill enforcement.
+                    }
+                }
+            } else {
+                eventChannel.trySend(winSnapshot)
+            }
+        }
+    }
+
+    /**
+     * Roots of every TYPE_APPLICATION window the system exposes
+     * to this service — requires flagRetrieveInteractiveWindows
+     * in the service config (#92). Split-screen panes and
+     * picture-in-picture windows are application windows, so
+     * they arrive here even when they are not the active window.
+     * Any failure reads as an empty list: the sweep simply does
+     * not run, never a crash on the event path.
+     */
+    private fun interactiveWindowRoots(): List<AccessibilityNodeInfo> {
+        return try {
+            windows?.mapNotNull { window ->
+                if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) null
+                else try { window.root } catch (_: Exception) { null }
+            } ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     // ------------------------------------------------------------------
@@ -561,6 +645,17 @@ class MonolithAccessibilityService : AccessibilityService() {
      *  facts. All other packages need no content at all — the tier
      *  door works from the package name alone. */
     private fun captureEventFacts(pkgName: String): EventFacts {
+        val rootNode = try { rootInActiveWindow } catch (e: Exception) { noteDetectionFailure("rootInActiveWindow", e); null }
+            ?: return EventFacts()
+        return captureEventFacts(pkgName, rootNode)
+    }
+
+    /** The fact capture itself, against a GIVEN window's root —
+     *  the active window for the event's own snapshot, another
+     *  application window for the #92 sweep's snapshots. The same
+     *  needs-root discipline applies either way: packages whose
+     *  doors work from the name alone never have content read. */
+    private fun captureEventFacts(pkgName: String, rootNode: AccessibilityNodeInfo): EventFacts {
         val needsRoot = pkgName in INSTALLER_PACKAGES ||
             pkgName in MARKET_PACKAGES ||
             pkgName in SETTINGS_PACKAGES ||
@@ -568,8 +663,6 @@ class MonolithAccessibilityService : AccessibilityService() {
             pkgName == "com.instagram.android" ||
             isSupportedBrowser(pkgName)
         if (!needsRoot) return EventFacts()
-        val rootNode = try { rootInActiveWindow } catch (_: Exception) { null }
-            ?: return EventFacts()
         return EventFacts(
             tamperSurface = isPackageInstallerOrTamperSettings(pkgName, rootNode),
             sniperFeedVisible = detectShortsOrReelsFeed(rootNode),
@@ -711,7 +804,11 @@ class MonolithAccessibilityService : AccessibilityService() {
                 null
             }
             shouldBypassForCall(am.mode, pkgName, callOwnerPackage, defaultDialer)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // Issue #76: a thrown AudioManager query is not "no call"
+            // — the bypass is still lost (fail-closed stands), but
+            // the loss is counted and logged, never silent.
+            noteDetectionFailure("isCallActive", e)
             false
         }
     }
@@ -784,7 +881,7 @@ class MonolithAccessibilityService : AccessibilityService() {
     /** One synthetic snapshot of the window already on screen, for
      *  the collector's catch-up scan when the session gate opens. */
     private fun enqueueCurrentWindowSnapshot() {
-        val rootNode = try { rootInActiveWindow } catch (_: Exception) { null } ?: return
+        val rootNode = try { rootInActiveWindow } catch (e: Exception) { noteDetectionFailure("rootInActiveWindow", e); null } ?: return
         val pkgName = rootNode.packageName?.toString() ?: return
         if (pkgName == applicationContext.packageName ||
             pkgName.startsWith("com.android.systemui")
@@ -815,7 +912,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         // excluded entirely (see SHORTS_PLAYER_VIEW_IDS), and a
         // player surface instantiated off-screen no longer fires.
         for (id in SHORTS_PLAYER_VIEW_IDS) {
-            val nodes = try { rootNode.findAccessibilityNodeInfosByViewId(id) } catch (_: Exception) { null }
+            val nodes = try { rootNode.findAccessibilityNodeInfosByViewId(id) } catch (e: Exception) { noteDetectionFailure("findByViewId", e); null }
             if (nodes?.any { it.isVisibleToUser } == true) return true
         }
         // Strategy B (#131, tightened): a selected Shorts/Reels
@@ -936,8 +1033,15 @@ class MonolithAccessibilityService : AccessibilityService() {
             putExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME, appName)
             putExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE, reasonBadge)
             putExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH, path.name)
+            putExtra(
+                MonolithShieldService.EXTRA_INTERCEPT_NONCE,
+                InterceptNonce.mint(applicationContext)
+            )
         }
-        startActivity(interceptIntent)
+        // Issue #94 (F2): never a bare background launch — a dropped
+        // launch stamps itself and falls back to a tappable
+        // notification (InterceptLaunch).
+        InterceptLaunch.launch(applicationContext, interceptIntent, appName)
     }
 
     override fun onInterrupt() {}

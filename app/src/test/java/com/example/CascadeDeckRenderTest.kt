@@ -61,7 +61,12 @@ class CascadeDeckRenderTest {
             File("app/shots-redirect.txt")
         ).firstOrNull { it.isFile }
         val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        File(target ?: "/home/hatch/workspace/clone-inspect/shots")
+        // issue #66 cluster-priority: hardcoded author path removed, same cure as ScreenshotHarnessTest.
+        // Finisher cure: a redirect target that cannot be created on this machine falls through
+        // to the next candidate (a committed lane-local path poisoned every CI capture).
+        listOfNotNull(target, System.getenv("MONOLITH_SHOTS_DIR"), "build/outputs/screenshots")
+            .map { File(it) }
+            .first { it.mkdirs() || it.isDirectory }
     }
 
     @Before
@@ -214,14 +219,14 @@ class CascadeDeckRenderTest {
     @Test
     fun jammedNamesTheUnansweringLink() {
         setDeck(jammed(), dark = false)
-        composeRule.onNodeWithText("SHIELD DIDN'T ANSWER — STILL PROVING.").assertIsDisplayed()
+        composeRule.onNodeWithText("THE SHIELD DIDN'T ANSWER — STILL CHECKING.").assertIsDisplayed()
         capture("cascade_jammed_day.png")
     }
 
     @Test
     fun jammedNamesTheUnansweringLinkAtNight() {
         setDeck(jammed(), dark = true)
-        composeRule.onNodeWithText("SHIELD DIDN'T ANSWER — STILL PROVING.").assertIsDisplayed()
+        composeRule.onNodeWithText("THE SHIELD DIDN'T ANSWER — STILL CHECKING.").assertIsDisplayed()
         capture("cascade_jammed_night.png")
     }
 

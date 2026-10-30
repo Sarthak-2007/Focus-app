@@ -48,6 +48,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
+import com.example.service.InterceptNonce
 import com.example.service.InterceptPath
 import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithShieldService
@@ -161,6 +162,19 @@ class MainActivity : ComponentActivity() {
         if (intent == null) return
         val pkg = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
         if (!pkg.isNullOrBlank()) {
+            // Issue #68 F5, Tier 2 — provenance before trust: this
+            // activity is exported (LAUNCHER), so any installed app
+            // can send these extras. Honour them only with the
+            // single-use nonce an in-app service minted moments ago
+            // (InterceptNonce); without one the extras are dropped
+            // here and never reach the airlock.
+            val nonce = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_NONCE)
+            if (!InterceptNonce.consume(applicationContext, nonce)) {
+                intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
+                intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
+                intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_NONCE)
+                return
+            }
             val name = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
                 ?: "Short-Form Feed"
             val badge = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
@@ -239,6 +253,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // from the persisted store by way of the VM.
     val loadoutCapIndex by viewModel.loadoutCapIndex.collectAsStateWithLifecycle()
     val showRoutineResetNote by viewModel.showRoutineResetNote.collectAsStateWithLifecycle()
+    val freshStartNoteVisible by viewModel.freshStartNoteVisible.collectAsStateWithLifecycle()
+    val updateNoteVisible by viewModel.updateNoteVisible.collectAsStateWithLifecycle()
     val frozenDigest by viewModel.frozenDigest.collectAsStateWithLifecycle()
     val storedMonths by viewModel.storedMonths.collectAsStateWithLifecycle()
     val drawerMonth by viewModel.drawerMonth.collectAsStateWithLifecycle()
@@ -247,6 +263,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val drawerQuery by viewModel.drawerQuery.collectAsStateWithLifecycle()
     val drawerResults by viewModel.drawerResults.collectAsStateWithLifecycle()
     val drawerSearchHasEarlier by viewModel.drawerSearchHasEarlier.collectAsStateWithLifecycle()
+    val drawerLoading by viewModel.drawerLoading.collectAsStateWithLifecycle()
+    val drawerError by viewModel.drawerError.collectAsStateWithLifecycle()
+    val drawerSearchDayWords by viewModel.drawerSearchDayWords.collectAsStateWithLifecycle()
     val dayWords by viewModel.dayWords.collectAsStateWithLifecycle()
     val forgedArtifactIds by viewModel.forgedArtifactIds.collectAsStateWithLifecycle()
     val forgeStats by viewModel.forgeStats.collectAsStateWithLifecycle()
@@ -306,7 +325,15 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // plain remember — a rotation must not resurrect a dismissed
     // receipt, snap PARK shut mid-diagnosis, or restart the
     // return-tick diagnostic.
-    var dismissedReceiptSessionId by rememberSaveable { mutableStateOf(-1) }
+    // Audit R1 #40: the saveable is SEEDED from the persisted
+    // dismissal (ReceiptDismissalStore) — rememberSaveable covers
+    // rotation and state-restore, but a put-away receipt must
+    // also survive a cold process death with no saved state to
+    // restore; every dismissal below writes through to the store
+    // (viewModel.persistReceiptDismissal).
+    var dismissedReceiptSessionId by rememberSaveable {
+        mutableStateOf(viewModel.dismissedReceiptSessionId())
+    }
 
     // ------------------------------------------------------------------
     // PARK state (chrome C4). The drawer is invoked by arrival (the
@@ -354,7 +381,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // same input, and so does any navigation away from the Deck.
     LaunchedEffect(currentDestination, parkOpen) {
         if (currentDestination != MonolithDestination.DECK || parkOpen) {
-            receiptState?.let { dismissedReceiptSessionId = it.sessionId }
+            receiptState?.let {
+                dismissedReceiptSessionId = it.sessionId
+                viewModel.persistReceiptDismissal(it.sessionId)
+            }
         }
     }
 
@@ -540,17 +570,34 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     "DISPLAY OVER OTHER APPS"
                 )
             com.example.service.WatchItemId.BATTERY -> {
-                val direct = Intent(
-                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                    Uri.parse("package:${context.packageName}")
-                )
-                runCatching { context.startActivity(direct) }
-                    .getOrElse {
-                        launchSettings(
-                            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
-                            "BATTERY"
-                        )
-                    }
+                // Issue #94 (F1): on an OEM-autostart-gated skin the
+                // survival trip is the vendor's AUTOSTART pane first —
+                // the AOSP battery pane alone leaves the boot receiver
+                // dead. Each vendor component is a guess that may not
+                // exist on this build; walk the list, then fall back
+                // to the AOSP battery trip as shipped on main.
+                val gate = com.example.data.OemPolicy.currentGate()
+                val autostartOpened = gate !=
+                    com.example.data.OemPolicy.AutostartGate.NONE &&
+                    com.example.data.OemPolicy
+                        .autostartIntents(gate, context.packageName)
+                        .any { pane ->
+                            runCatching { context.startActivity(pane) }
+                                .isSuccess
+                        }
+                if (!autostartOpened) {
+                    val direct = Intent(
+                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:${context.packageName}")
+                    )
+                    runCatching { context.startActivity(direct) }
+                        .getOrElse {
+                            launchSettings(
+                                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+                                "BATTERY"
+                            )
+                        }
+                }
             }
             else -> launchSettings(Intent(Settings.ACTION_SETTINGS), item.name)
         }
@@ -722,6 +769,11 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onToggleBrowserUrlBlocker = viewModel::toggleBrowserUrlBlocker,
                                     routines = routines,
                                     showResetNote = showRoutineResetNote,
+                                    onDismissResetNote = viewModel::dismissRoutineResetNote,
+                                    showFreshStartNote = freshStartNoteVisible,
+                                    showUpdateNote = updateNoteVisible,
+                                    onDismissFreshStartNote = viewModel::dismissFreshStartNote,
+                                    onDismissUpdateNote = viewModel::dismissUpdateNote,
                                     onToggleRoutine = viewModel::toggleRoutine,
                                     onCycleRoutineLoadout = viewModel::cycleRoutineLoadout,
                                     onAdjustRoutineTime = viewModel::adjustRoutineTime,
@@ -776,6 +828,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     drawerQuery = drawerQuery,
                                     drawerResults = drawerResults,
                                     drawerSearchHasEarlier = drawerSearchHasEarlier,
+                                    drawerSearchDayWords = drawerSearchDayWords,
                                     dayWords = dayWords,
                                     isSealed = sealed,
                                     isDarkTheme = effectiveNight,
@@ -786,6 +839,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onDeclareTodayWord = viewModel::declareTodayWord,
                                     artifacts = com.example.data.CurioCatalog.artifacts,
                                     forgedArtifactIds = forgedArtifactIds,
+                                    drawerLoading = drawerLoading,
+                                    drawerError = drawerError,
                                     forgeStats = forgeStats
                                 )
                             }
@@ -955,7 +1010,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             ) {
                 com.example.ui.components.ReceiptSheet(
                     receipt = standingReceipt,
-                    onDismiss = { dismissedReceiptSessionId = standingReceipt.sessionId }
+                    onDismiss = {
+                        dismissedReceiptSessionId = standingReceipt.sessionId
+                        viewModel.persistReceiptDismissal(standingReceipt.sessionId)
+                    }
                 )
             }
 
@@ -1018,7 +1076,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onOpenPeekApps = {
                     launcherPage = LauncherPage.PEEK
                     launcherOpen = true
-                }
+                },
+                onRequestEmergencyBreak = viewModel::requestDisarmFromAirlock
             )
 
             // Issue #99 F2: the peek countdown pill — the one

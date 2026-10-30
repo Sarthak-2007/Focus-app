@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.util.Log
 import android.content.Context
 import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
@@ -158,8 +159,12 @@ data class WatchSnapshot(
 }
 
 /** What a permission line prints at a given instant (spec §4.2):
- *  never-measured, the measured value, or its stale derivative. */
-enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE, MISSING_STALE }
+ *  never-measured, the measured value, or its stale derivative.
+ *  UNPROVED (issue #94): a measurement exists and reads granted, but
+ *  a fact the app cannot measure stands behind it — the BATTERY line
+ *  on an OEM-autostart-gated skin, where the AOSP exemption is only
+ *  half the survival fact and the autostart half is unreadable. */
+enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE, MISSING_STALE, UNPROVED }
 
 object WatchStore {
 
@@ -330,8 +335,18 @@ object WatchStore {
         pendingSweepStartWall = System.currentTimeMillis()
         for (item in WatchItemId.PERMISSIONS) {
             sweepScope.launch {
-                val granted = runCatching { query(item) }.getOrDefault(false)
-                stampPermission(item, granted, gen)
+                // Truth (issue #76): a query that THREW is not a
+                // measurement. The old getOrDefault(false) stamped a
+                // fresh MISSING with now-timestamps, so a sweep whose
+                // every query failed still completed the set and
+                // advanced LAST PROVED — a fabricated proof. A thrown
+                // query now writes NO stamp: the item keeps its older
+                // measurement and ages to STALE honestly.
+                runCatching { query(item) }
+                    .onSuccess { granted -> stampPermission(item, granted, gen) }
+                    .onFailure {
+                        Log.w("WatchStore", "sweep query threw for $item; no stamp written", it)
+                    }
             }
         }
     }
@@ -440,6 +455,15 @@ object WatchStore {
         val perm = m.perm ?: return PermPrint.UNMEASURED
         val stale = nowMono - m.measuredMono > STALE_AFTER_MS
         return when {
+            // Issue #94 (F1): on a skin whose OEM autostart toggle gates
+            // receiver restarts, a granted AOSP battery read never
+            // prints GRANTED — the toggle cannot be read back, so the
+            // honest word is UNPROVED. A missing AOSP read stays
+            // MISSING below: that half is known, not proved-absent.
+            item == WatchItemId.BATTERY && perm == PermState.GRANTED &&
+                !com.example.data.OemPolicy.batteryGrantedIsProved(
+                    com.example.data.OemPolicy.currentGate()
+                ) -> PermPrint.UNPROVED
             perm == PermState.GRANTED && stale -> PermPrint.STALE
             perm == PermState.GRANTED -> PermPrint.GRANTED
             stale -> PermPrint.MISSING_STALE

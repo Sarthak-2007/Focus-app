@@ -450,7 +450,7 @@ class ArmProvingControllerTest {
         assertEquals(1, controller.annulCount.value)
         assertTrue(port.sealCalls.isEmpty())
         val sentence = controller.armSentence.value
-        assertEquals("SHIELD — NO PROOF. NOTHING WAS SEALED. ANY BLOCKING FROM THE WAIT IS OFF.", sentence?.text)
+        assertEquals("NOT SEALED — THE SHIELD DIDN'T ANSWER.", sentence?.text)
         assertNull(sentence?.action)
     }
 
@@ -545,7 +545,7 @@ class ArmProvingControllerTest {
             lastVibrationPattern()?.contentEquals(TactileSoundEngine.SEAL_THROW_TIMINGS) == true
         )
         val sentence = controller.armSentence.value
-        assertEquals("SESSION-ROW — NO PROOF. NOTHING WAS SEALED.", sentence?.text)
+        assertEquals("NOT SEALED — THE SESSION DIDN'T ANSWER.", sentence?.text)
     }
 
     // =================================================================

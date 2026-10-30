@@ -1,5 +1,6 @@
 package com.example.ui
 
+import android.util.Log
 import android.content.Context
 import android.os.SystemClock
 import android.view.Choreographer
@@ -43,22 +44,22 @@ import kotlinx.coroutines.launch
  *  intercepted on the attempt, never shut in advance, so there
  *  is nothing per-app to confirm (Opal §1 — the per-app link and
  *  the rack's N=loadout died together). */
-enum class ArmLink(val displayName: String) {
+enum class ArmLink(val displayName: String, val plainName: String) {
     /** The session row exists and is the active row: the insert
      *  returned an id AND a snapshot read returns that id with
      *  isActive == true. */
-    SESSION_ROW("SESSION"),
+    SESSION_ROW("SESSION", "THE SESSION"),
 
     /** The shield is a live instance, its foreground start
      *  succeeded, AND its monitor loop completed a first
      *  iteration that read the latched row as active. */
-    SHIELD_PROTECTING("SHIELD"),
+    SHIELD_PROTECTING("SHIELD", "THE SHIELD"),
 
     /** The accessibility service is bound AND has observed this
      *  session as active — its own session gate, which early-
      *  returns when no active session exists, is open for this
      *  row. */
-    A11Y_SESSION_ARMED("ACCESS")
+    A11Y_SESSION_ARMED("ACCESS", "ACCESSIBILITY")
 }
 
 sealed interface LinkMark {
@@ -377,7 +378,10 @@ class ArmProvingController(
 
     private suspend fun onSessionRowInserted(attemptId: Long, sessionId: Int) {
         if (attemptId in deadAttempts) {
+            // Truth (issue #76): this annul used to be discarded
+            // silently — a failure leaked the proving row forever.
             runCatching { port.annulProvingSession(sessionId) }
+                .onFailure { Log.e("ArmProving", "dead-attempt annul failed for session $sessionId", it) }
             return
         }
         val current = _phase.value
@@ -776,7 +780,7 @@ class ArmProvingController(
         _phase.value = ArmPhase.Idle
         _annulCount.value += 1
         val sentence = RefusalSentence(
-            text = "SESSION-ROW — NO PROOF. NOTHING WAS SEALED.",
+            text = "NOT SEALED — THE SESSION DIDN'T ANSWER.",
             action = null
         )
         _armSentence.value = sentence
@@ -803,10 +807,25 @@ class ArmProvingController(
         // Slice E (Riegel §1.2): a primed seal that never fires
         // must not leave its barrier standing over the queue.
         transition.cancelSealPrime()
+        // Truth (issue #76): a FAILED snapshot read is not "no other
+        // session", and a FAILED annul is not an annulment. The old
+        // code flattened both through runCatching + getOrNull and
+        // discarded results, so a DB hiccup could stop a stranger's
+        // shield — and the refusal sentence below then published
+        // "NOTHING WAS SEALED" over a row that may still stand.
+        var annulFailed = false
         if (sessionId != null) {
-            val activeNow = runCatching { port.activeSnapshotId() }.getOrNull()
-            runCatching { port.annulProvingSession(sessionId) }
-            if (activeNow == null || activeNow == sessionId) {
+            val activeResult = runCatching { port.activeSnapshotId() }
+            val annulResult = runCatching { port.annulProvingSession(sessionId) }
+            if (annulResult.isFailure) {
+                annulFailed = true
+                Log.e("ArmProving", "annulProvingSession($sessionId) failed", annulResult.exceptionOrNull())
+            }
+            // The shield is ours to stop only when a read that
+            // SUCCEEDED says the active row is nobody's or ours.
+            // A failed read proves nothing and stops nothing.
+            val activeNow = activeResult.getOrNull()
+            if (activeResult.isSuccess && (activeNow == null || activeNow == sessionId)) {
                 port.stopShield()
             }
             // A different active row means another session (a
@@ -829,7 +848,23 @@ class ArmProvingController(
         // above). Wording is conditional ("ANY") because in the
         // SESSION_ROW-jammed path no row ever armed the gate.
         val sentence = RefusalSentence(
-            text = "${first.displayName} — NO PROOF. NOTHING WAS SEALED. ANY BLOCKING FROM THE WAIT IS OFF.",
+            text = if (annulFailed) {
+                "ANNUL FAILED — THE ROW MAY STILL STAND. NOTHING WAS PROVED."
+            } else {
+                // R3b #164 F5: the failed link is named in plain
+                // words and the sentence says what happened, in
+                // the order it happened — no studio code, and no
+                // "NOTHING WAS SEALED" standing against the
+                // screen's own ARM SESSION NOW.
+                // (Merge note, #126 F5: this wording superseded
+                // the branch's "ANY BLOCKING FROM THE WAIT IS OFF"
+                // form when #164 re-ruled the annul sentence on
+                // main; the F5 substance stands — annul stops the
+                // shield above, so any blocking the wait ran is
+                // off, and the recovery path's sentence in
+                // resolveRecovery still says so in words.)
+                "NOT SEALED — ${first.plainName} DIDN'T ANSWER."
+            },
             action = null
         )
         _armSentence.value = sentence

@@ -129,7 +129,10 @@ class MonolithShieldService : Service() {
                         "SESSION COMPLETE",
                         "Your session has ended. The receipt is on the Deck."
                     )
-                    updateNotification("Session Complete", "Unlocked desk toy ready in your Break tab.")
+                    // R3b #164 F2: the low notification's old line
+                    // promised an "Unlocked desk toy" in a "Break
+                    // tab" — neither exists anywhere in the app.
+                    updateNotification("Session Complete", "Your receipt is waiting in the Ledger.")
                     stopForeground(STOP_FOREGROUND_DETACH)
                     stopSelf()
                     break
@@ -166,10 +169,27 @@ class MonolithShieldService : Service() {
                     }
                 }
 
-                updateNotification(
-                    title = "Monolith • ${updated.intention}",
-                    subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped"
-                )
+                // Audit R3b #149: the grace window exists off the
+                // Deck too. During the window the shield's own
+                // notification counts it down — its tap already
+                // opens the app to the Deck chip — and for a
+                // routine-born row it names the booking instead of
+                // promising free.
+                if (updated.elapsedSeconds <= 10 && !updated.isInSafeBreak) {
+                    updateNotification(
+                        title = "Monolith • ${updated.intention}",
+                        subtitle = if (updated.routineId != null) {
+                            "GRACE ${10 - updated.elapsedSeconds}S — ABORT BOOKED BY ROUTINE · TAP TO OPEN"
+                        } else {
+                            "GRACE ${10 - updated.elapsedSeconds}S — CANCEL FREE · TAP TO OPEN"
+                        }
+                    )
+                } else {
+                    updateNotification(
+                        title = "Monolith • ${updated.intention}",
+                        subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped"
+                    )
+                }
 
                 // Live Wire: the shield is PROTECTING only once a
                 // full monitor iteration has run under a live
@@ -215,12 +235,19 @@ class MonolithShieldService : Service() {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                         putExtra(EXTRA_INTERCEPTED_PACKAGE, foregroundBlockedPkg)
                         putExtra(EXTRA_INTERCEPTED_APP_NAME, blockedApp?.appName ?: "Blocked App")
-                        putExtra(EXTRA_INTERCEPT_BADGE, blockedApp?.resolvedTier?.badge ?: "Locked")
+                        putExtra(EXTRA_INTERCEPT_BADGE, blockedApp?.resolvedTier?.badge ?: "Shut")
                         // This door's blocked set already excludes a leased PEEK app
                         // (the filter above), so a lease sold here is honoured (UNA2-01).
                         putExtra(EXTRA_INTERCEPT_PATH, InterceptPath.SHIELD_APP.name)
+                        putExtra(EXTRA_INTERCEPT_NONCE, InterceptNonce.mint(applicationContext))
                     }
-                    startActivity(interceptIntent)
+                    // Issue #94 (F2): never a bare background launch —
+                    // a dropped launch stamps itself and falls back
+                    // to a tappable notification (InterceptLaunch).
+                    InterceptLaunch.launch(
+                        applicationContext, interceptIntent,
+                        blockedApp?.appName ?: "Blocked App"
+                    )
                 }
 
                 delay(2000L)
@@ -375,6 +402,11 @@ class MonolithShieldService : Service() {
          *  WHICH door — and only lease-honouring doors may sell a
          *  peek. Written by both intercept launchers. */
         const val EXTRA_INTERCEPT_PATH = "extra_intercept_path"
+        /** Issue #68 F5, Tier 2: the single-use provenance nonce
+         *  (see [InterceptNonce]). Written by both intercept
+         *  launchers; required by MainActivity before any
+         *  intercept extra is honoured. */
+        const val EXTRA_INTERCEPT_NONCE = "extra_intercept_nonce"
 
         fun startShield(context: Context) {
             try {
