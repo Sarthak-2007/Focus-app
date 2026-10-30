@@ -172,7 +172,7 @@ class Issue59CensusTest {
         override fun drawLine(a: Float, b: Float, c: Float, d: Float, p: android.graphics.Paint) { total++; super.drawLine(a, b, c, d, p) }
         override fun drawPath(path: android.graphics.Path, p: android.graphics.Paint) { total++; super.drawPath(path, p) }
         override fun drawText(t: String, x: Float, y: Float, p: android.graphics.Paint) { total++; super.drawText(t, x, y, p) }
-        override fun drawRoundRect(r: android.graphics.RectF, a: Float, b: Float, p: android.graphics.Paint) { total++; super.drawRoundRect(r, a, b, c, p) }
+        override fun drawRoundRect(r: android.graphics.RectF, a: Float, b: Float, p: android.graphics.Paint) { total++; super.drawRoundRect(r, a, b, p) }
         override fun drawRect(a: Float, b: Float, c: Float, d: Float, p: android.graphics.Paint) { total++; super.drawRect(a, b, c, d, p) }
     }
 
