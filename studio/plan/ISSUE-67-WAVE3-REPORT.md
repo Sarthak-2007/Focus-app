@@ -434,3 +434,18 @@ DeskClockLivedTest passes.
 routing with no user-visible effect intended — the #78 firing id,
 #68 nonce, #150 unattended binding, and boot-action labels are
 main's current behaviours, preserved through the seams.
+
+## FIFTH-REBASE NOTE (merge pass, base origin/main 2e4789c9)
+
+Two further rebases in the merge window (26c21a7d, then 2e4789c9 —
+the herd is landing merges minutes apart). New-main compositions
+absorbed: MLog imports (Shield/A11y/Seal), UndoDeleteStore (Boot),
+#81's Repository provenance composition. Body audit of the merged
+Repository: every driven edge routes via the port (12 servicePort
+call sites, incl. accessibilityBound / shieldProtecting /
+notificationListenerBound properties); the remaining concrete
+service references are ComponentName identity entries (A11y,
+Shield, NotificationListener, BootReceiver — naming components
+for the OS, driving nothing) and WatchStore model types. Two
+stale imports (RoutineScheduler, TactileSoundEngine) left by the
+#393 import union were removed — no body references exist.
