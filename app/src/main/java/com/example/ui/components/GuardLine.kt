@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import com.example.service.DetectorHealthSnapshot
 import com.example.service.PermPrint
 import com.example.service.WatchItemId
 import com.example.service.WatchSnapshot
@@ -67,4 +68,29 @@ fun guardLineFor(snapshot: WatchSnapshot?, nowMono: Long): GuardLinePrint? {
         else -> firstLack.first.boardName
     }
     return GuardLinePrint("GUARD $warranted/$total — $name")
+}
+
+/**
+ * Issue #335 F5: the DETECTOR line — the detector-health surface
+ * the audit found missing. Pure, like [guardLineFor]: a function
+ * of (health snapshot, now) only. Three honest states:
+ *  - never proved: the detector has not seen a single node yet —
+ *    printed as such, never dressed as live.
+ *  - stale: nodes were seen, then silence past the stale line —
+ *    the silent-detector state, named instead of impersonating a
+ *    working one.
+ *  - live: nodes flowing; a slow last scan (>100 ms, Freedom's
+ *    health line) is appended, not hidden.
+ */
+fun detectorLineFor(health: DetectorHealthSnapshot, nowMono: Long): GuardLinePrint {
+    if (!health.hasProved) return GuardLinePrint("DETECTOR — NEVER PROVED")
+    if (health.isStale(nowMono, DetectorHealthSnapshot.STALE_AFTER_MS)) {
+        val silentSec = (nowMono - health.lastNodeMono) / 1000
+        return GuardLinePrint("DETECTOR — STALE ${silentSec}S")
+    }
+    return if (health.lastScanWasSlow) {
+        GuardLinePrint("DETECTOR — LIVE · LAST SCAN ${health.lastScanDurationMs}MS SLOW")
+    } else {
+        GuardLinePrint("DETECTOR — LIVE")
+    }
 }
