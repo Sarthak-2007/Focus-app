@@ -78,7 +78,11 @@ class PreArmStore(context: Context) {
         const val DEFAULT_DIAL_MINUTES = 50
         const val DEFAULT_STUDY_BLOCKS = 2
         val DEFAULT_STUDY_PRESET: StudyModePreset = StudyModePreset.POMODORO_25_5
-        const val DEFAULT_INTENTION_TEXT = "Finish Chapter 4 Problem Set"
+        // Issue #124 overrode the old factory phrase ("Finish
+        // Chapter 4 Problem Set"): the intention is the user's own
+        // words or blank — so the store's default is blank, and a
+        // fresh user is born with no name, exactly as #124 ruled.
+        const val DEFAULT_INTENTION_TEXT = ""
         const val DEFAULT_DESTINATION_NAME = "DECK"
     }
 }
