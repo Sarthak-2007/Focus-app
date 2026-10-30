@@ -60,6 +60,11 @@ object SessionOutcome {
     /** The free grace cancel inside the opening window. */
     const val GRACE_CANCEL = "GRACE_CANCEL"
 
+    /** Audit R6 #341 F30: a session that was still active when its
+     *  successor was born — closed at the birth transaction with its
+     *  true end stamp, never left unclassified. */
+    const val SUPERSEDED = "SUPERSEDED"
+
     /** Ended early by his hand (the disarm challenge). */
     const val ENDED_EARLY = "ENDED_EARLY"
 
@@ -234,8 +239,28 @@ data class ReceiptDeflection(
     val appName: String,
     val packageName: String,
     val atWallMillis: Long,
-    val isSite: Boolean = false
-)
+    val isSite: Boolean = false,
+    // Issue #105 (F3, remainder after the A4 allowlist): the
+    // log's own outcome rides. Assembly admits only proven
+    // blocks (A4 — a peek never reaches the slip at all), but
+    // the three blocked outcomes are different events — a
+    // turned-away attempt, a plain block, and a task split
+    // into a micro-step — and the old print could not tell
+    // them apart. Default "" keeps hand-built slips valid:
+    // no outcome recorded, no word printed, none invented.
+    val outcome: String = ""
+) {
+    /** The outcome in the slip's dialect. "Stayed Focused"
+     *  gets its true name; any other logged blocked outcome
+     *  prints verbatim (upper-cased); a deflection carrying
+     *  no outcome prints no word. */
+    val outcomePrint: String
+        get() = when {
+            outcome.trim().equals("Stayed Focused", ignoreCase = true) -> "TURNED AWAY"
+            outcome.trim().equals("Used 2m Peek", ignoreCase = true) -> "PEEKED 2 MIN"
+            else -> outcome.trim().uppercase(java.util.Locale.US)
+        }
+}
 
 /** The facts gathered at E0 for a publish, before the claim
  *  transaction mints the №. Pure reads only (assembly, Reihe §3):
@@ -280,7 +305,15 @@ data class PendingReceipt(
     // FocusSessionEntity.heldShutAtSeal). -1 on a pre-v14 row:
     // the sheet falls back to the stored total.
     val heldShutAtSeal: Int = -1,
-    val heldPeekAtSeal: Int = -1
+    val heldPeekAtSeal: Int = -1,
+    // Issue #105 (F1): the tasks this session's own row booked
+    // as finished (completedTasksSummary, split on its " • "
+    // join), in booking order — the slip prints the work it
+    // attests. (F4): the Safe Break seconds actually lived in
+    // this session (the row's breakTakenSeconds), NOT the
+    // valve ledger [bankedBreakSeconds] reads.
+    val completedTasks: List<String> = emptyList(),
+    val safeBreakSeconds: Int = 0
 )
 
 /**
@@ -322,7 +355,18 @@ data class ReceiptState(
     val forgedArtifactName: String? = null,
     // W-41: see PendingReceipt.heldShutAtSeal.
     val heldShutAtSeal: Int = -1,
-    val heldPeekAtSeal: Int = -1
+    val heldPeekAtSeal: Int = -1,
+    // Issue #152: the IANA zone the session was ARMED in, captured
+    // at the birth funnel (ArmZoneStore). Null when unknown (a
+    // session armed before the capture existed). The slip renders
+    // ARMED in this zone — with its offset printed — whenever it
+    // differs from the zone in force at render; a receipt's times
+    // must say where they live.
+    val armZoneId: String? = null,
+    // Issue #105 (F1/F4): see PendingReceipt.completedTasks /
+    // safeBreakSeconds — carried through publish + rehydrate.
+    val completedTasks: List<String> = emptyList(),
+    val safeBreakSeconds: Int = 0
 ) {
     /** The printed №: zero-padded to a minimum of 3, never
      *  truncated (№ 048 … № 1048). */

@@ -59,12 +59,27 @@ class DayWordStore(context: Context) {
         if (!isDateIso(dateIso)) return false
         val editor = prefs.edit()
         when {
-            word == null -> editor.remove(dateIso)
+            word == null -> editor.remove(dateIso).remove(zoneKey(dateIso))
             word in WORDS -> editor.putString(dateIso, word)
+                // Issue #152: witness the zone this declaration is
+                // made in, under a side key the readers never serve
+                // as a word (its key is not a date and its value is
+                // not in WORDS, so all() filters it twice over).
+                // The seed-sync drain likewise skips it, so the
+                // witness survives the word's move into day_notes.
+                .putString(zoneKey(dateIso), java.time.ZoneId.systemDefault().id)
             else -> return false
         }
         return editor.commit()
     }
+
+    /** Issue #152: the zone the standing declaration for
+     *  [dateIso] was made in, or null when no witness exists
+     *  (a word declared before this witness, or none declared). */
+    fun declaredZone(dateIso: String): String? =
+        prefs.getString(zoneKey(dateIso), null)
+
+    private fun zoneKey(dateIso: String): String = "$dateIso#zone"
 
     /** Strict yyyy-MM-dd: parses as a real calendar date and
      *  round-trips to the same string (no "2026-13-40", no

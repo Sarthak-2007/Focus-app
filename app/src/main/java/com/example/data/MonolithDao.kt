@@ -10,11 +10,21 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface MonolithDao {
     // Blocked Apps (3-Tier: LOCKED, PEEK_2M, OPEN)
-    @Query("SELECT * FROM blocked_apps ORDER BY isBlocked DESC, interceptCount DESC, appName ASC")
+    // Issue #142: the catalogue is a place to FIND an app, so it
+    // sorts A-Z by name (package as the stable tiebreak). The old
+    // enforcement-priority order (isBlocked, interceptCount) moved
+    // an app's row every time it was intercepted - a list that
+    // rearranges itself while the user is scanning it.
+    @Query("SELECT * FROM blocked_apps ORDER BY appName ASC, packageName ASC")
     fun getAllApps(): Flow<List<BlockedAppEntity>>
 
     @Query("SELECT * FROM blocked_apps")
     suspend fun getAllAppsSnapshot(): List<BlockedAppEntity>
+
+    /** Audit R6 #341 F54: the notification listener's per-capture
+     *  lookup — one row, not a full catalogue materialisation. */
+    @Query("SELECT * FROM blocked_apps WHERE packageName = :packageName LIMIT 1")
+    suspend fun getAppByPackage(packageName: String): BlockedAppEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertApps(apps: List<BlockedAppEntity>)
@@ -30,6 +40,16 @@ interface MonolithDao {
 
     @Query("UPDATE blocked_apps SET activePeekUntilElapsedRealtime = :activeUntilMono, lastPeekEndElapsedRealtime = :peekEndMono WHERE packageName = :packageName")
     suspend fun updatePeekLeaseAndCooldown(packageName: String, activeUntilMono: Long, peekEndMono: Long): Int
+
+    // Issue #87 (process-death F1): both peek anchors are monotonic
+    // (SystemClock.elapsedRealtime) values. A reboot resets that clock
+    // to ~0, so every stored anchor becomes a far-future instant in
+    // the new boot — a live lease would resurrect for up to the whole
+    // previous uptime, and a spent lease's cooldown would never end.
+    // Zeroing BOTH fields on every row at real boot kills the lease
+    // and the cooldown together; neither means anything across a boot.
+    @Query("UPDATE blocked_apps SET activePeekUntilElapsedRealtime = 0, lastPeekEndElapsedRealtime = 0")
+    suspend fun clearAllPeekLeases()
 
     /** The prune (Ordner lane): rows for packages the phone no longer
      *  has leave the table at sync — the catalog is the phone's truth,
@@ -225,11 +245,26 @@ interface MonolithDao {
     @Insert
     suspend fun insertEmergencyBreakSpend(spend: EmergencyBreakSpendEntity)
 
-    @Query("SELECT * FROM emergency_break_spends WHERE weekAnchorMillis = :anchor")
-    suspend fun getSpendsForWeek(anchor: Long): List<EmergencyBreakSpendEntity>
+    // Issue #39 F1: the week's reads are MonolithWeek.spendCountsAgainstWeek
+    // in SQL — NOT anchor equality. A spend counts iff its stored anchor is
+    // within 26h (93_600_000 ms = MonolithWeek.WEEK_ANCHOR_ZONE_TOLERANCE_MILLIS,
+    // the ruled max Monday-to-Monday zone delta) of the current anchor, OR
+    // its spend instant falls inside the current local week. Exact equality
+    // orphaned every spend minted under another timezone and silently
+    // reset the weekly cap.
+    @Query(
+        "SELECT * FROM emergency_break_spends WHERE " +
+            "(weekAnchorMillis BETWEEN :anchor - 93600000 AND :anchor + 93600000) " +
+            "OR (spentAtWallMillis >= :anchor AND spentAtWallMillis < :nextAnchor)"
+    )
+    suspend fun getSpendsForWeek(anchor: Long, nextAnchor: Long): List<EmergencyBreakSpendEntity>
 
-    @Query("SELECT * FROM emergency_break_spends WHERE weekAnchorMillis = :anchor")
-    fun observeSpendsForWeek(anchor: Long): Flow<List<EmergencyBreakSpendEntity>>
+    @Query(
+        "SELECT * FROM emergency_break_spends WHERE " +
+            "(weekAnchorMillis BETWEEN :anchor - 93600000 AND :anchor + 93600000) " +
+            "OR (spentAtWallMillis >= :anchor AND spentAtWallMillis < :nextAnchor)"
+    )
+    fun observeSpendsForWeek(anchor: Long, nextAnchor: Long): Flow<List<EmergencyBreakSpendEntity>>
 
     @Query("SELECT * FROM emergency_break_spends ORDER BY spentAtWallMillis DESC")
     suspend fun getAllSpendsSnapshot(): List<EmergencyBreakSpendEntity>
