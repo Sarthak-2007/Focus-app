@@ -1,0 +1,39 @@
+name: durch-fin-release-capture
+on:
+  push:
+    branches: [agent/durch-fin-release-10]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - name: Install SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "build-tools;35.0.0"
+      - name: Assemble debug APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug --console=plain 2>&1 | tee release-console.log
+          echo "ASSEMBLE_EXIT=${PIPESTATUS[0]}" | tee -a release-console.log
+      - name: Fingerprint and version read
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          BT=$(ls -d $ANDROID_HOME/build-tools/*/ | sort -V | tail -1)
+          echo "build-tools: $BT" > release-info.txt
+          ${BT}apksigner verify --print-certs "$APK" >> release-info.txt 2>&1 || true
+          ${BT}aapt2 dump badging "$APK" | head -3 >> release-info.txt 2>&1 || true
+          sha256sum "$APK" >> release-info.txt
+          cat release-info.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: batch-10-apk
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            release-info.txt
+            release-console.log
+          if-no-files-found: warn
