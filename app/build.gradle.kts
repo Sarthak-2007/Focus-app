@@ -93,7 +93,13 @@ tasks.withType<Test>().configureEach {
     "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
     "--add-opens=java.base/sun.security.ssl=ALL-UNNAMED",
     "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
-    "--add-opens=java.desktop/java.awt.font=ALL-UNNAMED"
+    "--add-opens=java.desktop/java.awt.font=ALL-UNNAMED",
+    // BUILDER-TRAIN-4 triage (PR #231, run 41105848855): add-opens does
+    // not substitute for add-exports - Robolectric's sandbox needs
+    // jdk.internal.access EXPORTED (SharedSecrets, at
+    // ApplicationSharedMemory.create). Without it every Robolectric
+    // suite dies in setup: 211 toolchain failures at head 7a0ba487.
+    "--add-exports=java.base/jdk.internal.access=ALL-UNNAMED"
   )
 }
 
