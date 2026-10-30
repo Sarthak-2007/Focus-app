@@ -4,7 +4,6 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import com.example.data.RoutineDerive
 import com.example.data.RoutineEntity
 
@@ -37,23 +36,29 @@ object RoutineScheduler {
         if (boundary == null) cancelChain(context) else rearmChain(context, boundary)
     }
 
-    /** Cancel-then-set: exactly one chain alarm exists at any time. */
+    /** Cancel-then-set: exactly one chain alarm exists at any time.
+     *  Issue #309 F2 (Audit R5, AppBlock second pass): the chain
+     *  used to arm with the inexact setAndAllowWhileIdle only, so
+     *  Doze could deliver a routine boundary minutes late. When the
+     *  exact-alarm permission is held (SCHEDULE_EXACT_ALARM declared
+     *  in the manifest; granted by the user in system settings on
+     *  Android 12+), the chain now arms EXACT; without it, the
+     *  inexact arm remains — alarms are still hints, never the
+     *  mechanism, and every other trigger reconciles regardless. */
     fun rearmChain(context: Context, boundaryMillis: Long) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         val intent = chainPendingIntent(context, PendingIntent.FLAG_UPDATE_CURRENT) ?: return
         alarmManager.cancel(intent)
-        // Issue #280 (R5 supplement): when the user has granted
-        // exact alarms, the chain boundary fires exactly; the
-        // inexact form stays as the fallback, and the heartbeat
-        // reconcile remains the mechanism either way — an exact
-        // alarm sharpens the hint, it never becomes the truth.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            alarmManager.canScheduleExactAlarms()
-        ) {
-            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, boundaryMillis, intent)
-        } else {
-            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, boundaryMillis, intent)
-        }
+        // Issues #319 F2 + #280 + #309 F2: exact when the exact-alarm
+        // grant is held, inexact otherwise — one law (ExactAlarm)
+        // for the chain and the release-retry cadence alike. #309's
+        // exactAlarmPermitted (bottom of this file) states the same
+        // decision and is kept — Issue309SecondPassTest pins it;
+        // ExactAlarm.useExact mirrors it exactly (pre-API-31 exact
+        // needs no grant). An exact alarm sharpens the hint, it
+        // never becomes the truth: the heartbeat reconcile remains
+        // the mechanism either way.
+        ExactAlarm.setWakeup(alarmManager, boundaryMillis, intent)
     }
 
     fun cancelChain(context: Context) {
@@ -101,3 +106,12 @@ object RoutineScheduler {
             mode or PendingIntent.FLAG_IMMUTABLE
         )
 }
+
+/**
+ * Issue #309 F2: the exact-alarm decision, pure. Before Android 12
+ * (API 31) exact alarms needed no permission and are always
+ * permitted; from API 31 the SCHEDULE_EXACT_ALARM grant decides —
+ * [canScheduleExactAlarms] is its live answer.
+ */
+internal fun exactAlarmPermitted(sdkInt: Int, canScheduleExactAlarms: Boolean): Boolean =
+    sdkInt < 31 || canScheduleExactAlarms

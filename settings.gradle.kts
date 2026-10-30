@@ -12,12 +12,17 @@ pluginManagement {
   }
 }
 
-plugins { id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0" }
-
 dependencyResolutionManagement {
   repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
   repositories {
-    google()
+    exclusiveContent {
+      forRepository { google() }
+      filter {
+        includeGroupByRegex("com\\.android.*")
+        includeGroupByRegex("com\\.google\\.android.*")
+        includeGroupByRegex("androidx.*")
+      }
+    }
     mavenCentral()
   }
 }

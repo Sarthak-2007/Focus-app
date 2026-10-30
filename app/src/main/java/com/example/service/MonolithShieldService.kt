@@ -15,12 +15,13 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
-import com.example.MainActivity
 import com.example.R
 import com.example.data.AppBlockTier
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
 import com.example.widget.MonolithWidgetProvider
+import com.example.MLog
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,34 +34,144 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+
+/**
+ * The shield's command dispatch (Issue #78, Audit R2 ipc-intents):
+ * fail-CLOSED. Only [MonolithShieldService.ACTION_START_SHIELD]
+ * starts protection; only [MonolithShieldService.ACTION_STOP_SHIELD]
+ * stops it. A null intent (START_STICKY system restart) may resume
+ * ONLY when a live session is re-derived from the store — with no
+ * live session it stops itself and never enters the foreground. An
+ * unknown action never starts anything and never tears down a
+ * running loop. Pure, so the matrix is unit-tested action by action.
+ */
+internal enum class ShieldDispatch { STOP, START_FULL, KEEP_RUNNING, STOP_SELF }
+
+internal fun shieldDispatchFor(
+    action: String?,
+    monitorRunning: Boolean,
+    hasLiveSession: Boolean
+): ShieldDispatch = when {
+    action == MonolithShieldService.ACTION_STOP_SHIELD -> ShieldDispatch.STOP
+    action == MonolithShieldService.ACTION_START_SHIELD ->
+        if (monitorRunning) ShieldDispatch.KEEP_RUNNING else ShieldDispatch.START_FULL
+    action == null -> when {
+        !hasLiveSession -> ShieldDispatch.STOP_SELF
+        monitorRunning -> ShieldDispatch.KEEP_RUNNING
+        else -> ShieldDispatch.START_FULL
+    }
+    else -> if (monitorRunning) ShieldDispatch.KEEP_RUNNING else ShieldDispatch.STOP_SELF
+}
 
 class MonolithShieldService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var monitorJob: Job? = null
 
+    /** The live session's id re-derived from the store, or null
+     *  when there is none (or the read failed — fail closed). The
+     *  only lawful answer to "should a command with no explicit
+     *  START resume protection?": the store's row, never the
+     *  intent's say-so. Read synchronously because onStartCommand
+     *  must decide before it returns; the read is a single Room
+     *  snapshot on Room's own executor. */
+    private fun liveActiveSessionId(): Int? = runCatching {
+        runBlocking {
+            // ISSUE-67: via the single construction point
+            // (AppContainer resolves the same getInstance singleton).
+            com.example.AppContainer.dao(applicationContext)
+                .getActiveSessionSnapshot()?.takeIf { it.isActive }?.id
+        }
+    }.onFailure {
+        // Issue #75 F1 wiring: a thrown read reads as "no live
+        // session" to the dispatch — that conversion must not be
+        // silent, or a wedged DB stands the shield down invisibly.
+        MLog.w("liveActiveSessionId read failed; dispatch treats it as no live session", it)
+    }.getOrNull()
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
-        if (action == ACTION_STOP_SHIELD) {
-            protecting = false
-            protectingSessionId = -1
-            protectingMono = 0L
-            WatchStore.onShieldIteration(protecting = false)
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            MonolithWidgetProvider.requestUpdate(applicationContext)
-            stopSelf()
-            return START_NOT_STICKY
+        // A null delivery (sticky restart) is dispatched on the
+        // re-derived session fact, read BEFORE any state moves.
+        val liveSessionId = if (action == null) liveActiveSessionId() else null
+        return when (
+            shieldDispatchFor(action, monitorJob?.isActive == true, liveSessionId != null)
+        ) {
+            ShieldDispatch.STOP -> {
+                protecting = false
+                protectingSessionId = -1
+                protectingMono = 0L
+                WatchStore.onShieldIteration(protecting = false)
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                // Issue #155 (F1): the shield is down — refresh
+                // the home-screen widget at the moment it matters.
+                MonolithWidgetProvider.requestUpdate(applicationContext)
+                stopSelf()
+                START_NOT_STICKY
+            }
+            ShieldDispatch.STOP_SELF -> {
+                // Fail closed: an unknown action, or a sticky
+                // restart with no live session behind it. No witness
+                // reset, no foreground, no loop — the service simply
+                // declines to exist for this command.
+                stopSelf()
+                START_NOT_STICKY
+            }
+            ShieldDispatch.KEEP_RUNNING -> {
+                // Duplicate START / unknown action / sticky restart
+                // over a live loop: the loop and the protection
+                // witness stand untouched. Foreground is re-asserted
+                // (a startForegroundService delivery carries its own
+                // promote-or-crash deadline; re-posting the standing
+                // notification satisfies it without moving any
+                // protection state). The ONE lawful witness reset
+                // here is a session change — the witness attests the
+                // OLD session, so the new one must re-prove on the
+                // running loop's next iteration.
+                if (!promoteToForeground()) return START_NOT_STICKY
+                val currentId = liveSessionId ?: liveActiveSessionId()
+                if (protecting && currentId != null && protectingSessionId != currentId) {
+                    protecting = false
+                    protectingSessionId = -1
+                    protectingMono = 0L
+                    WatchStore.poke()
+                }
+                START_STICKY
+            }
+            ShieldDispatch.START_FULL -> {
+                // Cascade witness reset (Slice D step 4, Opal L2): a
+                // fresh start must re-prove protection for the
+                // session this loop is about to read - a stale flip
+                // from a previous session would let the cascade
+                // confirm a shield that has not yet run one iteration
+                // over the latched row. This branch is reached only
+                // when no loop is running, so the witness it resets
+                // attests no live loop.
+                protecting = false
+                protectingSessionId = -1
+                protectingMono = 0L
+
+                // promoteToForeground registers the Live Wire
+                // instance itself, and only on a startForeground
+                // that actually succeeded; a refusal stands the
+                // service down instead of starting a loop behind a
+                // foreground that does not exist.
+                if (!promoteToForeground()) return START_NOT_STICKY
+                WatchStore.poke()
+                startMonitoringLoop()
+
+                START_STICKY
+            }
         }
+    }
 
-        // Cascade witness reset (Slice D step 4, Opal L2): a fresh
-        // start must re-prove protection for the session this loop
-        // is about to read - a stale flip from a previous session
-        // would let the cascade confirm a shield that has not yet
-        // run one iteration over the latched row.
-        protecting = false
-        protectingSessionId = -1
-        protectingMono = 0L
-
+    /** Enters (or re-asserts) the foreground with the standing
+     *  shield notification. Re-asserting moves no protection state:
+     *  the witness, the loop and the session are untouched.
+     *  Returns false when the platform refused the foreground
+     *  start — the caller must stand down (START_NOT_STICKY). */
+    private fun promoteToForeground(): Boolean {
         createNotificationChannel()
         val fgsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
@@ -73,16 +184,17 @@ class MonolithShieldService : Service() {
         // SecurityException). An unguarded throw here would leave
         // a zombie — the caller believes a shield was requested,
         // the system has a dying service, and no loop ever runs.
-        // On failure: clear every witness, stopSelf, and return
-        // START_NOT_STICKY so nothing advertises protection that
-        // does not exist.
-        // Issue #155 (F2, composed at the STURM-4 recovery merge):
-        // the card this posts must not claim a lock that has not
-        // happened yet — `protecting` flips only after the monitor
-        // loop's first full iteration, and that same iteration
-        // overwrites this card with real session facts — so the
-        // guarded call carries the honest arming text, not
-        // "Monolith Locked / Protecting your focus session...".
+        // On failure: clear every witness, stopSelf, and report
+        // false so the dispatch in onStartCommand returns
+        // START_NOT_STICKY — nothing advertises protection that
+        // does not exist. (Merge, STURM3-15: main's guarded body
+        // adopted whole into #78's promoteToForeground; the
+        // Boolean replaces main's Int return because #78's
+        // dispatch has four call paths, not one.)
+        // Issue #155 (F2): the guarded call below carries the
+        // honest arming text ("Monolith" / "Arming shield\u2026"),
+        // not a claim of a lock that has not happened yet.
+
         try {
             ServiceCompat.startForeground(
                 this,
@@ -100,23 +212,26 @@ class MonolithShieldService : Service() {
             protectingMono = 0L
             WatchStore.onShieldIteration(protecting = false)
             stopSelf()
-            return START_NOT_STICKY
+            return false
         }
         // Live Wire registry (Ines): the instance exists only once
         // startForeground has actually succeeded - no instance, no
         // flag, no rumour.
         instance = this
+        // Main's WatchStore.bind (Live Wire registry) preserved:
+        // binding is idempotent and every other door binds on entry.
         WatchStore.bind(applicationContext)
-        WatchStore.poke()
-        startMonitoringLoop()
-
-        return START_STICKY
+        return true
+        WatchStore.bind(applicationContext)
     }
 
     private fun startMonitoringLoop() {
         monitorJob?.cancel()
-        val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
-        val repository = MonolithRepository(applicationContext, dao)
+        // ISSUE-67: construction via the single point; the DAO
+        // comes from the same container for the loop's remaining
+        // direct reads.
+        val dao = com.example.AppContainer.dao(applicationContext)
+        val repository = com.example.AppContainer.repository(applicationContext)
 
         monitorJob = serviceScope.launch {
             var iteration = 0
@@ -144,8 +259,19 @@ class MonolithShieldService : Service() {
                     RoutineHeartbeat.tick(
                         applicationContext, RoutineHeartbeat.Source.SHIELD_LOOP
                     )
+                    // Issue #129 F2: the catalogue resyncs on the
+                    // same ~30s cadence, mid-session. An app
+                    // installed AFTER this session sealed previously
+                    // stayed invisible to both enforcement doors
+                    // until the session ended; now its row (and its
+                    // birth tier) lands within one cadence, and the
+                    // blocked-set derivation below reads the fresh
+                    // table on the next iteration. A failed sync
+                    // leaves the standing table untouched — the
+                    // reconcile itself refuses an empty query.
+                    runCatching { repository.ensureSeededAndSyncPackages() }
                 }
-                val activeSession = dao.getActiveSessionSnapshot()
+                val activeSession = repository.activeSessionSnapshot() // ISSUE-67(d): via repository, not direct DAO
                 if (activeSession == null || !activeSession.isActive) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     MonolithWidgetProvider.requestUpdate(applicationContext)
@@ -153,12 +279,36 @@ class MonolithShieldService : Service() {
                     break
                 }
 
+                // Issue #81 F4: the shield's sight IS Usage Access.
+                // Revoked mid-session, queryForegroundBlockedApp
+                // returns null forever — indistinguishable from an
+                // empty foreground — while this loop kept beating on
+                // schedule and the finish certified ELAPSED_CLEAN.
+                // The blindness is now measured every iteration (see
+                // the latch just after the progress write below),
+                // and the protecting flip further down only happens
+                // for an iteration that could actually see.
+                val usageGranted = repository.hasUsageStatsPermission()
+
                 // Slice E (Nocke §2.2): the shield's own loop is
                 // the beat's only lawful writer — its tick stamps
                 // shieldLastBeatWallMillis into the row it already
                 // persists, so the finish machine can later prove
                 // whether the shield was present or gone.
                 val updated = repository.updateSessionProgress(activeSession, stampShieldBeat = true)
+                if (!usageGranted) {
+                    // Latched AFTER the progress write on purpose:
+                    // updateSession is a full-row @Update, so a latch
+                    // set before it would be overwritten by this
+                    // iteration's own snapshot (taken while the row
+                    // was unlatched). From here the latch persists:
+                    // every later iteration re-reads the row fresh,
+                    // and the finish classifies ELAPSED_SHIELD_GAP.
+                    // (A session completing on THIS tick is covered
+                    // by the fresh usage read inside
+                    // updateSessionProgress's outcome classification.)
+                    repository.latchShieldGapNow()
+                }
                 if (!updated.isActive) {
                     // Session-edge tick BEFORE standing down: a routine
                     // session that just timer-completed gets finalised
@@ -295,7 +445,7 @@ class MonolithShieldService : Service() {
                 } else {
                     updateNotification(
                         title = "Monolith • ${updated.intention}",
-                        subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped",
+                        subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} reaches blocked",
                         bigText = bigText,
                         chronometerEndMillis = chronometerEndMillis,
                         badgeNumber = badgeNumber
@@ -308,7 +458,7 @@ class MonolithShieldService : Service() {
                 // witness (Opal L2) is stamped at the same flip:
                 // the session this iteration read, and the mono it
                 // flipped - CONFIRMED stamp for SHIELD-PROTECTING.
-                if (!protecting) {
+                if (!protecting && usageGranted) {
                     protecting = true
                     protectingSessionId = updated.id
                     protectingMono = SystemClock.elapsedRealtime()
@@ -316,26 +466,57 @@ class MonolithShieldService : Service() {
                     // Issue #155 (F1): a session is now live — refresh
                     // the home-screen widget at the moment it matters.
                     MonolithWidgetProvider.requestUpdate(applicationContext)
+                    // Issue #80 finding 4: the session just armed —
+                    // sweep notifications blocked apps posted BEFORE
+                    // this moment through the listener's capture path.
+                    try {
+                        MonolithNotificationListener.instance?.sweepActiveNotifications()
+                    } catch (_: Exception) {}
                 }
                 // Watch Store (chrome C3): ONE publication per
                 // iteration — the engine heartbeat plus a re-read of
-                // the two BIND items' present state.
-                WatchStore.onShieldIteration(protecting)
+                // the two BIND items' present state (and, #81 F4,
+                // this iteration's USAGE ACCESS measurement).
+                WatchStore.onShieldIteration(protecting, usageGranted)
 
                 val nowMono = SystemClock.elapsedRealtime()
-                val blockedPackages = dao.getAllAppsSnapshot()
+                val blockedPackages = repository.allAppsSnapshot() /* ISSUE-67(d): via repository */
                     .filter { app ->
                         val tier = app.resolvedTier
+                        // Issue #140: the daily limit is real. An app
+                        // whose today's usage has reached its limit is
+                        // blocked whatever its tier — except inside a
+                        // lawful peek already running (Safe Break or a
+                        // live 2-minute lease), which is never yanked
+                        // mid-peek. Usage is the reconciled
+                        // todayUsageMinutes on the row.
+                        val overLimit = app.dailyLimitMinutes > 0 &&
+                            app.todayUsageMinutes >= app.dailyLimitMinutes
                         when {
-                            tier == AppBlockTier.OPEN -> false
                             updated.isInSafeBreak && tier == AppBlockTier.PEEK_2M -> false
                             tier == AppBlockTier.PEEK_2M && nowMono < app.activePeekUntilElapsedRealtime -> false
+                            overLimit -> true
+                            tier == AppBlockTier.OPEN -> false
                             else -> true
                         }
                     }
                     .map { it.packageName }
                     .toSet()
 
+                // Issue #290 F5: screen state is a first-class
+                // input to this loop. While the screen is off /
+                // the device is locked-idle there is no foreground
+                // to police — the session's clock above still
+                // ticks (locked-away study counts), but no
+                // foreground verdict is acted on, so a stale
+                // witness/stat can never fire an intercept at a
+                // dark screen or the instant of unlock.
+                val screenInteractive = try {
+                    (getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager)
+                        ?.isInteractive ?: true
+                } catch (_: Exception) {
+                    true
+                }
                 // Foreground detection (issue #43, finding 2):
                 // prefer the accessibility service's real
                 // TYPE_WINDOW_STATE_CHANGED witness when that
@@ -345,7 +526,7 @@ class MonolithShieldService : Service() {
                 // the witness path does not go through the
                 // repository's UsageStats query that checked it
                 // before — a call must never be blocked on either
-                // path. The 2 s cadence is unchanged.
+                // path. The cadence is 1 s (issue #332 F1).
                 // Issue #99 F1 composes on the fallback path: a
                 // package whose peek lease just expired is evicted
                 // on this poll even though its lastTimeUsed is
@@ -362,37 +543,54 @@ class MonolithShieldService : Service() {
                 } else {
                     null
                 }
-                val foregroundBlockedPkg = if (repository.isPhoneOrVoipCallActive()) {
-                    null
-                } else {
-                    ForegroundSelection.selectBlockedForeground(
+                // Issue #332 F2: a live call no longer suspends
+                // this door wholesale (the pre-cure shape made
+                // every call a complete enforcement holiday on
+                // both paths, uninstall guard included). Selection
+                // always runs; the call's own surfaces are exempt
+                // per-package through the safety floor (dialer /
+                // incallui / telecom), and every other blocked app
+                // stays blocked mid-call — Flipd's construction.
+                // The VoIP-owner exemption lives in the
+                // accessibility door (shouldBypassForCall); this
+                // fallback door fails closed, as a fallback must.
+                val selectedForeground = ForegroundSelection
+                    .selectBlockedForeground(
                         accessibilityForeground = a11yForeground,
                         blockedPackages = blockedPackages,
                         usageStatsFallback = { repository.queryForegroundBlockedApp(blockedPackages, expiredPeeks) }
                     )
-                }
+                    ?.takeUnless { com.example.data.SafetyFloor.isFloorPackage(it) }
+                // Issue #290 F5: a dark/locked screen vetoes the
+                // verdict (see screenInteractive above).
+                val foregroundBlockedPkg = if (screenInteractive) selectedForeground else null
                 if (foregroundBlockedPkg != null && foregroundBlockedPkg != applicationContext.packageName) {
-                    val blockedApp = dao.getAllAppsSnapshot().find { it.packageName == foregroundBlockedPkg }
-                    val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                        putExtra(EXTRA_INTERCEPTED_PACKAGE, foregroundBlockedPkg)
-                        putExtra(EXTRA_INTERCEPTED_APP_NAME, blockedApp?.appName ?: "Blocked App")
-                        putExtra(EXTRA_INTERCEPT_BADGE, blockedApp?.resolvedTier?.badge ?: "Shut")
-                        // This door's blocked set already excludes a leased PEEK app
-                        // (the filter above), so a lease sold here is honoured (UNA2-01).
-                        putExtra(EXTRA_INTERCEPT_PATH, InterceptPath.SHIELD_APP.name)
-                        putExtra(EXTRA_INTERCEPT_NONCE, InterceptNonce.mint(applicationContext))
-                    }
+                    val blockedApp = repository.allAppsSnapshot() /* ISSUE-67(d): via repository */.find { it.packageName == foregroundBlockedPkg }
+                    // ISSUE-67: intercept intent via the seam (no
+                    // MainActivity import; the seam mints the #68
+                    // nonce and the #78 firing id). This door's
+                    // blocked set already excludes a leased PEEK
+                    // app (the filter above), so a lease sold here
+                    // is honoured (UNA2-01) — InterceptPath.SHIELD_APP,
+                    // as before.
                     // Issue #94 (F2): never a bare background launch —
                     // a dropped launch stamps itself and falls back
                     // to a tappable notification (InterceptLaunch).
                     InterceptLaunch.launch(
-                        applicationContext, interceptIntent,
+                        applicationContext,
+                        InterceptIntents.interceptIntent(
+                            applicationContext, foregroundBlockedPkg,
+                            blockedApp?.appName ?: "Blocked App",
+                            blockedApp?.resolvedTier?.badge ?: "Shut",
+                            InterceptPath.SHIELD_APP
+                        ),
                         blockedApp?.appName ?: "Blocked App"
                     )
                 }
 
-                delay(2000L)
+                // Issue #332 F1: 1-second cadence, matching the
+                // UsageEvents window the fallback door now reads.
+                delay(1000L)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -508,12 +706,12 @@ class MonolithShieldService : Service() {
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-                // Issue #155 (F5): a tap on the shield card lands on
-                // the SHIELD destination, not the default Deck —
-                // MainActivity routes on this extra when no intercept
-                // extras are present.
+            // ISSUE-67: via the seam, same SINGLE_TOP semantics —
+            // composed with issue #155 (F5): a tap on the shield
+            // card lands on the SHIELD destination, not the default
+            // Deck; MainActivity routes on this extra when no
+            // intercept extras are present.
+            InterceptIntents.notificationIntent(this).apply {
                 putExtra(EXTRA_FROM_SHIELD_NOTIFICATION, true)
             },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
@@ -602,9 +800,9 @@ class MonolithShieldService : Service() {
         val pendingIntent = PendingIntent.getActivity(
             this,
             1,
-            Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-            },
+            // ISSUE-67: via the seam, same SINGLE_TOP semantics
+            // (this summons site landed with #146 after the seam).
+            InterceptIntents.notificationIntent(this),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val notification = NotificationCompat.Builder(this, SUMMONS_CHANNEL_ID)
@@ -700,6 +898,13 @@ class MonolithShieldService : Service() {
          *  WHICH door — and only lease-honouring doors may sell a
          *  peek. Written by both intercept launchers. */
         const val EXTRA_INTERCEPT_PATH = "extra_intercept_path"
+        /** Issue #78: the firing's unique id (UUID, minted by the
+         *  firing door). MainActivity persists consumption of this
+         *  id BEFORE showing the Airlock; the platform-retained
+         *  intent redelivered after process death carries the same
+         *  id and is dropped as already consumed. */
+        const val EXTRA_INTERCEPT_ID = "extra_intercept_id"
+
         /** Issue #68 F5, Tier 2: the single-use provenance nonce
          *  (see [InterceptNonce]). Written by both intercept
          *  launchers; required by MainActivity before any

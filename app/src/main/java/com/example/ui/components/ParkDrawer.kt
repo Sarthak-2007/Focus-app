@@ -1,4 +1,6 @@
 package com.example.ui.components
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
 
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
@@ -528,7 +530,7 @@ fun ParkDrawer(
                     if (proved != null) {
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = SimpleDateFormat("HH:mm", Locale.US).format(Date(proved)) +
+                            text = ClockText.timeOfDay(LocalContext.current, proved) +
                                 " · SELF-REPORT",
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
@@ -929,6 +931,18 @@ fun ParkDrawer(
                         }
                     }
                 }
+                // Issue #150: the sled's word must not lie by
+                // omission — OFF silences the voice, never the
+                // event: the haptic twin still fires at full
+                // amplitude by design (S0). One caption line in
+                // the plate's own grammar, printed always, so the
+                // fact is read before it is discovered on a
+                // library desk.
+                Text(
+                    text = "SOUND OFF KEEPS THE TOUCH — THE BUZZ CARRIES THE EVENT",
+                    style = PillBadgeTextStyle,
+                    color = scheme.onSurfaceVariant
+                )
                 ParkHairline()
 
                 // (5) Shorts + Reels — the sniper's sled, seated

@@ -27,7 +27,8 @@ import kotlinx.coroutines.launch
  *  - service lifecycle hooks stamp the two BIND items (accessibility,
  *    notification listener) and the device-admin GRANT CHECK;
  *  - the shield loop publishes ONE snapshot per iteration: the engine
- *    heartbeat plus a re-read of the two BIND items' present state;
+ *    heartbeat plus a re-read of the two BIND items' present state
+ *    (and, since issue #81 F4, the USAGE ACCESS grant it measured);
  *  - the grant-check sweep (Deck entry, Deck resume, FIX return)
  *    dispatches the six permission queries in parallel at t=0; each
  *    item re-stamps only when its own query lands.
@@ -102,23 +103,22 @@ enum class WatchItemId(val boardName: String, val counted: Boolean) {
 
     companion object {
         /** The six permission-family items, board order.
-         *  Issue #313 F4 (Audit R5 · Opal second pass): the board
-         *  used to lead with ACCESSIBILITY — the scariest grant,
-         *  asked cold. Board order is now value order: USAGE ACCESS
-         *  first (the benefit the user can see — their own app/time
-         *  picture), ACCESSIBILITY second (the blocking engine,
-         *  asked once the point is proven), then the listener, the
-         *  device-admin uninstall guard, overlay and battery. This
-         *  list IS the render order (GuardLine prints, PARK board)
-         *  and the next-fix suggestion order in ParkDrawer, so the
-         *  FIX trips now fire in this order too. */
+         *  Issue #309 F5 (Audit R5, AppBlock second pass): the board
+         *  used to LEAD with its scariest grants (ACCESSIBILITY,
+         *  DEVICE ADMIN). The order is now cheapest-first — the
+         *  read-only USAGE ACCESS ask leads, the invasive grants
+         *  (ACCESSIBILITY, DEVICE ADMIN) close the board — so the
+         *  first thing a new user is asked for is the least
+         *  frightening one, and the "first missing" surfaces that
+         *  read this list meet the cheap asks before the dear ones. */
         val PERMISSIONS: List<WatchItemId> = listOf(
-            USAGE_ACCESS, ACCESSIBILITY, NOTIFICATION_LISTENER,
-            DEVICE_ADMIN, OVERLAY, BATTERY
+            USAGE_ACCESS, OVERLAY, NOTIFICATION_LISTENER,
+            ACCESSIBILITY, DEVICE_ADMIN, BATTERY
         )
-        /** The counted four, board order. */
+        /** The counted four, board order (same relative order as
+         *  [PERMISSIONS]). */
         val COUNTED: List<WatchItemId> = listOf(
-            ACCESSIBILITY, USAGE_ACCESS, DEVICE_ADMIN, NOTIFICATION_LISTENER
+            USAGE_ACCESS, NOTIFICATION_LISTENER, ACCESSIBILITY, DEVICE_ADMIN
         )
         /** The three derived interceptor items, board order. */
         val INTERCEPTORS: List<WatchItemId> = listOf(SHORTS_REELS, SOCIAL_SITES, NOTIFICATIONS)
@@ -328,8 +328,17 @@ object WatchStore {
      * heartbeat (behind the strip, never a board line) plus a
      * re-read of the two BIND items' present state, stamped as
      * measurements of this instant.
+     *
+     * Issue #81 F4: the loop also hands over the USAGE ACCESS fact
+     * it measured this iteration ([usageGranted], null = not
+     * measured — the stop/destroy publications, which must not
+     * fabricate a reading while dying). Before this, USAGE_ACCESS
+     * was re-measured only by the Deck-triggered sweep, so a
+     * mid-session revocation stayed invisible to every surface
+     * while the shield kept beating; now the board re-reads it on
+     * the shield's own 2s cadence for as long as a session runs.
      */
-    fun onShieldIteration(protecting: Boolean) {
+    fun onShieldIteration(protecting: Boolean, usageGranted: Boolean? = null) {
         val mono = SystemClock.elapsedRealtime()
         val wall = System.currentTimeMillis()
         val a11y = MonolithAccessibilityService.instance != null
@@ -354,6 +363,15 @@ object WatchStore {
                     measuredMono = mono, measuredWall = wall
                 )
             )
+            if (usageGranted != null) {
+                next = next.withMeasurement(
+                    WatchMeasurement(
+                        WatchItemId.USAGE_ACCESS,
+                        perm = if (usageGranted) PermState.GRANTED else PermState.MISSING,
+                        measuredMono = mono, measuredWall = wall
+                    )
+                )
+            }
             next
         }
     }
