@@ -300,6 +300,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val allApps by viewModel.apps.collectAsStateWithLifecycle()
     val filteredApps by viewModel.filteredApps.collectAsStateWithLifecycle()
     val pruneNote by viewModel.pruneNote.collectAsStateWithLifecycle()
+    val unreviewedOpenNames by viewModel.unreviewedOpenNames.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val selectedCategory by viewModel.selectedCategoryFilter.collectAsStateWithLifecycle()
     val shortsReelsSniperEnabled by viewModel.shortsReelsSniperEnabled.collectAsStateWithLifecycle()
@@ -963,7 +964,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                         "${note.appsRemoved} APPS NOT ON THIS PHONE WERE TAKEN OFF THIS LIST" +
                                             if (note.rulesRemoved) " — AND THEIR RULES WITH THEM" else ""
                                     },
-                                    onPruneNoteDismissed = viewModel::dismissPruneNote
+                                    onPruneNoteDismissed = viewModel::dismissPruneNote,
+                                    unreviewedOpenText = unreviewedOpenNames.takeIf { it.isNotEmpty() }?.let { names ->
+                                        val shown = names.take(3).joinToString(", ") { it.uppercase() }
+                                        val more = if (names.size > 3) " +${names.size - 3} MORE" else ""
+                                        "${names.size} APPS ARE OPEN WITHOUT YOUR REVIEW: $shown$more — SET A RULE FOR EACH BELOW"
+                                    }
                                 )
                             }
 

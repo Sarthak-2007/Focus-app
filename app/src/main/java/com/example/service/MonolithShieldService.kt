@@ -250,6 +250,17 @@ class MonolithShieldService : Service() {
                     RoutineHeartbeat.tick(
                         applicationContext, RoutineHeartbeat.Source.SHIELD_LOOP
                     )
+                    // Issue #129 F2: the catalogue resyncs on the
+                    // same ~30s cadence, mid-session. An app
+                    // installed AFTER this session sealed previously
+                    // stayed invisible to both enforcement doors
+                    // until the session ended; now its row (and its
+                    // birth tier) lands within one cadence, and the
+                    // blocked-set derivation below reads the fresh
+                    // table on the next iteration. A failed sync
+                    // leaves the standing table untouched — the
+                    // reconcile itself refuses an empty query.
+                    runCatching { repository.ensureSeededAndSyncPackages() }
                 }
                 val activeSession = repository.activeSessionSnapshot() // ISSUE-67(d): via repository, not direct DAO
                 if (activeSession == null || !activeSession.isActive) {

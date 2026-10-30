@@ -15,6 +15,7 @@ import com.example.MLog
 import com.example.data.AppBlockTier
 import com.example.data.BlockedBrowserDomains
 import com.example.data.GuardSettingsEntity
+import com.example.data.MonolithRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -122,6 +123,50 @@ internal fun matchBlockedDomain(urlText: String, domains: List<String>): String?
         if (candidates.any { ruleMatches(rule, it) }) return rule.host
     }
     return null
+}
+
+/** System surfaces that are never a distraction door, however
+ *  they arrive: the OS itself, the system UI (shade, recents),
+ *  and the permission controller (a grant dialog is not an app
+ *  the user opened for fun). */
+internal val UNLISTED_HARD_EXEMPT: Set<String> = setOf(
+    "android",
+    "com.android.systemui",
+    "com.google.android.permissioncontroller",
+    "com.android.permissioncontroller"
+)
+
+/**
+ * Issue #129 (unlisted-distraction, CRITICAL): the fail-closed
+ * door for a package with NO catalogue row. Before this law, a
+ * missing row meant no law at all — both enforcement doors only
+ * ever enforced rows that exist, so an app installed after the
+ * last catalogue sync was invisible for the whole session.
+ *
+ * A launchable app with no row is SHUT by default: unlisted =
+ * shut unless he listed it otherwise, and listing happens by the
+ * sync birthing its row (born LOCKED, AppCatalogReconcile) or by
+ * his hand. What is NOT shut: Monolith itself, the hard system
+ * surfaces above, the home launcher(s), the default dialer, the
+ * current input method, and any package with no launch intent —
+ * a non-launchable package is a service surface, not an app the
+ * user opened, and trapping it would punish plumbing, not
+ * distraction. Pure, so the door's matrix is unit-tested.
+ */
+internal fun unlistedAppMustBeShut(
+    pkgName: String,
+    ownPackage: String,
+    hasLaunchIntent: Boolean,
+    homePackages: Set<String>,
+    dialerPackage: String?,
+    imePackage: String?
+): Boolean {
+    if (!hasLaunchIntent) return false
+    if (pkgName == ownPackage) return false
+    if (pkgName in UNLISTED_HARD_EXEMPT) return false
+    if (pkgName in homePackages) return false
+    if (pkgName == dialerPackage || pkgName == imePackage) return false
+    return true
 }
 
 /**
@@ -450,6 +495,51 @@ internal fun isBottomNavBounds(boundsBottomPx: Int, rootHeightPx: Int): Boolean 
 class MonolithAccessibilityService : AccessibilityService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // Issue #129: packages already reported as unlisted in this
+    // process — the catalogue re-sync fires once per sighted
+    // package, not once per window event.
+    private val unlistedSyncRequested = mutableSetOf<String>()
+
+    @Volatile
+    private var homePackagesCache: Set<String>? = null
+
+    /** The phone's home launcher packages (resolved once, then
+     *  cached): the launcher is the floor the block stands on,
+     *  never a door to shut. */
+    private fun homePackages(): Set<String> {
+        homePackagesCache?.let { return it }
+        val resolved = try {
+            val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+            packageManager.queryIntentActivities(homeIntent, 0)
+                .mapNotNull { it.activityInfo?.packageName }
+                .toSet()
+        } catch (e: Exception) {
+            noteDetectionFailure("homePackages", e)
+            emptySet()
+        }
+        homePackagesCache = resolved
+        return resolved
+    }
+
+    /** Issue #129: an unlisted sighting asks the catalogue to
+     *  re-sync (once per package per process), so the app is born
+     *  into a row — LOCKED — and every later event, plus the
+     *  shield's UsageStats door, enforces the row itself. The
+     *  fail-closed intercept below does not wait for the sync:
+     *  the door is shut from the first sighting. */
+    private fun requestCatalogueSyncForUnlisted(pkgName: String, dao: com.example.data.MonolithDao) {
+        synchronized(unlistedSyncRequested) {
+            if (!unlistedSyncRequested.add(pkgName)) return
+        }
+        scope.launch {
+            try {
+                MonolithRepository(applicationContext, dao).ensureSeededAndSyncPackages()
+            } catch (e: Exception) {
+                noteDetectionFailure("unlistedCatalogueSync", e)
+            }
+        }
+    }
 
     companion object {
         // Live Wire registry (Ines): the service proves its own
@@ -1107,7 +1197,58 @@ class MonolithAccessibilityService : AccessibilityService() {
         }
 
         // 5. 3-Tier Per-App & Safe Break Blocking
-        val appRule = appsSnapshot.find { it.packageName == pkgName } ?: return
+        val appRule = appsSnapshot.find { it.packageName == pkgName }
+        if (appRule == null) {
+            // Issue #129 (unlisted-distraction, CRITICAL): no row
+            // used to mean no law — an app installed after the
+            // last sync was invisible to this door for the whole
+            // session. Now the door fails closed: a launchable
+            // unlisted app is shut on sight (system surfaces, the
+            // launcher, the dialer and the keyboard are exempt —
+            // see unlistedAppMustBeShut), and the sighting asks
+            // the catalogue to birth its row so the shield door
+            // and the seal's held count can see it too.
+            requestCatalogueSyncForUnlisted(pkgName, dao)
+            val pm = applicationContext.packageManager
+            val hasLaunchIntent = try {
+                pm.getLaunchIntentForPackage(pkgName) != null
+            } catch (e: Exception) {
+                noteDetectionFailure("unlistedLaunchIntent", e)
+                false
+            }
+            val dialerPkg = try {
+                (getSystemService(Context.TELECOM_SERVICE) as? TelecomManager)?.defaultDialerPackage
+            } catch (e: Exception) {
+                noteDetectionFailure("unlistedDialer", e)
+                null
+            }
+            val imePkg = try {
+                android.provider.Settings.Secure.getString(
+                    contentResolver, android.provider.Settings.Secure.DEFAULT_INPUT_METHOD
+                )?.substringBefore('/')
+            } catch (e: Exception) {
+                noteDetectionFailure("unlistedIme", e)
+                null
+            }
+            if (unlistedAppMustBeShut(
+                    pkgName, applicationContext.packageName, hasLaunchIntent,
+                    homePackages(), dialerPkg, imePkg
+                )
+            ) {
+                val label = try {
+                    pm.getApplicationLabel(pm.getApplicationInfo(pkgName, 0)).toString()
+                } catch (e: Exception) {
+                    pkgName
+                }
+                launchInterceptScreen(
+                    packageName = pkgName,
+                    appName = label,
+                    reasonBadge = AppBlockTier.LOCKED.badge,
+                    path = InterceptPath.APP_TIER
+                )
+            }
+            return
+        }
         val tier = appRule.resolvedTier
         // Issue #140: the daily limit binds every tier. An OPEN
         // app whose today's usage reached its limit is

@@ -296,6 +296,25 @@ class MonolithRepository(
         const val PRUNE_NOTE_COUNT_KEY = "prune_note_count"
         const val PRUNE_NOTE_RULES_KEY = "prune_note_rules_removed"
 
+        /** Issue #129 F1: the unreviewed-auto-OPEN record — the
+         *  packages the category guess birthed OPEN with no preset
+         *  and no ruling from the man. Prefs, not Room (same
+         *  reasoning as the prune note: a catalogue bookkeeping
+         *  record needs no column in the table). Entries leave the
+         *  set ONLY when a ruling lands on that package
+         *  ([setAppBlockTier] / [cycleAppBlockTier]) or the row is
+         *  pruned — never by dismissal, or the prompt would be
+         *  silence with extra steps. */
+        const val UNREVIEWED_OPEN_KEY = "unreviewed_open_packages"
+
+        /** Issue #129 F3: the reserved intercept-log package that
+         *  carries a session's open-exposure names (the exposed
+         *  app's real package rides in triggerReason, its label in
+         *  appName). Receipt assembly reads these rows back and
+         *  excludes them from deflections. */
+        const val EXPOSURE_LOG_PACKAGE = "com.monolith.exposure"
+        const val EXPOSURE_LOG_OUTCOME = "Open exposure"
+
 
         /** Issue #81 F1: the resurrection witness's prefs home.
          *  Written once, at seed time, when a virgin database meets
@@ -600,6 +619,9 @@ class MonolithRepository(
                     // A restored package's tombstone is spent.
                     forgetRememberedRules(plan.toInsert.map { it.packageName })
                 }
+                if (plan.unreviewedOpenPackages.isNotEmpty()) {
+                    recordUnreviewedOpen(plan.unreviewedOpenPackages)
+                }
                 plan.usageUpdates.forEach { dao.updateApp(it) }
                 if (plan.toPrune.isNotEmpty()) {
                     // M5 (Mikro): the prune announces itself once, so
@@ -620,6 +642,9 @@ class MonolithRepository(
                             it.resolvedTier != AppBlockTier.OPEN
                         }
                     )
+                    // A pruned app can no longer be reviewed; its
+                    // unreviewed entry leaves with its row (#129 F1).
+                    clearUnreviewedOpen(plan.toPrune)
                     dao.deleteAppsByPackage(plan.toPrune)
                 }
                 // The strike set for the next sync: only packages
@@ -903,6 +928,46 @@ class MonolithRepository(
     }
 
     // ------------------------------------------------------------------
+    // THE UNREVIEWED-OPEN RECORD (issue #129 F1): record — read — clear
+    // on ruling. An app the keyword guess birthed OPEN is not the man's
+    // decision; this record keeps that fact alive until he rules on it.
+    // ------------------------------------------------------------------
+
+    private fun recordUnreviewedOpen(packages: List<String>) {
+        if (packages.isEmpty()) return
+        val prefs = context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+        val current = prefs.getStringSet(UNREVIEWED_OPEN_KEY, emptySet()).orEmpty()
+        prefs.edit().putStringSet(UNREVIEWED_OPEN_KEY, current + packages).apply()
+    }
+
+    /** The recorded unreviewed-auto-OPEN packages, as stored. */
+    fun unreviewedOpenPackages(): Set<String> =
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .getStringSet(UNREVIEWED_OPEN_KEY, emptySet()).orEmpty().toSet()
+
+    /** The unreviewed apps that still stand in the catalogue, in
+     *  name order — the review prompt's content. Rows pruned since
+     *  the record was written are not returned (and are dropped
+     *  from the record by the prune path above). */
+    suspend fun unreviewedOpenApps(): List<BlockedAppEntity> {
+        val recorded = unreviewedOpenPackages()
+        if (recorded.isEmpty()) return emptyList()
+        return dao.getAllAppsSnapshot()
+            .filter { it.packageName in recorded && it.resolvedTier == AppBlockTier.OPEN }
+            .sortedWith(compareBy<BlockedAppEntity> { it.appName.lowercase() }.thenBy { it.packageName })
+    }
+
+    fun clearUnreviewedOpen(packages: Collection<String>) {
+        if (packages.isEmpty()) return
+        val prefs = context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+        val current = prefs.getStringSet(UNREVIEWED_OPEN_KEY, emptySet()).orEmpty()
+        val next = current - packages.toSet()
+        if (next.size != current.size) {
+            prefs.edit().putStringSet(UNREVIEWED_OPEN_KEY, next).apply()
+        }
+    }
+
+    // ------------------------------------------------------------------
     // THE CATALOG MEMORY (issue #34): strike set + rule tombstones.
     // ------------------------------------------------------------------
 
@@ -1052,6 +1117,52 @@ class MonolithRepository(
         } catch (e: Exception) {
             swallow("isPhoneOrVoipCallActive", e)
             false
+        }
+    }
+
+    /**
+     * Issue #129 F3: per-package foreground milliseconds inside
+     * one wall-clock window, from UsageStats EVENTS (resumed /
+     * paused pairs), not the whole-day totals the sync reads.
+     * This is the evidence the ending write judges "clean" by:
+     * what was actually in front of the man while the session
+     * ran. Empty when usage access is not granted — the caller
+     * can only judge from evidence it can see, and the warrant
+     * already prints that blindness elsewhere; it never invents
+     * exposure it cannot prove.
+     */
+    fun queryForegroundMillisInWindow(startWallMillis: Long, endWallMillis: Long): Map<String, Long> {
+        if (!hasUsageStatsPermission() || endWallMillis <= startWallMillis) return emptyMap()
+        return try {
+            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+                ?: return emptyMap()
+            val events = usm.queryEvents(startWallMillis, endWallMillis) ?: return emptyMap()
+            val event = android.app.usage.UsageEvents.Event()
+            val resumedAt = mutableMapOf<String, Long>()
+            val totals = mutableMapOf<String, Long>()
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                val pkg = event.packageName ?: continue
+                @Suppress("DEPRECATION")
+                when (event.eventType) {
+                    android.app.usage.UsageEvents.Event.MOVE_TO_FOREGROUND ->
+                        resumedAt[pkg] = event.timeStamp
+                    android.app.usage.UsageEvents.Event.MOVE_TO_BACKGROUND -> {
+                        val start = resumedAt.remove(pkg)
+                        if (start != null) {
+                            totals[pkg] = (totals[pkg] ?: 0L) + (event.timeStamp - start).coerceAtLeast(0L)
+                        }
+                    }
+                }
+            }
+            // A package still in the foreground at the window's
+            // end was used until the end — book the open span.
+            for ((pkg, start) in resumedAt) {
+                totals[pkg] = (totals[pkg] ?: 0L) + (endWallMillis - start).coerceAtLeast(0L)
+            }
+            totals
+        } catch (_: Exception) {
+            emptyMap()
         }
     }
 
@@ -1866,6 +1977,10 @@ class MonolithRepository(
         }
         val isBlockedFlag = nextTier != AppBlockTier.OPEN
         dao.setAppTier(app.packageName, isBlockedFlag, nextTier.name)
+        // A ruling landed (#129 F1): the guess no longer stands
+        // unreviewed for this package, whatever tier he chose —
+        // choosing OPEN himself IS a review.
+        clearUnreviewedOpen(listOf(app.packageName))
         return nextTier
     }
 
@@ -1885,6 +2000,9 @@ class MonolithRepository(
         val effectiveTier = EssentialApps.floorTier(packageName, tier)
         val isBlockedFlag = effectiveTier != AppBlockTier.OPEN
         dao.setAppTier(packageName, isBlockedFlag, effectiveTier.name)
+        // Issue #129 F1: a ruling from the man retires the
+        // unreviewed record for this package.
+        clearUnreviewedOpen(listOf(packageName))
     }
 
     /**
@@ -1893,6 +2011,12 @@ class MonolithRepository(
      * - Sleep Loadout: Locks everything except Phone, Clock, Maps, Camera, and navigation (EssentialApps, by package).
      */
     suspend fun applySmartLoadout(loadout: SmartLoadout) = withContext(Dispatchers.IO) {
+        // Issue #129 F4/F2: resync FIRST, so the loadout derives
+        // over the phone's whole catalogue — an app installed
+        // after the last sync previously wasn't in this map at
+        // all, so the loadout passed over it and it stayed
+        // whatever (nothing) it was while the seal counted held.
+        ensureSeededAndSyncPackages()
         val allApps = dao.getAllAppsSnapshot()
         // Issue #304 F1: while a session is sealed the loadout lands
         // tightening-only — each app keeps the stricter of its
@@ -1911,12 +2035,23 @@ class MonolithRepository(
             // derives isBlocked from it at the single derivation point.
             // Issue #119 F4/F5 ride inside LoadoutRules.tierFor itself
             // (SLEEP essentials by package + the dialler floor), so
-            // preview and commit carry them identically.
-            val desired = LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category)
+            // preview and commit carry them identically. Issue #129
+            // F4: tierFor also takes the current tier, so a loadout
+            // never loosens LOCKED->OPEN on a category guess; the
+            // sealed-session gate then clamps whatever remains.
+            val desired = LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category, app.resolvedTier)
             val tier = SessionTierGate.clampWhileSealed(app.resolvedTier, desired, sealed)
             app.copy(blockTier = tier.name).normalized()
         }
         dao.insertApps(updated)
+        // Apps this loadout actually ruled (any non-OPEN landing)
+        // leave the unreviewed record (#129 F1): the loadout act
+        // is a ruling on them. Apps it left OPEN — the unknowns
+        // in SHOPPING above all — stay in the record, still
+        // awaiting his word.
+        clearUnreviewedOpen(
+            updated.filter { it.resolvedTier != AppBlockTier.OPEN }.map { it.packageName }
+        )
     }
 
     /**
@@ -2231,6 +2366,15 @@ class MonolithRepository(
         windowStartMillis: Long = 0L,
         windowEndMillis: Long = 0L
     ): FocusSessionEntity {
+        // Issue #129 F2: the catalogue resyncs at EVERY session
+        // birth, before the held counts are captured below. An app
+        // installed after the last Monolith launch / sync — even a
+        // factory-preset one that will be born LOCKED — previously
+        // had no row, no tier and no enforcement for the whole
+        // session, because both enforcement doors only read rows
+        // that exist. Birth is the one moment every session passes
+        // through, whichever door armed it (hand or routine).
+        ensureSeededAndSyncPackages()
         val isStopwatch = durationMinutes < 10
         val targetSecs = if (isStopwatch) {
             STOPWATCH_MIN_FLOOR_SECONDS
@@ -2577,6 +2721,24 @@ class MonolithRepository(
         val siteDomains = dao.getAllSitesSnapshot().map { it.domain }.toSet()
         val breakWindows = spends
             .map { it.spentAtWallMillis..(it.spentAtWallMillis + 60_000L) }
+        // Issue #129 F3: the exposure booking the ending write
+        // left for this session — the unguarded apps actually
+        // used in the window, by label. Read back here, and
+        // excluded from deflections below: an exposure is not a
+        // deflection, and must never inflate that list.
+        val openExposureApps = if (row.outcome == SessionOutcome.ELAPSED_OPEN_EXPOSURE) {
+            dao.getInterceptLogsBetween(row.startWallTimeMillis, windowEnd)
+                .filter { log ->
+                    log.packageName == EXPOSURE_LOG_PACKAGE &&
+                        log.outcome == EXPOSURE_LOG_OUTCOME &&
+                        log.sessionIntention == row.intention
+                }
+                .map { it.appName }
+                .distinct()
+        } else {
+            emptyList()
+        }
+
         val lastByPackage = mutableMapOf<String, Long>()
         val deflections = dao.getInterceptLogsBetween(row.startWallTimeMillis, windowEnd)
             .filter { log ->
@@ -2588,6 +2750,7 @@ class MonolithRepository(
                 // a peek (he was LET IN) is not a deflection.
                 log.sessionIntention == row.intention &&
                     log.packageName != "com.monolith.system" &&
+                    log.packageName != EXPOSURE_LOG_PACKAGE &&
                     isBlockedInterceptOutcome(log.outcome) &&
                     breakWindows.none { log.timestampMillis in it }
             }
@@ -2631,6 +2794,7 @@ class MonolithRepository(
             bankedBreakSeconds = banked,
             shieldWasOff = row.outcome == SessionOutcome.ELAPSED_SHIELD_GAP,
             deflections = deflections,
+            openExposureApps = openExposureApps,
             // Audit R3b #145: the forged curio's name rides the
             // slip — read off the row's own stamp, never re-drawn.
             forgedArtifactName = row.forgedArtifactId?.let { forgedId ->
@@ -2677,7 +2841,12 @@ class MonolithRepository(
         FinishKind.ROUTINE_PARTIAL -> "PARTIAL"
         FinishKind.ROUTINE_SLEEP_STANDDOWN -> "SLEPT THROUGH"
         FinishKind.FLOW_FINISH -> "FLOW ENDED"
-        else -> if (row.outcome == SessionOutcome.ELAPSED_SHIELD_GAP) "ENDED · SHIELD GAP" else "ENDED"
+        else -> when (row.outcome) {
+            SessionOutcome.ELAPSED_SHIELD_GAP -> "ENDED · SHIELD GAP"
+            // #129 F3: never "ENDED" plain for an exposed session.
+            SessionOutcome.ELAPSED_OPEN_EXPOSURE -> "ENDED · OPEN APP USED"
+            else -> "ENDED"
+        }
     }
 
     /**
@@ -2735,6 +2904,7 @@ class MonolithRepository(
             shieldWasOff = pending.shieldWasOff,
             faulted = faulted,
             deflections = pending.deflections,
+            openExposureApps = pending.openExposureApps,
             restored = false,
             receiptPublishedMonoMs = 0L,
             forgedArtifactName = pending.forgedArtifactName
@@ -2847,6 +3017,7 @@ class MonolithRepository(
             shieldWasOff = pending.shieldWasOff,
             faulted = row.releaseFaultShield,
             deflections = pending.deflections,
+            openExposureApps = pending.openExposureApps,
             restored = true,
             receiptPublishedMonoMs = 0L,
             forgedArtifactName = pending.forgedArtifactName
@@ -3395,6 +3566,30 @@ class MonolithRepository(
         // (5 missed 2s beats) measured from the later of the beat
         // and the session's start. Routine rows keep '' — their
         // judgement is routineOutcome, booked by the funnel.
+        // Issue #129 F3: at the ending write, "clean" must also
+        // survive the usage evidence. The exposure test reads the
+        // session's own window (UsageStats events) against the
+        // catalogue as it stands at the end: an unguarded
+        // distraction door used for 30s+ inside the window means
+        // this session was NOT clean, whatever the shield's
+        // heartbeat says. The exposed names are booked as
+        // intercept-log rows under a system package the receipt's
+        // deflection filter excludes, so the slip can name them
+        // without ever counting them as deflections.
+        val exposedAtEnd: List<ExposedApp> = if (allBlocksCompleted && !isRoutineSession) {
+            val nowWall = System.currentTimeMillis()
+            OpenExposure.exposedApps(
+                foregroundMillisByPackage = queryForegroundMillisInWindow(
+                    session.startWallTimeMillis, nowWall
+                ),
+                apps = dao.getAllAppsSnapshot(),
+                unreviewedOpenPackages = unreviewedOpenPackages(),
+                ownPackage = context.packageName
+            )
+        } else {
+            emptyList()
+        }
+
         val outcomeStamp = if (!allBlocksCompleted) {
             session.outcome
         } else if (isRoutineSession) {
@@ -3429,6 +3624,8 @@ class MonolithRepository(
 
             ) {
                 SessionOutcome.ELAPSED_SHIELD_GAP
+            } else if (exposedAtEnd.isNotEmpty()) {
+                SessionOutcome.ELAPSED_OPEN_EXPOSURE
             } else {
                 SessionOutcome.ELAPSED_CLEAN
             }
@@ -3443,9 +3640,19 @@ class MonolithRepository(
             hmacSignature = newHmac,
             penaltySecondsAdded = penaltyAdd,
             isActive = !allBlocksCompleted,
-            completedSuccessfully = allBlocksCompleted && !isRoutineSession,
+            // #129 F3: an exposed session elapsed, but it did not
+            // succeed — no completion, no forged artifact for time
+            // spent in an unguarded app (TELL-THE-TRUTH).
+            completedSuccessfully = allBlocksCompleted && !isRoutineSession &&
+                outcomeStamp != SessionOutcome.ELAPSED_OPEN_EXPOSURE,
             tamperDetected = tamper,
-            forgedArtifactId = if (isRoutineSession) null else forgedId ?: session.forgedArtifactId,
+            forgedArtifactId = if (isRoutineSession ||
+                outcomeStamp == SessionOutcome.ELAPSED_OPEN_EXPOSURE
+            ) {
+                null
+            } else {
+                forgedId ?: session.forgedArtifactId
+            },
             shieldLastBeatWallMillis = beatWall,
             outcome = outcomeStamp,
             // Truth Car 2 (RC-01): the true end, stamped in the
@@ -3460,6 +3667,26 @@ class MonolithRepository(
             }
         )
         dao.updateSession(updated)
+        // #129 F3: book the exposure names at the stamping write
+        // (first stamp only — a re-tick of an ended row must not
+        // book them twice). The rows ride the intercept log under
+        // a reserved package, the same trick the Partial Stamp
+        // uses, so no schema change carries them; the receipt
+        // assembly reads them back by that package and NEVER
+        // counts them as deflections.
+        if (outcomeStamp == SessionOutcome.ELAPSED_OPEN_EXPOSURE && session.outcome.isEmpty()) {
+            for (exposed in exposedAtEnd) {
+                dao.insertInterceptLog(
+                    InterceptLogEntity(
+                        packageName = EXPOSURE_LOG_PACKAGE,
+                        appName = exposed.appName,
+                        sessionIntention = session.intention,
+                        outcome = EXPOSURE_LOG_OUTCOME,
+                        triggerReason = exposed.packageName
+                    )
+                )
+            }
+        }
         return updated
     }
 
