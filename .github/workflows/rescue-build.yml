@@ -3,6 +3,19 @@ name: rescue-build
 on:
   workflow_dispatch:
   push:
+    # Methods-2 (TAKT-2): a push that changes ONLY markdown / studio
+    # plan files cannot change the build — skip the 5–17 min run.
+    # (paths-ignore skips only when EVERY changed file matches.)
+    paths-ignore:
+      - '**.md'
+      - 'studio/**'
+
+# Methods-2: a newer push to the same branch supersedes the old run.
+# Tonight's fleet pushed in bursts and paid full price for runs whose
+# verdicts nobody would ever read. Cancel the stale ones.
+concurrency:
+  group: rescue-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -19,6 +32,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      # Methods-2 (TAKT-2): persist the Gradle user home (dependency
+      # cache, build cache, configuration cache) across runs. Until
+      # now every run was cold: wrapper + all dependencies downloaded
+      # from scratch (~200 runs/day fleet-wide). Scout-2 find 8 /
+      # WAVE2-METHODS 1.1, finally landed. Branches other than main
+      # restore but do not write the cache, so half-finished branch
+      # states can't poison it.
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
       - name: Install SDK platform 36.1
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
@@ -73,6 +96,20 @@ jobs:
         id: tests
         run: ./gradlew --console=plain testDebugUnitTest
 
+      # Methods-2: the JUnit XML is the verdict. Upload it so a lead
+      # reads counts from an artifact instead of log-diving a
+      # 14-minute step (tonight's standard verdict-reading cost).
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.ref_name }}
+          path: |
+            app/build/test-results/testDebugUnitTest/*.xml
+            app/build/reports/tests/testDebugUnitTest/
+          retention-days: 3
+          if-no-files-found: ignore
+
       # Wave-2 (Feel/Finisher pass): the run page must tell the truth
       # in plain words without anyone opening a log. This APK is
       # uploaded BEFORE the test step, so while tests are red the
@@ -85,6 +122,18 @@ jobs:
             echo "- Assemble debug: ${{ steps.assemble.outcome }}"
             echo "- Unit tests executed: ${{ steps.tests.outcome != 'skipped' }}"
             echo "- Unit test verdict: ${{ steps.tests.outcome }}"
+            # Methods-2: counts from the JUnit XML — the verdict in
+            # numbers, on the run page, without opening a log.
+            python3 - <<'PYEOF' >> "$GITHUB_STEP_SUMMARY" || true
+            import glob, xml.etree.ElementTree as ET
+            t = f = e = s = 0
+            for p in glob.glob('app/build/test-results/testDebugUnitTest/*.xml'):
+                r = ET.parse(p).getroot()
+                t += int(r.get('tests', 0)); f += int(r.get('failures', 0))
+                e += int(r.get('errors', 0)); s += int(r.get('skipped', 0))
+            if t:
+                print(f"- Unit test counts: {t} run · {f} failures · {e} errors · {s} skipped")
+            PYEOF
             if [ "${{ steps.tests.outcome }}" != "success" ]; then
               echo "- ⚠️ The uploaded APK is UNTESTED in this run — its unit tests did not pass. Do not treat it as proven."
             fi
