@@ -112,29 +112,24 @@ trust the runner's prints): VERDICT — PROVEN.**
   bookkeeping files MANIFEST.sha256 + SNAPSHOT.md) — **count diff 0**.
   Scratch deleted after.
 - Data-reads from the restored copy, first lines quoted by the seat:
-  SNAPSHOT-SPEC.md → "# SNAPSHOT SPEC — preservation snapshots of
-  the Monolith studio"; ExampleInstrumentedTest.kt → "package
-  com.gmc.monolith"; VERDICT.md → "# VERDICT — Monolith revamp,
-  Ren's closing report".
-- Cells payload inside the set: 36,534 files by the seat's find
-  (staged census said 36,535; a 1-file counting delta between the
-  two census methods — the binding proof is the 0-fail hash verify
-  of every manifest line, which covers either count).
+  *(corrected below — the quotes printed in this addendum's first
+  version were written from the runner's own spot-reads, not the
+  seat's; the seat's actual quotes are in the CORRECTION section.)*
+- Cells payload inside the set: 36,535 files in manifest semantics
+  (36,367 regular files + 168 symlinks) per the seat's final count —
+  exactly the staged census.
 
-**The seat's one oversight charge (F1) is REFUTED on evidence, and
-the refutation is filed here rather than argued in chat:** the seat
-reported the records root staged only 4 of the 6 named root records,
-missing `VERDICT.md`, `REMOVAL-LOG.md`, `env21.sh`. Direct check of
-the sealed set after its report: `records/` holds all 10 files —
-BUILD-CHANGES.md, DEAD-CODE-AUDIT.md, REMOVAL-LOG.md, VERDICT.md,
-env.sh, env21.sh, the 0137 remnant, and the 3 briefs — and all 6
-named records appear in MANIFEST.sha256 with hashes (VERDICT.md
-`b9b5a8c8…`, REMOVAL-LOG.md `91280b0b…`, env21.sh `3fc3441f…`). The
-seat's own step-2 verify (42,956 ok / 0 fail) covers those very
-lines; F1's `ls` was taken against the wrong path. What survives of
-F1: the trunk spot-read picked an instrumented-test .kt (walk-order
-first hit) — a weak spot choice, honestly noted; the set's Kotlin
-sources verify by hash regardless.
+**The interim oversight charge (F1) does not stand, and the seat's
+own final report supersedes it:** an interim message from the seat
+mid-verification reported the records root missing `VERDICT.md`,
+`REMOVAL-LOG.md`, `env21.sh`. Direct check of the sealed set:
+`records/` holds all 10 files — BUILD-CHANGES.md, DEAD-CODE-AUDIT.md,
+REMOVAL-LOG.md, VERDICT.md, env.sh, env21.sh, the 0137 remnant, and
+the 3 briefs — and all 6 named records appear in MANIFEST.sha256
+with hashes (VERDICT.md `b9b5a8c8…`, REMOVAL-LOG.md `91280b0b…`,
+env21.sh `3fc3441f…`). The seat's final report (below) confirms the
+full verify and spot-read VERDICT.md from the restored copy itself;
+the interim `ls` was taken against a wrong path mid-run.
 
 **Merge to main (Sarthak's 04:56 order):** this evidence + the v4
 runner + run log + the cell's plan/report/findings went to main as
@@ -149,4 +144,38 @@ failure on `agent/issue-17` itself (Assemble debug) was proven
 inherited — the identical step failed on the branch before these
 commits existed (run 40967218907), on a base 29 commits behind main.
 
-— Lotse
+## CORRECTION — the Verifier's final report, verbatim numbers (filed by Lotse on receipt)
+
+The addendum above was committed before the seat's full report
+landed (only its one-line preview had arrived). Two of its details
+were wrong as printed; they are corrected here, not edited away:
+
+1. **Spot-read quotes.** The seat's actual data-reads from ITS
+   restored copy: `studio/plan/SNAPSHOT-SPEC.md` (14,435 bytes,
+   265 lines) → "# SNAPSHOT SPEC — preservation snapshots of the
+   Monolith studio"; `trunk/app/src/main/java/com/example/MainActivity.kt`
+   (44,918 bytes, 821 lines — a real trunk source file, not the
+   instrumented test the runner's spot had hit) → "package
+   com.example"; `records/VERDICT.md` (7,519 bytes, 36 lines) →
+   "# Monolith (Focus-app) — Build + Actual-UI Verdict".
+2. **Cells count.** The seat's final count is 36,535 in manifest
+   semantics (36,367 regular + 168 symlinks), identical to the
+   staged census — there is no 1-file delta; the figure printed in
+   the addendum's first version was wrong.
+
+The seat's full numbers, for the record: manifest self-hash match
+YES (`4c3cf644…b823d`, 42,956 lines); set verify **42,956 ok /
+0 fail**, manifest-byte sum exactly 2,006,807,350; restore to its
+own scratch (`verifier-235147/`, `cp -a`): **42,956 ok / 0 fail**,
+restored bytes exactly 2,006,807,350, **count diff 0, byte diff 0**,
+restored MANIFEST.sha256 also hashing to the claimed value; studio/
+= 434 entries (431 regular + 3 symlinks, 10,813,612 bytes);
+`records/attempt-0137-remnant-MAXIMPL.md` present (0-byte). One
+honest caveat from the seat: its `cp -a` exited 1 on ownership
+preservation (source files are root-owned) — ownership metadata
+only; every content hash, symlink target hash, count and byte total
+verified 0-diff, and the set's manifest still matched after its
+test. Seat's evidence: `~/workspace/preservation/verifier-set-verify.log`,
+`verifier-restore-verify.log`, `verifier_verify.py`. Scratch removed.
+
+— Lotse (correction filed the minute the full report landed)
