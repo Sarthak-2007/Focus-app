@@ -295,7 +295,18 @@ fun TactileDeckScreen(
         // re-derives from it.
         finishState.frozenDisplaySeconds
     } else if (isSessionRunning) {
-        if (activeSession.isStopwatchMode) activeSession.elapsedSeconds else activeSession.remainingSeconds
+        when {
+            activeSession.isStopwatchMode -> activeSession.elapsedSeconds
+            // Audit R3b #148: during a Safe Break the per-block
+            // remainder is 0 — that block HAS finished — so the
+            // hero read 00:00 for ten minutes, a break displayed
+            // as FINISH. In a break the hero counts the break
+            // itself down (the shield's own rendering of the same
+            // fact), under the BREAK eyebrow the strip already
+            // prints.
+            activeSession.isInSafeBreak -> activeSession.safeBreakSecondsRemaining
+            else -> activeSession.remainingSeconds
+        }
     } else {
         dialMinutes * 60
     }
@@ -328,6 +339,15 @@ fun TactileDeckScreen(
     } else if (isSessionRunning) {
         if (activeSession.isStopwatchMode) {
             0f
+        } else if (activeSession.isInSafeBreak) {
+            // Audit R3b #148: in a break the bar prices the whole
+            // session span (the model's own span derivation — the
+            // break counts as session time), so it holds its
+            // ground and keeps moving instead of sitting at the
+            // finished block's empty remainder. Priced in the
+            // F3 form: elapsed/target, filling, no floors.
+            val spanTarget = activeSession.spanTargetSeconds.coerceAtLeast(1)
+            (activeSession.spanElapsedSeconds.toFloat() / spanTarget.toFloat()).coerceIn(0f, 1f)
         } else {
             val target = activeSession.effectiveTargetSeconds.coerceAtLeast(1)
             val elapsed = (target - activeSession.remainingSeconds).coerceAtLeast(0)
@@ -698,6 +718,15 @@ fun TactileDeckScreen(
                     text = when {
                         isSessionRunning && activeSession.isInSafeBreak ->
                             "BREAK · ${(activeSession.safeBreakSecondsRemaining + 59) / 60} MIN"
+                        // Audit R3b #146: a user returning late to a
+                        // later block is told when that block began —
+                        // startWallTimeMillis is re-anchored at the
+                        // break flip, so it IS the block's start; the
+                        // hero's elapsed readout beside it says how
+                        // far in he is. No more silent fait accompli.
+                        isSessionRunning && activeSession.currentBlockIndex > 1 ->
+                            "BLOCK ${activeSession.currentBlockIndex} · SINCE " +
+                                SimpleDateFormat("HH:mm", Locale.US).format(Date(activeSession.startWallTimeMillis))
                         // Issue #6 F4: SESSION RUNNING / TOTAL were
                         // wallpaper and die. A routine-born session
                         // prints its name; a hand-armed running
@@ -1080,8 +1109,22 @@ fun TactileDeckScreen(
                     // 1 on the last.
                     val withinGraceWindow = activeSession != null && activeSession.elapsedSeconds <= 10
                     if (withinGraceWindow) {
+                        // Audit R3b #149: one chip, two bookings. A
+                        // manual session's grace cancel is free and
+                        // unrecorded; a routine-born session's abort
+                        // is funnel-booked with attendance
+                        // consequences (disarmActiveSession diverts
+                        // it before the grace classification). The
+                        // chip names which birth it serves — the
+                        // free promise is never printed over a
+                        // booking. (Copy only: the funnel's judgement
+                        // itself belongs to the routines rethink.)
                         BlockitActionChip(
-                            wordLabel = "GRACE WINDOW ABORT",
+                            wordLabel = if (activeSession?.routineId != null) {
+                                "GRACE ABORT — BOOKED BY ROUTINE"
+                            } else {
+                                "GRACE WINDOW ABORT"
+                            },
                             monoBadge = "${(11 - (activeSession?.elapsedSeconds ?: 0)).coerceIn(1, 10)}s",
                             // E5b B6 (Horiz §2): the grace chip
                             // exits the accent with the rest — it
@@ -1107,6 +1150,30 @@ fun TactileDeckScreen(
                         )
                     }
                 }
+            }
+            // Audit R3b #149: the grace-to-valve cliff, named. The
+            // slot above swaps its chip at 10 seconds with nothing
+            // saying the door changed; this standing line states
+            // both states, in both states — in-window it counts the
+            // free cancel down, past it the valve's terms stand
+            // printed before they are ever needed.
+            if (activeSession != null) {
+                val graceLeft = 10 - activeSession.elapsedSeconds
+                Text(
+                    text = when {
+                        graceLeft > 0 && activeSession.routineId != null ->
+                            "GRACE ${graceLeft}S — ABORT IS BOOKED BY THE ROUTINE · AFTER: VALVE, 60S HOLD"
+                        graceLeft > 0 ->
+                            "GRACE ${graceLeft}S — CANCEL FREE, NOTHING BOOKED · AFTER: VALVE, 60S HOLD"
+                        else ->
+                            "GRACE SPENT · VALVE: 60S HOLD · $weeklyEmergencyTokensRemaining/1 WEEK"
+                    },
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 9.5.sp,
+                    letterSpacing = 0.8.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
             }
             Spacer(Modifier.height(8.dp))
             RefusalSentenceSlot(

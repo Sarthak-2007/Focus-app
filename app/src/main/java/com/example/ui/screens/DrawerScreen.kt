@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.HorizontalDivider
@@ -21,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -120,6 +122,14 @@ private fun buildDayGroups(
     }
 }
 
+/** #158 F2: does [query] name the declared day [word]? Same rule
+ *  as the repository's: the trimmed, upper-cased query equals the
+ *  word or is a prefix of it ("IL" names ILL). */
+private fun dayWordMatchesQuery(word: String, query: String): Boolean {
+    val q = query.trim().uppercase(Locale.US)
+    return q.isNotEmpty() && (word == q || word.startsWith(q))
+}
+
 private fun headingLabel(date: LocalDate, withYear: Boolean): String {
     val pattern = if (withYear) "EEE d MMM yyyy" else "EEE d MMM"
     return DateTimeFormatter.ofPattern(pattern, Locale.US).format(date).uppercase(Locale.US)
@@ -153,6 +163,12 @@ fun DrawerScreen(
     drawerQuery: String,
     drawerResults: List<FocusTaskEntity>,
     drawerSearchHasEarlier: Boolean,
+    // #158 F2: the ViewModel's word-aware search state — every
+    // date carrying a word the query names (word-only days
+    // included), merged with the words of the task-hit dates.
+    // Defaults empty so a caller without it still gets the
+    // dayWords-derived search rendering below.
+    drawerSearchDayWords: Map<String, String> = emptyMap(),
     dayWords: Map<String, String>,
     isSealed: Boolean,
     isDarkTheme: Boolean = false,
@@ -183,6 +199,9 @@ fun DrawerScreen(
 ) {
     val scheme = MaterialTheme.colorScheme
     var view by remember { mutableStateOf(DrawerView.LANDING) }
+    // #158 F3: the surface the MONTH view was entered from, so its
+    // BACK returns there — never a silent month reload.
+    var monthEnteredFrom by remember { mutableStateOf(DrawerView.LANDING) }
     var selectedTask by remember { mutableStateOf<FocusTaskEntity?>(null) }
     var cabinetArtifact by remember { mutableStateOf<KineticArtifact?>(null) }
 
@@ -204,6 +223,83 @@ fun DrawerScreen(
     val currentYearMonth = DrawerDay.filingYearMonth(nowMillis)
     val searching = drawerQuery.isNotBlank()
     val globallyEmpty = storedMonths.isEmpty() && dayWords.isEmpty()
+
+    // #158 F2: the words the search rendering stands on, derived
+    // from the REAL dayWords map — never emptyMap(), never the
+    // whole map either: the whole map would file every declared
+    // day under every query, a print that isn't true. A search
+    // day keeps its word when (a) a task hit files under it, or
+    // (b) its word is the word the query names (the ViewModel's
+    // word-aware state, drawerSearchDayWords, carries exactly
+    // those dates, word-only ones included). Union of the three
+    // sources — all read the same declared words.
+    val effectiveSearchDayWords = remember(drawerQuery, drawerResults, dayWords, drawerSearchDayWords) {
+        val resultIsos = drawerResults.mapTo(HashSet()) {
+            DrawerDay.dateIso(DrawerDay.filingDate(it.completedAtMillis))
+        }
+        dayWords.filterKeys { it in resultIsos } +
+            dayWords.filterValues { dayWordMatchesQuery(it, drawerQuery) } +
+            drawerSearchDayWords
+    }
+
+    // #158 F5(ii): every regrouping memoised on exactly the
+    // inputs its call site builds from — recomposition no longer
+    // re-groups the whole accumulated list from scratch.
+    val searchGroups = remember(drawerResults, effectiveSearchDayWords, today) {
+        buildDayGroups(
+            rows = drawerResults,
+            dayWords = effectiveSearchDayWords,
+            scopeMonth = null,
+            includeTodayGroup = false,
+            today = today
+        )
+    }
+    val monthGroups = remember(drawerRows, dayWords, drawerMonth, isSealed, today, currentYearMonth) {
+        buildDayGroups(
+            rows = drawerRows,
+            dayWords = dayWords,
+            scopeMonth = drawerMonth,
+            includeTodayGroup = !isSealed && drawerMonth == currentYearMonth,
+            today = today
+        )
+    }
+    val landingGroups = remember(drawerRows, dayWords, currentYearMonth, isSealed, today) {
+        buildDayGroups(
+            rows = drawerRows,
+            dayWords = dayWords,
+            scopeMonth = currentYearMonth,
+            includeTodayGroup = !isSealed,
+            today = today
+        )
+    }
+
+    // #158 F5(i): scroll state for the list views + the auto-load
+    // trigger — when the last visible item approaches the end and
+    // an earlier page exists, fetch it; the EARLIER row stays as
+    // the manual fallback. The row/size keys re-arm the effect
+    // after each landed page, so a still-near-end list keeps
+    // paging until hasEarlier runs out. loadEarlierDrawer's own
+    // month guard keeps a stale trigger from appending a
+    // previous month's page.
+    val listState = rememberLazyListState()
+    val nearListEnd by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            info.totalItemsCount > 0 && lastVisible >= info.totalItemsCount - 3
+        }
+    }
+    LaunchedEffect(
+        nearListEnd, searching, drawerHasEarlier, drawerSearchHasEarlier,
+        drawerRows, drawerResults
+    ) {
+        if (!nearListEnd) return@LaunchedEffect
+        if (searching) {
+            if (drawerSearchHasEarlier) onLoadEarlierSearch()
+        } else if (drawerHasEarlier) {
+            onLoadEarlier()
+        }
+    }
 
     // ------------------------------------------------------------------
     // DETAIL — one stored task, read-only. BACK is the only action.
@@ -582,6 +678,7 @@ fun DrawerScreen(
     // LIST VIEWS — landing / month index / one month / search results.
     // ------------------------------------------------------------------
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
             .background(scheme.background)
@@ -644,7 +741,10 @@ fun DrawerScreen(
 
         if (searching) {
             // ---------- SEARCH RESULTS (all years, paged) ----------
-            if (drawerResults.isEmpty()) {
+            // The empty line prints only when NEITHER a task nor a
+            // named day word matched (#158 F2): a word match alone
+            // yields groups (possibly row-less, word-only days).
+            if (searchGroups.isEmpty()) {
                 item {
                     Text(
                         text = "NOTHING STORED UNDER “$drawerQuery”",
@@ -655,23 +755,15 @@ fun DrawerScreen(
                     )
                 }
             } else {
-                val groups = buildDayGroups(
-                    rows = drawerResults,
-                    dayWords = emptyMap(),
-                    scopeMonth = null,
-                    includeTodayGroup = false,
-                    today = today
-                )
-                groups.forEach { group ->
+                searchGroups.forEach { group ->
                     item(key = "search-head-${group.date}") {
-                        Text(
-                            text = headingLabel(group.date, withYear = true),
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 6.dp)
+                        // #158 F2: the real DayHeading, so a found
+                        // day keeps its declared word in search too.
+                        DayHeading(
+                            group = group,
+                            isToday = group.date == today,
+                            isSealed = isSealed,
+                            onDeclareTodayWord = onDeclareTodayWord
                         )
                     }
                     items(group.rows, key = { "search-${it.id}" }) { task ->
@@ -704,6 +796,7 @@ fun DrawerScreen(
                             .fillMaxWidth()
                             .clickable {
                                 onSelectMonth(month.year, month.month)
+                                monthEnteredFrom = DrawerView.INDEX
                                 view = DrawerView.MONTH
                             }
                             .padding(vertical = 10.dp)
@@ -724,6 +817,15 @@ fun DrawerScreen(
 
             DrawerView.MONTH -> {
                 // ---------- ONE MONTH ----------
+                // #158 F3(ii): prev/next walk the months actually
+                // present in storedMonths (newest first): ‹ goes
+                // to the previous (older) stored month, › to the
+                // next (newer) one, both through selectDrawerMonth.
+                val monthPos = storedMonths.indexOfFirst {
+                    it.year == drawerMonth.first && it.month == drawerMonth.second
+                }
+                val olderMonth = if (monthPos >= 0) storedMonths.getOrNull(monthPos + 1) else null
+                val newerMonth = if (monthPos >= 0) storedMonths.getOrNull(monthPos - 1) else null
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -738,28 +840,57 @@ fun DrawerScreen(
                             letterSpacing = 1.sp,
                             color = scheme.onSurfaceVariant
                         )
-                        Text(
-                            text = "BACK",
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = scheme.onBackground,
-                            modifier = Modifier.clickable {
-                                onSelectMonth(currentYearMonth.first, currentYearMonth.second)
-                                view = DrawerView.LANDING
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (olderMonth != null) {
+                                Text(
+                                    text = "‹",
+                                    fontFamily = AtkinsonHyperlegibleFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp,
+                                    color = scheme.onBackground,
+                                    modifier = Modifier
+                                        .clickable { onSelectMonth(olderMonth.year, olderMonth.month) }
+                                        .testTag("drawer_month_prev")
+                                )
                             }
-                        )
+                            if (newerMonth != null) {
+                                Text(
+                                    text = "›",
+                                    fontFamily = AtkinsonHyperlegibleFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp,
+                                    color = scheme.onBackground,
+                                    modifier = Modifier
+                                        .clickable { onSelectMonth(newerMonth.year, newerMonth.month) }
+                                        .testTag("drawer_month_next")
+                                )
+                            }
+                            Text(
+                                text = "BACK",
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = scheme.onBackground,
+                                modifier = Modifier
+                                    .clickable {
+                                        // #158 F3(i): back to the
+                                        // surface entered from, and
+                                        // NOTHING else — no
+                                        // onSelectMonth(current…):
+                                        // going back must not reload
+                                        // the current month or throw
+                                        // away the place being read.
+                                        view = monthEnteredFrom
+                                    }
+                                    .testTag("drawer_month_back")
+                            )
+                        }
                     }
                 }
-                val groups = buildDayGroups(
-                    rows = drawerRows,
-                    dayWords = dayWords,
-                    scopeMonth = drawerMonth,
-                    includeTodayGroup = !isSealed &&
-                        drawerMonth == currentYearMonth,
-                    today = today
-                )
-                groups.forEach { group ->
+                monthGroups.forEach { group ->
                     item(key = "month-head-${group.date}") {
                         DayHeading(
                             group = group,
@@ -855,14 +986,7 @@ fun DrawerScreen(
                     // The current month, newest first. An empty current
                     // month renders in SILENCE under the ALL MONTHS row —
                     // no absence line greets a month that has barely begun.
-                    val groups = buildDayGroups(
-                        rows = drawerRows,
-                        dayWords = dayWords,
-                        scopeMonth = currentYearMonth,
-                        includeTodayGroup = !isSealed,
-                        today = today
-                    )
-                    groups.forEach { group ->
+                    landingGroups.forEach { group ->
                         item(key = "land-head-${group.date}") {
                             DayHeading(
                                 group = group,

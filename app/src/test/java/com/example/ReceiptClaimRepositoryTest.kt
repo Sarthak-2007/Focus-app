@@ -247,6 +247,36 @@ class ReceiptClaimRepositoryTest {
             FinishKind.ROUTINE_ATTENDED,
             finishKindOf(row(routineId = 5, routineOutcome = "ATTENDED"), false, now)
         )
+        // Audit R1 #40: VALVE_BROKE binds routine rows too — a
+        // judgement the finalise funnel stamps later never
+        // revives the receipt the outcome forbids.
+        assertNull(
+            finishKindOf(
+                row(
+                    outcome = SessionOutcome.VALVE_BROKE,
+                    routineId = 5, routineOutcome = "ATTENDED"
+                ),
+                false, now
+            )
+        )
+        assertNull(
+            finishKindOf(
+                row(
+                    outcome = SessionOutcome.VALVE_BROKE,
+                    routineId = 5, routineOutcome = "PARTIAL"
+                ),
+                false, now
+            )
+        )
+        assertNull(
+            finishKindOf(
+                row(
+                    outcome = SessionOutcome.VALVE_BROKE,
+                    routineId = 5, routineOutcome = null, windowEnd = 5_000_000L
+                ),
+                true, now
+            )
+        )
         val partial = row(routineId = 5, routineOutcome = "PARTIAL")
         assertEquals(FinishKind.ROUTINE_PARTIAL, finishKindOf(partial, false, now))
         assertFalse(finishPulses(FinishKind.ROUTINE_PARTIAL, partial))
@@ -264,5 +294,53 @@ class ReceiptClaimRepositoryTest {
                 isSleepLoadout = true, nowWallMillis = now
             )
         )
+        // Audit R1 #40 (rehydration floor): a stand-down row whose
+        // window end is still ahead of the (rolled-back) wall
+        // clock judges null on the raw clock — and STANDDOWN on
+        // the claimed row's floored clock, max(now, windowEnd),
+        // which is what rehydrateReceipt now feeds the predicate
+        // for any row wearing a claimed №.
+        val rolledBack = row(
+            routineId = 5, routineOutcome = null, windowEnd = now + 5_000_000L
+        )
+        assertNull(finishKindOf(rolledBack, true, now))
+        assertEquals(
+            FinishKind.ROUTINE_SLEEP_STANDDOWN,
+            finishKindOf(
+                rolledBack, true,
+                maxOf(now, rolledBack.windowEndMillis)
+            )
+        )
+    }
+
+    /**
+     * Audit R1 #40: the release-fault stamp rides the claim
+     * transaction. After a faulted claim the row wears BOTH its №
+     * and its fault record — there is no interleaving (and no
+     * crash window) in which one exists without the other, which
+     * is what rehydration's `faulted = row.releaseFaultShield`
+     * has always assumed.
+     */
+    @Test
+    fun faultedClaim_stampsFaultWithTheClaim() = runBlocking {
+        val repo = repository()
+        val db = MonolithDatabase.getInstance(context)
+        val dao = db.monolithDao()
+        val id = dao.insertSession(endedRow(SessionOutcome.ELAPSED_CLEAN)).toInt()
+        val number = repo.claimReceiptNumber(
+            id, "ENDED", faulted = true, faultWallMillis = 4242L
+        )
+        val row = dao.getSessionById(id)!!
+        assertEquals(number, row.receiptNumber)
+        assertTrue(row.releaseFaultShield)
+        assertEquals(4242L, row.releaseFaultedAtWallMillis)
+        // A clean re-claim of the same session mints nothing and
+        // leaves the fault record standing.
+        assertEquals(
+            number,
+            repo.claimReceiptNumber(id, "ENDED", faulted = false)
+        )
+        assertTrue(dao.getSessionById(id)!!.releaseFaultShield)
+        dao.deleteSessionById(id)
     }
 }
