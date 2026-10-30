@@ -61,20 +61,27 @@ object AudibilityProbe {
         return SoundAudibility.AUDIBLE
     }
 
-    /** Read the phone as it stands. Any service that cannot be
-     *  read answers AUDIBLE: an unreadable phone must not print
-     *  a silence it cannot prove. */
+    /** Read the phone as it stands. Every service read is
+     *  guarded: a service that cannot be read (or throws, as
+     *  shadows and OEM builds occasionally do) answers with its
+     *  AUDIBLE component — an unreadable phone must not print a
+     *  silence it cannot prove, and a probe must never crash the
+     *  surface that prints it. */
     fun read(context: Context): SoundAudibility {
         val appContext = context.applicationContext
         val audio = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
             ?: return SoundAudibility.AUDIBLE
         val notifications =
             appContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-        val filter = notifications?.currentInterruptionFilter
-            ?: NotificationManager.INTERRUPTION_FILTER_ALL
+        val filter = runCatching { notifications?.currentInterruptionFilter }
+            .getOrNull() ?: NotificationManager.INTERRUPTION_FILTER_ALL
+        val volume = runCatching { audio.getStreamVolume(AudioManager.STREAM_MUSIC) }
+            .getOrNull() ?: return SoundAudibility.AUDIBLE
+        val ringer = runCatching { audio.ringerMode }.getOrNull()
+            ?: AudioManager.RINGER_MODE_NORMAL
         return classify(
-            ringerMode = audio.ringerMode,
-            musicStreamVolume = audio.getStreamVolume(AudioManager.STREAM_MUSIC),
+            ringerMode = ringer,
+            musicStreamVolume = volume,
             interruptionFilter = filter
         )
     }
