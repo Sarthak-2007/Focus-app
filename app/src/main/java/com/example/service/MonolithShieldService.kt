@@ -187,7 +187,13 @@ class MonolithShieldService : Service() {
                         // (the filter above), so a lease sold here is honoured (UNA2-01).
                         putExtra(EXTRA_INTERCEPT_PATH, InterceptPath.SHIELD_APP.name)
                     }
-                    startActivity(interceptIntent)
+                    // Issue #94 (F2): never a bare background launch —
+                    // a dropped launch stamps itself and falls back
+                    // to a tappable notification (InterceptLaunch).
+                    InterceptLaunch.launch(
+                        applicationContext, interceptIntent,
+                        blockedApp?.appName ?: "Blocked App"
+                    )
                 }
 
                 delay(2000L)
