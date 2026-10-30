@@ -3656,6 +3656,7 @@ class MonolithRepository(
         return session.copy(
             currentBlockIndex = (session.currentBlockIndex + 1).coerceAtMost(session.totalStudyBlocks),
             isInSafeBreak = false,
+            midBlockSafeBreak = false,
             safeBreakSecondsRemaining = 0,
             breakTakenSeconds = breakTakenSeconds,
             // W3 #134: the call ledger is per-block, like the
@@ -3669,6 +3670,54 @@ class MonolithRepository(
             startElapsedRealtimeMillis = nowMono,
             bootCount = currentBoot,
             accumulatedBeforeRebootSeconds = 0,
+            lastTickElapsedRealtimeMillis = nowMono,
+            hmacSignature = freshHmac,
+            shieldLastBeatWallMillis = beatWall
+        )
+    }
+
+    /** Issue #261: the exit write for a MID-BLOCK Safe Break —
+     *  the sibling of [advancePastBreak] for the break that did
+     *  not begin at a flip. The block has NOT finished, so nothing
+     *  advances: the index stands, the frozen elapsed stands, and
+     *  the block RESUMES from exactly where the entry froze it.
+     *  The resume re-bases both anchors to this instant and banks
+     *  the frozen elapsed in accumulatedBeforeRebootSeconds — the
+     *  verified-elapsed derivation (banked + mono since the mono
+     *  anchor) then counts the resumed block from the frozen
+     *  figure, and the break's own seconds are never re-counted
+     *  as focus. The HMAC re-signs over the fresh anchor pair, as
+     *  at every re-anchor in this machine. The per-block call
+     *  ledger restarts (advancePastBreak's law): the frozen
+     *  figure already excludes the call seconds booked against
+     *  it, so carrying the ledger over would exclude them twice.
+     *  The break's boundary voice and its end-alarm disarm are
+     *  the same single crossing the flip-born exit makes — both
+     *  exits speak the engage knock exactly once here. */
+    private fun resumeBlockFromMidBreak(
+        session: FocusSessionEntity,
+        nowMono: Long,
+        currentBoot: Int,
+        beatWall: Long,
+        breakTakenSeconds: Int
+    ): FocusSessionEntity {
+        val wallNow = System.currentTimeMillis()
+        val freshHmac = CryptoIntegrityManager.signSessionState(
+            wallNow, nowMono, currentBoot, session.targetDurationSeconds, false
+        )
+        breakBoundaryKnock(true)
+        com.example.service.BreakEndScheduler.cancel(context)
+        return session.copy(
+            isInSafeBreak = false,
+            midBlockSafeBreak = false,
+            safeBreakSecondsRemaining = 0,
+            breakTakenSeconds = breakTakenSeconds,
+            callExcludedSeconds = 0,
+            elapsedSeconds = session.elapsedSeconds,
+            accumulatedBeforeRebootSeconds = session.elapsedSeconds.coerceAtLeast(0),
+            startWallTimeMillis = wallNow,
+            startElapsedRealtimeMillis = nowMono,
+            bootCount = currentBoot,
             lastTickElapsedRealtimeMillis = nowMono,
             hmacSignature = freshHmac,
             shieldLastBeatWallMillis = beatWall
@@ -3703,15 +3752,97 @@ class MonolithRepository(
         )
         val taken = (breakLengthSeconds(row) - remaining)
             .coerceIn(0, breakLengthSeconds(row))
-        val next = advancePastBreak(
-            session = row,
-            nowMono = nowMono,
-            currentBoot = querySystemBootCountOrNull() ?: row.bootCount,
-            beatWall = row.shieldLastBeatWallMillis,
-            breakTakenSeconds = row.breakTakenSeconds + taken
-        )
+        // Issue #261: the exit follows the break's ORIGIN, recorded
+        // on the row at entry — a mid-block break resumes the block
+        // it froze; a flip-born break advances past the finished
+        // block. The taken booking is identical either way.
+        val next = if (row.midBlockSafeBreak) {
+            resumeBlockFromMidBreak(
+                session = row,
+                nowMono = nowMono,
+                currentBoot = querySystemBootCountOrNull() ?: row.bootCount,
+                beatWall = row.shieldLastBeatWallMillis,
+                breakTakenSeconds = row.breakTakenSeconds + taken
+            )
+        } else {
+            advancePastBreak(
+                session = row,
+                nowMono = nowMono,
+                currentBoot = querySystemBootCountOrNull() ?: row.bootCount,
+                beatWall = row.shieldLastBeatWallMillis,
+                breakTakenSeconds = row.breakTakenSeconds + taken
+            )
+        }
         dao.updateSession(next)
         return next
+    }
+
+    /** Issue #261 (transferred W9 DAYLIGHT DS3 finding): START a
+     *  Safe Break NOW, mid-block — the door the register found
+     *  missing. Until this verb a Safe Break had exactly one entry
+     *  point, the block flip inside [updateSessionProgress]: a man
+     *  fading in the second hour of a three-hour block was offered
+     *  a 2-minute peek or the session-ending weekly valve, never
+     *  the break itself. The exit side already existed
+     *  ([endSafeBreakEarly], the Deck's END BREAK chip); this is
+     *  its missing entry twin.
+     *
+     *  The block FREEZES, it does not finish: the row enters the
+     *  break with its focus elapsed booked at this instant (the
+     *  verified figure minus the block's call exclusions — call
+     *  time is never focus time), its block index untouched, and
+     *  the origin marked (midBlockSafeBreak) with the break's
+     *  planned length stamped into the span price
+     *  (extraSafeBreakSeconds). Every break exit — the countdown's
+     *  expiry flip and the hand's early end alike — reads the
+     *  origin mark and RESUMES this block (see
+     *  [resumeBlockFromMidBreak]) instead of advancing past it.
+     *  The break's length is the length in force
+     *  ([breakLengthSeconds]) — the free-length doctrine is a
+     *  separate, parked half of #261 and this verb does not
+     *  pre-empt it.
+     *
+     *  Refuses quietly (returns the row unchanged), mirroring the
+     *  end verb's law, when there is nothing to enter: no active
+     *  session, a different session, a session already in a break,
+     *  a stopwatch session (FLOW has no blocks and no breaks), a
+     *  row whose verified clock reads tampered (a freeze must
+     *  never launder a forged elapsed into a banked one), or a
+     *  block that has already reached its target — that crossing
+     *  belongs to the progress machine's flip/finish, not to a
+     *  mid-block door. A routine session enters the same way its
+     *  flip-born breaks already run: entering a break declares no
+     *  success, so the routines fence is not engaged. The entry
+     *  speaks the release knock and arms the break-end alarm,
+     *  exactly as the flip's entry does (ST-03 / issue #339) —
+     *  one entry shape, whoever opens the door. */
+    suspend fun startSafeBreakMidBlock(sessionId: Int): FocusSessionEntity? {
+        val row = dao.getActiveSessionSnapshot() ?: return null
+        if (row.id != sessionId || !row.isActive || row.isInSafeBreak ||
+            row.isStopwatchMode
+        ) return row
+        val (verifiedElapsed, tamper) = computeVerifiedSessionElapsed(row)
+        if (tamper) return row
+        val focusElapsed = (verifiedElapsed - row.callExcludedSeconds).coerceAtLeast(0)
+        if (focusElapsed >= row.effectiveTargetSeconds) return row
+        val nowMono = SystemClock.elapsedRealtime()
+        val length = breakLengthSeconds(row)
+        val entered = row.copy(
+            elapsedSeconds = focusElapsed,
+            isInSafeBreak = true,
+            midBlockSafeBreak = true,
+            safeBreakSecondsRemaining = length,
+            extraSafeBreakSeconds = row.extraSafeBreakSeconds + length,
+            lastTickElapsedRealtimeMillis = nowMono
+        )
+        dao.updateSession(entered)
+        com.example.service.BreakEndScheduler.schedule(
+            context,
+            entered.id,
+            System.currentTimeMillis() + length * 1000L
+        )
+        breakBoundaryKnock(false)
+        return entered
     }
 
     /**
@@ -3986,15 +4117,29 @@ class MonolithRepository(
             return if (nextBreakRemaining == 0) {
                 // Expiry: the break ran its full length in force,
                 // and the taken ledger books exactly that (ST-02's
-                // honesty condition — see breakTakenSeconds).
-                val nextBlockSession = advancePastBreak(
-                    session = session,
-                    nowMono = nowMono,
-                    currentBoot = newBootCount,
-                    beatWall = beatWall,
-                    breakTakenSeconds = session.breakTakenSeconds +
-                        breakLengthSeconds(session)
-                )
+                // honesty condition — see breakTakenSeconds). The
+                // exit follows the break's ORIGIN (issue #261): a
+                // mid-block break resumes its frozen block; a
+                // flip-born break advances past the finished one.
+                val nextBlockSession = if (session.midBlockSafeBreak) {
+                    resumeBlockFromMidBreak(
+                        session = session,
+                        nowMono = nowMono,
+                        currentBoot = newBootCount,
+                        beatWall = beatWall,
+                        breakTakenSeconds = session.breakTakenSeconds +
+                            breakLengthSeconds(session)
+                    )
+                } else {
+                    advancePastBreak(
+                        session = session,
+                        nowMono = nowMono,
+                        currentBoot = newBootCount,
+                        beatWall = beatWall,
+                        breakTakenSeconds = session.breakTakenSeconds +
+                            breakLengthSeconds(session)
+                    )
+                }
                 dao.updateSession(nextBlockSession)
                 nextBlockSession
             } else {

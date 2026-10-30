@@ -508,7 +508,25 @@ data class FocusSessionEntity(
     // through MonolithRepository.setSessionReflection.
     val failureCausePackage: String = "",
     val failureCauseKind: String = "",
-    val reflectionNote: String = ""
+    val reflectionNote: String = "",
+    // Issue #261 (15→16, the mid-block Safe Break door — the
+    // transferred W9 DAYLIGHT DS3 finding): a Safe Break entered
+    // MID-BLOCK, at the man's tap, instead of only at a block
+    // flip. midBlockSafeBreak marks the CURRENT break's origin
+    // while it runs (false = the break in force, if any, began
+    // at a block flip; the flip's own rows never set it) — the
+    // break exits read it to choose resume-same-block over
+    // advance-to-next-block, a fact recorded on the row, never
+    // inferred from elapsed arithmetic. Cleared at every break
+    // exit. extraSafeBreakSeconds is the PLANNED extra break
+    // time this session has booked by entering mid-block breaks
+    // (the break length in force, stamped once per entry, never
+    // revised): spanTargetSeconds prices it, because a mid-block
+    // break is a break slot the (totalStudyBlocks − 1) scheduled
+    // slots do not contain. 0 / false ARE the truthful pre-v16
+    // values — before this door no break could start mid-block.
+    val midBlockSafeBreak: Boolean = false,
+    val extraSafeBreakSeconds: Int = 0
 ) {
     // ONE derivation of session time (the Now Frame fix, Nadia x Freya):
     // every surface - Deck, desk clock, airlock, the enforcing service -
@@ -561,6 +579,7 @@ data class FocusSessionEntity(
         currentBlockIndex = currentBlockIndex.coerceIn(1, totalStudyBlocks.coerceIn(1, 64)),
         safeBreakSecondsRemaining = safeBreakSecondsRemaining.coerceAtLeast(0),
         breakTakenSeconds = breakTakenSeconds.coerceAtLeast(0),
+        extraSafeBreakSeconds = extraSafeBreakSeconds.coerceAtLeast(0),
         penaltySecondsAdded = penaltySecondsAdded.coerceAtLeast(0),
         tasksCompletedCount = tasksCompletedCount.coerceAtLeast(0),
         receiptNumber = receiptNumber.coerceAtLeast(0)
@@ -575,9 +594,17 @@ data class FocusSessionEntity(
     // against current code: Safe Break is a fixed 10-minute
     // mechanism everywhere it is armed, MonolithRepository.kt's
     // SAFE_BREAK_DURATION_SECONDS, and presets never arm it.)
+    // Issue #261: the planned span also prices every mid-block
+    // Safe Break entered (extraSafeBreakSeconds, stamped at each
+    // entry) — a mid-block break is real span time the scheduled
+    // (blocks − 1) break slots do not contain, and a target that
+    // ignored it would let the desk clock and the planned-end
+    // derivation call the session finished while its resumed
+    // block still had the break's length left to run.
     val spanTargetSeconds: Int
         get() = safeTotalBlocks * effectiveTargetSeconds +
-            (safeTotalBlocks - 1).coerceAtLeast(0) * MonolithRepository.SAFE_BREAK_DURATION_SECONDS
+            (safeTotalBlocks - 1).coerceAtLeast(0) * MonolithRepository.SAFE_BREAK_DURATION_SECONDS +
+            extraSafeBreakSeconds.coerceAtLeast(0)
 
     // Truth Car 3 (ST-02, Tamm): completed breaks contribute the
     // seconds ACTUALLY taken (breakTakenSeconds, booked at every
@@ -592,7 +619,19 @@ data class FocusSessionEntity(
     // the seam is declared in mail/rurik/2250.
     val spanElapsedSeconds: Int
         get() {
-            return if (isInSafeBreak) {
+            return if (isInSafeBreak && midBlockSafeBreak) {
+                // Issue #261: inside a MID-BLOCK break the current
+                // block has NOT finished — the span is the finished
+                // blocks, this block's frozen elapsed, the breaks
+                // already booked, and the running part of this one.
+                // (The flip-born branch below prices the current
+                // block whole, because at a flip it HAS finished.)
+                (safeCurrentBlockIndex - 1).coerceAtLeast(0) * effectiveTargetSeconds +
+                    elapsedSeconds.coerceAtLeast(0) +
+                    breakTakenSeconds.coerceAtLeast(0) +
+                    (MonolithRepository.SAFE_BREAK_DURATION_SECONDS - safeBreakSecondsRemaining)
+                        .coerceAtLeast(0)
+            } else if (isInSafeBreak) {
                 safeCurrentBlockIndex * effectiveTargetSeconds +
                     breakTakenSeconds.coerceAtLeast(0) +
                     (MonolithRepository.SAFE_BREAK_DURATION_SECONDS - safeBreakSecondsRemaining)

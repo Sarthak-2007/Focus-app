@@ -901,6 +901,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onOpenAlwaysOnDeskClock = { viewModel.toggleAlwaysOnDeskClock(true) },
                                     onOpenNotificationDigest = { viewModel.toggleNotificationDigestSheet(true) },
                                     onEndSafeBreak = { viewModel.endSafeBreakEarly() },
+                                    onStartSafeBreak = { viewModel.startSafeBreakMidBlock() },
                                     onExtendSession = viewModel::extendActiveSession,
                                     weeklyEmergencyTokensRemaining = weeklyEmergencyTokensRemaining,
                                     appsCellCount = appsCellCount,
