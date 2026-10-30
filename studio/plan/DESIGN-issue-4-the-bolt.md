@@ -76,6 +76,20 @@ warrant read; the pure function `boltStateFor` receives only that verdict and
 never touches `WatchStore`, `seamMarksFor`, or the warrant itself (grep gate in
 KANTE §7.3). The fold, host-side, running precedence first-match-wins:
 
+> **LANDED (issue-#4 closer pass, Oct 30):** this law was a promise, not a
+> property, from the design's filing until the closer pass (KRALL K-1, VEX §A).
+> It is now code: `BoltInputs` + `boltStateFor` in `SealBar.kt`, one fold block
+> in `TactileDeckScreen.kt`, and the strip's `blockCellFor`/`blockCell`
+> derivations **deleted from the host** — no BLOCK string word is derived
+> anywhere on this face. The truth table is pinned row-by-row in
+> `SealBarStateTest`. Deviations from the sketch above, on the record: the
+> fold's output is a `BoltFace` (state + window), not a bare state; the
+> NO_READ row is idle-only (a running no-read folds to RUNNING_UNPROVEN —
+> the session's pose is a fact); B-C2's detention input (`heldFinish`) is
+> passed and outranks all rows; B-C1's shield-beat input is **not** an input
+> (the warrant's 45 s law carries the running STALE row; the shield's 10 s
+> beat law is never merged into it and remains owed VM plumbing).
+
 `liveRaw == OFF → OFF` (UNA2-04, frozen never consulted) · `read == null →
 NO_READ` · `stale ∧ raw LIVE → STALE_LIVE` · `print UNPROVEN → UNPROVEN` ·
 `print LIVE ∧ frozen ≠ LIVE → FROZEN_UNPROVEN` · `print LIVE ∧ frozen LIVE → LIVE`.
@@ -161,6 +175,20 @@ auto-shrink; font scale ≥1.3 clips are an honest overflow, never a shrunk digi
   printed without labels is the old strip's idle-ENDS lie in new metal.
   Placeholders (`--:--`) are banned outright. KANTE's dim-numerals rows for
   idle planned/frozen ends are superseded by this law.
+  > **AMENDED (issue-#4 closer pass, Oct 30 — HOLLIS H-1, flagged for Ren's
+  > countersignature, NOT silent):** this law deleted the one datum the
+  > issue's acceptance explicitly protects — the session end readable at a
+  > glance in the screenshotted **idle** state. The audit's own cure
+  > ("label it planned or freeze the derivation") and this section's own
+  > grammar ("printed **without labels** is the lie") both permit the
+  > labelled form. The closer pass therefore restores KANTE's dim-numerals
+  > row for idle: the window carries the dial's planned end at 55% ink
+  > under a **PLANNED END** bezel engraving (the fold's `PLANNED_END`
+  > window), in OFF / UNPROVEN / NO_READ / ARMED alike. A plan in plan's
+  > grammar; the live-end grammar (full ink, END) is reserved for running
+  > faces. If Ren strikes this amendment, the window returns to blank and
+  > the acceptance line must be re-issued with it — the cell may not hold
+  > both.
 - **Alert numerals are banned** (numerals never take the alert material); the
   one exception-that-isn't: ENDING_SOON inverts the *whole window* (brass plate
   behind, measured pair, §5) — a block change, not a recolour.
@@ -229,20 +257,34 @@ report, adopted verbatim into this spec):
 
 ## 6 · The glance gate (BLICK — the ship gate)
 
-Every number below was measured on real renders (blur at 1.8 arcmin/px,
-greyscale twin, 12dp downscale). **The Bolt ships only if the battery passes;
-no battery, no swap.**
+~~Every number below was measured on real renders~~ **STRUCK (KRALL K-5 /
+HOLLIS H-4 / VEX V-9, closer pass Oct 30): no number in this section was ever
+measured on a render, and two were not correct arithmetic about this
+instrument either (a 644dp² bed that exists in no geometry — the bed is the
+bolt's 90×34 = 3,060dp² footprint — and a "worst case" priced as a bare brass
+disc, a colour/element combination RUNNING never renders). The figures are
+replaced below by model arithmetic computed in code over the elements that
+actually render (`SealBarParams.offLuminousTotal` /
+`jewelLuminousTotal`, pinned by `SealBarStateTest`) and by render-side pixel
+measurement (`BoltRenderGateTest`). The human battery (cold reads, 1 AM
+simulation, greyscale twins judged by people) has still never run; it is
+dispositioned on the issue as owed, not claimed here.** **The Bolt ships
+only if the battery passes; no battery, no swap.**
 
 - **OFF vs RUNNING, pairwise, at 10% brightness in a dark room:** OFF's
   orange-region luminous total ≥ 3× RUNNING's lamp total. As coded (WERK v0,
-  no bed), the totals are **0.00 vs 42.6 — a fail by the whole amount.** As
-  specced: OFF = bed 644dp² × 0.1775 = 114.3 + painted socket 11.4 = **125.7**;
-  RUNNING jewel worst case (brass, 9dp) = 33.3 → **3.77× PASS** (6.16× with an
-  orange jewel). The gate is only passable from both sides — OFF gains area,
-  RUNNING loses lamp — which is why the jewel cap is a law, not a style:
-  **jewel luminous total ≤ 41.9 proxy units; ≤9dp diameter is the enforceable
-  proxy.** The budget ships as a named constant in code so the gate is
-  executable, not prose (DUNKEL §7).
+  no bed), the totals were **0.00 vs 42.6 — a fail by the whole amount.** As
+  built now, computed over rendered elements: OFF = bed 3,060dp² ×
+  rel-lum(#D63E06) + painted socket 64dp² × the same ≈ **554 units**;
+  RUNNING (night, the brighter mode) = magenta disc 63.6dp² ×
+  rel-lum(#F04FCB) + halo ring 62.8dp² × the same ≈ **35.9 units** — a
+  ≈15× model ratio, and `BoltRenderGateTest` measures the same law in
+  pixels on real renders of the composable. The gate is only passable from
+  both sides — OFF gains area, RUNNING loses lamp — which is why the jewel
+  cap is a law, not a style: **jewel luminous total ≤ 41.9 proxy units;
+  ≤9dp diameter is the enforceable proxy.** The budget ships as a named
+  constant in code, and the totals are now computed from it and the
+  geometry — no longer a constant asserted equal to itself (K-5).
 - **OFF's peripheral read is ONE load-bearing cue** — the exposed orange bed —
   plus foveal confirmations. Protective rule: any future change cutting the
   exposed bed by >20% re-triggers the whole battery.
@@ -254,6 +296,14 @@ no battery, no swap.**
 - **CAUGHT passes only under the binary-bucket rule** (≥95% of cold reads sort
   it "not protected") plus the detent contact cue and the full-shut ink-flip —
   never as an exact-position read.
+  > **FLAGGED (HOLLIS H-2, closer pass):** this bucket means the glance gate
+  > certifies "OFF cannot be told from CAUGHT" while the issue's acceptance
+  > says "OFF must stay unmistakable". Those are different claims. The
+  > closer does not resolve them: the conflict is escalated on the issue
+  > for Ren's ruling (amend the acceptance openly, or give OFF a beat-1
+  > carrier CAUGHT does not share). No summary may say "OFF unmistakable"
+  > until he rules. FALZ §2's beat 1 is likewise renamed by the facts:
+  > it carries **not-protected-ness**, not OFF-ness (KRALL K-6).
 - **Screenshot law:** the acceptance frame is a side-by-side OFF/RUNNING pair,
   Night, with greyscale twins. A lone RUNNING shot proves nothing — OFF is the
   state that can hurt him, and the contrast is the proof. Battery: T1–T9
@@ -380,9 +430,13 @@ AUDIT-deck §3 evicted this strip (seam → PARK; sentence to a × destination;
 top strip to refuse-with-repair). This design **does not comply silently and
 does not ignore it**: issue #4 is Sarthak's direct order for this surface,
 issued after the audit, and it supersedes the eviction for the Deck's pinned
-band. Where this design *exceeds* §3: the seam stamps are **deleted outright**,
-not moved to PARK — posology stamps on a parking page would re-import the
-telemetry vocabulary §3 itself wanted off the Deck. Where it agrees with §3:
+band. Where this design *exceeds* §3: the seam stamps are **de-rendered
+from every Deck surface** (corrected by the closer pass, KRALL K-11 — the
+original wording here, "deleted outright", was false: `seamMarksFor`
+survives in `MonolithCustomComponents.kt`, test-pinned, as the wire's
+grade record for the sentence slot and imprint; it renders nowhere on the
+Deck). They are not moved to PARK — posology stamps on a parking page
+would re-import the telemetry vocabulary §3 itself wanted off the Deck. Where it agrees with §3:
 the refusal sentence stays (it is below the band, in the sentence slot, and is
 the JAMMED face's second channel), and nothing §3 protected is weakened.
 **Flagged for Ren's countersignature** — a cell does not overrule an audit on
@@ -397,10 +451,14 @@ SALZ's 21 acceptance tests bind the merge, including: the one-derivation test
 (one fold, grep-enforced); the both-directions disagreement test (frozen ON
 standing mid-session; live OFF overriding instantly); mid-session revocation
 (the JAMMED face + sentence, same frame); the idle-tense test (no hypothetical
-end in fact grammar — §4's blank window); the 5-second cold test; the 1 AM
-test (§6 battery); TalkBack parity (§4); the rent test (60dp buys a state
-change, a threshold, and an evidence channel the 53dp strip never carried);
-and the audit-disposition test (§9 above). BLICK's T1–T9 (§6) run alongside;
+end in fact grammar — §4 as amended: the planned end in **plan** grammar,
+labelled, is not a hypothetical in fact grammar); the 5-second cold test; the
+1 AM test (§6 battery); TalkBack parity (§4); the rent test (60dp buys a state
+change, a threshold, and an evidence channel the 53dp strip never carried —
+**HOLLIS H-7's CONDITIONAL mark is discharged for the evidence channel by
+the closer pass: the fold now exists in code**; the rent claim for the
+glance channel remains conditional on the human battery); and the
+audit-disposition test (§9 above). BLICK's T1–T9 (§6) run alongside;
 a failure in either suite is a failure of the design, not of the test.
 
 ## 11 · Rulings & dissents of record (lead adjudications)

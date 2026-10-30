@@ -256,3 +256,31 @@ machining, and the spoken set already says what the ticks show.
 
 — **FALZ**, Designer, dedicated-100 · issue #4 cell
 Declared as design only — nothing compiled, nothing built.
+
+---
+
+## CORRECTION NOTE — issue-#4 closer pass, Oct 30 (KRALL K-4/K-6/K-8/K-9)
+
+Filed by the closer, on the record, so no finisher renders from
+wrong numbers again:
+
+- **Channel (K-4):** §3's formula (housingW − 156 = 204dp) and §4's
+  grid (channel x=24→222, 198dp; leading edges OPEN 114 · CAUGHT
+  150 · THROWN 222) describe **no built geometry**. The code's
+  channel is layout-derived (`weight(1f)`): at the 360dp reference
+  it is **191dp, travel 101dp**. Render from the code
+  (`SealBarParams` + the running layout), never from §3/§4's
+  figures.
+- **Beat 1 (K-6):** §2's name for beat 1 is corrected: it carries
+  **not-protected-ness**, not "OFF-ness". CAUGHT at ⅓ exposes ≈⅔
+  of the bed (the render gate measures it between OFF and RUNNING),
+  so beat 1 fires for CAUGHT too; §2's "exposed third" is wrong,
+  §4's "right ⅔" is the geometry.
+- **Fail list (K-8):** the checklist line "travel follows the Bolt
+  §7.1 50ms keyframed throw" is **suspended** until the merge pass
+  lands keyframes; the shipped 50 ms tween is a named INTERIM and
+  does not fail this list.
+- **Detent scale (K-9):** the tick spec (§3.2) is **not built** and
+  is not to be built from these coordinates; it must be re-priced
+  on the code's channel with a render order the bolt cannot cover
+  before any finisher picks it up.
