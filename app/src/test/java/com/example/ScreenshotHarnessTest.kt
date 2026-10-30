@@ -159,9 +159,6 @@ class ScreenshotHarnessTest {
             if (viewModel.apps.value.isNotEmpty() && viewModel.profiles.value.isNotEmpty()) break
             Thread.sleep(250)
         }
-            "HARNESS seeded apps=${viewModel.apps.value.size} profiles=${viewModel.profiles.value.size} " +
-                "tasks queued=${viewModel.queuedTasks.value.size} routines=${viewModel.routines.value.size}"
-        )
     }
 
     private fun setRootApp() {
@@ -412,6 +409,7 @@ class ScreenshotHarnessTest {
                     )
                 )
             }
+        }.onFailure { }
     }
 
     private fun findView(root: View, pred: (View) -> Boolean): View? {
@@ -506,12 +504,6 @@ class ScreenshotHarnessTest {
             if (viewModel.finishState.value != null) sawFinishState = true
             val receipt = viewModel.receiptState.value
             if (receipt != null) {
-                    "HARNESS receipt issued: number=${receipt.numberPrint} kind=${receipt.kind} " +
-                        "outcome=${receipt.outcomeWord} faulted=${receipt.faulted} " +
-                        "shieldWasOff=${receipt.shieldWasOff} held=${receipt.heldAppsAtSeal}/${receipt.heldSitesAtSeal} " +
-                        "routineLabel=${receipt.routineLabelWithin} deflections=${receipt.deflections.size} " +
-                        "witnessedPath=$sawFinishState"
-                )
                 return true
             }
             ShadowSystemClock.advanceBy(Duration.ofMillis(100))
@@ -679,6 +671,7 @@ class ScreenshotHarnessTest {
         captureTo(File(shotsDir, "hb4_detention_before_tap.png"))
         runCatching {
             composeRule.onNodeWithTag("header_guard_line").performClick()
+        }.onFailure { }
         settle(300)
         captureTo(File(shotsDir, "hb4_detention_after_guard_tap.png"))
         composeRule.onNodeWithTag("park_sheet").assertDoesNotExist()
