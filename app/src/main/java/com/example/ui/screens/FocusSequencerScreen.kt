@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -89,26 +90,18 @@ fun FocusSequencerScreen(
     activeTask: FocusTaskEntity?,
     queuedTasks: List<FocusTaskEntity>,
     completedTasks: List<FocusTaskEntity>,
-    deferredTasks: List<FocusTaskEntity>,
     deletedTaskForUndo: FocusTaskEntity?,
-    totalQueueMinutes: Int,
     isSessionActive: Boolean,
     soundEngine: TactileSoundEngine? = null,
     isDarkTheme: Boolean = false,
     onAddTask: (String, Int, String, String, Boolean) -> Unit,
-    onEditTask: (Int, String, Int, String, String) -> Unit,
-    onUpdateTaskDuration: (Int, Int) -> Unit,
     onCueTaskToFocus: (Int) -> Unit,
     onCompleteTask: (Int) -> Unit,
-    onPromoteTask: (Int) -> Unit,
-    onMoveTaskOrder: (Int, Boolean) -> Unit,
-    onDeferTask: (Int) -> Unit,
     onDeleteTask: (Int) -> Unit,
     onUndoDeleteTask: () -> Unit,
     onDismissUndoBanner: () -> Unit,
     onReopenTask: (Int) -> Unit,
     onToggleSubStep: (Int, Int) -> Unit,
-    onAddSubStep: (Int, String) -> Unit,
     onAutoSplitTask: (Int) -> Unit,
     onNavigateToDeck: () -> Unit
 ) {
@@ -155,7 +148,10 @@ fun FocusSequencerScreen(
             soundEngine?.playMechanicalLatch(true)
             // MINUTES DIE (Sarthak's order): the composer asks
             // NOTHING about duration — 0, no estimate given.
-            onAddTask(clean, 0, "Study", "", orderedQueue.isEmpty())
+            // Issue #53 F4: and it asks nothing about category —
+            // the tag is "" (uncategorised), never a fabricated
+            // "Study" the user never chose.
+            onAddTask(clean, 0, "", "", orderedQueue.isEmpty())
             newTaskTitle = ""
         }
     }
@@ -315,6 +311,24 @@ fun FocusSequencerScreen(
                         isUndoStyle = true,
                         onClick = onUndoDeleteTask,
                         testTag = "undo_delete_task_button"
+                    )
+                    // Issue #53 F2: the banner's dismiss control
+                    // exists now — onDismissUndoBanner was declared
+                    // for a full audit round with nothing wired to
+                    // it; the banner could only be waited out.
+                    Text(
+                        text = "DISMISS",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clickable(
+                                role = androidx.compose.ui.semantics.Role.Button
+                            ) { onDismissUndoBanner() }
+                            .sizeIn(minHeight = 48.dp)
+                            .padding(horizontal = 8.dp, vertical = 14.dp)
+                            .testTag("sequencer_undo_dismiss")
                     )
                 }
             }
@@ -512,6 +526,8 @@ private fun TaskLeafItem(
     onNavigateToDeck: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // Issue #53 F5: two-tap DEL confirm, per leaf.
+    var delArmed by remember(task.id) { mutableStateOf(false) }
     val scheme = MaterialTheme.colorScheme
     // A ghost tears from its first frame; a live leaf never tears
     // in place (its tap books, and the ghost replaces it).
@@ -629,7 +645,7 @@ private fun TaskLeafItem(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable(enabled = !ghost) { onToggleSubStep(task.id, stepIdx) }
+                                .clickable(enabled = !ghost && !isSessionActive) { onToggleSubStep(task.id, stepIdx) }
                                 .padding(start = 14.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
@@ -683,30 +699,33 @@ private fun TaskLeafItem(
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
                         color = scheme.onSurfaceVariant,
-                        modifier = Modifier.clickable(enabled = !ghost) { onAutoSplitTask(task.id) }
+                        modifier = Modifier.clickable(enabled = !ghost && !isSessionActive) { onAutoSplitTask(task.id) }
                     )
                 }
                 if (isCued) {
-                    // START is the screen's one commit verb, and it
-                    // takes the commit's type (chrome C9 §10.4):
-                    // Anonymous Pro 700 on the 15sp step, tracked
-                    // +0.5, accent TEXT — the budget buys the verb,
-                    // never a fill.
+                    // Issue #53 F3: START and CUE were two verbs
+                    // hiding one identical action (cue + navigate).
+                    // One verb now, told truthfully: CUE. The cued
+                    // leaf keeps the commit's type (chrome C9
+                    // §10.4): Anonymous Pro 700 on the 15sp step,
+                    // tracked +0.5, accent TEXT.
                     Text(
-                        // MINUTES DIE: START carries the estimate
+                        // MINUTES DIE: CUE carries the estimate
                         // only where one was given; the verb stands
                         // alone on a name-only task.
                         text = if (task.estimatedMinutes > 0) {
-                            "START ${task.estimatedMinutes}m"
+                            "CUE ${task.estimatedMinutes}m"
                         } else {
-                            "START"
+                            "CUE"
                         },
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                         letterSpacing = 0.5.sp,
                         color = scheme.primaryContainer,
-                        modifier = Modifier.clickable(enabled = !ghost) {
+                        modifier = Modifier.clickable(
+                            enabled = !ghost && !isSessionActive
+                        ) {
                             onCueTaskToFocus(task.id)
                             onNavigateToDeck()
                         }
@@ -718,19 +737,33 @@ private fun TaskLeafItem(
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
                         color = scheme.onSurfaceVariant,
-                        modifier = Modifier.clickable(enabled = !ghost) {
+                        modifier = Modifier.clickable(
+                            enabled = !ghost && !isSessionActive
+                        ) {
                             onCueTaskToFocus(task.id)
                             onNavigateToDeck()
                         }
                     )
                 }
                 Text(
-                    text = "DEL",
+                    text = if (delArmed) "SURE?" else "DEL",
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
                     color = scheme.onSurfaceVariant,
-                    modifier = Modifier.clickable(enabled = !ghost) { onDeleteTask(task.id) }
+                    modifier = Modifier
+                        .clickable(
+                            enabled = !ghost && !isSessionActive,
+                            role = androidx.compose.ui.semantics.Role.Button
+                        ) {
+                            // Issue #53 F5: DEL no longer destroys
+                            // on one tap — the first tap arms the
+                            // word (DEL -> SURE?), the second fires.
+                            if (delArmed) onDeleteTask(task.id)
+                            else delArmed = true
+                        }
+                        .sizeIn(minHeight = 48.dp)
+                        .padding(vertical = 14.dp)
                 )
             }
         }
