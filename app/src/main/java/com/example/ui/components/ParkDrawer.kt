@@ -121,8 +121,11 @@ private val PLATE_HEAD = listOf(
 private val PLATE_BODY = listOf(
     "HOLD: 60 SECONDS, BANKED EVERY 15 · ONE BREAK A WEEK",
     // The PEEK line is NOT static text: plateBodyFor() substitutes
-    // the set length (W-08). This entry is the default-value form.
-    "PEEK: 2 MINUTES, THEN SHUT AGAIN",
+    // the set length (W-08) for any line starting with "PEEK:".
+    // This entry is the bare slot token — no length literal lives
+    // here (batch-10 verifier cure: a stale "2 MINUTES" default
+    // form survived the W-08 composition as source text).
+    "PEEK:",
     // Wave-2 plate cut (AUDIT-park §1.11/§4.9, lead ruling): the
     // plate is cut toward the ruled four lines (head 2 + HOLD +
     // PEEK). CUT: the WHEEL line, the COLOUR line (it contradicted
