@@ -1,0 +1,32 @@
+# Draft routing for surfaced comments: issue -> owning lane.
+# Exact number wins; otherwise first matching range; otherwise Ren triages.
+# Provisional where the identity inquisition touches purpose — lanes, not verdicts.
+1	Charter — Ren
+2	Cell A (Fuge) — test call-sites; merge via batch-10 train (Konto)
+3	CI circuit — Fern cell; Konto train owns the cure chain
+4	Bolt strip — Antlitz cell (design of record: THE BOLT)
+5	Truth verification — Beweis cell
+6	Deck — Rost cell
+7	Shield live-blocking — Vogt cell
+8	Drawer — Lade cell
+9	Park — Hof cell
+10	Receipt — Zettel cell
+11	Held Door — Tor cell
+12	Tasks — Amt cell
+13	Session Room — Wacht cell (lane closed; merge table owns remainders)
+14	Setup sheet / onboarding — Pforte cell
+15	Batch-10 merge train — Konto
+16	Pill — Pastille/Presse; loop L2 reconciliation
+17	Snapshot — Anker/Lotse
+18	FROZEN (looks programme, record-only) — Ren
+19	Sarthak-decision (decided, closed) — Ren
+20	Sarthak-decision (decided, closed) — Ren
+21	Parked decisions — Ren (needs Sarthak)
+22	Orders index — Ren / FRAGE tally
+23-72	Wave-3 R1 cluster leads (Grund/Motor/Herz/Blatt/Posten/Puls/Tafel/Rampe/Nachlass/Prisma by slice)
+73-96	Wave-3 R2 cluster leads (Funke/Welle/Strom/Flut/Brand by slice)
+97-114	Wave-3 R3 cluster leads (Weg/Pfad/Reise/Karte by slice)
+115-164	Wave-3 R3b cluster leads (Larve/Huelle/Miene/Gestalt/Abbild/Echo/Umriss/Profil/Wesen/Figur by slice)
+165	PR #165 — issue #2's test call-site fix (merged) — Ren
+166	CI test floor — Boden squad
+245	PR TRACKER — whoever touched the PR updates it; Ren enforces
