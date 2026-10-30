@@ -45,6 +45,24 @@ the other into a property of the machine itself.
 | Horizon bar proportions: `totalMins = Σ estimatedMinutes.coerceAtLeast(10)`, `weight = coerceAtLeast(10)/totalMins`; every composer-made task stores `estimatedMinutes = 0` (MINUTES DIE), so every segment is floored to a phantom equal 10 | `ui/views/BlockitTowerFadersAndCatalogViews.kt:194,198`. Interaction priced in §8 only. |
 | SPLIT fabricates: `defaultSubStepsForCategory(title, category)` ignores the title, branches on category alone, and the composer hard-codes `"Study"` (no branch) → every split gets the physics triple | `MonolithModels.kt`, audit item 11. Interaction priced in §8 only. |
 
+### 0.5 Status on `agent/issue-12` (found while filing this spec)
+
+The issue-12 cell has already landed a **first-generation F-1** on this
+branch (`d9d7697` + wave-2 `a5f33a3`, CI-verdict addendum `2993fbc`):
+derive takes the queue snapshot and resolves a head **title**
+(`RoutineDerive.resolveHeadTitle` — ACTIVE/QUEUED only, DEFERRED never,
+SLEEP keeps the routine name), with an H1 seal-time re-resolve and an
+H2 blank-title guard. **That is Tier 0 of this spec, and it is correct
+as far as it goes.** What it does *not* do — and what the tiers below
+therefore still price, unchanged — is: write the **bond**
+(`focus_sessions.taskId` is still unwritten; the session knows a title
+string, not *which task* it carries), **promote** the head at birth
+(a stale ACTIVE from yesterday can coexist with the bonded title),
+record **provenance**, freeze the intention against
+`completeTaskAndAdvance`'s rewrite, or bind per-routine. Read every
+"today" in §0 against trunk `main`; on this branch, read Tier 1 as
+"complete the bond the title-only fix began".
+
 **Hard boundary (not maximised past):** Monolith is a blocker, never a
 tracker. F-1 MAX moves *which named task a blocking session carries*. It
 adds no hours, no syllabus state, no scoring, no streaks — study hours
