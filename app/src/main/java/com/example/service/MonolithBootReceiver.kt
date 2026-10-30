@@ -142,7 +142,7 @@ class MonolithBootReceiver : BroadcastReceiver() {
         // one boot; the clear is idempotent.
         runGuardedBootAction {
             if (action != Intent.ACTION_MY_PACKAGE_REPLACED) {
-                MonolithDatabase.getInstance(appContext).monolithDao()
+                com.example.AppContainer.dao(appContext)
                     .clearAllPeekLeases()
             }
         }
