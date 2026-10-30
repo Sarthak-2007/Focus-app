@@ -1530,13 +1530,28 @@ class MonolithViewModel(
         }
     }
 
+    /** Issue #128 finding 3 (ratchet only — the routine model
+     *  itself is under Sarthak's RETHINK FREEZE, Oct 30 05:07):
+     *  while a session is live, every routine edit is refused
+     *  before it can re-stamp scheduleEditedAtMillis, dismiss the
+     *  reset note, or force a heartbeat reconcile. The schedule
+     *  the seal was struck under is the schedule that stands
+     *  until the phone unseals; edits resume untouched after. */
+    private fun routineEditRefusedUnderSeal(): Boolean {
+        if (activeSession.value?.isActive != true) return false
+        triggerRatchetWarning("ONE-WAY RATCHET • ROUTINE SCHEDULE IS FROZEN DURING ACTIVE VAULT")
+        return true
+    }
+
     fun toggleRoutine(routine: com.example.data.RoutineEntity) {
+        if (routineEditRefusedUnderSeal()) return
         val updated = routine.copy(enabled = !routine.enabled)
         soundEngine.playMechanicalLatch(updated.enabled)
         persistRoutine(updated)
     }
 
     fun cycleRoutineLoadout(routine: com.example.data.RoutineEntity) {
+        if (routineEditRefusedUnderSeal()) return
         val order = listOf(SmartLoadout.STUDY, SmartLoadout.WORK_SPRINT, SmartLoadout.SLEEP)
         val current = runCatching { SmartLoadout.valueOf(routine.loadoutName) }.getOrDefault(SmartLoadout.STUDY)
         val next = order[(order.indexOf(current) + 1) % order.size]
@@ -1545,6 +1560,7 @@ class MonolithViewModel(
     }
 
     fun adjustRoutineTime(routine: com.example.data.RoutineEntity, isStart: Boolean, deltaMinutes: Int) {
+        if (routineEditRefusedUnderSeal()) return
         val start = if (isStart) {
             (routine.startMinutes + deltaMinutes + 1440) % 1440
         } else routine.startMinutes
@@ -1562,6 +1578,7 @@ class MonolithViewModel(
     }
 
     fun toggleRoutineDay(routine: com.example.data.RoutineEntity, dayIndex: Int) {
+        if (routineEditRefusedUnderSeal()) return
         val mask = routine.daysMask xor (1 shl dayIndex)
         soundEngine.playRotaryDetent()
         persistRoutine(routine.copy(daysMask = mask))
