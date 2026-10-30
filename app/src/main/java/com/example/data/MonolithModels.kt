@@ -827,6 +827,24 @@ object RoutineSchedule {
         return null
     }
 
+    /**
+     * Audit R5 #306 F2: is this routine ENFORCING at [nowMillis] —
+     * enabled, not paused, and a window contains the instant. While
+     * this holds the routine is forced-on: the editor's off-switch
+     * and current-day removal are refused in MonolithViewModel, the
+     * forced state StayFree's scheduled modes carry (its
+     * focus_mode_forced_* strings exist to refuse the same tap).
+     * A paused routine is NOT enforcing — the pause was already
+     * bought at the pause's own price — so it stays editable, and a
+     * disabled routine enforces nothing by definition.
+     */
+    fun isEnforcingAt(routine: RoutineEntity, nowMillis: Long): Boolean {
+        val r = routine.sanitized()
+        if (!r.enabled) return false
+        if (r.pausedUntilMillis > nowMillis) return false
+        return windowContaining(r, nowMillis) != null
+    }
+
     /** The next window to start strictly after [nowMillis], as an instance. */
     fun nextWindow(routine: RoutineEntity, nowMillis: Long): WindowInstance? {
         val start = nextStartMillis(routine, nowMillis) ?: return null

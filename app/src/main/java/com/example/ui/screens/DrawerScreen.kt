@@ -49,12 +49,14 @@ import androidx.compose.foundation.layout.PaddingValues
 import com.example.data.CurioCatalog
 import com.example.data.DayWordStore
 import com.example.data.DrawerDay
+import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
 import com.example.data.ForgeStat
 import com.example.data.KineticArtifact
-import com.example.data.ReceiptIndexEntry
 import com.example.data.PARTIAL_STAMP_ARTIFACT
 import com.example.data.PARTIAL_STAMP_ID
+import com.example.data.ReceiptIndexEntry
+import com.example.data.SessionOutcome
 import com.example.data.StoredMonth
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
@@ -98,6 +100,12 @@ private data class DrawerDayGroup(
     val date: LocalDate,
     val rows: List<FocusTaskEntity>,
     val word: String?
+    // R3b #163 F2/F3 STRUCK (Purpose lens, Sarthak's settled
+    // definition): the Drawer stores finished tasks in a quiet
+    // drawer — NO scores, NO day-grading, NO judgement. It does
+    // not print routine outcomes ("MISSED") and it does not
+    // manufacture a group for a day that stored nothing: a day
+    // with no finished tasks kept nothing, so nothing vanished.
 )
 
 /** Group rows by filing date and merge declared words + (optionally)
@@ -190,6 +198,9 @@ fun DrawerScreen(
     onQueryChange: (String) -> Unit,
     onLoadEarlierSearch: () -> Unit,
     onDeclareTodayWord: (String?) -> Unit,
+    // R3b #163 F1: yesterday's word stays declarable the morning
+    // after. (F2/F3 struck — see DrawerDayGroup.)
+    onDeclareDayWord: (LocalDate, String?) -> Unit = { _, _ -> },
     // The cabinet (chrome C10): the curios' new home. The Drawer is
     // storage; the cabinet is its furniture — the six artifacts as
     // ruled rows, their forged state read from real sessions, their
@@ -202,6 +213,17 @@ fun DrawerScreen(
     // not hold.)
     artifacts: List<KineticArtifact> = CurioCatalog.artifacts,
     forgedArtifactIds: Set<String> = emptySet(),
+    // Audit R3b #145: forge provenance per artifact — the sessions
+    // that forged it (date, intention, outcome ride the row), so
+    // the cabinet can count duplicates and name their spans.
+    curioForgeRecords: Map<String, List<FocusSessionEntity>> = emptyMap(),
+    // Issue #110, finding 5: the forge record per artifact — count
+    // of forging sessions + most recent forge instant, derived by
+    // the repository from stored session rows. The cabinet detail
+    // prints it, so a forged artifact names real days instead of
+    // only standing there. The Partial Stamp row joins the list
+    // whenever a session actually carries the stamp.
+    forgeStats: Map<String, ForgeStat> = emptyMap(),
     // Issue #157: the Vault IS the "Receipts" destination, so the
     // receipts live here — an index of every claimed slip, each
     // row carrying only what its session row proves. Tapping a
@@ -210,13 +232,6 @@ fun DrawerScreen(
     // nothing is printed on it from here.
     receipts: List<ReceiptIndexEntry> = emptyList(),
     onReceiptClick: (Int) -> Unit = {},
-    // Issue #110, finding 5: the forge record per artifact — count
-    // of forging sessions + most recent forge instant, derived by
-    // the repository from stored session rows. The cabinet detail
-    // prints it, so a forged artifact names real days instead of
-    // only standing there. The Partial Stamp row joins the list
-    // whenever a session actually carries the stamp.
-    forgeStats: Map<String, ForgeStat> = emptyMap(),
     // Issue #52 F3 cure: the month read's state, from the
     // ViewModel — loading while a page is in flight, an error
     // line when the read failed. An empty month, a loading
@@ -610,19 +625,35 @@ fun DrawerScreen(
                                 )
                             }
                         }
-                        Text(
-                            text = item.name,
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 14.sp,
-                            color = scheme.onBackground
-                        )
-                        Text(
-                            text = item.subtitle,
-                            fontFamily = AnonymousProFamily,
-                            fontSize = 10.5.sp,
-                            color = scheme.onSurfaceVariant
-                        )
+                        // Audit R3b #145: an un-forged artifact's
+                        // name and subtitle are the reward's text —
+                        // they are earned, not previewed. The row
+                        // shows the serial (its public identity) and
+                        // the unforged fact; the name prints only
+                        // once a real span has forged it.
+                        if (forged) {
+                            Text(
+                                text = item.name,
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 14.sp,
+                                color = scheme.onBackground
+                            )
+                            Text(
+                                text = item.subtitle,
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 10.5.sp,
+                                color = scheme.onSurfaceVariant
+                            )
+                        } else {
+                            Text(
+                                text = "NOT YET FORGED",
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 10.5.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onSurfaceVariant
+                            )
+                        }
                     }
                     HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
                 }
@@ -634,7 +665,13 @@ fun DrawerScreen(
                 // thresholds nothing enforces.
                 item {
                     Text(
-                        text = "A FINISHED SPAN FORGES ONE — THE FORGE CHOOSES WHICH.",
+                        // Audit R3b #145: the rule, scoped to what
+                        // the code now actually does on every hand
+                        // finish (timed and FLOW alike). Routine-born
+                        // spans forge nothing — the fence stands
+                        // while the routines rethink owns them — and
+                        // the print no longer claims otherwise.
+                        text = "A SPAN YOU FINISH YOURSELF FORGES ONE — THE FORGE CHOOSES WHICH.",
                         fontFamily = AnonymousProFamily,
                         fontSize = 10.5.sp,
                         letterSpacing = 1.sp,
@@ -661,27 +698,34 @@ fun DrawerScreen(
                             color = scheme.onSurfaceVariant,
                             modifier = Modifier.testTag("cabinet_serial_plate")
                         )
-                        Text(
-                            text = artifact.name,
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
-                            color = scheme.onBackground
-                        )
-                        Text(
-                            text = artifact.subtitle,
-                            fontFamily = AnonymousProFamily,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = artifact.lore,
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 13.sp,
-                            color = scheme.onBackground
-                        )
+                        // Audit R3b #145: name, subtitle and lore
+                        // are the earned text — an un-forged
+                        // artifact's detail is its serial plate and
+                        // the unforged fact, nothing more. What is
+                        // not yet earned is not previewed.
+                        if (artifact.id in forgedArtifactIds) {
+                            Text(
+                                text = artifact.name,
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 17.sp,
+                                color = scheme.onBackground
+                            )
+                            Text(
+                                text = artifact.subtitle,
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = artifact.lore,
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 13.sp,
+                                color = scheme.onBackground
+                            )
+                        }
                         // DRW-01: the "REQUIRES … MIN · …
                         // INTERCEPTIONS" price tag is gone — no
                         // code ever read those numbers. The true
@@ -727,6 +771,31 @@ fun DrawerScreen(
                                 letterSpacing = 1.sp,
                                 color = scheme.onSurfaceVariant,
                                 modifier = Modifier.testTag("cabinet_forge_record_${artifact.id}")
+                            )
+                        }
+                        // Audit R3b #145: provenance under the
+                        // summary — every forge of this artifact,
+                        // dated, with the span's intention and its
+                        // outcome. A duplicate forge is a second
+                        // line, never a silent no-op; a shield-gap
+                        // forge says so.
+                        val forgeRecords = curioForgeRecords[artifact.id].orEmpty()
+                        forgeRecords.forEach { record ->
+                            val forgeDay = java.text.SimpleDateFormat(
+                                "d MMM yyyy", Locale.US
+                            ).format(java.util.Date(record.startWallTimeMillis))
+                            val gapMark = if (
+                                record.outcome == SessionOutcome.ELAPSED_SHIELD_GAP
+                            ) {
+                                " · SHIELD GAP"
+                            } else {
+                                ""
+                            }
+                            Text(
+                                text = "$forgeDay · ${record.intention}$gapMark",
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 10.5.sp,
+                                color = scheme.onSurfaceVariant
                             )
                         }
                         // DRW-06: no SELECT verb, no SELECTED
@@ -780,7 +849,7 @@ fun DrawerScreen(
                         fontSize = 12.sp,
                         color = scheme.onBackground,
                         modifier = Modifier
-                            .clickable { view = DrawerView.LANDING }
+                            .clickable { viewName = DrawerView.LANDING.name }
                             .testTag("receipts_back")
                     )
                 }
@@ -1110,9 +1179,12 @@ fun DrawerScreen(
                     item(key = "month-head-${group.date}") {
                         DayHeading(
                             group = group,
-                            isToday = group.date == today,
-                            isSealed = isSealed,
-                            onDeclareTodayWord = onDeclareTodayWord
+                            canDeclare = !isSealed && (group.date == today ||
+                                (group.date == today.minusDays(1) && group.word == null)),
+                            onDeclareWord = { word ->
+                                if (group.date == today) onDeclareTodayWord(word)
+                                else onDeclareDayWord(group.date, word)
+                            }
                         )
                     }
                     items(group.rows, key = { "month-${it.id}" }) { task ->
@@ -1189,9 +1261,8 @@ fun DrawerScreen(
                                 rows = emptyList(),
                                 word = dayWords[DrawerDay.dateIso(today)]
                             ),
-                            isToday = true,
-                            isSealed = isSealed,
-                            onDeclareTodayWord = onDeclareTodayWord
+                            canDeclare = !isSealed,
+                            onDeclareWord = onDeclareTodayWord
                         )
                     }
                     item {
@@ -1205,7 +1276,7 @@ fun DrawerScreen(
                     item {
                         DrawerNavRow(
                             label = "RECEIPTS",
-                            onClick = { view = DrawerView.RECEIPTS },
+                            onClick = { viewName = DrawerView.RECEIPTS.name },
                             modifier = Modifier.testTag("drawer_receipts_row")
                         )
                         HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
@@ -1257,7 +1328,7 @@ fun DrawerScreen(
                     item {
                         DrawerNavRow(
                             label = "RECEIPTS",
-                            onClick = { view = DrawerView.RECEIPTS },
+                            onClick = { viewName = DrawerView.RECEIPTS.name },
                             modifier = Modifier.testTag("drawer_receipts_row")
                         )
                         HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
@@ -1269,9 +1340,12 @@ fun DrawerScreen(
                         item(key = "land-head-${group.date}") {
                             DayHeading(
                                 group = group,
-                                isToday = group.date == today,
-                                isSealed = isSealed,
-                                onDeclareTodayWord = onDeclareTodayWord
+                                canDeclare = !isSealed && (group.date == today ||
+                                    (group.date == today.minusDays(1) && group.word == null)),
+                                onDeclareWord = { word ->
+                                    if (group.date == today) onDeclareTodayWord(word)
+                                    else onDeclareDayWord(group.date, word)
+                                }
                             )
                         }
                         items(group.rows, key = { "land-${it.id}" }) { task ->
@@ -1318,9 +1392,11 @@ private fun DrawerNavRow(
 @Composable
 private fun DayHeading(
     group: DrawerDayGroup,
-    isToday: Boolean,
-    isSealed: Boolean,
-    onDeclareTodayWord: (String?) -> Unit
+    // R3b #163 F1: the picker is offered for today, and for
+    // yesterday while yesterday still carries no word — the call
+    // sites compute that; the heading just renders the offer.
+    canDeclare: Boolean,
+    onDeclareWord: (String?) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1337,7 +1413,7 @@ private fun DayHeading(
             color = scheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 6.dp)
         )
-        if (isToday && !isSealed) {
+        if (canDeclare) {
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 DayWordStore.WORDS.forEach { word ->
                     val active = group.word == word
@@ -1350,7 +1426,7 @@ private fun DayHeading(
                         modifier = Modifier
                             .clickable(
                                 role = androidx.compose.ui.semantics.Role.Button
-                            ) { onDeclareTodayWord(if (active) null else word) }
+                            ) { onDeclareWord(if (active) null else word) }
                             .sizeIn(minHeight = 48.dp)
                             .padding(vertical = 12.dp)
                             .testTag("declare_word_${word.lowercase()}")
