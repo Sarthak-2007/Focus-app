@@ -72,12 +72,17 @@ class PreArmStore(context: Context) {
         private const val KEY_INTENTION_TEXT = "intention_text"
         private const val KEY_DESTINATION = "destination"
 
-        // The ViewModel's old hardcoded birth values, kept as the
-        // defaults of record: a user who never touched the pre-arm
-        // setup gets exactly what a fresh install always showed.
-        const val DEFAULT_DIAL_MINUTES = 50
-        const val DEFAULT_STUDY_BLOCKS = 2
+        // Issue #261 (W3-B1 FORGE re-port of the DURCH-E verdict):
+        // the birth defaults MUST agree with the default preset.
+        // They previously read 50 x 2 while DEFAULT_STUDY_PRESET said
+        // POMODORO_25_5 (25m Sprint), so a first start silently
+        // committed to 100 min of work (110 min span) under a 25m
+        // label. Single source of truth: the preset itself, exactly
+        // as selectStudyPreset applies it. (Not const: an enum's
+        // constructor values are not compile-time constants.)
         val DEFAULT_STUDY_PRESET: StudyModePreset = StudyModePreset.POMODORO_25_5
+        val DEFAULT_DIAL_MINUTES: Int = DEFAULT_STUDY_PRESET.workMinutes
+        val DEFAULT_STUDY_BLOCKS: Int = DEFAULT_STUDY_PRESET.defaultBlocks
         // Issue #124 overrode the old factory phrase ("Finish
         // Chapter 4 Problem Set"): the intention is the user's own
         // words or blank — so the store's default is blank, and a
