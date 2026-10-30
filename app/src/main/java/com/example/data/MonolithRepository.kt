@@ -3035,6 +3035,18 @@ class MonolithRepository(
         return rehydrateReceipt(sessionId, row.receiptNumber)
     }
 
+    /** Issue #135 F2 (re-issue): the Deck's LAST RECEIPT door -
+     *  the standing slip for ONE session, rebuilt settled from
+     *  its row. The ViewModel's publishReceipt facade calls this
+     *  first: a session that claimed its № re-derives its slip
+     *  here (the #157 rehydration - restored, its fault read from
+     *  the row's own fault shield) and never re-claims; a session
+     *  that claimed nothing returns null and the caller falls
+     *  through to discovery. Re-issue is a read: it claims
+     *  nothing and stamps nothing. */
+    suspend fun receiptForSession(sessionId: Int): ReceiptState? =
+        rehydrateReceipt(sessionId)
+
     /** The Vault's receipts index (issue #157): every claimed
      *  session, newest № first, carrying only what its row
      *  proves. The outcome word is the slip's own dialect,
