@@ -394,7 +394,18 @@ fun ParkDrawer(
                             )
                         } else {
                             ParkBoardRow(
-                                name = item.boardName,
+                                // Issue #109, F5: the SHORTS + REELS
+                                // board line is the MEASURED outcome;
+                                // the sled row below is the SETTING.
+                                // The two lines used to carry the same
+                                // bare name and could print OFF over
+                                // ON with nothing saying why both were
+                                // true. The qualifier is the link.
+                                name = if (item == WatchItemId.SHORTS_REELS) {
+                                    "${item.boardName} — MEASURED"
+                                } else {
+                                    item.boardName
+                                },
                                 word = word,
                                 wordIsLack = m?.interceptor != InterceptorState.RUNNING
                             )
@@ -421,7 +432,15 @@ fun ParkDrawer(
                                 onToggle = onToggleSocialSites
                             )
                         } else {
-                            ParkBoardRow(name = item.boardName, word = null, wordIsLack = true)
+                            ParkBoardRow(
+                                name = if (item == WatchItemId.SHORTS_REELS) {
+                                    "${item.boardName} — MEASURED"
+                                } else {
+                                    item.boardName
+                                },
+                                word = null,
+                                wordIsLack = true
+                            )
                         }
                     }
                 }
@@ -555,6 +574,10 @@ fun ParkDrawer(
                 // source was the ViewModel's memory; the sled reads
                 // and writes the persisted Guard row, and the board
                 // above now prints the same fact the sled holds.
+                // Issue #109, F5: this row is the SETTING and prints
+                // so — the board's line above is the MEASURED
+                // outcome, and the two qualifiers are what keep an
+                // honest OFF-over-ON from reading as a contradiction.
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -562,7 +585,7 @@ fun ParkDrawer(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "SHORTS + REELS",
+                        text = "SHORTS + REELS — SETTING",
                         style = PillBadgeTextStyle,
                         color = scheme.onSurfaceVariant
                     )
