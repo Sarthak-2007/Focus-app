@@ -274,6 +274,25 @@ fun TactileDeckScreen(
     val heldFinish = finishState != null && !finishState.issued
     val showRunningForm = isSessionRunning || heldFinish
 
+    // Issue #128 finding 5: DONE under a live seal takes TWO taps.
+    // Completing the active task mid-session is a designed,
+    // receipt-booked act (the repository writes it into the
+    // session's summary) — but it is also irreversible from this
+    // screen, so one stray tap from a child or a pocket must not
+    // falsify the session's task record. The first tap arms the
+    // cap (it re-prints SURE?); only a second tap on the armed
+    // cap completes. Unsealed, DONE stays one tap exactly as
+    // before. The arm dies on its own after ~2.6s and whenever
+    // the active task changes.
+    var doneConfirmTaskId by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(doneConfirmTaskId) {
+        if (doneConfirmTaskId != null) {
+            kotlinx.coroutines.delay(2600L)
+            doneConfirmTaskId = null
+        }
+    }
+    LaunchedEffect(activeTask?.id) { doneConfirmTaskId = null }
+
     // The sled's scheduler (Schlitten §3.2): the host effect that
     // turns a standing receipt into the return. Witness first,
     // then count the SAME 1050 the seal shot ran, from the
@@ -828,11 +847,25 @@ fun TactileDeckScreen(
                             // Input death (Zug-II §4.6): the task
                             // verbs' HANDLERS are removed by state
                             // during the shot — not greyed, gone.
-                            .clickable(enabled = !shotActive) { onCompleteActiveTask(activeTask.id) }
+                            // Issue #128 finding 5: while a session
+                            // runs, the first tap only arms the cap
+                            // (SURE?); the second completes.
+                            .clickable(enabled = !shotActive) {
+                                if (!isSessionRunning ||
+                                    doneConfirmTaskId == activeTask.id
+                                ) {
+                                    doneConfirmTaskId = null
+                                    onCompleteActiveTask(activeTask.id)
+                                } else {
+                                    doneConfirmTaskId = activeTask.id
+                                }
+                            }
                             .padding(horizontal = 10.dp, vertical = 5.dp)
                     ) {
                         Text(
-                            text = "DONE",
+                            text = if (isSessionRunning &&
+                                doneConfirmTaskId == activeTask.id
+                            ) "SURE?" else "DONE",
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.sp,
