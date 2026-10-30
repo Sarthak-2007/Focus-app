@@ -32,9 +32,26 @@ class MonolithShieldService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var monitorJob: Job? = null
 
+    // Issue #102 (peek-lived, findings 1+2): the peek watcher —
+    // a 1-second beat that draws the floating countdown pill over
+    // the peeked app while a lease is live and, at the moment the
+    // lease dies, evicts a user who is still inside the peeked
+    // app. The repository handle is captured when monitoring
+    // starts (the watcher outlives any single monitor iteration).
+    private var peekJob: Job? = null
+    private var peekRepository: MonolithRepository? = null
+    @Volatile private var observedPeekPackage: String? = null
+    @Volatile private var observedPeekAppName: String? = null
+    private val peekPill: PeekPillOverlay by lazy {
+        PeekPillOverlay(applicationContext) { pkg -> onPeekPillEndTapped(pkg) }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
         if (action == ACTION_STOP_SHIELD) {
+            peekPill.hide()
+            observedPeekPackage = null
+            observedPeekAppName = null
             protecting = false
             protectingSessionId = -1
             protectingMono = 0L
@@ -79,6 +96,8 @@ class MonolithShieldService : Service() {
         monitorJob?.cancel()
         val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
         val repository = MonolithRepository(applicationContext, dao)
+        peekRepository = repository
+        startPeekWatcher(dao, repository)
 
         monitorJob = serviceScope.launch {
             var iteration = 0
@@ -195,6 +214,110 @@ class MonolithShieldService : Service() {
         }
     }
 
+    /**
+     * Issue #102 (peek-lived, findings 1+2): the peek watcher.
+     * Every second it reads the lease straight from the Room rows
+     * (the same stored end the VM pill state derives from —
+     * UNA2-06's one truth):
+     *  - lease live → the floating pill is shown/updated over
+     *    whatever app the user is in, with a working ✕.
+     *  - lease just died (expiry, or an early end recorded
+     *    elsewhere) after being observed live → the pill is
+     *    removed and, if the user is STILL inside the peeked app
+     *    (events-based foreground read — a still screen generates
+     *    no accessibility event and its lastTimeUsed is minutes
+     *    stale, which is why nothing used to cut him off), the
+     *    intercept door is launched over him: the 2:00 cut-off.
+     * The watch ends when the session ends; the monitor loop's
+     * own blocked-app check (now events-backed too) remains as
+     * the second door.
+     */
+    private fun startPeekWatcher(
+        dao: com.example.data.MonolithDao,
+        repository: MonolithRepository
+    ) {
+        peekJob?.cancel()
+        peekJob = serviceScope.launch {
+            while (isActive) {
+                val session = dao.getActiveSessionSnapshot()
+                if (session == null || !session.isActive) {
+                    peekPill.hide()
+                    observedPeekPackage = null
+                    observedPeekAppName = null
+                    break
+                }
+                val nowMono = SystemClock.elapsedRealtime()
+                val liveLease = dao.getAllAppsSnapshot()
+                    .filter {
+                        it.resolvedTier == AppBlockTier.PEEK_2M &&
+                            it.activePeekUntilElapsedRealtime > nowMono
+                    }
+                    .maxByOrNull { it.activePeekUntilElapsedRealtime }
+                if (liveLease != null) {
+                    observedPeekPackage = liveLease.packageName
+                    observedPeekAppName = liveLease.appName
+                    val seconds = com.example.ui.peekSecondsRemaining(
+                        liveLease.activePeekUntilElapsedRealtime, nowMono
+                    )
+                    if (seconds != null) {
+                        peekPill.show(liveLease.packageName, seconds)
+                    }
+                } else {
+                    val endedPackage = observedPeekPackage
+                    if (endedPackage != null) {
+                        val endedName = observedPeekAppName
+                        observedPeekPackage = null
+                        observedPeekAppName = null
+                        peekPill.hide()
+                        val foreground = repository.queryCurrentForegroundPackage()
+                        if (peekExpiryShouldEvict(foreground, endedPackage)) {
+                            launchPeekIntercept(endedPackage, endedName)
+                        }
+                    } else if (peekPill.shownPackage != null) {
+                        peekPill.hide()
+                    }
+                }
+                delay(1000L)
+            }
+        }
+    }
+
+    /** The pill's ✕: end the lease NOW (same write the VM's
+     *  end2MinutePeekEarly makes — the row closes and the
+     *  cooldown anchors to the tap), then bring the door up over
+     *  the peeked app: the hand-back. The airlock explains the
+     *  cooldown from its first frame (finding 4's fix). */
+    private fun onPeekPillEndTapped(packageName: String) {
+        val appName = if (observedPeekPackage == packageName) observedPeekAppName else null
+        if (observedPeekPackage == packageName) {
+            observedPeekPackage = null
+            observedPeekAppName = null
+        }
+        peekPill.hide()
+        val repository = peekRepository ?: return
+        serviceScope.launch {
+            repository.recordPeekEnded(packageName)
+            launchPeekIntercept(packageName, appName)
+        }
+    }
+
+    private fun launchPeekIntercept(packageName: String, appName: String?) {
+        val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            putExtra(EXTRA_INTERCEPTED_PACKAGE, packageName)
+            putExtra(EXTRA_INTERCEPTED_APP_NAME, appName ?: "Blocked App")
+            putExtra(EXTRA_INTERCEPT_BADGE, AppBlockTier.PEEK_2M.badge)
+            putExtra(EXTRA_INTERCEPT_PATH, InterceptPath.APP_TIER.name)
+        }
+        try {
+            startActivity(interceptIntent)
+        } catch (_: Exception) {
+            // Background-activity restrictions can refuse the
+            // launch on some OEM builds; the monitor loop's
+            // blocked check retries on its own 2s beat.
+        }
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -238,6 +361,9 @@ class MonolithShieldService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        peekPill.hide()
+        observedPeekPackage = null
+        observedPeekAppName = null
         if (instance === this) {
             instance = null
         }

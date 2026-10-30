@@ -2412,6 +2412,22 @@ class MonolithViewModel(
                 outcome = "Used 2m Peek",
                 triggerReason = state.selectedReason.shortTag
             )
+            // Issue #102 (peek-lived, finding 3): the HAND-OFF.
+            // The grant used to stop here, stranding the user
+            // inside Monolith while the 120 seconds burned on
+            // travel time. Now the peeked app is launched from the
+            // same coroutine, AFTER the lease row lands — so the
+            // accessibility/shield doors read a live lease when
+            // the app comes to the foreground and honour it
+            // instead of re-intercepting the user mid-hand-off.
+            // A package with no launch intent (uninstalled since
+            // the intercept) simply leaves the user in Monolith
+            // with the pill running and its ✕ to hand back.
+            runCatching {
+                appContext.packageManager.getLaunchIntentForPackage(pkg)
+                    ?.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    ?.let { appContext.startActivity(it) }
+            }
         }
     }
 

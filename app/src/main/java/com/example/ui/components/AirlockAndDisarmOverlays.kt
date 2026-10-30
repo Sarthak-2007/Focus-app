@@ -678,11 +678,32 @@ fun AirlockInterceptOverlay(
                         modifier = Modifier.fillMaxWidth(),
                         testTag = "airlock_peek_button"
                     )
+                }
+
+                // Issue #102 (peek-lived, findings 4+5): the
+                // EXPLANATION is not behind the wall. The 5-second
+                // wall still gates the peek ACTION (the chip above
+                // renders only at countdown 0 — the breathing delay
+                // is the door's design, not a secret), but its price
+                // and terms print from the first frame: a user
+                // yanked back at peek expiry sees WHY (cooldown,
+                // below) immediately instead of staring at an
+                // unexplained countdown, and a first-timer learns a
+                // peek exists before the wall ends. Finding 5: the
+                // terms line separates this door from the weekly
+                // EMERGENCY BREAK in plain words.
+                if (state.canUse2MinutePeek) {
                     // SIL-2 / W-29: the price stands on the offer,
                     // before the peek is taken — the cooldown the
                     // repository will arm, named in full.
                     Text(
                         text = peekPriceText(MonolithRepository.PEEK_COOLDOWN_MILLIS),
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f)
+                    )
+                    Text(
+                        text = peekTermsText(),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 12.5.sp,
                         color = NightColorPrimary.copy(alpha = 0.8f)
@@ -693,8 +714,10 @@ fun AirlockInterceptOverlay(
                 // (Held Door Truth Baseline): cooldown with its
                 // live remaining time, or the running pill named.
                 // Doors that never owed a peek carry withheld ==
-                // null and print nothing here.
-                if (countdownSecs == 0 && !state.canUse2MinutePeek) {
+                // null and print nothing here. Issue #102 finding 4:
+                // this block is deliberately NOT gated on the wall
+                // finishing — the reason is visible from frame one.
+                if (!state.canUse2MinutePeek) {
                     when (state.peekWithheld) {
                         PeekWithheld.COOLDOWN -> Text(
                             text = peekCooldownPrint(cooldownSecs),

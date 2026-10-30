@@ -238,6 +238,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val totalInterceptions by viewModel.totalInterceptions.collectAsStateWithLifecycle()
     val soundEnabled by viewModel.soundEnabled.collectAsStateWithLifecycle()
     val airlockState by viewModel.airlockState.collectAsStateWithLifecycle()
+    // Issue #102 (peek-lived, finding 1): the peek pill state is
+    // COLLECTED here — before this it had zero collectors and no
+    // screen ever rendered it.
+    val floatingPeekPill by viewModel.floatingPeekPill.collectAsStateWithLifecycle()
     val disarmChallenge by viewModel.disarmChallenge.collectAsStateWithLifecycle()
     val weeklyEmergencyTokensRemaining by viewModel.weeklyEmergencyTokensRemaining.collectAsStateWithLifecycle()
     val ratchetWarningMessage by viewModel.ratchetWarningMessage.collectAsStateWithLifecycle()
@@ -872,6 +876,25 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onCompleteDisarm = { viewModel.completeEmergencyBreakFromValve() },
                 onHoldStarted = viewModel::recordValveHoldStarted
             )
+
+            // Issue #102 (peek-lived, finding 1): the floating
+            // countdown pill's in-Monolith face — visible whenever
+            // the user is on Monolith's own screens mid-peek, with
+            // the ✕ wired to end2MinutePeekEarly (its first UI
+            // caller; before this only the VM's expiry ticker
+            // called it). Over the peeked app itself, the shield
+            // service draws the same pill as a system overlay.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 64.dp),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                com.example.ui.components.FloatingPeekPill(
+                    state = floatingPeekPill,
+                    onEndPeek = viewModel::end2MinutePeekEarly
+                )
+            }
 
         }
     }

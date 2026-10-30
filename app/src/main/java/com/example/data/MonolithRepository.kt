@@ -106,6 +106,12 @@ class MonolithRepository(
         const val PEEK_DURATION_SECONDS = 120 // 2-Minute Peek
         const val PEEK_DURATION_MILLIS = 120 * 1000L // 2-Minute Peek lease in ms
         const val PEEK_COOLDOWN_MILLIS = 20 * 60 * 1000L // 20-Minute Mandatory Cooldown
+        /** How far back queryCurrentForegroundPackage scans the
+         *  usage-events stream for the last foreground resume.
+         *  Must comfortably exceed the 120s peek lease so a
+         *  continuous peek's entry resume is still in the window
+         *  at expiry (issue #102, finding 2). */
+        const val FOREGROUND_EVENTS_WINDOW_MILLIS = 30 * 60 * 1000L
         const val STOPWATCH_MIN_FLOOR_SECONDS = 20 * 60 // 20-Minute Minimum Floor
         const val SAFE_BREAK_DURATION_SECONDS = 10 * 60 // 10-Minute Safe Break
         const val HMAC_TAMPER_PENALTY_SECONDS = 15 * 60 // 15-Minute Penalty Lock
@@ -561,9 +567,55 @@ class MonolithRepository(
         }
     }
 
+    /**
+     * The package ACTUALLY in the foreground right now, read from
+     * the usage-events stream: the package of the most recent
+     * foreground-resume event in the last
+     * [FOREGROUND_EVENTS_WINDOW_MILLIS]. Unlike `lastTimeUsed`
+     * (which goes stale the moment an app is entered), a resume
+     * event names the foreground until another app resumes over
+     * it — so a user sitting still inside an app (video, photo,
+     * reading) is still correctly reported as inside it. Null
+     * when usage access is missing, a call is active, or no
+     * resume event exists in the window. Issue #102 (peek-lived,
+     * finding 2): this is the read the peek-expiry enforcer uses;
+     * the old 8-second `lastTimeUsed` window was arithmetically
+     * blind to a continuous 120-second peek.
+     */
+    fun queryCurrentForegroundPackage(): String? {
+        if (!hasUsageStatsPermission()) return null
+        if (isPhoneOrVoipCallActive()) return null
+        return try {
+            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+                ?: return null
+            val end = System.currentTimeMillis()
+            val events = usm.queryEvents(end - FOREGROUND_EVENTS_WINDOW_MILLIS, end)
+                ?: return null
+            val event = android.app.usage.UsageEvents.Event()
+            var foreground: String? = null
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                val isResume = event.eventType == android.app.usage.UsageEvents.Event.MOVE_TO_FOREGROUND ||
+                    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                        event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED)
+                if (isResume) foreground = event.packageName
+            }
+            foreground
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     fun queryForegroundBlockedApp(blockedPackages: Set<String>): String? {
         if (!hasUsageStatsPermission() || blockedPackages.isEmpty()) return null
         if (isPhoneOrVoipCallActive()) return null
+        // Issue #102 (peek-lived, finding 2): the events read
+        // comes FIRST — it sees the still-screen user the stats
+        // window below cannot. The legacy recent-stats read stays
+        // as a fallback for devices whose event stream is empty.
+        queryCurrentForegroundPackage()
+            ?.takeIf { it in blockedPackages }
+            ?.let { return it }
         return try {
             val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
                 ?: return null
