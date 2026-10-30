@@ -473,7 +473,7 @@ class MonolithNotificationListener : NotificationListenerService() {
         scope.launch {
             val dao = com.example.AppContainer.dao(applicationContext) /* ISSUE-67: single construction point */
             val target = seen ?: run {
-                val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
+                val appRule = dao.getAppByPackage(pkg)
                 SeenCapture(
                     fingerprint = NotificationCapturePolicy.contentFingerprint(rawTitle, text),
                     packageName = pkg,

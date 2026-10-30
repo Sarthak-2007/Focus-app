@@ -1,4 +1,6 @@
 package com.example.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
@@ -239,7 +241,7 @@ fun FocusSequencerScreen(
                 ) {
                     if (newTaskTitle.isEmpty()) {
                         Text(
-                            text = "Add single-line focus task...",
+                            text = stringResource(R.string.sequencer_add_hint),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontSize = 13.sp,
                             color = scheme.onSurfaceVariant
@@ -302,7 +304,7 @@ fun FocusSequencerScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "REMOVED: ${deletedTaskForUndo.title}",
+                        text = stringResource(R.string.sequencer_removed, deletedTaskForUndo.title),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -383,9 +385,10 @@ fun FocusSequencerScreen(
                         modifier = Modifier.weight(1f)
                     )
                     Text(
-                        text = "FINISHED ${
+                        text = stringResource(
+                            R.string.sequencer_finished,
                             ClockText.timeOfDay(LocalContext.current, lastFinished.completedAtMillis)
-                        }",
+                        ),
                         fontFamily = AnonymousProFamily,
                         fontSize = 10.5.sp,
                         color = scheme.onSurfaceVariant,
@@ -393,7 +396,7 @@ fun FocusSequencerScreen(
                     )
                     if (!isSessionActive) {
                         Text(
-                            text = "REOPEN",
+                            text = stringResource(R.string.sequencer_reopen),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
@@ -433,7 +436,7 @@ fun FocusSequencerScreen(
                         verticalArrangement = Arrangement.Center
                     ) {
                         Text(
-                            text = "NOTHING QUEUED",
+                            text = stringResource(R.string.sequencer_nothing_queued),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontSize = 15.sp,
                             color = scheme.onSurfaceVariant
@@ -692,7 +695,7 @@ private fun TaskLeafItem(
                 // while a session is sealed: its absence is the lock.
                 if (!isSessionActive) {
                     Text(
-                        text = "DONE — TEAR",
+                        text = stringResource(R.string.sequencer_done_tear),
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
@@ -703,7 +706,7 @@ private fun TaskLeafItem(
                 }
                 if (task.subSteps.isEmpty()) {
                     Text(
-                        text = "SPLIT",
+                        text = stringResource(R.string.label_split),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -751,7 +754,7 @@ private fun TaskLeafItem(
                     )
                 } else {
                     Text(
-                        text = "CUE",
+                        text = stringResource(R.string.label_cue),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -769,7 +772,7 @@ private fun TaskLeafItem(
                     )
                 }
                 Text(
-                    text = if (delArmed) "SURE?" else "DEL",
+                    text = if (delArmed) stringResource(R.string.key_sure) else stringResource(R.string.key_del),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
