@@ -4,8 +4,6 @@ import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import com.example.data.GuardSettingsEntity
-import com.example.data.MonolithDatabase
-import com.example.data.MonolithRepository
 import com.example.data.RoutineDerive
 import com.example.data.SmartLoadout
 import kotlinx.coroutines.CancellationException
@@ -116,7 +114,7 @@ object RoutineHeartbeat {
      *  the failure above is already in the log. */
     private suspend fun recoverChainAfterFailure(appContext: Context) {
         try {
-            val dao = MonolithDatabase.getInstance(appContext).monolithDao()
+            val dao = com.example.AppContainer.dao(appContext) // ISSUE-67: single construction point
             val now = System.currentTimeMillis()
             val boundary = RoutineDerive.nextBoundaryMillis(dao.getAllRoutinesSnapshot(), now)
             RoutineScheduler.rearmChain(appContext, recoveryRearmMillis(boundary, now))
@@ -147,11 +145,20 @@ object RoutineHeartbeat {
     }
 
     private suspend fun reconcileOnce(appContext: Context) {
-        val database = MonolithDatabase.getInstance(appContext)
-        val dao = database.monolithDao()
-        val repository = MonolithRepository(appContext, dao)
+        // ISSUE-67: construction via the single point.
+        val dao = com.example.AppContainer.dao(appContext)
+        val repository = com.example.AppContainer.repository(appContext)
 
-        val now = System.currentTimeMillis()
+        // Issue #82 (clock-attacks F2): the reconcile's "now" is
+        // the HONEST now (monotonic-anchored), never the raw wall
+        // clock. A forward jump used to materialise a session
+        // inside a future window — claiming it forever ("no second
+        // mint, ever") and even stamping it MISSED before the
+        // window honestly happened; a TIME_CHANGED broadcast made
+        // the attack one settings visit long. With the honest now,
+        // derive/finalise/materialise all reason about the time
+        // that has actually elapsed.
+        val now = repository.honestNowMillis()
         val routines = dao.getAllRoutinesSnapshot()
         val routinesById = routines.associateBy { it.id }
         val active = dao.getActiveSessionSnapshot()
@@ -192,7 +199,11 @@ object RoutineHeartbeat {
         // 2. SLEEP stand-downs: an active SLEEP session past its stored
         //    window end is stood down unstamped (J2) — a plain
         //    deactivation, never a judgement.
-        if (active != null && active.routineId != null && active.windowEndMillis in 1..now) {
+        // #153 F1: a disabled SLEEP routine also stands down at
+        // once, window end or not — OFF means off.
+        if (active != null && active.routineId != null &&
+            (active.windowEndMillis in 1..now || routinesById[active.routineId]?.enabled == false)
+        ) {
             if (routinesById[active.routineId]?.loadoutName == SmartLoadout.SLEEP.name) {
                 repository.deactivateRoutineSession(active)
                 activeFinalised = true
@@ -239,6 +250,41 @@ object RoutineHeartbeat {
         //    session (manual or routine) is never stopped here.
         if (activeFinalised && !materialised) {
             MonolithShieldService.stopShield(appContext)
+        }
+
+        // 4b. Shield resurrection (issue #81 F2): a session that is
+        //    still live after this pass but whose shield PROCESS is
+        //    gone gets its shield re-raised. The hole this closes:
+        //    force-stop/kill cancels the FGS and every alarm and
+        //    blocks all broadcasts until the user relaunches by
+        //    hand — and that manual relaunch (MainActivity →
+        //    ViewModel init → this funnel's RESUME tick) previously
+        //    reconciled routines and advanced the timer while never
+        //    restarting the shield, so the session ran out its clock
+        //    unprotected, indefinitely. Every recovery door (boot,
+        //    resume, chain alarm, opportunistic service ticks) runs
+        //    this same pass, so the resurrection lives here, once.
+        //    Guarded by the in-memory registry: a live shield is
+        //    never re-started — a second onStartCommand would reset
+        //    its protecting witness and prove nothing.
+        val sessionLiveAfter = materialised || (active != null && !activeFinalised)
+        if (sessionLiveAfter && MonolithShieldService.instance == null) {
+            MonolithShieldService.startShield(appContext)
+        }
+
+        // 4c. Component-surgery witness (issue #81 F5): if a
+        //    critical component (shield, accessibility, listener,
+        //    boot receiver) has been disabled — the adb / pm-disable
+        //    route, invisible to the Settings text guard — while a
+        //    session is live, the session's gap is latched in this
+        //    same pass. The loss is thereby on the session's own
+        //    record (the finish can never certify it clean), not
+        //    discovered later as a generic "service not bound".
+        //    Re-latched by every pass for as long as the component
+        //    stays down, so a tick's full-row write landing between
+        //    passes cannot quietly erase it.
+        if (sessionLiveAfter && repository.disabledCriticalComponents().isNotEmpty()) {
+            repository.latchShieldGapNow()
         }
 
         // 5. Rearm the chain when the boundary moved or the chain is

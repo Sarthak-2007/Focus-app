@@ -1,4 +1,6 @@
 package com.example.ui.components
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
 
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
@@ -481,7 +483,11 @@ fun ParkDrawer(
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "Every line names a guard and whether it is SET or MISSING. " +
-                            "FIX takes you to the first one that is missing.",
+                            "FIX takes you to the first one that is missing. " +
+                            "Monolith asks for six system grants, one at a time; " +
+                            "each FIX trip first says what the grant does and what it never does. " +
+                            "THE WAY OUT, BEFORE ANY GRANT: every session carries an emergency " +
+                            "break — a 60-second hold, once a week. You are never sealed in without an exit.",
                         style = BodyTextStyle,
                         color = scheme.onSurfaceVariant
                     )
@@ -524,7 +530,7 @@ fun ParkDrawer(
                     if (proved != null) {
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = SimpleDateFormat("HH:mm", Locale.US).format(Date(proved)) +
+                            text = ClockText.timeOfDay(LocalContext.current, proved) +
                                 " · SELF-REPORT",
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
@@ -540,21 +546,48 @@ fun ParkDrawer(
                 // (2) The board: nine ruled lines, fixed order.
                 if (snapshot != null) {
                     WatchItemId.PERMISSIONS.forEach { item ->
-                        ParkBoardRow(
-                            name = item.boardName,
-                            word = when (WatchStore.permPrintAt(snapshot, item, nowMono)) {
-                                PermPrint.GRANTED -> "GRANTED"
-                                PermPrint.MISSING -> "MISSING"
-                                PermPrint.STALE -> "STALE"
-                                PermPrint.UNPROVED -> "UNPROVED"
-                                PermPrint.MISSING_STALE -> "STALE"
-                                PermPrint.UNMEASURED -> null
-                            },
-                            wordIsLack = when (WatchStore.permPrintAt(snapshot, item, nowMono)) {
-                                PermPrint.GRANTED -> false
-                                else -> true
+                        // Issue #122, rebased onto #94's UNPROVED print:
+                        // the BATTERY line prints the battery itself
+                        // (level \u00b7 saver/charging \u00b7 NOT EXEMPT) from the
+                        // snapshot's battery read \u2014 the exemption bit
+                        // alone read "GRANTED" over an 8% battery with
+                        // saver on. The perm print is NOT discarded:
+                        // an UNPROVED / STALE exemption verdict still
+                        // appends and still counts as a lack, so the
+                        // line can never read satisfied while either
+                        // the battery or the proof is lacking. No
+                        // battery read yet \u2192 the perm print, as before.
+                        val battery = snapshot.battery
+                        val permPrint = WatchStore.permPrintAt(snapshot, item, nowMono)
+                        if (item == WatchItemId.BATTERY && battery != null) {
+                            val suffix = when (permPrint) {
+                                PermPrint.UNPROVED -> " \u00b7 UNPROVED"
+                                PermPrint.STALE, PermPrint.MISSING_STALE -> " \u00b7 STALE"
+                                else -> ""
                             }
-                        )
+                            ParkBoardRow(
+                                name = item.boardName,
+                                word = com.example.data.batteryBoardWord(battery) + suffix,
+                                wordIsLack = com.example.data.batteryBoardIsLack(battery) ||
+                                    permPrint != PermPrint.GRANTED
+                            )
+                        } else {
+                            ParkBoardRow(
+                                name = item.boardName,
+                                word = when (permPrint) {
+                                    PermPrint.GRANTED -> "GRANTED"
+                                    PermPrint.MISSING -> "MISSING"
+                                    PermPrint.STALE -> "STALE"
+                                    PermPrint.UNPROVED -> "UNPROVED"
+                                    PermPrint.MISSING_STALE -> "STALE"
+                                    PermPrint.UNMEASURED -> null
+                                },
+                                wordIsLack = when (permPrint) {
+                                    PermPrint.GRANTED -> false
+                                    else -> true
+                                }
+                            )
+                        }
                     }
                     // The doubled gap: 16dp, no hairline, no eyebrow —
                     // the family break is whitespace, not a heading.
@@ -749,14 +782,28 @@ fun ParkDrawer(
                                     "⋮ MENU → ALLOW RESTRICTED SETTINGS, " +
                                     "THEN COME BACK AND FIX AGAIN."
                             WatchItemId.BATTERY ->
+                                // Issue #296 (Audit R5, ScreenZen
+                                // second-pass F10): the battery step
+                                // teaches, it does not just link — a
+                                // named purpose and the OEM-killer
+                                // pointer (dontkillmyapp.com, the
+                                // public database of per-maker
+                                // background-killing behaviour), on
+                                // every skin, not only gated ones.
                                 if (com.example.data.OemPolicy.gatesAutostart()) {
                                     "THIS PHONE ALSO GATES RESTARTS BEHIND " +
                                         "AUTOSTART: FIX OPENS THE AUTOSTART " +
                                         "LIST — SWITCH MONOLITH ON THERE. " +
                                         "THE APP CANNOT READ THAT SWITCH " +
-                                        "BACK, SO THIS LINE STAYS UNPROVED."
+                                        "BACK, SO THIS LINE STAYS UNPROVED. " +
+                                        "DONTKILLMYAPP.COM LISTS THIS " +
+                                        "MAKER'S EXTRA STEPS."
                                 } else {
-                                    null
+                                    "REQUIRED SO THE PHONE DOES NOT " +
+                                        "SWITCH BLOCKING OFF IN THE " +
+                                        "BACKGROUND: SET MONOLITH TO " +
+                                        "UNRESTRICTED. DONTKILLMYAPP.COM " +
+                                        "LISTS EACH MAKER'S EXTRA STEPS."
                                 }
                             else -> null
                         }
@@ -772,6 +819,21 @@ fun ParkDrawer(
                                 color = scheme.onSurfaceVariant
                             )
                         }
+                    }
+                }
+
+                // Issue #280: the rationale for the grant the FIX
+                // key targets — printed under the key, before any
+                // Settings trip, in the board's body type.
+                if (firstMissing != null && !isSealed) {
+                    WatchStore.boardRationale(firstMissing!!)?.let { rationale ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = rationale,
+                            style = BodyTextStyle,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("park_fix_rationale")
+                        )
                     }
                 }
 
@@ -910,6 +972,18 @@ fun ParkDrawer(
                         }
                     }
                 }
+                // Issue #150: the sled's word must not lie by
+                // omission — OFF silences the voice, never the
+                // event: the haptic twin still fires at full
+                // amplitude by design (S0). One caption line in
+                // the plate's own grammar, printed always, so the
+                // fact is read before it is discovered on a
+                // library desk.
+                Text(
+                    text = "SOUND OFF KEEPS THE TOUCH — THE BUZZ CARRIES THE EVENT",
+                    style = PillBadgeTextStyle,
+                    color = scheme.onSurfaceVariant
+                )
                 ParkHairline()
 
                 // (5) Shorts + Reels — the sniper's sled, seated
