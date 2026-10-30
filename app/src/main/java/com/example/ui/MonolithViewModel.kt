@@ -3122,7 +3122,19 @@ class MonolithViewModel(
         // the ratchet's own warning instead of letting the tap
         // pretend the whole preset applied.
         if (activeSession.value?.isActive == true &&
-            com.example.data.LoadoutRules.anyLoosening(loadout, apps.value)
+            com.example.data.LoadoutRules.anyLoosening(
+                loadout, apps.value,
+                // Issue #121: judge loosening with the same
+                // structural time-critical set the commit path
+                // uses, so the warning matches the landing.
+                if (loadout == SmartLoadout.SLEEP) {
+                    com.example.data.TimeCriticalApps.resolveTimeCriticalPackages(
+                        appContext, apps.value.map { it.packageName }
+                    )
+                } else {
+                    emptySet()
+                }
+            )
         ) {
             triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • LOADOUT APPLIES TIGHTENING-ONLY DURING ACTIVE VAULT")
         }

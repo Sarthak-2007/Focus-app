@@ -328,6 +328,7 @@ fun ShieldMatrixScreen(
         // the same 84dp slot the knob's AndroidView held)
         // =====================================================================
         item {
+            val context = LocalContext.current
             // The counts left this header (Liv D3, adopted by Gust):
             // SHUT / PEEK / OPEN live on the standing-orders tally
             // below — one home per number, or numbers are decoration.
@@ -352,7 +353,22 @@ fun ShieldMatrixScreen(
                 LoadoutPreviewPanel(
                     loadout = loadout,
                     preview = remember(loadout, allApps) {
-                        LoadoutRules.preview(loadout, allApps)
+                        // Issue #121: the preview resolves the same
+                        // structural time-critical set the commit
+                        // path uses (SLEEP only) — issue #107's law:
+                        // the printed counts are computed by the
+                        // exact rule that will commit them.
+                        LoadoutRules.preview(
+                            loadout, allApps,
+                            if (loadout == com.example.data.SmartLoadout.SLEEP) {
+                                com.example.data.TimeCriticalApps
+                                    .resolveTimeCriticalPackages(
+                                        context, allApps.map { it.packageName }
+                                    )
+                            } else {
+                                emptySet()
+                            }
+                        )
                     },
                     onApply = {
                         // Reverse direction of the same ONE mapping
