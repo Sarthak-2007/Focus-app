@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <device-admin xmlns:android="http://schemas.android.com/apk/res/android">
-    <uses-policies>
-        <limit-password />
-    </uses-policies>
+    <!-- No policies declared: the uninstall guard works from active-admin status
+         alone (MonolithRepository only ever calls isAdminActive). The previous
+         limit-password policy was declared but never exercised (issue #26). -->
 </device-admin>

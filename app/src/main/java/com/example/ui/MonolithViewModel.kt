@@ -150,6 +150,32 @@ internal fun peekOfferFor(
         cooldownLeftSeconds == 0 &&
         !pillActive
 
+/**
+ * Issue #55: the withheld reason for a peek offer, computed from
+ * live facts — used at intercept time AND when a grant is refused,
+ * so the standing overlay always prints the current truth. A
+ * running pill binds before the cooldown (verifier, pill race):
+ * naming COOLDOWN while a pill also runs would let the overlay
+ * locally unlock into a chip the grant would refuse.
+ */
+internal fun peekWithheldFor(
+    canPeek: Boolean,
+    path: InterceptPath,
+    appEntity: BlockedAppEntity?,
+    cooldownLeft: Int,
+    pillActive: Boolean
+): PeekWithheld? = when {
+    canPeek -> null
+    !path.canHonourPeekLease -> null
+    appEntity?.resolvedTier != AppBlockTier.PEEK_2M -> null
+    // Hale W-30: a peek length of zero is its own reason — the peek
+    // is OFF, not cooling down.
+    MonolithRepository.PEEK_DURATION_SECONDS <= 0 -> PeekWithheld.PEEK_OFF
+    pillActive -> PeekWithheld.ALREADY_ACTIVE
+    cooldownLeft > 0 -> PeekWithheld.COOLDOWN
+    else -> null
+}
+
 data class AirlockInterceptState(
     val isVisible: Boolean = false,
     val interceptedPackageName: String = "",
@@ -159,6 +185,23 @@ data class AirlockInterceptState(
     val selectedReason: DistractionTriggerReason = DistractionTriggerReason.MUSCLE_MEMORY,
     val transmutedParticles: Int = 0,
     val canUse2MinutePeek: Boolean = true,
+    /** Issue #55: a fresh identity for EVERY intercept — even a
+     *  same-package re-intercept while the overlay already stands.
+     *  The overlay keys its 5s wall and cooldown on this, never on
+     *  (package, visibility), which a re-intercept left unchanged. */
+    val interceptInstanceId: Long = 0L,
+    /** Issue #55: when this intercept fired, in the MONOTONIC
+     *  `SystemClock.elapsedRealtime()` domain — the overlay's wall
+     *  is deadline-derived from this instant, so a wall-clock jump
+     *  can never zero or stretch the 5 seconds. */
+    val interceptedAtMonoMillis: Long = 0L,
+    /** Issue #55: the peek cooldown's absolute deadline in the
+     *  same monotonic domain (repository anchor + 20 min), 0 when
+     *  no cooldown is armed. The overlay derives its remaining
+     *  time from this instant with ceiling math, mirroring
+     *  [peekSecondsRemaining] — its unlock instant is never before
+     *  the repository's grant instant. */
+    val peekCooldownEndsAtMonoMillis: Long = 0L,
     val peekCooldownRemainingSeconds: Int = 0,
     /** The door that fired (UNA2-01): carried from the firing
      *  service through the intent into this state, never inferred
@@ -384,6 +427,7 @@ class MonolithViewModel(
     private val _selectedCategoryFilter = MutableStateFlow<AppCategory?>(null)
     val selectedCategoryFilter: StateFlow<AppCategory?> = _selectedCategoryFilter.asStateFlow()
 
+    private var airlockInstanceSeq: Long = 0L
     private val _airlockState = MutableStateFlow(AirlockInterceptState())
     val airlockState: StateFlow<AirlockInterceptState> = _airlockState.asStateFlow()
 
@@ -2334,19 +2378,7 @@ class MonolithViewModel(
         // The withheld reason is owed only where the door could
         // have honoured a peek and the tier is PEEK: elsewhere no
         // peek line prints at all (Held Door Truth Baseline).
-        val withheld = when {
-            canPeek -> null
-            !path.canHonourPeekLease -> null
-            appEntity?.resolvedTier != AppBlockTier.PEEK_2M -> null
-            // Hale W-30: a peek length of zero is its own reason —
-            // the peek is OFF, not cooling down. (Trunk's constant
-            // is 120 s; the branch arms the day Rurik's editable
-            // store can set it to 0.)
-            MonolithRepository.PEEK_DURATION_SECONDS <= 0 -> PeekWithheld.PEEK_OFF
-            cooldownLeft > 0 -> PeekWithheld.COOLDOWN
-            pillActive -> PeekWithheld.ALREADY_ACTIVE
-            else -> null
-        }
+        val withheld = peekWithheldFor(canPeek, path, appEntity, cooldownLeft, pillActive)
 
         _airlockState.value = AirlockInterceptState(
             isVisible = true,
@@ -2355,7 +2387,16 @@ class MonolithViewModel(
             interceptReasonBadge = reasonBadge,
             sessionIntention = active?.intention ?: _intentionText.value,
             selectedReason = DistractionTriggerReason.MUSCLE_MEMORY,
-            transmutedParticles = 0,
+            interceptInstanceId = ++airlockInstanceSeq,
+            // ANCHOR (Issue #55, DECISION-NEEDED recorded in the
+            // wave-3 report): the wall is anchored to the INTERCEPT
+            // instant (deadline truth); service→overlay latency
+            // therefore subtracts from the visible wall. The
+            // alternative — anchoring at the first visible frame —
+            // is Sarthak's/Ren's call, not silently changed here.
+            interceptedAtMonoMillis = SystemClock.elapsedRealtime(),
+            peekCooldownEndsAtMonoMillis =
+                appEntity?.let { repository.getPeekCooldownDeadlineMono(it) } ?: 0L,
             canUse2MinutePeek = canPeek,
             peekCooldownRemainingSeconds = cooldownLeft,
             interceptPath = path,
@@ -2393,6 +2434,23 @@ class MonolithViewModel(
         val entity = apps.value.find { it.packageName == state.interceptedPackageName }
         val cooldownNow = entity?.let { repository.getPeekCooldownRemainingSeconds(it) } ?: 0
         if (!peekOfferFor(state.interceptPath, entity, cooldownNow, _floatingPeekPill.value.isActive)) {
+            // Issue #55 (fresh-eyes): a refused grant must never be a
+            // silent no-op under a tappable chip. Recompute the offer
+            // from the same live facts and re-present the truth in
+            // place — the chip is replaced by the real withheld
+            // reason (or by nothing, where the door owes no peek).
+            // The intercept instance and wall stamps are preserved:
+            // this is a correction of the offer, not a new intercept.
+            _airlockState.value = state.copy(
+                canUse2MinutePeek = false,
+                peekCooldownRemainingSeconds = cooldownNow,
+                peekCooldownEndsAtMonoMillis =
+                    entity?.let { repository.getPeekCooldownDeadlineMono(it) } ?: 0L,
+                peekWithheld = peekWithheldFor(
+                    false, state.interceptPath, entity, cooldownNow,
+                    _floatingPeekPill.value.isActive
+                )
+            )
             return
         }
         val pkg = state.interceptedPackageName
