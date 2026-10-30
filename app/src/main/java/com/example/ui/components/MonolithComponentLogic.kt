@@ -1,6 +1,7 @@
 package com.example.ui.components
 import com.example.R
 
+import android.os.SystemClock
 import com.example.data.ClockText
 import com.example.data.SystemGuardStatus
 import com.example.service.UsageAccess

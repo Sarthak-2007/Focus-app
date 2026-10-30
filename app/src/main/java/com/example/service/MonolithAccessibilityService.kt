@@ -1963,21 +1963,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         // #335 F5: every intercept is a detector block — recorded
         // (last block + last successful block) in the health record.
         DetectorHealth.recordBlock(SystemClock.elapsedRealtime(), success = true)
-        val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            putExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE, packageName)
-            putExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME, appName)
-            putExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE, reasonBadge)
-            putExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH, path.name)
-            putExtra(
-                MonolithShieldService.EXTRA_INTERCEPT_NONCE,
-                InterceptNonce.mint(applicationContext)
-            )
-        }
-        // Issue #94 (F2): never a bare background launch — a dropped
-        // launch stamps itself and falls back to a tappable
-        // notification (InterceptLaunch).
-        InterceptLaunch.launch(applicationContext, interceptIntent, appName)
+
     }
 
     /** Issue #339 (Second-pass F2): the ejection itself, shared
