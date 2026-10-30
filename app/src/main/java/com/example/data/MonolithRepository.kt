@@ -1389,6 +1389,15 @@ class MonolithRepository(
         windowStartMillis: Long = 0L,
         windowEndMillis: Long = 0L
     ): FocusSessionEntity {
+        // Issue #129 F2: the catalogue resyncs at EVERY session
+        // birth, before the held counts are captured below. An app
+        // installed after the last Monolith launch / sync — even a
+        // factory-preset one that will be born LOCKED — previously
+        // had no row, no tier and no enforcement for the whole
+        // session, because both enforcement doors only read rows
+        // that exist. Birth is the one moment every session passes
+        // through, whichever door armed it (hand or routine).
+        ensureSeededAndSyncPackages()
         val isStopwatch = durationMinutes < 10
         val targetSecs = if (isStopwatch) {
             STOPWATCH_MIN_FLOOR_SECONDS
