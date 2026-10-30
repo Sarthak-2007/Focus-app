@@ -1607,7 +1607,7 @@ class MonolithRepository(
             // passing as a free, invisible freeze.
             val priorElapsed = max(session.accumulatedBeforeRebootSeconds, session.elapsedSeconds)
             val sinceRebootSec = (nowMono / 1000L).toInt().coerceAtLeast(0)
-            val unwitnessed = TamperWitness.unwitnessedBoot(session.bootCount, currentBoot)
+            val unwitnessed = currentBoot != null && TamperWitness.unwitnessedBoot(session.bootCount, currentBoot)
             Pair(priorElapsed + sinceRebootSec, !hmacValid || unwitnessed)
         }
     }
@@ -3999,7 +3999,7 @@ class MonolithRepository(
      * meaningless). Returns the updated row, or null when no
      * session is active.
      */
-    suspend fun extendActiveSession(extraMinutes: Int): FocusSessionEntity? =
+    suspend fun extendActiveSessionReturningSession(extraMinutes: Int): FocusSessionEntity? =
         withContext(Dispatchers.IO) {
             val active = dao.getActiveSessionSnapshot() ?: return@withContext null
             if (extraMinutes <= 0 || active.isStopwatchMode) return@withContext active
