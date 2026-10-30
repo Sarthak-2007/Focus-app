@@ -707,6 +707,7 @@ fun ParkDrawer(
                             factory = { ctx ->
                                 SledSwitchView(ctx).apply {
                                     chromeMode = true
+                                    contentDescription = "Sound"
                                     this.soundEngine = soundEngine
                                     isChecked = soundEnabled
                                     // Issue #56, finding 1: the sled
@@ -791,6 +792,7 @@ fun ParkDrawer(
                             factory = { ctx ->
                                 SledSwitchView(ctx).apply {
                                     chromeMode = true
+                                    contentDescription = "Shorts and Reels blocker"
                                     this.soundEngine = soundEngine
                                     isChecked = shortsReelsSniperEnabled
                                     // Issue #56, finding 1: same gate
@@ -970,6 +972,7 @@ private fun ParkSocialSitesRow(
                     factory = { ctx ->
                         SledSwitchView(ctx).apply {
                             chromeMode = true
+                            contentDescription = "Social sites blocker"
                             this.soundEngine = soundEngine
                             isChecked = enabled
                             onToggleRequested = { if (interactiveState.value) onToggle() }
