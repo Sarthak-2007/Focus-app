@@ -98,7 +98,7 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
         const val NIGHT_SECONDARY_CONTAINER = 0xFF4A423C.toInt()
         const val NIGHT_ON_SECONDARY_CONTAINER = 0xFFFFE4CF.toInt()
         const val NIGHT_ON_SURFACE = 0xFFEDE3D8.toInt()
-        const val NIGHT_ON_SURFACE_VARIANT = 0xFF776A60.toInt()
+        const val NIGHT_ON_SURFACE_VARIANT = 0xFF9C8E84.toInt() // Issue #70 F5: 5.8:1 (was 0xFF776A60, 3.5:1) — twin of Color.kt's NightColorOnSurfaceVariant; the two must move together
         const val NIGHT_OUTLINE = 0xFF807A7A.toInt()
         const val NIGHT_OUTLINE_VARIANT = 0x758F8888
         const val NIGHT_BLOCK_BAR = 0xFF161311.toInt()
@@ -116,6 +116,25 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
         }
 
     var soundEngine: TactileSoundEngine? = null
+
+    // Issue #70 F1 (fresh-base port): the base accessibility
+    // machinery for the canvas family. Each CONTROL subclass
+    // opts in (isFocusable/isClickable + its own spoken
+    // description via [describeAs]); display-only canvas views
+    // stay out of the focus order. Subclasses that override
+    // performClick call super, which lands here.
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
+    }
+
+    /** Set this view's spoken description (Issue #70 F1). Kept as
+     *  a named helper so subclasses refresh their description at
+     *  the same call sites that refresh their drawn state. */
+    protected fun describeAs(text: String) {
+        contentDescription = text
+    }
 
     protected val density: Float = resources.displayMetrics.density
     protected val scaledDensity: Float = resources.displayMetrics.scaledDensity
