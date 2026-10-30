@@ -107,15 +107,21 @@
             </intent-filter>
         </receiver>
 
+        <!-- Issue #281 (R5 supplement): directBootAware is kept ONLY on
+             the four components with a real pre-unlock job — the boot
+             receiver and the three services it raises before first
+             unlock so an active session stays sealed across a reboot
+             (MonolithBootReceiver's filed design). The three receivers
+             below have no pre-unlock job (alarm hints for a
+             credential-protected store, a retry hint, admin events)
+             and no longer declare it. -->
         <receiver
             android:name=".service.RoutineAlarmReceiver"
-            android:directBootAware="true"
             android:exported="false" />
 
         <!-- Slice E (Draht): the release-retry cadence's hint. -->
         <receiver
             android:name=".service.ReleaseRetryReceiver"
-            android:directBootAware="true"
             android:exported="false" />
 
         <!-- Device Admin (DeviceAdminReceiver): friction + a warning
@@ -124,7 +130,6 @@
         <receiver
             android:name=".service.MonolithDeviceAdminReceiver"
             android:description="@string/device_admin_description"
-            android:directBootAware="true"
             android:exported="false"
             android:label="@string/device_admin_label"
             android:permission="android.permission.BIND_DEVICE_ADMIN">
