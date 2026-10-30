@@ -22,5 +22,11 @@ debug.keystore
 my-upload-key.jks
 keystore.properties
 
-# AI Studio temp-media scratch cache (audit R2 #89 — never source, never committed)
-.aistudio/**/.tempmediaStorage/
+# Repo hygiene (audit round 2, issue #84): tool caches + run debris never re-enter
+.aistudio/
+.tempmediaStorage/
+/public/
+*.log
+*.tmp
+*.flag
+*.note
