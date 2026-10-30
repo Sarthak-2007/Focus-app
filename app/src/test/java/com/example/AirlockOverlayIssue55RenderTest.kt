@@ -51,7 +51,6 @@ class AirlockOverlayIssue55RenderTest {
 
     @Test
     fun expiredCooldownShowsPeekChipNotWithheldLine() {
-        val now = SystemClock.elapsedRealtime()
         setAirlock(
             AirlockInterceptState(
                 isVisible = true,
@@ -61,8 +60,8 @@ class AirlockOverlayIssue55RenderTest {
                 peekCooldownRemainingSeconds = 0,
                 peekWithheld = PeekWithheld.COOLDOWN,
                 interceptInstanceId = 7L,
-                interceptedAtMonoMillis = now - 10_000L,
-                peekCooldownEndsAtMonoMillis = now - 1L
+                interceptedAtMonoMillis = 1L,
+                peekCooldownEndsAtMonoMillis = 1L
             )
         )
         composeRule.onNodeWithTag("airlock_peek_button").assertIsDisplayed()
@@ -74,7 +73,6 @@ class AirlockOverlayIssue55RenderTest {
         // Fresh-eyes trap: on a short screen the card must scroll —
         // RETURN (and the peek chip) can never be clipped unreachable
         // while Back is deliberately swallowed.
-        val now = SystemClock.elapsedRealtime()
         composeRule.setContent {
             MyApplicationTheme(darkTheme = true, dynamicColor = false) {
                 androidx.compose.foundation.layout.Box(
@@ -87,7 +85,7 @@ class AirlockOverlayIssue55RenderTest {
                             interceptedAppName = "Blocked",
                             canUse2MinutePeek = true,
                             interceptInstanceId = 9L,
-                            interceptedAtMonoMillis = now - 10_000L
+                            interceptedAtMonoMillis = 1L
                         ),
                         onSelectReason = {},
                         onTransmuteParticleTap = {},
@@ -107,8 +105,10 @@ class AirlockOverlayIssue55RenderTest {
 
     @Test
     fun samePackageReInterceptResetsWallAndHidesChip() {
-        val now = SystemClock.elapsedRealtime()
         // First intercept: wall long expired, peek on offer.
+        // (Stamps are 1L — ancient but positive: Robolectric's
+        // shadow elapsedRealtime is tiny, so now-10_000 would go
+        // negative and trip the state's fresh-stamp fallback.)
         setAirlock(
             AirlockInterceptState(
                 isVisible = true,
@@ -116,7 +116,7 @@ class AirlockOverlayIssue55RenderTest {
                 interceptedAppName = "Blocked",
                 canUse2MinutePeek = true,
                 interceptInstanceId = 3L,
-                interceptedAtMonoMillis = now - 10_000L
+                interceptedAtMonoMillis = 1L
             )
         )
         composeRule.onNodeWithTag("airlock_peek_button").assertIsDisplayed()
