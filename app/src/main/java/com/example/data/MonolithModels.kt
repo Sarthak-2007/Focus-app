@@ -268,6 +268,13 @@ enum class AppCategory(val label: String, val code: String) {
     // a study app had no home at all and fell to SHOPPING or a
     // name-substring trap.
     EDUCATION("Education", "Study"),
+    // Issue #120 (otp-banking-mid-session): finance gets a real
+    // home. Banks, UPI apps and authenticators are time-critical
+    // infrastructure — an OTP or a UPI collect request dies in
+    // minutes — not shopping. Before this value existed they fell
+    // through to SHOPPING, and the Sleep profile bulk-locked every
+    // one of them without the user ever reviewing a single bank.
+    FINANCE("Finance & Payments", "Money"),
     SHOPPING("Other Apps", "Tools")
 }
 
@@ -426,6 +433,17 @@ data class FocusSessionEntity(
     // OMIT a -1 figure, never print it (Zettel Z2).
     val heldAppsAtSeal: Int = -1,
     val heldSitesAtSeal: Int = -1,
+    // W-41 (13→14): the HELD total split by tier — heldShutAtSeal
+    // counts LOCKED ("Shut") apps, heldPeekAtSeal counts PEEK_2M
+    // ("2m Peek") apps. Written by the same single writer, inside
+    // the same birth transaction, from the same snapshot as
+    // heldAppsAtSeal (their sum IS the total, by construction).
+    // The receipt prints the split; it never flattens the two
+    // tiers into one number. -1 = uncaptured (a pre-13→14 row):
+    // readers fall back to the stored total, never invent a split
+    // that was never recorded.
+    val heldShutAtSeal: Int = -1,
+    val heldPeekAtSeal: Int = -1,
     // Draht's release-fault record (9→10): the shield that would
     // not stop at a finish. releaseFaultShield names the faulted
     // link; releaseRetriesDone counts the retry cadence's spent
@@ -675,7 +693,12 @@ object BlockedBrowserDomains {
         "twitter.com",
         "facebook.com",
         "snapchat.com",
-        "youtube.com/shorts"
+        "youtube.com/shorts",
+        // W3 #130 (browser-as-loophole): the whole YouTube host, not
+        // only its /shorts path — the home/watch feed was the biggest
+        // unlisted feed. Enforced by the same site blocker; a needed
+        // video is reachable through the domain-scoped site peek.
+        "youtube.com"
     )
     // Issue #133 (finding 4): an "allowed study sites" example
     // list used to live here as dead decoration — no study-site
@@ -806,6 +829,27 @@ object RoutineSchedule {
             day.add(java.util.Calendar.DAY_OF_YEAR, 1)
         }
         return null
+    }
+
+    /**
+     * The pause-aware next start (routines rebuild §3.6): the
+     * search origin is max(now, pausedUntilMillis), fed into
+     * [nextStartMillis] - whose strictly-after contract means the
+     * origin is passed as pausedUntilMillis - 1 when the pause is
+     * the binding origin, so a window starting exactly as the
+     * pause ends still counts. Windows the pause covers never
+     * fire, so they are never the next start. This one helper is
+     * what the scheduler and every "next seal" reader (Deck
+     * ribbon, widget) share, so they can never disagree.
+     */
+    fun effectiveNextStartMillis(routine: RoutineEntity, nowMillis: Long): Long? {
+        val r = routine.sanitized()
+        val origin = maxOf(nowMillis, r.pausedUntilMillis)
+        return if (origin > nowMillis) {
+            nextStartMillis(r, origin - 1L)
+        } else {
+            nextStartMillis(r, nowMillis)
+        }
     }
 
     /** End of the window containing [nowMillis], or of the next window if none contains it. */

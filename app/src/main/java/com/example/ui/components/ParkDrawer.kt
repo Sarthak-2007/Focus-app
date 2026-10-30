@@ -1,4 +1,6 @@
 package com.example.ui.components
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
 
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
@@ -529,7 +531,7 @@ fun ParkDrawer(
                     if (proved != null) {
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = SimpleDateFormat("HH:mm", Locale.US).format(Date(proved)) +
+                            text = ClockText.timeOfDay(LocalContext.current, proved) +
                                 " · SELF-REPORT",
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
@@ -754,14 +756,28 @@ fun ParkDrawer(
                                     "⋮ MENU → ALLOW RESTRICTED SETTINGS, " +
                                     "THEN COME BACK AND FIX AGAIN."
                             WatchItemId.BATTERY ->
+                                // Issue #296 (Audit R5, ScreenZen
+                                // second-pass F10): the battery step
+                                // teaches, it does not just link — a
+                                // named purpose and the OEM-killer
+                                // pointer (dontkillmyapp.com, the
+                                // public database of per-maker
+                                // background-killing behaviour), on
+                                // every skin, not only gated ones.
                                 if (com.example.data.OemPolicy.gatesAutostart()) {
                                     "THIS PHONE ALSO GATES RESTARTS BEHIND " +
                                         "AUTOSTART: FIX OPENS THE AUTOSTART " +
                                         "LIST — SWITCH MONOLITH ON THERE. " +
                                         "THE APP CANNOT READ THAT SWITCH " +
-                                        "BACK, SO THIS LINE STAYS UNPROVED."
+                                        "BACK, SO THIS LINE STAYS UNPROVED. " +
+                                        "DONTKILLMYAPP.COM LISTS THIS " +
+                                        "MAKER'S EXTRA STEPS."
                                 } else {
-                                    null
+                                    "REQUIRED SO THE PHONE DOES NOT " +
+                                        "SWITCH BLOCKING OFF IN THE " +
+                                        "BACKGROUND: SET MONOLITH TO " +
+                                        "UNRESTRICTED. DONTKILLMYAPP.COM " +
+                                        "LISTS EACH MAKER'S EXTRA STEPS."
                                 }
                             else -> null
                         }

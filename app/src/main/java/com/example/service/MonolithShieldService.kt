@@ -15,11 +15,12 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
-import com.example.MainActivity
 import com.example.R
 import com.example.data.AppBlockTier
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
+import com.example.widget.MonolithWidgetProvider
+import com.example.MLog
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -77,9 +78,16 @@ class MonolithShieldService : Service() {
      *  snapshot on Room's own executor. */
     private fun liveActiveSessionId(): Int? = runCatching {
         runBlocking {
-            MonolithDatabase.getInstance(applicationContext).monolithDao()
+            // ISSUE-67: via the single construction point
+            // (AppContainer resolves the same getInstance singleton).
+            com.example.AppContainer.dao(applicationContext)
                 .getActiveSessionSnapshot()?.takeIf { it.isActive }?.id
         }
+    }.onFailure {
+        // Issue #75 F1 wiring: a thrown read reads as "no live
+        // session" to the dispatch — that conversion must not be
+        // silent, or a wedged DB stands the shield down invisibly.
+        MLog.w("liveActiveSessionId read failed; dispatch treats it as no live session", it)
     }.getOrNull()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -96,6 +104,9 @@ class MonolithShieldService : Service() {
                 protectingMono = 0L
                 WatchStore.onShieldIteration(protecting = false)
                 stopForeground(STOP_FOREGROUND_REMOVE)
+                // Issue #155 (F1): the shield is down — refresh
+                // the home-screen widget at the moment it matters.
+                MonolithWidgetProvider.requestUpdate(applicationContext)
                 stopSelf()
                 START_NOT_STICKY
             }
@@ -180,11 +191,15 @@ class MonolithShieldService : Service() {
         // adopted whole into #78's promoteToForeground; the
         // Boolean replaces main's Int return because #78's
         // dispatch has four call paths, not one.)
+        // Issue #155 (F2): the guarded call below carries the
+        // honest arming text ("Monolith" / "Arming shield\u2026"),
+        // not a claim of a lock that has not happened yet.
+
         try {
             ServiceCompat.startForeground(
                 this,
                 NOTIFICATION_ID,
-                buildNotification("Monolith Locked", "Protecting your focus session..."),
+                buildNotification("Monolith", "Arming shield\u2026"),
                 fgsType
             )
         } catch (e: Exception) {
@@ -212,8 +227,11 @@ class MonolithShieldService : Service() {
 
     private fun startMonitoringLoop() {
         monitorJob?.cancel()
-        val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
-        val repository = MonolithRepository(applicationContext, dao)
+        // ISSUE-67: construction via the single point; the DAO
+        // comes from the same container for the loop's remaining
+        // direct reads.
+        val dao = com.example.AppContainer.dao(applicationContext)
+        val repository = com.example.AppContainer.repository(applicationContext)
 
         monitorJob = serviceScope.launch {
             var iteration = 0
@@ -241,13 +259,36 @@ class MonolithShieldService : Service() {
                     RoutineHeartbeat.tick(
                         applicationContext, RoutineHeartbeat.Source.SHIELD_LOOP
                     )
+                    // Issue #129 F2: the catalogue resyncs on the
+                    // same ~30s cadence, mid-session. An app
+                    // installed AFTER this session sealed previously
+                    // stayed invisible to both enforcement doors
+                    // until the session ended; now its row (and its
+                    // birth tier) lands within one cadence, and the
+                    // blocked-set derivation below reads the fresh
+                    // table on the next iteration. A failed sync
+                    // leaves the standing table untouched — the
+                    // reconcile itself refuses an empty query.
+                    runCatching { repository.ensureSeededAndSyncPackages() }
                 }
-                val activeSession = dao.getActiveSessionSnapshot()
+                val activeSession = repository.activeSessionSnapshot() // ISSUE-67(d): via repository, not direct DAO
                 if (activeSession == null || !activeSession.isActive) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
+                    MonolithWidgetProvider.requestUpdate(applicationContext)
                     stopSelf()
                     break
                 }
+
+                // Issue #81 F4: the shield's sight IS Usage Access.
+                // Revoked mid-session, queryForegroundBlockedApp
+                // returns null forever — indistinguishable from an
+                // empty foreground — while this loop kept beating on
+                // schedule and the finish certified ELAPSED_CLEAN.
+                // The blindness is now measured every iteration (see
+                // the latch just after the progress write below),
+                // and the protecting flip further down only happens
+                // for an iteration that could actually see.
+                val usageGranted = repository.hasUsageStatsPermission()
 
                 // Slice E (Nocke §2.2): the shield's own loop is
                 // the beat's only lawful writer — its tick stamps
@@ -255,6 +296,19 @@ class MonolithShieldService : Service() {
                 // persists, so the finish machine can later prove
                 // whether the shield was present or gone.
                 val updated = repository.updateSessionProgress(activeSession, stampShieldBeat = true)
+                if (!usageGranted) {
+                    // Latched AFTER the progress write on purpose:
+                    // updateSession is a full-row @Update, so a latch
+                    // set before it would be overwritten by this
+                    // iteration's own snapshot (taken while the row
+                    // was unlatched). From here the latch persists:
+                    // every later iteration re-reads the row fresh,
+                    // and the finish classifies ELAPSED_SHIELD_GAP.
+                    // (A session completing on THIS tick is covered
+                    // by the fresh usage read inside
+                    // updateSessionProgress's outcome classification.)
+                    repository.latchShieldGapNow()
+                }
                 if (!updated.isActive) {
                     // Session-edge tick BEFORE standing down: a routine
                     // session that just timer-completed gets finalised
@@ -270,11 +324,23 @@ class MonolithShieldService : Service() {
                         "SESSION COMPLETE",
                         "Your session has ended. The receipt is on the Deck."
                     )
-                    // R3b #164 F2: the low notification's old line
-                    // promised an "Unlocked desk toy" in a "Break
-                    // tab" — neither exists anywhere in the app.
-                    updateNotification("Session Complete", "Your receipt is waiting in the Ledger.")
+                    // Issue #155 (F3) + R3b #164 F2 (composed at the
+                    // STURM-4 recovery merge): the completion receipt
+                    // stays findable via DETACH, but it is no longer an
+                    // ongoing card — it dismisses on tap and expires
+                    // after 45 minutes instead of ghosting forever;
+                    // and its line is main's #164 truthful one (the old
+                    // "Unlocked desk toy / Break tab" promise named
+                    // things that exist nowhere in the app).
+                    updateNotification(
+                        "Session Complete",
+                        "Your receipt is waiting in the Ledger.",
+                        ongoing = false,
+                        autoCancel = true,
+                        timeoutAfterMs = COMPLETION_TIMEOUT_MS
+                    )
                     stopForeground(STOP_FOREGROUND_DETACH)
+                    MonolithWidgetProvider.requestUpdate(applicationContext)
                     stopSelf()
                     break
                 }
@@ -310,12 +376,60 @@ class MonolithShieldService : Service() {
                     }
                 }
 
-                // Audit R3b #149: the grace window exists off the
-                // Deck too. During the window the shield's own
-                // notification counts it down — its tap already
-                // opens the app to the Deck chip — and for a
-                // routine-born row it names the booking instead of
-                // promising free.
+                // Issue #155 (F5): the expanded card carries the full
+                // status, and timed sessions get a SYSTEM chronometer
+                // (when = session end) instead of this loop's 2s text
+                // snapshot as the only timer. The end is derived from
+                // the same remaining-seconds math as the text above.
+                val timeLeftLabel = when {
+                    updated.isInSafeBreak -> {
+                        val bMin = updated.safeBreakSecondsRemaining / 60
+                        val bSec = updated.safeBreakSecondsRemaining % 60
+                        String.format("Safe Break %02d:%02d left", bMin, bSec)
+                    }
+                    updated.isStopwatchMode -> {
+                        val mins = updated.elapsedSeconds / 60
+                        val secs = updated.elapsedSeconds % 60
+                        String.format("Stopwatch +%02d:%02d elapsed", mins, secs)
+                    }
+                    else -> {
+                        val effectiveTarget = updated.targetDurationSeconds + updated.penaltySecondsAdded
+                        val remainingSec = (effectiveTarget - updated.elapsedSeconds).coerceAtLeast(0)
+                        val mins = remainingSec / 60
+                        val secs = remainingSec % 60
+                        String.format("%02d:%02d left", mins, secs)
+                    }
+                }
+                val chronometerEndMillis: Long? = when {
+                    updated.isStopwatchMode -> null
+                    updated.isInSafeBreak ->
+                        System.currentTimeMillis() + updated.safeBreakSecondsRemaining * 1000L
+                    else -> {
+                        val effectiveTarget = updated.targetDurationSeconds + updated.penaltySecondsAdded
+                        val remainingSec = (effectiveTarget - updated.elapsedSeconds).coerceAtLeast(0)
+                        System.currentTimeMillis() + remainingSec * 1000L
+                    }
+                }
+                // Issue #155 (F4): the badge's one number is the held
+                // (captured) notification count — the same count the
+                // Deck's HELD chip prints. If that read ever fails,
+                // fall back to this session's urges stopped.
+                val heldCount = runCatching {
+                    dao.getCapturedNotificationsSnapshot().size
+                }.getOrNull()
+                val badgeNumber = heldCount ?: updated.phantomReachesBlocked
+                val bigText = "${updated.intention} • $timeLeftLabel • " +
+                    "Block ${updated.currentBlockIndex}/${updated.totalStudyBlocks} • " +
+                    "${updated.phantomReachesBlocked} urges stopped • " +
+                    (if (heldCount != null) "$heldCount held" else "held count unavailable")
+
+                // Audit R3b #149 (from main): the grace window exists
+                // off the Deck too. During the window the shield's own
+                // notification counts it down — and for a routine-born
+                // row it names the booking instead of promising free.
+                // Merge resolution (WELLE-4, #155 × #149): the grace
+                // subtitle rides on the #155 card — bigText,
+                // chronometer and badge number apply in both branches.
                 if (updated.elapsedSeconds <= 10 && !updated.isInSafeBreak) {
                     updateNotification(
                         title = "Monolith • ${updated.intention}",
@@ -323,12 +437,18 @@ class MonolithShieldService : Service() {
                             "GRACE ${10 - updated.elapsedSeconds}S — ABORT BOOKED BY ROUTINE · TAP TO OPEN"
                         } else {
                             "GRACE ${10 - updated.elapsedSeconds}S — CANCEL FREE · TAP TO OPEN"
-                        }
+                        },
+                        bigText = bigText,
+                        chronometerEndMillis = chronometerEndMillis,
+                        badgeNumber = badgeNumber
                     )
                 } else {
                     updateNotification(
                         title = "Monolith • ${updated.intention}",
-                        subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped"
+                        subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} reaches blocked",
+                        bigText = bigText,
+                        chronometerEndMillis = chronometerEndMillis,
+                        badgeNumber = badgeNumber
                     )
                 }
 
@@ -338,19 +458,29 @@ class MonolithShieldService : Service() {
                 // witness (Opal L2) is stamped at the same flip:
                 // the session this iteration read, and the mono it
                 // flipped - CONFIRMED stamp for SHIELD-PROTECTING.
-                if (!protecting) {
+                if (!protecting && usageGranted) {
                     protecting = true
                     protectingSessionId = updated.id
                     protectingMono = SystemClock.elapsedRealtime()
                     WatchStore.poke()
+                    // Issue #155 (F1): a session is now live — refresh
+                    // the home-screen widget at the moment it matters.
+                    MonolithWidgetProvider.requestUpdate(applicationContext)
+                    // Issue #80 finding 4: the session just armed —
+                    // sweep notifications blocked apps posted BEFORE
+                    // this moment through the listener's capture path.
+                    try {
+                        MonolithNotificationListener.instance?.sweepActiveNotifications()
+                    } catch (_: Exception) {}
                 }
                 // Watch Store (chrome C3): ONE publication per
                 // iteration — the engine heartbeat plus a re-read of
-                // the two BIND items' present state.
-                WatchStore.onShieldIteration(protecting)
+                // the two BIND items' present state (and, #81 F4,
+                // this iteration's USAGE ACCESS measurement).
+                WatchStore.onShieldIteration(protecting, usageGranted)
 
                 val nowMono = SystemClock.elapsedRealtime()
-                val blockedPackages = dao.getAllAppsSnapshot()
+                val blockedPackages = repository.allAppsSnapshot() /* ISSUE-67(d): via repository */
                     .filter { app ->
                         val tier = app.resolvedTier
                         // Issue #140: the daily limit is real. An app
@@ -435,30 +565,25 @@ class MonolithShieldService : Service() {
                 // verdict (see screenInteractive above).
                 val foregroundBlockedPkg = if (screenInteractive) selectedForeground else null
                 if (foregroundBlockedPkg != null && foregroundBlockedPkg != applicationContext.packageName) {
-                    val blockedApp = dao.getAllAppsSnapshot().find { it.packageName == foregroundBlockedPkg }
-                    val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                        putExtra(EXTRA_INTERCEPTED_PACKAGE, foregroundBlockedPkg)
-                        putExtra(EXTRA_INTERCEPTED_APP_NAME, blockedApp?.appName ?: "Blocked App")
-                        putExtra(EXTRA_INTERCEPT_BADGE, blockedApp?.resolvedTier?.badge ?: "Shut")
-                        // This door's blocked set already excludes a leased PEEK app
-                        // (the filter above), so a lease sold here is honoured (UNA2-01).
-                        putExtra(EXTRA_INTERCEPT_PATH, InterceptPath.SHIELD_APP.name)
-                        // Issue #78: every firing carries a unique id so
-                        // MainActivity can persist its consumption — a
-                        // redelivered copy of THIS intent (process death)
-                        // is then recognised and never re-shown.
-                        putExtra(EXTRA_INTERCEPT_ID, UUID.randomUUID().toString())
-                        // Issue #68 F5, Tier 2: provenance nonce (see
-                        // InterceptNonce) — required by MainActivity
-                        // before any intercept extra is honoured.
-                        putExtra(EXTRA_INTERCEPT_NONCE, InterceptNonce.mint(applicationContext))
-                    }
+                    val blockedApp = repository.allAppsSnapshot() /* ISSUE-67(d): via repository */.find { it.packageName == foregroundBlockedPkg }
+                    // ISSUE-67: intercept intent via the seam (no
+                    // MainActivity import; the seam mints the #68
+                    // nonce and the #78 firing id). This door's
+                    // blocked set already excludes a leased PEEK
+                    // app (the filter above), so a lease sold here
+                    // is honoured (UNA2-01) — InterceptPath.SHIELD_APP,
+                    // as before.
                     // Issue #94 (F2): never a bare background launch —
                     // a dropped launch stamps itself and falls back
                     // to a tappable notification (InterceptLaunch).
                     InterceptLaunch.launch(
-                        applicationContext, interceptIntent,
+                        applicationContext,
+                        InterceptIntents.interceptIntent(
+                            applicationContext, foregroundBlockedPkg,
+                            blockedApp?.appName ?: "Blocked App",
+                            blockedApp?.resolvedTier?.badge ?: "Shut",
+                            InterceptPath.SHIELD_APP
+                        ),
                         blockedApp?.appName ?: "Blocked App"
                     )
                 }
@@ -550,24 +675,44 @@ class MonolithShieldService : Service() {
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            // Issue #155 (F4): channels are immutable on-device, so
+            // the badge fix cannot flip the legacy channel's
+            // setShowBadge(false) in place. Create the v2 channel
+            // with the badge ON and delete the legacy id — existing
+            // installs migrate on the shield's next start.
+            manager.deleteNotificationChannel(LEGACY_CHANNEL_ID)
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 getString(R.string.notification_channel_name),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = getString(R.string.notification_channel_desc)
-                setShowBadge(false)
+                setShowBadge(true)
             }
             manager.createNotificationChannel(channel)
         }
     }
 
-    private fun buildNotification(title: String, subtitle: String): Notification {
+    private fun buildNotification(
+        title: String,
+        subtitle: String,
+        ongoing: Boolean = true,
+        autoCancel: Boolean = false,
+        timeoutAfterMs: Long = 0,
+        bigText: String? = null,
+        chronometerEndMillis: Long? = null,
+        badgeNumber: Int? = null
+    ): Notification {
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            // ISSUE-67: via the seam, same SINGLE_TOP semantics —
+            // composed with issue #155 (F5): a tap on the shield
+            // card lands on the SHIELD destination, not the default
+            // Deck; MainActivity routes on this extra when no
+            // intercept extras are present.
+            InterceptIntents.notificationIntent(this).apply {
+                putExtra(EXTRA_FROM_SHIELD_NOTIFICATION, true)
             },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
@@ -585,21 +730,54 @@ class MonolithShieldService : Service() {
             .setOngoing(true)
             .setContentIntent(pendingIntent)
             .build()
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
             .setContentText(subtitle)
-            .setOngoing(true)
+            .setOngoing(ongoing)
+            .setAutoCancel(autoCancel)
             .setOnlyAlertOnce(true)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setPublicVersion(publicVersion)
             .setContentIntent(pendingIntent)
-            .build()
+        if (timeoutAfterMs > 0) {
+            builder.setTimeoutAfter(timeoutAfterMs)
+        }
+        if (bigText != null) {
+            builder.setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
+        }
+        if (chronometerEndMillis != null) {
+            // The countdown is the system's chronometer (real time),
+            // not the monitor loop's 2-second text snapshot.
+            builder.setUsesChronometer(true)
+            builder.setChronometerCountDown(true)
+            builder.setWhen(chronometerEndMillis)
+            builder.setShowWhen(true)
+        }
+        if (badgeNumber != null) {
+            builder.setNumber(badgeNumber)
+        }
+        return builder.build()
     }
 
-    private fun updateNotification(title: String, subtitle: String) {
+    private fun updateNotification(
+        title: String,
+        subtitle: String,
+        ongoing: Boolean = true,
+        autoCancel: Boolean = false,
+        timeoutAfterMs: Long = 0,
+        bigText: String? = null,
+        chronometerEndMillis: Long? = null,
+        badgeNumber: Int? = null
+    ) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, buildNotification(title, subtitle))
+        manager.notify(
+            NOTIFICATION_ID,
+            buildNotification(
+                title, subtitle, ongoing, autoCancel, timeoutAfterMs,
+                bigText, chronometerEndMillis, badgeNumber
+            )
+        )
     }
 
     /** Audit R3b #146: post an ALERTING summons on the HIGH channel.
@@ -622,9 +800,9 @@ class MonolithShieldService : Service() {
         val pendingIntent = PendingIntent.getActivity(
             this,
             1,
-            Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-            },
+            // ISSUE-67: via the seam, same SINGLE_TOP semantics
+            // (this summons site landed with #146 after the seam).
+            InterceptIntents.notificationIntent(this),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val notification = NotificationCompat.Builder(this, SUMMONS_CHANNEL_ID)
@@ -640,6 +818,15 @@ class MonolithShieldService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    // Issue #324 (Audit R5, Zario): the Recents-swipe resurrection
+    // override lives earlier in this file — main landed it via
+    // issue #43 as the ShieldRestartPolicy alarm re-dispatch while
+    // this lane was in flight, so this lane's own duplicate
+    // override was removed at merge reconciliation. What this lane
+    // adds on top is the manifest surface: stopWithTask=false and
+    // MainActivity excludeFromRecents, pinned by
+    // ShieldResurrectionTest.
 
     override fun onDestroy() {
         if (instance === this) {
@@ -692,8 +879,17 @@ class MonolithShieldService : Service() {
             internal set
         const val TAG = "MonolithShield"
         const val RESTART_REQUEST_CODE = 0x5211
-        const val CHANNEL_ID = "monolith_shield_channel"
+        // Issue #155 (F4): v2 carries setShowBadge(true); the legacy
+        // id is deleted in createNotificationChannel because channels
+        // are immutable once created on a device.
+        const val CHANNEL_ID = "monolith_shield_channel_v2"
+        const val LEGACY_CHANNEL_ID = "monolith_shield_channel"
         const val NOTIFICATION_ID = 4096
+        /** Issue #155 (F3): the detached completion card self-expires. */
+        const val COMPLETION_TIMEOUT_MS = 45 * 60 * 1000L
+        /** Issue #155 (F5): present (true) on the shield card's content
+         *  intent; MainActivity routes such a launch to SHIELD. */
+        const val EXTRA_FROM_SHIELD_NOTIFICATION = "com.example.EXTRA_FROM_SHIELD_NOTIFICATION"
         // Audit R3b #146: the summons channel — HIGH importance, its
         // own notification id, used ONLY for the two moments the user
         // is away from the phone by design (break expiry, session
