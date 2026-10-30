@@ -154,6 +154,12 @@ class MonolithRepository(
         const val PEEK_DURATION_MILLIS = 120 * 1000L // 2-Minute Peek lease in ms
         const val PEEK_COOLDOWN_MILLIS = 20 * 60 * 1000L // 20-Minute Mandatory Cooldown
         const val STOPWATCH_MIN_FLOOR_SECONDS = 20 * 60 // 20-Minute Minimum Floor
+        // Issue #290 F1: FLOW's terminal cap — a count-up session
+        // auto-ends at 4 hours instead of running forever with no
+        // terminal rule of its own (Forest's stopwatch auto-stops
+        // at its cap). The ending books STOPWATCH_ENDED, the same
+        // lawful FLOW finish as the past-floor door.
+        const val STOPWATCH_MAX_CAP_SECONDS = 4 * 60 * 60 // 4-Hour FLOW Cap
         const val SAFE_BREAK_DURATION_SECONDS = 10 * 60 // 10-Minute Safe Break
         const val HMAC_TAMPER_PENALTY_SECONDS = 15 * 60 // 15-Minute Penalty Lock
 
@@ -931,6 +937,11 @@ class MonolithRepository(
             // app the moment it settled into use.
             val usageEvents = usm.queryEvents(end - ForegroundDoor.WINDOW_MS, end)
                 ?: return null
+            // Issue #290 F4 disposition (merge-time truth): the
+            // event-stream cure landed on main first via issue
+            // #332 (ForegroundDoor, below) — this branch's own
+            // ForegroundEventStream implementation is withdrawn
+            // rather than shipping a second, competing fold.
             val events = mutableListOf<ForegroundDoor.FgEvent>()
             val event = android.app.usage.UsageEvents.Event()
             while (usageEvents.hasNextEvent()) {
@@ -2770,6 +2781,34 @@ class MonolithRepository(
         accrueActiveTaskSeconds(session, nowMono)
 
         if (session.isStopwatchMode) {
+            // Issue #290 F1: FLOW's own terminal law — at the cap
+            // the session ends in this same tick (STOPWATCH_ENDED,
+            // completed, end stamped once), instead of copying
+            // elapsed into the row and running indefinitely until
+            // the user happens to find the valve.
+            if (verifiedElapsed >= STOPWATCH_MAX_CAP_SECONDS) {
+                val capped = session.copy(
+                    elapsedSeconds = STOPWATCH_MAX_CAP_SECONDS,
+                    startElapsedRealtimeMillis = newStartMono,
+                    bootCount = newBootCount,
+                    accumulatedBeforeRebootSeconds = newAccumulated,
+                    lastTickElapsedRealtimeMillis = nowMono,
+                    hmacSignature = newHmac,
+                    penaltySecondsAdded = penaltyAdd,
+                    tamperDetected = tamper,
+                    shieldLastBeatWallMillis = beatWall,
+                    isActive = false,
+                    completedSuccessfully = true,
+                    outcome = SessionOutcome.STOPWATCH_ENDED,
+                    endWallMillis = if (session.endWallMillis == 0L) {
+                        System.currentTimeMillis()
+                    } else {
+                        session.endWallMillis
+                    }
+                )
+                dao.updateSession(capped)
+                return capped
+            }
             val updated = session.copy(
                 elapsedSeconds = verifiedElapsed,
                 startElapsedRealtimeMillis = newStartMono,
@@ -3296,6 +3335,10 @@ class MonolithRepository(
             outcomeReason == EMERGENCY_BREAK_REASON -> SessionOutcome.VALVE_BROKE
             completed && active.isStopwatchMode -> SessionOutcome.STOPWATCH_ENDED
             isGraceCancel -> SessionOutcome.GRACE_CANCEL
+            // Issue #290 F1: a FLOW session stopped under its floor
+            // books its own withered outcome, not generic early end.
+            !completed && active.isStopwatchMode &&
+                lawElapsed < STOPWATCH_MIN_FLOOR_SECONDS -> SessionOutcome.STOPWATCH_WITHERED
             else -> SessionOutcome.ENDED_EARLY
         }
         // Issue #287 F5: a broken session names its culprit in its

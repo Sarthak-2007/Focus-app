@@ -373,6 +373,20 @@ class MonolithShieldService : Service() {
                     .map { it.packageName }
                     .toSet()
 
+                // Issue #290 F5: screen state is a first-class
+                // input to this loop. While the screen is off /
+                // the device is locked-idle there is no foreground
+                // to police — the session's clock above still
+                // ticks (locked-away study counts), but no
+                // foreground verdict is acted on, so a stale
+                // witness/stat can never fire an intercept at a
+                // dark screen or the instant of unlock.
+                val screenInteractive = try {
+                    (getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager)
+                        ?.isInteractive ?: true
+                } catch (_: Exception) {
+                    true
+                }
                 // Foreground detection (issue #43, finding 2):
                 // prefer the accessibility service's real
                 // TYPE_WINDOW_STATE_CHANGED witness when that
@@ -410,13 +424,16 @@ class MonolithShieldService : Service() {
                 // The VoIP-owner exemption lives in the
                 // accessibility door (shouldBypassForCall); this
                 // fallback door fails closed, as a fallback must.
-                val foregroundBlockedPkg = ForegroundSelection
+                val selectedForeground = ForegroundSelection
                     .selectBlockedForeground(
                         accessibilityForeground = a11yForeground,
                         blockedPackages = blockedPackages,
                         usageStatsFallback = { repository.queryForegroundBlockedApp(blockedPackages, expiredPeeks) }
                     )
                     ?.takeUnless { com.example.data.SafetyFloor.isFloorPackage(it) }
+                // Issue #290 F5: a dark/locked screen vetoes the
+                // verdict (see screenInteractive above).
+                val foregroundBlockedPkg = if (screenInteractive) selectedForeground else null
                 if (foregroundBlockedPkg != null && foregroundBlockedPkg != applicationContext.packageName) {
                     val blockedApp = dao.getAllAppsSnapshot().find { it.packageName == foregroundBlockedPkg }
                     val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
