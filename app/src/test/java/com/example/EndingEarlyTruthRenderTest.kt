@@ -68,42 +68,22 @@ class EndingEarlyTruthRenderTest {
 
     private fun setDeck(session: FocusSessionEntity, routineJudged: Boolean = false) {
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 TactileDeckScreen(
                     activeSession = session,
                     dialMinutes = 50,
                     studyBlocksCount = 2,
-                    studyPreset = StudyModePreset.POMODORO_25_5,
-                    checklist = emptyList(),
                     activeTask = null,
                     queuedTasks = emptyList(),
-                    completedTasksCount = 0,
-                    totalQueueMinutes = 0,
-                    selectedProfileName = "Default",
-                    intentionText = "Deep Study",
-                    totalFocusedMinutes = 0,
-                    totalInterceptions = 0,
-                    profiles = emptyList(),
-                    apps = emptyList(),
-                    shortsReelsSniperEnabled = true,
-                    browserUrlBlockerEnabled = true,
                     capturedNotificationsCount = 0,
                     soundEngine = TactileSoundEngine(context),
                     isDarkTheme = false,
                     onDialMinutesChanged = {},
                     onSelectStudyPreset = {},
                     onSetStudyBlocksCount = {},
-                    onToggleChecklistItem = {},
-                    onAddChecklistItem = {},
                     onCompleteActiveTask = {},
-                    onDeferActiveTask = {},
-                    onExtendActiveTaskOvertime = {},
-                    onAddQuickTaskToQueue = { _, _ -> },
                     onToggleTaskSubStep = { _, _ -> },
                     onOpenTaskSequencer = {},
-                    onOpenCurioVault = {},
-                    onIntentionChanged = {},
-                    onProfileSelected = {},
                     onArmSession = {},
                     onRequestDisarm = {},
                     onCancelWithinGraceWindow = {},
@@ -153,7 +133,7 @@ class EndingEarlyTruthRenderTest {
     @Test
     fun refusedHold_printsItsRefusalOnTheValveFace() {
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = true, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = true) {
                 DisarmChallengeOverlay(
                     state = DisarmChallengeState(
                         isVisible = true,
@@ -172,7 +152,7 @@ class EndingEarlyTruthRenderTest {
     @Test
     fun refusedHold_printsItsRefusalOnTheSpentFaceToo() {
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = true, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = true) {
                 DisarmChallengeOverlay(
                     state = DisarmChallengeState(
                         isVisible = true,
