@@ -301,6 +301,20 @@ fun ReceiptSheet(
                         color = scheme.onBackground
                     )
                 }
+                if (receipt.penaltySecondsAdded > 0) {
+                    // Audit R3 #113, finding 4: the penalty was
+                    // already inside the PLANNED figure above (the
+                    // span prices it in) — this line names what the
+                    // plan silently included, in the same bold
+                    // register as the shield-gap line.
+                    Text(
+                        text = "A ${receipt.penaltySecondsAdded / 60} MIN TAMPER PENALTY WAS ADDED TO THIS SESSION",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = scheme.onBackground
+                    )
+                }
                 if (receipt.openExposureApps.isNotEmpty()) {
                     // Issue #129 F3: the slip names what was
                     // actually used through the open door — a
