@@ -3383,6 +3383,29 @@ class MonolithViewModel(
     }
 
     fun selectAndApplyProfile(profile: FocusProfileEntity) {
+        // Issue #101 F1 (profile half): mid-session, the repository
+        // lands this profile tightening-only (SessionTierGate, the
+        // #304 loadout law applied to the second bulk door) — say
+        // so with the ratchet's own warning instead of letting the
+        // tap pretend the whole profile applied. The check mirrors
+        // the repository's category derivation; the repository
+        // clamp is the enforcement, this warning is its voice.
+        if (activeSession.value?.isActive == true) {
+            val blockedCats = profile.blockedCategoriesCsv
+                .split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+            val wouldLoosen = apps.value.any { app ->
+                val desired = when {
+                    app.category !in blockedCats -> AppBlockTier.OPEN
+                    app.category == AppCategory.MESSAGING.name -> AppBlockTier.PEEK_2M
+                    app.category == AppCategory.FINANCE.name -> AppBlockTier.PEEK_2M
+                    else -> AppBlockTier.LOCKED
+                }
+                com.example.data.SessionTierGate.loosens(app.resolvedTier, desired)
+            }
+            if (wouldLoosen) {
+                triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • PROFILE APPLIES TIGHTENING-ONLY DURING ACTIVE VAULT")
+            }
+        }
         soundEngine.playHarmonicSeal(true)
         // Snapshot the dial + name before the tap overwrites them
         // (issue #139 F4); the repository snapshots the tiers.

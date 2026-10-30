@@ -2530,6 +2530,15 @@ class MonolithRepository(
             .toSet()
 
         val currentApps = dao.getAllAppsSnapshot()
+        // Issue #101 F1 (profile half): while a session is sealed
+        // the profile lands tightening-only, exactly as the loadout
+        // does since #304 F1 — each app keeps the stricter of its
+        // current tier and the profile's tier, so a mid-session
+        // profile tap can never OPEN every category the profile
+        // does not list (the bulk ratchet bypass the wave-3 audit
+        // named CRITICAL; the loadout half was cured by #304, this
+        // door was not). Unsealed, the profile lands whole.
+        val sealed = dao.getActiveSessionSnapshot()?.isActive == true
         // Snapshot BEFORE the overwrite (issue #139 F4).
         profileUndoPrefs().edit()
             .putString(
@@ -2563,7 +2572,11 @@ class MonolithRepository(
             // Issue #119, finding 5: the dialler floor binds bulk
             // profile writes too — a profile can never lock the
             // dialler, so the floor applies before the copy.
-            val tier = EssentialApps.floorTier(app.packageName, rawTier)
+            // Issue #101 F1: the sealed-session gate then clamps
+            // the floored desire exactly as for the loadout, so
+            // no bulk door can loosen while a session runs.
+            val floored = EssentialApps.floorTier(app.packageName, rawTier)
+            val tier = SessionTierGate.clampWhileSealed(app.resolvedTier, floored, sealed)
             app.copy(blockTier = tier.name).normalized()
         }
         dao.insertApps(updated)
