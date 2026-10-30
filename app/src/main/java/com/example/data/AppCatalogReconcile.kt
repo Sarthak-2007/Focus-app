@@ -248,7 +248,6 @@ object AppCategorizer {
                 "microsoft edge", "emmx", "kiwi", "ucbrowser",
                 "uc browser", "vivaldi", "yandex") ->
                 AppCategory.BROWSERS
-                AppCategory.BROWSERS
             else -> AppCategory.SHOPPING
         }
     }

@@ -1597,7 +1597,7 @@ class MonolithRepository(
             // passing as a free, invisible freeze.
             val priorElapsed = max(session.accumulatedBeforeRebootSeconds, session.elapsedSeconds)
             val sinceRebootSec = (nowMono / 1000L).toInt().coerceAtLeast(0)
-            val unwitnessed = TamperWitness.unwitnessedBoot(session.bootCount, currentBoot)
+            val unwitnessed = currentBoot?.let { TamperWitness.unwitnessedBoot(session.bootCount, it) } ?: false
             Pair(priorElapsed + sinceRebootSec, !hmacValid || unwitnessed)
         }
     }
@@ -3407,8 +3407,18 @@ class MonolithRepository(
      * while an hour or more remains, no further extension is sold
      * (its 'still 60 min' refusal). Stopwatch sessions have no
      * target to extend and refuse.
+     *
+     * WELLE-7 rename: this verb is NOT [extendActiveSession]
+     * (Issue #287 F7, merged earlier via PR #460 - that one takes
+     * extraMinutes and returns the updated row, uncapped). This
+     * #283 verb (PR #413, merged later) takes seconds, is capped
+     * at the 60-minutes-remaining line and answers Boolean. The
+     * two collided on one name and broke main's compile
+     * (conflicting overloads); the earlier-merged verb keeps the
+     * name, this one is [extendActiveSessionCapped]. Behaviour
+     * is unchanged in every particular.
      */
-    suspend fun extendActiveSession(addSeconds: Int = 900): Boolean {
+    suspend fun extendActiveSessionCapped(addSeconds: Int = 900): Boolean {
         val session = dao.getActiveSessionSnapshot() ?: return false
         if (!session.isActive || session.isStopwatchMode) return false
         val (verifiedElapsed, _) = computeVerifiedSessionElapsed(session)
@@ -3678,7 +3688,7 @@ class MonolithRepository(
             session = session,
             allBlocksCompleted = allBlocksCompleted,
             isRoutineSession = isRoutineSession,
-            verifiedElapsedSeconds = verifiedElapsed,
+            verifiedElapsedSeconds = verifiedElapsed.toLong(),
             appLastUpdateMillis = appLastUpdateMillis(),
             usageStatsPermissionHeld = hasUsageStatsPermission(),
             openExposureSeen = exposedAtEnd.isNotEmpty()

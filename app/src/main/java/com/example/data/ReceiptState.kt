@@ -265,7 +265,7 @@ data class PendingReceipt(
      *  this session's window (labels, longest-use first), read
      *  back from the ending write's exposure booking. Empty for
      *  every session not stamped ELAPSED_OPEN_EXPOSURE. */
-    val openExposureApps: List<String> = emptyList()
+    val openExposureApps: List<String> = emptyList(),
     // Audit R3b #145: the curio this finish forged, by name — the
     // completion moment must not be silent about its own reward.
     // Null when the span forged nothing (routine-born rows, valve
@@ -309,7 +309,7 @@ data class ReceiptState(
     val restored: Boolean,
     val receiptPublishedMonoMs: Long,
     /** Issue #129 F3: see [PendingReceipt.openExposureApps]. */
-    val openExposureApps: List<String> = emptyList()
+    val openExposureApps: List<String> = emptyList(),
     // Audit R3b #145: see PendingReceipt.forgedArtifactName.
     val forgedArtifactName: String? = null,
     // W-41: see PendingReceipt.heldShutAtSeal.
