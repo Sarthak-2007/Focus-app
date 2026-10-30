@@ -2483,9 +2483,17 @@ class MonolithRepository(
      *  is not alive mid-break, and this machine crosses breaks
      *  from the shield's tick as readily as from the screen's.
      *
-     *  The voice is the engine's existing latch pair — release
-     *  (false) as the block lets go into the break, engage (true)
-     *  as the next block takes hold. No new sound machinery. The
+     *  The voices: release (false) is the engine's latch, fired
+     *  as the block lets go into the break; engage (true) — the
+     *  break END, the one cue a user plans around — got its own
+     *  dedicated voice in issue #150 (a low double strike, not
+     *  the toggle latch's single click: the exit cue was being
+     *  missed and block time ran while the user believed the
+     *  break still held), and #146 later raised that voice to
+     *  the full summons this seam now fires. Both are
+     *  machinery-fired, so both are spoken as unattended: the
+     *  ringer's word and Do Not Disturb bind them in the engine.
+     *  The
      *  player is a seam for exactly one reason: the transition
      *  tests count knock REQUESTS at the flip (Pruefer's proof
      *  standard — call level, never an acoustic claim). In
@@ -2499,15 +2507,21 @@ class MonolithRepository(
      *  door creates honours the setting exactly as the screen's
      *  engine does. */
     internal var breakBoundaryKnock: (engaged: Boolean) -> Unit = { engaged ->
-        // Audit R3b #146: the break EXIT is a summons, not a tick —
+        // Composition of #150 and #146 (merge of main 017d2d6 into
+        // agent/issue-150): the break EXIT is a summons, not a tick —
         // the user is away from the phone by design at that moment,
-        // so the exit speaks with the full summons voice. The entry
-        // (engaged = false) keeps the plain latch: the user is
-        // present, mid-flow, when a block lets go into its break.
+        // so the exit speaks with #146's full summons voice (which
+        // supersedes #150's double-strike cue for this call site;
+        // playBreakEndCue survives in the engine). Both boundary
+        // voices are machinery-fired, so both are spoken as
+        // unattended: the ringer's word and Do Not Disturb bind
+        // them in the engine (#150 F1/F2 — the summons and the
+        // warning knock pass unattended = true inside the engine).
+        // The entry (engaged = false) keeps the latch, unattended.
         if (engaged) {
             breakSoundEngine.playBreakEndSummons()
         } else {
-            breakSoundEngine.playMechanicalLatch(false)
+            breakSoundEngine.playMechanicalLatch(engaged = false, unattended = true)
         }
     }
 
