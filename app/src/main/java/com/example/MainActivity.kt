@@ -840,12 +840,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onDeclareTodayWord = viewModel::declareTodayWord,
                                     artifacts = com.example.data.CurioCatalog.artifacts,
                                     forgedArtifactIds = forgedArtifactIds,
-<<<<<<< HEAD
                                     curioForgeRecords = curioForgeRecords,
-=======
                                     drawerLoading = drawerLoading,
                                     drawerError = drawerError,
->>>>>>> origin/main
                                     forgeStats = forgeStats
                                 )
                             }
