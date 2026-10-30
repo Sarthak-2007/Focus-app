@@ -60,7 +60,7 @@ class BoltRenderGateTest {
         name: String
     ): Bitmap {
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = dark, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = dark) {
                 Box(
                     Modifier
                         .fillMaxWidth()
