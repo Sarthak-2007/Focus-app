@@ -546,21 +546,48 @@ fun ParkDrawer(
                 // (2) The board: nine ruled lines, fixed order.
                 if (snapshot != null) {
                     WatchItemId.PERMISSIONS.forEach { item ->
-                        ParkBoardRow(
-                            name = item.boardName,
-                            word = when (WatchStore.permPrintAt(snapshot, item, nowMono)) {
-                                PermPrint.GRANTED -> "GRANTED"
-                                PermPrint.MISSING -> "MISSING"
-                                PermPrint.STALE -> "STALE"
-                                PermPrint.UNPROVED -> "UNPROVED"
-                                PermPrint.MISSING_STALE -> "STALE"
-                                PermPrint.UNMEASURED -> null
-                            },
-                            wordIsLack = when (WatchStore.permPrintAt(snapshot, item, nowMono)) {
-                                PermPrint.GRANTED -> false
-                                else -> true
+                        // Issue #122, rebased onto #94's UNPROVED print:
+                        // the BATTERY line prints the battery itself
+                        // (level \u00b7 saver/charging \u00b7 NOT EXEMPT) from the
+                        // snapshot's battery read \u2014 the exemption bit
+                        // alone read "GRANTED" over an 8% battery with
+                        // saver on. The perm print is NOT discarded:
+                        // an UNPROVED / STALE exemption verdict still
+                        // appends and still counts as a lack, so the
+                        // line can never read satisfied while either
+                        // the battery or the proof is lacking. No
+                        // battery read yet \u2192 the perm print, as before.
+                        val battery = snapshot.battery
+                        val permPrint = WatchStore.permPrintAt(snapshot, item, nowMono)
+                        if (item == WatchItemId.BATTERY && battery != null) {
+                            val suffix = when (permPrint) {
+                                PermPrint.UNPROVED -> " \u00b7 UNPROVED"
+                                PermPrint.STALE, PermPrint.MISSING_STALE -> " \u00b7 STALE"
+                                else -> ""
                             }
-                        )
+                            ParkBoardRow(
+                                name = item.boardName,
+                                word = com.example.data.batteryBoardWord(battery) + suffix,
+                                wordIsLack = com.example.data.batteryBoardIsLack(battery) ||
+                                    permPrint != PermPrint.GRANTED
+                            )
+                        } else {
+                            ParkBoardRow(
+                                name = item.boardName,
+                                word = when (permPrint) {
+                                    PermPrint.GRANTED -> "GRANTED"
+                                    PermPrint.MISSING -> "MISSING"
+                                    PermPrint.STALE -> "STALE"
+                                    PermPrint.UNPROVED -> "UNPROVED"
+                                    PermPrint.MISSING_STALE -> "STALE"
+                                    PermPrint.UNMEASURED -> null
+                                },
+                                wordIsLack = when (permPrint) {
+                                    PermPrint.GRANTED -> false
+                                    else -> true
+                                }
+                            )
+                        }
                     }
                     // The doubled gap: 16dp, no hairline, no eyebrow —
                     // the family break is whitespace, not a heading.
@@ -755,14 +782,28 @@ fun ParkDrawer(
                                     "⋮ MENU → ALLOW RESTRICTED SETTINGS, " +
                                     "THEN COME BACK AND FIX AGAIN."
                             WatchItemId.BATTERY ->
+                                // Issue #296 (Audit R5, ScreenZen
+                                // second-pass F10): the battery step
+                                // teaches, it does not just link — a
+                                // named purpose and the OEM-killer
+                                // pointer (dontkillmyapp.com, the
+                                // public database of per-maker
+                                // background-killing behaviour), on
+                                // every skin, not only gated ones.
                                 if (com.example.data.OemPolicy.gatesAutostart()) {
                                     "THIS PHONE ALSO GATES RESTARTS BEHIND " +
                                         "AUTOSTART: FIX OPENS THE AUTOSTART " +
                                         "LIST — SWITCH MONOLITH ON THERE. " +
                                         "THE APP CANNOT READ THAT SWITCH " +
-                                        "BACK, SO THIS LINE STAYS UNPROVED."
+                                        "BACK, SO THIS LINE STAYS UNPROVED. " +
+                                        "DONTKILLMYAPP.COM LISTS THIS " +
+                                        "MAKER'S EXTRA STEPS."
                                 } else {
-                                    null
+                                    "REQUIRED SO THE PHONE DOES NOT " +
+                                        "SWITCH BLOCKING OFF IN THE " +
+                                        "BACKGROUND: SET MONOLITH TO " +
+                                        "UNRESTRICTED. DONTKILLMYAPP.COM " +
+                                        "LISTS EACH MAKER'S EXTRA STEPS."
                                 }
                             else -> null
                         }

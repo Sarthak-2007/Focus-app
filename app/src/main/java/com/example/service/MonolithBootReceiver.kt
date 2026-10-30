@@ -3,8 +3,9 @@ package com.example.service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.PowerManager
 import android.util.Log
-import com.example.data.MonolithDatabase
+import com.example.data.UndoDeleteStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -57,6 +58,14 @@ class MonolithBootReceiver : BroadcastReceiver() {
         val action = intent?.action ?: return
         val appContext = context.applicationContext
         when (action) {
+            // Issue #122: the battery turned — the shield's
+            // standing notification must re-read it now (its own
+            // dynamic receiver usually beats this manifest one;
+            // both are idempotent re-posts of the same facts).
+            Intent.ACTION_BATTERY_LOW,
+            PowerManager.ACTION_POWER_SAVE_MODE_CHANGED -> {
+                MonolithShieldService.instance?.refreshBatteryNotification()
+            }
             Intent.ACTION_LOCKED_BOOT_COMPLETED,
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
@@ -85,6 +94,23 @@ class MonolithBootReceiver : BroadcastReceiver() {
                     }
                 }
             }
+            // Issue #81 F5: a package's component set changed —
+            // reconcile; the pass re-reads Monolith's own critical
+            // components' enabled states (RoutineHeartbeat step 4c)
+            // and latches the live session's gap if one was
+            // disabled out from under it.
+            Intent.ACTION_PACKAGE_CHANGED -> {
+                val pendingResult = goAsync()
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        RoutineHeartbeat.tick(
+                            appContext, RoutineHeartbeat.Source.PACKAGE_REPLACED, force = true
+                        )
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
+            }
         }
     }
 
@@ -95,16 +121,29 @@ class MonolithBootReceiver : BroadcastReceiver() {
         // Group 1 — the boot stamp, once per real boot.
         runGuardedBootAction("boot-stamp") {
             if (bootStampDue(action)) {
-                MonolithDatabase.getInstance(appContext).monolithDao()
+                com.example.AppContainer.dao(appContext) /* ISSUE-67: single construction point */
                     .stampLastBoot(System.currentTimeMillis())
             }
+        }
+
+        // Group 1b — issue #83: a boot-started process reaps a stale
+        // undo-delete copy. A process born through this door (incl.
+        // LOCKED_BOOT_COMPLETED and MY_PACKAGE_REPLACED) may be the
+        // only process that ever runs after the copy's 5-second
+        // window closed; without this the deleted task's full copy
+        // outlived its window indefinitely in cleartext prefs.
+        // Guarded as its own group: in direct boot the copy's
+        // credential-protected prefs may be unreadable pre-unlock,
+        // and a failed reap must never cost the tick its run.
+        runGuardedBootAction {
+            UndoDeleteStore.expireIfStale(appContext)
         }
 
         // Group 2 — shield FIRST, before the slow reconcile: if a
         // session is already active, it is shielded now, so a slow
         // or failed tick cannot lose the shield.
         runGuardedBootAction("shield-before-tick") {
-            val active = MonolithDatabase.getInstance(appContext).monolithDao()
+            val active = com.example.AppContainer.dao(appContext) /* ISSUE-67: single construction point */
                 .getActiveSessionSnapshot()
             if (shouldRaiseBootShield(active != null, active?.isActive == true)) {
                 MonolithShieldService.startShield(appContext)
@@ -120,7 +159,7 @@ class MonolithBootReceiver : BroadcastReceiver() {
         // finalised the session that was active, so raise the shield
         // only if one remains active afterwards.
         runGuardedBootAction("shield-after-tick") {
-            val active = MonolithDatabase.getInstance(appContext).monolithDao()
+            val active = com.example.AppContainer.dao(appContext) /* ISSUE-67: single construction point */
                 .getActiveSessionSnapshot()
             if (shouldRaiseBootShield(active != null, active?.isActive == true)) {
                 MonolithShieldService.startShield(appContext)
