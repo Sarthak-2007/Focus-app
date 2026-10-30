@@ -103,10 +103,13 @@ fun ShieldCapSelector(
     // Unselected stops print in the house text-2 tier (the rail's
     // unselected words, CHROME-BUILD-READY §2.3 / F-05): day
     // onSurfaceVariant IS text-2 (#5F5856), but at night
-    // onSurfaceVariant is the muted tier (#776A60, 3.68:1 on the
+    // onSurfaceVariant was the muted tier (#776A60, 3.68:1 on the
     // #100E0C recess — measured on the chrome lane's n02_shield
     // render, Linea's adaptation pass) where text-2 is
     // NightTextColorSecondary (#9C8E84, 6.07:1 on the same recess).
+    // (Issue #70 F5 has since raised the muted tier itself to
+    // #9C8E84, so the two now agree; this explicit night pick
+    // stays as the measured-on-render choice.)
     // Night detection follows inkControlFill()'s house pattern.
     val unselectedWord =
         if (scheme.background.luminance() < 0.5f) NightTextColorSecondary

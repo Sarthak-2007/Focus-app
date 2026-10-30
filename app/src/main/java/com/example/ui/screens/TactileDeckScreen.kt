@@ -84,6 +84,7 @@ import com.example.ui.components.onInkControlFill
 import com.example.ui.components.FullBleedSectionHeader
 import com.example.ui.components.rememberMixedTypographyText
 import com.example.ui.theme.AnonymousProFamily
+import com.example.ui.theme.BodyTextStyle
 import com.example.ui.theme.DialClockTextStyle
 import com.example.ui.theme.DisplayUnitTextStyle
 import com.example.ui.theme.NightColorOnSurface
@@ -159,6 +160,10 @@ fun TactileDeckScreen(
     appsCellCount: Int? = null,
     appsSplit: com.example.ui.MonolithViewModel.AppsSplit? = null,
     deckWarrant: Warrant? = null,
+    // Issue #70 F3: the first-run primer's gate (host-owned
+    // one-bit flag, mirroring the PARK intro) — true only until
+    // the first session has ever run.
+    deckPrimerPending: Boolean = false,
     sealFreeze: com.example.ui.MonolithViewModel.SealFreeze? = null,
     warrantProvider: () -> Warrant = {
         Warrant(
@@ -712,6 +717,33 @@ fun TactileDeckScreen(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // Issue #70 F3 — the first-run primer (Session-Zero order):
+        // three lines on the FIRST screen, in plain words, shown
+        // only while the warrant is OFF and no session has ever
+        // run; gone forever after the first session. No modal, no
+        // gate — arming works exactly as before; this only answers
+        // the three questions a first morning asks.
+        if (deckPrimerPending && activeSession == null &&
+            deckWarrant?.state == WarrantState.OFF
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Monolith shuts the apps you name while a study session runs.",
+                    style = BodyTextStyle,
+                    color = scheme.onBackground
+                )
+                Text(
+                    text = "Two switches make it work. Both live in PARK, at the far end of the rail.",
+                    style = BodyTextStyle,
+                    color = scheme.onBackground
+                )
+                Text(
+                    text = "Nothing leaves this phone.",
+                    style = BodyTextStyle,
+                    color = scheme.onSurfaceVariant
+                )
+            }
+        }
         // =====================================================================
         // SECTION 1: THE INSTRUMENT (Ren — hero card and dial are ONE object:
         // the readout lives in the same panel as the wheel that sets it.
@@ -1003,9 +1035,18 @@ fun TactileDeckScreen(
                                 onSelectStudyPreset(StudyModePreset.STOPWATCH_FLOW)
                                 onDialMinutesChanged(5)
                             }
-                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                            .padding(horizontal = 10.dp)
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Column(
+                            // Issue #70 F5 (re-based): the 48dp measure
+                            // lives on the text block itself — the strip
+                            // the thumb sees IS the target it hits. HEAD
+                            // grew a #147 badge line under FLOW since the
+                            // original fix, so the padding now wraps the
+                            // whole column (FLOW + badge ≈ 28dp + 26dp).
+                            modifier = Modifier.padding(vertical = 13.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
                             Text(
                                 text = "FLOW",
                                 fontFamily = AnonymousProFamily,

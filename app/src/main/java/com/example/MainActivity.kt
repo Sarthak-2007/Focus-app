@@ -606,6 +606,15 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // shipped in PR #375's branch but was lost in that branch's
     // merge chain before it merged; the ViewModel's own init caller
     // of refreshSystemGuard is untouched.
+    // Issue #70 F3: the Deck primer's bit flips the moment the
+    // first session is live — the primer is a first-run-only
+    // surface and never returns.
+    LaunchedEffect(activeSession) {
+        if (activeSession?.isActive == true && viewModel.deckPrimerPending()) {
+            viewModel.markDeckPrimerDone()
+        }
+    }
+
     LaunchedEffect(parkOpen) {
         if (parkOpen) {
             viewModel.runWatchSweep()
@@ -892,6 +901,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     appsCellCount = appsCellCount,
                                     appsSplit = appsSplit,
                                     deckWarrant = deckWarrant,
+                                    deckPrimerPending = viewModel.deckPrimerPending(),
                                     sealFreeze = sealFreeze,
                                     armPhase = armPhase,
                                     armSentence = armSentence,

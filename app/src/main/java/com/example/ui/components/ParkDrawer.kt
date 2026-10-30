@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -876,7 +877,8 @@ fun ParkDrawer(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp),
+                        .height(52.dp)
+                        .semantics(mergeDescendants = true) {},
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -908,6 +910,11 @@ fun ParkDrawer(
                                     // obeys the same gate as the FIX
                                     // key — no toggle mid-rise,
                                     // mid-throw, or while closing.
+                                    // Issue #70 F1 (re-based): this gate
+                                    // subsumes the original #70 seal-null —
+                                    // interactive = visible && settled &&
+                                    // !isSealed (above), so the a11y path
+                                    // is read-only under the seal too.
                                     onToggleRequested = { if (interactiveState.value) onToggleSound() }
                                     // Fresh-eyes B: the view itself
                                     // consults this before any haptic,
@@ -925,7 +932,7 @@ fun ParkDrawer(
                             },
                             modifier = Modifier
                                 .width(76.dp)
-                                .height(34.dp)
+                                .height(48.dp)
                                 .testTag("park_sound_sled")
                         )
                         if (!interactive) {
@@ -936,7 +943,7 @@ fun ParkDrawer(
                             Box(
                                 modifier = Modifier
                                     .width(76.dp)
-                                    .height(34.dp)
+                                    .height(48.dp)
                                     .clickable(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = null
@@ -973,7 +980,8 @@ fun ParkDrawer(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp),
+                        .height(52.dp)
+                        .semantics(mergeDescendants = true) {},
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // #131 truth scope: the sled arms the FEED
@@ -1025,7 +1033,7 @@ fun ParkDrawer(
                             },
                             modifier = Modifier
                                 .width(76.dp)
-                                .height(34.dp)
+                                .height(48.dp)
                                 .testTag("park_shorts_sled")
                         )
                         if (!interactive) {
@@ -1035,7 +1043,7 @@ fun ParkDrawer(
                             Box(
                                 modifier = Modifier
                                     .width(76.dp)
-                                    .height(34.dp)
+                                    .height(48.dp)
                                     .clickable(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = null
@@ -1104,7 +1112,8 @@ private fun ParkBoardRow(name: String, word: String?, wordIsLack: Boolean) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
+                .height(48.dp)
+                .semantics(mergeDescendants = true) {},
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -1161,7 +1170,8 @@ private fun ParkSocialSitesRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
+                .height(48.dp)
+                .semantics(mergeDescendants = true) {},
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -1203,7 +1213,7 @@ private fun ParkSocialSitesRow(
                     },
                     modifier = Modifier
                         .width(76.dp)
-                        .height(34.dp)
+                        .height(48.dp)
                         .testTag("park_social_sled")
                 )
                 if (!interactive) {
@@ -1212,7 +1222,7 @@ private fun ParkSocialSitesRow(
                     Box(
                         modifier = Modifier
                             .width(76.dp)
-                            .height(34.dp)
+                            .height(48.dp)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null

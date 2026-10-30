@@ -98,7 +98,7 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
         const val NIGHT_SECONDARY_CONTAINER = 0xFF4A423C.toInt()
         const val NIGHT_ON_SECONDARY_CONTAINER = 0xFFFFE4CF.toInt()
         const val NIGHT_ON_SURFACE = 0xFFEDE3D8.toInt()
-        const val NIGHT_ON_SURFACE_VARIANT = 0xFF776A60.toInt()
+        const val NIGHT_ON_SURFACE_VARIANT = 0xFF9C8E84.toInt() // Issue #70 F5: 5.8:1 (was 0xFF776A60, 3.5:1) — twin of Color.kt's NightColorOnSurfaceVariant; the two must move together
         const val NIGHT_OUTLINE = 0xFF807A7A.toInt()
         const val NIGHT_OUTLINE_VARIANT = 0x758F8888
         const val NIGHT_BLOCK_BAR = 0xFF161311.toInt()
@@ -116,6 +116,27 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
         }
 
     var soundEngine: TactileSoundEngine? = null
+
+    // Issue #70 F1: the accessibility machinery for the canvas
+    // family. Before this, the family carried
+    // @SuppressLint("ClickableViewAccessibility") with no
+    // performClick anywhere: TalkBack met silence on every
+    // primary control. The base now supplies performClick and the
+    // description helper; each CONTROL subclass opts in
+    // (isFocusable/isClickable + its own spoken description), so
+    // display-only canvas views stay out of the focus order.
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
+    }
+
+    /** Set this view's spoken description (Issue #70 F1). Kept as
+     *  a named helper so subclasses refresh their description at
+     *  the same call sites that refresh their drawn state. */
+    protected fun describeAs(text: String) {
+        contentDescription = text
+    }
 
     protected val density: Float = resources.displayMetrics.density
     protected val scaledDensity: Float = resources.displayMetrics.scaledDensity
@@ -428,6 +449,42 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
                 invalidate()
             }
         }
+
+    init {
+        // Issue #70 F1 (re-based): the dial can be driven without
+        // the drag — TalkBack scroll actions step it ±5 minutes
+        // through the same setter and callback the drag uses.
+        // The spoken label itself is owned by
+        // refreshAccessibilityLabel() below (issue #59: minutes,
+        // blocks, locked state — richer than the original #70
+        // "Session length, N minutes", which is NOT re-applied
+        // here so it cannot clobber that label on every change).
+        isFocusable = true
+        isClickable = true
+    }
+
+    override fun onInitializeAccessibilityNodeInfo(info: android.view.accessibility.AccessibilityNodeInfo) {
+        super.onInitializeAccessibilityNodeInfo(info)
+        info.className = "android.widget.SeekBar"
+        info.addAction(
+            android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD
+        )
+        info.addAction(
+            android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD
+        )
+    }
+
+    override fun performAccessibilityAction(action: Int, args: android.os.Bundle?): Boolean {
+        val step = when (action) {
+            android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD.id -> 5
+            android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD.id -> -5
+            else -> return super.performAccessibilityAction(action, args)
+        }
+        minutesValue = minutesValue + step
+        onMinutesChanged?.invoke(minutesValue)
+        announceForAccessibility("Session length, $minutesValue minutes")
+        return true
+    }
 
     var studyBlocksCount: Int = 2
         set(value) {
@@ -1656,6 +1713,17 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
 
     /** The gesture's machine is back at REST (or the latch has fired). */
     var onPressEnd: (() -> Unit)? = null
+
+    // Issue #70 F1 (re-based): the slide's spoken label and
+    // TalkBack activation are owned by the issue-#59 block further
+    // down this class (contentDescription "Slide or tap to
+    // start" + performClick under the latch-frame law: OFF earns
+    // the refusal, UNPROVEN drives only to the catch, LIVE runs
+    // the mesh — no commit dispatches from activation). The
+    // original #70 performClick fired onSlideCommitted directly
+    // on LIVE, which would bypass that law on current main, so
+    // it is NOT carried over; #59's path satisfies F1's slide
+    // requirement in its current, stronger form.
 
     /** The Live Wire verdict, read synchronously. Null = no provider
      *  wired (preview): the wire reads UNPROVEN (issue #6 F11b) —

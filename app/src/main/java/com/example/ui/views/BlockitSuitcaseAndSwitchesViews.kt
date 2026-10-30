@@ -807,6 +807,17 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
  */
 class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
 
+    init {
+        // Issue #70 F1: the valve announces itself and its price —
+        // and offers NO activation shortcut. The continuous
+        // 60-second hold is the law of this control; a TalkBack
+        // double-tap that completed it would be a cheat code, so
+        // the view is focusable (it can be found and heard) but
+        // not clickable.
+        isFocusable = true
+        describeAs("Emergency break. Hold for 60 seconds to open.")
+    }
+
     var requiredSeconds: Int = 60
         set(value) {
             // Issue-60 (finding 4): was a plain field — the Airlock

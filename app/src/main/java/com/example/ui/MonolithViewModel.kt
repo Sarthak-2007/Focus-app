@@ -988,6 +988,10 @@ class MonolithViewModel(
     fun parkIntroPending(): Boolean = repository.parkIntroPending()
     fun markParkIntroDone() = repository.markParkIntroDone()
 
+    /** Issue #70 F3: the Deck primer's first-run bit. */
+    fun deckPrimerPending(): Boolean = repository.deckPrimerPending()
+    fun markDeckPrimerDone() = repository.markDeckPrimerDone()
+
     /**
      * The seal freeze (Emil §3.2): the APPS count and the wire
      * verdict captured at the session's SEAL — at VM scope, so the
