@@ -265,6 +265,23 @@ data class DisarmChallengeState(
     // as long as it is visible.
 )
 
+/**
+ * Issue #141: one sled tier commit, staged for its undo window.
+ * A rocker mistap used to be instant and permanent; the commit now
+ * leaves this record on the Shield banner ("'X' SET TO OPEN — UNDO")
+ * for a few seconds, and [MonolithViewModel.undoLastTierChange]
+ * restores [fromTier]. In-memory only, by design: the window is
+ * seconds long and the change it reverses is the one the hand just
+ * made — a process death inside the window loses the undo, never
+ * the ruling itself.
+ */
+data class TierChangeForUndo(
+    val packageName: String,
+    val appName: String,
+    val fromTier: AppBlockTier,
+    val toTier: AppBlockTier
+)
+
 class MonolithViewModel(
     private val appContext: Context,
     private val repository: MonolithRepository,
@@ -361,6 +378,14 @@ class MonolithViewModel(
     private val _ratchetWarningMessage = MutableStateFlow<String?>(null)
     val ratchetWarningMessage: StateFlow<String?> = _ratchetWarningMessage.asStateFlow()
     private var ratchetBannerJob: Job? = null
+
+    // Issue #141: the last out-of-session sled commit, staged for
+    // its undo window (see TierChangeForUndo). Mirrors the
+    // task-delete undo's shape: a StateFlow the Shield renders plus
+    // a dismiss job that closes the window.
+    private val _tierChangeForUndo = MutableStateFlow<TierChangeForUndo?>(null)
+    val tierChangeForUndo: StateFlow<TierChangeForUndo?> = _tierChangeForUndo.asStateFlow()
+    private var tierUndoDismissJob: Job? = null
 
     private fun triggerRatchetWarning(msg: String) {
         // Slice E (E4 §7.9 census): the completion pulse is the
@@ -2192,8 +2217,54 @@ class MonolithViewModel(
             AppBlockTier.OPEN -> 820.0
         }
         soundEngine.playRotaryDetent(freq)
+        // Issue #141: stage the take-back. Only out-of-session
+        // commits get a window — in-session changes are deliberate
+        // tightenings under the ratchet, and an undo there could
+        // only ever be a weakening (refused in undoLastTierChange).
+        if (tier != app.resolvedTier && !isLockedSession) {
+            _tierChangeForUndo.value = TierChangeForUndo(
+                packageName = app.packageName,
+                appName = app.appName,
+                fromTier = app.resolvedTier,
+                toTier = tier
+            )
+            tierUndoDismissJob?.cancel()
+            tierUndoDismissJob = viewModelScope.launch {
+                delay(6000L)
+                _tierChangeForUndo.value = null
+            }
+        }
         viewModelScope.launch {
             repository.setAppBlockTier(app.packageName, tier)
+        }
+    }
+
+    private fun tierRankOf(tier: AppBlockTier): Int = when (tier) {
+        AppBlockTier.OPEN -> 0
+        AppBlockTier.PEEK_2M -> 1
+        AppBlockTier.LOCKED -> 2
+    }
+
+    /**
+     * Issue #141: take back the staged sled commit inside its
+     * window. The undo is itself a tier change, so it obeys the
+     * one-way ratchet: if a session has armed since the commit, an
+     * undo that would weaken the app's current rule is refused
+     * with the ratchet warning instead of applied.
+     */
+    fun undoLastTierChange() {
+        val change = _tierChangeForUndo.value ?: return
+        _tierChangeForUndo.value = null
+        tierUndoDismissJob?.cancel()
+        val current = apps.value.firstOrNull { it.packageName == change.packageName }?.resolvedTier
+        if (activeSession.value?.isActive == true && current != null &&
+            tierRankOf(change.fromTier) < tierRankOf(current)
+        ) {
+            triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT WEAKEN '${change.appName.uppercase()}' DURING ACTIVE VAULT")
+            return
+        }
+        viewModelScope.launch {
+            repository.setAppBlockTier(change.packageName, change.fromTier)
         }
     }
 

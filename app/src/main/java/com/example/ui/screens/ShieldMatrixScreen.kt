@@ -65,6 +65,7 @@ import com.example.data.MonolithRepository
 import com.example.data.SmartLoadout
 import com.example.data.groupedByRule
 import com.example.service.TactileSoundEngine
+import com.example.ui.TierChangeForUndo
 import com.example.ui.components.BlockitActionChip
 import com.example.ui.components.ShieldCapSelector
 import com.example.ui.components.onInkControlFill
@@ -100,6 +101,10 @@ fun ShieldMatrixScreen(
     loadoutCapIndex: Int = 0,
     isSessionActive: Boolean = false,
     ratchetWarningMessage: String? = null,
+    // Issue #141: the staged sled commit + its take-back, rendered
+    // as a banner under the ratchet warning while the window lasts.
+    tierChangeForUndo: TierChangeForUndo? = null,
+    onUndoTierChange: () -> Unit = {},
     soundEngine: TactileSoundEngine? = null,
     isDarkTheme: Boolean = false,
     onSearchQueryChanged: (String) -> Unit,
@@ -237,7 +242,11 @@ fun ShieldMatrixScreen(
      *  elsewhere is suppressed here, so an app is present in exactly
      *  one section at any instant. */
     fun slipLines(tier: AppBlockTier): List<SlipLine> {
-        val committed = if (tier == AppBlockTier.PEEK_2M) rules.peek else rules.shut
+        val committed = when (tier) {
+            AppBlockTier.PEEK_2M -> rules.peek
+            AppBlockTier.LOCKED -> rules.shut
+            AppBlockTier.OPEN -> rules.open
+        }
         val lines = mutableListOf<SlipLine>()
         for (app in committed) {
             val resting = restingFlips[app.packageName]
@@ -286,6 +295,46 @@ fun ShieldMatrixScreen(
                         fontSize = 12.sp,
                         color = Color(0xFFFBF1EC)
                     )
+                }
+            }
+        }
+
+        // Issue #141: the sled commit's receipt + take-back. A tier
+        // change used to land silently and forever; while the undo
+        // window lasts, the banner names what changed and offers
+        // the reversal on the spot.
+        item {
+            AnimatedVisibility(visible = tierChangeForUndo != null) {
+                val change = tierChangeForUndo
+                if (change != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(scheme.primaryContainer)
+                            .padding(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "'${change.appName.uppercase()}' SET TO ${tierWord(change.toTier)}",
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = Color(0xFFFBF1EC)
+                            )
+                            Text(
+                                text = "UNDO",
+                                modifier = Modifier.clickable { onUndoTierChange() },
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = Color(0xFFFBF1EC)
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -447,6 +496,33 @@ fun ShieldMatrixScreen(
                 item { SlipNoneLine() }
             } else {
                 items(shutLines, key = { "slip_${it.app.packageName}" }) { line ->
+                    SlipLineRow(
+                        line = line,
+                        onTap = { slipTap(line.app) },
+                        onRestElapsed = {
+                            restingFlips[line.app.packageName]?.let { entry ->
+                                restingFlips = restingFlips +
+                                    (line.app.packageName to entry.copy(exiting = true))
+                            }
+                        },
+                        onExitElapsed = {
+                            restingFlips = restingFlips - line.app.packageName
+                        }
+                    )
+                }
+            }
+            // Issue #141: OPEN gets a section too. The slip used to
+            // print only the rulings that restrict, so an app flipped
+            // to OPEN vanished from the book entirely — discoverable
+            // only by the absence nobody audits. The open rulings are
+            // printed like the others; a line tap shuts the app
+            // (the book amends in both directions).
+            val openLines = slipLines(AppBlockTier.OPEN)
+            item { SlipSectionHeader(word = "OPEN") }
+            if (openLines.isEmpty()) {
+                item { SlipNoneLine() }
+            } else {
+                items(openLines, key = { "slip_${it.app.packageName}" }) { line ->
                     SlipLineRow(
                         line = line,
                         onTap = { slipTap(line.app) },
