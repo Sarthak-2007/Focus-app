@@ -83,7 +83,7 @@ class CascadeDeckRenderTest {
     private fun setDeck(phase: ArmPhase, dark: Boolean) {
         val session = fakeSession()
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = dark, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = dark) {
                 TactileDeckScreen(
                     activeSession = session,
                     dialMinutes = 50,

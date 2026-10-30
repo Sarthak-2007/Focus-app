@@ -48,11 +48,14 @@ data class SystemGuardStatus(
     val isAccessibilityServiceEnabled: Boolean = false,
     val isNotificationListenerEnabled: Boolean = false,
     val isDeviceAdminEnabled: Boolean = false,
-    val isMonotonicClockIntact: Boolean = true,
-    val isHmacSignatureValid: Boolean = true,
+    // Issue #28: unmeasured is NOT intact. The old defaults (true /
+    // true / 1 / 12) let every surface print security facts that
+    // were never checked. Unknown now reads as unknown.
+    val isMonotonicClockIntact: Boolean = false,
+    val isHmacSignatureValid: Boolean = false,
     val clockDriftSeconds: Long = 0L,
-    val systemBootCount: Int = 1,
-    val installedLauncherAppsCount: Int = 12
+    val systemBootCount: Int = 0,
+    val installedLauncherAppsCount: Int = 0
 ) {
     val readinessCount: Int
         get() = listOf(
@@ -86,6 +89,30 @@ data class PruneNote(
     val appsRemoved: Int,
     val rulesRemoved: Boolean
 )
+
+/** Issue #99 F1: how long after a peek lease's end its package still
+ *  counts as "just expired" for eviction purposes. The shield polls
+ *  every 2s, so this only needs to cover the first polls after
+ *  expiry; 15 minutes is generous without resurrecting old leases. */
+const val EXPIRED_PEEK_EVICTION_WINDOW_MILLIS = 15 * 60 * 1000L
+
+/**
+ * Issue #99 F1 (pure, unit-tested): the packages whose peek lease
+ * has expired inside the eviction window — lease end recorded,
+ * in the past, and not so far in the past that the row is history.
+ * A lease end of 0 (never leased / already closed) never qualifies.
+ */
+internal fun expiredPeekPackages(
+    apps: List<BlockedAppEntity>,
+    nowMono: Long,
+    windowMillis: Long = EXPIRED_PEEK_EVICTION_WINDOW_MILLIS
+): Set<String> = apps
+    .filter { app ->
+        val end = app.activePeekUntilElapsedRealtime
+        end > 0L && end <= nowMono && (nowMono - end) <= windowMillis
+    }
+    .map { it.packageName }
+    .toSet()
 
 class MonolithRepository(
     private val context: Context,
@@ -573,7 +600,23 @@ class MonolithRepository(
         }
     }
 
-    fun queryForegroundBlockedApp(blockedPackages: Set<String>): String? {
+    fun queryForegroundBlockedApp(blockedPackages: Set<String>): String? =
+        queryForegroundBlockedApp(blockedPackages, emptySet())
+
+    /**
+     * Issue #99 F1: packages whose peek lease has JUST expired. A
+     * stay-put user inside the peeked app has a [lastTimeUsed] from
+     * when the app was opened — minutes stale by expiry — so the
+     * ordinary 8-second freshness filter is structurally blind to
+     * exactly the user the expiry must evict. For a package in
+     * [expiredPeekPackages] the freshness filter is waived and the
+     * usage window widened: the package is treated as
+     * foreground-blocked on this poll regardless of lastTimeUsed age.
+     */
+    fun queryForegroundBlockedApp(
+        blockedPackages: Set<String>,
+        expiredPeekPackages: Set<String>
+    ): String? {
         if (!hasUsageStatsPermission() || blockedPackages.isEmpty()) return null
         if (isPhoneOrVoipCallActive()) return null
         return try {
@@ -582,9 +625,14 @@ class MonolithRepository(
             val end = System.currentTimeMillis()
             val start = end - 15_000L
             val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end)
+                ?: return null
+            val expiredHit = stats
+                .filter { it.packageName in expiredPeekPackages && it.packageName in blockedPackages }
+                .maxByOrNull { it.lastTimeUsed }
+            if (expiredHit != null) return expiredHit.packageName
             val recent = stats
-                ?.filter { it.packageName in blockedPackages && it.lastTimeUsed >= (end - 8_000L) }
-                ?.maxByOrNull { it.lastTimeUsed }
+                .filter { it.packageName in blockedPackages && it.lastTimeUsed >= (end - 8_000L) }
+                .maxByOrNull { it.lastTimeUsed }
             recent?.packageName
         } catch (_: Exception) {
             null
@@ -683,6 +731,35 @@ class MonolithRepository(
     suspend fun forgedArtifactIds(): Set<String> =
         dao.getForgedArtifactIds().toSet()
 
+    /**
+     * The cabinet's forge record per artifact (Issue #110,
+     * finding 5): how many sessions forged each id, and the most
+     * recent forge instant. Computed from the session rows the
+     * app already stores — forgedArtifactId plus the row's end
+     * stamp (falling back to its start for pre-v11 rows) — so no
+     * new storage is needed; the old DISTINCT read collapsed all
+     * of this away. The Partial Stamp's id is counted here too:
+     * it is a real stamp on real sessions, and the cabinet now
+     * carries a catalog entry for it.
+     */
+    suspend fun forgeStats(): Map<String, ForgeStat> {
+        val stats = mutableMapOf<String, ForgeStat>()
+        for (session in dao.getSessionHistorySnapshot()) {
+            val artifactId = session.forgedArtifactId ?: continue
+            val forgedAt = if (session.endWallMillis > 0L) {
+                session.endWallMillis
+            } else {
+                session.startWallTimeMillis
+            }
+            val prev = stats[artifactId]
+            stats[artifactId] = ForgeStat(
+                count = (prev?.count ?: 0) + 1,
+                lastForgedAtMillis = maxOf(prev?.lastForgedAtMillis ?: 0L, forgedAt)
+            )
+        }
+        return stats
+    }
+
     fun hasOverlayPermission(): Boolean {
         return try {
             Settings.canDrawOverlays(context)
@@ -775,8 +852,11 @@ class MonolithRepository(
 
     suspend fun getSystemGuardStatus(): SystemGuardStatus = withContext(Dispatchers.IO) {
         val active = dao.getActiveSessionSnapshot()
-        var clockIntact = true
-        var hmacIntact = true
+        // Issue #28: with no active session there is nothing to
+        // measure against — intact stays false (unproven), never
+        // a free pass printed as a fact.
+        var clockIntact = false
+        var hmacIntact = false
         var driftSeconds = 0L
 
         if (active != null) {
@@ -2334,7 +2414,10 @@ class MonolithRepository(
         val isGraceCancel = outcomeReason.contains("Grace Cancel", ignoreCase = true)
         val bankedElapsed = if (isGraceCancel) 0 else max(verifiedElapsed, active.elapsedSeconds)
         val partialStampId = if (!completed && !isGraceCancel && bankedElapsed >= 60) {
-            "partial_stamp"
+            // Issue #110, finding 5: the id is the named constant
+            // whose catalog entry (PARTIAL_STAMP_ARTIFACT) the
+            // cabinet carries — the stamp matches a real row now.
+            PARTIAL_STAMP_ID
         } else {
             active.forgedArtifactId
         }
@@ -2624,11 +2707,24 @@ class MonolithRepository(
      * man never gave.
      */
     private fun completedTaskSummaryEntry(task: FocusTaskEntity): String {
-        val actualMins = (task.actualSecondsSpent / 60).coerceAtLeast(1)
+        // Issue #110 (vault-history-lived, finding 3): the actual
+        // segment prints the task's REAL accrued time. The old
+        // coerceAtLeast(1) inflated every sub-minute completion —
+        // including tasks ticked done with no session ever run
+        // (0 accrued seconds) — to "1m actual": a printed minute
+        // that never happened, on the receipt of the very session
+        // that proves it didn't. Zero accrued seconds says so;
+        // a real sub-minute accrual says "<1m", never a whole
+        // minute it did not reach.
+        val actualSegment = when {
+            task.actualSecondsSpent <= 0 -> "no session time"
+            task.actualSecondsSpent < 60 -> "<1m actual"
+            else -> "${task.actualSecondsSpent / 60}m actual"
+        }
         return if (task.estimatedMinutes > 0) {
-            "${task.title} (${task.estimatedMinutes}m est / ${actualMins}m actual)"
+            "${task.title} (${task.estimatedMinutes}m est / $actualSegment)"
         } else {
-            "${task.title} (${actualMins}m actual)"
+            "${task.title} ($actualSegment)"
         }
     }
 
@@ -2846,7 +2942,15 @@ class MonolithRepository(
      *  index, or the word would be filed nowhere. Word months come
      *  from BOTH word stores (see allDayWords). */
     suspend fun storedMonths(): List<StoredMonth> {
-        val fromTasks = dao.getStoredMonths()
+        // Audit R1 #37: months are filed by the ONE filing function
+        // (DrawerDay) from raw instants — the SQL twin that used to
+        // compute this in SQLite disagreed with it on DST days.
+        val fromTasks = dao.getStoredCompletionInstants()
+            .map { instant ->
+                val (year, month) = DrawerDay.filingYearMonth(instant)
+                StoredMonth(year, month)
+            }
+            .distinct()
         val fromWords = allDayWords().keys.mapNotNull { iso ->
             runCatching {
                 val date = java.time.LocalDate.parse(iso)
@@ -2884,8 +2988,23 @@ class MonolithRepository(
         return fromTable + dayWordStore.all()
     }
 
-    fun declareDayWord(dateIso: String, word: String?) {
-        dayWordStore.put(dateIso, word)
+    /** Declare (or clear, with null) the word for [dateIso].
+     *  Returns whether the prefs write reached disk (DayWordStore's
+     *  commit verdict — Audit R1 #37: the result used to be
+     *  discarded, so a failed write still displayed as declared).
+     *
+     *  A CLEAR reaches BOTH stores: before this fix it removed only
+     *  the prefs key, so a word that had drained into day_notes at
+     *  seed-sync resurrected on the very next union read and could
+     *  never be undeclared. The table row is deleted only when the
+     *  prefs removal committed — if that failed, nothing about the
+     *  clear is presented as done. */
+    suspend fun declareDayWord(dateIso: String, word: String?): Boolean {
+        val committed = dayWordStore.put(dateIso, word)
+        if (committed && word == null) {
+            dao.deleteDayNote(dateIso)
+        }
+        return committed
     }
 
     /**

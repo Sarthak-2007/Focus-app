@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -74,6 +75,12 @@ import com.example.ui.components.FullBleedSectionHeader
 import com.example.ui.components.rememberMixedTypographyText
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.DialClockTextStyle
+import com.example.ui.theme.DisplayUnitTextStyle
+import com.example.ui.theme.NightColorOnSurface
+import com.example.ui.theme.NightColorSurfaceSheet
+import com.example.ui.theme.TokenColorSurfaceBright
+import com.example.ui.theme.TokenColorSurfaceVariant
+import com.example.ui.theme.TokenTrueBlack
 import com.example.ui.theme.MonolithCurves
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.views.RotaryWheelView
@@ -354,7 +361,18 @@ fun TactileDeckScreen(
     // it. liveWarrantState stays the raw wire word for the one
     // place that must follow the wire itself (the running BLOCK
     // cell's OFF, below).
-    val nowMono = SystemClock.elapsedRealtime()
+    // Issue #50 F4 cure: freshness is judged against a ticking
+    // state, not a raw clock read — a 5-second mono ticker bounds
+    // a stale LIVE print to 5s past its deadline instead of the
+    // ~60s the minute-aligned frame clock allowed.
+    var nowMonoTick by remember { mutableStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            nowMonoTick = SystemClock.elapsedRealtime()
+            kotlinx.coroutines.delay(5_000L)
+        }
+    }
+    val nowMono = nowMonoTick
     val warrantPrintState = com.example.service.WatchStore.printState(deckWarrant, nowMono)
     fun blockCellFor(state: WarrantState?): Pair<String, StripDensity> = when (state) {
         WarrantState.LIVE -> "ON" to StripDensity.PASS
@@ -379,11 +397,27 @@ fun TactileDeckScreen(
     // whole press and release at the latch or the return to rest.
     // (Declared before the freeze: the seal retires a live latch.)
     var pressLatch by remember { mutableStateOf<PressLatch?>(null) }
+    // The armResetKey in force when the live latch was taken
+    // (event-time write, in onPressStart). A reset that lands
+    // after the DOWN retires the latch by derivation, not by a
+    // composition write (issue #50 F2).
+    var latchArmKey by remember { mutableStateOf(armResetKey) }
 
     // A committed press retires its latch at the SEAL, not at the
     // view's press-end (Emil E-5): between the latch frame and the
     // sealed composition, the latched print must keep standing.
     var commitInFlight by remember { mutableStateOf(false) }
+
+    // Storage hygiene for the F2 derivation: once a session is
+    // running the stored latch is cleared in an effect, so it
+    // can never revive when the session ends. Prints never wait
+    // for this — pressLatchLive already reads null while running.
+    LaunchedEffect(isSessionRunning) {
+        if (isSessionRunning && (pressLatch != null || commitInFlight)) {
+            pressLatch = null
+            commitInFlight = false
+        }
+    }
 
     // The seal freeze (Emil §3.2, as far as this slice can honestly
     // build it): the ViewModel captures the count and the verdict
@@ -403,39 +437,52 @@ fun TactileDeckScreen(
     var fbFrozenShut by rememberSaveable { mutableStateOf<Int?>(null) }
     var fbFrozenPeek by rememberSaveable { mutableStateOf<Int?>(null) }
     var fbFrozenState by rememberSaveable { mutableStateOf<String?>(null) }
-    if (isSessionRunning && activeSession != null) {
-        // The seal retires any live press latch: if the slide view
-        // detached mid-refusal (a routine armed during the refusal's
-        // 300ms), its onPressEnd never fires — the latch must not
-        // leak across the seal (Joss, review J-2).
-        if (pressLatch != null || commitInFlight) {
-            pressLatch = null
-            commitInFlight = false
+    // Issue #50 F2 cure (capture door, completed by STOSS-50):
+    // the fbFrozen capture / split fill-in / reset no longer write
+    // snapshot state during composition — they run in this effect,
+    // keyed on every input the capture reads. Semantics kept:
+    // capture-WHEN-KNOWN only (a null count never freezes), the
+    // VM's sealFreeze still outranks this fallback (its session
+    // never captures here), the split still fills in on its own
+    // later emission, and the reset still clears all five fields
+    // when no session is running. The one honest cost: the frozen
+    // values land one frame after the first running composition
+    // instead of inside it — that frame prints UNKNOWN, which is
+    // the truth until the capture exists. (The latch retirement
+    // at this same door was cured by derivation: pressLatchLive
+    // reads null from the sealing frame on, per E-13, and the
+    // LaunchedEffect(isSessionRunning) above clears the storage —
+    // if the slide view detached mid-refusal its onPressEnd never
+    // fires, and the latch still cannot leak across the seal,
+    // Joss review J-2.)
+    LaunchedEffect(
+        isSessionRunning, activeSession?.id, appsCellCount,
+        appsSplit, liveWarrantState, sealFreeze?.sessionId
+    ) {
+        val session = activeSession
+        if (isSessionRunning && session != null) {
+            if (sealFreeze?.sessionId != session.id &&
+                fbFrozenKey != session.id && appsCellCount != null
+            ) {
+                fbFrozenKey = session.id
+                fbFrozenCount = appsCellCount
+                fbFrozenShut = appsSplit?.shut
+                fbFrozenPeek = appsSplit?.peek
+                fbFrozenState = liveWarrantState?.name
+            }
+            if (fbFrozenKey == session.id &&
+                (fbFrozenShut == null || fbFrozenPeek == null) && appsSplit != null
+            ) {
+                fbFrozenShut = appsSplit.shut
+                fbFrozenPeek = appsSplit.peek
+            }
+        } else if (fbFrozenKey != null) {
+            fbFrozenKey = null
+            fbFrozenCount = null
+            fbFrozenShut = null
+            fbFrozenPeek = null
+            fbFrozenState = null
         }
-        if (sealFreeze?.sessionId != activeSession.id &&
-            fbFrozenKey != activeSession.id && appsCellCount != null
-        ) {
-            fbFrozenKey = activeSession.id
-            fbFrozenCount = appsCellCount
-            fbFrozenShut = appsSplit?.shut
-            fbFrozenPeek = appsSplit?.peek
-            fbFrozenState = liveWarrantState?.name
-        }
-        // The split can land an emission after the count; fill it
-        // in on its own pass so the frozen tenant is not silent
-        // for the session's whole life over a one-frame lag.
-        if (fbFrozenKey == activeSession.id &&
-            (fbFrozenShut == null || fbFrozenPeek == null) && appsSplit != null
-        ) {
-            fbFrozenShut = appsSplit.shut
-            fbFrozenPeek = appsSplit.peek
-        }
-    } else if (fbFrozenKey != null) {
-        fbFrozenKey = null
-        fbFrozenCount = null
-        fbFrozenShut = null
-        fbFrozenPeek = null
-        fbFrozenState = null
     }
 
     // The sealFreeze branches must test the freeze's presence, not
@@ -466,25 +513,15 @@ fun TactileDeckScreen(
     }
 
     // Annulment retires the press like the seal does (step 4):
-    // the attempt un-existed, so its frozen print un-exists with
-    // it — and the slide view is ordered home by the reset key
-    // in its update pass below. The retirement is BODY-LEVEL, in
-    // the first composition carrying the new key and before the
-    // derivations below (Emil, cascade review E-13): as a
-    // LaunchedEffect it ran one-to-two compositions late, and the
-    // dead attempt's latched WILL SHUT prints lingered past the
-    // annulment frame. The seal path above retires in-body on its
-    // frame; this is the same law at the other door — and it
-    // covers the latch-frame hand-back too, which increments the
-    // same key (Joss CHARGE 2's fix).
-    var seenArmResetKey by remember { mutableStateOf(armResetKey) }
-    if (armResetKey != seenArmResetKey) {
-        seenArmResetKey = armResetKey
-        if (pressLatch != null || commitInFlight) {
-            pressLatch = null
-            commitInFlight = false
-        }
-    }
+    // Issue #50 F2 cure (reset door) — no composition writes any
+    // more. The latch carries the armResetKey of its own DOWN
+    // frame (latchArmKey, stamped in onPressStart); derivations
+    // read pressLatchLive, which a changed key retires on the
+    // very frame the new key composes (E-13's same-frame law,
+    // kept — derivation, unlike a LaunchedEffect, is not one-to-
+    // two compositions late), and the next DOWN re-stamps the key.
+    // This covers the latch-frame hand-back too, which increments
+    // the same key (Joss CHARGE 2's fix).
 
     // UNA2-04: the frozen verdict owns the running BLOCK cell
     // while the wire agrees the bind held — but the instant the
@@ -510,12 +547,17 @@ fun TactileDeckScreen(
             else -> blockCellFor(frozenState)
         }
     } else idleBlockCell
+    // The latch as derivations may read it: retired by the
+    // seal (session running) and by any arm reset newer than
+    // its DOWN frame — derived, never written in composition.
+    val pressLatchLive: PressLatch? =
+        pressLatch?.takeIf { !isSessionRunning && latchArmKey == armResetKey }
     val appsCell = when {
         isSessionRunning -> {
             if (frozenCount != null) frozenCount.toString() to StripDensity.PASS
             else "UNKNOWN" to StripDensity.UNKNOWN
         }
-        pressLatch != null -> pressLatch!!.appsWord to pressLatch!!.appsDensity
+        pressLatchLive != null -> pressLatchLive.appsWord to pressLatchLive.appsDensity
         appsCellCount != null -> appsCellCount.toString() to StripDensity.PASS
         else -> "UNKNOWN" to StripDensity.UNKNOWN
     }
@@ -527,10 +569,10 @@ fun TactileDeckScreen(
                 endsAtText(nowFrame + activeSession.spanRemainingSeconds * 1000L) to StripDensity.PASS
             }
         }
-        pressLatch != null -> pressLatch!!.timeText to pressLatch!!.timeDensity
+        pressLatchLive != null -> pressLatchLive.timeText to pressLatchLive.timeDensity
         else -> idleTimeCell
     }
-    val imprintTenant = (if (!isSessionRunning) pressLatch?.tenant else null) ?: imprintTenantText(
+    val imprintTenant = pressLatchLive?.tenant ?: imprintTenantText(
         isSealed = isSessionRunning,
         shut = if (isSessionRunning) frozenShut else appsSplit?.shut,
         peek = if (isSessionRunning) frozenPeek else appsSplit?.peek,
@@ -586,17 +628,46 @@ fun TactileDeckScreen(
                 // gone at Settle. At rest every term is identity.
                 .then(
                     if (shotActive && shot != null) {
-                        val vt = shot.vertigoT
-                        val blurDp = (6f * 4f * shot.blurT * (1f - shot.blurT)).dp
-                        Modifier
-                            .graphicsLayer {
-                                scaleX = 1f - 0.06f * vt
-                                scaleY = 1f - 0.06f * vt
-                                // Issue #6 F15: the ground rise is
-                                // DELETED, not moved (verdict) — the
-                                // page recedes, it does not climb.
+                        // Issue #50 F3 cure: vertigoT/blurT are read
+                        // inside the graphicsLayer block (draw phase),
+                        // so the 1050ms shot no longer recomposes the
+                        // whole screen every frame. The blur rides the
+                        // layer's renderEffect on API 31+; below that
+                        // the composition-read Modifier.blur remains
+                        // as the documented fallback. (Issue #6 F15
+                        // stands: no translationY — the page recedes,
+                        // it does not climb.)
+                        Modifier.graphicsLayer {
+                            val vt = shot.vertigoT
+                            scaleX = 1f - 0.06f * vt
+                            scaleY = 1f - 0.06f * vt
+                            if (android.os.Build.VERSION.SDK_INT >=
+                                android.os.Build.VERSION_CODES.S
+                            ) {
+                                val b = 24f * shot.blurT * (1f - shot.blurT)
+                                renderEffect = if (b > 0f) {
+                                    android.graphics.RenderEffect
+                                        .createBlurEffect(
+                                            b.dp.toPx(), b.dp.toPx(),
+                                            android.graphics.Shader.TileMode.CLAMP
+                                        )
+                                        .asComposeRenderEffect()
+                                } else {
+                                    null
+                                }
                             }
-                            .then(if (blurDp > 0.dp) Modifier.blur(blurDp) else Modifier)
+                        }.then(
+                            if (android.os.Build.VERSION.SDK_INT <
+                                android.os.Build.VERSION_CODES.S
+                            ) {
+                                val blurDp =
+                                    (6f * 4f * shot.blurT * (1f - shot.blurT)).dp
+                                if (blurDp > 0.dp) Modifier.blur(blurDp)
+                                else Modifier
+                            } else {
+                                Modifier
+                            }
+                        )
                     } else {
                         Modifier
                     }
@@ -665,18 +736,18 @@ fun TactileDeckScreen(
                 isStopwatchMode -> buildAnnotatedString { append("FLOW") }
                 totalSpanMinutes < 60 -> buildAnnotatedString {
                     append(totalSpanMinutes.toString())
-                    withStyle(SpanStyle(fontSize = 50.sp, letterSpacing = (-1.5).sp)) { append(" MIN") }
+                    withStyle(SpanStyle(fontSize = DisplayUnitTextStyle.fontSize, letterSpacing = DisplayUnitTextStyle.letterSpacing)) { append(" MIN") }
                 }
                 else -> buildAnnotatedString {
                     append((totalSpanMinutes / 60).toString())
-                    withStyle(SpanStyle(fontSize = 50.sp, letterSpacing = (-1.5).sp)) { append("H ") }
+                    withStyle(SpanStyle(fontSize = DisplayUnitTextStyle.fontSize, letterSpacing = DisplayUnitTextStyle.letterSpacing)) { append("H ") }
                     append(String.format(Locale.US, "%02d", totalSpanMinutes % 60))
-                    withStyle(SpanStyle(fontSize = 50.sp, letterSpacing = (-1.5).sp)) { append("M") }
+                    withStyle(SpanStyle(fontSize = DisplayUnitTextStyle.fontSize, letterSpacing = DisplayUnitTextStyle.letterSpacing)) { append("M") }
                 }
             }
             val heroTracking = if (!showRunningForm && isStopwatchMode) (-0.5).sp else (-2.0).sp
-            val heroGlyph = if (effectiveNight) Color(0xFFEDE3D8) else scheme.onBackground
-            val heroShadowGhost = if (effectiveNight) Color(0x80000000) else Color(0x99D8D1CB)
+            val heroGlyph = if (effectiveNight) NightColorOnSurface else scheme.onBackground
+            val heroShadowGhost = if (effectiveNight) TokenTrueBlack.copy(alpha = 0.5f) else TokenColorSurfaceVariant.copy(alpha = 0.6f)
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 // Issue #6 F10 — SINGLE-PRESS: the catch ghost dies;
                 // ONE shadow ghost survives, and ghosts are OFF on
@@ -797,116 +868,15 @@ fun TactileDeckScreen(
         // SECTION 2: THE TASK — one quiet line (Ren). Sub-steps behind a tap.
         // =====================================================================
         if (activeTask != null) {
-            var stepsExpanded by remember { mutableStateOf(false) }
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        text = "NOW",
-                        fontFamily = AnonymousProFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 10.5.sp,
-                        letterSpacing = 1.sp,
-                        color = scheme.onBackground
-                    )
-                    Text(
-                        text = activeTask.title,
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 15.sp,
-                        color = scheme.onBackground,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .weight(1f)
-                            .then(
-                                if (activeTask.subSteps.isNotEmpty() && !shotActive) {
-                                    Modifier.clickable { stepsExpanded = !stepsExpanded }
-                                } else {
-                                    Modifier
-                                }
-                            )
-                    )
-                    // DONE is a verb, so it wears an action's body
-                    // (ESR-07): the same raised key-cap as the FLOW
-                    // key — bare mono text beside the static QUEUE
-                    // count read as print, declaring an unfinished
-                    // task done. (Truth patch, re-applied at the
-                    // slide merge over this lane's older Deck.)
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(scheme.surfaceVariant)
-                            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
-                            // Input death (Zug-II §4.6): the task
-                            // verbs' HANDLERS are removed by state
-                            // during the shot — not greyed, gone.
-                            .clickable(enabled = !shotActive) { onCompleteActiveTask(activeTask.id) }
-                            .padding(horizontal = 10.dp, vertical = 5.dp)
-                    ) {
-                        Text(
-                            text = "DONE",
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onBackground
-                        )
-                    }
-                    Text(
-                        text = "QUEUE ${queuedTasks.size}",
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier.then(
-                            if (!shotActive) Modifier.clickable { onOpenTaskSequencer() } else Modifier
-                        )
-                    )
-                }
-                if (stepsExpanded && activeTask.subSteps.isNotEmpty()) {
-                    activeTask.subSteps.forEachIndexed { idx, step ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(enabled = !shotActive) { onToggleTaskSubStep(activeTask.id, idx) }
-                                .padding(vertical = 3.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                // The shared two-digit voice (DRW-08,
-                                // Truth Car 2): the tenth sub-step
-                                // prints "10", never "010" — one
-                                // formatter cures Deck, Tasks leaf,
-                                // and Drawer detail together.
-                                text = com.example.data.twoDigitCount(idx + 1),
-                                fontFamily = AnonymousProFamily,
-                                fontSize = 11.sp,
-                                // E5b B3 (Horiz §2): a done step's
-                                // numeral exits the accent at the
-                                // seal — from exit phase 1 it reads
-                                // as ground print, permanently for
-                                // this session's frame.
-                                color = if (step.isDone && exitPhase < 1) {
-                                    scheme.primaryContainer
-                                } else {
-                                    scheme.onSurfaceVariant
-                                }
-                            )
-                            Text(
-                                text = step.title,
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontSize = 13.sp,
-                                color = if (step.isDone) scheme.onSurfaceVariant else scheme.onBackground,
-                                textDecoration = if (step.isDone) TextDecoration.LineThrough else TextDecoration.None
-                            )
-                        }
-                    }
-                }
-            }
+            DeckTaskSection(
+                task = activeTask,
+                queuedCount = queuedTasks.size,
+                shotActive = shotActive,
+                exitPhaseProvider = { exitPhase },
+                onCompleteActiveTask = onCompleteActiveTask,
+                onOpenTaskSequencer = onOpenTaskSequencer,
+                onToggleTaskSubStep = onToggleTaskSubStep
+            )
         }
 
         // =====================================================================
@@ -1027,6 +997,7 @@ fun TactileDeckScreen(
                                 // The latch captures from the slide's
                                 // own DOWN-frame read (Emil E-4), never
                                 // from this screen's async flow.
+                                latchArmKey = armResetKey
                                 pressLatch = PressLatch(
                                     tenant = imprintTenantText(
                                         isSealed = false,
@@ -1127,6 +1098,137 @@ fun TactileDeckScreen(
                 onStruck = { key -> onSessionStruck(key.toInt()) }
             )
         }
+    }
+}
+
+/**
+ * SECTION 2 as its own composition scope (issue #50 F3/F5):
+ * the seal-shot's exitPhase ticks recompose this section only,
+ * never the whole Deck, and the sub-step expansion state is
+ * keyed by task id so it cannot bleed across tasks.
+ */
+@Composable
+private fun DeckTaskSection(
+    task: FocusTaskEntity,
+    queuedCount: Int,
+    shotActive: Boolean,
+    exitPhaseProvider: () -> Int,
+    onCompleteActiveTask: (Int) -> Unit,
+    onOpenTaskSequencer: () -> Unit,
+    onToggleTaskSubStep: (Int, Int) -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    // Issue #50 F5 cure: keyed on the task id — a new active
+    // task never inherits the previous task's expansion state.
+    var stepsExpanded by remember(task.id) { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "NOW",
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.5.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onBackground
+                )
+                Text(
+                    text = task.title,
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 15.sp,
+                    color = scheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .then(
+                            if (task.subSteps.isNotEmpty() && !shotActive) {
+                                Modifier.clickable { stepsExpanded = !stepsExpanded }
+                            } else {
+                                Modifier
+                            }
+                        )
+                )
+                // DONE is a verb, so it wears an action's body
+                // (ESR-07): the same raised key-cap as the FLOW
+                // key — bare mono text beside the static QUEUE
+                // count read as print, declaring an unfinished
+                // task done. (Truth patch, re-applied at the
+                // slide merge over this lane's older Deck.)
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(scheme.surfaceVariant)
+                        .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
+                        // Input death (Zug-II §4.6): the task
+                        // verbs' HANDLERS are removed by state
+                        // during the shot — not greyed, gone.
+                        .clickable(enabled = !shotActive) { onCompleteActiveTask(task.id) }
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = "DONE",
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        letterSpacing = 1.sp,
+                        color = scheme.onBackground
+                    )
+                }
+                Text(
+                    text = "QUEUE ${queuedCount}",
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.then(
+                        if (!shotActive) Modifier.clickable { onOpenTaskSequencer() } else Modifier
+                    )
+                )
+            }
+            if (stepsExpanded && task.subSteps.isNotEmpty()) {
+                task.subSteps.forEachIndexed { idx, step ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !shotActive) { onToggleTaskSubStep(task.id, idx) }
+                            .padding(vertical = 3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            // The shared two-digit voice (DRW-08,
+                            // Truth Car 2): the tenth sub-step
+                            // prints "10", never "010" — one
+                            // formatter cures Deck, Tasks leaf,
+                            // and Drawer detail together.
+                            text = com.example.data.twoDigitCount(idx + 1),
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            // E5b B3 (Horiz §2): a done step's
+                            // numeral exits the accent at the
+                            // seal — from exit phase 1 it reads
+                            // as ground print, permanently for
+                            // this session's frame.
+                            color = if (step.isDone && exitPhaseProvider() < 1) {
+                                scheme.primaryContainer
+                            } else {
+                                scheme.onSurfaceVariant
+                            }
+                        )
+                        Text(
+                            text = step.title,
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 13.sp,
+                            color = if (step.isDone) scheme.onSurfaceVariant else scheme.onBackground,
+                            textDecoration = if (step.isDone) TextDecoration.LineThrough else TextDecoration.None
+                        )
+                    }
+                }
+            }
     }
 }
 
