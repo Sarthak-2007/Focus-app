@@ -274,8 +274,13 @@ class StripDerivationsTest {
     @Test
     fun endsAtIsAPureFunctionOfTheEndInstant() {
         val millis = 1_700_000_000_000L
-        val expected = "ENDS " + SimpleDateFormat("HH:mm", Locale.US).format(Date(millis))
-        assertEquals(expected, endsAtText(millis))
-        assertEquals(endsAtText(millis), endsAtText(millis))
+        // #88: endsAtText takes the device's 12/24-hour choice as a
+        // boolean, so both branches pin exactly (test JVM default
+        // locale is en, matching the Locale.US expectations below).
+        val expected24 = "ENDS " + SimpleDateFormat("HH:mm", Locale.US).format(Date(millis))
+        assertEquals(expected24, endsAtText(true, millis))
+        assertEquals(endsAtText(true, millis), endsAtText(true, millis))
+        val expected12 = "ENDS " + SimpleDateFormat("h:mm a", Locale.US).format(Date(millis))
+        assertEquals(expected12, endsAtText(false, millis))
     }
 }

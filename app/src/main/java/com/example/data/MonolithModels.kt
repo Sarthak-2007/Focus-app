@@ -43,7 +43,7 @@ enum class SmartLoadout(
 ) {
     STUDY(
         title = "Deep Study",
-        subtitle = "Blocks Social & Games, sets YouTube & Messaging to 2m Peek, enables Shorts & Web shields.",
+        subtitle = "Blocks Social & Games, keeps YouTube, browsers & study apps open for lectures, sets Messaging to 2m Peek, enables Shorts & Web shields.",
         badge = "Recommended"
     ),
     WORK_SPRINT(
@@ -197,7 +197,7 @@ data class FocusTaskEntity(
         }
 
         fun defaultSubStepsForCategory(title: String, category: String): List<TaskSubStep> {
-            return when (category.lowercase()) {
+            return when (category.lowercase(java.util.Locale.ROOT)) {
                 "code" -> listOf(
                     TaskSubStep(0, "Trace base cases & data invariants", false),
                     TaskSubStep(1, "Implement core algorithm logic", false),
@@ -261,6 +261,20 @@ enum class AppCategory(val label: String, val code: String) {
     // was filed by substring luck (YouTube Music as SHORT_VIDEO,
     // "…Player" labels as GAMES, Spotify as SHOPPING by accident).
     MUSIC("Music & Audio", "Music"),
+    // EDUCATION (issue #133, study-on-phone-itself): the
+    // deterministic home for study apps — filed by AppCategorizer
+    // (deterministic package homes + study signals), correctable
+    // by the user (setAppCategory, issue #107). Before this value
+    // a study app had no home at all and fell to SHOPPING or a
+    // name-substring trap.
+    EDUCATION("Education", "Study"),
+    // Issue #120 (otp-banking-mid-session): finance gets a real
+    // home. Banks, UPI apps and authenticators are time-critical
+    // infrastructure — an OTP or a UPI collect request dies in
+    // minutes — not shopping. Before this value existed they fell
+    // through to SHOPPING, and the Sleep profile bulk-locked every
+    // one of them without the user ever reviewing a single bank.
+    FINANCE("Finance & Payments", "Money"),
     SHOPPING("Other Apps", "Tools")
 }
 
@@ -380,6 +394,17 @@ data class FocusSessionEntity(
     // counted whole by the span — break time that never ran,
     // claimed on the desk clock and the receipt alike.
     val breakTakenSeconds: Int = 0,
+    // W3 #134 (phone-call-mid-session, DB 14→15): the seconds of THIS
+    // block the call bypass was active — AudioManager in a call
+    // mode (ringing / in-call / VoIP) while the progress machine
+    // ticked. Those seconds are excluded from the block's booked
+    // elapsed at every tick: call time is not focus time, and a
+    // session may not finish, flip into its Safe Break, or stamp
+    // ELAPSED_CLEAN on the strength of minutes spent talking.
+    // Booked per block: the break-exit write (advancePastBreak)
+    // resets it to 0 alongside the anchors it re-bases, so one
+    // block's call never taxes the next block's clock.
+    val callExcludedSeconds: Int = 0,
     val penaltySecondsAdded: Int = 0,
     val isActive: Boolean,
     val completedSuccessfully: Boolean,
@@ -419,6 +444,17 @@ data class FocusSessionEntity(
     // OMIT a -1 figure, never print it (Zettel Z2).
     val heldAppsAtSeal: Int = -1,
     val heldSitesAtSeal: Int = -1,
+    // W-41 (13→14): the HELD total split by tier — heldShutAtSeal
+    // counts LOCKED ("Shut") apps, heldPeekAtSeal counts PEEK_2M
+    // ("2m Peek") apps. Written by the same single writer, inside
+    // the same birth transaction, from the same snapshot as
+    // heldAppsAtSeal (their sum IS the total, by construction).
+    // The receipt prints the split; it never flattens the two
+    // tiers into one number. -1 = uncaptured (a pre-13→14 row):
+    // readers fall back to the stored total, never invent a split
+    // that was never recorded.
+    val heldShutAtSeal: Int = -1,
+    val heldPeekAtSeal: Int = -1,
     // Draht's release-fault record (9→10): the shield that would
     // not stop at a finish. releaseFaultShield names the faulted
     // link; releaseRetriesDone counts the retry cadence's spent
@@ -458,7 +494,21 @@ data class FocusSessionEntity(
     // session can never mint a second №, whatever the settings
     // slot holds by then — replacing the single-slot arithmetic
     // coincidence the guarantee used to rest on.
-    val receiptNumber: Int = 0
+    val receiptNumber: Int = 0,
+    // Issue #287 (12→13, Forest head-to-head F5/F8): the session's
+    // own failure record and the user's own words about it.
+    // failureCausePackage names the blocked app whose reach the
+    // record blames for the break ('' = none recorded — a clean
+    // finish, a grace cancel, or a break with no deflection on
+    // record); failureCauseKind is the trigger vocabulary:
+    // EMERGENCY_VALVE / MANUAL_DISARM. Both are stamped once, at
+    // the ending write, by the disarm doors — never revised.
+    // reflectionNote is the one user-authored line stored against
+    // the finished session ('' = he said nothing); written only
+    // through MonolithRepository.setSessionReflection.
+    val failureCausePackage: String = "",
+    val failureCauseKind: String = "",
+    val reflectionNote: String = ""
 ) {
     // ONE derivation of session time (the Now Frame fix, Nadia x Freya):
     // every surface - Deck, desk clock, airlock, the enforcing service -
@@ -654,29 +704,52 @@ object BlockedBrowserDomains {
         "twitter.com",
         "facebook.com",
         "snapchat.com",
-        "youtube.com/shorts"
+        "youtube.com/shorts",
+        // W3 #130 (browser-as-loophole): the whole YouTube host, not
+        // only its /shorts path — the home/watch feed was the biggest
+        // unlisted feed. Enforced by the same site blocker; a needed
+        // video is reachable through the domain-scoped site peek.
+        "youtube.com"
     )
-    val allowedStudyExamples = listOf(
-        "scholar.google.com",
-        "arxiv.org",
-        "wikipedia.org",
-        "canvas.instructure.com",
-        "leetcode.com"
-    )
+    // Issue #133 (finding 4): an "allowed study sites" example
+    // list used to live here as dead decoration — no study-site
+    // allowlist exists anywhere in enforcement (the browser
+    // blocker is blocklist-only and reads the user's own blocked
+    // list), and nothing in production consumed the examples.
+    // Removed rather than left lying on the surface; a real
+    // study-site allowlist is a feature decision, not a constant.
 
     /**
      * Normalises free-typed input ("https://www.YouTube.com/shorts?x=1")
      * into a stored domain ("youtube.com/shorts"). Null = not a usable site.
+     *
+     * Issue #79 (Audit R2, url-blocker-bypasses #4): the authority is
+     * parsed, not just prefix-stripped — userinfo ("user:pass@"),
+     * ports (":8443") and trailing dots ("instagram.com.") are
+     * stripped, so an accepted entry can always match a real visit.
+     * Before this, all three were stored verbatim and could never be
+     * a substring of the real URL-bar text: a rule the user believed
+     * blocked a site that was wide open. The path is kept (the
+     * "youtube.com/shorts" form above is a real, shipped rule), with
+     * the same authority canonicalisation applied in front of it.
      */
     fun normalizeDomain(raw: String): String? {
-        var d = raw.trim().lowercase()
-        if (d.isEmpty()) return null
-        d = d.removePrefix("https://").removePrefix("http://")
+        var d = raw.trim().lowercase(java.util.Locale.ROOT)
+        if (d.isEmpty() || d.contains(' ')) return null
+        d = d.removePrefix("https://").removePrefix("http://").removePrefix("//")
         d = d.substringBefore('?').substringBefore('#')
-        d = d.removePrefix("www.")
-        d = d.trim().trimEnd('/')
-        if (d.isEmpty() || !d.contains('.') || d.contains(' ')) return null
-        return d
+        if (d.isEmpty()) return null
+        val slash = d.indexOf('/')
+        val authority = if (slash >= 0) d.substring(0, slash) else d
+        val path = if (slash >= 0) d.substring(slash + 1).trim().trimEnd('/') else ""
+        // Authority canonicalisation: drop userinfo and port, then a
+        // trailing dot (FQDN root label), then one leading "www.".
+        var host = authority.substringAfterLast('@')
+        host = host.substringBefore(':')
+        host = host.trim().trimEnd('.').removePrefix("www.").trimEnd('.')
+        if (host.isEmpty() || !host.contains('.')) return null
+        if (host.split('.').any { it.isEmpty() }) return null
+        return if (path.isEmpty()) host else "$host/$path"
     }
 }
 
@@ -769,6 +842,32 @@ object RoutineSchedule {
         return null
     }
 
+    /**
+     * The pause-aware next start (routines rebuild §3.6): the
+     * search origin is max(now, pausedUntilMillis), fed into
+     * [nextStartMillis] - whose strictly-after contract means the
+     * origin is passed as pausedUntilMillis - 1 when the pause is
+     * the binding origin, so a window starting exactly as the
+     * pause ends still counts. Windows the pause covers never
+     * fire, so they are never the next start. This one helper is
+     * what the scheduler and every "next seal" reader (Deck
+     * ribbon, widget) share, so they can never disagree.
+     *
+     * (Composed at the e1996c16 merge on the #152 branch: main's
+     * §3.6 helper supersedes the pause-stepping version this
+     * branch's fix-forward 2 added when no definition existed —
+     * same contract, one shared implementation.)
+     */
+    fun effectiveNextStartMillis(routine: RoutineEntity, nowMillis: Long): Long? {
+        val r = routine.sanitized()
+        val origin = maxOf(nowMillis, r.pausedUntilMillis)
+        return if (origin > nowMillis) {
+            nextStartMillis(r, origin - 1L)
+        } else {
+            nextStartMillis(r, nowMillis)
+        }
+    }
+
     /** End of the window containing [nowMillis], or of the next window if none contains it. */
     fun nextEndMillis(routine: RoutineEntity, nowMillis: Long): Long? {
         val r = routine.sanitized()
@@ -820,6 +919,24 @@ object RoutineSchedule {
         return null
     }
 
+    /**
+     * Audit R5 #306 F2: is this routine ENFORCING at [nowMillis] —
+     * enabled, not paused, and a window contains the instant. While
+     * this holds the routine is forced-on: the editor's off-switch
+     * and current-day removal are refused in MonolithViewModel, the
+     * forced state StayFree's scheduled modes carry (its
+     * focus_mode_forced_* strings exist to refuse the same tap).
+     * A paused routine is NOT enforcing — the pause was already
+     * bought at the pause's own price — so it stays editable, and a
+     * disabled routine enforces nothing by definition.
+     */
+    fun isEnforcingAt(routine: RoutineEntity, nowMillis: Long): Boolean {
+        val r = routine.sanitized()
+        if (!r.enabled) return false
+        if (r.pausedUntilMillis > nowMillis) return false
+        return windowContaining(r, nowMillis) != null
+    }
+
     /** The next window to start strictly after [nowMillis], as an instance. */
     fun nextWindow(routine: RoutineEntity, nowMillis: Long): WindowInstance? {
         val start = nextStartMillis(routine, nowMillis) ?: return null
@@ -831,6 +948,15 @@ object RoutineSchedule {
             driftMinutes = 0
         )
     }
+
+    /** #153 F2/F3 — the pause horizon for "skip today": the end of
+     *  the window containing [nowMillis], or of the next window if
+     *  none contains it. Pausing until this instant forgives exactly
+     *  that one window (judgement J6: a pause-covered window is
+     *  never a miss) and no other day — the weekly mask is untouched. */
+    fun skipWindowEndMillis(routine: RoutineEntity, nowMillis: Long): Long? =
+        windowContaining(routine, nowMillis)?.endMillis
+            ?: nextWindow(routine, nowMillis)?.endMillis
 
     /**
      * The most recent window whose end is at or before [nowMillis],
@@ -861,14 +987,6 @@ object RoutineSchedule {
         return null
     }
 
-    /**
-     * Pause-aware next start (Sten §1.9): the scheduler and the
-     * ribbon read this one helper so they can never disagree. The
-     * origin is `max(now, pausedUntilMillis)` — a paused routine's
-     * next start is computed from the pause's end.
-     */
-    fun effectiveNextStartMillis(routine: RoutineEntity, nowMillis: Long): Long? =
-        nextStartMillis(routine, maxOf(nowMillis, routine.pausedUntilMillis))
 
     /**
      * LIVE (UNA-09, Truth Car 3): a routine the scheduler will ever
@@ -886,21 +1004,6 @@ object RoutineSchedule {
     fun liveCount(routines: List<RoutineEntity>): Int =
         routines.count { isLive(it) }
 
-    fun isActiveNow(routine: RoutineEntity, nowMillis: Long): Boolean {
-        val r = routine.sanitized()
-        if (!isLive(r)) return false
-        val durMs = durationMinutes(r) * 60_000L
-        val day = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
-        day.add(java.util.Calendar.DAY_OF_YEAR, -1)
-        repeat(2) {
-            if (r.daysMask and (1 shl bitFor(day)) != 0) {
-                val start = atMinutes(day, r.startMinutes)
-                if (nowMillis in start until start + durMs) return true
-            }
-            day.add(java.util.Calendar.DAY_OF_YEAR, 1)
-        }
-        return false
-    }
 }
 
 /** Single-row guard settings the accessibility service must honour (Ren). */
