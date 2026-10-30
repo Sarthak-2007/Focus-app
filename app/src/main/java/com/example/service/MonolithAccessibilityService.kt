@@ -1259,46 +1259,20 @@ class MonolithAccessibilityService : AccessibilityService() {
         // host-exact (Wave-3 #42).
         if ((guardSettings?.browserBlockerEnabled ?: true) && isSupportedBrowser(pkgName)) {
             val userDomains = dao.getAllSitesSnapshot().map { it.domain }
-            val matchedDomain = snapshot.facts.browserUrlTexts.firstNotNullOfOrNull { urlText ->
-                matchBlockedDomain(urlText, userDomains)
-            } ?: snapshot.facts.browserContentText.takeIf { it.isNotEmpty() }?.let {
-                // Issue #79 finding 3 (detectable part): the URL bar
-                // is clean, but a blocked service's embed may be
-                // playing inside this allowed page — where the tree
-                // exposes the embed's address as page text.
-                matchEmbeddedBlockedDomain(it, userDomains)
-            }
-            // W3 #130: the domain-scoped site peek is the ONLY
-            // exemption — this exact domain, in this browser,
-            // while its lease (the browser row's lease end) is
-            // live. Every other blocked domain still intercepts,
-            // including during a browser app peek.
-            val sitePeeked = matchedDomain != null && sitePeekExempts(
-                peekedDomain = SitePeekStore.domain,
-                peekedPackage = SitePeekStore.packageName,
-                domain = matchedDomain,
-                packageName = pkgName,
-                leaseUntilMono = leaseRow?.activePeekUntilElapsedRealtime ?: 0L,
-                nowMono = SystemClock.elapsedRealtime()
-            )
-            if (matchedDomain != null && !sitePeeked) {
-                launchInterceptScreen(
-                    packageName = pkgName,
-                    appName = matchedDomain,
-                    reasonBadge = "Site Blocked",
-                    path = InterceptPath.SITE
-                )
-                return
-            }
-            // Issue #339 (Second-pass F1): the Web Gate — with
-            // block-all armed, the web is closed except the user's
-            // allowed hosts. The stored list above keeps its force
-            // in both modes (it fired first, as the listed leg);
-            // a domain under a live site-peek lease for this
-            // browser stays exempt here exactly as there (#130).
-            // The ejection (BACK, escalating) is owned by
-            // launchInterceptScreen for every door (#339 F2) —
-            // this door no longer fires its own.
+            // Issue #339 (Second-pass F1) — recomposition on
+            // current main: the Web Gate's BLOCK_ALL verdict is
+            // enforced here, AHEAD of the blacklist door below.
+            // When the gate is armed, a URL whose host is not on
+            // the user's allowed list is intercepted as 'Web
+            // Blocked — Allowlist'. Listed domains stay with the
+            // door below, which owns the embedded-domain detection
+            // (#79) and the site-peek exemption (W3 #130) the gate
+            // must not bypass — and a domain under a live site-peek
+            // lease for this browser stays exempt here exactly as
+            // there (#130). Gate off: webGateVerdict never returns
+            // BLOCK_ALL and this pre-check is inert. The ejection
+            // (BACK, escalating) is owned by launchInterceptScreen
+            // for every door (#339 F2) — neither door fires its own.
             val webGate = com.example.data.WebGateStore(applicationContext)
             if (webGate.blockAll()) {
                 val gateHit = snapshot.facts.browserUrlTexts.firstNotNullOfOrNull { urlText ->
@@ -1327,6 +1301,41 @@ class MonolithAccessibilityService : AccessibilityService() {
                     )
                     return
                 }
+            }
+            val matchedDomain = snapshot.facts.browserUrlTexts.firstNotNullOfOrNull { urlText ->
+                matchBlockedDomain(urlText, userDomains)
+            } ?: snapshot.facts.browserContentText.takeIf { it.isNotEmpty() }?.let {
+                // Issue #79 finding 3 (detectable part): the URL bar
+                // is clean, but a blocked service's embed may be
+                // playing inside this allowed page — where the tree
+                // exposes the embed's address as page text.
+                matchEmbeddedBlockedDomain(it, userDomains)
+            }
+            // W3 #130: the domain-scoped site peek is the ONLY
+            // exemption — this exact domain, in this browser,
+            // while its lease (the browser row's lease end) is
+            // live. Every other blocked domain still intercepts,
+            // including during a browser app peek.
+            val sitePeeked = matchedDomain != null && sitePeekExempts(
+                peekedDomain = SitePeekStore.domain,
+                peekedPackage = SitePeekStore.packageName,
+                domain = matchedDomain,
+                packageName = pkgName,
+                leaseUntilMono = leaseRow?.activePeekUntilElapsedRealtime ?: 0L,
+                nowMono = SystemClock.elapsedRealtime()
+            )
+            if (matchedDomain != null && !sitePeeked) {
+                // Ejection is owned by launchInterceptScreen (#339 F2
+                // composition): it ejects first (BACK, escalating to
+                // HOME on repeat) — this door no longer fires its own
+                // BACK ahead of it, or the user would be popped twice.
+                launchInterceptScreen(
+                    packageName = pkgName,
+                    appName = matchedDomain,
+                    reasonBadge = "Site Blocked",
+                    path = InterceptPath.SITE
+                )
+                return
             }
         }
 
