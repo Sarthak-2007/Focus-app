@@ -630,10 +630,14 @@ class TactileSoundEngine(private val context: Context) {
         durationMs: Int,
         gain: Float,
         chordRatio: Float = 1.0f,
-        sealVoice: Boolean = false
+        sealVoice: Boolean = false,
+        fullGainAlways: Boolean = false
     ) {
         if (!soundEnabled) return
-        val scale = nightGainScale(sealVoice)
+        // Sarthak's ruling (Oct 30, #14): the tear pulse is FULL at
+        // all hours — night/DND softening never touches it. Its
+        // call site passes fullGainAlways and bypasses the gate.
+        val scale = if (fullGainAlways) 1f else nightGainScale(sealVoice)
         if (scale <= 0f) return
         val samples = ((SAMPLE_RATE * durationMs) / 1000).coerceIn(96, 6000)
         commandQueue.offer(
@@ -866,7 +870,10 @@ class TactileSoundEngine(private val context: Context) {
             fundamentalHz = 240f,
             durationMs = 40,
             gain = 0.68f,
-            chordRatio = 1.21f
+            chordRatio = 1.21f,
+            // FULL at all hours (Sarthak's Oct 30 ruling, #14):
+            // the tear never takes the night/DND gain gate.
+            fullGainAlways = true
         )
     }
 
