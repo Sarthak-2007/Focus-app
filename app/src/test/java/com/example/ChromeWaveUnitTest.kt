@@ -13,7 +13,6 @@ import com.example.ui.evaluateTheme
 import com.example.ui.views.RailGeometry
 import java.util.Calendar
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -171,18 +170,32 @@ class ChromeWaveUnitTest {
     }
 
     @Test
-    fun guardLine_unmeasuredPrintsNothing() {
+    fun guardLine_unmeasuredPrintsNotChecked() {
+        // Issue #9, P-6: unmeasured prints the confession, never a
+        // blank and never a fabricated count.
         val snap = countedSnap(
             PermState.GRANTED, PermState.GRANTED, PermState.GRANTED, PermState.GRANTED
         )
         val partial = snap.copy(items = snap.items - WatchItemId.DEVICE_ADMIN)
-        assertNull(guardLineFor(partial, nowMono = 20_000L))
-        // An unmeasured OVERLAY silences the line too — no partial
+        assertEquals(
+            "GUARD — NOT CHECKED",
+            guardLineFor(partial, nowMono = 20_000L).text
+        )
+        // An unmeasured OVERLAY gates the line too — no partial
         // denominator is ever printed as if it were the whole.
         val noOverlay = snap.copy(items = snap.items - WatchItemId.OVERLAY)
-        assertNull(guardLineFor(noOverlay, nowMono = 20_000L))
-        assertNull(guardLineFor(null, nowMono = 20_000L))
-        assertNull(guardLineFor(WatchSnapshot.EMPTY, nowMono = 20_000L))
+        assertEquals(
+            "GUARD — NOT CHECKED",
+            guardLineFor(noOverlay, nowMono = 20_000L).text
+        )
+        assertEquals(
+            "GUARD — NOT CHECKED",
+            guardLineFor(null, nowMono = 20_000L).text
+        )
+        assertEquals(
+            "GUARD — NOT CHECKED",
+            guardLineFor(WatchSnapshot.EMPTY, nowMono = 20_000L).text
+        )
     }
 
     // ------------------------------------------------------------------
