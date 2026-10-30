@@ -331,6 +331,23 @@ class MonolithShieldService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /**
+     * Issue #328 (Audit R5, Zario): the Recents-swipe resurrection.
+     * Zario stacks four re-arm paths; Monolith's shield had none —
+     * swiping the task away was a silent unlock path. The manifest
+     * now declares stopWithTask=false, and if the task is still
+     * removed while this shield is protecting a session, the
+     * shield re-arms itself through the same start path everything
+     * else uses. When nothing is protected there is nothing to
+     * resurrect: a shield with no session stays down.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        if (shieldResurrectOnTaskRemoved(protecting)) {
+            startShield(applicationContext)
+        }
+    }
+
     override fun onDestroy() {
         if (instance === this) {
             instance = null
@@ -432,3 +449,12 @@ class MonolithShieldService : Service() {
         }
     }
 }
+
+/**
+ * Issue #328 (Audit R5, Zario): the task-removal truth table,
+ * unit-tested directly. A shield that is protecting a session
+ * resurrects when its task is swiped away; a shield protecting
+ * nothing stays down — resurrection must never conjure a session
+ * the user did not seal.
+ */
+internal fun shieldResurrectOnTaskRemoved(protecting: Boolean): Boolean = protecting

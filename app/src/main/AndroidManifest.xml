@@ -40,6 +40,7 @@
 
         <activity
             android:name=".MainActivity"
+            android:excludeFromRecents="true"
             android:exported="true"
             android:launchMode="singleTop"
             android:label="@string/app_name"
@@ -51,11 +52,16 @@
         </activity>
 
         <!-- Direct-Boot Aware Foreground Service for active focus session & call-aware usage polling -->
+        <!-- Issue #328 (Audit R5, Zario): stopWithTask=false — a
+             Recents swipe of the Monolith task must not take the
+             shield down with it; the service answers the swipe in
+             onTaskRemoved by re-arming while a session is protected. -->
         <service
             android:name=".service.MonolithShieldService"
             android:directBootAware="true"
             android:enabled="true"
             android:exported="false"
+            android:stopWithTask="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
