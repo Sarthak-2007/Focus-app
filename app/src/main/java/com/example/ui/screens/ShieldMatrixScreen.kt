@@ -136,17 +136,21 @@ fun ShieldMatrixScreen(
     // remember key re-seats it whenever the stored fact (re)loads.
     var selectedLoadoutIndex by remember(loadoutCapIndex) { mutableIntStateOf(loadoutCapIndex) }
 
-    val shutCount = remember(allApps) { allApps.count { it.resolvedTier == AppBlockTier.LOCKED } }
-    val peekCount = remember(allApps) { allApps.count { it.resolvedTier == AppBlockTier.PEEK_2M } }
-
     // =====================================================================
     // THE STANDING ORDERS (Ordner lane — Liv's placement + catalogue
     // discipline, Gust's slip as the form, Mikro's moments as its
     // manners). His decisions, printed in the receipt's grammar,
     // present tense, directly above the catalogue they govern.
     // =====================================================================
+    // Issue #35: the printed tally IS AppRules' counts (the bucket
+    // list sizes themselves) — this screen no longer recounts with
+    // its own predicates, so a printed count cannot disagree with
+    // the lines under it. Corrupt-tier rows count in none of the
+    // three: they are not decisions (see AppRules.corrupt).
     val rules = remember(allApps) { allApps.groupedByRule() }
-    val openCount = allApps.size - shutCount - peekCount
+    val shutCount = rules.shutCount
+    val peekCount = rules.peekCount
+    val openCount = rules.openCount
 
     // M6 (Mikro): return is memory — the list reopens where his thumb
     // left it. Saveable, so the place survives this screen being
@@ -234,7 +238,11 @@ fun ShieldMatrixScreen(
             if (app.resolvedTier == tier) continue
             lines += SlipLine(app = app, word = resting.to, resting = resting)
         }
-        return lines.sortedBy { it.app.appName.lowercase() }
+        // AppRules' total order (issue #35): name, then package —
+        // a name tie can never inherit feed/intercept order here.
+        return lines.sortedWith(
+            compareBy<SlipLine> { it.app.appName.lowercase() }.thenBy { it.app.packageName }
+        )
     }
 
     LazyColumn(
