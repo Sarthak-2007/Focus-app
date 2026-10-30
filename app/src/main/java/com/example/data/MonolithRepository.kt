@@ -2086,21 +2086,41 @@ class MonolithRepository(
         val banked = spends.sumOf { it.heldSeconds }
 
         // Deflections (Zettel): intercept instants inside the
-        // session's wall window, intention-matched, system rows
-        // excluded, break-window openings excluded, 30s-per-
-        // package dedupe keeping the first. A list, never a sum.
+        // session's wall window, intention-matched, BLOCKED
+        // outcome only (A4 — peeks never print as blocks),
+        // system rows excluded, break-window openings excluded,
+        // 30s-per-package dedupe keeping the first. A list,
+        // never a sum.
         val windowEnd = if (row.routineId != null && row.windowEndMillis > 0L) {
             maxOf(trueEndedAtWallMs, row.windowEndMillis)
         } else {
             trueEndedAtWallMs
         }
+        // Nachdruck R4 (Finisher 3 §4): the SITE distinction is
+        // derived here, at assembly — the blocked-site domains
+        // read ONCE into a set, and a deflection whose appName
+        // exactly matches one is a site reach (the enforcer
+        // stamps the matched domain into appName for site
+        // intercepts, MonolithAccessibilityService). Exact match
+        // against the very list the enforcer matched — hard
+        // evidence, not string shape: a stored domain can be a
+        // path form (youtube.com/shorts) and an app label can
+        // contain a dot, so shape-sniffing would mislabel rows.
+        val siteDomains = dao.getAllSitesSnapshot().map { it.domain }.toSet()
         val breakWindows = spends
             .map { it.spentAtWallMillis..(it.spentAtWallMillis + 60_000L) }
         val lastByPackage = mutableMapOf<String, Long>()
         val deflections = dao.getInterceptLogsBetween(row.startWallTimeMillis, windowEnd)
             .filter { log ->
+                // A4 (issue #10, ported by WELLE-6 from
+                // e39ae62): the outcome test sits in the FIRST
+                // filter — before the dedupe below — so a peek
+                // row the filter removes can never eat a real
+                // block's dedupe slot. Only proven blocks print:
+                // a peek (he was LET IN) is not a deflection.
                 log.sessionIntention == row.intention &&
                     log.packageName != "com.monolith.system" &&
+                    isBlockedInterceptOutcome(log.outcome) &&
                     breakWindows.none { log.timestampMillis in it }
             }
             .filter { log ->
@@ -2112,7 +2132,14 @@ class MonolithRepository(
                     false
                 }
             }
-            .map { ReceiptDeflection(it.appName, it.packageName, it.timestampMillis) }
+            .map {
+                ReceiptDeflection(
+                    it.appName,
+                    it.packageName,
+                    it.timestampMillis,
+                    isSite = it.appName in siteDomains
+                )
+            }
 
         return PendingReceipt(
             sessionId = sessionId,
