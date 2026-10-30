@@ -669,6 +669,40 @@ fun ShieldMatrixScreen(
                     )
                 }
             }
+            // The zero-result line pins WITH the search strip
+            // (issue #142, closure fix): the answer stays on screen
+            // while the query is refined, instead of living in a
+            // list item the catalogue can scroll past. The line's
+            // semantics are unchanged - an empty list is answered
+            // in print, never with a void (Liv/Gust); a search hit
+            // under another category says exactly that (fresh-eyes
+            // L7); the existence check uses the SAME match as the
+            // filter (appMatchesQuery, #107/#142), and the search
+            // line never claims an app is absent from the phone.
+            if (filteredApps.isEmpty()) {
+                val existsOutsideFilter = searchQuery.isNotBlank() && allApps.any {
+                    com.example.ui.appMatchesQuery(it, searchQuery)
+                }
+                Text(
+                    text = when {
+                        searchQuery.isNotBlank() && existsOutsideFilter ->
+                            "THAT NAME IS ON THIS PHONE — NOT IN THIS CATEGORY"
+                        searchQuery.isNotBlank() && selectedCategory != null ->
+                            "NO MATCH FOR THAT SEARCH IN ${selectedCategory.label.uppercase()} — TRY THE APP'S NAME OR ITS PACKAGE NAME"
+                        searchQuery.isNotBlank() ->
+                            "NO MATCH FOR THAT SEARCH — TRY THE APP'S NAME OR ITS PACKAGE NAME"
+                        selectedCategory != null ->
+                            "NO APPS IN THIS CATEGORY ON THIS PHONE"
+                        else -> "NO APPS ON THIS PHONE"
+                    },
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .padding(top = 8.dp)
+                        .testTag("shield_no_match_line")
+                )
+            }
             }
         }
 
@@ -699,42 +733,6 @@ fun ShieldMatrixScreen(
                 onCycleDailyLimit = onCycleDailyLimit,
                 onSetAppCategory = onSetAppCategory
             )
-        }
-
-        // The first sentence the installed-only cure lets the app say
-        // honestly (Liv, adopted by Gust): an empty list is answered
-        // in print, never with a void. Fresh-eyes L7: the filtered
-        // list is query AND category chip, so a search hit that
-        // lives under another category must say exactly that — the
-        // phone fact is only claimed when the name matches NOTHING
-        // in the full catalog. Issue #51 F5 widened the trigger:
-        // the non-search empties (a category void, a whole-list
-        // void) print their fact too. (Union merged by STOSS-34:
-        // L7's cross-category case first, #107's never-deny search
-        // line second, #51's two void facts last.)
-        if (filteredApps.isEmpty()) {
-            item {
-                val existsOutsideFilter = searchQuery.isNotBlank() && allApps.any {
-                    com.example.ui.appMatchesQuery(it, searchQuery)
-                }
-                Text(
-                    text = when {
-                        searchQuery.isNotBlank() && existsOutsideFilter ->
-                            "THAT NAME IS ON THIS PHONE — NOT IN THIS CATEGORY"
-                        searchQuery.isNotBlank() && selectedCategory != null ->
-                            "NO MATCH FOR THAT SEARCH IN ${selectedCategory.label.uppercase()} — TRY THE APP'S NAME OR ITS PACKAGE NAME"
-                        searchQuery.isNotBlank() ->
-                            "NO MATCH FOR THAT SEARCH — TRY THE APP'S NAME OR ITS PACKAGE NAME"
-                        selectedCategory != null ->
-                            "NO APPS IN THIS CATEGORY ON THIS PHONE"
-                        else -> "NO APPS ON THIS PHONE"
-                    },
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 11.sp,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.testTag("shield_no_match_line")
-                )
-            }
         }
 
         // =====================================================================
