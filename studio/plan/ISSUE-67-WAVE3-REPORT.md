@@ -238,6 +238,26 @@ Total remainder programme: ~9–10 focused days, sequenced as above.
   DB v11→v12 migration tests, which the merge order reserves to
   Konto's train — flagged, not forced).
 
+### Second-rebase addendum (main → 357debc, before merge)
+
+- Main landed #48/#55/#132/#17/#132 among others; MonolithRepository.kt
+  itself changed. Rebase conflicts: MainActivity (resolved: #48's new
+  WatchStore.bind kept, construction via AppContainer) and the
+  categoriser — **issue #132 independently extracted the same
+  categorizePackage function into AppCategorizer on main, as a
+  superset (old buckets verbatim + MUSIC token category)**. Keeping
+  this branch's FocusDomain version would have downgraded #132, so
+  the domain slice defers: categorizePackage delegates to
+  AppCategorizer, FocusDomain keeps the remaining four derivations,
+  FocusDomainTest drops to 5 tests. One classifier, never two — the
+  convergence is also recorded in both files' comments.
+- Post-rebase census re-run on the final tree: Repository service
+  imports still 5 (non-driven only), servicePort used at 9 sites,
+  getInstance outside container/DB/fallback = 0, Repository
+  constructions outside AppContainer = 0, service→MainActivity = 0,
+  FocusDomain delegates = 4. Repository stands at 2,981 lines on the
+  new main (other lanes' growth, not this branch's).
+
 ## 7. Seat verdicts (20 seats, signed)
 
 - **Crazy-ideas** — Proposed replacing the intercept Intent entirely with a

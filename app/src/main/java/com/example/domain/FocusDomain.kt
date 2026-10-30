@@ -14,14 +14,11 @@ package com.example.domain
  * delegates to these functions for the derivations that were always
  * pure but lived trapped inside the 2,932-line god class. The
  * repository keeps the Android work (clock reads, DAO reads); the
- * arithmetic and classification live here, once.
+ * arithmetic lives here, once.
  *
- * Category and tier identities cross this boundary as NAMES
- * (the enum entry names of the data layer's AppCategory /
- * AppBlockTier), so this file never imports the data layer. The
- * repository maps names back to its enums at the call site — a
- * name that does not parse is a programming error, not a runtime
- * case, exactly as the old `when` fell through to a default.
+ * Tier identities cross this boundary as NAMES (the enum entry
+ * names of the data layer's AppBlockTier), so this file never
+ * imports the data layer.
  */
 object FocusDomain {
 
