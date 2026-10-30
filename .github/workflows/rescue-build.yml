@@ -99,6 +99,31 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 3
 
+      # Issue #382 (Sarthak's ask, Oct 30 05:20 IST): screens with
+      # every build. The harness runs as its OWN invocation, ordered
+      # after the unit-test step above. It is deliberately NOT gated
+      # on the full suite's outcome: the #166 shared floor carries
+      # unrelated red families, and gating on it would mean the
+      # gallery silently never ships. Instead the upload below is
+      # gated on THIS step's own outcome — the harness's tests are
+      # the tests for this pipeline. Output goes to a fresh build
+      # dir inside a fresh checkout, so nothing stale can ride
+      # along; if no PNG lands, the upload errors, never warns.
+      - name: Screenshots (ScreenshotHarnessTest)
+        id: screens
+        if: ${{ !cancelled() }}
+        env:
+          SCREENSHOTS_DIR: ${{ github.workspace }}/app/build/outputs/screenshots
+        run: ./gradlew --console=plain testDebugUnitTest --tests "com.example.ScreenshotHarnessTest"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.screens.outcome == 'success'
+        with:
+          name: screens-${{ github.sha }}
+          path: app/build/outputs/screenshots
+          if-no-files-found: error
+          retention-days: 7
+
       # Wave-2 (Feel/Finisher pass), corrected by issue #24: the run
       # page tells the truth in plain words without anyone opening a
       # log. Since finding 1 was fixed, the artifact is built and
@@ -118,6 +143,12 @@ jobs:
               echo "- APK in this run was built and uploaded AFTER its unit tests passed."
             fi
             echo "- Signing: committed debug keystore, SHA-256 ${{ steps.keystore.outputs.fingerprint }} — the key that signed the installed builds, so this APK installs over the Monolith on Sarthak's phone (versionCode permitting)."
+            echo "- Screenshots step: ${{ steps.screens.outcome }}"
+            if [ "${{ steps.screens.outcome }}" = "success" ]; then
+              echo "- Screenshots artifact: screens-${{ github.sha }} — Robolectric renders of THIS tree, one PNG per harness-captured screen (states the harness cannot render are named on issue #382, never faked)."
+            else
+              echo "- ⚠️ No screenshots artifact in this run — the harness step did not pass."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Issue #24 (finding 3): the debug job above proves the phone

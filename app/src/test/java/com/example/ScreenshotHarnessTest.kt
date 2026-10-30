@@ -84,23 +84,43 @@ class ScreenshotHarnessTest {
     private lateinit var viewModel: MonolithViewModel
     private lateinit var soundEngine: TactileSoundEngine
 
-    // Lane redirect (pipeline law, Oct 29): a lane tree drops a
-    // one-line shots-redirect.txt (module root or repo root) naming
-    // its OWN shots dir, so parallel lanes never overwrite each
-    // other's renders. No file -> the shared trunk default below.
+    // Output dir (issue #382 cure; same shape as Boden's test-floor
+    // cure tracked on #166): the old law read a committed
+    // shots-redirect.txt whose target was an absolute path on the
+    // author's machine — every CI capture died at the PNG write
+    // (FileNotFoundException, 14 of this class's 15 tests red in CI,
+    // 15/15 green locally). Order now: explicit env/property override
+    // (CI sets SCREENSHOTS_DIR) -> a lane redirect ONLY when its
+    // first-line target is creatable and writable on THIS machine ->
+    // the module build dir, which exists anywhere the build runs.
     private val shotsDir: File = run {
+        val override = System.getenv("SCREENSHOTS_DIR")?.takeIf { it.isNotBlank() }
+            ?: System.getProperty("monolith.screenshotsDir")?.takeIf { it.isNotBlank() }
+        if (override != null) return@run File(override)
         val redirect = listOf(
             File("shots-redirect.txt"),
             File("../shots-redirect.txt"),
             File("app/shots-redirect.txt")
         ).firstOrNull { it.isFile }
-        val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        File(target ?: "/home/hatch/workspace/clone-inspect/shots")
+        val target = redirect?.readText()?.lineSequence()?.firstOrNull()?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        val candidate = target?.let { File(it) }
+        if (candidate != null && (candidate.mkdirs() || candidate.isDirectory) && candidate.canWrite()) {
+            candidate
+        } else {
+            File("build/outputs/screenshots")
+        }
     }
 
     @Before
     fun setup() {
         shotsDir.mkdirs()
+        // Fail HERE, loudly, if the dir cannot be written — the old
+        // silent mkdirs() failure surfaced 50 lines later as a
+        // FileNotFoundException at the PNG write and hid the cause.
+        check(shotsDir.isDirectory && shotsDir.canWrite()) {
+            "ScreenshotHarnessTest: shots dir not writable: ${shotsDir.absolutePath}"
+        }
         context = ApplicationProvider.getApplicationContext()
         db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
             .allowMainThreadQueries()
@@ -415,7 +435,12 @@ class ScreenshotHarnessTest {
                     )
                 )
             }
-        }.onFailure { println("HARNESS wheel drag capture failed: $it") }
+        }.onFailure {
+            // Issue #382: this swallow made wheelMidDrag the one
+            // "passing" test in CI while it captured nothing — the
+            // same write failure as its 14 red siblings, hidden.
+            throw AssertionError("HARNESS wheel drag capture failed", it)
+        }
     }
 
     private fun findView(root: View, pred: (View) -> Boolean): View? {
