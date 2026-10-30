@@ -228,6 +228,15 @@ abstract class MonolithDatabase : RoomDatabase() {
          */
         fun getInstance(context: Context): MonolithDatabase {
             return INSTANCE ?: synchronized(this) {
+                // The second check INSIDE the lock (issue #31
+                // finding 1): the pre-fix shape re-checked nothing
+                // after acquiring it, so two racing callers (boot
+                // receivers + the activity's first read are the
+                // realistic pair) could each build a database —
+                // the second overwriting INSTANCE and orphaning
+                // the first's open instance, its DAOs, and any
+                // transaction in flight on it.
+                INSTANCE?.let { return@synchronized it }
                 val appCtx = context.applicationContext
                 val storageContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     appCtx.createDeviceProtectedStorageContext() ?: appCtx
@@ -243,6 +252,23 @@ abstract class MonolithDatabase : RoomDatabase() {
                     .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        /**
+         * Test-only escape hatch (issue #31 finding 4): closes
+         * the singleton and clears it under the same lock
+         * [getInstance] builds under, so a test can start from a
+         * cold database instead of inheriting whatever a previous
+         * test built. Production paths never call this — in
+         * production the singleton's immortality is deliberate
+         * (Direct-Boot enforcement reads it from boot receivers
+         * before any unlock exists).
+         */
+        fun closeAndResetForTests() {
+            synchronized(this) {
+                INSTANCE?.close()
+                INSTANCE = null
             }
         }
     }
