@@ -914,9 +914,12 @@ fun DrawerScreen(
                         // day keeps its declared word in search too.
                         DayHeading(
                             group = group,
-                            isToday = group.date == today,
-                            isSealed = isSealed,
-                            onDeclareTodayWord = onDeclareTodayWord
+                            canDeclare = !isSealed && (group.date == today ||
+                                (group.date == today.minusDays(1) && group.word == null)),
+                            onDeclareWord = { word ->
+                                if (group.date == today) onDeclareTodayWord(word)
+                                else onDeclareDayWord(group.date, word)
+                            }
                         )
                     }
                     items(group.rows, key = { "search-${it.id}" }) { task ->
