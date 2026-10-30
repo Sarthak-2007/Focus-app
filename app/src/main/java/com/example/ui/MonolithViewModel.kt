@@ -2901,12 +2901,19 @@ class MonolithViewModel(
         soundEngine.playHarmonicSeal(arming = true)
         _airlockState.value = state.copy(isVisible = false)
         viewModelScope.launch {
+            // R3b #162 F4: a return from the Uninstall Guard door is
+            // not "Stayed Focused" and not a phantom reach — it is an
+            // uninstall attempt that turned back, and the log now
+            // says exactly that.
+            val uninstallAttempt = state.interceptPath ==
+                com.example.service.InterceptPath.UNINSTALL_GUARD
             repository.recordIntercept(
                 packageName = state.interceptedPackageName.ifBlank { "com.zhiliaoapp.musically" },
                 appName = state.interceptedAppName.ifBlank { "Blocked App" },
                 sessionIntention = state.sessionIntention.ifBlank { _intentionText.value },
-                outcome = "Stayed Focused",
-                triggerReason = state.selectedReason.shortTag
+                outcome = if (uninstallAttempt) "Uninstall Attempt — Returned" else "Stayed Focused",
+                triggerReason = state.selectedReason.shortTag,
+                countAsReach = !uninstallAttempt
             )
         }
     }

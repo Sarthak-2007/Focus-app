@@ -52,6 +52,7 @@ import com.example.data.CapturedNotificationEntity
 import com.example.data.DistractionTriggerReason
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
+import com.example.service.InterceptPath
 import com.example.service.TactileSoundEngine
 import com.example.data.MonolithRepository
 import com.example.ui.AirlockInterceptState
@@ -805,6 +806,21 @@ fun AirlockInterceptOverlay(
                 // PEEK-tier behaviour is unchanged (RETURN was and
                 // stays live, the peek offer is what its wall gates).
                 val returnLive = returnToFocusLive(state.isLockedTier, countdownSecs)
+                // R3b #162 F4: the Uninstall Guard door can honour no
+                // peek (InterceptPath.UNINSTALL_GUARD), so beside its
+                // single RETURN offer it prints the lawful road out —
+                // the same road the device-admin warning prescribes:
+                // end the block first; the emergency break is the door
+                // the app itself sanctions. A signpost to an existing
+                // valve, not a new exit.
+                if (state.interceptPath == InterceptPath.UNINSTALL_GUARD) {
+                    Text(
+                        text = "TO REMOVE MONOLITH: END THE BLOCK FIRST — THE EMERGENCY BREAK ON THE DECK IS THE LAWFUL DOOR.",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f)
+                    )
+                }
                 BlockitActionChip(
                     wordLabel = "RETURN TO FOCUS",
                     isAccentArmed = true,
