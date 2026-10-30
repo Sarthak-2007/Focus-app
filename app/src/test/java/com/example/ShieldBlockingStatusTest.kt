@@ -175,7 +175,7 @@ class ShieldBlockingStatusTest {
         val s = session(startWall = start, beatWall = start)
         val st = proved(s, start + 60_000L)
         assertEquals(ShieldBlockingProof.STALE, st.proof)
-        assertEquals("NOT BLOCKING — THE APP'S OWN CHECKS HAVE STOPPED", st.headline)
+        assertEquals("NOT BLOCKING — THE SHIELD'S OWN CHECKS HAVE STOPPED", st.headline)
         assertFalse(st.isBlocking)
     }
 
@@ -636,7 +636,7 @@ class ShieldBlockingStatusTest {
         val s = breakSession()
         val st = proved(s, at(0, 10, 0) + 60_000L)
         assertEquals(ShieldBlockingProof.STALE, st.proof)
-        assertEquals("NOT BLOCKING — THE APP'S OWN CHECKS HAVE STOPPED", st.headline)
+        assertEquals("NOT BLOCKING — THE SHIELD'S OWN CHECKS HAVE STOPPED", st.headline)
     }
 
     @Test

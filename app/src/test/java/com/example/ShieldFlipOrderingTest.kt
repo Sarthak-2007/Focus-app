@@ -70,7 +70,7 @@ class ShieldFlipOrderingTest {
         val setIdx = loop.indexOf("val blockedPackages")
         val queryIdx = loop.indexOf("queryForegroundBlockedApp(blockedPackages)")
         val interceptIdx = loop.indexOf("startActivity(interceptIntent)")
-        val guardIdx = loop.indexOf("if (!protecting)")
+        val guardIdx = loop.indexOf("if (!protecting || protectingSessionId != updated.id)")
         val flipIdx = loop.indexOf("protecting = true")
         val delayIdx = loop.indexOf("delay(2000L)")
 

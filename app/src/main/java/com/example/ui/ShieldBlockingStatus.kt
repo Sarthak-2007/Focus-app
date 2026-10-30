@@ -36,9 +36,10 @@ import java.util.Locale
  *    repository's own 10s gap law (SHIELD_GAP_THRESHOLD_MILLIS).
  *  - ACCESS: MonolithAccessibilityService is bound and its own
  *    session collector has armed for this session's id — and
- *    its pipeline is alive: `lastRootMono`, stamped on every
- *    accessibility event whose root window was acquired, aged
- *    on the MONOTONIC clock by ACCESS_PROOF_FRESH_MILLIS below.
+ *    its pipeline is alive: `lastRootMono`, stamped whenever a
+ *    root window is acquired (accessibility events, plus the
+ *    service's own 30s armed self-check), aged on the MONOTONIC
+ *    clock by ACCESS_PROOF_FRESH_MILLIS below.
  *    The armed stamp alone proves only that a database row was
  *    observed once; without a fresh root stamp the pipeline may
  *    have died at arming and this sentence would lie (Nagel N-2).
@@ -79,18 +80,24 @@ enum class ShieldBlockingProof {
  * service's last acquired-root stamp (`lastRootMono`, monotonic)
  * may be before the pipeline is no longer proven alive.
  *
- * 90s = three consecutive missed 30s windows. The 30s window is
- * the codebase's own standing assumption for window-event
- * cadence on an awake, in-use device (RoutineHeartbeat's
- * OPPORTUNISTIC_THROTTLE_MILLIS rests on it). This law is NOT
- * the warrant's 45s monotonic law (that ages permission
- * MEASUREMENTS for the Deck, a different subject) and NOT the
- * shield's 10s wall law (that ages a persisted heartbeat written
- * by a guaranteed 2s loop; the accessibility pipeline has no
- * loop and guarantees no cadence, so 10s would false-stale any
- * user who sits still for 11 seconds). Each witness is aged on
- * the clock its stamp is written in, by a threshold its own
- * cadence justifies.
+ * 90s = three consecutive missed 30s self-checks. While a
+ * session is armed, the accessibility service re-acquires a
+ * root window every 30s (ACCESS_SELF_CHECK_MILLIS in
+ * MonolithAccessibilityService) and re-stamps lastRootMono —
+ * so this stamp's cadence is GUARANTEED by the service itself,
+ * never by the user's motion: a student sitting still on one
+ * page reading (the posture this app exists for) keeps the
+ * proof fresh, and a service that cannot acquire a root three
+ * beats running has honestly lost its verdict. (Before the
+ * self-check, the stamp refreshed only on window events and
+ * this law false-staled exactly that reader — KRITIK-1R
+ * attack 2; the threshold was not the bug, the missing
+ * heartbeat was.) This law is NOT the warrant's 45s monotonic
+ * law (that ages permission MEASUREMENTS for the Deck, a
+ * different subject) and NOT the shield's 10s wall law (that
+ * ages a persisted heartbeat on a different stamp, clock, and
+ * cadence). Each witness is aged on the clock its stamp is
+ * written in, by a threshold its own cadence justifies.
  */
 const val ACCESS_PROOF_FRESH_MILLIS: Long = 90_000L
 
@@ -231,7 +238,7 @@ fun computeShieldBlockingStatus(
     if (beatAge < 0L || beatAge > MonolithRepository.SHIELD_GAP_THRESHOLD_MILLIS) {
         return ShieldBlockingStatus(
             proof = ShieldBlockingProof.STALE,
-            headline = "NOT BLOCKING — THE APP'S OWN CHECKS HAVE STOPPED",
+            headline = "NOT BLOCKING — THE SHIELD'S OWN CHECKS HAVE STOPPED",
             activeRoutineId = session.routineId
         )
     }

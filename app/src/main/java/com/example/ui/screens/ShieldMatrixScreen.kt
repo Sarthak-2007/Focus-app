@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -236,20 +237,34 @@ fun ShieldMatrixScreen(
             // on the screen at its least readable. Now: FULL INK in
             // every state; the state is carried by the verb and a
             // 10dp solidity glyph (solid = the wall stands, hollow =
-            // it does not), never by colour alone. The slot is a
-            // fixed 40dp so a re-strike never shoves the screen.
+            // it does not), never by colour alone. The slot rests
+            // at 40dp so a re-strike never shoves the screen, but
+            // grows rather than clips when a long failure headline
+            // wraps at large font scales (GEFUEHL-R: a fixed 40dp
+            // slot squeezed three wrapped lines into mush for
+            // exactly the large-text users who need it most).
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(40.dp)
+                    .heightIn(min = 40.dp)
                     .semantics { contentDescription = statusHeadline },
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // The lamp, felt in half a second (GEFUEHL-R):
+                // ● the wall stands, ◐ a break (half open, half
+                // held), ○ the wall is down, ◌ not yet known —
+                // four states the eye separates without reading.
                 Text(
-                    text = if (blockingStatus?.proof == ShieldBlockingProof.LIVE) "●" else "○",
+                    text = when {
+                        blockingStatus == null -> "◌"
+                        blockingStatus.proof == ShieldBlockingProof.LIVE &&
+                            blockingStatus.headline.startsWith("ON A BREAK") -> "◐"
+                        blockingStatus.proof == ShieldBlockingProof.LIVE -> "●"
+                        else -> "○"
+                    },
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
+                    fontSize = 18.sp,
                     color = scheme.onBackground
                 )
                 Spacer(modifier = Modifier.width(8.dp))
@@ -264,10 +279,29 @@ fun ShieldMatrixScreen(
                     },
                     label = "shield_blocking_status"
                 ) { headline ->
+                    // The lead is the half-second read (GEFUEHL-R):
+                    // BLOCKING NOW / NOT BLOCKING / ON A BREAK /
+                    // CAN'T CHECK at 16sp bold — it never wraps;
+                    // the reason tail follows at 13sp normal, same
+                    // ink (weight contrast only, never a dimmer
+                    // colour). Every headline carries the " — "
+                    // split; a headline without one prints whole.
+                    val splitAt = headline.indexOf(" — ")
+                    val styled = if (splitAt < 0) {
+                        AnnotatedString(headline)
+                    } else {
+                        buildAnnotatedString {
+                            withStyle(SpanStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold)) {
+                                append(headline.substring(0, splitAt))
+                            }
+                            withStyle(SpanStyle(fontSize = 13.sp, fontWeight = FontWeight.Normal)) {
+                                append(headline.substring(splitAt))
+                            }
+                        }
+                    }
                     Text(
-                        text = headline,
+                        text = styled,
                         fontFamily = AnonymousProFamily,
-                        fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
                         color = scheme.onBackground,
                         modifier = Modifier.testTag("shield_blocking_status")

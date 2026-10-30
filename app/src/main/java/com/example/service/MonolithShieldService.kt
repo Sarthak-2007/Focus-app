@@ -62,7 +62,13 @@ class MonolithShieldService : Service() {
         ServiceCompat.startForeground(
             this,
             NOTIFICATION_ID,
-            buildNotification("Monolith Locked", "Protecting your focus session..."),
+            // No blocking claim in the birth notification
+            // (issue #7, KRITIK-1R attack 4): "Protecting..." here
+            // would assert enforcement before the first monitor
+            // iteration has run — the loop's own per-iteration
+            // notification replaces this within one pass, and if
+            // the loop wedges, this text must not go on claiming.
+            buildNotification("Monolith", "Starting the session checks…"),
             fgsType
         )
         // Live Wire registry (Ines): the instance exists only once
@@ -190,7 +196,14 @@ class MonolithShieldService : Service() {
                 // witness (Opal L2) is stamped at the same flip:
                 // the session this iteration read, and the mono it
                 // flipped - CONFIRMED stamp for SHIELD-PROTECTING.
-                if (!protecting) {
+                // The guard re-stamps on a session change, not only
+                // on the first flip (KRITIK-1R attack 8): if the
+                // loop ever crosses to a new session id without a
+                // service restart, the witness must attest the NEW
+                // session's first completed pass — a stamp frozen
+                // on the dead session would strand the new one
+                // UNPROVEN forever over a loop actively enforcing it.
+                if (!protecting || protectingSessionId != updated.id) {
                     protecting = true
                     protectingSessionId = updated.id
                     protectingMono = SystemClock.elapsedRealtime()
