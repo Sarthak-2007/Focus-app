@@ -507,8 +507,14 @@ class MonolithRepository(
             nowBootCount = boot
         )
         if (decision.reanchor) {
+            // Issue #82 tightening: persist the DECISION's honest
+            // now, not the raw wall clock. On a powered-off rollback
+            // the decision is floored at the old anchor; persisting
+            // the raw (rolled-back) wall instead would re-anchor to
+            // the travelled clock and the floor would last one read.
+            // In every other reanchor case honest == wall, unchanged.
             prefs.edit()
-                .putLong(CLOCK_ANCHOR_WALL_KEY, nowWall)
+                .putLong(CLOCK_ANCHOR_WALL_KEY, decision.honestNowMillis)
                 .putLong(CLOCK_ANCHOR_MONO_KEY, nowMono)
                 .putInt(CLOCK_ANCHOR_BOOT_KEY, boot)
                 .apply()
@@ -4284,10 +4290,16 @@ class MonolithRepository(
     // asks; every surface's number is a rendering of this truth.
     // =========================================================================
 
-    /** Remaining breaks for the week containing [nowMillis]. */
-    suspend fun emergencyBreaksRemaining(nowMillis: Long = System.currentTimeMillis()): Int {
-        val anchor = MonolithWeek.weekAnchorMillis(nowMillis)
-        val nextAnchor = MonolithWeek.nextWeekAnchorMillis(nowMillis)
+    /** Remaining breaks for the week containing [nowMillis].
+     *  Issue #82 tightening: the default is a [Long.MIN_VALUE]
+     *  sentinel resolving to the HONEST now — never the raw wall
+     *  clock — so a caller that forgets the argument cannot silently
+     *  reopen the date-travel token renewal (F3) on this surface.
+     *  Explicit instants (tests) are honoured exactly as before. */
+    suspend fun emergencyBreaksRemaining(nowMillis: Long = Long.MIN_VALUE): Int {
+        val effectiveNow = if (nowMillis == Long.MIN_VALUE) honestNowMillis() else nowMillis
+        val anchor = MonolithWeek.weekAnchorMillis(effectiveNow)
+        val nextAnchor = MonolithWeek.nextWeekAnchorMillis(effectiveNow)
         return emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(anchor, nextAnchor).size)
     }
 
