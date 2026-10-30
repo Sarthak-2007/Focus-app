@@ -215,6 +215,27 @@ class MonolithRepository(
         const val APP_LIST_PREFS_NAME = "monolith_app_list"
         const val PRUNE_NOTE_COUNT_KEY = "prune_note_count"
         const val PRUNE_NOTE_RULES_KEY = "prune_note_rules_removed"
+
+        /** The catalog memory (Wave 3, issue #34): the two-strike
+         *  strike set and the pruned-rule tombstones, in the same
+         *  prefs file — the schema stays frozen at v12, and a
+         *  ruling's survival needs no column in the table it left.
+         *  ABSENT_ONCE: packages absent at the last sync (a prune
+         *  needs a second consecutive absence). REMEMBERED_RULES:
+         *  "pkg|TIER|limit" strings for pruned rows, restored
+         *  ahead of factory presets if the package returns. */
+        const val ABSENT_ONCE_KEY = "catalog_absent_once"
+        const val REMEMBERED_RULES_KEY = "catalog_remembered_rules"
+
+        /** When the last catalog sync COMPLETED (wall millis,
+         *  fresh-eyes L3): the anchor of the collapse window —
+         *  a non-forced sync inside
+         *  [AppCatalogReconcile.SYNC_COLLAPSE_WINDOW_MILLIS] of
+         *  this instant is the same look repeating itself and
+         *  returns without touching the strike set. Stamped only
+         *  after a reconcile actually ran (a failed/empty query
+         *  is not a successful sync and starts no window). */
+        const val LAST_CATALOG_SYNC_KEY = "catalog_last_sync_ms"
     }
 
     /** The seal marker's session id, or -1 when no seal has ever
@@ -237,7 +258,9 @@ class MonolithRepository(
         return if (legacy >= 0) fromSet + legacy else fromSet
     }
 
-    suspend fun ensureSeededAndSyncPackages() = withContext(Dispatchers.IO) {
+    suspend fun ensureSeededAndSyncPackages(
+        forceCatalogSync: Boolean = false
+    ) = withContext(Dispatchers.IO) {
         seedMutex.withLock {
         if (dao.getAllSitesSnapshot().isEmpty()) {
             dao.insertSites(BlockedBrowserDomains.defaultDomains.map { BlockedSiteEntity(it) })
@@ -267,11 +290,35 @@ class MonolithRepository(
             reseedRoutinesV1()
         }
         try {
+            // THE COLLAPSE GUARD (fresh-eyes L3): the two-strike
+            // prune is only as honest as the distance between the
+            // strikes. The ViewModel's init calls this sync and
+            // then its guard refresh calls it AGAIN seconds later
+            // (PARK's open does the same) — identical
+            // PackageManager state, so one transiently-filtered
+            // cold-start query used to satisfy both strikes in a
+            // single launch and prune. A non-forced call inside
+            // the window after a completed sync therefore skips
+            // the reconcile entirely: it touches no strikes, files
+            // no tombstones, prunes nothing. The rest of this
+            // seeding pass (sites, profiles, tasks, the day-word
+            // drain) is idempotent and still runs. A forced call,
+            // and any call after the window, is a genuinely
+            // separate look and reconciles normally.
+            val collapseRepeat = !forceCatalogSync &&
+                AppCatalogReconcile.isCollapseRepeat(
+                    lastSuccessfulSyncMillis = loadLastCatalogSyncMillis(),
+                    nowMillis = System.currentTimeMillis()
+                )
             val pm = context.packageManager
             val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
                 addCategory(Intent.CATEGORY_LAUNCHER)
             }
             val resolvedList = pm.queryIntentActivities(mainIntent, 0)
+            // The main activity per package (its launch intent's
+            // component), resolved once per package — the reconcile's
+            // dedupe rule lets it win over shortcut activities.
+            val mainActivityByPackage = mutableMapOf<String, String?>()
             val installed = resolvedList.mapNotNull { resolveInfo ->
                 val pkg = resolveInfo.activityInfo?.packageName ?: return@mapNotNull null
                 if (pkg == context.packageName || pkg.startsWith("com.android.settings")) {
@@ -279,30 +326,45 @@ class MonolithRepository(
                 }
                 val label = resolveInfo.loadLabel(pm)?.toString()
                     ?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                InstalledPackage(pkg, label)
+                val mainActivity = mainActivityByPackage.getOrPut(pkg) {
+                    runCatching {
+                        pm.getLaunchIntentForPackage(pkg)?.component?.className
+                    }.getOrNull()
+                }
+                InstalledPackage(
+                    pkg, label,
+                    isMainActivity = mainActivity != null &&
+                        mainActivity == resolveInfo.activityInfo?.name
+                )
             }
             // THE CATALOG IS THE PHONE'S TRUTH (Ordner lane, Sarthak's
             // complaint Oct 29 22:40: the list carried apps he never
             // installed). There is no blind factory seed any more:
-            // this sync reconciles the table to exactly the installed
-            // launchable set — rows for absent packages are PRUNED,
-            // present packages are discovered without a cap, and the
+            // this sync reconciles the table to the installed
+            // launchable set — rows for packages absent on TWO
+            // consecutive syncs are PRUNED (with their rulings filed
+            // in the catalog memory first, issue #34), present
+            // packages are discovered without a cap, and the
             // factory presets survive only as birth rules applied to
             // packages that actually exist on this phone. An empty
             // query result can only mean the query failed (the
             // <queries> declaration in the manifest makes every
             // launcher app visible), so an empty result skips the
             // reconcile entirely rather than pruning his rules away.
-            if (installed.isNotEmpty()) {
+            if (installed.isNotEmpty() && !collapseRepeat) {
                 val existingRows = dao.getAllAppsSnapshot()
                 val plan = AppCatalogReconcile.reconcile(
                     existing = existingRows,
                     installed = installed,
                     usageMinutes = queryRealTodayUsageMinutes(),
-                    categorize = ::categorizePackage
+                    categorize = ::categorizePackage,
+                    previouslyAbsent = loadAbsentOnce(),
+                    rememberedRules = loadRememberedRules()
                 )
                 if (plan.toInsert.isNotEmpty()) {
                     dao.insertApps(plan.toInsert)
+                    // A restored package's tombstone is spent.
+                    forgetRememberedRules(plan.toInsert.map { it.packageName })
                 }
                 plan.usageUpdates.forEach { dao.updateApp(it) }
                 if (plan.toPrune.isNotEmpty()) {
@@ -314,6 +376,10 @@ class MonolithRepository(
                     val prunedRows = existingRows.filter {
                         it.packageName in plan.toPrune
                     }
+                    // Issue #34: file the rulings BEFORE the rows
+                    // leave, so a returning package is reborn with
+                    // its own ruling, never a silent OPEN.
+                    rememberPrunedRules(prunedRows)
                     recordPruneNote(
                         appsRemoved = prunedRows.size,
                         rulesRemoved = prunedRows.any {
@@ -322,6 +388,16 @@ class MonolithRepository(
                     )
                     dao.deleteAppsByPackage(plan.toPrune)
                 }
+                // The strike set for the next sync: only packages
+                // absent for the FIRST time here. A package absent
+                // twice has been pruned above; one present again
+                // clears itself by not being absent.
+                saveAbsentOnce(plan.pendingPrune.toSet())
+                // The sync completed: this instant anchors the
+                // collapse window (L3). Only a reconcile that
+                // actually ran earns the stamp — an empty query
+                // above is a failed look and starts no window.
+                saveLastCatalogSyncMillis(System.currentTimeMillis())
             }
         } catch (_: Exception) {
             // Safe fallback if package querying is restricted
@@ -545,6 +621,67 @@ class MonolithRepository(
             .apply()
     }
 
+    // ------------------------------------------------------------------
+    // THE CATALOG MEMORY (issue #34): strike set + rule tombstones.
+    // ------------------------------------------------------------------
+
+    private fun loadLastCatalogSyncMillis(): Long =
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .getLong(LAST_CATALOG_SYNC_KEY, 0L)
+
+    private fun saveLastCatalogSyncMillis(millis: Long) {
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putLong(LAST_CATALOG_SYNC_KEY, millis).apply()
+    }
+
+    private fun loadAbsentOnce(): Set<String> =
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .getStringSet(ABSENT_ONCE_KEY, emptySet())
+            ?.toSet() ?: emptySet()
+
+    private fun saveAbsentOnce(packages: Set<String>) {
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putStringSet(ABSENT_ONCE_KEY, packages).apply()
+    }
+
+    /** Remembered rulings, decoded: "pkg|TIER|limit" per entry.
+     *  A malformed entry is skipped, never fatal. */
+    private fun loadRememberedRules(): Map<String, AppRulePreset> {
+        val raw = context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .getStringSet(REMEMBERED_RULES_KEY, emptySet()) ?: emptySet()
+        return raw.mapNotNull { entry ->
+            val parts = entry.split("|")
+            if (parts.size != 3) return@mapNotNull null
+            val tier = runCatching { AppBlockTier.valueOf(parts[1]) }.getOrNull()
+                ?: return@mapNotNull null
+            val limit = parts[2].toIntOrNull() ?: return@mapNotNull null
+            parts[0] to AppRulePreset(tier, limit)
+        }.toMap()
+    }
+
+    private fun rememberPrunedRules(rows: List<BlockedAppEntity>) {
+        if (rows.isEmpty()) return
+        val prefs = context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+        val kept = (prefs.getStringSet(REMEMBERED_RULES_KEY, emptySet()) ?: emptySet())
+            .filter { entry -> rows.none { it.packageName == entry.substringBefore("|") } }
+        val encoded = rows.map {
+            "${it.packageName}|${it.resolvedTier.name}|${it.dailyLimitMinutes}"
+        }
+        prefs.edit()
+            .putStringSet(REMEMBERED_RULES_KEY, (kept + encoded).toSet())
+            .apply()
+    }
+
+    private fun forgetRememberedRules(packages: List<String>) {
+        if (packages.isEmpty()) return
+        val prefs = context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getStringSet(REMEMBERED_RULES_KEY, emptySet()) ?: return
+        val kept = raw.filter { it.substringBefore("|") !in packages }
+        if (kept.size != raw.size) {
+            prefs.edit().putStringSet(REMEMBERED_RULES_KEY, kept.toSet()).apply()
+        }
+    }
+
     fun markParkIntroDone() {
         context.getSharedPreferences(CHROME_PREFS_NAME, Context.MODE_PRIVATE)
             .edit().putBoolean(PARK_INTRO_DONE_KEY, true).apply()
@@ -569,7 +706,13 @@ class MonolithRepository(
     // (AppCatalogReconcile.kt) so it is unit-testable; this stays
     // as the reconcile's categorize seam. (Issue #107's top-level
     // categorizePackage in the same file delegates to it too —
-    // one classifier, two seams, no drift.)
+    // one classifier, two seams, no drift.) Fresh-eyes L2's
+    // whole-token matching lives in that same classifier — the
+    // old substring matcher here called the Play Store a game.
+    // Survivor safety, verified for L2: reconcile copies ONLY
+    // this category (plus label and usage) onto an existing row;
+    // a survivor's tier and limit are never re-priced by a sync,
+    // so a corrected category can never move an existing ruling.
     private fun categorizePackage(pkg: String, label: String): AppCategory =
         AppCategorizer.categorize(pkg, label)
 
@@ -581,8 +724,17 @@ class MonolithRepository(
             val end = System.currentTimeMillis()
             val start = end - (12 * 60 * 60 * 1000L)
             val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end)
-            stats?.associate {
-                it.packageName to ((it.totalTimeInForeground / 60_000L).toInt().coerceAtLeast(0))
+            // Fix 4: buckets SUM per package (the pure
+            // AppCatalogReconcile.aggregateUsageMinutes) — the
+            // old associate{} kept only the last bucket and
+            // under-reported any multi-bucket app.
+            stats?.let { rows ->
+                AppCatalogReconcile.aggregateUsageMinutes(
+                    rows.map {
+                        it.packageName to
+                            ((it.totalTimeInForeground / 60_000L).toInt().coerceAtLeast(0))
+                    }
+                )
             } ?: emptyMap()
         } catch (_: Exception) {
             emptyMap()
