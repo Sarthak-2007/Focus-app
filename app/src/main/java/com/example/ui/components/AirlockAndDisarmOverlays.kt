@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -1417,16 +1418,17 @@ fun PeekCountdownPill(
                 color = NightColorPrimary,
                 modifier = Modifier.testTag("peek_pill_countdown")
             )
-            Text(
-                text = "✕",
-                fontFamily = AtkinsonHyperlegibleFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
-                color = NightColorPrimary,
+            // #336: the close glyph is an ICON from the one system
+            // (MonolithIcons), not a text character.
+            androidx.compose.material3.Icon(
+                imageVector = com.example.ui.theme.MonolithIcons.Close,
+                contentDescription = "End peek early",
+                tint = NightColorPrimary,
                 modifier = Modifier
                     .clickable { onEndEarly() }
                     .testTag("peek_pill_end_button")
                     .padding(horizontal = 4.dp)
+                    .size(16.dp)
             )
         }
     }
