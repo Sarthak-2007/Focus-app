@@ -3,6 +3,7 @@ package com.example.service
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
+import android.graphics.Rect
 import android.media.AudioManager
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
@@ -26,6 +27,11 @@ import kotlinx.coroutines.launch
  * 3. YouTube Shorts & Instagram Reels Sniper: Checks BOTH internal View IDs AND selected bottom-navigation
  *    tabs (`node.isSelected` with text/description "Shorts" or "Reels"). Remains strictly active even during Safe Breaks.
  *    Gated by the persisted Guard switch `shortsReelsSniperEnabled` (Truth Car 3, UNA-01) — OFF leaves feeds alone.
+ *    A peek lease does NOT silence it (#131): the lease buys a time-boxed glance at the app, never a
+ *    Shorts/Reels binge — the sniper is the feed-specific door, the lease is an app-access door.
+ *    Scope, stated honestly (#131): the sniper polices ONLY the vertical Shorts/Reels feed. It does
+ *    not police long-form video, home feeds, Stories or DMs — those surfaces are governed solely by
+ *    the app's tier below (an OPEN app is open there because the user tiered it OPEN).
  * 4. In-Browser URL Bar Blocker: Ignores the address bar while the user is actively typing (`node.isFocused == true`),
  *    and blocks distracting domains once committed/loaded—even during Safe Breaks.
  * 5. 3-Tier Per-App & Safe Break Enforcement:
@@ -66,6 +72,36 @@ enum class InterceptPath {
  */
 internal fun matchBlockedDomain(urlText: String, domains: List<String>): String? =
     domains.firstOrNull { domain -> urlText.contains(domain) }
+
+/**
+ * #131: the player/viewer surfaces whose VISIBLE presence means a
+ * Short or Reel is actually on screen. Deliberately absent:
+ * `com.google.android.youtube:id/reel_recycler` — that is the
+ * Shorts SHELF container, present on home/channel/search screens
+ * while the user is merely near Shorts, not watching one. Presence
+ * of a shelf is proximity; only a visible player is watching.
+ */
+internal val SHORTS_PLAYER_VIEW_IDS: List<String> = listOf(
+    "com.google.android.youtube:id/reel_player_page_container",
+    "com.google.android.youtube:id/shorts_player",
+    "com.instagram.android:id/clips_viewer_view_pager",
+    "com.instagram.android:id/reel_viewer_fragment"
+)
+
+/** #131: the selected-tab label match, extracted pure. A label
+ *  alone is NOT evidence of watching — the caller must also place
+ *  the tab in the bottom-navigation region ([isBottomNavBounds]),
+ *  so a selected 'Shorts' channel tab or search chip never fires. */
+internal fun isFeedTabLabel(textLower: String, descLower: String): Boolean =
+    descLower == "shorts" || descLower == "reels" ||
+        textLower == "shorts" || textLower == "reels" ||
+        descLower.startsWith("shorts,") || descLower.startsWith("reels,")
+
+/** #131: a node sits in the bottom-navigation region when its
+ *  bottom edge reaches the lowest fifth of the window. Channel
+ *  tab strips and search filter chips live far above this line. */
+internal fun isBottomNavBounds(boundsBottomPx: Int, rootHeightPx: Int): Boolean =
+    rootHeightPx > 0 && boundsBottomPx >= (rootHeightPx * 4) / 5
 
 class MonolithAccessibilityService : AccessibilityService() {
 
@@ -214,21 +250,27 @@ class MonolithAccessibilityService : AccessibilityService() {
                 return@launch
             }
 
-            // UNA2-01, the lease agreement: a live peek lease on
-            // THIS package silences the sniper and the site blocker
-            // too — a lease is honoured by every door or it is
-            // honoured by none. The per-app door (branch 5) and the
-            // shield service's set filter already read the lease;
-            // these two doors fired blind, so a peek bought on the
-            // per-app door could be re-intercepted mid-lease by the
-            // sniper — the lease protecting nothing again.
+            // UNA2-01, the lease agreement — AMENDED by #131 for
+            // the sniper only: a live peek lease on THIS package
+            // still silences the site blocker below (a browser peek
+            // must not be re-intercepted by the door it was bought
+            // through), but it no longer silences the sniper. The
+            // old blanket rule turned the one sanctioned YouTube
+            // entry — its factory tier is PEEK_2M — into a 2-minute
+            // Shorts pass, and made the PARK sniper toggle a lived
+            // no-op in the default configuration. A lease is an
+            // app-access door: it buys a time-boxed, counted glance
+            // at the app (branch 5 still honours it exactly as
+            // before); it was never a feed licence. Inside a peeked
+            // YouTube/Instagram the user may use the app — and the
+            // moment a Short/Reel actually plays, the sniper fires.
             val leaseRow = dao.getAllAppsSnapshot().find { it.packageName == pkgName }
             val leaseLive = leaseRow != null &&
                 leaseRow.resolvedTier == AppBlockTier.PEEK_2M &&
                 SystemClock.elapsedRealtime() < leaseRow.activePeekUntilElapsedRealtime
 
-            // 3. YouTube Shorts & Instagram Reels Sniper (Strictly active during both Work Blocks and Safe Breaks — and only while its persisted switch is ON: UNA-01)
-            if (!leaseLive && shortsSniperArmed(guardSettings, pkgName)) {
+            // 3. YouTube Shorts & Instagram Reels Sniper (Strictly active during both Work Blocks and Safe Breaks, during peek leases (#131) — and only while its persisted switch is ON: UNA-01)
+            if (shortsSniperArmed(guardSettings, pkgName)) {
                 if (detectShortsOrReelsFeed(rootNode)) {
                     performGlobalAction(GLOBAL_ACTION_BACK)
                     launchInterceptScreen(
@@ -331,36 +373,38 @@ class MonolithAccessibilityService : AccessibilityService() {
 
     private fun detectShortsOrReelsFeed(rootNode: AccessibilityNodeInfo?): Boolean {
         if (rootNode == null) return false
-        // Strategy A: Known internal View IDs
-        val shortsViewIds = listOf(
-            "com.google.android.youtube:id/reel_recycler",
-            "com.google.android.youtube:id/reel_player_page_container",
-            "com.google.android.youtube:id/shorts_player",
-            "com.instagram.android:id/clips_viewer_view_pager",
-            "com.instagram.android:id/reel_viewer_fragment"
-        )
-        for (id in shortsViewIds) {
+        // Strategy A (#131, tightened): known player/viewer View
+        // IDs — and only when a node is actually VISIBLE to the
+        // user. Mere presence anywhere in the tree is proximity,
+        // not watching: the Shorts shelf ID (reel_recycler) is
+        // excluded entirely (see SHORTS_PLAYER_VIEW_IDS), and a
+        // player surface instantiated off-screen no longer fires.
+        for (id in SHORTS_PLAYER_VIEW_IDS) {
             val nodes = try { rootNode.findAccessibilityNodeInfosByViewId(id) } catch (_: Exception) { null }
-            if (!nodes.isNullOrEmpty()) return true
+            if (nodes?.any { it.isVisibleToUser } == true) return true
         }
-        // Strategy B: Resilient selected bottom-navigation tab inspection (`node.isSelected`)
-        return isSelectedBottomTabShortsOrReels(rootNode)
+        // Strategy B (#131, tightened): a selected Shorts/Reels
+        // tab counts only in the bottom-navigation region — the
+        // main apps open their feed the moment that tab is
+        // selected, so there selection IS watching. A selected
+        // 'Shorts' channel tab or search chip sits far above the
+        // nav bar and is mere browsing; it must not fire.
+        val rootRect = Rect()
+        try { rootNode.getBoundsInScreen(rootRect) } catch (_: Exception) { /* no bounds: B cannot prove its case */ }
+        return isSelectedBottomTabShortsOrReels(rootNode, rootRect.height())
     }
 
-    private fun isSelectedBottomTabShortsOrReels(node: AccessibilityNodeInfo?): Boolean {
+    private fun isSelectedBottomTabShortsOrReels(node: AccessibilityNodeInfo?, rootHeightPx: Int): Boolean {
         if (node == null) return false
         val desc = node.contentDescription?.toString()?.trim()?.lowercase() ?: ""
         val text = node.text?.toString()?.trim()?.lowercase() ?: ""
-        if (node.isSelected && (
-                desc == "shorts" || desc == "reels" ||
-                    text == "shorts" || text == "reels" ||
-                    desc.startsWith("shorts,") || desc.startsWith("reels,")
-            )
-        ) {
-            return true
+        if (node.isSelected && isFeedTabLabel(text, desc)) {
+            val rect = Rect()
+            val hasBounds = try { node.getBoundsInScreen(rect); true } catch (_: Exception) { false }
+            if (hasBounds && isBottomNavBounds(rect.bottom, rootHeightPx)) return true
         }
         for (i in 0 until node.childCount) {
-            if (isSelectedBottomTabShortsOrReels(node.getChild(i))) return true
+            if (isSelectedBottomTabShortsOrReels(node.getChild(i), rootHeightPx)) return true
         }
         return false
     }
