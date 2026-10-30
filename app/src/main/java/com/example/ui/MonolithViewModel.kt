@@ -458,6 +458,13 @@ internal fun peekSecondsRemaining(leaseEndMono: Long, nowMono: Long): Int? {
 data class DisarmChallengeState(
     val isVisible: Boolean = false,
     val requiredHoldSeconds: Int = 60,
+    // Issue #103 F5: when a completed 60s hold is REFUSED, the
+    // refusal must announce itself — the valve view resets its own
+    // progress the instant it fires completion, so without this
+    // sentence the user is left staring at a fresh valve with no
+    // sign the hold did not count. Set only on a refusal verdict;
+    // cleared whenever the challenge (re)opens or completes.
+    val refusalMessage: String? = null,
     // Audit R3b #147: the stopwatch floor, carried into the valve
     // overlay so it can state the wait-to-free path instead of
     // presenting the token as the only door. These two are FACTS
@@ -471,7 +478,14 @@ data class DisarmChallengeState(
     // for the visit's whole life. The overlay derives its count from
     // the repository flow (weeklyEmergencyTokensRemaining below) for
     // as long as it is visible.
-)
+) {
+    companion object {
+        const val REFUSAL_NO_TOKEN =
+            "HOLD DID NOT COUNT — THIS WEEK'S BREAK IS ALREADY SPENT. NOTHING WAS CHARGED; THE SESSION STAYS SEALED."
+        const val REFUSAL_NO_SESSION =
+            "HOLD DID NOT COUNT — THERE IS NO ACTIVE SESSION TO BREAK. NOTHING WAS SPENT."
+    }
+}
 
 /**
  * Issue #141: one sled tier commit, staged for its undo window.
@@ -2898,7 +2912,7 @@ class MonolithViewModel(
      *  repository re-signs the row in the same write. */
     fun extendActiveSession(extraMinutes: Int = 10) {
         viewModelScope.launch {
-            repository.extendActiveSession(extraMinutes)
+            repository.extendActiveSessionByMinutes(extraMinutes)
         }
     }
 
@@ -3604,9 +3618,26 @@ class MonolithViewModel(
         }
     }
 
-    /** The 60 s valve's hold-start hook: stamps E4 on the active
-     *  routine session (the hold itself is attendance evidence). */
+    /** The 60 s valve's hold-start hook (main, issue-60 seam):
+     *  stamps E4 on the active routine session. Kept from main;
+     *  NOT wired at the MainActivity call site in this merge —
+     *  issue #103 F4 rules that E4 attendance evidence stamps only
+     *  when a chamber BANKS (see recordValveHoldBanked), so a
+     *  momentary grip can never manufacture attendance. */
     fun recordValveHoldStarted() {
+        viewModelScope.launch {
+            repository.recordAttendanceEvidence(
+                MonolithRepository.EVIDENCE_E4_HOLD_START, System.currentTimeMillis()
+            )
+        }
+    }
+
+    /** The 60 s valve's bank hook: stamps E4 on the active routine
+     *  session. Fired only when a 15-second chamber BANKS (issue
+     *  #103 F4) — a momentary grip, slip or un-banked abandon
+     *  stamps nothing, so the valve cannot be touched briefly to
+     *  manufacture attendance evidence. */
+    fun recordValveHoldBanked() {
         viewModelScope.launch {
             repository.recordAttendanceEvidence(
                 MonolithRepository.EVIDENCE_E4_HOLD_START, System.currentTimeMillis()
@@ -3626,7 +3657,11 @@ class MonolithViewModel(
             current.elapsedSeconds < MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
         val remainingFloor = (MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS - current.elapsedSeconds).coerceAtLeast(0)
 
-        // If Stopwatch Mode has passed the mandatory 20-minute floor, allow clean completion
+        // If Stopwatch Mode has passed the mandatory 20-minute floor, allow clean completion.
+        // Issue #103 F3: this door is free and instant — no hold, no
+        // token — and the Deck chip that leads here says exactly
+        // that ("FINISH STOPWATCH · NO BREAK SPENT / PAST 20M
+        // FLOOR") instead of wearing the valve's label and price.
         if (current.isStopwatchMode && !isBelowFloor) {
             soundEngine.playHarmonicSeal(arming = false)
             viewModelScope.launch {
@@ -3672,11 +3707,13 @@ class MonolithViewModel(
      * The valve's completion callback (TOKEN-SPEC §5): the repository
      * decides. Only on [BreakResult.Completed] — after the spend +
      * disarm transaction has committed — does the seal sound, the
-     * overlay close and the shield stop. On
-     * [BreakResult.RefusedNoToken] the session stays sealed and the
-     * overlay stays open: its count is derived from the repository
-     * flow, so it transitions in place to the SPENT rendering
-     * (Amendment B) — silently, no seal.
+     * overlay close and the shield stop. On a refusal the session
+     * stays sealed and the overlay stays open — but NOT in silence
+     * (issue #103 F5, superseding Amendment B's silent transition):
+     * the valve has already erased its own 60s of progress, so the
+     * refusal announces itself with a latch sound and a printed
+     * sentence in the overlay ([DisarmChallengeState.refusalMessage])
+     * saying the hold did not count and nothing was spent.
      */
     fun completeEmergencyBreakFromValve() {
         viewModelScope.launch {
@@ -3690,9 +3727,19 @@ class MonolithViewModel(
                         appContext, com.example.service.RoutineHeartbeat.Source.SESSION_EDGE
                     )
                 }
-                BreakResult.RefusedNoToken, BreakResult.NoActiveSession -> {
-                    // Session stays sealed; the overlay remains open and
-                    // re-renders from the repository flow. Nothing sounds.
+                BreakResult.RefusedNoToken -> {
+                    soundEngine.playMechanicalLatch(false)
+                    _disarmChallenge.value = _disarmChallenge.value.copy(
+                        isVisible = true,
+                        refusalMessage = DisarmChallengeState.REFUSAL_NO_TOKEN
+                    )
+                }
+                BreakResult.NoActiveSession -> {
+                    soundEngine.playMechanicalLatch(false)
+                    _disarmChallenge.value = _disarmChallenge.value.copy(
+                        isVisible = true,
+                        refusalMessage = DisarmChallengeState.REFUSAL_NO_SESSION
+                    )
                 }
             }
         }

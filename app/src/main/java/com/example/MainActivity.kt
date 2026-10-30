@@ -56,6 +56,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.data.MonolithDatabase
+import com.example.data.MonolithRepository
+import com.example.data.SmartLoadout
 import com.example.service.InterceptConsumptionStore
 import com.example.service.InterceptNonce
 import com.example.service.InterceptPath
@@ -1010,6 +1013,17 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onExtendSession = viewModel::extendActiveSession,
                                     dndLine = dndLine,
                                     weeklyEmergencyTokensRemaining = weeklyEmergencyTokensRemaining,
+                                    // Issue #103 F1: the repository
+                                    // diverts a non-SLEEP routine
+                                    // session to its judging funnel —
+                                    // a deleted routine row judges
+                                    // too (null loadout != SLEEP);
+                                    // SLEEP rows fall through to the
+                                    // real grace path.
+                                    isActiveRoutineJudged = activeSession?.routineId?.let { rid ->
+                                        routines.firstOrNull { it.id == rid }
+                                            ?.loadoutName != SmartLoadout.SLEEP.name
+                                    } ?: false,
                                     appsCellCount = appsCellCount,
                                     appsSplit = appsSplit,
                                     deckWarrant = deckWarrant,
@@ -1682,7 +1696,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 soundEngine = viewModel.soundEngine,
                 onDismissKeepFocusing = viewModel::dismissDisarmChallenge,
                 onCompleteDisarm = { viewModel.completeEmergencyBreakFromValve() },
-                onHoldStarted = viewModel::recordValveHoldStarted
+                onHoldBanked = viewModel::recordValveHoldBanked
             )
 
             // Issue #143 F1/F6: the break dim stands over the

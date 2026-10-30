@@ -1654,6 +1654,11 @@ fun PeekCountdownPill(
  * valve = mechanics · chip KEEP FOCUSING. The count itself arrives as
  * [tokensRemaining], derived live from the repository's spend ledger
  * (Amendment A — never a snapshot written into the state at open).
+ * Ledger-Direct (Freya, invention 1): the valve receives NO count —
+ * at 0 remaining it is simply not composed, and this overlay renders
+ * the SPENT face (buildspec point 8) in its place.
+ * Issue #103 F5: a refused completed hold prints its refusal
+ * sentence (state.refusalMessage) on either face — never in silence.
  * Ledger-Direct (Freya, invention 1): the valve receives NO count.
  * Issue #119, finding 1 (truth half): at 0 remaining the INTERACTIVE
  * valve is not composed, but the valve's place is never left empty —
@@ -1679,6 +1684,7 @@ fun DisarmChallengeOverlay(
     soundEngine: TactileSoundEngine? = null,
     onDismissKeepFocusing: () -> Unit,
     onCompleteDisarm: () -> Unit,
+    onHoldBanked: () -> Unit = {},
     onHoldStarted: () -> Unit = {}
 ) {
     // Issue-60 (finding 1): banked valve progress is HOISTED here in
@@ -1737,6 +1743,23 @@ fun DisarmChallengeOverlay(
                     color = NightColorPrimary
                 )
 
+                // Issue #103 F5: a refused hold announces itself.
+                // Printed OUTSIDE the valve conditional so it shows
+                // on both faces (valve composed, and SPENT at 0) —
+                // the valve's own progress has already reset to
+                // zero, so this sentence is the only sign the 60
+                // seconds did not count.
+                state.refusalMessage?.let { refusal ->
+                    Text(
+                        text = refusal,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = NightColorPrimary,
+                        modifier = Modifier.testTag("valve_refusal_message")
+                    )
+                }
+
                 // Audit R3b #147: below the stopwatch floor, the
                 // valve is not the only door — waiting is. The
                 // overlay names the floor, the minutes left to it,
@@ -1767,6 +1790,7 @@ fun DisarmChallengeOverlay(
                         },
                         update = { view ->
                             view.requiredSeconds = state.requiredHoldSeconds
+                            view.onHoldBanked = onHoldBanked
                             view.onBankedProgressChanged = { banked ->
                                 hoistedBankedMs = banked
                             }
