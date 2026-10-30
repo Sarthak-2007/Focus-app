@@ -645,8 +645,12 @@ private fun TaskLeafItem(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable(enabled = !ghost && !isSessionActive) { onToggleSubStep(task.id, stepIdx) }
-                                .padding(start = 14.dp),
+                                .clickable(
+                                    enabled = !ghost && !isSessionActive,
+                                    role = androidx.compose.ui.semantics.Role.Button
+                                ) { onToggleSubStep(task.id, stepIdx) }
+                                .sizeIn(minHeight = 48.dp)
+                                .padding(start = 14.dp, top = 10.dp, bottom = 10.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -699,7 +703,13 @@ private fun TaskLeafItem(
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
                         color = scheme.onSurfaceVariant,
-                        modifier = Modifier.clickable(enabled = !ghost && !isSessionActive) { onAutoSplitTask(task.id) }
+                        modifier = Modifier
+                        .clickable(
+                            enabled = !ghost && !isSessionActive,
+                            role = androidx.compose.ui.semantics.Role.Button
+                        ) { onAutoSplitTask(task.id) }
+                        .sizeIn(minHeight = 48.dp)
+                        .padding(vertical = 14.dp)
                     )
                 }
                 if (isCued) {
@@ -723,12 +733,16 @@ private fun TaskLeafItem(
                         fontSize = 15.sp,
                         letterSpacing = 0.5.sp,
                         color = scheme.primaryContainer,
-                        modifier = Modifier.clickable(
-                            enabled = !ghost && !isSessionActive
-                        ) {
-                            onCueTaskToFocus(task.id)
-                            onNavigateToDeck()
-                        }
+                        modifier = Modifier
+                            .clickable(
+                                enabled = !ghost && !isSessionActive,
+                                role = androidx.compose.ui.semantics.Role.Button
+                            ) {
+                                onCueTaskToFocus(task.id)
+                                onNavigateToDeck()
+                            }
+                            .sizeIn(minHeight = 48.dp)
+                            .padding(vertical = 14.dp)
                     )
                 } else {
                     Text(
@@ -737,12 +751,16 @@ private fun TaskLeafItem(
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
                         color = scheme.onSurfaceVariant,
-                        modifier = Modifier.clickable(
-                            enabled = !ghost && !isSessionActive
-                        ) {
-                            onCueTaskToFocus(task.id)
-                            onNavigateToDeck()
-                        }
+                        modifier = Modifier
+                            .clickable(
+                                enabled = !ghost && !isSessionActive,
+                                role = androidx.compose.ui.semantics.Role.Button
+                            ) {
+                                onCueTaskToFocus(task.id)
+                                onNavigateToDeck()
+                            }
+                            .sizeIn(minHeight = 48.dp)
+                            .padding(vertical = 14.dp)
                     )
                 }
                 Text(
