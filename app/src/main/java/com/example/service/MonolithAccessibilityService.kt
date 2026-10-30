@@ -14,8 +14,12 @@ import android.view.accessibility.AccessibilityWindowInfo
 import com.example.MLog
 import com.example.data.AppBlockTier
 import com.example.data.BlockedBrowserDomains
+import com.example.data.DEFAULT_SURFACE_RULES
 import com.example.data.GuardSettingsEntity
+import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
+import com.example.data.SurfaceRuleStore
+import com.example.data.surfaceViewIdsFor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -577,6 +581,11 @@ class MonolithAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** #335: the data-driven surface-rule store (defaults + rules
+     *  learned on this phone). Lazy: first touched on the event
+     *  path, after the context exists. */
+    private val surfaceStore by lazy { SurfaceRuleStore(applicationContext) }
+
     companion object {
         // Live Wire registry (Ines): the service proves its own
         // liveness by EXISTING. In-memory only - proof is never
@@ -674,8 +683,21 @@ class MonolithAccessibilityService : AccessibilityService() {
          *  must never silently disarm an interceptor. */
         fun shortsSniperArmed(settings: GuardSettingsEntity?, packageName: String): Boolean =
             (settings?.shortsReelsSniperEnabled ?: true) &&
-                (packageName == "com.google.android.youtube" ||
-                    packageName == "com.instagram.android")
+                surfaceViewIdsFor(DEFAULT_SURFACE_RULES, packageName).isNotEmpty()
+
+        /** #335: the sniper's full gate — the persisted switch plus
+         *  a surface rule for the package, where the rule set is the
+         *  DATA store (shipped defaults merged with rules learned
+         *  on-device), so a third app can gain a surface rule with
+         *  no code change. The pure two-package form above remains
+         *  for callers without a store (tests, statics). */
+        fun shortsSniperArmed(
+            settings: GuardSettingsEntity?,
+            packageName: String,
+            store: SurfaceRuleStore
+        ): Boolean =
+            (settings?.shortsReelsSniperEnabled ?: true) &&
+                surfaceViewIdsFor(store.rules(), packageName).isNotEmpty()
     }
 
     override fun onServiceConnected() {
@@ -844,6 +866,9 @@ class MonolithAccessibilityService : AccessibilityService() {
         try {
             if (rootInActiveWindow != null) {
                 lastRootMono = SystemClock.elapsedRealtime()
+                // #335 F5: the detector's health record — first/last
+                // node stamps the guard surface reads.
+                DetectorHealth.recordNode(lastRootMono, -1L)
                 WatchStore.poke()
             }
         } catch (e: Exception) {
@@ -1038,11 +1063,15 @@ class MonolithAccessibilityService : AccessibilityService() {
      *  needs-root discipline applies either way: packages whose
      *  doors work from the name alone never have content read. */
     private fun captureEventFacts(pkgName: String, rootNode: AccessibilityNodeInfo): EventFacts {
+        val captureStartMono = SystemClock.elapsedRealtime()
+        // #335 F2/F3: root is needed for any package the surface-rule
+        // STORE covers (shipped defaults or a rule learned on-device)
+        // and for any browser with a learned URL-bar rule — the set
+        // is data now, not the two hard-coded package names.
         val needsRoot = pkgName in INSTALLER_PACKAGES ||
             pkgName in MARKET_PACKAGES ||
             pkgName in SETTINGS_PACKAGES ||
-            pkgName == "com.google.android.youtube" ||
-            pkgName == "com.instagram.android" ||
+            surfaceViewIdsFor(surfaceStore.rules(), pkgName).isNotEmpty() ||
             isSupportedBrowser(pkgName)
         // Issue #80 (STURM3-13 port): non-browser windows carry
         // their texts for the any-host URL door and the surface
@@ -1058,11 +1087,12 @@ class MonolithAccessibilityService : AccessibilityService() {
             out
         }
         if (!needsRoot) return EventFacts(windowTexts = windowTexts)
-        return EventFacts(
+        
+        val facts = EventFacts(
             tamperSurface = isPackageInstallerOrTamperSettings(pkgName, rootNode),
             sniperFeedVisible = detectShortsOrReelsFeed(rootNode),
             browserUrlTexts = if (isSupportedBrowser(pkgName)) {
-                extractBrowserUrlTexts(rootNode)
+                extractBrowserUrlTexts(rootNode, pkgName)
             } else {
                 emptyList()
             },
@@ -1073,6 +1103,13 @@ class MonolithAccessibilityService : AccessibilityService() {
                 ""
             }
         )
+        // #335 F5: a capture IS a detector scan — its duration feeds
+        // the slow-scan health warning (>100 ms, Freedom's line).
+        DetectorHealth.recordNode(
+            SystemClock.elapsedRealtime(),
+            SystemClock.elapsedRealtime() - captureStartMono
+        )
+        return facts
     }
 
     /** Issue #80's bounded tree walk: depth- and count-capped,
@@ -1163,7 +1200,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         // exemption reads the row's lease end directly.
 
         // 3. YouTube Shorts & Instagram Reels Sniper (Strictly active during both Work Blocks and Safe Breaks, during peek leases (#131) — and only while its persisted switch is ON: UNA-01)
-        if (shortsSniperArmed(guardSettings, pkgName) && snapshot.facts.sniperFeedVisible) {
+        if (shortsSniperArmed(guardSettings, pkgName, surfaceStore) && snapshot.facts.sniperFeedVisible) {
             performGlobalAction(GLOBAL_ACTION_BACK)
             launchInterceptScreen(
                 packageName = pkgName,
@@ -1569,7 +1606,18 @@ class MonolithAccessibilityService : AccessibilityService() {
         // not watching: the Shorts shelf ID (reel_recycler) is
         // excluded entirely (see SHORTS_PLAYER_VIEW_IDS), and a
         // player surface instantiated off-screen no longer fires.
-        for (id in SHORTS_PLAYER_VIEW_IDS) {
+        // #335 F3: the ids are the STORE's rules for this window's
+        // package (defaults merged with on-device learned rules);
+        // the compiled-in list survives only as the store fallback
+        // if the store itself cannot be read.
+        val rootPackage = rootNode.packageName?.toString() ?: ""
+        val ruleIds = try {
+            surfaceViewIdsFor(surfaceStore.rules(), rootPackage)
+                .ifEmpty { SHORTS_PLAYER_VIEW_IDS.filter { it.startsWith(rootPackage) } }
+        } catch (_: Exception) {
+            SHORTS_PLAYER_VIEW_IDS.filter { it.startsWith(rootPackage) }
+        }
+        for (id in ruleIds) {
             val nodes = try { rootNode.findAccessibilityNodeInfosByViewId(id) } catch (e: Exception) { noteDetectionFailure("findByViewId", e); null }
             if (nodes?.any { it.isVisibleToUser } == true) return true
         }
@@ -1616,8 +1664,13 @@ class MonolithAccessibilityService : AccessibilityService() {
         return false
     }
 
-    private fun isSupportedBrowser(pkgName: String): Boolean =
-        isSupportedBrowserPackage(pkgName)
+    private fun isSupportedBrowser(pkgName: String): Boolean {
+        // #335 F2: a browser the shipped list never named becomes
+        // supported the moment a URL-bar rule is learned for it
+        // on-device — no app update involved.
+        if (surfaceStore.hasLearnedBrowser(pkgName)) return true
+        return isSupportedBrowserPackage(pkgName)
+    }
 
     /**
      * Captures the browser URL bar's text across Chrome, Brave,
@@ -1640,9 +1693,11 @@ class MonolithAccessibilityService : AccessibilityService() {
      * it captures the text here; the host-exact match still happens
      * in the worker, against the stored list.
      */
-    private fun extractBrowserUrlTexts(rootNode: AccessibilityNodeInfo): List<String> {
+    private fun extractBrowserUrlTexts(rootNode: AccessibilityNodeInfo, pkgName: String): List<String> {
         val texts = mutableListOf<String>()
-        collectUrlBarTexts(rootNode, 0, texts)
+        // #335 F2: suffixes are data — shipped defaults plus any
+        // suffix learned for THIS browser on-device.
+        collectUrlBarTexts(rootNode, 0, texts, surfaceStore.urlBarSuffixesFor(pkgName))
         return texts
     }
 
@@ -1668,39 +1723,16 @@ class MonolithAccessibilityService : AccessibilityService() {
     private fun collectUrlBarTexts(
         node: AccessibilityNodeInfo?,
         depth: Int,
-        out: MutableList<String>
+        out: MutableList<String>,
+        urlBarSuffixes: List<String> = com.example.data.DEFAULT_URL_BAR_SUFFIXES
     ) {
         if (node == null || depth > 32 || out.size >= 6) return
         val viewId = node.viewIdResourceName?.lowercase(Locale.ROOT) ?: ""
-        if (!node.isFocused && (
-                viewId.endsWith(":id/url_bar") ||
-                    viewId.endsWith(":id/location_bar_edit_text") ||
-                    viewId.endsWith(":id/mozac_browser_toolbar_url_view")
-                )
-        ) {
+        if (!node.isFocused && urlBarSuffixes.any { viewId.endsWith(it) }) {
             node.text?.toString()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { out.add(it) }
         }
-        // Generic address-bar leg (W3 #130, see the doc above):
-        // an unfocused EditText whose whole text is a URL.
-        if (!node.isFocused && out.size < 6) {
-            val className = node.className?.toString() ?: ""
-            if (className.contains("EditText")) {
-                val urlText = node.text?.toString()?.trim()?.lowercase()
-                if (!urlText.isNullOrEmpty() && !urlText.contains(' ')) {
-                    val host = extractUrlHost(urlText)
-                    if (host != null && (
-                            urlText.contains("://") ||
-                                urlText.startsWith(host) ||
-                                urlText.startsWith("www.$host")
-                            ) && urlText !in out
-                    ) {
-                        out.add(urlText)
-                    }
-                }
-            }
-        }
         for (i in 0 until node.childCount) {
-            collectUrlBarTexts(node.getChild(i), depth + 1, out)
+            collectUrlBarTexts(node.getChild(i), depth + 1, out, urlBarSuffixes)
         }
     }
 
@@ -1734,6 +1766,9 @@ class MonolithAccessibilityService : AccessibilityService() {
             InterceptIntents.interceptIntent(applicationContext, packageName, appName, reasonBadge, path),
             appName
         )
+        // #335 F5: every intercept is a detector block — recorded
+        // (last block + last successful block) in the health record.
+        DetectorHealth.recordBlock(SystemClock.elapsedRealtime(), success = true)
     }
 
     override fun onInterrupt() {}

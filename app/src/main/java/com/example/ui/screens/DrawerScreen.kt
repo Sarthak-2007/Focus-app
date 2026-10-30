@@ -1352,7 +1352,7 @@ fun DrawerScreen(
                         HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
                     }
                     // The receipts index's door: ONE furniture row
-                    // under CURIOS (issue #157) — this destination
+                    // under CABINET (issue #157) — this destination
                     // is named "Receipts"; the receipts are here.
                     item {
                         DrawerNavRow(
