@@ -200,6 +200,46 @@ internal fun peekWithheldFor(
     else -> null
 }
 
+/**
+ * Issue #87 (process-death F4, re-derive half): should a fresh
+ * process re-present an Airlock whose intercept was booked at
+ * trigger time (the F4 log half) but whose process died before any
+ * verb was chosen? Pure, so the matrix is unit-tested fact by fact.
+ * EVERY fact must hold — the re-derive may only ever restore a
+ * door that truthfully still stands, never invent one:
+ *  - the newest intercept row is the trigger-time arrival itself
+ *    (outcome "Intercepted"): every verb (peek, return, split) and
+ *    the abandon trace book a NEWER row, so a verb outcome on top
+ *    means the user already chose and there is nothing to restore;
+ *  - no Airlock is already standing in this process;
+ *  - a session is still active, the intercept fired DURING that
+ *    session (row timestamp at/after the session's own start), and
+ *    the row's recorded intention is that session's intention
+ *    (a blank recorded intention defers to the timestamp fact);
+ *  - the package's row still exists and its tier still blocks
+ *    (an app since set OPEN owes no door);
+ *  - no peek lease is live for the package (a live lease means
+ *    the peek verb WAS chosen; the F2 pill rehydration owns that
+ *    restoration, and standing an Airlock over a live lease would
+ *    contradict it).
+ */
+internal fun shouldRederiveAirlock(
+    newestOutcome: String?,
+    airlockAlreadyVisible: Boolean,
+    sessionActive: Boolean,
+    interceptDuringSession: Boolean,
+    intentionMatches: Boolean,
+    packageStillBlocked: Boolean,
+    peekLeaseLiveForPackage: Boolean
+): Boolean =
+    newestOutcome == "Intercepted" &&
+        !airlockAlreadyVisible &&
+        sessionActive &&
+        interceptDuringSession &&
+        intentionMatches &&
+        packageStillBlocked &&
+        !peekLeaseLiveForPackage
+
 data class AirlockInterceptState(
     val isVisible: Boolean = false,
     val interceptedPackageName: String = "",
@@ -934,6 +974,59 @@ class MonolithViewModel(
                 packageName = live.packageName,
                 appName = live.appName,
                 secondsRemaining = remaining
+            )
+        }
+        // Issue #87 (process-death F4, re-derive half): the F4 log
+        // half books every intercept at trigger time; this half
+        // reads that booking back. If the newest intercept row is
+        // still the bare arrival — no verb row on top of it — and
+        // its session is still active with the package still
+        // blocked, the Airlock that died with the old process is
+        // re-presented through the same mint a live intercept uses.
+        // The door the intercept arrived by was never persisted, so
+        // the restored state carries InterceptPath.UNKNOWN, which
+        // peekOfferFor answers peek-OFF: a restored door never
+        // sells a peek its real door might not have honoured, and
+        // fabricates nothing about how the user got here. No second
+        // "Intercepted" row is booked and no latch sounds — the
+        // arrival already happened once; this is its restoration,
+        // not a new enforcement event.
+        viewModelScope.launch {
+            if (_airlockState.value.isVisible) return@launch
+            val newest = runCatching {
+                repository.interceptLogsFlow.first()
+            }.getOrNull()?.firstOrNull() ?: return@launch
+            val session = runCatching {
+                repository.activeSessionSnapshot()
+            }.getOrNull()
+            val catalog = runCatching {
+                repository.allAppsFlow.first { it.isNotEmpty() }
+            }.getOrNull().orEmpty()
+            val entity = catalog.firstOrNull { it.packageName == newest.packageName }
+            val nowMono = SystemClock.elapsedRealtime()
+            val livePeekLease = entity != null &&
+                peekSecondsRemaining(entity.activePeekUntilElapsedRealtime, nowMono) != null
+            if (!shouldRederiveAirlock(
+                    newestOutcome = newest.outcome,
+                    airlockAlreadyVisible = _airlockState.value.isVisible,
+                    sessionActive = session?.isActive == true,
+                    interceptDuringSession = session != null &&
+                        newest.timestampMillis >= session.startWallTimeMillis,
+                    intentionMatches = newest.sessionIntention.isBlank() ||
+                        (session != null && newest.sessionIntention == session.intention),
+                    packageStillBlocked = entity != null &&
+                        entity.resolvedTier != AppBlockTier.OPEN,
+                    peekLeaseLiveForPackage = livePeekLease
+                )
+            ) return@launch
+            _airlockState.value = mintAirlockState(
+                packageName = newest.packageName,
+                appName = (entity?.appName?.takeIf { it.isNotBlank() }
+                    ?: newest.appName).ifBlank { "Blocked App" },
+                reasonBadge = entity?.resolvedTier?.badge ?: "Locked",
+                path = InterceptPath.UNKNOWN,
+                active = session,
+                appEntity = entity
             )
         }
         _freshStartNoteVisible.value = repository.freshStartNotePending()
@@ -2678,8 +2771,52 @@ class MonolithViewModel(
     ) {
         soundEngine.playMechanicalLatch(true)
         val active = activeSession.value
+        _airlockState.value = mintAirlockState(
+            packageName, appName, reasonBadge, path, active,
+            apps.value.find { it.packageName == packageName }
+        )
+        // Issue #87 (process-death F4): the intercept itself is booked
+        // at trigger, with the verb handlers' own call — before this,
+        // recordIntercept ran only inside the verbs (start2MinutePeek,
+        // transmuteImpulseAndReturn, splitActiveTaskAndReturn), so an
+        // intercept whose process died while the airlock stood, or
+        // which the user simply walked away from, left no log row and
+        // no phantomReachesBlocked increment at all, even though
+        // enforcement fired. The outcome names the arrival, never a
+        // verb the user has not chosen yet; the reason is the state's
+        // own birth reason, exactly as the state above was minted.
+        viewModelScope.launch {
+            repository.recordIntercept(
+                packageName = packageName,
+                appName = appName,
+                sessionIntention = active?.intention ?: _intentionText.value,
+                outcome = "Intercepted",
+                triggerReason = DistractionTriggerReason.MUSCLE_MEMORY.shortTag
+            )
+        }
+    }
 
-        val appEntity = apps.value.find { it.packageName == packageName }
+    /**
+     * The one Airlock mint (Issue #87 F4 re-derive): a fresh
+     * intercept and a re-derived one build their state through the
+     * same derivation, so the restored door can never disagree with
+     * the door a live intercept would have stood. The app entity is
+     * passed in, never re-read here — at init the apps StateFlow is
+     * still cold (WhileSubscribed), and a restored door minted from
+     * an empty snapshot would misprint its tier facts. The mint
+     * itself books nothing and sounds nothing: booking is the
+     * trigger's act (a re-derive must not double-book the arrival
+     * or re-increment the session's reaches counter), and the latch
+     * sound is the firing door's, not a restoration's.
+     */
+    private fun mintAirlockState(
+        packageName: String,
+        appName: String,
+        reasonBadge: String,
+        path: InterceptPath,
+        active: FocusSessionEntity?,
+        appEntity: BlockedAppEntity?
+    ): AirlockInterceptState {
         val cooldownLeft = if (appEntity != null) repository.getPeekCooldownRemainingSeconds(appEntity) else 0
         val pillActive = _floatingPeekPill.value.isActive
         // UNA2-01: the offer is computed per-path by the one pure
@@ -2692,7 +2829,7 @@ class MonolithViewModel(
         // peek line prints at all (Held Door Truth Baseline).
         val withheld = peekWithheldFor(canPeek, path, appEntity, cooldownLeft, pillActive)
 
-        _airlockState.value = AirlockInterceptState(
+        return AirlockInterceptState(
             isVisible = true,
             interceptedPackageName = packageName,
             interceptedAppName = appName,
@@ -2726,25 +2863,6 @@ class MonolithViewModel(
                 ?.let { System.currentTimeMillis() + it.spanRemainingSeconds * 1000L },
             sessionIsStopwatch = active?.isStopwatchMode == true
         )
-        // Issue #87 (process-death F4): the intercept itself is booked
-        // at trigger, with the verb handlers' own call \u2014 before this,
-        // recordIntercept ran only inside the verbs (start2MinutePeek,
-        // transmuteImpulseAndReturn, splitActiveTaskAndReturn), so an
-        // intercept whose process died while the airlock stood, or
-        // which the user simply walked away from, left no log row and
-        // no phantomReachesBlocked increment at all, even though
-        // enforcement fired. The outcome names the arrival, never a
-        // verb the user has not chosen yet; the reason is the state's
-        // own birth reason, exactly as the state above was minted.
-        viewModelScope.launch {
-            repository.recordIntercept(
-                packageName = packageName,
-                appName = appName,
-                sessionIntention = active?.intention ?: _intentionText.value,
-                outcome = "Intercepted",
-                triggerReason = DistractionTriggerReason.MUSCLE_MEMORY.shortTag
-            )
-        }
     }
 
     fun selectDistractionReason(reason: DistractionTriggerReason) {
