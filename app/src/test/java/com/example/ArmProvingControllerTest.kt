@@ -15,6 +15,7 @@ import com.example.ui.ArmSessionPort
 import com.example.ui.ArmWitnesses
 import com.example.ui.LinkMark
 import com.example.ui.components.jamSentenceFor
+import com.example.ui.components.provingSentenceFor
 import com.example.ui.provenCount
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -747,6 +748,84 @@ class ArmProvingControllerTest {
     }
 
     @Test
+    fun recoveryGateHoldsProvingUntilTheVerdict() = runTest {
+        // Issue #126 F1: a row under relaunch recovery reads
+        // PROVING (the Deck's gate renders it not-running) until
+        // the transition's verdict resolves it. SEALED relaxes
+        // silently — no hand-back, no sentence.
+        val controller = newController()
+        now = 20_000L
+        controller.beginRecovery(41)
+        val gated = controller.phase.value
+        assertTrue(gated is ArmPhase.Proving)
+        assertEquals(41, (gated as ArmPhase.Proving).sessionId)
+        assertEquals(0, gated.provenCount())
+        controller.resolveRecovery(41, com.example.service.SealVerdict.SEALED)
+        assertEquals(ArmPhase.Idle, controller.phase.value)
+        assertEquals(0, controller.annulCount.value)
+        assertNull(controller.armSentence.value)
+    }
+
+    @Test
+    fun recoveryAnnulmentHandsBackAndSpeaksPastTense() = runTest {
+        // The transition deleted the row; the controller's part
+        // is the hand-back + the past-tense sentence, and it must
+        // NOT annul through the port a second time.
+        val controller = newController()
+        now = 20_000L
+        controller.beginRecovery(41)
+        controller.resolveRecovery(41, com.example.service.SealVerdict.ANNULLED)
+        assertEquals(ArmPhase.Idle, controller.phase.value)
+        assertEquals(1, controller.annulCount.value)
+        assertTrue(port.annulCalls.isEmpty())
+        assertEquals(
+            "SESSION — NO PROOF. NOTHING WAS SEALED. ANY BLOCKING FROM THE WAIT IS OFF.",
+            controller.armSentence.value?.text
+        )
+    }
+
+    @Test
+    fun recoveryGateNeverHijacksALiveAttempt() = runTest {
+        val controller = newController()
+        now = 10_000L
+        controller.latch()
+        runCurrent()
+        val attempt = controller.phase.value
+        controller.beginRecovery(99)
+        assertEquals(attempt, controller.phase.value)
+        // And a verdict for some other row resolves nothing.
+        controller.resolveRecovery(99, com.example.service.SealVerdict.ANNULLED)
+        assertEquals(attempt, controller.phase.value)
+    }
+
+    @Test
+    fun jamSentenceNamesTheLivePendingLinkNotTheFrozenJamSet() {
+        // Issue #126 F4: SHIELD was in the deadline's jamSet but
+        // answered during the retry window (its mark is Confirmed
+        // in links); ACCESS is the link still pending. The old
+        // sentence kept accusing SHIELD; the live one names ACCESS.
+        val jammed = ArmPhase.Jammed(
+            attemptId = 1,
+            latchMono = 1_000L,
+            sessionId = 7,
+            links = mapOf(
+                ArmLink.SESSION_ROW to LinkMark.Confirmed(1_010L),
+                ArmLink.SHIELD_PROTECTING to LinkMark.Confirmed(1_700L),
+                ArmLink.A11Y_SESSION_ARMED to LinkMark.Pending
+            ),
+            jamSet = setOf(ArmLink.SHIELD_PROTECTING, ArmLink.A11Y_SESSION_ARMED),
+            retryCount = 1
+        )
+        assertEquals("ACCESS DIDN'T ANSWER — STILL PROVING.", jamSentenceFor(jammed)?.text)
+        // With a clock: the retry verb + the annulment countdown
+        // (latch 1000 + ANNUL 1500 − now 1900 = 600ms → 1S).
+        assertEquals(
+            "ACCESS STILL HASN'T ANSWERED — RETRYING · ANNULS IN 1S.",
+            jamSentenceFor(jammed, nowMono = 1_900L)?.text
+        )
+    }
+
+    @Test
     fun jamSentenceAndProvenCountArePhasePure() {
         val proving = ArmPhase.Proving(
             attemptId = 1,
@@ -759,6 +838,14 @@ class ArmProvingControllerTest {
             )
         )
         assertEquals(2, proving.provenCount())
+        // Issue #126 F2: PROVING speaks, counting its answered
+        // links from the same derived count.
+        assertEquals(
+            "PROVING THE SEAL — 2 OF 3 LINKS ANSWERED.",
+            provingSentenceFor(proving)?.text
+        )
+        assertNull(provingSentenceFor(ArmPhase.Idle))
+        assertNull(provingSentenceFor(ArmPhase.SealedRunning(7, 100)))
         assertNull(jamSentenceFor(proving))
         assertNull(jamSentenceFor(ArmPhase.Idle))
         assertNull(jamSentenceFor(ArmPhase.SealedRunning(7, 100)))
