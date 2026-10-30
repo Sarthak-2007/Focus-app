@@ -72,12 +72,20 @@ class PreArmStore(context: Context) {
         private const val KEY_INTENTION_TEXT = "intention_text"
         private const val KEY_DESTINATION = "destination"
 
-        // The ViewModel's old hardcoded birth values, kept as the
-        // defaults of record: a user who never touched the pre-arm
-        // setup gets exactly what a fresh install always showed.
-        const val DEFAULT_DIAL_MINUTES = 50
-        const val DEFAULT_STUDY_BLOCKS = 2
+        // The defaults of record: a user who never touched the
+        // pre-arm setup gets exactly the default preset's own
+        // session — no second literal may contradict it.
+        // Issue #261 (F9/F14, FINISH K6/D): the dial/blocks birth
+        // values used to be hardcoded literals (50 / 2) while the
+        // birth preset said POMODORO_25_5 (25 min × 2 blocks), so a
+        // first start silently committed to 50×2 + break = a
+        // 110-minute span under a "25m Sprint" label. Both values
+        // now DERIVE from the preset itself — the same derivation
+        // selectStudyPreset applies on every preset tap — so the
+        // preset is the single source of truth.
         val DEFAULT_STUDY_PRESET: StudyModePreset = StudyModePreset.POMODORO_25_5
+        val DEFAULT_DIAL_MINUTES: Int = DEFAULT_STUDY_PRESET.workMinutes
+        val DEFAULT_STUDY_BLOCKS: Int = DEFAULT_STUDY_PRESET.defaultBlocks
         // Issue #124 overrode the old factory phrase ("Finish
         // Chapter 4 Problem Set"): the intention is the user's own
         // words or blank — so the store's default is blank, and a
