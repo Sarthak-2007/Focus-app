@@ -71,6 +71,21 @@ data class InstalledPackage(
     val isMainActivity: Boolean = false
 )
 
+/**
+ * Issue #80 finding 1 (partial): one install of a package in one
+ * user profile. [profileKey] is the profile's UserHandle string —
+ * the only profile identity a normal app may read; Android exposes
+ * no public numeric user id, and no door (AccessibilityEvent,
+ * UsageStats, notifications) carries a UserHandle at all, which is
+ * why per-profile RULES stay blocked (see ISSUE-80 report) while
+ * per-profile DISCOVERY is possible and implemented.
+ */
+data class ProfiledInstalledPackage(
+    val packageName: String,
+    val label: String,
+    val profileKey: String
+)
+
 /** A birth rule for a package: the tier and daily limit it is
  *  discovered with IF it is actually installed. */
 data class AppRulePreset(
@@ -267,6 +282,26 @@ object AppCatalogReconcile {
         val elapsed = nowMillis - lastSuccessfulSyncMillis
         return elapsed >= 0L && elapsed < windowMillis
     }
+
+    /** Catalog view of profiled installs: one row per PACKAGE
+     *  (the table's primary key is still the bare package name),
+     *  first label seen wins. A package present in ANY profile is
+     *  installed for catalog purposes — it must not be pruned just
+     *  because the calling profile cannot launch it. */
+    fun mergeProfiledInstalls(
+        profiled: List<ProfiledInstalledPackage>
+    ): List<InstalledPackage> =
+        profiled.distinctBy { it.packageName }
+            .map { InstalledPackage(it.packageName, it.label) }
+
+    /** Which profiles each package is present in — the conflation
+     *  made visible: more than one key means one rule row is
+     *  standing for several installs. */
+    fun profilesByPackage(
+        profiled: List<ProfiledInstalledPackage>
+    ): Map<String, List<String>> =
+        profiled.groupBy({ it.packageName }, { it.profileKey })
+            .mapValues { it.value.distinct().sorted() }
 
     fun reconcile(
         existing: List<BlockedAppEntity>,
