@@ -225,6 +225,11 @@ enum class AppCategory(val label: String, val code: String) {
     GAMES("Games", "Games"),
     MESSAGING("Messaging", "Chat"),
     BROWSERS("Web & News", "Web"),
+    // Issue #132 (music-during-focus): media players get a real
+    // home in the EXISTING category system — before this, a player
+    // was filed by substring luck (YouTube Music as SHORT_VIDEO,
+    // "…Player" labels as GAMES, Spotify as SHOPPING by accident).
+    MUSIC("Music & Audio", "Music"),
     SHOPPING("Other Apps", "Tools")
 }
 
@@ -335,7 +340,9 @@ data class FocusSessionEntity(
     // not stop at a finish. releaseFaultShield names the faulted
     // link; releaseRetriesDone counts the retry cadence's spent
     // attempts; releaseFaultedAtWallMillis is the fault's wall
-    // instant. Written only by the finish machine's fault path.
+    // instant. Set only by the finish machine's fault path; the
+    // flag (never the stamps) is cleared by the retry scheduler
+    // when the fault heals or is superseded (issue #47 F1).
     val releaseFaultShield: Boolean = false,
     val releaseRetriesDone: Int = 0,
     val releaseFaultedAtWallMillis: Long = 0L,

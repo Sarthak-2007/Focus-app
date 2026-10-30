@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Declared so MainActivity can fire Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS directly (issue #26) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
@@ -39,7 +41,6 @@
 
         <activity
             android:name=".MainActivity"
-            android:directBootAware="true"
             android:exported="true"
             android:launchMode="singleTop"
             android:label="@string/app_name"
@@ -121,7 +122,7 @@
         <!-- Kernel-Level Uninstall Guard (DeviceAdminReceiver) -->
         <receiver
             android:name=".service.MonolithDeviceAdminReceiver"
-            android:description="@string/accessibility_service_description"
+            android:description="@string/device_admin_description"
             android:directBootAware="true"
             android:exported="false"
             android:label="@string/uninstall_guard_label"

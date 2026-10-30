@@ -118,6 +118,9 @@ class MonolithAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        // Watch Store bind (issue #48): restore the persisted LAST
+        // PROVED into the fresh process's store.
+        WatchStore.bind(applicationContext)
         // Watch Store BIND writer (chrome C3): the binding itself is
         // the measurement; the store stamps it.
         WatchStore.onAccessibilityBound(true)
