@@ -55,8 +55,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.data.MonolithDatabase
-import com.example.data.MonolithRepository
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.service.InterceptConsumptionStore
 import com.example.service.InterceptNonce
 import com.example.service.InterceptPath
@@ -127,8 +126,10 @@ class MainActivity : ComponentActivity() {
         // any surface reads the store.
         WatchStore.bind(applicationContext)
 
-        val database = MonolithDatabase.getInstance(applicationContext)
-        val repository = MonolithRepository(applicationContext, database.monolithDao())
+        // ISSUE-67: the repository comes from the single
+        // construction point (AppContainer: DAO + live service
+        // port + the same database instance).
+        val repository = AppContainer.repository(applicationContext)
         // Issue #27 (finding 2): the ViewModel is obtained through
         // the provider BEFORE any engine exists. On recreation the
         // provider returns the retained instance and the Factory's
@@ -349,6 +350,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val allApps by viewModel.apps.collectAsStateWithLifecycle()
     val filteredApps by viewModel.filteredApps.collectAsStateWithLifecycle()
     val pruneNote by viewModel.pruneNote.collectAsStateWithLifecycle()
+    val unreviewedOpenNames by viewModel.unreviewedOpenNames.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val selectedCategory by viewModel.selectedCategoryFilter.collectAsStateWithLifecycle()
     val shortsReelsSniperEnabled by viewModel.shortsReelsSniperEnabled.collectAsStateWithLifecycle()
@@ -391,6 +393,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val shotGround by viewModel.shotGround.collectAsStateWithLifecycle()
     val finishState by viewModel.finishState.collectAsStateWithLifecycle()
     val receiptState by viewModel.receiptState.collectAsStateWithLifecycle()
+    val lastReceiptSessionId by viewModel.lastReceiptSessionId.collectAsStateWithLifecycle()
     val isAlwaysOnDeskClockVisible by viewModel.isAlwaysOnDeskClockVisible.collectAsStateWithLifecycle()
     val burnInFigure8MinuteStep by viewModel.burnInFigure8MinuteStep.collectAsStateWithLifecycle()
     val showNotificationDigestSheet by viewModel.showNotificationDigestSheet.collectAsStateWithLifecycle()
@@ -492,8 +495,13 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // phone is sealed, the block surface is a launcher. It opens
     // from the Guard line's tap (a dead tap while sealed until now —
     // PARK refuses under seal) and from the Airlock's two doors.
-    var launcherOpen by remember { mutableStateOf(false) }
-    var launcherPage by remember { mutableStateOf(LauncherPage.HOME) }
+    // D-07 (design-revamp salvage, 2dac73e): launcher state is
+    // rememberSaveable, like the neighbouring host state above
+    // (issue #27 pattern) — plain remember lost the open launcher
+    // and its page to any Activity recreation / process death,
+    // above all while the user was inside a launched allowed app.
+    var launcherOpen by rememberSaveable { mutableStateOf(false) }
+    var launcherPage by rememberSaveable { mutableStateOf(LauncherPage.HOME) }
 
     // closePark / openPark are file-level functions since the
     // issue-90 F3 hoist (they were nested inside this composable);
@@ -569,20 +577,20 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         }
     }
 
-    // PARK's on-open diagnostic (§3.3): opening PARK fires the old
-    // refreshSystemGuard() sweep. Its result renders NOWHERE — the
-    // board renders the Watch Store — unless a diagnostic line is
-    // invoked; the sweep itself is the point (clock/HMAC/boot facts
-    // stay warm for the day a diagnostic needs them).
-    // Issue #109, F3: opening PARK ALSO fires the real Watch sweep.
+    // Issue #109, F3: opening PARK fires the real Watch sweep.
     // Until now the board opened on whatever the last ON_RESUME /
     // Deck-entry sweep left behind, and its own GRANTED lines aged
     // into STALE in front of the reader with no re-measure anywhere
     // on the surface. The sweep is the board's re-measure; the
     // drawer's RE-CHECK key fires the same one on demand.
+    // Issue #75 F2 (re-cut, STURM3-15): the old refreshSystemGuard()
+    // diagnostic sweep that also fired here — its own comment
+    // admitted its result rendered NOWHERE — is removed. The cut
+    // shipped in PR #375's branch but was lost in that branch's
+    // merge chain before it merged; the ViewModel's own init caller
+    // of refreshSystemGuard is untouched.
     LaunchedEffect(parkOpen) {
         if (parkOpen) {
-            viewModel.refreshSystemGuard()
             viewModel.runWatchSweep()
         }
     }
@@ -876,6 +884,16 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     sealT0MonoMs = (armPhase as? ArmPhase.SealedRunning)?.t0Mono,
                                     finishState = finishState,
                                     receiptState = receiptState,
+                                    lastReceiptSessionId = lastReceiptSessionId,
+                                    onShowLastReceipt = { sessionId ->
+                                        // Un-dismiss first: this slip may
+                                        // have been dismissed before the arm
+                                        // that cleared it, and the host's
+                                        // dismissed id would otherwise hide
+                                        // the re-issued slip forever.
+                                        dismissedReceiptSessionId = -1
+                                        viewModel.publishReceipt(sessionId)
+                                    },
                                     onWitnessSledReturn = viewModel::witnessSledReturn,
                                     onTryStartSledReturn = viewModel::tryStartSledReturn,
                                     sledInitialFraction = {
@@ -985,7 +1003,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                         "${note.appsRemoved} APPS NOT ON THIS PHONE WERE TAKEN OFF THIS LIST" +
                                             if (note.rulesRemoved) " — AND THEIR RULES WITH THEM" else ""
                                     },
-                                    onPruneNoteDismissed = viewModel::dismissPruneNote
+                                    onPruneNoteDismissed = viewModel::dismissPruneNote,
+                                    unreviewedOpenText = unreviewedOpenNames.takeIf { it.isNotEmpty() }?.let { names ->
+                                        val shown = names.take(3).joinToString(", ") { it.uppercase() }
+                                        val more = if (names.size > 3) " +${names.size - 3} MORE" else ""
+                                        "${names.size} APPS ARE OPEN WITHOUT YOUR REVIEW: $shown$more — SET A RULE FOR EACH BELOW"
+                                    }
                                 )
                             }
 
@@ -1233,7 +1256,26 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     onDismiss = {
                         dismissedReceiptSessionId = standingReceipt.sessionId
                         viewModel.persistReceiptDismissal(standingReceipt.sessionId)
-                    }
+                    },
+                    // Issue #135 F3: NEXT SESSION — dismiss the slip;
+                    // the Deck underneath is already idle and ready
+                    // to arm. The detention/sled ceremony is untouched.
+                    onNextSession = { dismissedReceiptSessionId = standingReceipt.sessionId },
+                    // Issue #135 F4: DONE WITH THIS TASK — only while
+                    // the session's task is still open (the host's
+                    // active task, not yet COMPLETED); completes it
+                    // through the same path the Deck/Tasks use, then
+                    // dismisses the slip.
+                    onDoneWithTask = activeTask
+                        ?.takeIf {
+                            it.resolvedStatus != com.example.data.TaskQueueStatus.COMPLETED
+                        }
+                        ?.let { task ->
+                            {
+                                viewModel.completeTaskAndAdvance(task.id)
+                                dismissedReceiptSessionId = standingReceipt.sessionId
+                            }
+                        }
                 )
             }
 
@@ -1265,24 +1307,87 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 initialPage = launcherPage,
                 onClose = { launcherOpen = false },
                 onLaunchApp = { app ->
-                    launcherOpen = false
-                    runCatching {
-                        context.packageManager
-                            .getLaunchIntentForPackage(app.packageName)
-                            ?.let { launch ->
-                                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                context.startActivity(launch)
-                            }
+                    // TAP-TIME LAUNCH GATE (design-revamp salvage,
+                    // b027368): the entity handed in was composed when
+                    // the grid rendered — re-read the VM's live rows
+                    // at the tap and launch only what is still true
+                    // NOW. On any refusal: no launch, the launcher
+                    // stays open, nothing crashes.
+                    val liveApp = viewModel.apps.value
+                        .find { it.packageName == app.packageName }
+                    val tapSealed =
+                        viewModel.activeSession.value?.isActive == true
+                    val launchAllowed = liveApp != null &&
+                        liveApp.resolvedTier == com.example.data.AppBlockTier.OPEN &&
+                        tapSealed &&
+                        !viewModel.navigationLocked() &&
+                        // Defence in depth, even if OPEN: the Play
+                        // Store is an install vector, and browsers
+                        // sit behind only a partial site blocker.
+                        // BlockedAppEntity.category stores the
+                        // AppCategory enum's name (see
+                        // MonolithModels / repository writers).
+                        liveApp.packageName != "com.android.vending" &&
+                        liveApp.category != com.example.data.AppCategory.BROWSERS.name
+                    if (launchAllowed && liveApp != null) {
+                        // D-05 (2dac73e): close only once an intent
+                        // has actually started — closing first made
+                        // a failed launch a silent nothing.
+                        val started = runCatching {
+                            context.packageManager
+                                .getLaunchIntentForPackage(liveApp.packageName)
+                                ?.let { launch ->
+                                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    context.startActivity(launch)
+                                    true
+                                } ?: false
+                        }.getOrDefault(false)
+                        if (started) launcherOpen = false
                     }
                 },
                 onPeekApp = { app ->
-                    launcherOpen = false
-                    viewModel.triggerAirlockIntercept(
-                        app.packageName,
-                        app.appName,
-                        app.resolvedTier.badge,
-                        InterceptPath.APP_TIER
-                    )
+                    // SAFE-BREAK PEEK (design-revamp salvage, b027368):
+                    // during a Safe Break the active session already
+                    // suspends the interceptors (WatchStore reads
+                    // isInSafeBreak), so PEEK apps are already free —
+                    // launch directly, no peek lease is started and
+                    // no cooldown is armed. Read at tap time from
+                    // the VM's activeSession flow.
+                    val tapSession = viewModel.activeSession.value
+                    // D-03 re-gate (2dac73e): same tap-time discipline
+                    // as the OPEN gate — re-read the live entity; an
+                    // app tightened to LOCKED mid-break must not
+                    // launch off the stale composed row.
+                    val livePeekApp = viewModel.apps.value.firstOrNull {
+                        it.packageName == app.packageName
+                    }
+                    if (tapSession != null && tapSession.isActive && tapSession.isInSafeBreak &&
+                        !viewModel.navigationLocked() && livePeekApp != null &&
+                        livePeekApp.resolvedTier != com.example.data.AppBlockTier.LOCKED
+                    ) {
+                        val started = runCatching {
+                            context.packageManager
+                                .getLaunchIntentForPackage(livePeekApp.packageName)
+                                ?.let { launch ->
+                                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    context.startActivity(launch)
+                                    true
+                                } ?: false
+                        }.getOrDefault(false)
+                        if (started) launcherOpen = false
+                    } else {
+                        // Outside a Safe Break (or refused by the
+                        // re-gate) the existing Airlock route stands
+                        // exactly as it was — the peek offer / lease
+                        // machinery decides from there.
+                        launcherOpen = false
+                        viewModel.triggerAirlockIntercept(
+                            app.packageName,
+                            app.appName,
+                            app.resolvedTier.badge,
+                            InterceptPath.APP_TIER
+                        )
+                    }
                 },
                 onRequestEmergencyBreak = {
                     launcherOpen = false
@@ -1297,16 +1402,20 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onReturnToFocus = viewModel::transmuteImpulseAndReturn,
                 onTake2MinutePeek = viewModel::start2MinutePeek,
                 allowedAppsCount = allApps.count {
-                    it.resolvedTier == com.example.data.AppBlockTier.OPEN
+                    it.resolvedTier == com.example.data.AppBlockTier.OPEN &&
+                        it.category != com.example.data.AppCategory.BROWSERS.name &&
+                        it.packageName != "com.android.vending"
                 },
                 peekAppsCount = allApps.count {
                     it.resolvedTier == com.example.data.AppBlockTier.PEEK_2M
                 },
                 onOpenAllowedApps = {
+                    viewModel.leaveAirlockViaLauncherDoors()
                     launcherPage = LauncherPage.ALLOWED
                     launcherOpen = true
                 },
                 onOpenPeekApps = {
+                    viewModel.leaveAirlockViaLauncherDoors()
                     launcherPage = LauncherPage.PEEK
                     launcherOpen = true
                 },

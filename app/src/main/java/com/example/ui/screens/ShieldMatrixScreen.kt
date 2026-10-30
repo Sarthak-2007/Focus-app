@@ -163,7 +163,10 @@ fun ShieldMatrixScreen(
     // Null = nothing pending; the words are the repository's record,
     // composed by the caller, printed exactly.
     pruneNoteText: String? = null,
-    onPruneNoteDismissed: () -> Unit = {}
+    onPruneNoteDismissed: () -> Unit = {},
+    // Issue #129 F1: the unreviewed-auto-OPEN review prompt. Not
+    // dismissible — it stands until each named app has a ruling.
+    unreviewedOpenText: String? = null
 ) {
     val scheme = MaterialTheme.colorScheme
     val effectiveNight = isDarkTheme || isSessionActive
@@ -413,6 +416,20 @@ fun ShieldMatrixScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     StandingTallyLine(counts = tallyShown)
+                    // Issue #129 F5: the tally's OPEN figure is
+                    // exposure, and the slip now says so in words
+                    // — an open app is not bookkeeping, it is a
+                    // door nothing guards for a whole session.
+                    if (rules.unguardedCount > 0) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "${rules.unguardedCount} OPEN — NOT HELD. ANY OF THEM CAN BE USED FOR THE WHOLE SESSION.",
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("open_exposure_line")
+                        )
+                    }
                     // Issue #107 (#2): the PEEK terms, printed where
                     // the rulings are read.
                     Text(
@@ -517,6 +534,24 @@ fun ShieldMatrixScreen(
                         .fillMaxWidth()
                         .clickable { onPruneNoteDismissed() }
                         .testTag("app_list_prune_note")
+                )
+            }
+        }
+
+        // #129 F1: the review prompt — apps the keyword guess set
+        // OPEN that he never ruled on, named, directly above the
+        // catalogue where the ruling is made. No tap target: it
+        // leaves only by being answered, app by app.
+        if (unreviewedOpenText != null) {
+            item {
+                Text(
+                    text = unreviewedOpenText,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("unreviewed_open_note")
                 )
             }
         }

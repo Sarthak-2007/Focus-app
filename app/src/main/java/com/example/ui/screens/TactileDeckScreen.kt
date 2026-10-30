@@ -180,6 +180,13 @@ fun TactileDeckScreen(
     // receipt, with the sled gate's host seams (Schlitten §3).
     finishState: com.example.ui.MonolithViewModel.FinishState? = null,
     receiptState: com.example.data.ReceiptState? = null,
+    // Issue #135 F2: the LAST RECEIPT door — the most recent session
+    // that claimed a №, offered only while no receipt stands and no
+    // session runs (the standing slip and the running frame are
+    // their own surfaces; this door is for the slip the next arm
+    // cleared from memory).
+    lastReceiptSessionId: Int? = null,
+    onShowLastReceipt: (Int) -> Unit = {},
     onWitnessSledReturn: (Int) -> Unit = {},
     onTryStartSledReturn: (Int) -> Boolean = { false },
     sledInitialFraction: () -> Float = { 0f },
@@ -226,7 +233,11 @@ fun TactileDeckScreen(
             if (sealShot?.sessionId != session.id) {
                 val t0 = sealT0MonoMs
                 sealShot = if (t0 != null) {
-                    SealShotState(session.id, t0, preExisting = false)
+                    SealShotState(
+                        session.id, t0, preExisting = false,
+                        nightCalm = com.example.service.NightSignal
+                            .isNightAt(System.currentTimeMillis())
+                    )
                 } else {
                     exitPhase = 3
                     SealShotState(session.id, 0L, preExisting = true)
@@ -245,12 +256,18 @@ fun TactileDeckScreen(
         while (!shot.heroLanded) {
             withFrameMillis { }
             val e = SystemClock.elapsedRealtime() - shot.t0Mono
-            shot.vertigoT = MonolithCurves.VertigoTransformEasing.transform(
-                (e / 1050f).coerceIn(0f, 1f)
-            )
-            shot.blurT = MonolithCurves.VertigoBlurEasing.transform(
-                (e / 1050f).coerceIn(0f, 1f)
-            )
+            // Night calm (#116 finding 4): at night the easings are
+            // never driven — vertigoT/blurT stay at rest (0), so the
+            // hero neither recedes nor blurs. The phase latches
+            // below still advance on the same 1050ms clock.
+            if (!shot.nightCalm) {
+                shot.vertigoT = MonolithCurves.VertigoTransformEasing.transform(
+                    (e / 1050f).coerceIn(0f, 1f)
+                )
+                shot.blurT = MonolithCurves.VertigoBlurEasing.transform(
+                    (e / 1050f).coerceIn(0f, 1f)
+                )
+            }
             if (e >= 180L) shot.departed = true
             if (e >= 400L) shot.groundStepped = true
             val phase = (e / 50L).toInt().coerceIn(0, 3)
@@ -701,7 +718,11 @@ fun TactileDeckScreen(
                 // the blur on its own re-ease, peaking mid-shot and
                 // gone at Settle. At rest every term is identity.
                 .then(
-                    if (shotActive && shot != null) {
+                        // #116 finding 4 rides the same gate: at
+                        // night the shot is CALM (nightCalm) — the
+                        // vertigo/blur branch is skipped entirely and
+                        // the seal lands without the room receding.
+                    if (shotActive && shot != null && !shot.nightCalm) {
                         // Issue #50 F3 cure: vertigoT/blurT are read
                         // inside the graphicsLayer block (draw phase),
                         // so the 1050ms shot no longer recomposes the
@@ -809,6 +830,28 @@ fun TactileDeckScreen(
                 // count's only homes are the strip's APPS cell and
                 // the imprint — one number, LOCKED+PEEK, one rendering
                 // per fact.
+            }
+
+            // Issue #135 F2: the LAST RECEIPT door, on the eyebrow's
+            // own line of the room — a quiet mono affordance, shown
+            // only when no receipt is standing and no session runs.
+            if (!isSessionRunning && receiptState == null && lastReceiptSessionId != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Text(
+                        text = "LAST RECEIPT",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 10.sp,
+                        letterSpacing = 2.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clickable { onShowLastReceipt(lastReceiptSessionId) }
+                            .testTag("last_receipt_button")
+                            .padding(vertical = 4.dp)
+                    )
+                }
             }
 
             // The hero states the TOTAL, once (one fact, one rendering).
@@ -1710,7 +1753,16 @@ private fun DeckTaskSection(
 class SealShotState(
     val sessionId: Int,
     val t0Mono: Long,
-    val preExisting: Boolean
+    val preExisting: Boolean,
+    /**
+     * Night calm (Audit R3b #116, finding 4): true when the seal
+     * was armed inside clock night (the one NightSignal). A night
+     * seal runs the shot's TIMING — departure, ground step, settle
+     * — but never its vertigo or blur: a half-asleep user in bed
+     * gets a still room, not a receding, blurring one. Daytime
+     * seals keep the full shot, exactly as shipped.
+     */
+    val nightCalm: Boolean = false
 ) {
     var vertigoT: Float by mutableStateOf(if (preExisting) 1f else 0f)
     var blurT: Float by mutableStateOf(if (preExisting) 1f else 0f)

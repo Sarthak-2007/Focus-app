@@ -19,6 +19,22 @@ import org.junit.Test
  */
 class Issue143NightFlipTest {
 
+    // Midday in the device zone. (Composition note, #116 × #143:
+    // with the clock-night step composed into evaluateTheme, the
+    // raw epoch — 00:00 UTC — is clock night, not "a plain
+    // moment"; a DAY fixture must be a day hour in the zone the
+    // evaluation reads. The held/session fixtures keep their
+    // epoch stamp: those steps precede the clock step, so their
+    // verdicts are zone-independent.)
+    private fun middayMillis(): Long {
+        val cal = java.util.Calendar.getInstance()
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 12)
+        cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
+    }
+
     @Test
     fun finishHeld_keepsNightAfterSessionEnds() {
         val held = evaluateTheme(
@@ -36,7 +52,7 @@ class Issue143NightFlipTest {
         val day = evaluateTheme(
             sessionActive = false,
             routines = emptyList(),
-            nowMillis = 1_000L,
+            nowMillis = middayMillis(),
             finishHeld = false
         )
         assertFalse(day.isNight)

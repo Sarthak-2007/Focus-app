@@ -17,7 +17,8 @@ object LoadoutRules {
         loadout: SmartLoadout,
         packageName: String,
         appName: String,
-        categoryName: String
+        categoryName: String,
+        currentTier: AppBlockTier? = null
     ): AppBlockTier {
         val lower = "$packageName $appName".lowercase(Locale.ROOT)
         val rawTier = when (loadout) {
@@ -39,6 +40,13 @@ object LoadoutRules {
                     AppBlockTier.OPEN
                 categoryName == AppCategory.MESSAGING.name ->
                     AppBlockTier.PEEK_2M
+                // Issue #129 F4 (ported from the earlier lane):
+                // EVERY browser is a corridor, not just Chrome by
+                // name — a browser lands on PEEK_2M, so the one
+                // honest search gets a knock and the open corridor
+                // does not stand for the whole session.
+                categoryName == AppCategory.BROWSERS.name ->
+                    AppBlockTier.PEEK_2M
                 categoryName == AppCategory.SHORT_VIDEO.name ||
                     categoryName == AppCategory.SOCIAL.name ||
                     categoryName == AppCategory.GAMES.name ->
@@ -49,7 +57,8 @@ object LoadoutRules {
                 categoryName == AppCategory.SHORT_VIDEO.name ||
                     categoryName == AppCategory.GAMES.name ->
                     AppBlockTier.LOCKED
-                categoryName == AppCategory.SOCIAL.name ->
+                categoryName == AppCategory.SOCIAL.name ||
+                    categoryName == AppCategory.BROWSERS.name ->
                     AppBlockTier.PEEK_2M
                 else -> AppBlockTier.OPEN
             }
@@ -62,9 +71,23 @@ object LoadoutRules {
                 EssentialApps.sleepLoadoutTierFor(packageName, appName)
             }
         }
+        // Issue #129 (unlisted-distraction, HIGH): a loadout NEVER
+        // loosens LOCKED -> OPEN on a category guess. The guessed
+        // category is exactly what mis-files an unlisted app;
+        // before this law, STUDY/WORK_SPRINT re-derived
+        // `else -> OPEN` from that same guess, so the one-tap fix
+        // silently re-opened the very app the fail-closed birth
+        // had shut, while the seal's held count excluded it. A
+        // loadout may tighten or keep a tier; opening a shut app
+        // is HIS hand on the catalogue sled, never a guess.
+        val tier = if (rawTier == AppBlockTier.OPEN && currentTier == AppBlockTier.LOCKED) {
+            AppBlockTier.LOCKED
+        } else {
+            rawTier
+        }
         // Issue #119, finding 5: the dialler floor binds every
         // loadout — the dialler can never be classified LOCKED.
-        return EssentialApps.floorTier(packageName, rawTier)
+        return EssentialApps.floorTier(packageName, tier)
     }
 
     /** Issue #304 F1: would applying [loadout] loosen ANY app's
@@ -88,7 +111,7 @@ object LoadoutRules {
         var peek = 0
         var open = 0
         for (app in apps) {
-            val tier = tierFor(loadout, app.packageName, app.appName, app.category)
+            val tier = tierFor(loadout, app.packageName, app.appName, app.category, app.resolvedTier)
             if (tier != app.resolvedTier) changed++
             when (tier) {
                 AppBlockTier.LOCKED -> shut++

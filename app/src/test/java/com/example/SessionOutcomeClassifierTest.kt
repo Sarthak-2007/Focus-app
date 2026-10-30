@@ -46,13 +46,17 @@ class SessionOutcomeClassifierTest {
         completed: Boolean = true,
         routine: Boolean = false,
         verifiedElapsedSeconds: Long = 150L,
-        appLastUpdateMillis: Long = 0L
+        appLastUpdateMillis: Long = 0L,
+        usageStatsPermissionHeld: Boolean = true,
+        openExposureSeen: Boolean = false
     ) = classifyElapsedOutcome(
         session = s,
         allBlocksCompleted = completed,
         isRoutineSession = routine,
         verifiedElapsedSeconds = verifiedElapsedSeconds,
-        appLastUpdateMillis = appLastUpdateMillis
+        appLastUpdateMillis = appLastUpdateMillis,
+        usageStatsPermissionHeld = usageStatsPermissionHeld,
+        openExposureSeen = openExposureSeen
     )
 
     @Test
@@ -132,5 +136,35 @@ class SessionOutcomeClassifierTest {
         // Same facts without the update term: the beat is 130s
         // stale against the implied now and the gap books.
         assertEquals(SessionOutcome.ELAPSED_SHIELD_GAP, classify(s))
+    }
+
+    @Test
+    fun completed_noUsagePermission_isGapEvenWithFreshBeat() {
+        // #81 F4: a finish may certify CLEAN only if the shield
+        // can still see at the ending write.
+        val start = 1_000_000L
+        val s = session(startWall = start, beatWall = start + 145_000L)
+        assertEquals(
+            SessionOutcome.ELAPSED_SHIELD_GAP,
+            classify(s, usageStatsPermissionHeld = false)
+        )
+    }
+
+    @Test
+    fun completed_openExposure_booksExposureBelowGap() {
+        // #129 F3: an unguarded door used inside the window is
+        // neither clean nor a shield gap — it books EXPOSURE,
+        // and only when the gap terms do not fire first.
+        val start = 1_000_000L
+        val s = session(startWall = start, beatWall = start + 145_000L)
+        assertEquals(
+            SessionOutcome.ELAPSED_OPEN_EXPOSURE,
+            classify(s, openExposureSeen = true)
+        )
+        val latched = session(startWall = start, beatWall = start + 145_000L, gapSeen = true)
+        assertEquals(
+            SessionOutcome.ELAPSED_SHIELD_GAP,
+            classify(latched, openExposureSeen = true)
+        )
     }
 }
