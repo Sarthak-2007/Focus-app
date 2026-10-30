@@ -969,8 +969,28 @@ class MonolithViewModel(
                     // completion, its stats, its desk-clock hide —
                     // is CUT (E4); the finish machine owns all
                     // three now.
-                    repository.latchShieldGapIfStale(System.currentTimeMillis())
-                    repository.updateSessionProgress(current)
+                    val nowWall = System.currentTimeMillis()
+                    repository.latchShieldGapIfStale(nowWall)
+                    // Issue #69 F3 — one lawful writer: the shield
+                    // loop persists progress every 2 s (its own
+                    // header names it the beat's only lawful
+                    // writer); this ticker used to write the same
+                    // row every 1 s as well — 1.5 writes/s and two
+                    // writers contending on one row, for zero extra
+                    // accuracy (accrual is wall-derived and
+                    // caller-count-invariant). The VM persists
+                    // progress now ONLY when the shield's beat is
+                    // provably stale past the same 10 s law the gap
+                    // latch uses — a dead shield (an FGS start
+                    // failure) still advances the session here
+                    // instead of stalling it silently.
+                    val beatRef = maxOf(
+                        current.shieldLastBeatWallMillis,
+                        current.startWallTimeMillis
+                    )
+                    if (nowWall - beatRef > MonolithRepository.SHIELD_GAP_THRESHOLD_MILLIS) {
+                        repository.updateSessionProgress(current)
+                    }
                 }
 
                 // The peek pill's remaining time is DERIVED from the

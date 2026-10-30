@@ -82,6 +82,7 @@ class MonolithShieldService : Service() {
 
         monitorJob = serviceScope.launch {
             var iteration = 0
+            var lastNotifiedText: String? = null
             while (isActive) {
                 iteration++
                 // Routine heartbeat cadence (rebuild §2.2): first pass,
@@ -139,10 +140,21 @@ class MonolithShieldService : Service() {
                     }
                 }
 
-                updateNotification(
-                    title = "Monolith • ${updated.intention}",
-                    subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped"
-                )
+                // Issue #69 F1 — notify on change only: this loop
+                // runs 1,800 times an hour of session, but the
+                // subtitle's clock changes at most once a minute
+                // and the urges count only when a reach is stopped.
+                // Rebuilding and re-posting the notification every
+                // 2 s bought nothing; a stopped reach changes the
+                // count, so a block still re-prints instantly.
+                val subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped"
+                if (subtitle != lastNotifiedText) {
+                    lastNotifiedText = subtitle
+                    updateNotification(
+                        title = "Monolith • ${updated.intention}",
+                        subtitle = subtitle
+                    )
+                }
 
                 // Live Wire: the shield is PROTECTING only once a
                 // full monitor iteration has run under a live
@@ -162,7 +174,15 @@ class MonolithShieldService : Service() {
                 WatchStore.onShieldIteration(protecting)
 
                 val nowMono = SystemClock.elapsedRealtime()
-                val blockedPackages = dao.getAllAppsSnapshot()
+                // Issue #69 F1 — ONE apps snapshot per iteration,
+                // read fresh: the peek-lease expiry lives in these
+                // rows and a lease granted mid-session must be
+                // honoured on the very next pass, so the rows are
+                // never cached — but the old code read the table a
+                // SECOND time below to find the intercepted app's
+                // row; that row now comes from this same snapshot.
+                val appsSnapshot = dao.getAllAppsSnapshot()
+                val blockedPackages = appsSnapshot
                     .filter { app ->
                         val tier = app.resolvedTier
                         when {
@@ -177,7 +197,7 @@ class MonolithShieldService : Service() {
 
                 val foregroundBlockedPkg = repository.queryForegroundBlockedApp(blockedPackages)
                 if (foregroundBlockedPkg != null && foregroundBlockedPkg != applicationContext.packageName) {
-                    val blockedApp = dao.getAllAppsSnapshot().find { it.packageName == foregroundBlockedPkg }
+                    val blockedApp = appsSnapshot.find { it.packageName == foregroundBlockedPkg }
                     val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                         putExtra(EXTRA_INTERCEPTED_PACKAGE, foregroundBlockedPkg)
