@@ -175,12 +175,29 @@ internal class DeskClockSettleMachine(
             return false
         }
         if (heldSessionId == id) {
-            // The signature lifted: the phone was put down (or
-            // the hand stilled past the band). The session arms
-            // fresh from this beat under the new verdict.
-            heldSessionId = NO_SESSION
-            heldSinceMono = 0L
-            armedSessionId = NO_SESSION
+            // Wave-3 (Samt F-2 / Funke P-3, REDUCED LATCH only):
+            // HELD clears only on a positive REST verdict. The
+            // old code cleared the held state on ANY non-HELD
+            // beat — including UNKNOWN — and re-armed with
+            // armStartMono = now on that same beat, so a verdict
+            // flapping at the threshold's edge restarted the
+            // 20 s backstop forever and the duty cycle never
+            // engaged. UNKNOWN while held is ignorance, and
+            // ignorance is not evidence the hand left: the latch
+            // holds, both paths stay suppressed, the backstop
+            // does not run. (The dual-threshold hysteresis and
+            // the sway channel of F-2's full cure are NOT landed
+            // here — tuning debt, §7 debt 9.)
+            if (sensorVerdict == DeskClockVerdict.REST) {
+                // The signature lifted: the phone was put down
+                // (or the hand stilled past the band). The
+                // session arms fresh from this beat.
+                heldSessionId = NO_SESSION
+                heldSinceMono = 0L
+                armedSessionId = NO_SESSION
+            } else {
+                return false
+            }
         }
         if (sessionStartWallMillis < processBirthWallMillis) {
             // Cold open into a live session (§2.3): the row
@@ -339,4 +356,157 @@ internal fun chargerDisconnectStamp(
     nowPlugged -> prevStampMono
     prevPlugged != false -> nowMono
     else -> prevStampMono
+}
+
+// =====================================================================
+// E-1 AS ONE SCRIM (Wave-3) — the night-return phase machine, pure.
+//
+// Daemmer DAE-5/6/7 + Hauch H-1…H-7 + Ruhe R-1…R-5, three seats
+// convergent: the return is ONE scrim over the Deck in three
+// phases — VEILED 0.80 / LANDING 0.45 / OPEN 0 — one 520 Curve C
+// animation in the host, driven by this state. The invariant:
+// after the stand-down, the light never rises except at his
+// verb (the unveil leg VEILED → LANDING is the one lawful rise
+// before a verb, and it is his touch that drives it).
+//
+//  - VEILED is entered only for a return that IS a return:
+//    witnessed in-process (the machine performed the finish
+//    under the clock's ground, so the arrival is covered), or
+//    a cold discovery ≤ 30 min old (Hauch H-3). Older cold
+//    discoveries file their receipt and wear NO veil — a late
+//    veil over a lit morning Deck is a blackout in his hand.
+//  - LANDING is entered from the unveil (animated), or by a
+//    night HAND dismissal (toggleAlwaysOnDeskClock(false) at
+//    night) — that entry SNAPS (Ruhe §1.3: covered by the
+//    dismissal's own 180 Throw; an animated entry would pulse).
+//  - OPEN is entered only by the first TRUE VERB (Ruhe R-3's
+//    commit taxonomy — bloomNightLanding in the VM's verb
+//    handlers), never by contact: noteUserInteraction does NOT
+//    clear the Landing any more.
+//  - An armed return EXPIRES (Ruhe R-5): armed > 30 min ago
+//    with no session standing and no SLEEP window open, the
+//    phase clears instantly on resume — housekeeping, not a
+//    gesture.
+// =====================================================================
+
+/** The night return's three phases (one scrim, three targets). */
+internal enum class NightReturnPhase { OPEN, VEILED, LANDING }
+
+/** The phase machine's state: the phase, when the current
+ *  return was armed (wall), and whether a night-return EPISODE
+ *  is open (Ruhe §1.5's stickiness: inside an open episode a
+ *  chip raise + dismissal re-lands even if the theme
+ *  evaluation has since flipped to day). */
+internal data class NightReturnState(
+    val phase: NightReturnPhase = NightReturnPhase.OPEN,
+    val armedWallMillis: Long = 0L,
+    val episodeOpen: Boolean = false
+)
+
+/** The scrim's alpha at each phase: VEILED 0.80 (transmission
+ *  0.20 — covered but present), LANDING 0.45 (transmission
+ *  0.55 — the room's light law as its complement), OPEN 0. */
+internal fun nightReturnScrimAlpha(phase: NightReturnPhase): Float = when (phase) {
+    NightReturnPhase.VEILED -> 0.80f
+    NightReturnPhase.LANDING -> 0.45f
+    NightReturnPhase.OPEN -> 0f
+}
+
+/** Hauch H-3: a cold discovery still counts as a return for
+ *  this long after the stand-down's instant. */
+internal const val NIGHT_RETURN_FRESH_COLD_MILLIS: Long = 30L * 60_000L
+
+/** Ruhe R-5: an armed Landing older than this, with no night
+ *  condition standing, is a new visit, not a return. */
+internal const val NIGHT_RETURN_EXPIRY_MILLIS: Long = 30L * 60_000L
+
+/** E-1's gate, cured (C-22's kind gate stands in the caller;
+ *  this is the freshness half): veil only if witnessed, or
+ *  cold-discovered within [NIGHT_RETURN_FRESH_COLD_MILLIS] of
+ *  the window's end. Past that: no veil, ever — the filed
+ *  receipt still files at any age (A-10(iv) untouched). */
+internal fun nightReturnOnStandDown(
+    state: NightReturnState,
+    witnessed: Boolean,
+    windowEndMillis: Long,
+    nowWallMillis: Long
+): NightReturnState {
+    val freshCold = !witnessed && windowEndMillis > 0L &&
+        nowWallMillis - windowEndMillis in 0..NIGHT_RETURN_FRESH_COLD_MILLIS
+    return if (witnessed || freshCold) {
+        NightReturnState(NightReturnPhase.VEILED, nowWallMillis, episodeOpen = true)
+    } else {
+        state
+    }
+}
+
+/** The unveil: first touch on the veil (pointer DOWN, Hauch
+ *  H-4) moves VEILED → LANDING. Idempotent off-phase. */
+internal fun nightReturnOnUnveil(state: NightReturnState): NightReturnState =
+    if (state.phase == NightReturnPhase.VEILED) {
+        state.copy(phase = NightReturnPhase.LANDING)
+    } else {
+        state
+    }
+
+/** The bloom: the first true verb moves LANDING → OPEN and
+ *  closes the episode. Off-phase calls are no-ops, so verb
+ *  handlers may call it unconditionally. */
+internal fun nightReturnOnBloom(state: NightReturnState): NightReturnState =
+    if (state.phase == NightReturnPhase.LANDING) {
+        NightReturnState(NightReturnPhase.OPEN, armedWallMillis = 0L, episodeOpen = false)
+    } else {
+        state
+    }
+
+/** Ruhe R-1 / Daemmer DAE-5: a night hand dismissal of the
+ *  standing room enters at LANDING — never at full light.
+ *  [isNight] is the caller's one discriminator
+ *  (themeEvaluation.isNight OR an open episode, so an
+ *  in-episode re-dismissal re-lands across the evaluation's
+ *  flip). A day dismissal changes nothing. */
+internal fun nightReturnOnHandDismissal(
+    state: NightReturnState,
+    isNight: Boolean,
+    nowWallMillis: Long
+): NightReturnState =
+    if (isNight && state.phase == NightReturnPhase.OPEN) {
+        NightReturnState(NightReturnPhase.LANDING, nowWallMillis, episodeOpen = true)
+    } else {
+        state
+    }
+
+/** Ruhe R-5: expiry on resume. Armed, stale (> expiry), and
+ *  no night condition standing (no session, no SLEEP window —
+ *  the caller's themeEvaluation.isNight) → OPEN, instantly.
+ *  Inside the grace or under a live night condition the
+ *  return stands. */
+internal fun nightReturnExpireIfStale(
+    state: NightReturnState,
+    isNight: Boolean,
+    nowWallMillis: Long
+): NightReturnState =
+    if (state.phase != NightReturnPhase.OPEN && !isNight &&
+        nowWallMillis - state.armedWallMillis > NIGHT_RETURN_EXPIRY_MILLIS
+    ) {
+        NightReturnState(NightReturnPhase.OPEN, armedWallMillis = 0L, episodeOpen = false)
+    } else {
+        state
+    }
+
+/** Whether a phase transition ENTERS by snap rather than by
+ *  the 520 Curve C animation (Ruhe §1.3): the veil's own entry
+ *  is a covered snap under the finish ground; a hand-dismissal
+ *  entry to LANDING snaps under the 180 Throw; an expiry clear
+ *  snaps (housekeeping). The unveil (VEILED → LANDING) and the
+ *  bloom (LANDING → OPEN) are the two animated legs. */
+internal fun nightReturnEntryIsSnap(
+    from: NightReturnPhase,
+    to: NightReturnPhase,
+    expired: Boolean
+): Boolean = when {
+    expired -> true
+    to == NightReturnPhase.VEILED -> true
+    from == NightReturnPhase.OPEN && to == NightReturnPhase.LANDING -> true
+    else -> false
 }

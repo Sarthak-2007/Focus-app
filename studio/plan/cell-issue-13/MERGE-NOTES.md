@@ -109,6 +109,26 @@ the Landing dim (Deck at the room's light law) which the first
 verb blooms to full over 520 Curve C via the interaction
 stamp. E-2 MERGED as V1-as-amended above.
 
+**CORRECTION (wave-3, Wecker — the paragraph above
+OVERCLAIMS, and the record is amended, not silently
+rewritten):** E-1 merged IN FORM, defective IN ACT. What the
+wave-1 text above describes as landed was, on the merged
+code: a veil gated (after wave-2's C-22) on the stand-down
+kind alone but set for witnessed AND stale cold discoveries
+alike; TWO uncomposed scrims whose sum flashed full Deck
+light for ~300 ms at the unveil (Daemmer DAE-6 / Hauch H-1);
+a Landing that existed ONLY behind the veil — a night hand
+dismissal landed on the full-light Deck (DAE-5 / Ruhe R-1);
+a bloom that fired on ANY interaction via
+`noteUserInteraction`, not on the first true verb (DAE-7 /
+Ruhe R-3); a veil composed OVER the clock, cutting the
+finish print's ruled fade at E0 (Hauch H-2 / Glanz G-4); and
+a Landing weight applied over whatever scheme the Deck
+happened to wear — day, on the stand-down path (Ruhe R-4).
+The wave-3 disposition below replaces this paragraph's
+claim: E-1 is cured in wave 3 as ONE scrim (see item 1
+there). E-2's sentence stands as written.
+
 ## PROOF DEBTS (§7) — STATUS
 
 Discharged in code: debt 10 (state × figure × expected-string
@@ -135,5 +155,54 @@ compiling and a phone; this lane is DECLARED, uncompiled.
    in fact (one persisted marker, two writers) without a DB
    change — if Wacht wants the column instead, that is a
    v12→v13 migration decision for Ren, not this lane.
+
+## WAVE-3 CURE PASS — DISPOSITIONS (Wecker, cure-builder)
+
+Base for this pass: the wave-1 merge + wave-2 cures committed
+at e155802 (CI-green), plus the in-place finisher cures found
+UNCOMMITTED in the working tree and built on, never reverted:
+Politur P-1/P-2 (hero label in every state; the one
+window-keyed remaining-seconds derivation), Kante K-4/K-5/K-6
+(SLEEP banner sovereign over the queued-task fallback; exit
+ceiling 0.58 → 0.61 so the door invariant holds at standing;
+banner slab descends with the hero), and Glanz's themes.xml
+cure (the #000000 window background — item 3's already-landed
+half, verified and kept). Nothing compiled, nothing
+committed, nothing pushed, nothing posted in this pass —
+DECLARED, CI judges on the lead's push. Wave-2 cures
+(C-15/C-16/C-17/C-19/C-22, Samt D-1/D-2, DAE-1, Schliff F-1)
+checked at every touch site: no conflicts found, none
+regressed knowingly.
+
+| # | Item | Disposition |
+|---|---|---|
+| 1 | E-1 AS ONE SCRIM (DAE-5/6/7, H-1…H-7, R-1…R-5) | LANDED. One Animatable scrim in MainActivity over a VM `NightReturnPhase` (VEILED 0.80 / LANDING 0.45 / OPEN 0), one 520 Curve C per leg; the pure phase machine lives in DeskClockSettle.kt (`NightReturnState`, `nightReturnOn*`) and is JVM-tested. Bloom ONLY from verb handlers (Ruhe §5/R-3 taxonomy: navigateTo, armMonolithSession, requestDisarmChallenge, dismissReceipt, completeTaskAndAdvance — toggleChecklistItem delegates there — promoteTaskToActive, deferTask, selectStudyPreset, selectAndApplyProfile, applySmartLoadout, setStudyBlocksCount, endSafeBreakEarly, and inside the changed-guards of setDialMinutes / setIntentionText); the dim clear is REMOVED from noteUserInteraction. Night hand dismissal enters at LANDING, snap entry (toggleAlwaysOnDeskClock(false) under themeEvaluation.isNight OR an open episode). Night scheme held while an episode is armed (the OR into MainActivity's effectiveNight + the Deck's isDarkTheme site; Ruhe R-4). Arm timestamp + 30-min expiry + ON_RESUME re-check (R-5, expireNightReturnIfStale). Veil only if witnessed, or cold discovery ≤ 30 min (H-3; seeded from the finish controller's first-emission handling — if a future frame capture shows uncovered frames on the fresh-cold path, Hauch's priced fallback is no-veil there, not a late veil). Scrim composed BELOW AlwaysOnDeskClockOverlay (H-2). Unveil on pointer DOWN via detectTapGestures(onPress), no indication (H-4/H-5). JVM tests: six phase-machine tests in DeskClockFlowTest (weights, gate, unveil/bloom, hand dismissal, expiry, snap rules) — the grammar's first coverage (Ruhe §7). |
+| 2 | THE YIELD GETS ITS OWN EXIT (Samt S-1/S-3, Glanz G-1, Kante K-1/K-2/K-3) | LANDED. Yielded state exposed as `deskClockYielded` StateFlow; MainActivity composes a non-clickable true-black Box above the Deck while it stands (testTag desk_clock_yielded_black). The yield beat NEVER resets the surrender-fade flag (performDeskClockYield), the overlay's surrender effect holds 0 on a yield (no snap back to 1f), and the overlay's yield exit animates NOTHING — no dismissal throw (exitIsYield seam fact, one of the overlay's four exit branches). Scheduled two-phase clear (K-3): the ticker discovers deadline − 520 ms, sets the fade, and schedules performDeskClockYield for the deadline exactly (a plug-in before the deadline cancels the job and the yield). This REPLACES wave-2's one-ticker-grain fade lead. |
+| 3 | SEEDED FRAME-ONE (Schimmer FE-2) | LANDED. themes.xml #000000 window background: ALREADY-LANDED-BY-SIBLING (Glanz G-6, in the tree uncommitted; verified, kept). Raise-generation-keyed remember: the VM stamps every raise through stampDeskClockRaise (generation + entryStartsAtFull); the overlay's animatables are `remember(raiseGeneration)` seeded at 1f for SEEDED raises — frame one by construction, no LaunchedEffect snap trusted. Plus the pre-decision black gate, generalised from item 2's black surface: `deskClockColdGate` (live pre-birth session ∧ clock not visible ∧ no settle decision) composes black over the Deck from the process's first frames. |
+| 4 | DAWN AS MOTION (DAE-2 + Politur P-3; lead's ruling: DAE-2's form) | LANDED. The three composed alphas are animateFloatAsState targets (tween 520 Curve C) fed by deskClockPrintAlphas' outputs; the pure function's signature is UNCHANGED and no test call site moved. The same chase absorbs Samt D-3 / Kante K-7's resume curtain: at suspension expiry the target falls to the descended value and the animation walks it down over 520 Curve C. ONE form landed, per the merge ruling — D-3's resumeFraction input was NOT also built. |
+| 5 | FINISH SEAM ON THE EVENT (DAE-8 + Glanz G-3) | LANDED. `deskClockGroundRelease` flips at the publish act in the detention loop (both the formula branch and the ceiling branch — filed-issuance for routine kinds included, since publish IS their issuance); the overlay releases the ground 260 Curve A on that event, retaining a 2,200 ms failsafe delay in place of the fixed 1,200 ms hold. Branch-U unwitnessed finishes now publish FIRST and hide after, in the same order, with a snap exit (exitSnap) — the hide moved inside the branches (the witnessed hide is unchanged at E0). |
+| 6 | GLIDE + IDLE (Glaette G-1/G-2/G-3/G-4/G-6) | LANDED, all four. Glide: offsets are dp counts (3 dp step, ±6 dp grid) converted at the density and carried by animateIntOffsetAsState over 520 Curve C (G-1+G-2). Idle hero repaint aligned to the wall minute: an overlay-local minute-boundary clock drives idle derivations (G-3). Idle hand-raised keep-awake restored inside the VM machinery: the ticker's no-session beat keeps the flag for a visible HAND-raised face, no surrender deadline (G-4). dialMinutes threading REMOVED: the parameter is deleted from AlwaysOnDeskClockOverlay and from MainActivity's call site; the ripple check was clean (the overlay was the only consumer; the VM's own _dialMinutes flow is the composer's and untouched) (G-6). NOT landed: Glaette G-5 (serpentine glide path) — not in this pass's brief; the row-end leap stands as filed. |
+| 7 | SLOT + SEATS (Schliff F-3/F-4/F-5) | LANDED, all three. Block-line seat reserved: a fixed 17 dp box stands whenever a timed multi-block span runs, text (lineHeight 17.sp) prints inside only when the derivation returns non-null — break start/end no longer jumps the column (F-3). Banner slot height DERIVED from BANNER_LINE_HEIGHT (19.sp × 2 + 24.dp padding) — the 68.dp magic (62.dp in the original merge) is dead; the banner Text carries lineHeight + maxLines 2 + ellipsis (F-4). Dash pattern in dp: floatArrayOf(8.dp.toPx(), 6.dp.toPx()), phase still 0f (F-5). |
+| 8 | PROOF TABLE (Politur P-4) | LANDED. DeskClockFlowTest's face table gains the routine LAST MINUTE row (span 30 s / window 45 s → hero 00:45, sub-line ENDS 03:30 alone, banner SLEEP) and a label column asserted in every state (IDLE THE TIME NOW / timed LEFT / stopwatch ELAPSED) — the two blind spots P-1 and P-2 lived in. |
+| 9 | V1 RESIDUALS (Samt F-2/F-3) | PARTLY LANDED, rest RECORDED-AS-DEBT. Checked DeskClockSettle against current code: HELD did NOT latch across sampler off-windows — any non-HELD beat (UNKNOWN included) cleared the held state and re-armed, restarting the 20 s backstop on every flap. Funke P-3's REDUCED LATCH ONLY is landed: HELD clears only on a positive REST verdict; UNKNOWN while held holds the latch and returns false (pinned by heldLatchesAcrossUnknownBeats_untilPositiveRest). REST dwell VERIFIED as Glaette observed: REST_DWELL_BEATS = 2 consecutive ticker beats (~2 s of sustained furniture signature at the 1 s grain) — meets Samt F-1's 1.5 s ask; recorded here, unchanged. NOT landed (tuning debt under §7 debt 9, unchanged): F-2's dual-threshold hysteresis + sway channel, F-3's sample-count gate, F-4's floor calibration — all threshold work that must wait for Vega's bench traces; landing them untested would be inventing numbers. |
+| 10 | THIS RECORD | LANDED (this section + the E-1 correction above). |
+
+Named remainders this pass did NOT land, for the lead's
+table: Daemmer DAE-3 (the stand-down's trigger is an
+emission, not the instant — the ticker re-check cure was not
+in this pass's brief; DAE-1's keying landed in wave-2, so the
+pair Daemmer named is half-landed and the debt stands
+open); Glaette G-5 and G-7 (glide path; the dismissal-
+persistence document contradiction — Wacht's call, either
+way is one line); Schimmer FE-1 (HAND print delay 180 → 120 —
+a table amendment for Ren, not a builder); Samt S-4 (the
+wake tap spent twice — priced LOW, deferrable by name);
+Glanz G-8's full seam-state consolidation (mitigated, not
+landed whole: all raise sites now write through
+stampDeskClockRaise — one assignment per fact in one
+function — but visible/entryCause/exit-kind remain separate
+flows).
+
+— Wecker, wave-3 cure-builder (Wacht's cell, issue #13)
 
 — Bauer, builder (Wacht's cell, issue #13)

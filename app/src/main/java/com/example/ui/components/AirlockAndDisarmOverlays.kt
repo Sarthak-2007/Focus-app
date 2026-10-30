@@ -4,6 +4,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateIntOffsetAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -35,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -78,11 +81,15 @@ import java.util.Locale
 // prints 0.8125 at full strength — a 3.3× breach on a face that
 // now raises ITSELF and may stand all night. Composited over
 // the overlay's true-black ground: the content prints at 0.55
-// land at ≈0.216, and the exit line at 0.58 lands at ≈0.246.
+// land at ≈0.216, and the exit line at 0.61 lands at ≈0.259
+// (Finisher cure, Kante K-5: the exit ceiling was raised from
+// 0.58 so the door invariant holds at standing too — see the
+// A-2 note below; the one verb line runs ~4% over Nacht's 0.25
+// ceiling, the priced cost Samt's D-4 recommended paying).
 // The auto-raise ships only under this cure; these two numbers
 // are the cure.
 private const val DESK_CLOCK_PRINT_ALPHA = 0.55f
-private const val DESK_CLOCK_EXIT_ALPHA = 0.58f
+private const val DESK_CLOCK_EXIT_ALPHA = 0.61f
 
 // Issue #13, A-2 — the descent (item 14 / V4), completed:
 // DIM BY AREA. The hero and the tear rule descend 0.55 → 0.36
@@ -96,15 +103,17 @@ private const val DESK_CLOCK_EXIT_ALPHA = 0.58f
 // prints are the same ink, so the invariant is kept by
 // construction: exitAlpha = max(0.40, heroAlpha × 1.10).
 // Wave-2 honesty fix (Seat Overlay-Review): that sentence was
-// FALSE at the standing alphas — the exit is also capped at
-// its ruled ceiling DESK_CLOCK_EXIT_ALPHA (0.58), and
-// 0.58 / 0.55 = 1.055 < 1.10, so the cap binds wherever the
-// hero stands above 0.58 / 1.10 ≈ 0.527 (fraction ≲ 0.12, the
-// 60 s suspension, and the dawn's return). The invariant as
-// constructed holds through the descent; at standing, the
-// ruled ceiling wins. Which of the two constants yields is a
-// ruling for Ren — this merge changes neither number, and no
-// longer claims both.
+// FALSE at the standing alphas under the old 0.58 ceiling —
+// 0.58 / 0.55 = 1.055 < 1.10, so the cap bound wherever the
+// hero stood above ≈ 0.527 (fraction ≲ 0.12, the 60 s
+// suspension, and the dawn's return).
+// Finisher cure (Kante K-5, Samt D-4's priced cure): the
+// ceiling is now DESK_CLOCK_EXIT_ALPHA = 0.61 = 0.55 × 1.10
+// rounded up, so the cap never binds below the ratio and the
+// invariant holds at EVERY fraction by construction, as the
+// audit's ruled form requires. Cost, named: the exit line
+// lands at ≈ 0.259 relative luminance, ~4% over Nacht's 0.25
+// night ceiling — the door outranks the ceiling (Samt D-4).
 private const val DESK_CLOCK_HERO_FLOOR_ALPHA = 0.36f
 private const val DESK_CLOCK_NUMBER_FLOOR_ALPHA = 0.50f
 private const val DESK_CLOCK_EXIT_FLOOR_ALPHA = 0.40f
@@ -180,12 +189,23 @@ internal fun tearFraction(spanElapsedFraction: Float): Float =
  * (A-10(v): print fades 520 Curve C to 0 at true-off − 520 ms)
  * arrives as [surrenderFade].
  */
+// Wave-3 (Schliff F-4): the banner slot's measure is DERIVED,
+// never a magic height — two lines at this explicit line
+// height, plus the slot's 12 dp vertical padding each side
+// (the padding lives in the slot's modifier below).
+private val BANNER_LINE_HEIGHT = 19.sp
+
 @Composable
 fun AlwaysOnDeskClockOverlay(
     visible: Boolean,
     activeSession: FocusSessionEntity?,
     activeTask: FocusTaskEntity?,
-    dialMinutes: Int,
+    // Wave-3 (Glaette G-6): dialMinutes is DELETED from the
+    // face's contract. The idle lie (ST-01 / FL-03) ran on this
+    // wire; the print has not read it since the merge, and a
+    // finished signature does not keep a killed lie's dead
+    // input for the next hand to reconnect. The VM's own
+    // _dialMinutes flow (the composer's) is untouched.
     burnInStep: Int,
     entryCause: DeskClockEntryCause = DeskClockEntryCause.HAND,
     exitIsFinish: Boolean = false,
@@ -195,14 +215,40 @@ fun AlwaysOnDeskClockOverlay(
     // isSleepLoadout path and hands it in. Default false: a
     // caller that does not know keeps the face at standing.
     descentApplies: Boolean = false,
+    // Wave-3 (Schimmer FE-2): the VM's raise generation + the
+    // seeded-alpha fact. The animatables below are keyed on
+    // the generation and SEEDED from the fact, so a SEEDED
+    // raise's first composition already carries 1f.
+    raiseGeneration: Int = 0,
+    entryStartsAtFull: Boolean = false,
+    // Wave-3 (Daemmer DAE-8 / Glanz G-2): the finish ground
+    // releases when the VM's issuance event flips this —
+    // the fixed 1,200 ms hold is now only a 2,200 ms failsafe.
+    groundReleased: Boolean = false,
+    // Wave-3 (Glanz G-1 / Kante K-2): the yield is its own
+    // exit — no animation, no throw, no resurrection.
+    exitIsYield: Boolean = false,
+    // Wave-3 (Glanz G-3): a branch-U finish hides AFTER its
+    // publish, with this snap exit.
+    exitSnap: Boolean = false,
     onDismiss: () -> Unit
 ) {
     // A-4 — arrival and exit, keyed to cause. Ground and print
     // animate separately: the ground is true black, the print
     // lands on completed black and never blends over a lit Deck.
-    val groundAlpha = remember { Animatable(0f) }
-    val printAlpha = remember { Animatable(0f) }
-    LaunchedEffect(visible, entryCause) {
+    // Wave-3 (Schimmer FE-2): seeded by construction — keyed on
+    // the raise generation, initialised at 1f for a SEEDED
+    // raise. The wave-1/2 form was born at 0f for every cause
+    // and reached SEEDED's 1f only through this effect's
+    // snapTo: frame one held by effect scheduling, not by
+    // construction.
+    val groundAlpha = remember(raiseGeneration) {
+        Animatable(if (entryStartsAtFull) 1f else 0f)
+    }
+    val printAlpha = remember(raiseGeneration) {
+        Animatable(if (entryStartsAtFull) 1f else 0f)
+    }
+    LaunchedEffect(visible, entryCause, raiseGeneration) {
         if (visible) {
             when (entryCause) {
                 DeskClockEntryCause.SEEDED -> {
@@ -259,65 +305,128 @@ fun AlwaysOnDeskClockOverlay(
                 }
             }
         } else {
-            if (exitIsFinish) {
-                // EXIT, FINISH (A-4): print fades 260 Curve A
-                // while the true-black ground HOLDS over the
-                // Deck through the detention; the ground fades
-                // 260 Curve A as the receipt fades in. No surface
-                // brighter than the clock stands between the
-                // clock and the receipt (item 19, extended).
-                // Wave-2 (C-15): parallel — the ground's 1200 ms
-                // hold is measured from the exit's t=0, not from
-                // the print fade's end. (C-23's residual stands:
-                // the hold is still a constant against a
-                // detention that can run to 1800 ms on the
-                // faulted branch — keying it to the VM's issued
-                // flag is a named debt, not done here.)
-                launch { printAlpha.animateTo(0f, tween(260, easing = MonolithCurves.EasingA)) }
-                launch {
-                    groundAlpha.animateTo(
-                        0f,
-                        tween(260, delayMillis = 1200, easing = MonolithCurves.EasingA)
-                    )
+            when {
+                exitIsYield -> {
+                    // EXIT, YIELD (wave-3, Glanz G-1 / Kante K-2):
+                    // the yield animates NOTHING. The print has
+                    // already faded in its own curve (the
+                    // surrender fade); the ground holds black.
+                    // There is no dismissal throw and no
+                    // resurrection — the composition below
+                    // returns early on this flag and the host's
+                    // yielded black surface holds the room.
                 }
-            } else {
-                // EXIT, DISMISSAL: 180 EasingThrow, ground and
-                // print together (item 17 stands). Wave-2 (C-15):
-                // "together" is now literally true — parallel
-                // launches, not two serial 180 ms fades.
-                launch {
-                    groundAlpha.animateTo(
-                        0f, tween(180, easing = com.example.ui.theme.MonolithKin.EasingThrow)
-                    )
+                exitSnap -> {
+                    // EXIT, BRANCH-U FINISH (wave-3, Glanz G-3):
+                    // the receipt was published BEFORE this hide
+                    // and already stands (or is filed) — the
+                    // ground leaves instantly, in the same order.
+                    groundAlpha.snapTo(0f)
+                    printAlpha.snapTo(0f)
                 }
-                launch {
-                    printAlpha.animateTo(
-                        0f, tween(180, easing = com.example.ui.theme.MonolithKin.EasingThrow)
-                    )
+                exitIsFinish -> {
+                    // EXIT, FINISH (A-4): print fades 260 Curve A
+                    // while the true-black ground HOLDS over the
+                    // Deck through the detention; the ground fades
+                    // 260 Curve A as the receipt fades in. No
+                    // surface brighter than the clock stands
+                    // between the clock and the receipt (item 19,
+                    // extended).
+                    // Wave-3 (Daemmer DAE-8 / Glanz G-2): the
+                    // ground now releases on the VM's ISSUANCE
+                    // event (the groundReleased effect below),
+                    // not on the wave-1 fixed 1,200 ms clock —
+                    // that clock left 20–340 ms of uncovered,
+                    // unpapered Deck inside the seam (issuance
+                    // runs to 1,800 ms on the faulted branch).
+                    // This launch is only the FAILSAFE: 2,200 ms,
+                    // so a halted chain can never trap the face
+                    // under black.
+                    launch { printAlpha.animateTo(0f, tween(260, easing = MonolithCurves.EasingA)) }
+                    launch {
+                        groundAlpha.animateTo(
+                            0f,
+                            tween(260, delayMillis = 2200, easing = MonolithCurves.EasingA)
+                        )
+                    }
+                }
+                else -> {
+                    // EXIT, DISMISSAL: 180 EasingThrow, ground and
+                    // print together (item 17 stands). Wave-2
+                    // (C-15): "together" is now literally true —
+                    // parallel launches, not two serial 180 ms
+                    // fades.
+                    launch {
+                        groundAlpha.animateTo(
+                            0f, tween(180, easing = com.example.ui.theme.MonolithKin.EasingThrow)
+                        )
+                    }
+                    launch {
+                        printAlpha.animateTo(
+                            0f, tween(180, easing = com.example.ui.theme.MonolithKin.EasingThrow)
+                        )
+                    }
                 }
             }
         }
     }
+    // Wave-3 (DAE-8): the issuance event itself releases the
+    // finish ground — 260 Curve A, the moment the VM's publish
+    // lands, for standing and filed issuances alike.
+    LaunchedEffect(groundReleased, visible, exitIsFinish) {
+        if (groundReleased && !visible && exitIsFinish) {
+            groundAlpha.animateTo(0f, tween(260, easing = MonolithCurves.EasingA))
+        }
+    }
     // A-10(v): the surrender fade — at true-off − 520 ms the
     // print fades 520 Curve C to 0 over the black ground.
+    // Wave-3 (Kante K-2): on the yield beat the flag is never
+    // reset (the VM holds it), and this effect must not snap
+    // back either — when the hide is a yield, surrenderAlpha
+    // HOLDS 0. The snap-to-1 arm fires only on a raise / a
+    // cancelled surrender.
     val surrenderAlpha = remember { Animatable(1f) }
-    LaunchedEffect(surrenderFade) {
+    LaunchedEffect(surrenderFade, exitIsYield) {
         if (surrenderFade) {
             surrenderAlpha.animateTo(0f, tween(520, easing = MonolithCurves.EasingC))
-        } else {
+        } else if (!exitIsYield) {
             surrenderAlpha.snapTo(1f)
         }
     }
+    // Wave-3 (K-1/G-1): while yielded the face composes
+    // nothing — the host's true-black surface stands over the
+    // Deck in its place.
+    if (!visible && exitIsYield) return
     if (!visible && groundAlpha.value <= 0f && printAlpha.value <= 0f) return
 
     // FLOW §2.4.2 — the idle lie dies (ST-01 / FL-03). The hero
     // is derived by deskClockHeroText: a live session reads its
     // span; no live session, the hero is the CURRENT TIME,
     // labelled THE TIME NOW directly above it (K-8).
-    // dialMinutes is no longer read here at all.
     val nowWallMillis = System.currentTimeMillis()
     val running = activeSession != null && activeSession.isActive
-    val timeText = deskClockHeroText(activeSession, nowWallMillis)
+
+    // Wave-3 (Glaette G-3): the idle hero's repaint is aligned
+    // to the WALL MINUTE. Idle has no session row to re-emit,
+    // and the only other guaranteed input (burnInStep) ticks
+    // on the VM ticker's birth phase — so the idle hero could
+    // read a minute stale for up to ~60 s of every minute. A
+    // minute-boundary clock inside the composition now drives
+    // the idle derivations; running faces keep reading the
+    // row-driven instant.
+    var idleNowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(visible, running) {
+        if (visible && !running) {
+            while (true) {
+                val now = System.currentTimeMillis()
+                idleNowMillis = now
+                // Sleep to 50 ms past the next wall-minute turn.
+                delay(60_000L - (now % 60_000L) + 50L)
+            }
+        }
+    }
+    val faceNowMillis = if (running) nowWallMillis else idleNowMillis
+    val timeText = deskClockHeroText(activeSession, faceNowMillis)
 
     // A-2(ii): THE VARIABLE IS NAMED — span-elapsed fraction.
     // Wave-2 fixes (Samt D-1 + D-2): the fraction exists ONLY
@@ -348,24 +457,70 @@ fun AlwaysOnDeskClockOverlay(
     }
     val descentSuspended =
         android.os.SystemClock.elapsedRealtime() - raisedAtMono < 60_000L
-    val alphas = deskClockPrintAlphas(
+    // Wave-3 (Daemmer DAE-2, lead's merge ruling: DAE-2's form
+    // lands): the composed alphas are ANIMATED, not assigned.
+    // The pure function still computes the targets exactly as
+    // before (its signature is unchanged); three
+    // animateFloatAsState chases on 520 Curve C carry them, so
+    // the dawn ramp's per-second retargets move as light, not
+    // as a brightness setting being stepped — and the 60 s
+    // suspension's resume (Samt D-3 / Kante K-7's one-frame
+    // curtain-drop) is absorbed by the same chase: when the
+    // suspension lifts, the target falls to the descended
+    // value and the animation walks it down over 520 Curve C
+    // instead of cutting. ONE of the two priced forms lands —
+    // this one; D-3's resumeFraction input is not also built.
+    val targetAlphas = deskClockPrintAlphas(
         spanElapsedFraction = spanElapsedFraction,
         descentSuspended = descentSuspended,
         // Wave-2 (DAE-1): the dawn ramp keys to the same end
         // the hero and ENDS read — the window's end for a
         // routine row, the span's remaining otherwise.
         spanRemainingSeconds = activeSession?.let { s ->
-            if (s.routineId != null && s.windowEndMillis > 0L) {
-                ((s.windowEndMillis - nowWallMillis) / 1000L).coerceAtLeast(0L).toInt()
-            } else {
-                s.spanRemainingSeconds
-            }
+            if (s.isStopwatchMode) s.spanRemainingSeconds
+            else deskClockRemainingSeconds(s, faceNowMillis)
         },
         isStopwatch = activeSession?.isStopwatchMode == true
     )
+    val heroAlphaAnim by animateFloatAsState(
+        targetValue = targetAlphas.hero,
+        animationSpec = tween(520, easing = MonolithCurves.EasingC),
+        label = "desk_clock_hero_alpha"
+    )
+    val numberAlphaAnim by animateFloatAsState(
+        targetValue = targetAlphas.numberLine,
+        animationSpec = tween(520, easing = MonolithCurves.EasingC),
+        label = "desk_clock_number_alpha"
+    )
+    val exitAlphaAnim by animateFloatAsState(
+        targetValue = targetAlphas.exit,
+        animationSpec = tween(520, easing = MonolithCurves.EasingC),
+        label = "desk_clock_exit_alpha"
+    )
+    val alphas = DeskClockAlphas(
+        hero = heroAlphaAnim, exit = exitAlphaAnim, numberLine = numberAlphaAnim
+    )
 
+    // Wave-3 (Glaette G-1 + G-2): the burn-in glide is measured
+    // in DP and TRAVELS. The wave-1/2 code spent the offsets as
+    // IntOffset PIXELS (3 px ≈ 1 dp on his phone — the grid ran
+    // at a third of its ruled amplitude) and recomposed at the
+    // new position instantly. Now: dx/dy are dp counts on the
+    // ruled 3 dp step / ±6 dp grid, converted at the density,
+    // and an animateIntOffsetAsState carries the column over
+    // 520 Curve C — the room's one repeated motion moves like
+    // light, not like a setting being flipped.
     val dx = ((burnInStep % 5) - 2) * 3
     val dy = (((burnInStep / 5) % 5) - 2) * 3
+    val density = LocalDensity.current
+    val glide by animateIntOffsetAsState(
+        targetValue = IntOffset(
+            with(density) { dx.dp.roundToPx() },
+            with(density) { dy.dp.roundToPx() }
+        ),
+        animationSpec = tween(520, easing = MonolithCurves.EasingC),
+        label = "desk_clock_burn_in_glide"
+    )
 
     Box(
         modifier = Modifier
@@ -382,7 +537,7 @@ fun AlwaysOnDeskClockOverlay(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .offset { IntOffset(dx, dy) }
+                .offset { glide }
                 .graphicsLayer {
                     alpha = printAlpha.value * surrenderAlpha.value
                 },
@@ -407,17 +562,21 @@ fun AlwaysOnDeskClockOverlay(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                if (!running) {
-                    Text(
-                        text = "THE TIME NOW",
-                        fontFamily = AnonymousProFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp,
-                        letterSpacing = 2.sp,
-                        color = NightColorPrimary.copy(alpha = alphas.numberLine)
-                    )
-                }
-                // Hero architectural Space Mono numerals (112sp)
+                // K-8 / DESIGN §1: the label and the figure are
+                // inseparable in EVERY state — LEFT (timed),
+                // ELAPSED (stopwatch), THE TIME NOW (idle).
+                // Finisher cure (Politur P-1): the merged code
+                // printed the label only when idle, so a running
+                // hero was an unlabelled number all night.
+                Text(
+                    text = deskClockHeroLabel(activeSession),
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    letterSpacing = 2.sp,
+                    color = NightColorPrimary.copy(alpha = alphas.numberLine)
+                )
+                // Hero architectural Space Mono numerals (96sp)
                 Text(
                     text = timeText,
                     fontFamily = AnonymousProFamily,
@@ -433,7 +592,7 @@ fun AlwaysOnDeskClockOverlay(
                     // alone (an ENDS derived from elapsed would
                     // be a fabricated end). Idle has none.
                     Text(
-                        text = deskClockSubLine(activeSession!!, nowWallMillis),
+                        text = deskClockSubLine(activeSession!!, faceNowMillis),
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
@@ -444,15 +603,33 @@ fun AlwaysOnDeskClockOverlay(
                     // on a break, the break line owns those
                     // minutes), its figure the block's end in wall
                     // time, the final block figureless.
-                    deskClockBlockLine(activeSession!!, nowWallMillis)?.let { blockLine ->
-                        Text(
-                            text = blockLine,
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp,
-                            letterSpacing = 2.sp,
-                            color = NightColorPrimary.copy(alpha = alphas.numberLine)
-                        )
+                    // Wave-3 (Schliff F-3): the line's SEAT is
+                    // reserved — a fixed-height box stands
+                    // whenever a timed multi-block span runs, and
+                    // the text prints inside it only when the
+                    // derivation returns non-null. A-5 cured this
+                    // jump class for the banner slot; A-1's
+                    // suppression re-opened it one seat up: at
+                    // every break start/end the tear rule and
+                    // banner jumped ~one line in 0 ms. Single-
+                    // block, stopwatch and idle faces compose no
+                    // seat, as before.
+                    if (!activeSession!!.isStopwatchMode &&
+                        activeSession!!.totalStudyBlocks > 1
+                    ) {
+                        Box(modifier = Modifier.height(17.dp)) {
+                            deskClockBlockLine(activeSession!!, faceNowMillis)?.let { blockLine ->
+                                Text(
+                                    text = blockLine,
+                                    fontFamily = AnonymousProFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    lineHeight = 17.sp,
+                                    letterSpacing = 2.sp,
+                                    color = NightColorPrimary.copy(alpha = alphas.numberLine)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -491,7 +668,13 @@ fun AlwaysOnDeskClockOverlay(
                         end = Offset(w, h / 2f),
                         strokeWidth = h,
                         pathEffect = PathEffect.dashPathEffect(
-                            floatArrayOf(8f, 6f), 0f
+                            // Wave-3 (Schliff F-5): the dash is
+                            // measured in DP like the notch beside
+                            // it — the wave-1/2 raw floats were
+                            // PIXELS (≈2.7 dp on xxhdpi), one rule
+                            // in two unit systems. Phase stays 0f
+                            // (Mond J3's no-doubling condition).
+                            floatArrayOf(8.dp.toPx(), 6.dp.toPx()), 0f
                         )
                     )
                     // Notches: 3 dp ground-black gaps at the
@@ -529,27 +712,64 @@ fun AlwaysOnDeskClockOverlay(
             // height is FIXED, text top-aligned; the absent banner
             // leaves the slot empty and still. Idle wears no slot.
             // Wave-2 fix (Salz C-24): the slot is measured from
-            // the text it actually holds — 14 sp Atkinson Bold,
-            // two lines (≈2 × 20 dp) + 12 dp vertical padding
-            // each side = 64 dp, set at 68 for the font's
-            // leading — and the text carries a LAW for line 3:
-            // maxLines 2 + ellipsis. A long task title truncates
-            // by decision, never clips in silence.
+            // the text it actually holds, and the text carries a
+            // LAW for line 3: maxLines 2 + ellipsis. A long task
+            // title truncates by decision, never clips in
+            // silence. Wave-3 (Schliff F-4): the measure is now
+            // an explicit line height the height derives from —
+            // see BANNER_LINE_HEIGHT at the slot.
             if (running) {
-                val bannerLine = deskClockBreakLine(
+                var bannerLine = deskClockBreakLine(
                     isInSafeBreak = activeSession?.isInSafeBreak == true,
                     safeBreakSecondsRemaining = activeSession?.safeBreakSecondsRemaining ?: 0,
-                    nowWallMillis = nowWallMillis
-                ) ?: deskClockBannerText(
-                    activeTask?.title, activeSession?.intention, activeSession?.profileName
+                    nowWallMillis = faceNowMillis
                 )
+                // Finisher cure (Kante K-4): on the SLEEP span the
+                // banner IS "SLEEP" (DESIGN §1.7 — the routine
+                // row's own name; no task/intention derivation
+                // stands in front of it). The old chain ran
+                // task-first, and the VM's activeTask falls back
+                // to the first QUEUED task — so on any night with
+                // a task queued for tomorrow, the SLEEP face named
+                // that task instead. descentApplies is the VM's
+                // isSleepLoadout derivation for this very row.
+                // (SLEEP has no breaks — Moench MA-1 — so the
+                // break line above never pre-empts this in
+                // practice; the order here keeps it sovereign
+                // anyway.)
+                if (bannerLine == null && descentApplies) bannerLine = "SLEEP"
+                if (bannerLine == null) {
+                    bannerLine = deskClockBannerText(
+                        activeTask?.title, activeSession?.intention, activeSession?.profileName
+                    )
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(68.dp)
+                        // Wave-3 (Schliff F-4): the height is
+                        // DERIVED from the text's own measure —
+                        // two lines at BANNER_LINE_HEIGHT (19 sp)
+                        // + the 12 dp vertical padding each side
+                        // below. The wave-2 68.dp (and the merged
+                        // 62.dp before it) were asserted constants
+                        // that matched no derivation from the text
+                        // actually set.
+                        .height(with(density) { (BANNER_LINE_HEIGHT * 2).toDp() } + 24.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(
-                            if (bannerLine != null) NightColorSurfaceBright else Color.Transparent
+                            // Finisher cure (Kante K-6, Samt D-5):
+                            // the slab descends with the hero — A-2
+                            // is dim BY AREA, and at full strength
+                            // this card was the brightest, largest
+                            // lit object on the descended face.
+                            // 1.0 at standing, ≈ 0.65 at the floor.
+                            if (bannerLine != null) {
+                                NightColorSurfaceBright.copy(
+                                    alpha = alphas.hero / DESK_CLOCK_PRINT_ALPHA
+                                )
+                            } else {
+                                Color.Transparent
+                            }
                         )
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     contentAlignment = Alignment.TopStart
@@ -560,6 +780,9 @@ fun AlwaysOnDeskClockOverlay(
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
+                            // Schliff F-4: the text carries the
+                            // measure the slot derives from.
+                            lineHeight = BANNER_LINE_HEIGHT,
                             maxLines = 2,
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             color = NightColorPrimary.copy(alpha = alphas.numberLine)
@@ -577,6 +800,40 @@ internal fun wallClockTimeText(wallMillis: Long): String =
     java.text.SimpleDateFormat("HH:mm", Locale.US).format(java.util.Date(wallMillis))
 
 /**
+ * Finisher cure (Politur P-2): THE one remaining-seconds
+ * derivation for a timed session, shared by the hero, the
+ * sub-line's last-minute promotion and the dawn ramp's key.
+ * For a routine row it counts to the STAND-DOWN's instant —
+ * the frozen windowEndMillis, the same derivation ENDS
+ * prints (A-12 C-1) — not to the span's arithmetic: the span
+ * target is built from whole FLOORED minutes at
+ * materialisation, so spanRemainingSeconds hits 0 up to
+ * 59 s before the window's end, every night (Daemmer DAE-1).
+ * Wave-2 keyed the hero and the ramp to the window but left
+ * deskClockSubLine reading spanRemainingSeconds, so inside
+ * the window's true last minute NOW either dropped up to
+ * ~59 s early or never dropped at all.
+ */
+internal fun deskClockRemainingSeconds(session: FocusSessionEntity, nowWallMillis: Long): Int =
+    if (session.routineId != null && session.windowEndMillis > 0L) {
+        ((session.windowEndMillis - nowWallMillis) / 1000L).coerceAtLeast(0L).toInt()
+    } else {
+        session.spanRemainingSeconds
+    }
+
+/** K-8 / DESIGN §1: the hero's label, inseparable from the
+ *  figure — LEFT over a timed remainder, ELAPSED over a
+ *  stopwatch, THE TIME NOW over the idle wall clock. */
+internal fun deskClockHeroLabel(activeSession: FocusSessionEntity?): String =
+    if (activeSession == null || !activeSession.isActive) {
+        "THE TIME NOW"
+    } else if (activeSession.isStopwatchMode) {
+        "ELAPSED"
+    } else {
+        "LEFT"
+    }
+
+/**
  * The desk clock's hero (FLOW §2.4.1–2 — ST-01 / FL-03). A live
  * session reads its span: the span remaining for a timed
  * session (never the per-block remainder — it is 0 through
@@ -586,23 +843,11 @@ internal fun wallClockTimeText(wallMillis: Long): String =
  */
 internal fun deskClockHeroText(activeSession: FocusSessionEntity?, nowWallMillis: Long): String {
     if (activeSession != null && activeSession.isActive) {
-        // Wave-2 fix (Daemmer DAE-1, HIGH): for a routine row
-        // the hero counts to the STAND-DOWN's instant — the
-        // frozen windowEndMillis, the same derivation ENDS
-        // prints (A-12 C-1) — not to the span's arithmetic.
-        // The span target is built from whole FLOORED minutes
-        // at materialisation, so spanRemaining hit 00:00 up to
-        // 59 s before the window's end, every night, while the
-        // sub-line still promised ENDS 03:30: two ends at once
-        // inside the last minute, and dawn's peak spent early.
         val displaySecs =
             if (activeSession.isStopwatchMode) {
                 activeSession.elapsedSeconds
-            } else if (activeSession.routineId != null && activeSession.windowEndMillis > 0L) {
-                ((activeSession.windowEndMillis - nowWallMillis) / 1000L)
-                    .coerceAtLeast(0L).toInt()
             } else {
-                activeSession.spanRemainingSeconds
+                deskClockRemainingSeconds(activeSession, nowWallMillis)
             }
         // Wave-2 fix (Salz C-8): the L1 dual grammar. The old
         // single %02d:%02d of TOTAL minutes printed figures no
@@ -651,7 +896,12 @@ internal fun deskClockEndsLine(session: FocusSessionEntity, nowWallMillis: Long)
  */
 internal fun deskClockSubLine(session: FocusSessionEntity, nowWallMillis: Long): String {
     if (session.isStopwatchMode) return deskClockNowLine(nowWallMillis)
-    if (session.spanRemainingSeconds in 1..60) return deskClockEndsLine(session, nowWallMillis)
+    // The promotion keys to the SAME remaining the hero counts
+    // (Politur P-2) — for a routine row that is the window's
+    // remaining, never the floored span's.
+    if (deskClockRemainingSeconds(session, nowWallMillis) in 1..60) {
+        return deskClockEndsLine(session, nowWallMillis)
+    }
     return deskClockNowLine(nowWallMillis) + " · " + deskClockEndsLine(session, nowWallMillis)
 }
 
