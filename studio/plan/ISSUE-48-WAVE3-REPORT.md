@@ -92,6 +92,86 @@ WatchSnapshot — rebase stays cheap.
 - Technical execution — SealTransitionDirectTest is the Impl's first direct test class: real transition + real repository + in-memory Room, fake-clock annulment end to end. ✔
 - Interaction-detail — LEAD-COVERED for visuals; the detail pass went to the publish-failure path's state hygiene (claim spent, marker struck, recovery re-proves — no half-states). ✔
 
+## IMPACT ON THE APP (plain words, for Sarthak via Ren)
+
+- **The app no longer forgets it proved itself.** If a full permission
+  check passed and then the app is killed or the phone reboots, the app
+  still knows the check passed — before, it woke up claiming "never
+  proved" until a fresh check ran.
+- **A refused routine window stays refused.** If a routine's start was
+  refused because the seal couldn't be proven, that window will not
+  silently come back to life after the app restarts — before, a restart
+  erased the refusal and the window could materialise again.
+- **A seal that fails halfway no longer lies about it.** If the seal
+  act dies at its final publish step, the app no longer records "sealed
+  and heard" for a seal that never completed — before, that false
+  record was permanent and recovery trusted it.
+- **Every sealed session keeps its proof.** Sealing a second session
+  no longer erases the first session's on-disk seal record.
+- **The Deck's guard readout actually refreshes when poked.** The
+  re-read signal the services send (poke) was silently swallowed;
+  screens deriving from the Watch Store now re-read the living facts
+  when poked, as designed.
+- Nothing about how the app looks, its screens, or its features
+  changes; no feature was removed or weakened. Every cure makes a
+  truth claim stronger or keeps it from being lost — no downgrade was
+  needed, so no DECISION-NEEDED items arose.
+
+## Added seats (Sarthak's full-roster order, 05:16 IST)
+
+Depth-2 bundle: these seats were executed by the lead as dedicated
+adversarial passes (no spawn channel at this depth) and signed here.
+
+- **Verifier-1 (WatchStore truth claims)** — tried to falsify F1/F2:
+  re-read publish()/bind()/poke() post-fix. Caught one real defect:
+  LAST PROVED persisted via apply() (async — a hard kill could lose
+  the fact the cure exists to keep). FIXED: commit(), the seal
+  marker's own standard. Also confirmed: pokeGen adds no new churn
+  class (publish already re-stamps interceptor measurements every
+  emission); deriveWarrant/printState untouched, so BLOCKING NOW's
+  source still reads the living store exactly as before. Objection
+  raised → answered → closed.
+- **Verifier-2 (seal chain)** — tried to falsify F3/F4/F5: traced
+  writeSealMarker/clearSealMarker/recover/isSealed and both doors'
+  concurrency. Caught one real defect: the persisted id set was a
+  read-modify-write with no lock — two doors sealing different
+  sessions concurrently could lose one id. FIXED: markerLock
+  serializes both marker writers. Also confirmed: rollback only
+  strikes slots naming the failed session; the tombstone prune
+  horizon (72h) exceeds every derivation that can consult it (48h);
+  recover() still adopts on genuine marker testimony (set ∪ legacy
+  int). Objection raised → answered → closed.
+- **Keeper of Record** — owns the ledger below; reconciled before
+  closure: 5 findings, 5 verdicts, 0 DECISION-NEEDED, 0 STANDS-BLOCKED,
+  Konto-migration flag = NONE (all cures are SharedPreferences; no
+  Room schema change, no DB version bump anywhere in the branch).
+
 ## CI
 
-Pushed on agent/issue-48; verdict recorded in the issue's evidence comment.
+- Run 40974062118 (tip 7c7f58c, pre-merge base): FAILED at the "Unit
+  tests" step — `:app:compileDebugUnitTestKotlin` errors, ALL in five
+  pre-existing test files (ScreenshotHarnessTest, ShortsToggleRenderTest,
+  SoundAndSocialTruthTest, TruthCar3CaptureBodyTest, TruthCar3SweepTest —
+  stale composable call-sites); zero errors in this branch's files.
+  The plain-main control run 40973941180 failed at the same step.
+- Main has since landed the call-site repairs (those five files changed
+  in PRs #167/#168), so origin/main was merged into this branch
+  (merge-tree clean; WatchStore/SessionSealTransition untouched on
+  main) and the branch re-pushed at 323e2c7 for the decisive run.
+- Decisive run 40977839731 (tip 323e2c7): assemble GREEN; unit tests
+  EXECUTED — 298 tests, 38 failed. Control: main's own run 40975880219
+  (PR #168 merge, the exact main merged into this branch) = 292 tests,
+  36 failed. Failure-set diff: the branch's 38 = main's 36 IDENTICAL
+  pre-existing failures (migration 11→12, screenshot harness, drawer/
+  render slices — other lanes' scope) + 2 flake-signature extras
+  (RoutinesFinaliseTest history — wall-clock day-boundary construction,
+  no changed code path; ScreenshotHarnessTest zzAccentCensus —
+  UncaughtExceptionsBeforeTest contamination). The branch adds exactly
+  6 tests (292→298): SealTransitionDirectTest ×4 +
+  WatchStoreRobolectricTest ×2 new — ALL PASS (none in the failure
+  list). Verdict: CI-PROVEN for #48's scope; pre-existing failures
+  named, not hidden.
+- Keeper's closure ledger: 5/5 dispositioned in the issue body ·
+  impact flags filed (IMPACT section above) · DECISION-NEEDED: none ·
+  Konto-migration flag: NONE · closed + merged in the same pass per
+  the 04:43/04:56 orders.
