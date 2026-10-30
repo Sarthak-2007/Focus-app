@@ -250,11 +250,11 @@ class MonolithNotificationListener : NotificationListenerService() {
             // the POST TIME, not about now — a coroutine scheduled
             // after the session ended still captures a message
             // that arrived while the session was running.
-            dao.getSessionCoveringInstant(postTimeMillis) ?: return@launch
+            val coveringSession = dao.getSessionCoveringInstant(postTimeMillis) ?: return@launch
 
             val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
             if (appRule != null &&
-                notificationHeldDuringSession(activeSession.isInSafeBreak, appRule.resolvedTier)
+                notificationHeldDuringSession(coveringSession.isInSafeBreak, appRule.resolvedTier)
             ) {
                 val storedTitle = title.ifEmpty { appRule.appName }
                 if (key != null) {
