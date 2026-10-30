@@ -1716,6 +1716,19 @@ class MonolithViewModel(
     }
 
     fun toggleRoutine(routine: com.example.data.RoutineEntity) {
+        // Audit R5 #306 F2: a routine whose window is live is
+        // forced-on. The bare flip let the person being blocked kill
+        // the scheduled protection in one tap at exactly the moment
+        // it started to bite; while the window runs, disabling is
+        // refused (the row is state-driven, so it simply stays on).
+        // Enabling is never refused, and a routine that is paused or
+        // outside its window stays freely editable.
+        if (routine.enabled &&
+            com.example.data.RoutineSchedule.isEnforcingAt(routine, System.currentTimeMillis())
+        ) {
+            soundEngine.playMechanicalLatch(true)
+            return
+        }
         val updated = routine.copy(enabled = !routine.enabled)
         soundEngine.playMechanicalLatch(updated.enabled)
         persistRoutine(updated)
@@ -1749,6 +1762,22 @@ class MonolithViewModel(
     }
 
     fun toggleRoutineDay(routine: com.example.data.RoutineEntity, dayIndex: Int) {
+        // Audit R5 #306 F2: removing TODAY from a routine whose
+        // window is live is a disable by another name — refused
+        // while the window runs, on the same forced-on rule as
+        // toggleRoutine. Adding a day, or editing any other day,
+        // stays free.
+        val removing = routine.daysMask and (1 shl dayIndex) != 0
+        if (removing) {
+            val todayBit = (java.util.Calendar.getInstance()
+                .get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
+            if (dayIndex == todayBit &&
+                com.example.data.RoutineSchedule.isEnforcingAt(routine, System.currentTimeMillis())
+            ) {
+                soundEngine.playRotaryDetent()
+                return
+            }
+        }
         val mask = routine.daysMask xor (1 shl dayIndex)
         soundEngine.playRotaryDetent()
         persistRoutine(routine.copy(daysMask = mask))
