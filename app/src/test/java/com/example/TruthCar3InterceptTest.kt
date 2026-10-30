@@ -52,14 +52,17 @@ class TruthCar3InterceptTest {
     @Test
     fun peekOfferHoldsOnlyOnHonouringDoors() {
         val peekApp = app(AppBlockTier.PEEK_2M)
-        // The two doors whose blockers read the lease.
+        // The two app doors whose blockers read the lease.
         assertTrue(peekOfferFor(InterceptPath.APP_TIER, peekApp, 0, false))
         assertTrue(peekOfferFor(InterceptPath.SHIELD_APP, peekApp, 0, false))
-        // The sniper, the site blocker, the uninstall guard and an
-        // unidentified door never sell a peek — on the guard's door
-        // the old code defaulted the offer ON for an unlisted app.
+        // W3 #130: the SITE door now honours a lease too —
+        // domain-scoped (SitePeekStore), so it sells a peek. The
+        // full site matrix lives in BrowserLoopholeTest.
+        assertTrue(peekOfferFor(InterceptPath.SITE, peekApp, 0, false))
+        // The sniper, the uninstall guard and an unidentified door
+        // never sell a peek — on the guard's door the old code
+        // defaulted the offer ON for an unlisted app.
         assertFalse(peekOfferFor(InterceptPath.SNIPER, peekApp, 0, false))
-        assertFalse(peekOfferFor(InterceptPath.SITE, peekApp, 0, false))
         assertFalse(peekOfferFor(InterceptPath.UNINSTALL_GUARD, peekApp, 0, false))
         assertFalse(peekOfferFor(InterceptPath.UNKNOWN, peekApp, 0, false))
     }

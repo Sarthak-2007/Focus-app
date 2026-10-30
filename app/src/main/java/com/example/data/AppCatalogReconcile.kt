@@ -251,15 +251,20 @@ object AppCategorizer {
                 "whatsapp", "discord", "telegram", "message",
                 "messages", "messaging", "messenger", "signal", "viber"
             ) -> AppCategory.MESSAGING
-            // Issue #129/#130 (widening ported at the STURM-4 merge):
-            // second browsers are browsers — Opera, DuckDuckGo,
-            // Samsung Internet, Edge, Kiwi and UC were filed
-            // SHOPPING before this, outside the site blocker's
-            // category world entirely.
+            // Issue #129/#130 (widening ported at the STURM-4 merge,
+            // union recomposed at the DURCH-D #130 landing): second
+            // browsers are browsers — Opera, DuckDuckGo, Samsung
+            // Internet, Edge, Kiwi, UC, Vivaldi, Yandex and Via
+            // ("mark via" — the mark.via.gp package tokenised) were
+            // filed SHOPPING before this, outside the site blocker's
+            // category world entirely. The composed set is the UNION
+            // of main's tokens and #130's ("kiwibrowser", "mark via"),
+            // so neither lane's browser loses its recognition.
             matches("chrome", "browser", "browsers", "firefox", "brave",
                 "opera", "duckduckgo", "sbrowser", "samsung internet",
-                "microsoft edge", "emmx", "kiwi", "ucbrowser",
-                "uc browser", "vivaldi", "yandex", "news") ->
+                "microsoft edge", "emmx", "kiwi", "kiwibrowser",
+                "ucbrowser", "uc browser", "vivaldi", "yandex",
+                "mark via", "news") ->
                 AppCategory.BROWSERS
             else -> AppCategory.SHOPPING
         }

@@ -101,6 +101,17 @@ data class PruneNote(
     val rulesRemoved: Boolean
 )
 
+/**
+ * W3 #130 (browser-as-loophole, finding 5): the held-sites count a
+ * receipt may claim — the stored list's size ONLY when the browser
+ * blocker is actually on. With the blocker switched off the
+ * session holds no sites at all, whatever the list holds; claiming
+ * the list size printed held sites that were never once checked.
+ * Pure, mirroring countHeldApps' one-derivation law.
+ */
+internal fun heldSitesCount(siteCount: Int, browserBlockerEnabled: Boolean): Int =
+    if (browserBlockerEnabled) siteCount else 0
+
 /** Issue #99 F1: how long after a peek lease's end its package still
  *  counts as "just expired" for eviction purposes. The shield polls
  *  every 2s, so this only needs to cover the first polls after
@@ -2595,7 +2606,14 @@ class MonolithRepository(
             // stored on the row, never a receipt-time re-count
             // against tiers that may have changed since.
             val (heldShut, heldPeek) = countHeldAppsSplit(snapshotApps)
-            val heldSites = dao.getAllSitesSnapshot().size
+            // W3 #130 (recomposed at the DURCH-D landing): sites are
+            // held only when the blocker that enforces them is on —
+            // the same toggle the service reads per event (default
+            // ON when no row exists).
+            val heldSites = heldSitesCount(
+                dao.getAllSitesSnapshot().size,
+                dao.getGuardSettingsSnapshot()?.browserBlockerEnabled ?: true
+            )
             dao.deactivateAllSessions()
             val id = dao.insertSession(
                 session.copy(
@@ -3156,6 +3174,18 @@ class MonolithRepository(
         return rehydrateReceipt(sessionId, row.receiptNumber)
     }
 
+    /** Issue #135 F2 (re-issue): the Deck's LAST RECEIPT door -
+     *  the standing slip for ONE session, rebuilt settled from
+     *  its row. The ViewModel's publishReceipt facade calls this
+     *  first: a session that claimed its № re-derives its slip
+     *  here (the #157 rehydration - restored, its fault read from
+     *  the row's own fault shield) and never re-claims; a session
+     *  that claimed nothing returns null and the caller falls
+     *  through to discovery. Re-issue is a read: it claims
+     *  nothing and stamps nothing. */
+    suspend fun receiptForSession(sessionId: Int): ReceiptState? =
+        rehydrateReceipt(sessionId)
+
     /** The Vault's receipts index (issue #157): every claimed
      *  session, newest № first, carrying only what its row
      *  proves. The outcome word is the slip's own dialect,
@@ -3240,52 +3270,6 @@ class MonolithRepository(
             heldShutAtSeal = pending.heldShutAtSeal,
             heldPeekAtSeal = pending.heldPeekAtSeal,
             armZoneId = armZoneStore.zoneFor(pending.armWallMs)
-        )
-    }
-
-    /** Issue #135 F2: rebuild the slip for ANY session that already
-     *  claimed its № — the re-issue door behind the Deck's LAST
-     *  RECEIPT. Settled form only (restored = true, no mono stamp):
-     *  it never re-claims, never re-mints, and the row's own
-     *  receiptNumber is the № it prints. Null when the row is gone,
-     *  still active, never claimed a №, or no longer a finish. */
-    suspend fun receiptForSession(sessionId: Int): ReceiptState? {
-        val row = dao.getSessionById(sessionId) ?: return null
-        if (row.isActive || row.receiptNumber <= 0) return null
-        val isSleep = row.routineId?.let { dao.getRoutineById(it)?.loadoutName } ==
-            SmartLoadout.SLEEP.name
-        val kind = finishKindOf(row, isSleep, System.currentTimeMillis()) ?: return null
-        val endedAt = if (row.routineId != null && row.windowEndMillis > 0L) {
-            row.windowEndMillis
-        } else {
-            row.startWallTimeMillis +
-                (row.lastTickElapsedRealtimeMillis - row.startElapsedRealtimeMillis)
-                    .coerceAtLeast(0L)
-        }
-        val pending = assemblePendingReceipt(sessionId, kind, endedAt) ?: return null
-        return ReceiptState(
-            sessionId = sessionId,
-            number = row.receiptNumber,
-            kind = pending.kind,
-            outcomeWord = pending.outcomeWord,
-            title = pending.title,
-            armWallMs = pending.armWallMs,
-            endedAtWallMs = pending.endedAtWallMs,
-            plannedSeconds = pending.plannedSeconds,
-            sealedElapsedSeconds = pending.sealedElapsedSeconds,
-            heldAppsAtSeal = pending.heldAppsAtSeal,
-            heldSitesAtSeal = pending.heldSitesAtSeal,
-            routineLabelWithin = pending.routineLabelWithin,
-            bankedBreakSeconds = pending.bankedBreakSeconds,
-            shieldWasOff = pending.shieldWasOff,
-            faulted = row.releaseFaultShield,
-            deflections = pending.deflections,
-            restored = true,
-            receiptPublishedMonoMs = 0L,
-            penaltySecondsAdded = pending.penaltySecondsAdded,
-            forgedArtifactName = pending.forgedArtifactName,
-            heldShutAtSeal = pending.heldShutAtSeal,
-            heldPeekAtSeal = pending.heldPeekAtSeal
         )
     }
 
@@ -4244,7 +4228,7 @@ class MonolithRepository(
      * meaningless). Returns the updated row, or null when no
      * session is active.
      */
-    suspend fun extendActiveSessionReturningSession(extraMinutes: Int): FocusSessionEntity? =
+    suspend fun extendActiveSession(extraMinutes: Int): FocusSessionEntity? =
         withContext(Dispatchers.IO) {
             val active = dao.getActiveSessionSnapshot() ?: return@withContext null
             if (extraMinutes <= 0 || active.isStopwatchMode) return@withContext active
