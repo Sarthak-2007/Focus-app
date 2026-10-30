@@ -231,13 +231,34 @@ class MonolithShieldService : Service() {
                     "${updated.phantomReachesBlocked} urges stopped • " +
                     (if (heldCount != null) "$heldCount held" else "held count unavailable")
 
-                updateNotification(
-                    title = "Monolith • ${updated.intention}",
-                    subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped",
-                    bigText = bigText,
-                    chronometerEndMillis = chronometerEndMillis,
-                    badgeNumber = badgeNumber
-                )
+                // Audit R3b #149 (from main): the grace window exists
+                // off the Deck too. During the window the shield's own
+                // notification counts it down — and for a routine-born
+                // row it names the booking instead of promising free.
+                // Merge resolution (WELLE-4, #155 × #149): the grace
+                // subtitle rides on the #155 card — bigText,
+                // chronometer and badge number apply in both branches.
+                if (updated.elapsedSeconds <= 10 && !updated.isInSafeBreak) {
+                    updateNotification(
+                        title = "Monolith • ${updated.intention}",
+                        subtitle = if (updated.routineId != null) {
+                            "GRACE ${10 - updated.elapsedSeconds}S — ABORT BOOKED BY ROUTINE · TAP TO OPEN"
+                        } else {
+                            "GRACE ${10 - updated.elapsedSeconds}S — CANCEL FREE · TAP TO OPEN"
+                        },
+                        bigText = bigText,
+                        chronometerEndMillis = chronometerEndMillis,
+                        badgeNumber = badgeNumber
+                    )
+                } else {
+                    updateNotification(
+                        title = "Monolith • ${updated.intention}",
+                        subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped",
+                        bigText = bigText,
+                        chronometerEndMillis = chronometerEndMillis,
+                        badgeNumber = badgeNumber
+                    )
+                }
 
                 // Live Wire: the shield is PROTECTING only once a
                 // full monitor iteration has run under a live
