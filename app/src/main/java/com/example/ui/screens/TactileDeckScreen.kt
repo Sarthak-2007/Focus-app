@@ -92,7 +92,6 @@ import java.util.Locale
  * - Pinned `SlideToStartView` commit bar below the scroll.
  * - When armed, transforms into the dark Armed Lockdown state with One-Way Ratchet enforcement.
  */
-@Composable
 /**
  * The emergency break's price, printed under its Deck chip
  * (issue #114, finding 5): the door ends the session and spends
@@ -108,6 +107,7 @@ internal fun emergencyBreakPriceText(tokensRemaining: Int): String =
         "THIS WEEK'S EMERGENCY BREAK IS ALREADY SPENT"
     }
 
+@Composable
 fun TactileDeckScreen(
     activeSession: FocusSessionEntity?,
     dialMinutes: Int,
