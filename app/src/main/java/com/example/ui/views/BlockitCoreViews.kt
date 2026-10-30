@@ -9,6 +9,8 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Build
+import android.os.Parcel
+import android.os.Parcelable
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -437,6 +439,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
             val clamped = value.coerceIn(5, 180)
             if (field != clamped) {
                 field = clamped
+                refreshAccessibilityLabel()
                 if (!isDragging && !inPhysics) {
                     wheelAngleDeg = minutesToAngle(clamped)
                 }
@@ -448,6 +451,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         set(value) {
             if (field != value) {
                 field = value.coerceIn(1, 8)
+                refreshAccessibilityLabel()
                 // Tetrad closure (Vega): landing on 4 or 8 joins four
                 // wells into one bar; the bar lands at 88% ink and
                 // settles to full over 160ms - the one place the hub
@@ -472,6 +476,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         set(value) {
             if (field != value) {
                 field = value
+                refreshAccessibilityLabel()
                 if (value) {
                     // Zug-II §4.2's freezeAtSeal completion: the
                     // wheel's physics HALTS at the seal — no coast
@@ -523,6 +528,87 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
          *  Flipped ONLY on the DEVICE_PASS_E5A result — never on
          *  a render, a screenshot, or taste. */
         const val CORE_TRAVEL_GATE = 1
+    }
+
+    init {
+        // Issue #59 (finding 4): not a touch-only black box.
+        isClickable = true
+        isFocusable = true
+        refreshAccessibilityLabel()
+    }
+
+    private fun refreshAccessibilityLabel() {
+        contentDescription = if (isLockedSession) {
+            "Rotary wheel, locked"
+        } else if (minutesValue < 10) {
+            "Rotary wheel, open flow, $studyBlocksCount blocks. Activate to cycle blocks."
+        } else {
+            "Rotary wheel, $minutesValue minutes, $studyBlocksCount blocks. Activate to cycle blocks."
+        }
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val desired = dp(288f).toInt()
+        setMeasuredDimension(
+            resolveSize(desired, widthMeasureSpec),
+            resolveSize(desired, heightMeasureSpec)
+        )
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        if (isLockedSession) return true
+        if (minutesValue >= 10) {
+            fireFeel(4L)
+            onCycleBlocksCount?.invoke()
+        }
+        return true
+    }
+
+    override fun onSaveInstanceState(): Parcelable {
+        val ss = SavedState(super.onSaveInstanceState())
+        ss.minutes = minutesValue
+        ss.blocks = studyBlocksCount
+        ss.locked = isLockedSession
+        return ss
+    }
+
+    override fun onRestoreInstanceState(state: Parcelable?) {
+        if (state !is SavedState) {
+            super.onRestoreInstanceState(state)
+            return
+        }
+        super.onRestoreInstanceState(state.superState)
+        minutesValue = state.minutes
+        studyBlocksCount = state.blocks
+        isLockedSession = state.locked
+        invalidate()
+    }
+
+    class SavedState : BaseSavedState {
+        var minutes: Int = 50
+        var blocks: Int = 2
+        var locked: Boolean = false
+
+        constructor(superState: Parcelable?) : super(superState)
+
+        private constructor(parcel: Parcel) : super(parcel) {
+            minutes = parcel.readInt()
+            blocks = parcel.readInt()
+            locked = parcel.readInt() == 1
+        }
+
+        override fun writeToParcel(out: Parcel, flags: Int) {
+            super.writeToParcel(out, flags)
+            out.writeInt(minutes)
+            out.writeInt(blocks)
+            out.writeInt(if (locked) 1 else 0)
+        }
+
+        companion object CREATOR : Parcelable.Creator<SavedState> {
+            override fun createFromParcel(parcel: Parcel): SavedState = SavedState(parcel)
+            override fun newArray(size: Int): Array<SavedState?> = arrayOfNulls(size)
+        }
     }
 
     private fun startHubDip() {
@@ -1724,6 +1810,61 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
     private var frozenPlayTimeMs: Long = 0L
     private var resumeUsed: Boolean = false
     private var pendingResume: Boolean = false
+
+    init {
+        // Issue #59 (finding 4): labelled, clickable, focusable —
+        // not a touch-only black box.
+        isClickable = true
+        isFocusable = true
+        contentDescription = "Slide or tap to start"
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        setMeasuredDimension(
+            resolveSize(dp(280f).toInt(), widthMeasureSpec),
+            resolveSize(dp(72f).toInt(), heightMeasureSpec)
+        )
+    }
+
+    /** Accessibility activation = a classified tap (the same
+     *  warrant-owned outcome as the tap path's UP frame): OFF earns
+     *  the refusal, UNPROVEN drives only to the catch, LIVE runs
+     *  the mesh to the seat doorstep. No commit dispatches here —
+     *  enforcement still dispatches only at the latch frame. */
+    override fun performClick(): Boolean {
+        super.performClick()
+        if (sealedGate || isReturning || mode != Mode.REST) return true
+        // Attempt start, under beginAttempt's per-attempt law: a
+        // fresh warrant read and a clean refusal latch (without the
+        // latch reset, a repeat activation after a refusal would
+        // die silently inside startRefusal's already-fired guard).
+        attemptWarrant = readWarrant()
+        refusalFired = false
+        onPressStart?.invoke(attemptWarrant)
+        if (attemptWarrant == WarrantState.OFF) {
+            startRefusal(knockFirst = true)
+        } else {
+            startMesh(
+                target = if (attemptWarrant == WarrantState.UNPROVEN) {
+                    SlideGestureMath.CATCH
+                } else {
+                    0.92f
+                }
+            )
+        }
+        return true
+    }
+
+    // Issue #59 (finding 4), the deliberate omission: this view
+    // carries NO SavedState. Its posture is transient-by-law —
+    // detach resets the machine to REST, displayed home, refusal
+    // latch clean (Schlitten §4.5 + the detach-reset ruling in
+    // onDetachedFromWindow below), and the gate's factory rule
+    // rebuilds the posture from initialFraction on the next attach
+    // (§2.3). A framework-saved `displayed` would resurrect
+    // mid-gesture travel the detach law annulled. The durable
+    // state — minutes, blocks, lock — lives on the wheel and the
+    // host, never on this gesture surface.
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
