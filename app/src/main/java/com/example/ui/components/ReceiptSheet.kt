@@ -284,7 +284,7 @@ fun ReceiptSheet(
                 // same quiet mono footer. Do not "restore" the
                 // 1.sp without re-measuring.
                 Text(
-                    text = "THE MACHINE KEEPS ITS OWN LOG · YOUR STUDY RECORD LIVES IN YPT",
+                    text = "THE MACHINE KEEPS ITS OWN LOG · STUDY HOURS LIVE IN YEOLPUMTA",
                     fontFamily = AnonymousProFamily,
                     fontSize = 9.sp,
                     letterSpacing = 0.25.sp,

@@ -159,8 +159,12 @@ data class WatchSnapshot(
 }
 
 /** What a permission line prints at a given instant (spec §4.2):
- *  never-measured, the measured value, or its stale derivative. */
-enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE, MISSING_STALE }
+ *  never-measured, the measured value, or its stale derivative.
+ *  UNPROVED (issue #94): a measurement exists and reads granted, but
+ *  a fact the app cannot measure stands behind it — the BATTERY line
+ *  on an OEM-autostart-gated skin, where the AOSP exemption is only
+ *  half the survival fact and the autostart half is unreadable. */
+enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE, MISSING_STALE, UNPROVED }
 
 object WatchStore {
 
@@ -327,8 +331,17 @@ object WatchStore {
      * advances to the set's completion instant.
      */
     fun runSweep(query: (WatchItemId) -> Boolean) {
-        val gen = ++sweepGen
-        pendingSweepStartWall = System.currentTimeMillis()
+        // Issue #77: sweepGen and pendingSweepStartWall are read and
+        // cleared by publish() under its @Synchronized monitor; they
+        // were written here OUTSIDE that monitor, so overlapping
+        // sweeps (Deck entry + ON_RESUME) could mix generations and
+        // complete each other's sets with stale stamps. The dispatch
+        // state now takes the same monitor publish() holds.
+        val gen: Int
+        synchronized(this) {
+            gen = ++sweepGen
+            pendingSweepStartWall = System.currentTimeMillis()
+        }
         for (item in WatchItemId.PERMISSIONS) {
             sweepScope.launch {
                 // Truth (issue #76): a query that THREW is not a
@@ -451,6 +464,15 @@ object WatchStore {
         val perm = m.perm ?: return PermPrint.UNMEASURED
         val stale = nowMono - m.measuredMono > STALE_AFTER_MS
         return when {
+            // Issue #94 (F1): on a skin whose OEM autostart toggle gates
+            // receiver restarts, a granted AOSP battery read never
+            // prints GRANTED — the toggle cannot be read back, so the
+            // honest word is UNPROVED. A missing AOSP read stays
+            // MISSING below: that half is known, not proved-absent.
+            item == WatchItemId.BATTERY && perm == PermState.GRANTED &&
+                !com.example.data.OemPolicy.batteryGrantedIsProved(
+                    com.example.data.OemPolicy.currentGate()
+                ) -> PermPrint.UNPROVED
             perm == PermState.GRANTED && stale -> PermPrint.STALE
             perm == PermState.GRANTED -> PermPrint.GRANTED
             stale -> PermPrint.MISSING_STALE

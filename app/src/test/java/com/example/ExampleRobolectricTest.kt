@@ -221,7 +221,7 @@ class ExampleRobolectricTest {
     @Test
     fun `verify 3-stop switch labels and partial-credit session banking`() = runBlocking {
         assertEquals("Shut", AppBlockTier.LOCKED.label)
-        assertEquals("2m Knock", AppBlockTier.PEEK_2M.label)
+        assertEquals("2m Peek", AppBlockTier.PEEK_2M.label)
         assertEquals("Open", AppBlockTier.OPEN.label)
 
         // Start a 25-minute session and simulate 5 minutes elapsed before unlatching early
@@ -278,7 +278,12 @@ class ExampleRobolectricTest {
         // seeds are what this line now counts.
         assertTrue("Default timeboxed tasks should be seeded in Room", initialTasks.size >= 3)
 
-        val firstActive = initialTasks.first { it.resolvedStatus == com.example.data.TaskQueueStatus.ACTIVE }
+        // Audit R2 #96: the seed is an honest QUEUED slate now —
+        // no fabricated ACTIVE row with spent seconds and a done
+        // substep. This story promotes the first seed itself,
+        // exactly as a user's tap would.
+        val firstSeed = initialTasks.first { it.queueOrder == 0 }
+        val firstActive = repository.promoteTaskToActive(firstSeed.id)!!
         assertEquals("Finish Chapter 4 Problem Set (#1–6)", firstActive.title)
 
         // Start an active session so completing tasks logs to the session receipt
