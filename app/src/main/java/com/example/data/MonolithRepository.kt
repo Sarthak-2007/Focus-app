@@ -1560,8 +1560,13 @@ class MonolithRepository(
      *    Advancing the phone's system clock forward by +2 hours is ignored because elapsed time is anchored to
      *    `SystemClock.elapsedRealtime()`.
      * 2. Across device reboots (`LOCKED_BOOT_COMPLETED` where `currentBoot != session.bootCount` or
-     *    `nowMono < session.lastTickElapsedRealtimeMillis`), preserves `session.accumulatedBeforeRebootSeconds`
-     *    and adds `(nowMono / 1000L).toInt()`, so a reboot never resets or skips the timer.
+     *    `nowMono < session.lastTickElapsedRealtimeMillis`), preserves the elapsed banked before
+     *    the reboot and credits NOTHING for the unobserved interval — neither the powered-off
+     *    downtime nor the new boot's uptime before this first post-reboot tick. That time was
+     *    never witnessed by the shield or the session clock, so booking it as focus was a
+     *    fabrication (Audit R3 #113, finding 5). A reboot neither resets the timer nor
+     *    inflates it: the count resumes from the banked figure and ticks from the re-anchor
+     *    [updateSessionProgress] persists.
      * 3. Verifies the AndroidKeyStore `HmacSHA256` signature via `CryptoIntegrityManager.verifySessionState`.
      */
     @WorkerThread
@@ -1578,6 +1583,11 @@ class MonolithRepository(
 
         return if (!rebootOccurred && session.startElapsedRealtimeMillis > 0L && nowMono >= session.startElapsedRealtimeMillis) {
             val monoElapsedSec = ((nowMono - session.startElapsedRealtimeMillis) / 1000L).coerceAtLeast(0L)
+            // The drift test is SEGMENT-local: it compares wall against
+            // mono since the pair of anchors was set — and every
+            // re-anchor in this codebase (seal, block advance, reboot)
+            // moves BOTH anchors to the same frame, so the comparison
+            // never spans a boot or a block boundary.
             val drift = abs(wallElapsedSec - monoElapsedSec)
             val tamper = drift > 90L || !hmacValid
             Pair((session.accumulatedBeforeRebootSeconds + monoElapsedSec.toInt()), tamper)
@@ -2871,6 +2881,7 @@ class MonolithRepository(
             bankedBreakSeconds = banked,
             shieldWasOff = row.outcome == SessionOutcome.ELAPSED_SHIELD_GAP,
             deflections = deflections,
+            penaltySecondsAdded = row.penaltySecondsAdded,
             openExposureApps = openExposureApps,
             // Audit R3b #145: the forged curio's name rides the
             // slip — read off the row's own stamp, never re-drawn.
@@ -2987,6 +2998,7 @@ class MonolithRepository(
             openExposureApps = pending.openExposureApps,
             restored = false,
             receiptPublishedMonoMs = 0L,
+            penaltySecondsAdded = pending.penaltySecondsAdded,
             forgedArtifactName = pending.forgedArtifactName,
             heldShutAtSeal = pending.heldShutAtSeal,
             heldPeekAtSeal = pending.heldPeekAtSeal
@@ -3102,51 +3114,10 @@ class MonolithRepository(
             openExposureApps = pending.openExposureApps,
             restored = true,
             receiptPublishedMonoMs = 0L,
+            penaltySecondsAdded = pending.penaltySecondsAdded,
             forgedArtifactName = pending.forgedArtifactName,
             heldShutAtSeal = pending.heldShutAtSeal,
             heldPeekAtSeal = pending.heldPeekAtSeal
-        )
-    }
-
-    /** Issue #135 F2: rebuild the slip for ANY session that already
-     *  claimed its № — the re-issue door behind the Deck's LAST
-     *  RECEIPT. Settled form only (restored = true, no mono stamp):
-     *  it never re-claims, never re-mints, and the row's own
-     *  receiptNumber is the № it prints. Null when the row is gone,
-     *  still active, never claimed a №, or no longer a finish. */
-    suspend fun receiptForSession(sessionId: Int): ReceiptState? {
-        val row = dao.getSessionById(sessionId) ?: return null
-        if (row.isActive || row.receiptNumber <= 0) return null
-        val isSleep = row.routineId?.let { dao.getRoutineById(it)?.loadoutName } ==
-            SmartLoadout.SLEEP.name
-        val kind = finishKindOf(row, isSleep, System.currentTimeMillis()) ?: return null
-        val endedAt = if (row.routineId != null && row.windowEndMillis > 0L) {
-            row.windowEndMillis
-        } else {
-            row.startWallTimeMillis +
-                (row.lastTickElapsedRealtimeMillis - row.startElapsedRealtimeMillis)
-                    .coerceAtLeast(0L)
-        }
-        val pending = assemblePendingReceipt(sessionId, kind, endedAt) ?: return null
-        return ReceiptState(
-            sessionId = sessionId,
-            number = row.receiptNumber,
-            kind = pending.kind,
-            outcomeWord = pending.outcomeWord,
-            title = pending.title,
-            armWallMs = pending.armWallMs,
-            endedAtWallMs = pending.endedAtWallMs,
-            plannedSeconds = pending.plannedSeconds,
-            sealedElapsedSeconds = pending.sealedElapsedSeconds,
-            heldAppsAtSeal = pending.heldAppsAtSeal,
-            heldSitesAtSeal = pending.heldSitesAtSeal,
-            routineLabelWithin = pending.routineLabelWithin,
-            bankedBreakSeconds = pending.bankedBreakSeconds,
-            shieldWasOff = pending.shieldWasOff,
-            faulted = row.releaseFaultShield,
-            deflections = pending.deflections,
-            restored = true,
-            receiptPublishedMonoMs = 0L
         )
     }
 
@@ -3455,6 +3426,7 @@ class MonolithRepository(
         stampShieldBeat: Boolean
     ): FocusSessionEntity {
         val nowMono = SystemClock.elapsedRealtime()
+        val nowWall = System.currentTimeMillis()
         val currentBoot = querySystemBootCountOrNull()
         // Slice E (Nocke §2.2): the shield's own tick stamps its
         // beat into every copy this function persists — the beat
@@ -3482,15 +3454,25 @@ class MonolithRepository(
         }
         val effectiveTarget = session.targetDurationSeconds + penaltyAdd
 
-        // Re-anchor if device rebooted so subsequent ticks on the new boot stay monotonic
+        // Re-anchor if device rebooted so subsequent ticks on the new boot stay monotonic.
+        // BOTH anchors move to this frame — the seal's own law (sealSession:
+        // "Both anchors move to the same frame so the mono/wall cross-check
+        // stays consistent"), which this path used to break: it moved the
+        // mono anchor and left the wall anchor at the session's start, so
+        // every later tick compared wall-since-start against
+        // mono-since-reboot, the drift read permanently > 90s, and an
+        // honest reboot branded the user a tamperer and drew the 15-minute
+        // penalty (Audit R3 #113, finding 4). The re-sign covers the NEW
+        // anchor pair, exactly as the seal's re-sign does.
         val rebootDetected = (currentBoot != null && session.bootCount > 0 && currentBoot != session.bootCount) ||
             (session.lastTickElapsedRealtimeMillis > 0L && nowMono < session.lastTickElapsedRealtimeMillis)
         val newAccumulated = if (rebootDetected) verifiedElapsed else session.accumulatedBeforeRebootSeconds
         val newStartMono = if (rebootDetected) nowMono else session.startElapsedRealtimeMillis
+        val newStartWall = if (rebootDetected) nowWall else session.startWallTimeMillis
         val newBootCount = if (rebootDetected) currentBoot ?: session.bootCount else session.bootCount
         val newHmac = if (rebootDetected) {
             CryptoIntegrityManager.signSessionState(
-                session.startWallTimeMillis,
+                newStartWall,
                 newStartMono,
                 newBootCount,
                 session.targetDurationSeconds,
@@ -3533,6 +3515,7 @@ class MonolithRepository(
             }
             val updated = session.copy(
                 elapsedSeconds = verifiedElapsed,
+                startWallTimeMillis = newStartWall,
                 startElapsedRealtimeMillis = newStartMono,
                 bootCount = newBootCount,
                 accumulatedBeforeRebootSeconds = newAccumulated,
@@ -3686,6 +3669,7 @@ class MonolithRepository(
 
         val updated = session.copy(
             elapsedSeconds = verifiedElapsed.coerceAtMost(effectiveTarget),
+            startWallTimeMillis = newStartWall,
             startElapsedRealtimeMillis = newStartMono,
             bootCount = newBootCount,
             accumulatedBeforeRebootSeconds = newAccumulated,

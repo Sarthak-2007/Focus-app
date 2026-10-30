@@ -1308,6 +1308,27 @@ fun TactileDeckScreen(
             }
         }
 
+        // Audit R3 #113, finding 1: the HELD door outlives the
+        // session. The chip above is seated only while a session
+        // runs, so the moment a session ended — watched or not —
+        // the captured notifications became unreachable: no screen
+        // could open the digest again, and even its clear/delete
+        // verbs live inside that sheet. On the idle Deck, when
+        // anything stands captured, the same chip stands here
+        // alone: the count is the fact, the tap opens the same
+        // digest (unsealed opens are live mode — the VM clears
+        // any latched freeze — and the repository's sealed gate
+        // no longer refuses the verbs). An empty capture earns no
+        // chip: a door to nothing would be its own small lie.
+        if (!isSessionRunning && capturedNotificationsCount > 0) {
+            BlockitActionChip(
+                wordLabel = "HELD",
+                monoBadge = capturedNotificationsCount.toString(),
+                onClick = onOpenNotificationDigest,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
     }
         // =====================================================================
         // SECTION 4: THE PINNED STACK (Slice D) — outside the scroll:
@@ -1554,12 +1575,21 @@ fun TactileDeckScreen(
                 // must say the machine is checking, never render the
                 // idle form as if nothing had happened); an
                 // annulment's past-tense sentence stands until the
-                // controller clears it; a running session is
-                // silent; otherwise the wire's standing sentence.
+                // controller clears it; otherwise the wire's
+                // standing sentence. A RUNNING session used to be
+                // forced silent here (Audit R3 #113, finding 2) —
+                // exactly the case where the sentence matters most:
+                // refusalSentenceFor reads the LIVE warrant and
+                // returns null while the wire is whole, so the
+                // running Deck stays silent until a permission it
+                // depends on actually dies, then names it with its
+                // FIX verb. The stale guard inside
+                // refusalSentenceFor(warrant, nowMono) still owns
+                // the present tense: a stale read prints nothing.
                 sentence = when {
                     armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase, nowMono)
                     armPhase is ArmPhase.Proving -> provingSentenceFor(armPhase)
-                    isSessionRunning -> null
+                    isSessionRunning -> refusalSentenceFor(deckWarrant, nowMono)
                     armSentence != null -> armSentence
                     else -> refusalSentenceFor(deckWarrant, nowMono)
                 },

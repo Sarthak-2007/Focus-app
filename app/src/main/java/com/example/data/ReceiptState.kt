@@ -261,11 +261,16 @@ data class PendingReceipt(
     val bankedBreakSeconds: Int,
     val shieldWasOff: Boolean,
     val deflections: List<ReceiptDeflection>,
+    // Audit R3 #113, finding 4: the tamper penalty the row carries,
+    // threaded so the slip can NAME it — before this the penalty
+    // silently stretched the plan (it is inside spanTargetSeconds)
+    // and no surface ever mentioned it.
+    val penaltySecondsAdded: Int = 0,
     /** Issue #129 F3: the unguarded apps actually used inside
      *  this session's window (labels, longest-use first), read
      *  back from the ending write's exposure booking. Empty for
      *  every session not stamped ELAPSED_OPEN_EXPOSURE. */
-    val openExposureApps: List<String> = emptyList()
+    val openExposureApps: List<String> = emptyList(),
     // Audit R3b #145: the curio this finish forged, by name — the
     // completion moment must not be silent about its own reward.
     // Null when the span forged nothing (routine-born rows, valve
@@ -308,8 +313,11 @@ data class ReceiptState(
     val deflections: List<ReceiptDeflection>,
     val restored: Boolean,
     val receiptPublishedMonoMs: Long,
+    // Audit R3 #113, finding 4: see PendingReceipt — the slip
+    // prints the penalty its plan silently included.
+    val penaltySecondsAdded: Int = 0,
     /** Issue #129 F3: see [PendingReceipt.openExposureApps]. */
-    val openExposureApps: List<String> = emptyList()
+    val openExposureApps: List<String> = emptyList(),
     // Audit R3b #145: see PendingReceipt.forgedArtifactName.
     val forgedArtifactName: String? = null,
     // W-41: see PendingReceipt.heldShutAtSeal.
