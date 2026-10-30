@@ -123,7 +123,11 @@ object RoutineHeartbeat {
         // 2. SLEEP stand-downs: an active SLEEP session past its stored
         //    window end is stood down unstamped (J2) — a plain
         //    deactivation, never a judgement.
-        if (active != null && active.routineId != null && active.windowEndMillis in 1..now) {
+        // #153 F1: a disabled SLEEP routine also stands down at
+        // once, window end or not — OFF means off.
+        if (active != null && active.routineId != null &&
+            (active.windowEndMillis in 1..now || routinesById[active.routineId]?.enabled == false)
+        ) {
             if (routinesById[active.routineId]?.loadoutName == SmartLoadout.SLEEP.name) {
                 repository.deactivateRoutineSession(active)
                 activeFinalised = true

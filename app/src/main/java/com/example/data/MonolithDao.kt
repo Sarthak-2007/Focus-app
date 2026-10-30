@@ -299,6 +299,10 @@ interface MonolithDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertRoutines(routines: List<RoutineEntity>)
 
+    // #153 F4: routines are his to remove as well as add.
+    @Query("DELETE FROM routines WHERE id = :id")
+    suspend fun deleteRoutineById(id: Int)
+
     @Update
     suspend fun updateRoutine(routine: RoutineEntity)
 

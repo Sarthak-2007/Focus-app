@@ -1549,6 +1549,86 @@ class MonolithViewModel(
         persistRoutine(routine.copy(daysMask = mask))
     }
 
+    /** #153 F2+F3: SKIP TODAY — the forgive button. Sets the
+     *  pause-until to the end of today's (current or next) window:
+     *  the window never materialises, judgement J6 never calls it
+     *  a miss, and the weekly mask is NOT touched — every future
+     *  same-weekday still runs. One tap, one day, forgiven. */
+    fun skipRoutineToday(routine: com.example.data.RoutineEntity) {
+        val now = System.currentTimeMillis()
+        val until = com.example.data.RoutineSchedule.skipWindowEndMillis(routine, now) ?: return
+        if (until <= now) return
+        soundEngine.playMechanicalLatch(false)
+        persistRoutine(routine.copy(pausedUntilMillis = until))
+    }
+
+    /** #153 F2: undo a pause — the routine runs on its mask again. */
+    fun resumeRoutine(routine: com.example.data.RoutineEntity) {
+        if (routine.pausedUntilMillis == 0L) return
+        soundEngine.playMechanicalLatch(true)
+        persistRoutine(routine.copy(pausedUntilMillis = 0L))
+    }
+
+    /** #153 F4: add a routine — a plain new block he then shapes
+     *  with the same row controls (time, days, loadout, name). */
+    fun addRoutine() {
+        viewModelScope.launch {
+            repository.addRoutine(
+                com.example.data.RoutineEntity(
+                    name = "NEW BLOCK",
+                    startMinutes = 540,
+                    endMinutes = 660,
+                    daysMask = com.example.data.RoutineSchedule.ALL_DAYS,
+                    loadoutName = com.example.data.SmartLoadout.STUDY.name,
+                    enabled = true
+                )
+            )
+            repository.dismissRoutineResetNote()
+            com.example.service.RoutineHeartbeat.tick(
+                appContext, com.example.service.RoutineHeartbeat.Source.CRUD, force = true
+            )
+        }
+    }
+
+    /** #153 F4: delete a routine. The heartbeat's orphan pass
+     *  finalises any of its sessions by their stored windows. */
+    fun deleteRoutine(routine: com.example.data.RoutineEntity) {
+        soundEngine.playMechanicalLatch(false)
+        viewModelScope.launch {
+            repository.deleteRoutine(routine.id)
+            repository.dismissRoutineResetNote()
+            com.example.service.RoutineHeartbeat.tick(
+                appContext, com.example.service.RoutineHeartbeat.Source.CRUD, force = true
+            )
+        }
+    }
+
+    /** #153 F4: rename a routine — the name is his word, not a
+     *  seed's. Blank names are refused (a nameless block is a bug). */
+    fun renameRoutine(routine: com.example.data.RoutineEntity, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty() || trimmed == routine.name) return
+        soundEngine.playFirmClick()
+        persistRoutine(routine.copy(name = trimmed.uppercase()))
+    }
+
+    /** #153 F5: apply a drafted window in ONE persist — the draft
+     *  lives in the row's UI state; nothing reaches the engine
+     *  until APPLY. Out-of-clamp spans are refused whole (the row
+     *  shows the clamp note; a silent no-op is a lie). */
+    fun setRoutineTime(
+        routine: com.example.data.RoutineEntity,
+        startMinutes: Int,
+        endMinutes: Int
+    ): Boolean {
+        val candidate = routine.copy(startMinutes = startMinutes, endMinutes = endMinutes)
+        val rawSpan = (endMinutes - startMinutes + 1440) % 1440
+        if (rawSpan !in 30..1080) return false
+        soundEngine.playRotaryDetent()
+        persistRoutine(candidate)
+        return true
+    }
+
     fun addBlockedSite(raw: String) {
         viewModelScope.launch {
             if (repository.addBlockedSite(raw)) soundEngine.playMechanicalLatch(true)

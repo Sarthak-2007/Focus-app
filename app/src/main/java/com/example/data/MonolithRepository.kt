@@ -832,6 +832,20 @@ class MonolithRepository(
         dao.updateRoutine(routine)
     }
 
+    /** #153 F4: add a routine row (single persist funnel stamps
+     *  the edit horizon, like every other routine write). */
+    suspend fun addRoutine(routine: RoutineEntity) {
+        val now = System.currentTimeMillis()
+        dao.insertRoutines(listOf(routine.copy(scheduleEditedAtMillis = now)))
+    }
+
+    /** #153 F4: delete a routine row. Its sessions are not lost:
+     *  derive() finalises orphaned routine sessions by their
+     *  stored window snapshot (R5). */
+    suspend fun deleteRoutine(id: Int) {
+        dao.deleteRoutineById(id)
+    }
+
     /** Guard settings as a flow (reset-note strip + tick stamps). */
     val guardSettingsFlow: Flow<GuardSettingsEntity?> = dao.getGuardSettingsFlow()
 
