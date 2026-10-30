@@ -1,5 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Wave-3 #42 / Scout-2 Find 11 (Android 17 Advanced Protection):
+     isAccessibilityTool is pinned FALSE on purpose. Monolith is a
+     focus blocker, not an accessibility tool; declaring true to
+     dodge Advanced Protection's revocation would be a false claim
+     (TELL-THE-TRUTH) and a policy risk. Under Advanced Protection
+     this service can be revoked like any non-accessibility app —
+     the honest degradation is that blocking then rests on the
+     UsageStats/shield layer and the setup surfaces must say so,
+     never that accessibility still holds. -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:isAccessibilityTool="false"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagDefault|flagIncludeNotImportantViews|flagReportViewIds"
