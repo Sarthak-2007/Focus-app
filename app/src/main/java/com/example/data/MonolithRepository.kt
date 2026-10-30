@@ -1831,6 +1831,13 @@ class MonolithRepository(
             val rawTier = when {
                 !shouldBlock -> AppBlockTier.OPEN
                 app.category == AppCategory.MESSAGING.name -> AppBlockTier.PEEK_2M
+                // Issue #120: a profile can no more bulk-LOCK
+                // finance than it can lock the dialler (issue
+                // #119's floor) — even a profile that lists FINANCE
+                // applies it as PEEK_2M, so the mid-session OTP/UPI
+                // door stays lawful instead of leaving only the
+                // once-a-week emergency valve.
+                app.category == AppCategory.FINANCE.name -> AppBlockTier.PEEK_2M
                 else -> AppBlockTier.LOCKED
             }
             // Issue #32 F4: tier is the truth; isBlocked is derived
