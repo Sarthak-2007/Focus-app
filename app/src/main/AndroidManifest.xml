@@ -7,22 +7,18 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Issues #280 + #319 F2: exact-alarm grant, asked only when
-         the user first enables a routine (MainActivity) — never a
-         first-run gate. Routine boundaries and the release-retry
-         cadence fire on the minute when the grant is held;
-         ExactAlarm probes the grant and falls back to inexact
-         without it (the heartbeat reconciles). -->
+    <!-- Issues #280 + #319 F2 + #309 F2: exact-alarm grant, asked
+         only when the user first enables a routine (MainActivity) —
+         never a first-run gate. Routine boundaries and the
+         release-retry cadence fire on the minute when the grant is
+         held; ExactAlarm probes the grant and falls back to the
+         inexact arm whenever it is absent (the heartbeat
+         reconciles). -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Declared so MainActivity can fire Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS directly (issue #26) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <!-- Issue #309 F2: lets the routine chain alarm fire exactly at
-         its boundary instead of Doze-late, when the user grants it
-         (Android 12+); RoutineScheduler falls back to the inexact
-         arm whenever the grant is absent. -->
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
