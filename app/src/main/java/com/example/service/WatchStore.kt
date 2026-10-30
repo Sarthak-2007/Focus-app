@@ -141,8 +141,12 @@ data class WatchSnapshot(
 }
 
 /** What a permission line prints at a given instant (spec §4.2):
- *  never-measured, the measured value, or its stale derivative. */
-enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE }
+ *  never-measured, the measured value, or its stale derivative.
+ *  UNPROVED (issue #94): a measurement exists and reads granted, but
+ *  a fact the app cannot measure stands behind it — the BATTERY line
+ *  on an OEM-autostart-gated skin, where the AOSP exemption is only
+ *  half the survival fact and the autostart half is unreadable. */
+enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE, UNPROVED }
 
 object WatchStore {
 
@@ -356,6 +360,15 @@ object WatchStore {
         val m = snapshot.items[item] ?: return PermPrint.UNMEASURED
         val perm = m.perm ?: return PermPrint.UNMEASURED
         return when {
+            // Issue #94 (F1): on a skin whose OEM autostart toggle gates
+            // receiver restarts, a granted AOSP battery read never
+            // prints GRANTED — the toggle cannot be read back, so the
+            // honest word is UNPROVED. A missing AOSP read stays
+            // MISSING below: that half is known, not proved-absent.
+            item == WatchItemId.BATTERY && perm == PermState.GRANTED &&
+                !com.example.data.OemPolicy.batteryGrantedIsProved(
+                    com.example.data.OemPolicy.currentGate()
+                ) -> PermPrint.UNPROVED
             perm == PermState.GRANTED && nowMono - m.measuredMono > STALE_AFTER_MS ->
                 PermPrint.STALE
             perm == PermState.GRANTED -> PermPrint.GRANTED

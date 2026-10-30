@@ -399,16 +399,34 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         )
                     )
                 com.example.service.WatchItemId.BATTERY -> {
-                    val direct = Intent(
-                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                        Uri.parse("package:${context.packageName}")
-                    )
-                    runCatching { context.startActivity(direct) }
-                        .getOrElse {
+                    // Issue #94 (F1): on an OEM-autostart-gated skin the
+                    // survival trip is the vendor's AUTOSTART pane first
+                    // — the AOSP battery pane alone leaves the boot
+                    // receiver dead. Each vendor component is a guess
+                    // that may not exist on this build; walk the list,
+                    // then fall back to the AOSP pane as shipped.
+                    val gate = com.example.data.OemPolicy.currentGate()
+                    val autostartOpened = gate !=
+                        com.example.data.OemPolicy.AutostartGate.NONE &&
+                        com.example.data.OemPolicy
+                            .autostartIntents(gate, context.packageName)
+                            .any { pane ->
+                                runCatching { context.startActivity(pane) }
+                                    .isSuccess
+                            }
+                    if (!autostartOpened) {
+                        runCatching {
+                            context.startActivity(
+                                com.example.data.OemPolicy.batterySettingsIntent(
+                                    context.packageName
+                                )
+                            )
+                        }.getOrElse {
                             context.startActivity(
                                 Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
                             )
                         }
+                    }
                 }
                 else -> Unit
             }
