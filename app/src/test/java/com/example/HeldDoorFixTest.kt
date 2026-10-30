@@ -7,9 +7,8 @@ import com.example.data.InterceptLogEntity
 import com.example.service.InterceptPath
 import com.example.ui.PeekWithheld
 import com.example.ui.components.breakAppointmentText
-import com.example.ui.components.derivedSecondsUntil
+import com.example.ui.components.cooldownRemainingSeconds
 import com.example.ui.components.doorMemoryLineText
-import com.example.ui.components.peekGateLineText
 import com.example.ui.nextBreakInstantMillis
 import com.example.ui.peekOfferFor
 import com.example.ui.peekWithheldFor
@@ -30,8 +29,10 @@ import org.junit.Test
  * test fails on the pre-fix behaviour it names:
  *
  *  FIX-5b — prints derive from anchored ends, ceiling, never a
- *           locally ticked counter.
- *  FIX-6  — the gate line's M:SS form.
+ *           locally ticked counter. (At the #11 merge the
+ *           derivation's home on main is cooldownRemainingSeconds
+ *           — Issue #55's deadline math, identical ceiling
+ *           semantics; the assertions below run against it.)
  *  FIX-8  — the taper (5 + this session's booked, cap 10), the
  *           memory line's THIS SESSION scope, the errand kernel's
  *           derived break instant.
@@ -48,29 +49,24 @@ class HeldDoorFixTest {
     @Test
     fun derivedSecondsUntilCeilsFromTheAnchor() {
         val now = 500_000L
-        assertEquals(2, derivedSecondsUntil(now + 1_500L, now))
-        assertEquals(1, derivedSecondsUntil(now + 1_000L, now))
-        assertEquals(1, derivedSecondsUntil(now + 1L, now))
-        assertEquals(10, derivedSecondsUntil(now + 10_000L, now))
+        assertEquals(2, cooldownRemainingSeconds(now + 1_500L, now))
+        assertEquals(1, cooldownRemainingSeconds(now + 1_000L, now))
+        assertEquals(1, cooldownRemainingSeconds(now + 1L, now))
+        assertEquals(10, cooldownRemainingSeconds(now + 10_000L, now))
         // End reached, end passed, end never anchored: zero —
         // and a cooldown print at zero is unrepresentable because
         // the overlay holds no cooldown tenant at zero.
-        assertEquals(0, derivedSecondsUntil(now, now))
-        assertEquals(0, derivedSecondsUntil(now - 1L, now))
-        assertEquals(0, derivedSecondsUntil(0L, now))
+        assertEquals(0, cooldownRemainingSeconds(now, now))
+        assertEquals(0, cooldownRemainingSeconds(now - 1L, now))
+        assertEquals(0, cooldownRemainingSeconds(0L, now))
     }
 
-    // -----------------------------------------------------------------
-    // FIX-6 — the gate line.
-    // -----------------------------------------------------------------
-
-    @Test
-    fun gateLineNamesWhatItGatesInMinuteSecondForm() {
-        assertEquals("PEEK OPENS IN 0:05", peekGateLineText(5))
-        assertEquals("PEEK OPENS IN 0:10", peekGateLineText(10))
-        assertEquals("PEEK OPENS IN 1:05", peekGateLineText(65))
-        assertEquals("PEEK OPENS IN 0:00", peekGateLineText(0))
-    }
+    // FIX-6's gate line ("PEEK OPENS IN M:SS" replacing the hero
+    // numeral) is NOT carried at the #11 merge: main's numeral is
+    // a wired fidget (Issue #55's transmute pulse) and the two
+    // designs collide on the same slot. Recorded as a merge
+    // disposition on issue #11; peekGateLineText stays on the
+    // branch's pre-merge tip for the record.
 
     // -----------------------------------------------------------------
     // FIX-8 — the taper and the memory line.
@@ -283,8 +279,8 @@ class HeldDoorFixTest {
         assertEquals(
             PeekWithheld.ALREADY_ACTIVE,
             peekWithheldFor(
-                canPeek = false, path = InterceptPath.APP_TIER, entity = peekApp(),
-                cooldownLeftSeconds = 1200, pillActive = true,
+                canPeek = false, path = InterceptPath.APP_TIER, appEntity = peekApp(),
+                cooldownLeft = 1200, pillActive = true,
                 pillIsForPackage = true, sessionLive = true
             )
         )
@@ -295,8 +291,8 @@ class HeldDoorFixTest {
         assertEquals(
             PeekWithheld.COOLDOWN,
             peekWithheldFor(
-                canPeek = false, path = InterceptPath.APP_TIER, entity = peekApp(),
-                cooldownLeftSeconds = 1200, pillActive = true,
+                canPeek = false, path = InterceptPath.APP_TIER, appEntity = peekApp(),
+                cooldownLeft = 1200, pillActive = true,
                 pillIsForPackage = false, sessionLive = true
             )
         )
@@ -307,16 +303,16 @@ class HeldDoorFixTest {
         // Dead session: no peek line at all (N-2).
         assertNull(
             peekWithheldFor(
-                canPeek = false, path = InterceptPath.APP_TIER, entity = peekApp(),
-                cooldownLeftSeconds = 1200, pillActive = false,
+                canPeek = false, path = InterceptPath.APP_TIER, appEntity = peekApp(),
+                cooldownLeft = 1200, pillActive = false,
                 pillIsForPackage = false, sessionLive = false
             )
         )
         // An offer standing: nothing withheld.
         assertNull(
             peekWithheldFor(
-                canPeek = true, path = InterceptPath.APP_TIER, entity = peekApp(),
-                cooldownLeftSeconds = 0, pillActive = false,
+                canPeek = true, path = InterceptPath.APP_TIER, appEntity = peekApp(),
+                cooldownLeft = 0, pillActive = false,
                 pillIsForPackage = false, sessionLive = true
             )
         )
@@ -324,8 +320,8 @@ class HeldDoorFixTest {
         assertEquals(
             PeekWithheld.COOLDOWN,
             peekWithheldFor(
-                canPeek = false, path = InterceptPath.APP_TIER, entity = peekApp(),
-                cooldownLeftSeconds = 300, pillActive = false,
+                canPeek = false, path = InterceptPath.APP_TIER, appEntity = peekApp(),
+                cooldownLeft = 300, pillActive = false,
                 pillIsForPackage = false, sessionLive = true
             )
         )

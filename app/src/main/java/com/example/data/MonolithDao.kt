@@ -26,22 +26,22 @@ interface MonolithDao {
     suspend fun updateApp(app: BlockedAppEntity)
 
     @Query("UPDATE blocked_apps SET isBlocked = :isBlocked, blockTier = :blockTier WHERE packageName = :packageName")
-    suspend fun setAppTier(packageName: String, isBlocked: Boolean, blockTier: String)
+    suspend fun setAppTier(packageName: String, isBlocked: Boolean, blockTier: String): Int
 
     @Query("UPDATE blocked_apps SET activePeekUntilElapsedRealtime = :activeUntilMono, lastPeekEndElapsedRealtime = :peekEndMono WHERE packageName = :packageName")
-    suspend fun updatePeekLeaseAndCooldown(packageName: String, activeUntilMono: Long, peekEndMono: Long)
+    suspend fun updatePeekLeaseAndCooldown(packageName: String, activeUntilMono: Long, peekEndMono: Long): Int
 
     /** The prune (Ordner lane): rows for packages the phone no longer
      *  has leave the table at sync — the catalog is the phone's truth,
      *  not an archive of everything it once held. */
     @Query("DELETE FROM blocked_apps WHERE packageName IN (:packageNames)")
-    suspend fun deleteAppsByPackage(packageNames: List<String>)
+    suspend fun deleteAppsByPackage(packageNames: List<String>): Int
 
     @Query("UPDATE blocked_apps SET interceptCount = interceptCount + 1 WHERE packageName = :packageName")
-    suspend fun incrementInterceptCount(packageName: String)
+    suspend fun incrementInterceptCount(packageName: String): Int
 
     @Query("UPDATE blocked_apps SET dailyLimitMinutes = :limitMinutes WHERE packageName = :packageName")
-    suspend fun updateDailyLimit(packageName: String, limitMinutes: Int)
+    suspend fun updateDailyLimit(packageName: String, limitMinutes: Int): Int
 
     // Focus Profiles & Schedules
     @Query("SELECT * FROM focus_profiles ORDER BY id ASC")
@@ -66,6 +66,42 @@ interface MonolithDao {
     @Query("SELECT * FROM focus_sessions WHERE isActive = 1 ORDER BY id DESC LIMIT 1")
     suspend fun getActiveSessionSnapshot(): FocusSessionEntity?
 
+    /**
+     * Issue #45 (C5): the session covering a given wall instant —
+     * the notification capture path decides "was a session active
+     * when this notification was POSTED" against sbn.postTime, not
+     * against whenever its coroutine happens to be scheduled. A
+     * coroutine delayed past a session's end used to read
+     * getActiveSessionSnapshot(), find nothing, and silently drop a
+     * message that was genuinely captured during the session.
+     *
+     * The covering predicate, by row shape:
+     * - isActive: the session is still running, and it started at
+     *   or before the instant — it covers it.
+     * - endWallMillis > 0 (the v11 ending stamp): the session's
+     *   true span is exactly [startWallTimeMillis, endWallMillis];
+     *   the instant must lie inside it.
+     * - endWallMillis = 0 (a legacy row ended before the stamp
+     *   existed): no exact end survives, so the bound is the
+     *   session's own maximum span, priced from its stored fields
+     *   the same way FocusSessionEntity.spanTargetSeconds prices
+     *   it — totalStudyBlocks × (target + penalty) plus one
+     *   600-second Safe Break between blocks. This can only
+     *   over-cover a legacy row that ended early; it can never
+     *   miss a message posted while that session truly ran,
+     *   because no real run exceeds its own span target.
+     */
+    @Query(
+        "SELECT * FROM focus_sessions WHERE startWallTimeMillis <= :instantMillis AND (" +
+            "isActive = 1 " +
+            "OR (endWallMillis > 0 AND :instantMillis <= endWallMillis) " +
+            "OR (endWallMillis = 0 AND :instantMillis <= startWallTimeMillis + " +
+            "(totalStudyBlocks * (targetDurationSeconds + penaltySecondsAdded) + " +
+            "(totalStudyBlocks - 1) * 600) * 1000)" +
+            ") ORDER BY startWallTimeMillis DESC LIMIT 1"
+    )
+    suspend fun getSessionCoveringInstant(instantMillis: Long): FocusSessionEntity?
+
     @Query("SELECT * FROM focus_sessions ORDER BY startWallTimeMillis DESC")
     fun getSessionHistoryFlow(): Flow<List<FocusSessionEntity>>
 
@@ -73,6 +109,13 @@ interface MonolithDao {
      *  artifact ids real sessions actually forged. */
     @Query("SELECT DISTINCT forgedArtifactId FROM focus_sessions WHERE forgedArtifactId IS NOT NULL")
     suspend fun getForgedArtifactIds(): List<String>
+
+    /** Audit R3b #145: the cabinet's provenance — every session
+     *  that forged, oldest first, so the Drawer can print count,
+     *  date, intention and outcome per artifact instead of a bare
+     *  FORGED badge (duplicates counted, never vanished). */
+    @Query("SELECT * FROM focus_sessions WHERE forgedArtifactId IS NOT NULL ORDER BY startWallTimeMillis ASC")
+    suspend fun getForgingSessions(): List<FocusSessionEntity>
 
     @Query("SELECT * FROM focus_sessions ORDER BY startWallTimeMillis DESC")
     suspend fun getSessionHistorySnapshot(): List<FocusSessionEntity>
@@ -84,7 +127,7 @@ interface MonolithDao {
     suspend fun updateSession(session: FocusSessionEntity)
 
     @Query("DELETE FROM focus_sessions WHERE id = :id")
-    suspend fun deleteSessionById(id: Int)
+    suspend fun deleteSessionById(id: Int): Int
 
     // Slice E (9→10): the finish machine's reads. The E0 edge
     // re-reads the ended row by id (its history emission is a list;
@@ -99,7 +142,14 @@ interface MonolithDao {
     // a latch write can never clobber a tick's row copy landing in
     // the same instant.
     @Query("UPDATE focus_sessions SET shieldGapSeen = 1 WHERE id = :id")
-    suspend fun latchShieldGap(id: Int)
+    suspend fun latchShieldGap(id: Int): Int
+
+    // The beat adoption (Audit R2 #95): a pre-v10 row's first
+    // post-upgrade judgement stamps the beat instead of convicting
+    // the row from its session start. Guarded on the beat still
+    // being 0 so a racing tick's real beat is never overwritten.
+    @Query("UPDATE focus_sessions SET shieldLastBeatWallMillis = :millis WHERE id = :id AND shieldLastBeatWallMillis = 0")
+    suspend fun adoptShieldBeat(id: Int, millis: Long)
 
     // The release-fault record (Draht): written once per fault by
     // the finish machine; the retry cadence increments its own
@@ -107,10 +157,53 @@ interface MonolithDao {
     @Query(
         "UPDATE focus_sessions SET releaseFaultShield = 1, releaseFaultedAtWallMillis = :wallMillis WHERE id = :id"
     )
-    suspend fun stampReleaseFault(id: Int, wallMillis: Long)
+    suspend fun stampReleaseFault(id: Int, wallMillis: Long): Int
 
+    // Issue #30 finding 4: the retry counter's INCREMENT moves
+    // by atomic SQL increment, never by an absolute write of a
+    // caller-computed total — two triggers racing (alarm + boot
+    // + Deck open) could each compute the same "done" from a
+    // stale read and a retry would be silently lost. The
+    // increment is judged inside SQLite, where the race cannot
+    // exist. Returns rows updated (0 = the row is gone).
+    @Query("UPDATE focus_sessions SET releaseRetriesDone = releaseRetriesDone + 1 WHERE id = :id")
+    suspend fun incrementReleaseRetries(id: Int): Int
+
+    // The terminal stamp (issue #47's STOP_FINAL door): an
+    // absolute write BY DESIGN — it assigns the cadence-closed
+    // value (CADENCE_OFFSETS_MS.size + 1) whatever the counter
+    // currently holds, so racing triggers writing it lose
+    // nothing. Kept beside the increment: assignment and
+    // increment are different acts, and each site uses its own.
     @Query("UPDATE focus_sessions SET releaseRetriesDone = :done WHERE id = :id")
-    suspend fun stampReleaseRetries(id: Int, done: Int)
+    suspend fun stampReleaseRetries(id: Int, done: Int): Int
+
+    // Issue #47 (heartbeat-retry F1/F5): the retry scheduler's own
+    // read — the newest still-faulted row ONLY, targeted + LIMIT 1,
+    // never a full-history scan. The heal write: clearing the fault
+    // flag ends the cadence for that row; faultedAt/retriesDone stay
+    // on the row as its history (the receipt's truth is untouched).
+    @Query(
+        "SELECT * FROM focus_sessions WHERE releaseFaultShield = 1 " +
+            "AND releaseFaultedAtWallMillis > 0 ORDER BY startWallTimeMillis DESC LIMIT 1"
+    )
+    suspend fun getFaultedReleaseSession(): FocusSessionEntity?
+
+    @Query("UPDATE focus_sessions SET releaseFaultShield = 0 WHERE id = :id")
+    suspend fun clearReleaseFault(id: Int)
+
+    // Issue #47 (heartbeat-retry F5): the heartbeat's cheap
+    // 'nothing due' probe — COUNT over exactly the union of the two
+    // derive() session reads below. Zero (with no active session)
+    // PROVES both reads would return empty, so the pass may derive
+    // over an empty list instead of materialising both.
+    @Query(
+        "SELECT COUNT(*) FROM focus_sessions WHERE " +
+            "(routineId IS NOT NULL AND (windowEndMillis >= :sinceMillis " +
+            "OR (isActive = 0 AND routineOutcome IS NULL))) " +
+            "OR startWallTimeMillis >= :sinceMillis"
+    )
+    suspend fun countDeriveSessionInputs(sinceMillis: Long): Int
 
     // The receipt's deflection read (Zettel): intercept instants in
     // the session's own wall window, oldest first — the reduction
@@ -120,7 +213,7 @@ interface MonolithDao {
     suspend fun getSpendsForSession(sessionId: Int): List<EmergencyBreakSpendEntity>
 
     @Query("UPDATE focus_sessions SET isActive = 0 WHERE isActive = 1")
-    suspend fun deactivateAllSessions()
+    suspend fun deactivateAllSessions(): Int
 
     // Emergency Break Spends (TOKEN-SPEC §2 — append-only ledger; the
     // weekly token is DERIVED from these rows, never stored as a count)
@@ -137,7 +230,13 @@ interface MonolithDao {
     suspend fun getAllSpendsSnapshot(): List<EmergencyBreakSpendEntity>
 
     // Intercept Logs
-    @Query("SELECT * FROM intercept_logs ORDER BY timestampMillis DESC")
+    // Issue #30 finding 2: capped at the newest 500. The table
+    // grows by a row per intercept, forever, and the uncapped
+    // flow re-emitted ALL of it on every insert. 500 is a display
+    // bound, not a data bound: rows are never deleted here, and
+    // the evidence reads (getInterceptLogsBetween, finalise's
+    // interval scan) keep their own uncapped queries.
+    @Query("SELECT * FROM intercept_logs ORDER BY timestampMillis DESC LIMIT 500")
     fun getInterceptLogsFlow(): Flow<List<InterceptLogEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -151,17 +250,26 @@ interface MonolithDao {
     suspend fun updateInterceptOutcome(id: Long, outcome: String)
 
     // Captured Notifications (Silent Notification Catcher & Persistent Digest)
-    @Query("SELECT * FROM captured_notifications ORDER BY timestampMillis DESC LIMIT 100")
+    // NO LIMIT (issue #138): the live header prints this list's size
+    // as the held total, so a capped flow would report the cap as
+    // the count and hide the oldest held items. A held item past
+    // any cap is still held.
+    @Query("SELECT * FROM captured_notifications ORDER BY timestampMillis DESC")
     fun getCapturedNotificationsFlow(): Flow<List<CapturedNotificationEntity>>
 
     /**
      * One-shot snapshot for the FROZEN digest: the same rows the
      * flow would print, taken once, at the freeze. Deliberately NO
      * LIMIT — a held item past any cap is still held, and a frozen
-     * read that silently dropped it would lie by omission. (The
-     * live flow keeps its shipped cap; only the snapshot — the
-     * sealed truth surface — is unbounded.)
+     * read that silently dropped it would lie by omission.
      */
+    // Deliberately UNCAPPED (FrozenDigestGateTest pins this:
+    // snapshot_isNotSilentlyCapped): the frozen digest must see
+    // everything the vault holds — a silent cap here would make
+    // the digest lie by omission. The display Flow above keeps
+    // its LIMIT 100. (Issue #30 finding 2 proposed capping this
+    // too; the pinned test is the older, deliberate law — the
+    // cap was tried and reverted on its evidence.)
     @Query("SELECT * FROM captured_notifications ORDER BY timestampMillis DESC")
     suspend fun getCapturedNotificationsSnapshot(): List<CapturedNotificationEntity>
 
@@ -169,10 +277,58 @@ interface MonolithDao {
     suspend fun insertCapturedNotification(notification: CapturedNotificationEntity)
 
     @Query("DELETE FROM captured_notifications WHERE id = :id")
-    suspend fun deleteCapturedNotification(id: Int)
+    suspend fun deleteCapturedNotification(id: Int): Int
 
     @Query("DELETE FROM captured_notifications")
-    suspend fun clearAllCapturedNotifications()
+    suspend fun clearAllCapturedNotifications(): Int
+
+    // Issue #45 (C5) retention: captured bodies are plaintext
+    // message content, so the table is bounded — the insert path
+    // prunes by age and caps the row count after every insert.
+    // The bounds (7 days / newest 200) live in
+    // MonolithNotificationListener; these are the two deletes it
+    // runs. The trim orders by timestamp then id so that, among
+    // rows sharing a postTime, the later inserts survive.
+    @Query("DELETE FROM captured_notifications WHERE timestampMillis < :cutoffMillis")
+    suspend fun pruneCapturedNotificationsOlderThan(cutoffMillis: Long)
+
+    @Query(
+        "DELETE FROM captured_notifications WHERE id NOT IN " +
+            "(SELECT id FROM captured_notifications ORDER BY timestampMillis DESC, id DESC LIMIT :keep)"
+    )
+    suspend fun trimCapturedNotificationsToNewest(keep: Int)
+
+    // Issue #45 (C5): the identity of one stored capture — the
+    // package, the title and body AS STORED (senderTitle is the
+    // title after the app-name fallback), and the row's
+    // timestampMillis, which is the notification's sbn.postTime
+    // snapshot. The dedupe-replace path finds the superseded row
+    // by this quadruple before deleting it; the removal path
+    // deletes by the same quadruple so a recalled message cannot
+    // resurrect in the digest.
+    @Query(
+        "SELECT * FROM captured_notifications WHERE packageName = :packageName " +
+            "AND senderTitle = :senderTitle AND messageBody = :messageBody " +
+            "AND timestampMillis = :timestampMillis ORDER BY id DESC LIMIT 1"
+    )
+    suspend fun findCapturedNotificationMatching(
+        packageName: String,
+        senderTitle: String,
+        messageBody: String,
+        timestampMillis: Long
+    ): CapturedNotificationEntity?
+
+    @Query(
+        "DELETE FROM captured_notifications WHERE packageName = :packageName " +
+            "AND senderTitle = :senderTitle AND messageBody = :messageBody " +
+            "AND timestampMillis = :timestampMillis"
+    )
+    suspend fun deleteCapturedNotificationMatching(
+        packageName: String,
+        senderTitle: String,
+        messageBody: String,
+        timestampMillis: Long
+    ): Int
 
     // Timeboxed Task Queue (Solar Queue)
     @Query("SELECT * FROM focus_tasks ORDER BY CASE status WHEN 'ACTIVE' THEN 0 WHEN 'QUEUED' THEN 1 WHEN 'DEFERRED' THEN 2 ELSE 3 END, queueOrder ASC, id ASC")
@@ -194,7 +350,7 @@ interface MonolithDao {
     suspend fun updateTask(task: FocusTaskEntity)
 
     @Query("DELETE FROM focus_tasks WHERE id = :id")
-    suspend fun deleteTaskById(id: Int)
+    suspend fun deleteTaskById(id: Int): Int
 
     // =========================================================================
     // THE DRAWER — stored tasks are COMPLETED rows of focus_tasks.
@@ -202,8 +358,8 @@ interface MonolithDao {
     // retention is permanent. Every read is paged (LIMIT + OFFSET,
     // newest first, id tiebreak for a total order) — no read may
     // silently cap the record. Filing day/month follow the 03:30
-    // rule (DrawerDay): the months index subtracts the same 210
-    // minutes inside SQLite that DrawerDay subtracts in Kotlin.
+    // rule (DrawerDay) — computed in Kotlin only; the old SQLite
+    // twin disagreed with it on DST days and is dead (Audit R1 #37).
     // =========================================================================
 
     // The page size is the CALLER's (Truth Car 2, DRW-04): the
@@ -213,10 +369,24 @@ interface MonolithDao {
     @Query("SELECT * FROM focus_tasks WHERE status = 'COMPLETED' AND completedAtMillis >= :fromMillis AND completedAtMillis < :toMillis ORDER BY completedAtMillis DESC, id DESC LIMIT :limit OFFSET :offset")
     suspend fun getStoredPage(fromMillis: Long, toMillis: Long, limit: Int, offset: Int): List<FocusTaskEntity>
 
-    @Query("SELECT CAST(strftime('%Y', (completedAtMillis / 1000) - 12600, 'unixepoch', 'localtime') AS INTEGER) AS year, CAST(strftime('%m', (completedAtMillis / 1000) - 12600, 'unixepoch', 'localtime') AS INTEGER) AS month FROM focus_tasks WHERE status = 'COMPLETED' AND completedAtMillis > 0 GROUP BY year, month ORDER BY year DESC, month DESC")
-    suspend fun getStoredMonths(): List<StoredMonth>
+    // Audit R1 #37: the months index used to be computed in SQL by
+    // subtracting 12,600 ELAPSED seconds from the epoch and taking
+    // SQLite 'localtime' — a different function from DrawerDay's
+    // wall-clock filing rule on DST days (verified divergence at
+    // the 2026-11-01 America/New_York fall-back month boundary:
+    // the same completion filed under October in Kotlin and
+    // November in SQL). There is now ONE filing function: the DAO
+    // returns raw completion instants and the repository groups
+    // them through DrawerDay.filingYearMonth. No SQL date math
+    // remains to disagree with it.
+    @Query("SELECT completedAtMillis FROM focus_tasks WHERE status = 'COMPLETED' AND completedAtMillis > 0")
+    suspend fun getStoredCompletionInstants(): List<Long>
 
-    @Query("SELECT * FROM focus_tasks WHERE status = 'COMPLETED' AND completedAtMillis > 0 AND (title LIKE '%' || :q || '%' OR categoryTag LIKE '%' || :q || '%' OR notesOrSubsteps LIKE '%' || :q || '%') ORDER BY completedAtMillis DESC, id DESC LIMIT :limit OFFSET :offset")
+    // Issue #30 finding 5: ESCAPE '\' on every LIKE — the
+    // repository escapes \, % and _ in the bound value, so a
+    // search for "50%" or "a_b" matches those characters
+    // literally instead of acting as wildcards over the Drawer.
+    @Query("SELECT * FROM focus_tasks WHERE status = 'COMPLETED' AND completedAtMillis > 0 AND (title LIKE '%' || :q || '%' ESCAPE '\\' OR categoryTag LIKE '%' || :q || '%' ESCAPE '\\' OR notesOrSubsteps LIKE '%' || :q || '%' ESCAPE '\\') ORDER BY completedAtMillis DESC, id DESC LIMIT :limit OFFSET :offset")
     suspend fun searchStoredTasks(q: String, limit: Int, offset: Int): List<FocusTaskEntity>
 
     // Truth Car 2 (RC-04): the claimed № stamped on the session
@@ -225,7 +395,7 @@ interface MonolithDao {
     // one column, for the same §7.5 reason as the claim's own
     // settings write: nothing else on the row may move.
     @Query("UPDATE focus_sessions SET receiptNumber = :number WHERE id = :sessionId")
-    suspend fun stampReceiptNumber(sessionId: Int, number: Int)
+    suspend fun stampReceiptNumber(sessionId: Int, number: Int): Int
 
     // Blocked Websites (user-editable; enforced by the accessibility service)
     @Query("SELECT * FROM blocked_sites ORDER BY domain ASC")
@@ -241,7 +411,7 @@ interface MonolithDao {
     suspend fun insertSite(site: BlockedSiteEntity)
 
     @Query("DELETE FROM blocked_sites WHERE domain = :domain")
-    suspend fun deleteSite(domain: String)
+    suspend fun deleteSite(domain: String): Int
 
     // Guard Settings (single row, id = 1)
     @Query("SELECT * FROM guard_settings WHERE id = 1 LIMIT 1")
@@ -259,18 +429,18 @@ interface MonolithDao {
     // receipt claim columns, and the claim's write is targeted
     // for the same reason in reverse.
     @Query("UPDATE guard_settings SET browserBlockerEnabled = :enabled WHERE id = 1")
-    suspend fun updateBrowserBlockerEnabled(enabled: Boolean)
+    suspend fun updateBrowserBlockerEnabled(enabled: Boolean): Int
 
     // Truth Car 3 (UNA-01): the sniper switch's targeted UPDATE —
     // same §7.5 discipline as the browser pair above.
     @Query("UPDATE guard_settings SET shortsReelsSniperEnabled = :enabled WHERE id = 1")
-    suspend fun updateShortsReelsSniperEnabled(enabled: Boolean)
+    suspend fun updateShortsReelsSniperEnabled(enabled: Boolean): Int
 
     @Query("UPDATE guard_settings SET routineReseedV1Done = 1 WHERE id = 1")
-    suspend fun markRoutineReseedV1Done()
+    suspend fun markRoutineReseedV1Done(): Int
 
     @Query("UPDATE guard_settings SET routineReseedNoteDismissed = 1 WHERE id = 1")
-    suspend fun markRoutineReseedNoteDismissed()
+    suspend fun markRoutineReseedNoteDismissed(): Int
 
     @Query(
         "UPDATE guard_settings SET lastCompositeSessionId = :sessionId, " +
@@ -282,16 +452,16 @@ interface MonolithDao {
         outcome: String,
         sequence: Int,
         receiptSessionId: Int
-    )
+    ): Int
 
     // Targeted stamp writes (routines rebuild): single-column UPDATEs
     // so a stamp can never clobber another settings field written in
     // the same instant (cf. arbitration A6's copy-fix).
     @Query("UPDATE guard_settings SET lastBootAtMillis = :millis WHERE id = 1")
-    suspend fun stampLastBoot(millis: Long)
+    suspend fun stampLastBoot(millis: Long): Int
 
     @Query("UPDATE guard_settings SET lastRoutineTickMillis = :millis WHERE id = 1")
-    suspend fun stampLastRoutineTick(millis: Long)
+    suspend fun stampLastRoutineTick(millis: Long): Int
 
     // Routines (persisted schedule; fired by RoutineAlarmReceiver)
     @Query("SELECT * FROM routines ORDER BY startMinutes ASC")
@@ -345,4 +515,12 @@ interface MonolithDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDayNotes(notes: List<DayNoteEntity>)
+
+    /** Audit R1 #37: clearing a declared word must reach the
+     *  drained table too — before this, no DELETE for day_notes
+     *  existed anywhere, so a word that had drained from prefs to
+     *  Room could never be undeclared (the clear removed only the
+     *  already-absent prefs key and the union read resurrected it). */
+    @Query("DELETE FROM day_notes WHERE dateIso = :dateIso")
+    suspend fun deleteDayNote(dateIso: String)
 }

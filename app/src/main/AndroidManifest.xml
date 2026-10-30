@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Declared so MainActivity can fire Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS directly (issue #26) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
@@ -38,7 +40,6 @@
 
         <activity
             android:name=".MainActivity"
-            android:directBootAware="true"
             android:exported="true"
             android:launchMode="singleTop"
             android:label="@string/app_name"
@@ -55,11 +56,19 @@
             android:directBootAware="true"
             android:enabled="true"
             android:exported="false"
+            android:stopWithTask="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Active app-blocking focus session timer and usage monitor" />
         </service>
+
+        <!-- Issue #308: polls the grant during a permission FIX trip
+             and returns the user to the app the moment it lands. -->
+        <service
+            android:name=".service.PermissionReturnService"
+            android:enabled="true"
+            android:exported="false" />
 
         <!-- Direct-Boot Aware Window, Shorts/Reels Sniper, Settings Blocker & URL Bar Interceptor -->
         <service
@@ -117,13 +126,15 @@
             android:directBootAware="true"
             android:exported="false" />
 
-        <!-- Kernel-Level Uninstall Guard (DeviceAdminReceiver) -->
+        <!-- Device Admin (DeviceAdminReceiver): friction + a warning
+             on deactivation only — it does not prevent deactivation
+             or uninstall (issue #44). -->
         <receiver
             android:name=".service.MonolithDeviceAdminReceiver"
-            android:description="@string/accessibility_service_description"
+            android:description="@string/device_admin_description"
             android:directBootAware="true"
             android:exported="false"
-            android:label="Monolith Uninstall Guard"
+            android:label="@string/device_admin_label"
             android:permission="android.permission.BIND_DEVICE_ADMIN">
             <meta-data
                 android:name="android.app.device_admin"
