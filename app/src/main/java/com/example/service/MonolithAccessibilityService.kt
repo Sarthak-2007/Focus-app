@@ -12,6 +12,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.example.MainActivity
+import com.example.MLog
 import com.example.data.AppBlockTier
 import com.example.data.GuardSettingsEntity
 import com.example.data.MonolithDatabase
@@ -420,9 +421,11 @@ class MonolithAccessibilityService : AccessibilityService() {
                     processEvent(snapshot)
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     // One bad event must not kill the pipeline: the
                     // next snapshot still deserves its verdict.
+                    // Issue #75 F1 wiring: the drop now speaks.
+                    MLog.w("a11y event worker dropped an event", e)
                 }
             }
         }
@@ -564,9 +567,11 @@ class MonolithAccessibilityService : AccessibilityService() {
                     processEvent(snapshot)
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     // Same law as the worker: one bad event must
-                    // not kill enforcement.
+                    // not kill enforcement. Issue #75 F1 wiring:
+                    // the drop now speaks.
+                    MLog.w("a11y tamper event dropped", e)
                 }
             }
         } else {
@@ -609,9 +614,11 @@ class MonolithAccessibilityService : AccessibilityService() {
                         processEvent(winSnapshot)
                     } catch (e: CancellationException) {
                         throw e
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
                         // Same law as the worker: one bad event
-                        // must not kill enforcement.
+                        // must not kill enforcement. Issue #75 F1
+                        // wiring: the drop now speaks.
+                        MLog.w("a11y collector tamper event dropped", e)
                     }
                 }
             } else {
@@ -633,9 +640,12 @@ class MonolithAccessibilityService : AccessibilityService() {
         return try {
             windows?.mapNotNull { window ->
                 if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) null
-                else try { window.root } catch (_: Exception) { null }
+                else try { window.root } catch (e: Exception) { MLog.d("a11y window.root probe failed: ${e.message}"); null }
             } ?: emptyList()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // Issue #75 F1 wiring: a failed window sweep read as
+            // "no windows" — the absence now speaks.
+            MLog.w("a11y interactiveWindowRoots failed; reading as no windows", e)
             emptyList()
         }
     }
@@ -856,7 +866,8 @@ class MonolithAccessibilityService : AccessibilityService() {
             val defaultDialer = try {
                 (getSystemService(Context.TELECOM_SERVICE) as? TelecomManager)
                     ?.defaultDialerPackage
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                MLog.d("a11y defaultDialerPackage probe failed: ${e.message}")
                 null
             }
             shouldBypassForCall(am.mode, pkgName, callOwnerPackage, defaultDialer)
@@ -1002,7 +1013,10 @@ class MonolithAccessibilityService : AccessibilityService() {
                     processEvent(snapshot)
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    // Issue #75 F1 wiring: this drop was not even
+                    // commented — it speaks now.
+                    MLog.w("a11y event dropped (uncommented catch)", e)
                 }
             }
         } else {
@@ -1029,7 +1043,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         // 'Shorts' channel tab or search chip sits far above the
         // nav bar and is mere browsing; it must not fire.
         val rootRect = Rect()
-        try { rootNode.getBoundsInScreen(rootRect) } catch (_: Exception) { /* no bounds: B cannot prove its case */ }
+        try { rootNode.getBoundsInScreen(rootRect) } catch (e: Exception) { MLog.d("a11y getBoundsInScreen failed: ${e.message}") /* no bounds: B cannot prove its case */ }
         return isSelectedBottomTabShortsOrReels(rootNode, rootRect.height())
     }
 
@@ -1039,7 +1053,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         val text = node.text?.toString()?.trim()?.lowercase() ?: ""
         if (node.isSelected && isFeedTabLabel(text, desc)) {
             val rect = Rect()
-            val hasBounds = try { node.getBoundsInScreen(rect); true } catch (_: Exception) { false }
+            val hasBounds = try { node.getBoundsInScreen(rect); true } catch (e: Exception) { MLog.d("a11y getBoundsInScreen probe failed: ${e.message}"); false }
             if (hasBounds && isBottomNavBounds(rect.bottom, rootHeightPx)) return true
         }
         // Structural fallback (Wave-3 #42): a SELECTED node whose
@@ -1056,7 +1070,7 @@ class MonolithAccessibilityService : AccessibilityService() {
             )
         ) {
             val rect = Rect()
-            val hasBounds = try { node.getBoundsInScreen(rect); true } catch (_: Exception) { false }
+            val hasBounds = try { node.getBoundsInScreen(rect); true } catch (e: Exception) { MLog.d("a11y getBoundsInScreen probe failed: ${e.message}"); false }
             if (hasBounds && isBottomNavBounds(rect.bottom, rootHeightPx)) return true
         }
         for (i in 0 until node.childCount) {

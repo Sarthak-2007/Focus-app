@@ -534,20 +534,20 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         }
     }
 
-    // PARK's on-open diagnostic (§3.3): opening PARK fires the old
-    // refreshSystemGuard() sweep. Its result renders NOWHERE — the
-    // board renders the Watch Store — unless a diagnostic line is
-    // invoked; the sweep itself is the point (clock/HMAC/boot facts
-    // stay warm for the day a diagnostic needs them).
-    // Issue #109, F3: opening PARK ALSO fires the real Watch sweep.
+    // Issue #109, F3: opening PARK fires the real Watch sweep.
     // Until now the board opened on whatever the last ON_RESUME /
     // Deck-entry sweep left behind, and its own GRANTED lines aged
     // into STALE in front of the reader with no re-measure anywhere
     // on the surface. The sweep is the board's re-measure; the
     // drawer's RE-CHECK key fires the same one on demand.
+    // Issue #75 F2 (re-cut, STURM3-15): the old refreshSystemGuard()
+    // diagnostic sweep that also fired here — its own comment
+    // admitted its result rendered NOWHERE — is removed. The cut
+    // shipped in PR #375's branch but was lost in that branch's
+    // merge chain before it merged; the ViewModel's own init caller
+    // of refreshSystemGuard is untouched.
     LaunchedEffect(parkOpen) {
         if (parkOpen) {
-            viewModel.refreshSystemGuard()
             viewModel.runWatchSweep()
         }
     }
