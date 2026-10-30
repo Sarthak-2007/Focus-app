@@ -82,7 +82,7 @@ class MonolithBootReceiver : BroadcastReceiver() {
                 scope.launch {
                     try {
                         runGuardedBootAction {
-                            val dao = MonolithDatabase.getInstance(appContext).monolithDao()
+                            val dao = com.example.AppContainer.dao(appContext) /* ISSUE-67: single construction point */
                             val active = dao.getActiveSessionSnapshot()
                             if (active != null && active.isActive) {
                                 MonolithShieldService.startShield(appContext)

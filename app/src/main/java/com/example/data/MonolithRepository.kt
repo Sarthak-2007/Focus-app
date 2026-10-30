@@ -2060,6 +2060,11 @@ class MonolithRepository(
      *  bypassing this layer for its per-iteration app reads. */
     suspend fun allAppsSnapshot(): List<BlockedAppEntity> = dao.getAllAppsSnapshot()
 
+    /** Audit R6 #340 F13: the full routine table for the
+     *  conflict detector — the ViewModel checks a candidate save
+     *  against every OTHER routine before persisting. */
+    suspend fun daoSnapshotRoutines(): List<RoutineEntity> = dao.getAllRoutinesSnapshot()
+
     suspend fun cycleAppBlockTier(app: BlockedAppEntity): AppBlockTier {
         val cycled = when (app.resolvedTier) {
             AppBlockTier.LOCKED -> AppBlockTier.PEEK_2M

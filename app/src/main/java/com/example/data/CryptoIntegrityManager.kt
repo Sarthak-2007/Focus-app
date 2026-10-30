@@ -290,15 +290,15 @@ object CryptoIntegrityManager {
                 try {
                     mac.init(hwKey)
                 } catch (_: Exception) {
-                    mac.init(fallbackHmacKey)
+                    mac.init(processFallbackKey)
                 }
             } else {
-                mac.init(fallbackHmacKey)
+                mac.init(processFallbackKey)
             }
             Base64.encodeToString(mac.doFinal(payloadBytes), Base64.NO_WRAP)
         } catch (_: Exception) {
             val mac = Mac.getInstance(HMAC_ALGO)
-            mac.init(fallbackHmacKey)
+            mac.init(processFallbackKey)
             Base64.encodeToString(mac.doFinal(payloadBytes), Base64.NO_WRAP)
         }
     }
@@ -342,7 +342,7 @@ object CryptoIntegrityManager {
         val expectedBytes = when {
             existingKey != null -> hmacSha256OrNull(existingKey, payloadBytes) ?: return false
             canHoldHardwareKey() -> return false
-            else -> hmacSha256OrNull(fallbackHmacKey, payloadBytes) ?: return false
+            else -> hmacSha256OrNull(processFallbackKey, payloadBytes) ?: return false
         }
         return MessageDigest.isEqual(expectedBytes, storedBytes)
     }
