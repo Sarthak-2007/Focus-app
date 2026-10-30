@@ -8,12 +8,8 @@ import android.util.Log
 import com.example.data.AppBlockTier
 import com.example.data.AppCategory
 import com.example.data.CapturedNotificationEntity
-<<<<<<< HEAD
-import com.example.data.MonolithDatabase
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineExceptionHandler
-=======
->>>>>>> 8c6490b (issue-67 (a2)+(d): InterceptIntents seam — services drop MainActivity import (class-name intent, identical extras/flags); shield loop reads via repository (activeSessionSnapshot/allAppsSnapshot); remaining DAO construction (A11y x2, Boot, NotificationListener, ReleaseRetry) via AppContainer)
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -296,18 +292,12 @@ class MonolithNotificationListener : NotificationListenerService() {
         val otpLike = NotificationCapturePolicy.looksLikeOneTimeCode(title, text)
 
         scope.launch {
-<<<<<<< HEAD
-            val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
+            val dao = com.example.AppContainer.dao(applicationContext) // ISSUE-67: single construction point
             // Issue #45 (C5): the session question is asked about
             // the POST TIME, not about now — a coroutine scheduled
             // after the session ended still captures a message
             // that arrived while the session was running.
             dao.getSessionCoveringInstant(postTimeMillis) ?: return@launch
-=======
-            val dao = com.example.AppContainer.dao(applicationContext) /* ISSUE-67: single construction point */
-            val activeSession = dao.getActiveSessionSnapshot() ?: return@launch
-            if (!activeSession.isActive) return@launch
->>>>>>> 8c6490b (issue-67 (a2)+(d): InterceptIntents seam — services drop MainActivity import (class-name intent, identical extras/flags); shield loop reads via repository (activeSessionSnapshot/allAppsSnapshot); remaining DAO construction (A11y x2, Boot, NotificationListener, ReleaseRetry) via AppContainer)
 
             val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
             // Issue #120: FINANCE is never captured and never
@@ -442,7 +432,7 @@ class MonolithNotificationListener : NotificationListenerService() {
         val seen = key?.let { dedupe.forget(it) }
 
         scope.launch {
-            val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
+            val dao = com.example.AppContainer.dao(applicationContext) /* ISSUE-67: single construction point */
             val target = seen ?: run {
                 val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
                 SeenCapture(
@@ -468,7 +458,7 @@ class MonolithNotificationListener : NotificationListenerService() {
      *  [MAX_CAPTURED_ROWS] rows. Failures surface through the
      *  scope's exception handler — logged, never silent. */
     private suspend fun pruneCaptured(latestPostTimeMillis: Long) {
-        val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
+        val dao = com.example.AppContainer.dao(applicationContext) /* ISSUE-67: single construction point */
         dao.pruneCapturedNotificationsOlderThan(latestPostTimeMillis - RETENTION_MILLIS)
         dao.trimCapturedNotificationsToNewest(MAX_CAPTURED_ROWS)
     }
