@@ -55,6 +55,7 @@ import com.example.ui.MonolithViewModel
 import com.example.ui.components.AirlockInterceptOverlay
 import com.example.ui.components.AlwaysOnDeskClockOverlay
 import com.example.ui.components.LauncherBlockScreen
+import com.example.ui.components.PeekCountdownPill
 import com.example.ui.components.LauncherPage
 import com.example.ui.components.CapturedNotificationsDigestSheet
 import com.example.ui.components.DisarmChallengeOverlay
@@ -243,6 +244,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val totalInterceptions by viewModel.totalInterceptions.collectAsStateWithLifecycle()
     val soundEnabled by viewModel.soundEnabled.collectAsStateWithLifecycle()
     val airlockState by viewModel.airlockState.collectAsStateWithLifecycle()
+    val floatingPeekPill by viewModel.floatingPeekPill.collectAsStateWithLifecycle()
     val disarmChallenge by viewModel.disarmChallenge.collectAsStateWithLifecycle()
     val weeklyEmergencyTokensRemaining by viewModel.weeklyEmergencyTokensRemaining.collectAsStateWithLifecycle()
     val ratchetWarningMessage by viewModel.ratchetWarningMessage.collectAsStateWithLifecycle()
@@ -344,6 +346,11 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
+            // Issue #99 F3: stopping with an Airlock still standing
+            // means the user left by Home/Recents — the VM logs it.
+            if (event == Lifecycle.Event.ON_STOP) {
+                viewModel.noteAirlockAbandonedIfStanding()
+            }
             if (event == Lifecycle.Event.ON_RESUME) {
                 // Return is proving (chrome C4 §4.4): the sweep
                 // re-reads every grant; a FIX trip's hand-back is
@@ -867,6 +874,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     launcherPage = LauncherPage.PEEK
                     launcherOpen = true
                 }
+            )
+
+            // Issue #99 F2: the peek countdown pill — the one
+            // rendering of floatingPeekPill (canonical; #101-F3
+            // cross-ref). Shows while a peek lease runs in Monolith.
+            PeekCountdownPill(
+                state = floatingPeekPill,
+                onEndEarly = viewModel::end2MinutePeekEarly
             )
 
             DisarmChallengeOverlay(

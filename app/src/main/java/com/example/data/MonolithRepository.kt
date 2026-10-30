@@ -87,6 +87,30 @@ data class PruneNote(
     val rulesRemoved: Boolean
 )
 
+/** Issue #99 F1: how long after a peek lease's end its package still
+ *  counts as "just expired" for eviction purposes. The shield polls
+ *  every 2s, so this only needs to cover the first polls after
+ *  expiry; 15 minutes is generous without resurrecting old leases. */
+const val EXPIRED_PEEK_EVICTION_WINDOW_MILLIS = 15 * 60 * 1000L
+
+/**
+ * Issue #99 F1 (pure, unit-tested): the packages whose peek lease
+ * has expired inside the eviction window — lease end recorded,
+ * in the past, and not so far in the past that the row is history.
+ * A lease end of 0 (never leased / already closed) never qualifies.
+ */
+internal fun expiredPeekPackages(
+    apps: List<BlockedAppEntity>,
+    nowMono: Long,
+    windowMillis: Long = EXPIRED_PEEK_EVICTION_WINDOW_MILLIS
+): Set<String> = apps
+    .filter { app ->
+        val end = app.activePeekUntilElapsedRealtime
+        end > 0L && end <= nowMono && (nowMono - end) <= windowMillis
+    }
+    .map { it.packageName }
+    .toSet()
+
 class MonolithRepository(
     private val context: Context,
     private val dao: MonolithDao
@@ -582,7 +606,23 @@ class MonolithRepository(
         }
     }
 
-    fun queryForegroundBlockedApp(blockedPackages: Set<String>): String? {
+    fun queryForegroundBlockedApp(blockedPackages: Set<String>): String? =
+        queryForegroundBlockedApp(blockedPackages, emptySet())
+
+    /**
+     * Issue #99 F1: packages whose peek lease has JUST expired. A
+     * stay-put user inside the peeked app has a [lastTimeUsed] from
+     * when the app was opened — minutes stale by expiry — so the
+     * ordinary 8-second freshness filter is structurally blind to
+     * exactly the user the expiry must evict. For a package in
+     * [expiredPeekPackages] the freshness filter is waived and the
+     * usage window widened: the package is treated as
+     * foreground-blocked on this poll regardless of lastTimeUsed age.
+     */
+    fun queryForegroundBlockedApp(
+        blockedPackages: Set<String>,
+        expiredPeekPackages: Set<String>
+    ): String? {
         if (!hasUsageStatsPermission() || blockedPackages.isEmpty()) return null
         if (isPhoneOrVoipCallActive()) return null
         return try {
@@ -591,9 +631,14 @@ class MonolithRepository(
             val end = System.currentTimeMillis()
             val start = end - 15_000L
             val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end)
+                ?: return null
+            val expiredHit = stats
+                .filter { it.packageName in expiredPeekPackages && it.packageName in blockedPackages }
+                .maxByOrNull { it.lastTimeUsed }
+            if (expiredHit != null) return expiredHit.packageName
             val recent = stats
-                ?.filter { it.packageName in blockedPackages && it.lastTimeUsed >= (end - 8_000L) }
-                ?.maxByOrNull { it.lastTimeUsed }
+                .filter { it.packageName in blockedPackages && it.lastTimeUsed >= (end - 8_000L) }
+                .maxByOrNull { it.lastTimeUsed }
             recent?.packageName
         } catch (_: Exception) {
             null
