@@ -2194,7 +2194,7 @@ class MonolithViewModel(
      *  the seal shot runs (t0 → t0+1050), and while a finish
      *  detains the Deck (E0 → issuance). The refusal precedes the
      *  detent sound: a refused tap must not sound like travel. */
-    fun navigationLocked(): Boolean {
+    private fun hardNavigationLocked(): Boolean {
         val phase = armProving.phase.value
         if (phase is ArmPhase.Proving || phase is ArmPhase.Jammed) return true
         if (phase is ArmPhase.SealedRunning &&
@@ -2207,10 +2207,28 @@ class MonolithViewModel(
         return false
     }
 
+    /** The full lock: the hard locks above, plus the seal itself
+     *  (issue #128 finding 1). A live session holds the phone on
+     *  the Deck for its whole life — not just the shot's first
+     *  1050ms — so one stray tap on the rail cannot walk away
+     *  mid-session into screens full of live controls. PARK's
+     *  tap-time guard (MainActivity.openPark) already read the
+     *  seal; the rail destinations never did. */
+    fun navigationLocked(): Boolean =
+        hardNavigationLocked() || activeSession.value?.isActive == true
+
     private var lastNavRefusalMono = 0L
 
     fun navigateTo(destination: MonolithDestination) {
-        if (destination != _currentDestination.value && navigationLocked()) {
+        // Sealed return: travelling TO the Deck under a seal is
+        // not an escape, it is the way back — the seal alone never
+        // refuses it. The hard locks refuse even that, exactly as
+        // before.
+        val refused = destination != _currentDestination.value &&
+            (hardNavigationLocked() ||
+                (activeSession.value?.isActive == true &&
+                    destination != MonolithDestination.DECK))
+        if (refused) {
             val now = SystemClock.elapsedRealtime()
             if (now - lastNavRefusalMono >= 250L) {
                 lastNavRefusalMono = now
@@ -2350,7 +2368,21 @@ class MonolithViewModel(
         }
     }
 
+    /** Issue #128 finding 3 (ratchet only — the routine model
+     *  itself is under Sarthak's RETHINK FREEZE, Oct 30 05:07):
+     *  while a session is live, every routine edit is refused
+     *  before it can re-stamp scheduleEditedAtMillis, dismiss the
+     *  reset note, or force a heartbeat reconcile. The schedule
+     *  the seal was struck under is the schedule that stands
+     *  until the phone unseals; edits resume untouched after. */
+    private fun routineEditRefusedUnderSeal(): Boolean {
+        if (activeSession.value?.isActive != true) return false
+        triggerRatchetWarning("ONE-WAY RATCHET • ROUTINE SCHEDULE IS FROZEN DURING ACTIVE VAULT")
+        return true
+    }
+
     fun toggleRoutine(routine: com.example.data.RoutineEntity) {
+        if (routineEditRefusedUnderSeal()) return
         // Audit R5 #306 F2: a routine whose window is live is
         // forced-on. The bare flip let the person being blocked kill
         // the scheduled protection in one tap at exactly the moment
@@ -2370,6 +2402,7 @@ class MonolithViewModel(
     }
 
     fun cycleRoutineLoadout(routine: com.example.data.RoutineEntity) {
+        if (routineEditRefusedUnderSeal()) return
         // Audit R1 #38: the seat order lives in ONE place —
         // LoadoutStore.CAP_ORDER — not re-hardcoded here.
         val order = com.example.data.LoadoutStore.CAP_ORDER
@@ -2380,6 +2413,7 @@ class MonolithViewModel(
     }
 
     fun adjustRoutineTime(routine: com.example.data.RoutineEntity, isStart: Boolean, deltaMinutes: Int) {
+        if (routineEditRefusedUnderSeal()) return
         val start = if (isStart) {
             (routine.startMinutes + deltaMinutes + 1440) % 1440
         } else routine.startMinutes
@@ -2397,6 +2431,7 @@ class MonolithViewModel(
     }
 
     fun toggleRoutineDay(routine: com.example.data.RoutineEntity, dayIndex: Int) {
+        if (routineEditRefusedUnderSeal()) return
         // Audit R5 #306 F2: removing TODAY from a routine whose
         // window is live is a disable by another name — refused
         // while the window runs, on the same forced-on rule as

@@ -1321,6 +1321,7 @@ fun TactileDeckScreen(
                 task = activeTask,
                 queuedCount = queuedTasks.size,
                 shotActive = shotActive,
+                isSessionRunning = isSessionRunning,
                 exitPhaseProvider = { exitPhase },
                 onCompleteActiveTask = onCompleteActiveTask,
                 onOpenTaskSequencer = onOpenTaskSequencer,
@@ -1709,6 +1710,7 @@ private fun DeckTaskSection(
     task: FocusTaskEntity,
     queuedCount: Int,
     shotActive: Boolean,
+    isSessionRunning: Boolean,
     exitPhaseProvider: () -> Int,
     onCompleteActiveTask: (Int) -> Unit,
     onOpenTaskSequencer: () -> Unit,
@@ -1721,6 +1723,22 @@ private fun DeckTaskSection(
     // Issue #50 F5 cure: keyed on the task id — a new active
     // task never inherits the previous task's expansion state.
     var stepsExpanded by remember(task.id) { mutableStateOf(false) }
+    // Issue #128 finding 5 (ported into this section at the main
+    // merge — the branch's inline form died with the extraction):
+    // DONE under a live seal takes TWO taps, so one stray touch
+    // cannot complete the task and advance the queue — a false
+    // completion would falsify the session's task record. The
+    // first tap arms the cap (it re-prints SURE?); only a second
+    // tap on the armed cap completes. Unsealed, DONE stays one
+    // tap exactly as before. The arm dies on its own after ~2.6s
+    // and whenever the active task changes (keyed remember).
+    var doneArmed by remember(task.id) { mutableStateOf(false) }
+    LaunchedEffect(doneArmed) {
+        if (doneArmed) {
+            kotlinx.coroutines.delay(2600L)
+            doneArmed = false
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1781,11 +1799,21 @@ private fun DeckTaskSection(
                         // Input death (Zug-II §4.6): the task
                         // verbs' HANDLERS are removed by state
                         // during the shot — not greyed, gone.
-                        .clickable(enabled = !shotActive) { onCompleteActiveTask(task.id) }
+                        // Issue #128 finding 5: while a session
+                        // runs, the first tap only arms the cap
+                        // (SURE?); the second completes.
+                        .clickable(enabled = !shotActive) {
+                            if (!isSessionRunning || doneArmed) {
+                                doneArmed = false
+                                onCompleteActiveTask(task.id)
+                            } else {
+                                doneArmed = true
+                            }
+                        }
                         .padding(horizontal = 10.dp, vertical = 5.dp)
                 ) {
                     Text(
-                        text = stringResource(R.string.label_done),
+                        text = if (isSessionRunning && doneArmed) stringResource(R.string.key_sure) else stringResource(R.string.label_done),
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.sp,
