@@ -890,9 +890,17 @@ class MonolithViewModel(
         // process was dead, the snapshot is discarded — the delete
         // was booked at its tap and an expired reversal is not
         // revived by a relaunch.
-        undoDeleteStore.load()?.let { (snapshot, deletedAt) ->
-            val remaining = com.example.data.UndoDeleteStore.WINDOW_MILLIS -
-                (System.currentTimeMillis() - deletedAt)
+        undoDeleteStore.load()?.let { (snapshot, deletedAtWall, deletedAtElapsed) ->
+            // Audit R1 #41: judged on the monotonic stamp when
+            // it survives (same boot) — a wall-clock rollback no
+            // longer resurrects an expired undo, nor a forward
+            // jump steals a live one.
+            val remaining = com.example.data.UndoDeleteStore.remainingMillis(
+                deletedAtWallMillis = deletedAtWall,
+                deletedAtElapsedMillis = deletedAtElapsed,
+                nowWallMillis = System.currentTimeMillis(),
+                nowElapsedMillis = android.os.SystemClock.elapsedRealtime()
+            )
             if (remaining > 0L) {
                 _deletedTaskForUndo.value = snapshot
                 undoDismissJob = viewModelScope.launch {
@@ -1983,15 +1991,25 @@ class MonolithViewModel(
                 // BEFORE the banner presents the delete as
                 // reversible — the promise and its backing are
                 // never out of order.
-                undoDeleteStore.save(deleted, System.currentTimeMillis())
-                _deletedTaskForUndo.value = deleted
+                // Audit R1 #41: the banner is presented only when
+                // the copy actually landed. A failed commit used
+                // to leave the banner promising a reversal whose
+                // restore copy did not exist.
+                val persisted = undoDeleteStore.save(
+                    deleted,
+                    System.currentTimeMillis(),
+                    android.os.SystemClock.elapsedRealtime()
+                )
+                if (persisted) {
+                    _deletedTaskForUndo.value = deleted
+                    undoDismissJob = viewModelScope.launch {
+                        delay(com.example.data.UndoDeleteStore.WINDOW_MILLIS)
+                        _deletedTaskForUndo.value = null
+                        undoDeleteStore.clear()
+                    }
+                }
                 if (nextActive != null) {
                     _intentionText.value = nextActive.title
-                }
-                undoDismissJob = viewModelScope.launch {
-                    delay(com.example.data.UndoDeleteStore.WINDOW_MILLIS)
-                    _deletedTaskForUndo.value = null
-                    undoDeleteStore.clear()
                 }
             }
         }
