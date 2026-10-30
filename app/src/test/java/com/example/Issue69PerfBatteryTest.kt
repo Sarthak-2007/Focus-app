@@ -234,7 +234,9 @@ class Issue69PerfBatteryTest {
         val appUpdate = runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
         }.getOrDefault(0L)
-        org.robolectric.shadows.ShadowSystemClock.setElapsedRealtime(10_000_000L)
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(
+            java.time.Duration.ofMillis(10_000_000L)
+        )
         val mono = SystemClock.elapsedRealtime()
         // Session started (wall) at the update instant, 60
         // monotonic seconds ago: the implied now is therefore
