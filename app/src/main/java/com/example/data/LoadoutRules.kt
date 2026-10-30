@@ -20,8 +20,22 @@ object LoadoutRules {
         val lower = "$packageName $appName".lowercase()
         return when (loadout) {
             SmartLoadout.STUDY -> when {
-                lower.contains("youtube") || lower.contains("chrome") ||
-                    categoryName == AppCategory.MESSAGING.name ->
+                // Issue #133 (study-on-phone-itself, finding 1): the
+                // study surfaces themselves — browsers (Chrome-hosted
+                // classes, PDFs, Classroom) and YouTube lectures —
+                // are OPEN in the loadout built for them; the old
+                // rule rationed them to 2m Peek, unusable for a
+                // 50-minute lecture. YouTube's guessed category is
+                // SHORT_VIDEO, so this check comes before the
+                // category locks; the Shorts/Reels sniper (armed
+                // separately by the STUDY pick) stays the guard on
+                // the short-form feed inside YouTube.
+                categoryName == AppCategory.BROWSERS.name ||
+                    lower.contains("youtube") || lower.contains("chrome") ->
+                    AppBlockTier.OPEN
+                categoryName == AppCategory.EDUCATION.name ->
+                    AppBlockTier.OPEN
+                categoryName == AppCategory.MESSAGING.name ->
                     AppBlockTier.PEEK_2M
                 categoryName == AppCategory.SHORT_VIDEO.name ||
                     categoryName == AppCategory.SOCIAL.name ||
