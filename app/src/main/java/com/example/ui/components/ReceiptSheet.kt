@@ -189,6 +189,14 @@ fun ReceiptSheet(
                         text = "HELD ${receipt.heldAppsAtSeal} APPS · ${receipt.heldSitesAtSeal} SITES ON THIS PHONE"
                     )
                 }
+                // Audit R3b #145: the completion moment names its
+                // reward — the curio this finish forged, on the slip
+                // itself, in the same mono register as the HELD line.
+                receipt.forgedArtifactName?.let { forgedName ->
+                    ReceiptMonoLine(
+                        text = "FORGED — ${forgedName.uppercase(Locale.US)}"
+                    )
+                }
                 if (receipt.bankedBreakSeconds > 0) {
                     // #57: exact span — the old `/ 60` printed a
                     // false `0 MIN` for 1–59 banked seconds and
@@ -234,7 +242,7 @@ fun ReceiptSheet(
                 // same quiet mono footer. Do not "restore" the
                 // 1.sp without re-measuring.
                 Text(
-                    text = "THE MACHINE KEEPS ITS OWN LOG · YOUR STUDY RECORD LIVES IN YPT",
+                    text = "THE MACHINE KEEPS ITS OWN LOG · STUDY HOURS LIVE IN YEOLPUMTA",
                     fontFamily = AnonymousProFamily,
                     fontSize = 9.sp,
                     letterSpacing = 0.25.sp,

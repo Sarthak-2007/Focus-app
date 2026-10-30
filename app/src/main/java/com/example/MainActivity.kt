@@ -52,6 +52,7 @@ import com.example.service.InterceptNonce
 import com.example.service.InterceptPath
 import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithShieldService
+import com.example.service.PermissionReturnService
 import com.example.service.WatchStore
 import com.example.ui.MonolithDestination
 import com.example.ui.ArmPhase
@@ -253,6 +254,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // from the persisted store by way of the VM.
     val loadoutCapIndex by viewModel.loadoutCapIndex.collectAsStateWithLifecycle()
     val showRoutineResetNote by viewModel.showRoutineResetNote.collectAsStateWithLifecycle()
+    val activeTaskFromYesterday by viewModel.activeTaskFromYesterday.collectAsStateWithLifecycle()
     val freshStartNoteVisible by viewModel.freshStartNoteVisible.collectAsStateWithLifecycle()
     val updateNoteVisible by viewModel.updateNoteVisible.collectAsStateWithLifecycle()
     val frozenDigest by viewModel.frozenDigest.collectAsStateWithLifecycle()
@@ -263,9 +265,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val drawerQuery by viewModel.drawerQuery.collectAsStateWithLifecycle()
     val drawerResults by viewModel.drawerResults.collectAsStateWithLifecycle()
     val drawerSearchHasEarlier by viewModel.drawerSearchHasEarlier.collectAsStateWithLifecycle()
+    val drawerLoading by viewModel.drawerLoading.collectAsStateWithLifecycle()
+    val drawerError by viewModel.drawerError.collectAsStateWithLifecycle()
     val drawerSearchDayWords by viewModel.drawerSearchDayWords.collectAsStateWithLifecycle()
     val dayWords by viewModel.dayWords.collectAsStateWithLifecycle()
     val forgedArtifactIds by viewModel.forgedArtifactIds.collectAsStateWithLifecycle()
+    val curioForgeRecords by viewModel.curioForgeRecords.collectAsStateWithLifecycle()
     val forgeStats by viewModel.forgeStats.collectAsStateWithLifecycle()
     val appsCellCount by viewModel.appsCellCount.collectAsStateWithLifecycle()
     val appsSplit by viewModel.appsSplit.collectAsStateWithLifecycle()
@@ -455,6 +460,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 // Return is proving (chrome C4 §4.4): the sweep
                 // re-reads every grant; a FIX trip's hand-back is
                 // judged against these landings.
+                // Issue #308: the user is back (by the return
+                // service or by hand) — any return watch ends here.
+                PermissionReturnService.stop(context)
                 viewModel.runWatchSweep()
                 parkReturnTick++
                 viewModel.onAppResumed()
@@ -526,6 +534,11 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // admin instead fires the official activation intent for this
     // app's own admin (issue #44), with Security Settings as fallback.
     fun openFixPane(item: com.example.service.WatchItemId) {
+        // Issue #308: arm the return trip BEFORE the pane opens —
+        // the service polls this item's grant and brings the user
+        // back the moment it lands, instead of stranding them in
+        // Settings.
+        PermissionReturnService.arm(context, item)
         when (item) {
             com.example.service.WatchItemId.ACCESSIBILITY ->
                 launchSettings(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "ACCESSIBILITY")
@@ -568,17 +581,34 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     "DISPLAY OVER OTHER APPS"
                 )
             com.example.service.WatchItemId.BATTERY -> {
-                val direct = Intent(
-                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                    Uri.parse("package:${context.packageName}")
-                )
-                runCatching { context.startActivity(direct) }
-                    .getOrElse {
-                        launchSettings(
-                            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
-                            "BATTERY"
-                        )
-                    }
+                // Issue #94 (F1): on an OEM-autostart-gated skin the
+                // survival trip is the vendor's AUTOSTART pane first —
+                // the AOSP battery pane alone leaves the boot receiver
+                // dead. Each vendor component is a guess that may not
+                // exist on this build; walk the list, then fall back
+                // to the AOSP battery trip as shipped on main.
+                val gate = com.example.data.OemPolicy.currentGate()
+                val autostartOpened = gate !=
+                    com.example.data.OemPolicy.AutostartGate.NONE &&
+                    com.example.data.OemPolicy
+                        .autostartIntents(gate, context.packageName)
+                        .any { pane ->
+                            runCatching { context.startActivity(pane) }
+                                .isSuccess
+                        }
+                if (!autostartOpened) {
+                    val direct = Intent(
+                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:${context.packageName}")
+                    )
+                    runCatching { context.startActivity(direct) }
+                        .getOrElse {
+                            launchSettings(
+                                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+                                "BATTERY"
+                            )
+                        }
+                }
             }
             else -> launchSettings(Intent(Settings.ACTION_SETTINGS), item.name)
         }
@@ -659,6 +689,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     dialMinutes = dialMinutes,
                                     studyBlocksCount = studyBlocksCount,
                                     activeTask = activeTask,
+                                    activeTaskFromYesterday = activeTaskFromYesterday,
                                     queuedTasks = queuedTasks,
                                     capturedNotificationsCount = capturedNotifications.size,
                                     soundEngine = viewModel.soundEngine,
@@ -819,8 +850,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onQueryChange = viewModel::setDrawerQuery,
                                     onLoadEarlierSearch = viewModel::loadEarlierDrawerSearch,
                                     onDeclareTodayWord = viewModel::declareTodayWord,
+                                    onDeclareDayWord = viewModel::declareDayWordFor,
                                     artifacts = com.example.data.CurioCatalog.artifacts,
                                     forgedArtifactIds = forgedArtifactIds,
+                                    curioForgeRecords = curioForgeRecords,
+                                    drawerLoading = drawerLoading,
+                                    drawerError = drawerError,
                                     forgeStats = forgeStats
                                 )
                             }
@@ -959,9 +994,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onDismiss = { viewModel.toggleAlwaysOnDeskClock(false) }
             )
 
-            // The digest renders the FROZEN snapshot whenever a
+            // The digest renders the sealed snapshot whenever a
             // freeze exists or a session is sealing the phone — the
-            // live list is passed only when unsealed and unfrozen.
+            // snapshot refreshes on open and on new arrivals (issue
+            // #118, finding 3) but renders in frozen MODE: read-only,
+            // nothing opens. The live list is passed only when
+            // unsealed and unfrozen.
             val digestFrozen = frozenDigest != null || sealed
             CapturedNotificationsDigestSheet(
                 visible = showNotificationDigestSheet,
@@ -1056,7 +1094,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onOpenPeekApps = {
                     launcherPage = LauncherPage.PEEK
                     launcherOpen = true
-                }
+                },
+                onRequestEmergencyBreak = viewModel::requestDisarmFromAirlock
             )
 
             // Issue #99 F2: the peek countdown pill — the one
