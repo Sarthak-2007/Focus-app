@@ -582,6 +582,19 @@ class MonolithAccessibilityService : AccessibilityService() {
          *  the two constants are one law stated in two places:
          *  change one, re-derive the other. */
         const val ACCESS_SELF_CHECK_MILLIS: Long = 30_000L
+        /** Binding generation (issue #7, TECH-1 B-Major-1): bumped
+         *  when a binding begins (onServiceConnected) and every time
+         *  one ends (onUnbind/onDestroy). A pipeline probe captures
+         *  the generation before its root query and re-checks it at
+         *  stamp time: the query can block for up to the platform's
+         *  interaction timeout, the binding can die while it is in
+         *  flight, and unbind zeroes [lastRootMono] precisely so a
+         *  rebound service starts unproven — an in-flight probe from
+         *  the dead binding must never stamp after that zeroing and
+         *  resurrect proof its successor never earned. */
+        @Volatile
+        var bindingGeneration: Long = 0L
+            internal set
 
         /** Cascade witness (Slice D step 4, Opal L3): the session
          *  this service's own session gate has observed as active,
@@ -631,7 +644,18 @@ class MonolithAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        // A new binding is a new generation: probes still in flight
+        // from any previous binding fail their stamp-time re-check.
+        bindingGeneration++
         instance = this
+        // Cold-start cure (issue #7): a rebind mid-residency
+        // re-proves itself. The stamp died with the old binding
+        // (onUnbind zeroes lastRootMono), so a residency that is
+        // already in force would rest UNPROVEN until some event
+        // happened to fire — probe actively instead of waiting.
+        if (WatchStore.residencyActive()) {
+            requestPipelineProbe()
+        }
         // Watch Store bind (issue #48): restore the persisted LAST
         // PROVED into the fresh process's store.
         WatchStore.bind(applicationContext)
@@ -640,6 +664,61 @@ class MonolithAccessibilityService : AccessibilityService() {
         WatchStore.onAccessibilityBound(true)
         startSessionArmedCollector()
         startEventWorker()
+    }
+
+    /**
+     * Active self-probe (issue #7, cold-start cure): the SAME proof
+     * the event path performs in [onAccessibilityEvent], done on
+     * demand instead of waiting for an event. The stamp races
+     * residency start on a cold open — the Deck can appear before
+     * this service binds, and a quiet Deck generates no events — so
+     * residency start (and a rebind mid-residency) probe the
+     * pipeline actively. A live root stamps [lastRootMono] and pokes
+     * the store, exactly as an event would; a null root or a thrown
+     * query stamps NOTHING and returns false — the wire reads dead,
+     * which is the truth. The stamp is also generation-guarded: a
+     * probe whose binding died while its query was in flight stamps
+     * nothing, so a dead binding can never mint its successor's
+     * proof (TECH-1 B-Major-1).
+     */
+    fun probePipelineNow(): Boolean {
+        // Capture the binding this probe serves BEFORE the query:
+        // the query can block for up to the platform interaction
+        // timeout, and the binding can die while it is in flight
+        // (TECH-1 B-Major-1).
+        val generationAtLaunch = bindingGeneration
+        return try {
+            if (rootInActiveWindow != null) {
+                // Stamp only if the binding that launched this probe
+                // is still the live one: same generation (no bind,
+                // unbind or destroy since launch) and this instance
+                // still the registered service. A probe that outlived
+                // its binding proves nothing for its successor.
+                if (bindingGeneration != generationAtLaunch || instance !== this) {
+                    false
+                } else {
+                    lastRootMono = SystemClock.elapsedRealtime()
+                    WatchStore.poke()
+                    true
+                }
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            // No stamp — and (issue #76) the failure is counted, not silent.
+            noteDetectionFailure("pipelineProbe", e)
+            false
+        }
+    }
+
+    /** Fire-and-forget probe request: runs [probePipelineNow] on
+     *  this service's existing scope, so a caller on any thread —
+     *  including the UI thread at residency start — never blocks
+     *  waiting for the root window. */
+    fun requestPipelineProbe() {
+        scope.launch {
+            probePipelineNow()
+        }
     }
 
     // ------------------------------------------------------------------
@@ -786,6 +865,10 @@ class MonolithAccessibilityService : AccessibilityService() {
 
     override fun onUnbind(intent: Intent?): Boolean {
         if (instance === this) {
+            // End this binding's generation FIRST: any probe still
+            // in flight under it fails its stamp-time re-check and
+            // cannot resurrect the stamp zeroed below (B-Major-1).
+            bindingGeneration++
             instance = null
             // The stamp dies with the binding (Register 3 Z-1): a
             // rebound service must never inherit its predecessor's
@@ -1652,6 +1735,9 @@ class MonolithAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         if (instance === this) {
+            // Same generation close as onUnbind: a dying binding's
+            // in-flight probes stamp nothing after this point.
+            bindingGeneration++
             instance = null
             lastRootMono = 0L
             armedSessionId = -1
