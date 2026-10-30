@@ -55,6 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.AppBlockTier
+import com.example.data.ClockText
 import com.example.data.BlockedAppEntity
 import com.example.data.FocusSessionEntity
 import com.example.ui.theme.AnonymousProFamily
@@ -67,7 +68,6 @@ import com.example.ui.theme.NightColorSurfaceBright
 import com.example.ui.theme.NightColorSurfaceSheet
 import com.example.ui.theme.NightTextColorSecondary
 import com.example.ui.theme.SoraFamily
-import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
@@ -368,7 +368,7 @@ private fun LauncherHome(
         }
         if (endsAtMs != null) {
             androidx.compose.material3.Text(
-                text = "ENDS " + SimpleDateFormat("HH:mm", Locale.US).format(Date(endsAtMs)),
+                text = "ENDS " + ClockText.timeOfDay(LocalContext.current, endsAtMs),
                 fontFamily = AnonymousProFamily,
                 fontSize = 13.sp,
                 color = NightTextColorSecondary

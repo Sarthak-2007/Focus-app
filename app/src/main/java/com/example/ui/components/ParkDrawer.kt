@@ -1,4 +1,6 @@
 package com.example.ui.components
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
 
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
@@ -528,7 +530,7 @@ fun ParkDrawer(
                     if (proved != null) {
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = SimpleDateFormat("HH:mm", Locale.US).format(Date(proved)) +
+                            text = ClockText.timeOfDay(LocalContext.current, proved) +
                                 " · SELF-REPORT",
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,

@@ -38,6 +38,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.ReceiptState
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.theme.MonolithCurves
@@ -165,14 +167,14 @@ fun ReceiptSheet(
                     receipt.armWallMs, receipt.endedAtWallMs
                 )
                 val armedPrint = if (crossesDay) {
-                    "ARMED ${dayLabel(receipt.armWallMs)} ${hhmm(receipt.armWallMs)}"
+                    "ARMED ${dayLabel(receipt.armWallMs)} ${hhmm(LocalContext.current, receipt.armWallMs)}"
                 } else {
-                    "ARMED ${hhmm(receipt.armWallMs)}"
+                    "ARMED ${hhmm(LocalContext.current, receipt.armWallMs)}"
                 }
                 val endedPrint = if (crossesDay) {
-                    "ENDED ${dayLabel(receipt.endedAtWallMs)} ${hhmm(receipt.endedAtWallMs)}"
+                    "ENDED ${dayLabel(receipt.endedAtWallMs)} ${hhmm(LocalContext.current, receipt.endedAtWallMs)}"
                 } else {
-                    "ENDED ${hhmm(receipt.endedAtWallMs)}"
+                    "ENDED ${hhmm(LocalContext.current, receipt.endedAtWallMs)}"
                 }
                 val planned = receipt.plannedSeconds
                 ReceiptMonoLine(
@@ -246,7 +248,7 @@ fun ReceiptSheet(
                     }
                     Row(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = hhmm(d.atWallMillis),
+                            text = hhmm(LocalContext.current, d.atWallMillis),
                             fontFamily = AnonymousProFamily,
                             fontSize = 11.sp,
                             letterSpacing = 1.sp,
@@ -333,6 +335,8 @@ private fun ReceiptMonoLine(text: String, bold: Boolean = false) {
     )
 }
 
+private fun hhmm(context: android.content.Context, wallMillis: Long): String =
+    ClockText.timeOfDay(context, wallMillis)
 /** Nachdruck R3 (Finisher 3 §3, Emil P5): the silence threshold
  *  — a gap of ≥20 minutes between two consecutive PRINTED
  *  deflections earns a QUIET span rule (boundary included,
@@ -381,13 +385,13 @@ private fun ReceiptQuietRule(gapSeconds: Int) {
     }
 }
 
-private fun hhmm(wallMillis: Long): String =
-    SimpleDateFormat("HH:mm", Locale.US).format(Date(wallMillis))
 
-/** The printed day for a wall instant: `TUE 4 NOV`. */
+/** The printed day for a wall instant: `TUE 4 NOV`. #88: the day
+ *  and month names follow the device locale, like every other
+ *  printed label — they were pinned to US English. */
 internal fun dayLabel(wallMillis: Long): String =
-    SimpleDateFormat("EEE d MMM", Locale.US)
-        .format(Date(wallMillis)).uppercase(Locale.US)
+    SimpleDateFormat("EEE d MMM", Locale.getDefault())
+        .format(Date(wallMillis)).uppercase(Locale.getDefault())
 
 /** Whether two wall instants share one local calendar day. */
 internal fun sameLocalDay(aMillis: Long, bMillis: Long): Boolean {

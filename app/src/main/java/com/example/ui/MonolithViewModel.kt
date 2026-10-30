@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppBlockTier
+import com.example.data.ClockText
 import com.example.data.AppCategory
 import com.example.data.BreakResult
 import com.example.data.BlockedAppEntity
@@ -489,8 +490,7 @@ class MonolithViewModel(
         val session = activeSession.value ?: return ""
         if (session.isStopwatchMode) return ""
         val endsAt = System.currentTimeMillis() + session.spanRemainingSeconds * 1000L
-        return " (ENDS " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
-            .format(java.util.Date(endsAt)) + ")"
+        return " (ENDS " + ClockText.timeOfDay(appContext, endsAt) + ")"
     }
 
     val tasks: StateFlow<List<FocusTaskEntity>> = repository.allTasksFlow
@@ -2382,6 +2382,23 @@ class MonolithViewModel(
         }
     }
 
+    /** Issue #287 F7: add time to the ACTIVE session itself
+     *  (never the task) — the session-extension verb. The
+     *  repository re-signs the row in the same write. */
+    fun extendActiveSession(extraMinutes: Int = 10) {
+        viewModelScope.launch {
+            repository.extendActiveSession(extraMinutes)
+        }
+    }
+
+    /** Issue #287 F8: store his one reflection line against a
+     *  finished session's row. */
+    fun saveSessionReflection(sessionId: Int, note: String) {
+        viewModelScope.launch {
+            repository.setSessionReflection(sessionId, note)
+        }
+    }
+
     // =========================================================================
     // THE DRAWER — permanent storage for finished tasks. State is
     // pages of stored rows accumulated by EARLIER, the months index,
@@ -2848,6 +2865,15 @@ class MonolithViewModel(
     }
 
     fun applySmartLoadout(loadout: SmartLoadout) {
+        // Issue #304 F1: mid-session, the repository lands this
+        // loadout tightening-only (SessionTierGate) — say so with
+        // the ratchet's own warning instead of letting the tap
+        // pretend the whole preset applied.
+        if (activeSession.value?.isActive == true &&
+            com.example.data.LoadoutRules.anyLoosening(loadout, apps.value)
+        ) {
+            triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • LOADOUT APPLIES TIGHTENING-ONLY DURING ACTIVE VAULT")
+        }
         soundEngine.playHarmonicSeal(true)
         _selectedProfileName.value = loadout.title
         if (loadout == SmartLoadout.STUDY) {
@@ -3004,6 +3030,12 @@ class MonolithViewModel(
                 MonolithRepository.EVIDENCE_E4_HOLD_START, System.currentTimeMillis()
             )
         }
+    }
+
+    /** Issue #283: +15 minutes on the running session — the cap
+     *  and the HMAC re-sign live in the repository verb. */
+    fun extendActiveSession() {
+        viewModelScope.launch { repository.extendActiveSession() }
     }
 
     fun requestDisarmChallenge() {
