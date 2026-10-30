@@ -53,7 +53,7 @@ class ThemeWiringTest {
         assertEquals(DisplayUnitTextStyle, Typography.displaySmall)
         assertEquals(50.sp, Typography.displaySmall.fontSize)
         assertEquals(Typography.headlineLarge, Typography.headlineSmall)
-        assertEquals(Typography.titleMedium.fontFamily, Typography.titleSmall.fontFamily)
+        assertEquals(com.example.ui.theme.AppTitleTextStyle, Typography.titleSmall)
         // bodyLarge is the honest 400 body tier, not the bold title style.
         assertNotEquals(Typography.titleSmall.fontWeight, Typography.bodyLarge.fontWeight)
         assertNotEquals(Typography.bodyMedium.lineHeight, Typography.bodySmall.lineHeight)
