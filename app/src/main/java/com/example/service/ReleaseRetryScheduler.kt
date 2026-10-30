@@ -4,7 +4,6 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import com.example.data.MonolithDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -143,7 +142,7 @@ object ReleaseRetryScheduler {
      */
     suspend fun runDueRetry(context: Context): Boolean = withContext(Dispatchers.IO) {
         val appContext = context.applicationContext
-        val dao = MonolithDatabase.getInstance(appContext).monolithDao()
+        val dao = com.example.AppContainer.dao(appContext) /* ISSUE-67: single construction point */
         // Targeted read (issue #47 F5): newest faulted row only,
         // never a full-history scan per trigger.
         val faulted = dao.getFaultedReleaseSession() ?: return@withContext false
