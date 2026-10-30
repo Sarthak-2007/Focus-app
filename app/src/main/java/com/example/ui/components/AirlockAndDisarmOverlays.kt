@@ -264,7 +264,7 @@ internal fun peekBadgeText(durationSeconds: Int): String = "${durationSeconds / 
 internal fun peekPriceText(cooldownMillis: Long): String {
     val minutes = cooldownMillis / 60_000L
     val unit = if (minutes == 1L) "MINUTE" else "MINUTES"
-    return "TAKING THE PEEK STARTS A $minutes $unit COOLDOWN ON THIS APP"
+    return "WHEN THE PEEK ENDS, A $minutes $unit COOLDOWN RUNS ON THIS APP"
 }
 
 /** The capture's own time, for a frozen row: HH:mm when the
@@ -373,7 +373,7 @@ fun CapturedNotificationsDigestSheet(
                 }
                 if (frozenMode && frozenAtMillis != null) {
                     Text(
-                        text = "Everything here is as of the time above. Nothing here opens. Anything newer waits until the session ends.",
+                        text = "Everything held so far, as of the time above — this list refreshes as new items are held. Nothing here opens.",
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 13.sp,
                         color = scheme.onSurfaceVariant
