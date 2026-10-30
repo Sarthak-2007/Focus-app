@@ -174,6 +174,15 @@ class MonolithRepository(
         const val SEAL_MARKER_SESSION_KEY = "sealed_session_id"
         const val SEAL_MARKER_WALL_KEY = "sealed_wall_ms"
 
+        /** The clock anchor's prefs home (issue #82): the persisted
+         *  (wall, elapsedRealtime, bootCount) triple [ClockHonesty]
+         *  reasons from. Prefs, not Room — the anchor is machinery
+         *  state, not record, and needs no column. */
+        const val CLOCK_PREFS_NAME = "monolith_clock_anchor"
+        const val CLOCK_ANCHOR_WALL_KEY = "anchor_wall_ms"
+        const val CLOCK_ANCHOR_MONO_KEY = "anchor_elapsed_realtime_ms"
+        const val CLOCK_ANCHOR_BOOT_KEY = "anchor_boot_count"
+
         /** The prune note's prefs home (Ordner lane, Mikro M5): a
          *  record of what the catalog reconcile removed, kept until
          *  Shield has shown it once. Prefs, not Room — announcing a
@@ -181,6 +190,37 @@ class MonolithRepository(
         const val APP_LIST_PREFS_NAME = "monolith_app_list"
         const val PRUNE_NOTE_COUNT_KEY = "prune_note_count"
         const val PRUNE_NOTE_RULES_KEY = "prune_note_rules_removed"
+    }
+
+    /** The honest now (issue #82): the wall clock cross-checked
+     *  against the persisted monotonic anchor — see [ClockHonesty].
+     *  Every verdict that used to read System.currentTimeMillis()
+     *  raw (week anchor for the emergency token, routine edit
+     *  stamps, the heartbeat's derive/finalise "now") reads this
+     *  instead, so travelling the device clock can neither mint a
+     *  fresh weekly token, nor future-stamp an edit, nor materialise
+     *  a routine window that has not honestly arrived. */
+    fun honestNowMillis(): Long {
+        val prefs = context.getSharedPreferences(CLOCK_PREFS_NAME, Context.MODE_PRIVATE)
+        val nowWall = System.currentTimeMillis()
+        val nowMono = SystemClock.elapsedRealtime()
+        val boot = querySystemBootCount()
+        val decision = ClockHonesty.decide(
+            anchorWallMillis = prefs.getLong(CLOCK_ANCHOR_WALL_KEY, 0L),
+            anchorElapsedRealtimeMillis = prefs.getLong(CLOCK_ANCHOR_MONO_KEY, 0L),
+            anchorBootCount = prefs.getInt(CLOCK_ANCHOR_BOOT_KEY, -1),
+            nowWallMillis = nowWall,
+            nowElapsedRealtimeMillis = nowMono,
+            nowBootCount = boot
+        )
+        if (decision.reanchor) {
+            prefs.edit()
+                .putLong(CLOCK_ANCHOR_WALL_KEY, nowWall)
+                .putLong(CLOCK_ANCHOR_MONO_KEY, nowMono)
+                .putInt(CLOCK_ANCHOR_BOOT_KEY, boot)
+                .apply()
+        }
+        return decision.honestNowMillis
     }
 
     /** The seal marker's session id, or -1 when no seal has ever
@@ -1790,12 +1830,27 @@ class MonolithRepository(
     /** The gap latch's repository door (Nocke §2.2): set the
      *  latch when the active row's beat is stale past the law.
      *  Called from the VM ticker and the relaunch path; the
-     *  latch, once set, is never cleared. */
-    suspend fun latchShieldGapIfStale(nowWallMillis: Long): Boolean {
+     *  latch, once set, is never cleared.
+     *
+     *  Issue #82 (clock-attacks F1): the staleness test runs on the
+     *  monotonic-implied now ([ClockHonesty.impliedNowMillis]),
+     *  never on the raw wall clock. An 11-second forward jump of
+     *  the device clock can no longer forge a gap that never
+     *  happened, and a rollback can no longer launder a real one:
+     *  monotonic time moves neither way at the user's hand. */
+    suspend fun latchShieldGapIfStale(nowElapsedRealtimeMillis: Long): Boolean {
         val active = dao.getActiveSessionSnapshot() ?: return false
         if (active.shieldGapSeen || active.outcome.isNotEmpty()) return false
         val beatRef = maxOf(active.shieldLastBeatWallMillis, active.startWallTimeMillis)
-        if (nowWallMillis - beatRef <= SHIELD_GAP_THRESHOLD_MILLIS) return false
+        val impliedNow = ClockHonesty.impliedNowMillis(
+            startWallMillis = active.startWallTimeMillis,
+            accumulatedBeforeRebootSeconds = active.accumulatedBeforeRebootSeconds,
+            startElapsedRealtimeMillis = active.startElapsedRealtimeMillis,
+            lastTickElapsedRealtimeMillis = active.lastTickElapsedRealtimeMillis,
+            elapsedSeconds = active.elapsedSeconds,
+            nowElapsedRealtimeMillis = nowElapsedRealtimeMillis
+        )
+        if (impliedNow - beatRef <= SHIELD_GAP_THRESHOLD_MILLIS) return false
         dao.latchShieldGap(active.id)
         return true
     }
@@ -1944,7 +1999,23 @@ class MonolithRepository(
         // anyone but the shield would be a forged witness.
         val beatWall = if (stampShieldBeat) System.currentTimeMillis() else session.shieldLastBeatWallMillis
         val (verifiedElapsed, tamper) = computeVerifiedSessionElapsed(session)
-        val penaltyAdd = if (tamper && session.penaltySecondsAdded == 0) HMAC_TAMPER_PENALTY_SECONDS else session.penaltySecondsAdded
+        // Issue #82 (clock-attacks F5): the tamper penalty is no
+        // longer a one-way ratchet for CLOCK drift. Session elapsed
+        // is monotonic-anchored, so clock travel alone gains the
+        // user nothing; a 91-second blip (or an honest manual time
+        // correction) must not permanently extend the lock. The
+        // drift penalty therefore applies only WHILE the drift
+        // persists and unwinds on the first clean tick. Forged
+        // state (HMAC failure) is the real conviction: that penalty
+        // is set once and never unwinds.
+        val hmacValid = CryptoIntegrityManager.verifySessionState(session)
+        val penaltyAdd = when {
+            !hmacValid ->
+                if (session.penaltySecondsAdded == 0) HMAC_TAMPER_PENALTY_SECONDS
+                else session.penaltySecondsAdded
+            tamper -> HMAC_TAMPER_PENALTY_SECONDS
+            else -> 0
+        }
         val effectiveTarget = session.targetDurationSeconds + penaltyAdd
 
         // Re-anchor if device rebooted so subsequent ticks on the new boot stay monotonic
@@ -2063,9 +2134,15 @@ class MonolithRepository(
         } else if (isRoutineSession) {
             session.outcome
         } else {
-            val nowWall = System.currentTimeMillis()
+            // Issue #82 (clock-attacks F1): the finish stamp's gap
+            // test runs on the monotonic-implied now — the session
+            // start advanced by the VERIFIED (monotonic) elapsed —
+            // never on the raw wall clock, so clock travel can
+            // neither forge ELAPSED_SHIELD_GAP nor launder one into
+            // ELAPSED_CLEAN.
+            val impliedNowWall = session.startWallTimeMillis + verifiedElapsed * 1000L
             val beatRef = maxOf(session.shieldLastBeatWallMillis, session.startWallTimeMillis)
-            if (session.shieldGapSeen || nowWall - beatRef > SHIELD_GAP_THRESHOLD_MILLIS) {
+            if (session.shieldGapSeen || impliedNowWall - beatRef > SHIELD_GAP_THRESHOLD_MILLIS) {
                 SessionOutcome.ELAPSED_SHIELD_GAP
             } else {
                 SessionOutcome.ELAPSED_CLEAN
@@ -2189,7 +2266,10 @@ class MonolithRepository(
     private fun weekAnchorTickFlow(): Flow<Long> = flow {
         var lastAnchor: Long? = null
         while (true) {
-            val anchor = MonolithWeek.weekAnchorMillis(System.currentTimeMillis())
+            // Issue #82 (clock-attacks F3): the displayed week is
+            // the honest week — date travel must not refresh the
+            // token on any surface either.
+            val anchor = MonolithWeek.weekAnchorMillis(honestNowMillis())
             if (anchor != lastAnchor) {
                 lastAnchor = anchor
                 emit(anchor)
@@ -2227,7 +2307,12 @@ class MonolithRepository(
         return database.withTransaction {
             val active = dao.getActiveSessionSnapshot()
                 ?: return@withTransaction BreakResult.NoActiveSession
-            val now = System.currentTimeMillis()
+            // Issue #82 (clock-attacks F3): the week's anchor is
+            // computed from the HONEST now, never the raw wall
+            // clock — travelling the date into any other week used
+            // to mint a fresh, unspent token; monotonic time does
+            // not travel, so the anchor stays in the real week.
+            val now = honestNowMillis()
             val anchor = MonolithWeek.weekAnchorMillis(now)
             if (dao.getSpendsForWeek(anchor).size >= 1) {
                 return@withTransaction BreakResult.RefusedNoToken

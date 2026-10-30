@@ -969,7 +969,7 @@ class MonolithViewModel(
                     // completion, its stats, its desk-clock hide —
                     // is CUT (E4); the finish machine owns all
                     // three now.
-                    repository.latchShieldGapIfStale(System.currentTimeMillis())
+                    repository.latchShieldGapIfStale(SystemClock.elapsedRealtime())
                     repository.updateSessionProgress(current)
                 }
 
@@ -1502,8 +1502,12 @@ class MonolithViewModel(
         viewModelScope.launch {
             // Every edit re-stamps the schedule and dismisses the
             // reset note, then reconciles immediately (CRUD trigger).
+            // Issue #82 (clock-attacks F4): the stamp is the HONEST
+            // now — stamping raw wall time let a +30-day clock jump
+            // mint a future edit horizon that suppressed every
+            // MISSED judgement for a month.
             repository.updateRoutine(
-                routine.copy(scheduleEditedAtMillis = System.currentTimeMillis())
+                routine.copy(scheduleEditedAtMillis = repository.honestNowMillis())
             )
             repository.dismissRoutineResetNote()
             com.example.service.RoutineHeartbeat.tick(
