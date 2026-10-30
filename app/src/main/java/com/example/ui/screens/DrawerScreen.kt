@@ -96,6 +96,12 @@ private data class DrawerDayGroup(
     val date: LocalDate,
     val rows: List<FocusTaskEntity>,
     val word: String?
+    // R3b #163 F2/F3 STRUCK (Purpose lens, Sarthak's settled
+    // definition): the Drawer stores finished tasks in a quiet
+    // drawer — NO scores, NO day-grading, NO judgement. It does
+    // not print routine outcomes ("MISSED") and it does not
+    // manufacture a group for a day that stored nothing: a day
+    // with no finished tasks kept nothing, so nothing vanished.
 )
 
 /** Group rows by filing date and merge declared words + (optionally)
@@ -188,6 +194,9 @@ fun DrawerScreen(
     onQueryChange: (String) -> Unit,
     onLoadEarlierSearch: () -> Unit,
     onDeclareTodayWord: (String?) -> Unit,
+    // R3b #163 F1: yesterday's word stays declarable the morning
+    // after. (F2/F3 struck — see DrawerDayGroup.)
+    onDeclareDayWord: (LocalDate, String?) -> Unit = { _, _ -> },
     // The cabinet (chrome C10): the curios' new home. The Drawer is
     // storage; the cabinet is its furniture — the six artifacts as
     // ruled rows, their forged state read from real sessions, their
@@ -1091,9 +1100,12 @@ fun DrawerScreen(
                     item(key = "month-head-${group.date}") {
                         DayHeading(
                             group = group,
-                            isToday = group.date == today,
-                            isSealed = isSealed,
-                            onDeclareTodayWord = onDeclareTodayWord
+                            canDeclare = !isSealed && (group.date == today ||
+                                (group.date == today.minusDays(1) && group.word == null)),
+                            onDeclareWord = { word ->
+                                if (group.date == today) onDeclareTodayWord(word)
+                                else onDeclareDayWord(group.date, word)
+                            }
                         )
                     }
                     items(group.rows, key = { "month-${it.id}" }) { task ->
@@ -1170,9 +1182,8 @@ fun DrawerScreen(
                                 rows = emptyList(),
                                 word = dayWords[DrawerDay.dateIso(today)]
                             ),
-                            isToday = true,
-                            isSealed = isSealed,
-                            onDeclareTodayWord = onDeclareTodayWord
+                            canDeclare = !isSealed,
+                            onDeclareWord = onDeclareTodayWord
                         )
                     }
                     item {
@@ -1231,9 +1242,12 @@ fun DrawerScreen(
                         item(key = "land-head-${group.date}") {
                             DayHeading(
                                 group = group,
-                                isToday = group.date == today,
-                                isSealed = isSealed,
-                                onDeclareTodayWord = onDeclareTodayWord
+                                canDeclare = !isSealed && (group.date == today ||
+                                    (group.date == today.minusDays(1) && group.word == null)),
+                                onDeclareWord = { word ->
+                                    if (group.date == today) onDeclareTodayWord(word)
+                                    else onDeclareDayWord(group.date, word)
+                                }
                             )
                         }
                         items(group.rows, key = { "land-${it.id}" }) { task ->
@@ -1280,9 +1294,11 @@ private fun DrawerNavRow(
 @Composable
 private fun DayHeading(
     group: DrawerDayGroup,
-    isToday: Boolean,
-    isSealed: Boolean,
-    onDeclareTodayWord: (String?) -> Unit
+    // R3b #163 F1: the picker is offered for today, and for
+    // yesterday while yesterday still carries no word — the call
+    // sites compute that; the heading just renders the offer.
+    canDeclare: Boolean,
+    onDeclareWord: (String?) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1299,7 +1315,7 @@ private fun DayHeading(
             color = scheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 6.dp)
         )
-        if (isToday && !isSealed) {
+        if (canDeclare) {
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 DayWordStore.WORDS.forEach { word ->
                     val active = group.word == word
@@ -1312,7 +1328,7 @@ private fun DayHeading(
                         modifier = Modifier
                             .clickable(
                                 role = androidx.compose.ui.semantics.Role.Button
-                            ) { onDeclareTodayWord(if (active) null else word) }
+                            ) { onDeclareWord(if (active) null else word) }
                             .sizeIn(minHeight = 48.dp)
                             .padding(vertical = 12.dp)
                             .testTag("declare_word_${word.lowercase()}")

@@ -253,6 +253,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // from the persisted store by way of the VM.
     val loadoutCapIndex by viewModel.loadoutCapIndex.collectAsStateWithLifecycle()
     val showRoutineResetNote by viewModel.showRoutineResetNote.collectAsStateWithLifecycle()
+    val activeTaskFromYesterday by viewModel.activeTaskFromYesterday.collectAsStateWithLifecycle()
     val freshStartNoteVisible by viewModel.freshStartNoteVisible.collectAsStateWithLifecycle()
     val updateNoteVisible by viewModel.updateNoteVisible.collectAsStateWithLifecycle()
     val frozenDigest by viewModel.frozenDigest.collectAsStateWithLifecycle()
@@ -679,6 +680,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     dialMinutes = dialMinutes,
                                     studyBlocksCount = studyBlocksCount,
                                     activeTask = activeTask,
+                                    activeTaskFromYesterday = activeTaskFromYesterday,
                                     queuedTasks = queuedTasks,
                                     capturedNotificationsCount = capturedNotifications.size,
                                     soundEngine = viewModel.soundEngine,
@@ -838,6 +840,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onQueryChange = viewModel::setDrawerQuery,
                                     onLoadEarlierSearch = viewModel::loadEarlierDrawerSearch,
                                     onDeclareTodayWord = viewModel::declareTodayWord,
+                                    onDeclareDayWord = viewModel::declareDayWordFor,
                                     artifacts = com.example.data.CurioCatalog.artifacts,
                                     forgedArtifactIds = forgedArtifactIds,
                                     curioForgeRecords = curioForgeRecords,
