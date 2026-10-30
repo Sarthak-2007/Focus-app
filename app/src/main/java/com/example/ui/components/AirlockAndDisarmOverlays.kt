@@ -1058,7 +1058,7 @@ fun AirlockInterceptOverlay(
                             modifier = Modifier.fillMaxWidth().height(34.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            AnimatedVisibility(
+                            androidx.compose.animation.AnimatedVisibility(
                                 visible = state.canUse2MinutePeek,
                                 enter = fadeIn(MonolithCurves.specA(180)),
                                 exit = fadeOut(MonolithCurves.specA(180))
