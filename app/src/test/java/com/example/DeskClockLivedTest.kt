@@ -148,7 +148,7 @@ class DeskClockLivedTest {
     fun renderedClock_breakFaceAnnouncesAndTapDoesNotDismiss_holdDoes() {
         var dismissed = false
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = true, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = true) {
                 AlwaysOnDeskClockOverlay(
                     visible = true,
                     activeSession = row(inBreak = true, breakRemaining = 452),

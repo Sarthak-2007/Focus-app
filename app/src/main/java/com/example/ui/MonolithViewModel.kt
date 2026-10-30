@@ -82,20 +82,25 @@ enum class MonolithDestination(val route: String, val label: String) {
 /**
  * The theme evaluation (chrome C4, Sten's precedence, §8.10): ONE
  * evaluation drives both the colour scheme and PARK's printed
- * readout, so the two can never disagree. (1) a session is active →
- * NIGHT, the session owns it; (2) else an enabled, unpaused SLEEP
- * window is active → NIGHT, that routine owns it and is named as
- * printed on its Shield row; (3) else CLOCK/SYSTEM night → NIGHT,
- * the night itself owns it (Audit R3b #116: darkness was hostage
- * to accepting a blocking routine — pausing or disabling SLEEP to
- * stop its blocking also cost the dark UI, and at 04:00 the app
- * opened in full light; the one [com.example.service.NightSignal]
- * now owns this step, the same signal the desk clock, the seal
- * shot and the sound engine read); (4) else DAY, owned by nothing
- * — and the readout says so. Window state comes from the one
+ * readout, so the two can never disagree. (1) a session is active
+ * AND its shot has GROUNDED → NIGHT, the session owns it (Issue
+ * #143: the caller passes the GROUNDED-stepped value — night
+ * never lands at the row's birth or during proving); (2) else a
+ * finish is being lived through (detention + receipt, until the
+ * finish state clears) → NIGHT, the finish holds it; (3) else an
+ * enabled, unpaused SLEEP window is active → NIGHT, that routine
+ * owns it and is named as printed on its Shield row; (4) else
+ * CLOCK/SYSTEM night → NIGHT, the night itself owns it (Audit
+ * R3b #116: darkness was hostage to accepting a blocking
+ * routine — pausing or disabling SLEEP to stop its blocking also
+ * cost the dark UI, and at 04:00 the app opened in full light;
+ * the one [com.example.service.NightSignal] now owns this step,
+ * the same signal the desk clock, the seal shot and the sound
+ * engine read); (5) else DAY, owned by nothing — and the
+ * readout says so. Window state comes from the one
  * derivation (RoutineDerive), never a second computation.
  *
- * Because step (3) holds night until 06:00, a session or SLEEP
+ * Because step (4) holds night until 06:00, a session or SLEEP
  * window ending at night can no longer cut to the light scheme in
  * a dark room: night is held till morning by construction.
  */
@@ -105,10 +110,14 @@ fun evaluateTheme(
     sessionActive: Boolean,
     routines: List<com.example.data.RoutineEntity>,
     nowMillis: Long,
-    systemNight: Boolean = false
+    systemNight: Boolean = false,
+    finishHeld: Boolean = false
 ): ThemeEvaluation {
     if (sessionActive) {
         return ThemeEvaluation(true, "AUTO · NIGHT — SESSION ACTIVE")
+    }
+    if (finishHeld) {
+        return ThemeEvaluation(true, "AUTO · NIGHT — FINISH HELD")
     }
     val owner = routines.firstOrNull { routine ->
         routine.loadoutName == SmartLoadout.SLEEP.name &&
@@ -195,6 +204,44 @@ internal fun peekOfferFor(
         !pillActive
 
 /**
+ * Issue #78 (Audit R2, ipc-intents): may an Airlock raised from an
+ * INTENT be shown at all? The intent is evidence that a door fired
+ * at some point in the past — possibly before a process death — so
+ * showing is re-derived from the LIVE facts, never from the
+ * intent's extras:
+ *  - no active session, no Airlock (every firing door is itself
+ *    session-gated; a session that has since ended voids the
+ *    firing with it);
+ *  - on the two app-tier doors the package must still carry a
+ *    non-OPEN tier, must not be free under the Safe Break's peek
+ *    pass, and must not already hold the live peek lease the
+ *    enforcement is honouring;
+ *  - the sniper / site / guard / unknown doors intercept packages
+ *    that legitimately have no row or an OPEN row (a browser, the
+ *    Settings app), so for them the live session IS the whole
+ *    revalidation — their peek offer is already always off
+ *    (see [peekOfferFor]).
+ * Pure, so the matrix is unit-tested door by door.
+ */
+internal fun airlockIntentRevalidated(
+    path: InterceptPath,
+    tier: AppBlockTier?,
+    sessionActive: Boolean,
+    inSafeBreak: Boolean,
+    peekLeaseLive: Boolean
+): Boolean {
+    if (!sessionActive) return false
+    return when (path) {
+        InterceptPath.APP_TIER, InterceptPath.SHIELD_APP ->
+            tier != null &&
+                tier != AppBlockTier.OPEN &&
+                !(inSafeBreak && tier == AppBlockTier.PEEK_2M) &&
+                !peekLeaseLive
+        else -> true
+    }
+}
+
+/**
  * Issue #55: the withheld reason for a peek offer, computed from
  * live facts — used at intercept time AND when a grant is refused,
  * so the standing overlay always prints the current truth. A
@@ -218,6 +265,7 @@ internal fun peekWithheldFor(
     pillActive -> PeekWithheld.ALREADY_ACTIVE
     cooldownLeft > 0 -> PeekWithheld.COOLDOWN
     else -> null
+
 }
 
 data class AirlockInterceptState(
@@ -266,7 +314,13 @@ data class AirlockInterceptState(
      *  Null when there is no timed end to state (stopwatch, or no
      *  session): the door never invents one. */
     val sessionEndsAtMillis: Long? = null,
-    val sessionIsStopwatch: Boolean = false
+    val sessionIsStopwatch: Boolean = false,
+    /** Audit R3b #147: a stopwatch session has no set end, but it
+     *  DOES have a floor moment — the wall instant its clean exit
+     *  opens (start + the 20-minute floor, on the session's own
+     *  banked elapsed). The door states it instead of the bare
+     *  "NO SET END". Null for timed sessions and no session. */
+    val stopwatchFloorAtMillis: Long? = null
 )
 
 /**
@@ -285,7 +339,15 @@ internal fun peekSecondsRemaining(leaseEndMono: Long, nowMono: Long): Int? {
 
 data class DisarmChallengeState(
     val isVisible: Boolean = false,
-    val requiredHoldSeconds: Int = 60
+    val requiredHoldSeconds: Int = 60,
+    // Audit R3b #147: the stopwatch floor, carried into the valve
+    // overlay so it can state the wait-to-free path instead of
+    // presenting the token as the only door. These two are FACTS
+    // about the session at open time (its mode, its banked
+    // distance to the floor) — not a token count; the count rule
+    // below stands untouched.
+    val sessionIsStopwatch: Boolean = false,
+    val remainingFloorSeconds: Int = 0
     // No token count lives here (TOKEN-SPEC §5, Amendment A): a count
     // copied into this state at open time is a snapshot that can lie
     // for the visit's whole life. The overlay derives its count from
@@ -371,8 +433,6 @@ class MonolithViewModel(
     private val _showNotificationDigestSheet = MutableStateFlow(false)
     val showNotificationDigestSheet: StateFlow<Boolean> = _showNotificationDigestSheet.asStateFlow()
 
-    private val _sevenDayStats = MutableStateFlow<List<DailyFocusStat>>(emptyList())
-    val sevenDayStats: StateFlow<List<DailyFocusStat>> = _sevenDayStats.asStateFlow()
 
 
     // Truth Car 3 (UNA-03): the printed state is born from the
@@ -420,13 +480,32 @@ class MonolithViewModel(
         // finish's reserved voice — the ratchet warning's spend
         // of it dies here. The warning is a print; it sounds
         // nothing.
+        // Issue #140: the print used to live 3.6 seconds — a user
+        // who looked up a second too late got a tap that silently
+        // did nothing. Ten seconds is a readable sentence's life.
 
         _ratchetWarningMessage.value = msg
         ratchetBannerJob?.cancel()
         ratchetBannerJob = viewModelScope.launch {
-            delay(3600L)
+            delay(10_000L)
             _ratchetWarningMessage.value = null
         }
+    }
+
+    /**
+     * Issue #140: the session's end as the door itself derives it
+     * (the span law — whole-span remaining, never the per-block
+     * remainder). " (ENDS 18:00)" for a timed session, "" for a
+     * stopwatch or no session: a ratchet sentence may only promise
+     * what the model knows. The old sentence promised 00:00, which
+     * was false in both directions.
+     */
+    private fun sessionEndsSuffix(): String {
+        val session = activeSession.value ?: return ""
+        if (session.isStopwatchMode) return ""
+        val endsAt = System.currentTimeMillis() + session.spanRemainingSeconds * 1000L
+        return " (ENDS " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+            .format(java.util.Date(endsAt)) + ")"
     }
 
     val tasks: StateFlow<List<FocusTaskEntity>> = repository.allTasksFlow
@@ -505,6 +584,9 @@ class MonolithViewModel(
 
     fun persistReceiptDismissal(sessionId: Int) {
         receiptDismissalStore.dismiss(sessionId)
+        // Issue #143: the slip has been read and put away — the
+        // finish's night hold retires with it.
+        _finishNightHold.value = false
     }
 
     private val _searchQuery = MutableStateFlow("")
@@ -584,30 +666,76 @@ class MonolithViewModel(
     val interceptLogs: StateFlow<List<InterceptLogEntity>> = repository.interceptLogsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // Issue #143: the finish + ground flows are declared BEFORE
+    // the theme evaluation on purpose — its combine reads them
+    // (below), and a flow declared under the combine is still
+    // null when the first transform can run (the Slice E lesson;
+    // see the note at _receiptState further down).
+    private val _finishState = MutableStateFlow<FinishState?>(null)
+    val finishState: StateFlow<FinishState?> = _finishState.asStateFlow()
+
+    // Issue #143 (closure pass, STURM-4): the night hold after a
+    // finish. Set ONLY at a witnessed E0 whose session was lived
+    // in night (latched below, while the session ran — by E0 the
+    // theme has already flipped, so the fact must be captured
+    // during the session, never re-derived after it). It holds
+    // the night through the detention AND the receipt's reading
+    // (the finish state itself retires at the rack's end, long
+    // before the slip is dismissed), and clears when the receipt
+    // is dismissed or the next session arms. A DAY session's
+    // finish never sets it — no night blast in reverse.
+    private val _finishNightHold = MutableStateFlow(false)
+    private var nightLatchedSessionId: Int? = null
+    private var nightLatchedForSession: Boolean = false
+
+    /** F-Z1 (a) — the VM mirror of the shot's ground step, and
+     *  F23's pin in the same state: SEALED_PRE_GROUND is the
+     *  400ms where the scheme holds its day values while the
+     *  orange exits; GROUNDED is the step itself. */
+    enum class ShotGround { NOT_SEALED, SEALED_PRE_GROUND, GROUNDED }
+
+    private val _shotGround = MutableStateFlow(ShotGround.NOT_SEALED)
+    val shotGround: StateFlow<ShotGround> = _shotGround.asStateFlow()
+    private var shotGroundJob: Job? = null
+
     // ------------------------------------------------------------------
     // THE THEME EVALUATION (chrome C4). One evaluation, two readers:
     // the scheme (through darkTheme) and PARK's printed readout.
     // Re-derived on a 1-second stamp so a boundary swaps the scheme
-    // within a second of its frame. (Audit R3b #116: the old note
-    // here boasted "a 0ms cut, never a fade" — that cut, fired when
-    // a session/SLEEP window ended at night, floodlit a half-asleep
-    // user. Clock night in the evaluation now holds the night
-    // scheme until 06:00, so no boundary inside the night can cut
-    // to light at all.)
+    // within a second of its frame. Issue #143: session-night is
+    // stepped by the GROUND (never at the row's birth, never
+    // during proving — the t=400ms pin MainActivity/Theme.kt
+    // always claimed), and a finish being lived through HOLDS
+    // the night until it clears, so the detention and the
+    // receipt are not spent under a day blast. The Deck and
+    // receipt surfaces animate the colour step (F6).
+    // (Audit R3b #116: the old note here boasted "a 0ms cut, never
+    // a fade" — that cut, fired when a session/SLEEP window ended
+    // at night, floodlit a half-asleep user. Clock night in the
+    // evaluation now holds the night scheme until 06:00, so no
+    // boundary inside the night can cut to light at all.)
     // ------------------------------------------------------------------
     private val _themeNow = MutableStateFlow(System.currentTimeMillis())
 
     val themeEvaluation: StateFlow<ThemeEvaluation> = combine(
         routines,
         activeSession,
-        _themeNow
-    ) { routineList, session, now ->
+        _themeNow,
+        _shotGround,
+        _finishNightHold
+    ) { routineList, session, now, ground, finishHold ->
         // The system signal, read live at each derivation: the
         // phone's own dark mode is a night witness beside the clock.
         val systemNight = (appContext.resources.configuration.uiMode and
             android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
             android.content.res.Configuration.UI_MODE_NIGHT_YES
-        evaluateTheme(session?.isActive == true, routineList, now, systemNight)
+        evaluateTheme(
+            session?.isActive == true && ground == ShotGround.GROUNDED,
+            routineList,
+            now,
+            systemNight = systemNight,
+            finishHeld = finishHold
+        )
     }.stateIn(
         viewModelScope, SharingStarted.Eagerly,
         ThemeEvaluation(false, "AUTO · DAY — NO ROUTINE OWNS IT")
@@ -624,6 +752,9 @@ class MonolithViewModel(
      *  board and the header's Guard line derive from it. */
     val watchSnapshots: StateFlow<com.example.service.WatchSnapshot> =
         com.example.service.WatchStore.snapshots
+
+    /** Otis's heartbeat, exposed for the strip and the chrome line. */
+    val wireSnapshots: StateFlow<com.example.service.WatchSnapshot> = com.example.service.WatchStore.snapshots
 
     val capturedNotifications: StateFlow<List<CapturedNotificationEntity>> = repository.capturedNotificationsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -725,7 +856,6 @@ class MonolithViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** Otis's heartbeat, exposed for the strip and the chrome line. */
-    val wireSnapshots: StateFlow<com.example.service.WatchSnapshot> = com.example.service.WatchStore.snapshots
 
     /**
      * The standing Live Wire verdict for the Deck's print (the strip,
@@ -880,9 +1010,8 @@ class MonolithViewModel(
     // declared below init is still null at that moment (the
     // harness caught exactly that NPE). The data classes and the
     // machines themselves live further down; state lives here.
-    private val _finishState = MutableStateFlow<FinishState?>(null)
-    val finishState: StateFlow<FinishState?> = _finishState.asStateFlow()
-
+    // (_finishState and _shotGround moved ABOVE the theme
+    // evaluation under Issue #143 — its combine reads them.)
     private val _receiptState = MutableStateFlow<com.example.data.ReceiptState?>(null)
     val receiptState: StateFlow<com.example.data.ReceiptState?> = _receiptState.asStateFlow()
 
@@ -891,16 +1020,6 @@ class MonolithViewModel(
      *  owns the firing. */
     internal val sledReturnGate = SledReturnGate()
     private var sledExpiryJob: Job? = null
-
-    /** F-Z1 (a) — the VM mirror of the shot's ground step, and
-     *  F23's pin in the same state: SEALED_PRE_GROUND is the
-     *  400ms where the scheme holds its day values while the
-     *  orange exits; GROUNDED is the step itself. */
-    enum class ShotGround { NOT_SEALED, SEALED_PRE_GROUND, GROUNDED }
-
-    private val _shotGround = MutableStateFlow(ShotGround.NOT_SEALED)
-    val shotGround: StateFlow<ShotGround> = _shotGround.asStateFlow()
-    private var shotGroundJob: Job? = null
 
     // Issue #28 (finding 4a): this set is touched from the
     // sessionHistory collector, onFinishE0's launched coroutines
@@ -942,6 +1061,22 @@ class MonolithViewModel(
                 undoDeleteStore.clear()
             }
         }
+        // Issue #143: latch "this session is being lived in night"
+        // while it runs — E0 reads the latch, because by then the
+        // evaluation has already flipped back to day.
+        viewModelScope.launch {
+            combine(activeSession, themeEvaluation) { session, theme ->
+                session to theme
+            }.collect { (session, theme) ->
+                if (session?.isActive == true) {
+                    if (nightLatchedSessionId != session.id) {
+                        nightLatchedSessionId = session.id
+                        nightLatchedForSession = false
+                    }
+                    if (theme.isNight) nightLatchedForSession = true
+                }
+            }
+        }
         _freshStartNoteVisible.value = repository.freshStartNotePending()
         _updateNoteVisible.value = repository.registerInstallOpen() || repository.updateNotePending()
         viewModelScope.launch {
@@ -958,7 +1093,6 @@ class MonolithViewModel(
             // flow is a print of the store, never the store.
             _shortsReelsSniperEnabled.value = repository.isShortsReelsSniperEnabled()
             refreshSystemGuard()
-            _sevenDayStats.value = repository.compute7DayHistory()
         }
         viewModelScope.launch {
             activeTask.collect { task ->
@@ -1170,7 +1304,7 @@ class MonolithViewModel(
                     // completion, its stats, its desk-clock hide —
                     // is CUT (E4); the finish machine owns all
                     // three now.
-                    repository.latchShieldGapIfStale(System.currentTimeMillis())
+                    repository.latchShieldGapIfStale(SystemClock.elapsedRealtime())
                     repository.updateSessionProgress(current)
                 }
 
@@ -1441,6 +1575,12 @@ class MonolithViewModel(
     ) {
         handledFinishIds += row.id
         val sessionId = row.id
+        // Issue #143: a witnessed finish of a night-lived session
+        // holds the night from this frame until the receipt is
+        // dismissed — detention and reading both stay in night.
+        if (witnessed && nightLatchedSessionId == sessionId && nightLatchedForSession) {
+            _finishNightHold.value = true
+        }
         val e0Mono = SystemClock.elapsedRealtime()
         val e0Wall = System.currentTimeMillis()
         if (activeSession.value?.id == sessionId) {
@@ -1449,7 +1589,6 @@ class MonolithViewModel(
             _isAlwaysOnDeskClockVisible.value = false
         }
         viewModelScope.launch {
-            _sevenDayStats.value = repository.compute7DayHistory()
             val pending = repository.assemblePendingReceipt(sessionId, kind, e0Wall)
             if (pending == null) {
                 handledFinishIds -= sessionId
@@ -1487,19 +1626,23 @@ class MonolithViewModel(
             // pair. Death-booked: the E700 slot stands EMPTY.
             val pulses = com.example.data.finishPulses(kind, row)
             launch {
-                soundEngine.playSeatKnock(24, 1.0f, 320f)
+                // Issue #150: the whole cascade is timer-fired
+                // against e0Mono — unattended voices, so Do Not
+                // Disturb binds them in the engine (the ringer's
+                // word already binds every voice).
+                soundEngine.playSeatKnock(24, 1.0f, 320f, unattended = true)
                 if (pulses) {
                     val toPulse = 700L - (SystemClock.elapsedRealtime() - e0Mono)
                     if (toPulse > 0L) delay(toPulse)
                     if (SystemClock.elapsedRealtime() - e0Mono < 900L) {
-                        soundEngine.playCompletionPulse()
+                        soundEngine.playCompletionPulse(unattended = true)
                     }
                 }
                 val toPair = 880L - (SystemClock.elapsedRealtime() - e0Mono)
                 if (toPair > 0L) delay(toPair)
-                soundEngine.playSeatKnock(24, 1.0f, 320f)
+                soundEngine.playSeatKnock(24, 1.0f, 320f, unattended = true)
                 delay(90L)
-                soundEngine.playSeatKnock(12, 0.5f, 320f)
+                soundEngine.playSeatKnock(12, 0.5f, 320f, unattended = true)
             }
 
             var pawlLiftMs: Long? = null
@@ -1621,7 +1764,6 @@ class MonolithViewModel(
 
     fun tryStartSledReturn(sessionId: Int): Boolean = sledReturnGate.tryStart(sessionId)
 
-    fun voidSledReturn(sessionId: Int) = sledReturnGate.void(sessionId)
 
     /** The slide factory's fraction (Schlitten §2.3): seated
      *  while a session runs or a return is pending; home in
@@ -1763,12 +1905,16 @@ class MonolithViewModel(
     private fun persistRoutine(routine: com.example.data.RoutineEntity) {
         viewModelScope.launch {
             // Every edit re-stamps the schedule, then reconciles
-            // immediately (CRUD trigger). The reset note is NOT
-            // dismissed here (R3b #161): obeying the note must not
-            // erase the record that a reset happened — only the
-            // user's tap on the note itself dismisses it.
+            // immediately (CRUD trigger). Issue #82 (clock-attacks
+            // F4): the stamp is the HONEST now — stamping raw wall
+            // time let a +30-day clock jump mint a future edit
+            // horizon that suppressed every MISSED judgement for a
+            // month. The reset note is NOT dismissed here (R3b
+            // #161): obeying the note must not erase the record
+            // that a reset happened — only the user's tap on the
+            // note itself dismisses it.
             repository.updateRoutine(
-                routine.copy(scheduleEditedAtMillis = System.currentTimeMillis())
+                routine.copy(scheduleEditedAtMillis = repository.honestNowMillis())
             )
             com.example.service.RoutineHeartbeat.tick(
                 appContext, com.example.service.RoutineHeartbeat.Source.CRUD, force = true
@@ -1777,6 +1923,19 @@ class MonolithViewModel(
     }
 
     fun toggleRoutine(routine: com.example.data.RoutineEntity) {
+        // Audit R5 #306 F2: a routine whose window is live is
+        // forced-on. The bare flip let the person being blocked kill
+        // the scheduled protection in one tap at exactly the moment
+        // it started to bite; while the window runs, disabling is
+        // refused (the row is state-driven, so it simply stays on).
+        // Enabling is never refused, and a routine that is paused or
+        // outside its window stays freely editable.
+        if (routine.enabled &&
+            com.example.data.RoutineSchedule.isEnforcingAt(routine, System.currentTimeMillis())
+        ) {
+            soundEngine.playMechanicalLatch(true)
+            return
+        }
         val updated = routine.copy(enabled = !routine.enabled)
         soundEngine.playMechanicalLatch(updated.enabled)
         persistRoutine(updated)
@@ -1810,9 +1969,105 @@ class MonolithViewModel(
     }
 
     fun toggleRoutineDay(routine: com.example.data.RoutineEntity, dayIndex: Int) {
+        // Audit R5 #306 F2: removing TODAY from a routine whose
+        // window is live is a disable by another name — refused
+        // while the window runs, on the same forced-on rule as
+        // toggleRoutine. Adding a day, or editing any other day,
+        // stays free.
+        val removing = routine.daysMask and (1 shl dayIndex) != 0
+        if (removing) {
+            val todayBit = (java.util.Calendar.getInstance()
+                .get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
+            if (dayIndex == todayBit &&
+                com.example.data.RoutineSchedule.isEnforcingAt(routine, System.currentTimeMillis())
+            ) {
+                soundEngine.playRotaryDetent()
+                return
+            }
+        }
         val mask = routine.daysMask xor (1 shl dayIndex)
         soundEngine.playRotaryDetent()
         persistRoutine(routine.copy(daysMask = mask))
+    }
+
+    /** #153 F2+F3: SKIP TODAY — the forgive button. Sets the
+     *  pause-until to the end of today's (current or next) window:
+     *  the window never materialises, judgement J6 never calls it
+     *  a miss, and the weekly mask is NOT touched — every future
+     *  same-weekday still runs. One tap, one day, forgiven. */
+    fun skipRoutineToday(routine: com.example.data.RoutineEntity) {
+        val now = System.currentTimeMillis()
+        val until = com.example.data.RoutineSchedule.skipWindowEndMillis(routine, now) ?: return
+        if (until <= now) return
+        soundEngine.playMechanicalLatch(false)
+        persistRoutine(routine.copy(pausedUntilMillis = until))
+    }
+
+    /** #153 F2: undo a pause — the routine runs on its mask again. */
+    fun resumeRoutine(routine: com.example.data.RoutineEntity) {
+        if (routine.pausedUntilMillis == 0L) return
+        soundEngine.playMechanicalLatch(true)
+        persistRoutine(routine.copy(pausedUntilMillis = 0L))
+    }
+
+    /** #153 F4: add a routine — a plain new block he then shapes
+     *  with the same row controls (time, days, loadout, name). */
+    fun addRoutine() {
+        viewModelScope.launch {
+            repository.addRoutine(
+                com.example.data.RoutineEntity(
+                    name = "NEW BLOCK",
+                    startMinutes = 540,
+                    endMinutes = 660,
+                    daysMask = com.example.data.RoutineSchedule.ALL_DAYS,
+                    loadoutName = com.example.data.SmartLoadout.STUDY.name,
+                    enabled = true
+                )
+            )
+            repository.dismissRoutineResetNote()
+            com.example.service.RoutineHeartbeat.tick(
+                appContext, com.example.service.RoutineHeartbeat.Source.CRUD, force = true
+            )
+        }
+    }
+
+    /** #153 F4: delete a routine. The heartbeat's orphan pass
+     *  finalises any of its sessions by their stored windows. */
+    fun deleteRoutine(routine: com.example.data.RoutineEntity) {
+        soundEngine.playMechanicalLatch(false)
+        viewModelScope.launch {
+            repository.deleteRoutine(routine.id)
+            repository.dismissRoutineResetNote()
+            com.example.service.RoutineHeartbeat.tick(
+                appContext, com.example.service.RoutineHeartbeat.Source.CRUD, force = true
+            )
+        }
+    }
+
+    /** #153 F4: rename a routine — the name is his word, not a
+     *  seed's. Blank names are refused (a nameless block is a bug). */
+    fun renameRoutine(routine: com.example.data.RoutineEntity, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty() || trimmed == routine.name) return
+        soundEngine.playFirmClick()
+        persistRoutine(routine.copy(name = trimmed.uppercase()))
+    }
+
+    /** #153 F5: apply a drafted window in ONE persist — the draft
+     *  lives in the row's UI state; nothing reaches the engine
+     *  until APPLY. Out-of-clamp spans are refused whole (the row
+     *  shows the clamp note; a silent no-op is a lie). */
+    fun setRoutineTime(
+        routine: com.example.data.RoutineEntity,
+        startMinutes: Int,
+        endMinutes: Int
+    ): Boolean {
+        val candidate = routine.copy(startMinutes = startMinutes, endMinutes = endMinutes)
+        val rawSpan = (endMinutes - startMinutes + 1440) % 1440
+        if (rawSpan !in 30..1080) return false
+        soundEngine.playRotaryDetent()
+        persistRoutine(candidate)
+        return true
     }
 
     fun addBlockedSite(raw: String) {
@@ -1891,17 +2146,6 @@ class MonolithViewModel(
         }
     }
 
-    fun simulateCapturedNotification() {
-        soundEngine.playRotaryDetent(700.0)
-        viewModelScope.launch {
-            repository.saveCapturedNotification(
-                packageName = "com.whatsapp",
-                appName = "WhatsApp",
-                senderTitle = "Lab Partner • CS 301",
-                messageBody = "Just pushed the test suite fix—check it after your focus block!"
-            )
-        }
-    }
 
     fun toggleChecklistItem(id: Int) {
         completeTaskAndAdvance(id)
@@ -2418,23 +2662,6 @@ class MonolithViewModel(
             activeTaskDayStore.taskIdOn(yesterdayIso) == task.id
     }
 
-    fun splitActiveTaskAndReturn(microStepTitle: String) {
-        if (midSeal()) return
-        soundEngine.playHarmonicSeal(arming = true)
-        val state = _airlockState.value
-        _airlockState.value = state.copy(isVisible = false)
-        viewModelScope.launch {
-            val microTask = repository.splitActiveTaskIntoMicroStep(microStepTitle)
-            _intentionText.value = microTask.title
-            repository.recordIntercept(
-                packageName = state.interceptedPackageName.ifBlank { "com.google.android.youtube" },
-                appName = state.interceptedAppName.ifBlank { "Blocked App" },
-                sessionIntention = microTask.title,
-                outcome = "Split Into 10m Micro-Step",
-                triggerReason = DistractionTriggerReason.STUCK_ON_PROBLEM.shortTag
-            )
-        }
-    }
 
     fun toggleTaskSubStep(taskId: Int, stepIndex: Int) {
         soundEngine.playRotaryDetent(640.0)
@@ -2505,7 +2732,7 @@ class MonolithViewModel(
                 AppBlockTier.OPEN -> setAppBlockTier(app, AppBlockTier.PEEK_2M)
                 AppBlockTier.PEEK_2M -> setAppBlockTier(app, AppBlockTier.LOCKED)
                 AppBlockTier.LOCKED -> {
-                    triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT UNLOCK '${app.appName.uppercase()}' UNTIL 00:00")
+                    triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT UNLOCK '${app.appName.uppercase()}' UNTIL THIS SESSION ENDS${sessionEndsSuffix()}")
                 }
             }
             return
@@ -2540,7 +2767,7 @@ class MonolithViewModel(
                 AppBlockTier.LOCKED -> 2
             }
             if (targetRank < currentRank) {
-                triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT WEAKEN '${app.appName.uppercase()}' DURING AN ACTIVE SESSION")
+                triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT WEAKEN '${app.appName.uppercase()}' WHILE A SESSION RUNS — END THE SESSION TO CHANGE IT")
                 return
             }
         }
@@ -2644,13 +2871,29 @@ class MonolithViewModel(
     fun updateAppDailyLimit(app: BlockedAppEntity, minutes: Int) {
         val clamped = minutes.coerceIn(5, 240)
         if (activeSession.value?.isActive == true && clamped > app.dailyLimitMinutes) {
-            triggerRatchetWarning("ONE-WAY RATCHET • DAILY QUOTA CAN ONLY BE TIGHTENED DURING LOCKDOWN")
+            triggerRatchetWarning("ONE-WAY RATCHET • '${app.appName.uppercase()}' DAILY LIMIT IS ${app.dailyLimitMinutes} MIN — $clamped MIN WOULD LOOSEN IT; LIMITS ONLY TIGHTEN WHILE A SESSION RUNS")
             return
         }
         soundEngine.playRotaryDetent(600.0)
         viewModelScope.launch {
             repository.updateAppDailyLimit(app.packageName, clamped)
         }
+    }
+
+    /**
+     * Issue #140: step an app's daily limit up the ladder — the
+     * catalogue row's hold gesture. The limit used to be a number
+     * the user never chose, shown nowhere, changeable nowhere;
+     * now it is printed on the row and this steps it
+     * (15→20→30→45→60→90→120→180→240, wrapping to 15). The
+     * one-way ratchet in [updateAppDailyLimit] still governs
+     * mid-session loosening, so a hold during a session can only
+     * tighten or be refused with the reason printed.
+     */
+    fun cycleAppDailyLimit(app: BlockedAppEntity) {
+        val ladder = listOf(15, 20, 30, 45, 60, 90, 120, 180, 240)
+        val next = ladder.firstOrNull { it > app.dailyLimitMinutes } ?: ladder.first()
+        updateAppDailyLimit(app, next)
     }
 
     fun addCustomApp(appName: String, packageName: String, category: AppCategory) {
@@ -2672,7 +2915,7 @@ class MonolithViewModel(
 
     fun toggleProfileSchedule(profile: FocusProfileEntity) {
         if (activeSession.value?.isActive == true && profile.isScheduleEnabled) {
-            triggerRatchetWarning("ONE-WAY RATCHET • ACTIVE SCHEDULE CANNOT BE DISABLED WHILE A SESSION IS SEALED")
+            triggerRatchetWarning("ONE-WAY RATCHET • ACTIVE SCHEDULE CANNOT BE DISABLED WHILE A SESSION RUNS — END THE SESSION TO CHANGE IT")
             return
         }
         soundEngine.playMechanicalLatch(!profile.isScheduleEnabled)
@@ -2688,19 +2931,6 @@ class MonolithViewModel(
         }
     }
 
-    fun createCustomProfile(
-        name: String,
-        minutes: Int,
-        categories: List<AppCategory>,
-        startHour: Int,
-        endHour: Int
-    ) {
-        if (name.isBlank()) return
-        soundEngine.playHarmonicSeal(true)
-        viewModelScope.launch {
-            repository.saveCustomProfile(name, minutes, categories, startHour, endHour)
-        }
-    }
 
     /** Suki's hand-back tick: one 5ms @ 0.4 seat-knock as the
      *  sentence slot returns to empty on the wire's recovery. Fired
@@ -2721,6 +2951,7 @@ class MonolithViewModel(
         // Schlitten §3.1: the standing receipt and its sled gate
         // clear at the next arm — the slip stood until now.
         _receiptState.value = null
+        _finishNightHold.value = false
         sledReturnGate.clear()
         armProving.onLatch(
             intention = _intentionText.value,
@@ -2771,7 +3002,6 @@ class MonolithViewModel(
                 com.example.service.RoutineHeartbeat.tickAsync(
                     appContext, com.example.service.RoutineHeartbeat.Source.SESSION_EDGE
                 )
-                _sevenDayStats.value = repository.compute7DayHistory()
             }
             return
         }
@@ -2779,7 +3009,9 @@ class MonolithViewModel(
         soundEngine.playMechanicalLatch(false)
         _disarmChallenge.value = DisarmChallengeState(
             isVisible = true,
-            requiredHoldSeconds = 60
+            requiredHoldSeconds = 60,
+            sessionIsStopwatch = current.isStopwatchMode,
+            remainingFloorSeconds = if (current.isStopwatchMode) remainingFloor else 0
         )
     }
 
@@ -2800,7 +3032,6 @@ class MonolithViewModel(
             com.example.service.RoutineHeartbeat.tickAsync(
                 appContext, com.example.service.RoutineHeartbeat.Source.SESSION_EDGE
             )
-            _sevenDayStats.value = repository.compute7DayHistory()
         }
     }
 
@@ -2825,13 +3056,47 @@ class MonolithViewModel(
                     com.example.service.RoutineHeartbeat.tickAsync(
                         appContext, com.example.service.RoutineHeartbeat.Source.SESSION_EDGE
                     )
-                    _sevenDayStats.value = repository.compute7DayHistory()
                 }
                 BreakResult.RefusedNoToken, BreakResult.NoActiveSession -> {
                     // Session stays sealed; the overlay remains open and
                     // re-renders from the repository flow. Nothing sounds.
                 }
             }
+        }
+    }
+
+    /**
+     * Issue #78: the INTENT door into the Airlock. Unlike the
+     * in-app doors (the Launcher's peek list, warm and on-screen),
+     * an intent may be a stale redelivery, so the showing is
+     * revalidated against one-shot store reads — the live session
+     * row and the package's live tier/lease — before the Airlock
+     * state is touched. A firing that no longer holds is dropped
+     * silently: the enforcement doors will fire a fresh one if the
+     * user is actually standing in a blocked app.
+     */
+    fun triggerAirlockInterceptFromIntent(
+        packageName: String,
+        appName: String,
+        reasonBadge: String = "Locked",
+        path: InterceptPath = InterceptPath.UNKNOWN
+    ) {
+        viewModelScope.launch {
+            val session = runCatching { repository.activeSessionSnapshot() }.getOrNull()
+            val entity = runCatching { repository.appsSnapshot() }.getOrNull()
+                ?.find { it.packageName == packageName }
+            val leaseLive = entity != null &&
+                entity.resolvedTier == AppBlockTier.PEEK_2M &&
+                SystemClock.elapsedRealtime() < entity.activePeekUntilElapsedRealtime
+            if (!airlockIntentRevalidated(
+                    path = path,
+                    tier = entity?.resolvedTier,
+                    sessionActive = session?.isActive == true,
+                    inSafeBreak = session?.isInSafeBreak == true,
+                    peekLeaseLive = leaseLive
+                )
+            ) return@launch
+            triggerAirlockIntercept(packageName, appName, reasonBadge, path)
         }
     }
 
@@ -2852,6 +3117,24 @@ class MonolithViewModel(
         if (active?.isActive != true) return
 
         val appEntity = apps.value.find { it.packageName == packageName }
+        // Issue #78, warm-door half of the same law: the showing
+        // must ALSO still hold against the live tier, the Safe
+        // Break's peek pass and a live peek lease (the intent door
+        // above runs the same predicate against one-shot store
+        // snapshots). Main's Tier-1 gate already proved the session
+        // active, so the predicate's session term is true here; its
+        // per-door tier/lease terms are the part this adds.
+        val leaseLive = appEntity != null &&
+            appEntity.resolvedTier == AppBlockTier.PEEK_2M &&
+            SystemClock.elapsedRealtime() < appEntity.activePeekUntilElapsedRealtime
+        if (!airlockIntentRevalidated(
+                path = path,
+                tier = appEntity?.resolvedTier,
+                sessionActive = true,
+                inSafeBreak = active.isInSafeBreak,
+                peekLeaseLive = leaseLive
+            )
+        ) return
         // On the two per-app doors (the only lease-honouring ones)
         // the claim is about a ruled row: the row must exist, must
         // not be OPEN, and the badge prints from the row — never
@@ -2911,7 +3194,14 @@ class MonolithViewModel(
             sessionEndsAtMillis = active
                 ?.takeIf { !it.isStopwatchMode }
                 ?.let { System.currentTimeMillis() + it.spanRemainingSeconds * 1000L },
-            sessionIsStopwatch = active?.isStopwatchMode == true
+            sessionIsStopwatch = active?.isStopwatchMode == true,
+            stopwatchFloorAtMillis = active
+                ?.takeIf { it.isStopwatchMode }
+                ?.let {
+                    System.currentTimeMillis() +
+                        (MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS - it.elapsedSeconds)
+                            .coerceAtLeast(0) * 1000L
+                }
         )
     }
 
@@ -3102,7 +3392,6 @@ class MonolithViewModel(
         viewModelScope.launch {
             repository.ensureSeededAndSyncPackages()
             _systemGuardStatus.value = repository.getSystemGuardStatus()
-            _sevenDayStats.value = repository.compute7DayHistory()
         }
     }
 

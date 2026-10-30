@@ -816,7 +816,20 @@ class MonolithAccessibilityService : AccessibilityService() {
         // 5. 3-Tier Per-App & Safe Break Blocking
         val appRule = appsSnapshot.find { it.packageName == pkgName } ?: return
         val tier = appRule.resolvedTier
-        if (tier == AppBlockTier.OPEN) return
+        // Issue #140: the daily limit binds every tier. An OPEN
+        // app whose today's usage reached its limit is
+        // intercepted like a blocked one; the peek exemptions
+        // below still protect a lawful peek already running.
+        val overLimit = appRule.dailyLimitMinutes > 0 &&
+            appRule.todayUsageMinutes >= appRule.dailyLimitMinutes
+        if (tier == AppBlockTier.OPEN && !overLimit) return
+        // Issue #332 F5: the safety floor holds in this door too —
+        // a floor package (dialer / telecom / keyboard / emergency)
+        // is never intercepted, whatever tier a legacy row holds.
+        // (Writer-side, EssentialApps.floorTier already stops new
+        // LOCKED dialler rows; the door floor covers every class,
+        // including the IME and emergency surfaces writers miss.)
+        if (com.example.data.SafetyFloor.isFloorPackage(pkgName)) return
 
         // Safe Break Rule: 2m Peek apps unlock freely during the 10-minute Safe Break, while Locked apps stay locked
         if (activeSession.isInSafeBreak && tier == AppBlockTier.PEEK_2M) {
@@ -832,7 +845,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         launchInterceptScreen(
             packageName = appRule.packageName,
             appName = appRule.appName,
-            reasonBadge = tier.badge,
+            reasonBadge = if (overLimit && tier == AppBlockTier.OPEN) "Daily Limit" else tier.badge,
             path = InterceptPath.APP_TIER
         )
     }
@@ -1127,6 +1140,15 @@ class MonolithAccessibilityService : AccessibilityService() {
             putExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME, appName)
             putExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE, reasonBadge)
             putExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH, path.name)
+            // Issue #78: unique firing id — MainActivity persists
+            // its consumption before showing the Airlock, so a
+            // process-death redelivery of this intent is dropped.
+            putExtra(
+                MonolithShieldService.EXTRA_INTERCEPT_ID,
+                java.util.UUID.randomUUID().toString()
+            )
+            // Issue #68 F5, Tier 2: single-use provenance nonce —
+            // MainActivity honours no intercept extra without one.
             putExtra(
                 MonolithShieldService.EXTRA_INTERCEPT_NONCE,
                 InterceptNonce.mint(applicationContext)

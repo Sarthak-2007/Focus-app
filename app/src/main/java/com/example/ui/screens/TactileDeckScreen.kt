@@ -333,7 +333,17 @@ fun TactileDeckScreen(
 
     val minsPart = displaySeconds / 60
     val secsPart = displaySeconds % 60
-    val primaryReadout = String.format(Locale.US, "%02d:%02d", minsPart, secsPart)
+    // Audit R3b #147: a running (or just-finished) stopwatch counts
+    // UP — the bare MM:SS read exactly like a countdown. The +
+    // prefix marks the direction on the hero readout; a timed
+    // session's countdown stays bare.
+    val countsUp = (finishState != null && finishState.frozenIsStopwatch) ||
+        (isSessionRunning && activeSession.isStopwatchMode)
+    val primaryReadout = if (countsUp) {
+        String.format(Locale.US, "+%02d:%02d", minsPart, secsPart)
+    } else {
+        String.format(Locale.US, "%02d:%02d", minsPart, secsPart)
+    }
 
     // True session span (BEYOND W3, verified against the engine): blocks
     // plus the 10-minute Safe Breaks BETWEEN them - n x block + (n-1) x 10.
@@ -644,13 +654,23 @@ fun TactileDeckScreen(
         wireNow = liveWarrantState
     )
 
+    // Issue #143 (F6): the day/night step cross-fades at the
+    // root instead of cutting in one frame — both flips (the
+    // ground step at session start, the release when the finish
+    // clears) pass through this one animated colour.
+    val animatedBackground by androidx.compose.animation.animateColorAsState(
+        targetValue = scheme.background,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 450),
+        label = "deckBackgroundNightFade"
+    )
+
     // Wrapper (Ren): the scroll column takes the flexible space and the
     // commit bar is PINNED beneath it — adding tasks can grow the content
     // forever and the start control can never be pushed off-screen again.
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(scheme.background)
+            .background(animatedBackground)
             .testTag("tactile_deck_screen")
     ) {
     val deckScrollState = rememberScrollState()
@@ -936,14 +956,33 @@ fun TactileDeckScreen(
                             }
                             .padding(horizontal = 10.dp, vertical = 5.dp)
                     ) {
-                        Text(
-                            text = "FLOW",
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = if (isStopwatchMode) onInkControlFill() else scheme.onBackground
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "FLOW",
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = if (isStopwatchMode) onInkControlFill() else scheme.onBackground
+                            )
+                            // Audit R3b #147: the preset's one law —
+                            // its 20-minute floor — printed on the
+                            // key itself, from the preset's own
+                            // badge constant, before anyone arms.
+                            // It was defined in the catalogue and
+                            // rendered nowhere.
+                            Text(
+                                text = StudyModePreset.STOPWATCH_FLOW.badge.uppercase(Locale.US),
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 8.5.sp,
+                                letterSpacing = 0.5.sp,
+                                color = if (isStopwatchMode) {
+                                    onInkControlFill().copy(alpha = 0.75f)
+                                } else {
+                                    scheme.onSurfaceVariant
+                                }
+                            )
+                        }
                     }
                     // Pia: the FINISHES line dies here — TIME's only
                     // home is the strip's TIME cell (a pure function;
@@ -1380,17 +1419,34 @@ fun TactileDeckScreen(
                             testTag = "grace_abort_button"
                         )
                     } else {
+                        // Audit R3b #147: past the stopwatch floor
+                        // this same tap is a clean, free finish —
+                        // requestDisarmChallenge completes the
+                        // session and never opens the valve. The
+                        // label says which door the tap opens:
+                        // FINISH SESSION with no token badge once
+                        // the floor is banked; the valve's true
+                        // name and price everywhere else.
+                        val stopwatchFloorMet = activeSession != null &&
+                            activeSession.isStopwatchMode &&
+                            activeSession.elapsedSeconds >=
+                                com.example.data.MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
                         BlockitActionChip(
-                            wordLabel = "EMERGENCY BREAK VALVE (60S HOLD)",
+                            wordLabel = if (stopwatchFloorMet) {
+                                "FINISH SESSION"
+                            } else {
+                                "EMERGENCY BREAK VALVE (60S HOLD)"
+                            },
                             // R3b #163 F4: a spent valve used to wear
                             // the same badge as a live one ("0/1 WEEK"
                             // read as a state, not a wait). The spent
                             // badge now names the wait itself — the
                             // week turns on Monday (MonolithWeek).
-                            monoBadge = if (weeklyEmergencyTokensRemaining > 0) {
-                                "$weeklyEmergencyTokensRemaining/1 WEEK"
-                            } else {
-                                "0/1 WEEK · BACK MONDAY"
+                            monoBadge = when {
+                                stopwatchFloorMet -> ""
+                                weeklyEmergencyTokensRemaining > 0 ->
+                                    "$weeklyEmergencyTokensRemaining/1 WEEK"
+                                else -> "0/1 WEEK · BACK MONDAY"
                             },
                             isPrimaryInk = true,
                             onClick = onRequestDisarm,
@@ -1416,8 +1472,17 @@ fun TactileDeckScreen(
                             "GRACE ${graceLeft}S — ABORT IS BOOKED BY THE ROUTINE · AFTER: VALVE, 60S HOLD"
                         graceLeft > 0 ->
                             "GRACE ${graceLeft}S — CANCEL FREE, NOTHING BOOKED · AFTER: VALVE, 60S HOLD"
+                        // R3b #163 F4 (fix-forward): the spent state
+                        // names its wait here too, exactly as the
+                        // valve chip's badge does — the week turns
+                        // on Monday (MonolithWeek).
                         else ->
-                            "GRACE SPENT · VALVE: 60S HOLD · $weeklyEmergencyTokensRemaining/1 WEEK"
+                            "GRACE SPENT · VALVE: 60S HOLD · " +
+                                if (weeklyEmergencyTokensRemaining > 0) {
+                                    "$weeklyEmergencyTokensRemaining/1 WEEK"
+                                } else {
+                                    "0/1 WEEK · BACK MONDAY"
+                                }
                     },
                     fontFamily = AnonymousProFamily,
                     fontSize = 9.5.sp,
