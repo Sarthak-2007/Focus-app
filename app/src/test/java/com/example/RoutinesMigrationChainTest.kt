@@ -332,15 +332,17 @@ class RoutinesMigrationChainTest {
             .addMigrations(
                 MonolithDatabase.MIGRATION_7_8, MonolithDatabase.MIGRATION_8_9,
                 MonolithDatabase.MIGRATION_9_10, MonolithDatabase.MIGRATION_10_11,
-                MonolithDatabase.MIGRATION_11_12
+                MonolithDatabase.MIGRATION_11_12, MonolithDatabase.MIGRATION_12_13
             )
             .build()
 
         runBlocking {
             val dao = room.monolithDao()
             // This read forces the open: Room has now migrated
-            // 7→8→9→10→11→12 AND validated the resulting schema
-            // against every v12 entity, day_notes included.
+            // 7→8→9→10→11→12→13 AND validated the resulting schema
+            // against every v13 entity, day_notes included.
+            // (Batch-10: chain terminus moved to 13 with the
+            // composed MIGRATION_12_13.)
             assertTrue(dao.getAllDayNotesSnapshot().isEmpty())
             dao.insertDayNotes(listOf(DayNoteEntity("2026-10-29", "REST")))
             assertEquals(

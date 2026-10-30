@@ -69,6 +69,16 @@ class BreakMigrationTest {
                             "`intention` TEXT NOT NULL)"
                     )
                     db.execSQL("INSERT INTO focus_sessions (id, intention) VALUES (1, 'shaped row')")
+                    // Batch-10 composition: MIGRATION_11_12 is the
+                    // COMPOSED migration — it also adds
+                    // shortsReelsSniperEnabled to guard_settings
+                    // (Truth Car 3's delta), so the v11 fixture
+                    // must carry that table for the migration to
+                    // run against, exactly as a real v11 file did.
+                    db.execSQL(
+                        "CREATE TABLE IF NOT EXISTS `guard_settings` (" +
+                            "`id` INTEGER PRIMARY KEY NOT NULL)"
+                    )
                 }
 
                 override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}

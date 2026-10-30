@@ -95,7 +95,7 @@ class ScreenshotHarnessTest {
             File("app/shots-redirect.txt")
         ).firstOrNull { it.isFile }
         val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        File(target ?: "/home/hatch/workspace/clone-inspect/shots")
+        File(target ?: System.getProperty("java.io.tmpdir") + "/monolith-shots")
     }
 
     @Before
@@ -139,6 +139,7 @@ class ScreenshotHarnessTest {
     }
 
     private fun captureTo(out: File) {
+        out.parentFile?.mkdirs() // batch-10 CI cure: the shots dir must exist on a clean runner, not only on the lane box
         composeRule.runOnUiThread {
             val decor = composeRule.activity.window.decorView
             val w = if (decor.width > 0) decor.width else 1318

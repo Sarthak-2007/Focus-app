@@ -108,6 +108,17 @@ class ShortsSniperTruthTest {
                             "receiptSequence, lastReceiptSessionId) " +
                             "VALUES (1, 1, 1, 0, 123, 456, 7, 'KEPT', 41, 9)"
                     )
+                    // Batch-10 composition: MIGRATION_11_12 is the
+                    // COMPOSED migration — it also adds
+                    // breakTakenSeconds to focus_sessions (the
+                    // break lane's delta), so the v11 fixture must
+                    // carry that table for the migration to run
+                    // against, exactly as a real v11 file did.
+                    db.execSQL(
+                        "CREATE TABLE IF NOT EXISTS `focus_sessions` (" +
+                            "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "`intention` TEXT NOT NULL)"
+                    )
                 }
 
                 override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
@@ -194,7 +205,7 @@ class ShortsSniperTruthTest {
     }
 
     @Test
-    fun v7EntitySchema_fullChain_roomValidatesAtV12_shortsDefaultsTrue_thenRoundTrips() {
+    fun v7EntitySchema_fullChain_roomValidatesAtV13_shortsDefaultsTrue_thenRoundTrips() {
         createV7EntityFile()
         val room = Room.databaseBuilder(context, MonolithDatabase::class.java, dbName)
             .addMigrations(
@@ -202,14 +213,17 @@ class ShortsSniperTruthTest {
                 MonolithDatabase.MIGRATION_8_9,
                 MonolithDatabase.MIGRATION_9_10,
                 MonolithDatabase.MIGRATION_10_11,
-                MonolithDatabase.MIGRATION_11_12
+                MonolithDatabase.MIGRATION_11_12,
+                MonolithDatabase.MIGRATION_12_13
             )
             .build()
         runBlocking {
             val dao = room.monolithDao()
             // The read forces the open: Room has migrated
-            // 7→8→9→10→11→12 AND validated the result against
-            // every v12 entity.
+            // 7→8→9→10→11→12→13 AND validated the result against
+            // every v13 entity. (Batch-10: the chain's terminus
+            // moved to 13 with the composed MIGRATION_12_13; this
+            // test's v12-era registration stopped one hop short.)
             val settings = dao.getGuardSettingsSnapshot()
             assertNotNull(settings)
             assertTrue(settings!!.shortsReelsSniperEnabled)

@@ -249,7 +249,7 @@ class SliceEMigrationChainTest {
     }
 
     @Test
-    fun v7EntitySchema_fullChain_roomValidatesAtV12() {
+    fun v7EntitySchema_fullChain_roomValidatesAtV13() {
         createV7EntityFile()
         val room = Room.databaseBuilder(context, MonolithDatabase::class.java, dbName)
             .addMigrations(
@@ -257,14 +257,16 @@ class SliceEMigrationChainTest {
                 MonolithDatabase.MIGRATION_8_9,
                 MonolithDatabase.MIGRATION_9_10,
                 MonolithDatabase.MIGRATION_10_11,
-                MonolithDatabase.MIGRATION_11_12
+                MonolithDatabase.MIGRATION_11_12,
+                MonolithDatabase.MIGRATION_12_13
             )
             .build()
         runBlocking {
             val dao = room.monolithDao()
             // The read forces the open: Room has migrated
-            // 7→8→9→10→11→12 AND validated the result against
-            // every v12 entity.
+            // 7→8→9→10→11→12→13 AND validated the result against
+            // every v13 entity. (Batch-10: chain terminus moved
+            // to 13 with the composed MIGRATION_12_13.)
             val session = dao.getSessionHistorySnapshot().single()
             assertEquals("shaped session", session.intention)
             assertEquals(0L, session.endWallMillis)

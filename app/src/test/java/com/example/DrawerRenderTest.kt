@@ -67,7 +67,7 @@ class DrawerRenderTest {
         val target = if (redirect.exists()) {
             redirect.readText().trim()
         } else {
-            "/home/hatch/workspace/clone-inspect/builds/drawer/shots-own"
+            System.getProperty("java.io.tmpdir") + "/monolith-shots-drawer"
         }
         File(target).apply { mkdirs() }
     }

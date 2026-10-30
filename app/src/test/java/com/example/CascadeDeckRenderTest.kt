@@ -59,7 +59,7 @@ class CascadeDeckRenderTest {
             File("app/shots-redirect.txt")
         ).firstOrNull { it.isFile }
         val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        File(target ?: "/home/hatch/workspace/clone-inspect/shots")
+        File(target ?: System.getProperty("java.io.tmpdir") + "/monolith-shots")
     }
 
     @Before
@@ -126,6 +126,7 @@ class CascadeDeckRenderTest {
 
     private fun capture(name: String) {
         val out = File(shotsDir, name)
+        out.parentFile?.mkdirs() // batch-10 CI cure: shots dir must exist on a clean runner
         composeRule.runOnUiThread {
             val decor = composeRule.activity.window.decorView
             val w = if (decor.width > 0) decor.width else 1318

@@ -46,6 +46,21 @@ jobs:
         id: tests
         run: ./gradlew --console=plain testDebugUnitTest
 
+      # Batch-10 Methods fix: a red run must carry its evidence.
+      # The JUnit XML + HTML reports are the lettered record of
+      # every failure (class, message, stack) — without this step
+      # the only route to a failure message is re-downloading the
+      # full run log. Always uploaded, green or red.
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: |
+            app/build/test-results/testDebugUnitTest
+            app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
+
       # Wave-2 (Feel/Finisher pass): the run page must tell the truth
       # in plain words without anyone opening a log. This APK is
       # uploaded BEFORE the test step, so while tests are red the
