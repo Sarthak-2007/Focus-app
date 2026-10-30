@@ -7,9 +7,12 @@ import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
+import android.os.Bundle
+import android.os.Parcelable
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.VelocityTracker
+import android.view.accessibility.AccessibilityEvent
 import com.example.data.AppBlockTier
 import com.example.data.BlockedAppEntity
 import com.example.ui.theme.MonolithCurves
@@ -29,12 +32,25 @@ import kotlin.math.sin
  *   not a Material Switch.
  * - State changes are animated throws (260ms, Curve A), with an 8ms firm click + synth clunk.
  */
+/** Issue-60: ONE geometry source of truth for the AppRow rocker.
+ *  Draw, drag and tap all derive slot width / tap index from here —
+ *  previously draw used (W-2*pad)/3 while touch used W/3, so the
+ *  zones disagreed by 2dp per stop. Pure math, unit-tested. */
+internal object RockerMath {
+    fun slotWidth(trackWidthPx: Float, padPx: Float): Float =
+        (trackWidthPx - padPx * 2f) / 3f
+
+    fun indexForTap(xPx: Float, trackLeftPx: Float, padPx: Float, slotWidthPx: Float): Int =
+        ((xPx - trackLeftPx - padPx) / slotWidthPx).toInt().coerceIn(0, 2)
+}
+
 class SledSwitchView(context: Context) : BlockitCanvasView(context) {
 
     var titleText: String = "SHORTS & REELS BLOCKER"
         set(value) {
             if (field != value) {
                 field = value
+                contentDescription = value
                 invalidate()
             }
         }
@@ -51,11 +67,61 @@ class SledSwitchView(context: Context) : BlockitCanvasView(context) {
         set(value) {
             if (field != value) {
                 field = value
-                animateThrow(if (value) 1f else 0f)
+                syncStateDescription()
+                if (isAttachedToWindow) {
+                    animateThrow(if (value) 1f else 0f)
+                } else {
+                    // Issue-60 (finding 4, tail): a view configured
+                    // before first attach (every AndroidView factory
+                    // does exactly this) must SEAT, not throw — the
+                    // old code visibly animated from the hardcoded
+                    // ON position on first appearance.
+                    throwAnimator?.cancel()
+                    sledProgress = if (value) 1f else 0f
+                    invalidate()
+                }
             }
         }
 
     var onToggleRequested: (() -> Unit)? = null
+
+    init {
+        // Issue-60 (finding 3): canvas text is invisible to TalkBack —
+        // the control itself must be clickable, labelled and stateful.
+        isClickable = true
+        isFocusable = true
+        contentDescription = titleText
+        syncStateDescription()
+    }
+
+    private fun syncStateDescription() {
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            stateDescription = if (isChecked) "On" else "Off"
+        }
+    }
+
+    override fun performClick(): Boolean {
+        // Issue #56 fresh-eyes B, reconciled with issue-60's single
+        // action path: the host gate is consulted HERE, once, before
+        // any feedback — a rejected activation (finger or AT) is
+        // silent: no firm click, no toggle, no click announcement
+        // for a change that never happened.
+        if (gateCheck?.invoke() == false) return true
+        super.performClick()
+        // §6: 8ms Firm click on SledSwitch throw!
+        fireFeel(8L)
+        onToggleRequested?.invoke()
+        sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_CLICKED)
+        return true
+    }
+
+    override fun onDetachedFromWindow() {
+        // Issue-60 (finding 1, lifecycle half): no animator may
+        // outlive the view.
+        throwAnimator?.cancel()
+        throwAnimator = null
+        super.onDetachedFromWindow()
+    }
 
     /**
      * Issue #56, fresh-eyes B: an optional host gate, consulted at
@@ -80,6 +146,15 @@ class SledSwitchView(context: Context) : BlockitCanvasView(context) {
      * Bounds in this mode are the sled itself: 76 × 34dp.
      */
     var chromeMode: Boolean = false
+        set(value) {
+            // Issue-60 (finding 4): was a plain field — assigning it
+            // after creation never redrew, so PARK vs row furniture
+            // stayed stale until an unrelated invalidate.
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
 
     private var sledProgress: Float = 1f
     private var throwAnimator: ValueAnimator? = null
@@ -177,36 +252,38 @@ class SledSwitchView(context: Context) : BlockitCanvasView(context) {
         }
     }
 
-    // Issue #56, finding 3: a toggle is a COMPLETE press that both
-    // starts and ends on this sled. The old body fired on ANY
-    // ACTION_UP — no DOWN tracking, no bounds check, no CANCEL
-    // handling — so a sheet scroll that merely ended over the sled
-    // (or a gesture the scroller cancelled) flipped a persisted
-    // setting. The rocker in this same file (AppRowSledToggleView)
-    // already keeps this discipline; the sled now does too.
+    // Issue #56 finding 3 + Issue-60 finding 2 (same defect, cured
+    // twice, reconciled at the #60 surge merge): a toggle is a
+    // COMPLETE press that both starts and ends on this sled. The old
+    // body fired on ANY ACTION_UP — no DOWN tracking, no bounds
+    // check, no CANCEL handling — so a sheet scroll that merely
+    // ended over the sled (or a gesture the scroller cancelled)
+    // flipped a persisted setting.
     private var pressStartedOnSled: Boolean = false
 
     private fun insideSled(event: MotionEvent): Boolean =
         event.x >= 0f && event.x <= width.toFloat() &&
             event.y >= 0f && event.y <= height.toFloat()
 
-    @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 pressStartedOnSled = insideSled(event)
                 return true
             }
+            MotionEvent.ACTION_MOVE -> return true
             MotionEvent.ACTION_UP -> {
                 val completedHere = pressStartedOnSled && insideSled(event)
                 pressStartedOnSled = false
-                // Fresh-eyes B: the gate is consulted only by a
-                // COMPLETE press, and a rejected press is silent —
-                // the feel fires only behind gate acceptance.
-                if (completedHere && gateCheck?.invoke() != false) {
-                    // §6: 8ms Firm click on SledSwitch throw!
-                    fireFeel(8L)
-                    onToggleRequested?.invoke()
+                if (completedHere) {
+                    // Route through performClick: one action path
+                    // for finger and assistive technology alike
+                    // (issue-60 finding 3). The host gate lives
+                    // INSIDE performClick, so it is consulted exactly
+                    // once per complete press — never by stray UPs,
+                    // cancels or slide-offs — and a rejected press is
+                    // silent on every path (#56 fresh-eyes B).
+                    performClick()
                 }
                 return true
             }
@@ -238,6 +315,7 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
         set(value) {
             if (field != value) {
                 field = value
+                syncA11yDescription()
                 invalidate()
             }
         }
@@ -246,6 +324,7 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
         set(value) {
             if (field != value) {
                 field = value
+                syncA11yDescription()
                 if (dragging) {
                     // The finger owns the rocker mid-drag; an outside
                     // change (a loadout landing) seats it directly.
@@ -273,6 +352,46 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
 
     /** Issue #140: hold the row to step the daily limit. */
     var onDailyLimitLongPress: (() -> Unit)? = null
+
+    init {
+        // Issue-60 (finding 3): clickable, labelled, stateful.
+        isClickable = true
+        isFocusable = true
+        syncA11yDescription()
+    }
+
+    private fun tierWord(tier: AppBlockTier): String = when (tier) {
+        AppBlockTier.LOCKED -> "Shut"
+        AppBlockTier.PEEK_2M -> "Peek"
+        AppBlockTier.OPEN -> "Open"
+    }
+
+    private fun syncA11yDescription() {
+        contentDescription = "$appName, ${tierWord(currentTier)}"
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            stateDescription = tierWord(currentTier)
+        }
+    }
+
+    /** Assistive activation has no position, so it advances one stop
+     *  (SHUT → PEEK → OPEN → SHUT) through the same commit path a tap
+     *  on that stop uses — feel, animation and callback included. */
+    override fun performClick(): Boolean {
+        super.performClick()
+        commitTo((tierToIndex(currentTier) + 1) % 3)
+        sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_CLICKED)
+        return true
+    }
+
+    override fun onDetachedFromWindow() {
+        rockerAnimator?.cancel()
+        rockerAnimator = null
+        velocityTracker?.recycle()
+        velocityTracker = null
+        dragging = false
+        touchInRocker = false
+        super.onDetachedFromWindow()
+    }
 
     private var rockerIndex: Float = 0f
     private var rockerAnimator: ValueAnimator? = null
@@ -472,7 +591,7 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
         canvas.drawLine(rLeft + radiusSmall, rTop + rockerH - dp(1.4f), rLeft + rockerW - radiusSmall, rTop + dp(1.4f), paintStroke)
 
         val pad = dp(3f)
-        val slotW = (rockerW - pad * 2f) / 3f
+        val slotW = RockerMath.slotWidth(rockerW, pad)
         val thumbL = rLeft + pad + rockerIndex * slotW
         thumbRect.set(thumbL, rTop + pad, thumbL + slotW, rTop + rockerH - pad)
 
@@ -525,9 +644,10 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
         }
     }
 
-    @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val rockerW = dp(168f)
+        val pad = dp(3f)
+        val slotW = RockerMath.slotWidth(rockerW, pad)
         val rLeft = width - rockerW
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -586,7 +706,6 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
                     dragging = true
                 }
                 if (dragging) {
-                    val slotW = rockerW / 3f
                     val next = (dragStartIndex + (event.x - downX) / slotW).coerceIn(0f, 2f)
                     noteTravel(rockerIndex, next)
                     rockerIndex = next
@@ -638,7 +757,7 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
                 } else {
                     velocityTracker?.recycle()
                     velocityTracker = null
-                    val idx = ((event.x - rLeft) / (rockerW / 3f)).toInt().coerceIn(0, 2)
+                    val idx = RockerMath.indexForTap(event.x, rLeft.toFloat(), pad, slotW)
                     commitTo(idx)
                 }
                 return true
@@ -689,6 +808,28 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
 class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
 
     var requiredSeconds: Int = 60
+        set(value) {
+            // Issue-60 (finding 4): was a plain field — the Airlock
+            // caller re-assigns this on every recomposition, and a
+            // real change neither redrew nor rescaled, corrupting
+            // bank thresholds mid-hold. A change now rescales held +
+            // banked progress proportionally (the FRACTION banked is
+            // the fact; the seconds are its denomination).
+            val clamped = value.coerceAtLeast(1)
+            if (field != clamped) {
+                val oldTotal = field * 1000L
+                field = clamped
+                if (oldTotal > 0L) {
+                    val newTotal = totalMs
+                    heldMs = heldMs * newTotal / oldTotal
+                    bankedMs = bankedMs * newTotal / oldTotal
+                    lastBankIndex = (bankedMs / bankIntervalMs).toInt().coerceIn(0, 3)
+                    if (isHolding) segmentBaseMs = heldMs
+                }
+                syncValveA11y()
+                invalidate()
+            }
+        }
 
     // Ledger-Direct (Freya, invention 1 — TOKEN-SPEC Amendment D is
     // moot because this input no longer exists): the valve receives NO
@@ -705,6 +846,104 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
      *  The routines rebuild stamps E4 attendance evidence on this —
      *  starting the 60 s hold is itself proof he showed up. */
     var onHoldStarted: (() -> Unit)? = null
+
+    /** Issue-60 (finding 1): hoisting seam — fired whenever BANKED
+     *  progress changes (a chamber locks, a restore lands, a detach
+     *  snapshot is taken). The production caller hoists this into
+     *  rememberSaveable, so banked progress survives the overlay
+     *  being dismissed/recomposed, rotation and process death, and
+     *  hands it back to a fresh view via [restoreBankedProgress].
+     *  Completion clears the hoisted value (the caller resets its
+     *  saved state when it consumes the completion callback). */
+    var onBankedProgressChanged: ((bankedMs: Long) -> Unit)? = null
+
+    /** Read-only snapshots for the hoisting caller and tests. */
+    val currentHeldMs: Long get() = heldMs
+    val currentBankedMs: Long get() = bankedMs
+
+    init {
+        // Issue-60 (finding 3): the valve is a control — clickable,
+        // labelled, state-described. performClick starts/cancels the
+        // SAME timed hold (see below); it never shortens it.
+        isClickable = true
+        isFocusable = true
+        contentDescription = "Emergency break valve"
+        syncValveA11y()
+    }
+
+    private fun syncValveA11y() {
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            stateDescription =
+                "Banked ${bankedMs / 1000L} of $requiredSeconds seconds"
+        }
+    }
+
+    /** Restore previously banked progress into a fresh view.
+     *  Only whole chambers restore — banked is the durable fact;
+     *  the un-banked remainder was always rest, not property. */
+    fun restoreBankedProgress(savedBankedMs: Long) {
+        if (isHolding || isDraining) return
+        val restored = (savedBankedMs / bankIntervalMs).coerceIn(0L, 3L) * bankIntervalMs
+        if (restored != bankedMs) {
+            bankedMs = restored
+            heldMs = restored
+            lastBankIndex = (restored / bankIntervalMs).toInt()
+            lastSecondTick = (restored / 1000L).toInt()
+            syncValveA11y()
+            invalidate()
+        }
+    }
+
+    override fun onSaveInstanceState(): Parcelable {
+        val bundle = Bundle()
+        bundle.putParcelable("super", super.onSaveInstanceState())
+        bundle.putLong("heldMs", heldMs)
+        bundle.putLong("bankedMs", bankedMs)
+        bundle.putInt("requiredSeconds", requiredSeconds)
+        return bundle
+    }
+
+    override fun onRestoreInstanceState(state: Parcelable?) {
+        if (state is Bundle) {
+            @Suppress("DEPRECATION")
+            super.onRestoreInstanceState(state.getParcelable("super"))
+            requiredSeconds = state.getInt("requiredSeconds", 60)
+            restoreBankedProgress(state.getLong("bankedMs", 0L))
+            // The un-banked remainder restores only up to the next
+            // chamber — it had not locked, but it was earned in this
+            // same attempt whose hierarchy state this is.
+            val savedHeld = state.getLong("heldMs", 0L)
+            if (savedHeld > heldMs) {
+                heldMs = savedHeld.coerceAtMost(bankedMs + bankIntervalMs - 1L)
+                invalidate()
+            }
+        } else {
+            super.onRestoreInstanceState(state)
+        }
+    }
+
+    override fun onDetachedFromWindow() {
+        // Issue-60 (finding 1, lifecycle half): cancel every pending
+        // runnable; snapshot the bank to the hoisting caller BEFORE
+        // going dark so a dismissed overlay loses nothing banked.
+        if (isHolding) {
+            val now = SystemClock.elapsedRealtime()
+            if (now >= segmentStartMs) {
+                heldMs = (segmentBaseMs + (now - segmentStartMs)).coerceAtMost(totalMs)
+            }
+            val bankIndex = (heldMs / bankIntervalMs).toInt().coerceAtMost(3)
+            if (bankIndex > lastBankIndex) {
+                lastBankIndex = bankIndex
+                bankedMs = bankIndex * bankIntervalMs
+            }
+            isHolding = false
+        }
+        isDraining = false
+        removeCallbacks(holdTickRunnable)
+        removeCallbacks(drainRunnable)
+        if (bankedMs > 0L) onBankedProgressChanged?.invoke(bankedMs)
+        super.onDetachedFromWindow()
+    }
 
     private var isHolding: Boolean = false
     private var heldMs: Long = 0L
@@ -728,12 +967,14 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
     private fun resetHold() {
         isHolding = false
         isDraining = false
+        a11yHoldActive = false
         heldMs = 0L
         bankedMs = 0L
         lastSecondTick = -1
         lastBankIndex = 0
         removeCallbacks(holdTickRunnable)
         removeCallbacks(drainRunnable)
+        syncValveA11y()
     }
 
     private val holdTickRunnable = object : Runnable {
@@ -747,6 +988,8 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
             if (bankIndex > lastBankIndex) {
                 lastBankIndex = bankIndex
                 bankedMs = bankIndex * bankIntervalMs
+                onBankedProgressChanged?.invoke(bankedMs)
+                syncValveA11y()
                 val pitch = when (bankIndex) {
                     1 -> 560f
                     2 -> 470f
@@ -869,42 +1112,69 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
         )
     }
 
-    @SuppressLint("ClickableViewAccessibility")
+    private var a11yHoldActive = false
+
+    private fun startHold() {
+        if (isHolding) return
+        parent?.requestDisallowInterceptTouchEvent(true)
+        val now = SystemClock.elapsedRealtime()
+        if (isDraining) {
+            // Re-grip halts the drain where it stands; accrual
+            // resumes after the re-seat beat.
+            isDraining = false
+            removeCallbacks(drainRunnable)
+            segmentStartMs = now + RESEAT_MS
+        } else {
+            segmentStartMs = now
+        }
+        segmentBaseMs = heldMs
+        isHolding = true
+        onHoldStarted?.invoke()
+        removeCallbacks(holdTickRunnable)
+        post(holdTickRunnable)
+    }
+
+    private fun releaseHold() {
+        if (!isHolding) return
+        isHolding = false
+        a11yHoldActive = false
+        removeCallbacks(holdTickRunnable)
+        if (heldMs > bankedMs) {
+            isDraining = true
+            drainStartMs = SystemClock.elapsedRealtime()
+            drainFromMs = heldMs
+            removeCallbacks(drainRunnable)
+            post(drainRunnable)
+        }
+        invalidate()
+        parent?.requestDisallowInterceptTouchEvent(false)
+    }
+
+    /** Assistive activation toggles the SAME timed hold a finger
+     *  performs: first activation starts the full countdown (banking
+     *  identically, drained on cancel identically) — the 60 seconds
+     *  are never shortened, only the finger contact is substituted. */
+    override fun performClick(): Boolean {
+        super.performClick()
+        if (isHolding && a11yHoldActive) {
+            releaseHold()
+        } else if (!isHolding) {
+            a11yHoldActive = true
+            startHold()
+        }
+        sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_CLICKED)
+        return true
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                if (isHolding) return true
-                parent?.requestDisallowInterceptTouchEvent(true)
-                val now = SystemClock.elapsedRealtime()
-                if (isDraining) {
-                    // Re-grip halts the drain where it stands; accrual
-                    // resumes after the re-seat beat.
-                    isDraining = false
-                    removeCallbacks(drainRunnable)
-                    segmentStartMs = now + RESEAT_MS
-                } else {
-                    segmentStartMs = now
-                }
-                segmentBaseMs = heldMs
-                isHolding = true
-                onHoldStarted?.invoke()
-                removeCallbacks(holdTickRunnable)
-                post(holdTickRunnable)
+                a11yHoldActive = false
+                startHold()
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (!isHolding) return true
-                isHolding = false
-                removeCallbacks(holdTickRunnable)
-                if (heldMs > bankedMs) {
-                    isDraining = true
-                    drainStartMs = SystemClock.elapsedRealtime()
-                    drainFromMs = heldMs
-                    removeCallbacks(drainRunnable)
-                    post(drainRunnable)
-                }
-                invalidate()
-                parent?.requestDisallowInterceptTouchEvent(false)
+                if (!a11yHoldActive) releaseHold()
                 return true
             }
         }

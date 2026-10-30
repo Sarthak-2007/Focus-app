@@ -1,5 +1,6 @@
 package com.example.ui
 
+import android.util.Log
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
@@ -491,6 +492,20 @@ class MonolithViewModel(
     private val _loadoutCapIndex = MutableStateFlow(loadoutStore.capIndex())
     val loadoutCapIndex: StateFlow<Int> = _loadoutCapIndex.asStateFlow()
 
+    // Audit R1 #40: the receipt dismissal is persisted — the
+    // host's remember{} alone let process death resurrect a
+    // receipt he had already put away. MainActivity seeds its
+    // gate from here and writes every dismissal through.
+    private val receiptDismissalStore =
+        com.example.data.ReceiptDismissalStore(appContext)
+
+    fun dismissedReceiptSessionId(): Int =
+        receiptDismissalStore.dismissedSessionId()
+
+    fun persistReceiptDismissal(sessionId: Int) {
+        receiptDismissalStore.dismiss(sessionId)
+    }
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
@@ -625,25 +640,40 @@ class MonolithViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     /**
-     * The reset-note strip state (Freya §3.3): shown after the reseed
-     * until he edits any routine (which dismisses it) or it ages out
-     * at 14 days. Fresh installs never see it (reseed flag and dismiss
-     * flag are both set at seed time).
+     * The reset-note strip state (Freya §3.3; R3b #161): shown after
+     * the reseed until HE dismisses it by tapping the note — edits
+     * no longer erase it and it no longer ages out in silence.
+     * Fresh installs never see it (reseed flag and dismiss flag are
+     * both set at seed time); they get the fresh-start note instead.
      */
     val showRoutineResetNote: StateFlow<Boolean> = combine(
         repository.guardSettingsFlow,
         routines
-    ) { settings, routineList ->
-        if (settings == null || !settings.routineReseedV1Done || settings.routineReseedNoteDismissed) {
-            false
-        } else {
-            val targetNames = setOf("FASTED BLOCK", "DAY BLOCKS", "SLEEP")
-            val newestEdit = routineList.filter { it.name in targetNames }
-                .maxOfOrNull { it.scheduleEditedAtMillis } ?: 0L
-            newestEdit == 0L ||
-                System.currentTimeMillis() - newestEdit < 14L * 24L * 60L * 60L * 1000L
-        }
+    ) { settings, _ ->
+        settings != null && settings.routineReseedV1Done && !settings.routineReseedNoteDismissed
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    // Install-day disclosures (R3b #161): prefs-backed one-time
+    // notes, read at init; registerInstallOpen compares this
+    // build's version against the last version this phone opened.
+    private val _freshStartNoteVisible = MutableStateFlow(false)
+    val freshStartNoteVisible: StateFlow<Boolean> = _freshStartNoteVisible
+    private val _updateNoteVisible = MutableStateFlow(false)
+    val updateNoteVisible: StateFlow<Boolean> = _updateNoteVisible
+
+    fun dismissFreshStartNote() {
+        repository.dismissFreshStartNote()
+        _freshStartNoteVisible.value = false
+    }
+
+    fun dismissUpdateNote() {
+        repository.dismissUpdateNote()
+        _updateNoteVisible.value = false
+    }
+
+    fun dismissRoutineResetNote() {
+        viewModelScope.launch { repository.dismissRoutineResetNote() }
+    }
 
     val totalInterceptions: StateFlow<Int> = interceptLogs.combine(apps) { logs, appList ->
         val fromApps = appList.sumOf { it.interceptCount }
@@ -879,9 +909,17 @@ class MonolithViewModel(
         // process was dead, the snapshot is discarded — the delete
         // was booked at its tap and an expired reversal is not
         // revived by a relaunch.
-        undoDeleteStore.load()?.let { (snapshot, deletedAt) ->
-            val remaining = com.example.data.UndoDeleteStore.WINDOW_MILLIS -
-                (System.currentTimeMillis() - deletedAt)
+        undoDeleteStore.load()?.let { (snapshot, deletedAtWall, deletedAtElapsed) ->
+            // Audit R1 #41: judged on the monotonic stamp when
+            // it survives (same boot) — a wall-clock rollback no
+            // longer resurrects an expired undo, nor a forward
+            // jump steals a live one.
+            val remaining = com.example.data.UndoDeleteStore.remainingMillis(
+                deletedAtWallMillis = deletedAtWall,
+                deletedAtElapsedMillis = deletedAtElapsed,
+                nowWallMillis = System.currentTimeMillis(),
+                nowElapsedMillis = android.os.SystemClock.elapsedRealtime()
+            )
             if (remaining > 0L) {
                 _deletedTaskForUndo.value = snapshot
                 undoDismissJob = viewModelScope.launch {
@@ -893,6 +931,8 @@ class MonolithViewModel(
                 undoDeleteStore.clear()
             }
         }
+        _freshStartNoteVisible.value = repository.freshStartNotePending()
+        _updateNoteVisible.value = repository.registerInstallOpen() || repository.updateNotePending()
         viewModelScope.launch {
             repository.ensureSeededAndSyncPackages()
             _pruneNote.value = repository.pendingPruneNote()
@@ -948,8 +988,13 @@ class MonolithViewModel(
             activeSession.collect { session ->
                 // The Watch Store's suspension input: the Safe Break
                 // is his suspension of the blocking interceptors.
+                // Issue #109, F1: the same flow carries the session-
+                // active fact the NOTIFICATIONS line now requires —
+                // the listener captures only while a session is
+                // active, so the board may print RUNNING only then.
                 com.example.service.WatchStore.updateInterceptorInputs(
-                    safeBreak = session?.isInSafeBreak == true
+                    safeBreak = session?.isInSafeBreak == true,
+                    sessionActive = session?.isActive == true
                 )
                 if (session == null) {
                     _sealFreeze.value = null
@@ -1231,16 +1276,25 @@ class MonolithViewModel(
             }
             val active = runCatching { repository.activeSessionSnapshot() }.getOrNull()
             if (active != null && armProving.phase.value == ArmPhase.Idle) {
+                // Truth (issue #76): this runCatching used to discard
+                // its Result — if recovery itself threw, nothing was
+                // logged, surfaced, or remembered, and the faulted
+                // session stayed unrecovered while the UI implied
+                // otherwise. Failures now speak.
                 runCatching {
                     sealTransition.recover(
                         active.id, active.startWallTimeMillis, System.currentTimeMillis()
                     )
+                }.onFailure {
+                    Log.e("MonolithVM", "Slice-E recovery failed for session ${active.id}", it)
                 }
             }
             // Draht: a faulted finish from a previous process
             // resumes its cadence from the row's own stamps.
             runCatching {
                 com.example.service.ReleaseRetryScheduler.runDueRetry(appContext)
+            }.onFailure {
+                Log.e("MonolithVM", "runDueRetry failed at process birth", it)
             }
         }
     }
@@ -1251,6 +1305,11 @@ class MonolithViewModel(
         viewModelScope.launch {
             runCatching {
                 com.example.service.ReleaseRetryScheduler.runDueRetry(appContext)
+            }.onFailure {
+                // Truth (issue #76): the Deck-open retry used to be a
+                // silent no-op when the retry itself threw — pressing
+                // it again reproduced the same invisible failure.
+                Log.e("MonolithVM", "runDueRetry failed on Deck-open retry", it)
             }
         }
     }
@@ -1305,6 +1364,18 @@ class MonolithViewModel(
                         when {
                             ageMs <= 1_800L -> onFinishE0(row, kind, witnessed = true)
                             ageMs <= 600_000L -> onFinishE0(row, kind, witnessed = false)
+                            // Audit R1 #40: a SLEEP stand-down is
+                            // DISCOVERED, never witnessed — the
+                            // phone slept through the window's end
+                            // and the finish exists only when the
+                            // app next looks. The 10-minute discard
+                            // made exactly that booking vanish,
+                            // forever. Stand-downs are exempt from
+                            // the discard; every other kind keeps
+                            // it (a stale manual finish discovered
+                            // days late still books nothing).
+                            kind == com.example.data.FinishKind.ROUTINE_SLEEP_STANDDOWN ->
+                                onFinishE0(row, kind, witnessed = false)
                             else -> handledFinishIds += row.id
                         }
                     } else {
@@ -1642,12 +1713,14 @@ class MonolithViewModel(
 
     private fun persistRoutine(routine: com.example.data.RoutineEntity) {
         viewModelScope.launch {
-            // Every edit re-stamps the schedule and dismisses the
-            // reset note, then reconciles immediately (CRUD trigger).
+            // Every edit re-stamps the schedule, then reconciles
+            // immediately (CRUD trigger). The reset note is NOT
+            // dismissed here (R3b #161): obeying the note must not
+            // erase the record that a reset happened — only the
+            // user's tap on the note itself dismisses it.
             repository.updateRoutine(
                 routine.copy(scheduleEditedAtMillis = System.currentTimeMillis())
             )
-            repository.dismissRoutineResetNote()
             com.example.service.RoutineHeartbeat.tick(
                 appContext, com.example.service.RoutineHeartbeat.Source.CRUD, force = true
             )
@@ -1661,7 +1734,9 @@ class MonolithViewModel(
     }
 
     fun cycleRoutineLoadout(routine: com.example.data.RoutineEntity) {
-        val order = listOf(SmartLoadout.STUDY, SmartLoadout.WORK_SPRINT, SmartLoadout.SLEEP)
+        // Audit R1 #38: the seat order lives in ONE place —
+        // LoadoutStore.CAP_ORDER — not re-hardcoded here.
+        val order = com.example.data.LoadoutStore.CAP_ORDER
         val current = runCatching { SmartLoadout.valueOf(routine.loadoutName) }.getOrDefault(SmartLoadout.STUDY)
         val next = order[(order.indexOf(current) + 1) % order.size]
         soundEngine.playFirmClick()
@@ -1698,6 +1773,21 @@ class MonolithViewModel(
     }
 
     fun removeBlockedSite(domain: String) {
+        // Issue #151 (friend-holds-the-phone): the site list now
+        // carries the same one-way ratchet as the app tiers.
+        // Removing a site WEAKENS the seal — the accessibility
+        // service re-reads the list per event, so the domain
+        // stopped matching inside the very session that was
+        // supposed to be sealed — and anyone holding the phone
+        // could do it: no session check existed on this verb,
+        // unlike tiers (setAppBlockTier) and daily limits. During
+        // an active session the verb refuses with the ratchet's
+        // own warning. Adding a site only tightens, and stays
+        // lawful mid-session, exactly as a tightening tier does.
+        if (activeSession.value?.isActive == true) {
+            triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT UNBLOCK '${domain.uppercase()}' DURING ACTIVE VAULT")
+            return
+        }
         soundEngine.playMechanicalLatch(false)
         viewModelScope.launch { repository.removeBlockedSite(domain) }
     }
@@ -1920,15 +2010,25 @@ class MonolithViewModel(
                 // BEFORE the banner presents the delete as
                 // reversible — the promise and its backing are
                 // never out of order.
-                undoDeleteStore.save(deleted, System.currentTimeMillis())
-                _deletedTaskForUndo.value = deleted
+                // Audit R1 #41: the banner is presented only when
+                // the copy actually landed. A failed commit used
+                // to leave the banner promising a reversal whose
+                // restore copy did not exist.
+                val persisted = undoDeleteStore.save(
+                    deleted,
+                    System.currentTimeMillis(),
+                    android.os.SystemClock.elapsedRealtime()
+                )
+                if (persisted) {
+                    _deletedTaskForUndo.value = deleted
+                    undoDismissJob = viewModelScope.launch {
+                        delay(com.example.data.UndoDeleteStore.WINDOW_MILLIS)
+                        _deletedTaskForUndo.value = null
+                        undoDeleteStore.clear()
+                    }
+                }
                 if (nextActive != null) {
                     _intentionText.value = nextActive.title
-                }
-                undoDismissJob = viewModelScope.launch {
-                    delay(com.example.data.UndoDeleteStore.WINDOW_MILLIS)
-                    _deletedTaskForUndo.value = null
-                    undoDeleteStore.clear()
                 }
             }
         }
@@ -1992,6 +2092,13 @@ class MonolithViewModel(
     private val _forgedArtifactIds = MutableStateFlow<Set<String>>(emptySet())
     val forgedArtifactIds: StateFlow<Set<String>> = _forgedArtifactIds.asStateFlow()
 
+    /** The cabinet's forge record (Issue #110, finding 5): per
+     *  artifact, how many sessions forged it and when the most
+     *  recent forge happened — re-read with the Drawer, from the
+     *  same session rows as the forged-id set. */
+    private val _forgeStats = MutableStateFlow<Map<String, com.example.data.ForgeStat>>(emptyMap())
+    val forgeStats: StateFlow<Map<String, com.example.data.ForgeStat>> = _forgeStats.asStateFlow()
+
     private val _drawerMonth = MutableStateFlow(
         com.example.data.DrawerDay.filingYearMonth(System.currentTimeMillis())
     )
@@ -2012,6 +2119,15 @@ class MonolithViewModel(
     private val _drawerSearchHasEarlier = MutableStateFlow(false)
     val drawerSearchHasEarlier: StateFlow<Boolean> = _drawerSearchHasEarlier.asStateFlow()
 
+    /** #158 F2: the day words the current Drawer search stands on —
+     *  every date carrying a word the query names (from
+     *  allDayWords(), word-only days included), merged with the
+     *  declared words of the dates the task hits file under, so a
+     *  found day keeps its word in the search rendering. Empty
+     *  exactly when neither a word nor a task-hit date has one. */
+    private val _drawerSearchDayWords = MutableStateFlow<Map<String, String>>(emptyMap())
+    val drawerSearchDayWords: StateFlow<Map<String, String>> = _drawerSearchDayWords.asStateFlow()
+
     private val _dayWords = MutableStateFlow<Map<String, String>>(emptyMap())
     val dayWords: StateFlow<Map<String, String>> = _dayWords.asStateFlow()
 
@@ -2019,23 +2135,51 @@ class MonolithViewModel(
     private var drawerSearchOffset = 0
     private var drawerSearchJob: Job? = null
 
+    /** #158 F3: true once a Drawer month has been selected (by a
+     *  first refreshDrawer or by hand). refreshDrawer may default
+     *  the month only before that — afterwards the place the user
+     *  is reading is theirs, and re-entering the Drawer reloads
+     *  THAT month instead of resetting to the current one. */
+    private var drawerMonthSelected = false
+
+    /** The declared words of the filing dates [rows] sit on, read
+     *  from the already-loaded day-words map. */
+    private fun dayWordsForRows(
+        rows: List<FocusTaskEntity>,
+        source: Map<String, String>
+    ): Map<String, String> {
+        if (rows.isEmpty() || source.isEmpty()) return emptyMap()
+        val isos = rows.mapTo(HashSet()) {
+            com.example.data.DrawerDay.dateIso(
+                com.example.data.DrawerDay.filingDate(it.completedAtMillis)
+            )
+        }
+        return source.filterKeys { it in isos }
+    }
+
     /** Refresh everything the Drawer renders from. Called when the
-     *  VAULT destination opens: the landing is always the CURRENT
-     *  filing month (the ruling's default view), with the months
-     *  index and day words re-read. Day words read through
-     *  allDayWords() — the union of the prefs capture and the
-     *  drained day_notes table, so a word survives its own drain. */
+     *  VAULT destination opens: on FIRST entry the month defaults
+     *  to the CURRENT filing month (the ruling's default view);
+     *  once a month is selected, refresh keeps it (#158 F3) and
+     *  reloads that month, with the months index and day words
+     *  re-read. Day words read through allDayWords() — the union
+     *  of the prefs capture and the drained day_notes table, so a
+     *  word survives its own drain. */
     fun refreshDrawer() {
-        _drawerMonth.value = com.example.data.DrawerDay.filingYearMonth(System.currentTimeMillis())
+        if (!drawerMonthSelected) {
+            _drawerMonth.value = com.example.data.DrawerDay.filingYearMonth(System.currentTimeMillis())
+        }
         viewModelScope.launch {
             _storedMonths.value = repository.storedMonths()
             _dayWords.value = repository.allDayWords()
             _forgedArtifactIds.value = repository.forgedArtifactIds()
+            _forgeStats.value = repository.forgeStats()
             selectDrawerMonth(_drawerMonth.value.first, _drawerMonth.value.second)
         }
     }
 
     fun selectDrawerMonth(year: Int, month: Int) {
+        drawerMonthSelected = true
         _drawerMonth.value = year to month
         drawerOffset = 0
         _drawerRows.value = emptyList()
@@ -2071,15 +2215,30 @@ class MonolithViewModel(
         _drawerQuery.value = query
         drawerSearchJob?.cancel()
         if (query.isBlank()) {
+            // The blank path still clears synchronously (#158 F4) —
+            // no debounce stands between clearing and a blank field.
             _drawerResults.value = emptyList()
+            _drawerSearchDayWords.value = emptyMap()
             _drawerSearchHasEarlier.value = false
             drawerSearchOffset = 0
             return
         }
         drawerSearchJob = viewModelScope.launch {
+            // #158 F4: settle before scanning. The job above is
+            // cancelled by the next keystroke, so intermediate
+            // keystrokes never reach the leading-wildcard LIKE
+            // scan at all; only the query that survives 300 ms
+            // of quiet runs it.
+            delay(300)
             val page = repository.searchStoredTasks(query, 0)
+            // #158 F2: a query naming a day word also stands for
+            // every date carrying that word (word-only days
+            // included); task-hit dates keep their own words.
+            val wordDays = repository.searchDayWords(query)
             if (_drawerQuery.value == query) {
                 _drawerResults.value = page.rows
+                _drawerSearchDayWords.value =
+                    dayWordsForRows(page.rows, _dayWords.value) + wordDays
                 drawerSearchOffset = page.rows.size
                 _drawerSearchHasEarlier.value = page.hasEarlier
             }
@@ -2094,6 +2253,9 @@ class MonolithViewModel(
             val page = repository.searchStoredTasks(query, offset)
             if (_drawerQuery.value == query) {
                 _drawerResults.value = _drawerResults.value + page.rows
+                // Later pages can file under further worded dates.
+                _drawerSearchDayWords.value = _drawerSearchDayWords.value +
+                    dayWordsForRows(page.rows, _dayWords.value)
                 drawerSearchOffset += page.rows.size
                 _drawerSearchHasEarlier.value = page.hasEarlier
             }
@@ -2305,15 +2467,28 @@ class MonolithViewModel(
     fun applySmartLoadout(loadout: SmartLoadout) {
         soundEngine.playHarmonicSeal(true)
         _selectedProfileName.value = loadout.title
-        // UNA-07: a hand pick is a fact — persist it and rest the cap
-        // on it, so the selector survives navigation and process death.
-        loadoutStore.put(loadout)
-        _loadoutCapIndex.value = com.example.data.LoadoutStore.capIndexOf(loadout)
         if (loadout == SmartLoadout.STUDY) {
             _shortsReelsSniperEnabled.value = true
             _browserUrlBlockerEnabled.value = true
         }
         viewModelScope.launch {
+            // UNA-07: a hand pick is a fact — persist it and rest the
+            // cap on it, so the selector survives navigation and
+            // process death. Audit R1 #38: the synchronous commit()
+            // used to run HERE, on the tap's (main) thread, and its
+            // result was discarded — the cap moved even when the
+            // pick never reached disk. The commit now runs on IO,
+            // and the cap rests on the pick only when the store
+            // confirms it; on failure the cap re-reads the stored
+            // fact, so it can never present an unpersisted pick.
+            val persisted = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                loadoutStore.put(loadout)
+            }
+            _loadoutCapIndex.value = if (persisted) {
+                com.example.data.LoadoutStore.capIndexOf(loadout)
+            } else {
+                loadoutStore.capIndex()
+            }
             repository.applySmartLoadout(loadout)
             if (loadout == SmartLoadout.STUDY) {
                 repository.setBrowserBlockerEnabled(true)
@@ -2541,10 +2716,32 @@ class MonolithViewModel(
         reasonBadge: String = "Locked",
         path: InterceptPath = InterceptPath.UNKNOWN
     ) {
-        soundEngine.playMechanicalLatch(true)
+        // Issue #68 F5, Tier 1 — revalidation: an airlock is a
+        // claim about a live session. With no active session there
+        // is nothing to intercept, whoever asks; every lawful
+        // caller fires only inside one (the shield loop, the
+        // accessibility doors, the sealed launcher's peek key), so
+        // the gate costs them nothing and a fabricated call dies
+        // here, before even the latch sound.
         val active = activeSession.value
+        if (active?.isActive != true) return
 
         val appEntity = apps.value.find { it.packageName == packageName }
+        // On the two per-app doors (the only lease-honouring ones)
+        // the claim is about a ruled row: the row must exist, must
+        // not be OPEN, and the badge prints from the row — never
+        // from the caller's word. The guard, sniper and site doors
+        // legitimately name unlisted packages (Settings, a
+        // browser) with door-defined badges; their provenance is
+        // the Tier-2 nonce at the intent boundary, and the session
+        // gate above binds them too.
+        val effectiveBadge = if (path.canHonourPeekLease) {
+            if (appEntity == null || appEntity.resolvedTier == AppBlockTier.OPEN) return
+            appEntity.resolvedTier.badge
+        } else {
+            reasonBadge
+        }
+        soundEngine.playMechanicalLatch(true)
         val cooldownLeft = if (appEntity != null) repository.getPeekCooldownRemainingSeconds(appEntity) else 0
         val pillActive = _floatingPeekPill.value.isActive
         // UNA2-01: the offer is computed per-path by the one pure
@@ -2561,7 +2758,7 @@ class MonolithViewModel(
             isVisible = true,
             interceptedPackageName = packageName,
             interceptedAppName = appName,
-            interceptReasonBadge = reasonBadge,
+            interceptReasonBadge = effectiveBadge,
             sessionIntention = active?.intention ?: _intentionText.value,
             selectedReason = DistractionTriggerReason.MUSCLE_MEMORY,
             interceptInstanceId = ++airlockInstanceSeq,

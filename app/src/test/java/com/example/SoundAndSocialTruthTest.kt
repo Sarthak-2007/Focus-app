@@ -447,7 +447,7 @@ class SoundAndSocialTruthTest {
         composeRule.setContent {
             val socialOn by vm.browserUrlBlockerEnabled.collectAsState()
             val snapshot by WatchStore.snapshots.collectAsState()
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 // shorts = true below is a premise, not filler: with
                 // the sniper OFF, the shorts row would print OFF from
                 // the first frame and break
@@ -488,6 +488,11 @@ class SoundAndSocialTruthTest {
                 Thread.sleep(50L)
             }
         }
+        // Fail loudly (#91): silently giving up let the node
+        // assertions below run against a possibly still-rising
+        // sheet, passing/failing for timing reasons unrelated to
+        // the behaviour under test.
+        throw AssertionError("Park sheet did not settle (compose never idled) within 5s")
     }
 
     /** Poll-with-looper-idle until [condition] holds (the

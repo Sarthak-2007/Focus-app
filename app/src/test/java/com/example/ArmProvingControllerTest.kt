@@ -103,6 +103,9 @@ class ArmProvingControllerTest {
         var startShieldCalls = 0
         var stopShieldCalls = 0
         var sealResult = true
+        /** The anchors a sealed row actually carries, by session
+         *  (issue #29 finding 4's read-back seam on the port). */
+        val rowT0BySession = mutableMapOf<Int, Long>()
         /** The production seal marker as it stood INSIDE the row
          *  step (wired to the real repository by the harness):
          *  -1 proves the marker is written after the row, by the
@@ -134,8 +137,12 @@ class ArmProvingControllerTest {
             sealCalls += sessionId to t0Mono
             markerAtSealRow = markerProbe()
             events += "seal"
+            if (sealResult) rowT0BySession[sessionId] = t0Mono
             return sealResult
         }
+
+        override suspend fun sealedRowT0Mono(sessionId: Int): Long? =
+            rowT0BySession[sessionId]
 
         override suspend fun annulProvingSession(sessionId: Int) {
             annulCalls += sessionId
@@ -156,11 +163,55 @@ class ArmProvingControllerTest {
         }
     }
 
+    /** Issue #29 finding 5: the witnesses are keyed BY SESSION —
+     *  a stamp attests one latched row, never "some session".
+     *  (The pre-fix fake ignored its sessionId argument entirely,
+     *  so a witness answering for the wrong row would have
+     *  "proved" any attempt.) The convenience vars write to
+     *  [forSession], the row the latch under test inserts (41). */
     private class FakeWitnesses : ArmWitnesses {
-        var shieldMono: Long? = null
-        var a11yMono: Long? = null
-        override fun shieldProtectingMono(sessionId: Int): Long? = shieldMono
-        override fun a11yArmedMono(sessionId: Int): Long? = a11yMono
+        private val shield = mutableMapOf<Int, Long>()
+        private val a11y = mutableMapOf<Int, Long>()
+        var forSession = 41
+        var shieldMono: Long?
+            get() = shield[forSession]
+            set(value) {
+                if (value == null) shield.remove(forSession) else shield[forSession] = value
+            }
+        var a11yMono: Long?
+            get() = a11y[forSession]
+            set(value) {
+                if (value == null) a11y.remove(forSession) else a11y[forSession] = value
+            }
+
+        override fun shieldProtectingMono(sessionId: Int): Long? = shield[sessionId]
+        override fun a11yArmedMono(sessionId: Int): Long? = a11y[sessionId]
+    }
+
+    /** Fault injection for issue #29 finding 1 ONLY: a transition
+     *  whose seal act dies mid-flight. The ordering proofs in this
+     *  suite run on the production transition (tests-1 #1); this
+     *  stub exists to prove the CONTROLLER's guard — a thrown seal
+     *  act must be judged as a refused seal, never strand the
+     *  attempt in Proving. */
+    private class ThrowingTransition : com.example.service.SessionSealTransition {
+        override fun primeForSeal() {}
+        override fun cancelSealPrime() {}
+        override suspend fun executeSeal(
+            sessionId: Int,
+            t0Mono: Long,
+            sealRow: suspend () -> Boolean,
+            publish: () -> Unit
+        ): Boolean = throw IllegalStateException("seal act died")
+
+        override suspend fun proveAndSeal(sessionId: Int, latchMonoMs: Long?) =
+            com.example.service.SealVerdict.ANNULLED
+
+        override suspend fun recover(sessionId: Int, rowStartWallMs: Long, nowWallMs: Long) =
+            com.example.service.SealVerdict.ANNULLED
+
+        override fun isSealed(sessionId: Int): Boolean = false
+        override fun isTombstoned(routineId: Int?, windowStartMillis: Long): Boolean = false
     }
 
     private lateinit var transition: SessionSealTransitionImpl
@@ -494,6 +545,205 @@ class ArmProvingControllerTest {
         )
         val sentence = controller.armSentence.value
         assertEquals("SESSION-ROW — NO PROOF. NOTHING WAS SEALED.", sentence?.text)
+    }
+
+    // =================================================================
+    // Issue #29 (Wave-3 MOTOR): the lethal edges the audit named.
+    // =================================================================
+
+    @Test
+    fun clockLeapAcrossBothDeadlinesStillRendersTheJam() = runTest {
+        // Issue #29 finding 2: one clock read previously drove
+        // both the Jammed transition and the annul check in the
+        // same iteration, so a single leap past L+1500 annulled
+        // instantly — the jam was never rendered and the retry
+        // window was zero. The jam must stand for at least one
+        // sample cycle before the final deadline judges it.
+        val controller = newController()
+        val l = 10_000L
+        now = l
+        controller.latch()
+        runCurrent()
+        // Step the scheduler by exactly ONE sample (10ms): the
+        // iteration that observes the leap declares the jam and
+        // may not annul in that same pass.
+        now = l + 2_000
+        advanceTimeBy(10)
+        runCurrent()
+        assertTrue(controller.phase.value is ArmPhase.Jammed)
+        assertEquals(0, controller.annulCount.value)
+        // The NEXT iteration judges the standing jam against the
+        // final deadline: annulment, exactly once.
+        advanceTimeBy(10)
+        runCurrent()
+        assertEquals(ArmPhase.Idle, controller.phase.value)
+        assertEquals(1, controller.annulCount.value)
+    }
+
+    @Test
+    fun witnessesAnsweringForAnotherSessionDoNotProveThisAttempt() = runTest {
+        // Issue #29 finding 5: the witnesses' stamps are keyed
+        // to a session row. Answers for a DIFFERENT row (99)
+        // prove nothing about this attempt's row (41): the
+        // links stay pending and the attempt jams on them.
+        val controller = newController()
+        val l = 10_000L
+        witnesses.forSession = 99
+        witnesses.shieldMono = l + 30
+        witnesses.a11yMono = l + 40
+        now = l
+        controller.latch()
+        runCurrent()
+        tick(l + 100)
+        tick(l + 600)
+        val jammed = controller.phase.value as ArmPhase.Jammed
+        assertEquals(
+            setOf(ArmLink.SHIELD_PROTECTING, ArmLink.A11Y_SESSION_ARMED),
+            jammed.jamSet
+        )
+        assertTrue(port.sealCalls.isEmpty())
+    }
+
+    @Test
+    fun sessionEdgeFiresOnlyWhenL1ActuallyLands() = runTest {
+        // Issue #29 finding 3: SESSION_EDGE previously fired
+        // unconditionally after the insert — even when the
+        // snapshot read that proves L1 missed entirely. Now the
+        // edge belongs to the proof: while every snapshot read
+        // misses, no edge; when a read finally lands L1 (here
+        // the sampler's self-heal re-read), the edge fires —
+        // exactly once.
+        val controller = newController()
+        val l = 10_000L
+        port.snapshotMisses = 2
+        now = l
+        controller.latch()
+        runCurrent()
+        assertTrue(!events.contains("edge"))
+        var links = (controller.phase.value as ArmPhase.Proving).links
+        assertTrue(links[ArmLink.SESSION_ROW] is LinkMark.Pending)
+        tick(l + 50)
+        links = (controller.phase.value as ArmPhase.Proving).links
+        assertTrue(links[ArmLink.SESSION_ROW] is LinkMark.Confirmed)
+        assertEquals(1, events.count { it == "edge" })
+    }
+
+    @Test
+    fun sessionEdgeFiresOnceWhenTheSnapshotProves() = runTest {
+        val controller = newController()
+        val l = 10_000L
+        now = l
+        controller.latch()
+        runCurrent()
+        assertEquals(1, events.count { it == "edge" })
+    }
+
+    @Test
+    fun executeSealThrowingFailsTheAttemptInsteadOfStrandingIt() = runTest {
+        // Issue #29 finding 1: the seal launch had no try/catch —
+        // a throwing executeSeal died in the scope and the
+        // attempt sat in Proving forever. A thrown seal act is
+        // now judged as a refused seal: the failSeal hand-back.
+        // (Fault injected via ThrowingTransition: the production
+        // transition itself swallows sealRow failures by design,
+        // so the throw is staged at the interface seam — the
+        // controller's guard is what is under test.)
+        port = FakePort(events)
+        witnesses = FakeWitnesses()
+        val throwing = ThrowingTransition()
+        val controller = ArmProvingController(
+            scope = backgroundScope,
+            port = port,
+            witnesses = witnesses,
+            transition = throwing,
+            playJamHaptics = { events += "jamhaptics" },
+            clock = { now },
+            framePoster = { callback -> frames.addLast(callback) },
+            sampleMs = 10
+        )
+        val l = 10_000L
+        witnesses.shieldMono = l + 30
+        witnesses.a11yMono = l + 40
+        now = l
+        controller.latch()
+        runCurrent()
+        tick(l + 60)
+        now = l + 210
+        pumpFrames()
+        runCurrent()
+        assertEquals(ArmPhase.Idle, controller.phase.value)
+        assertEquals(1, controller.annulCount.value)
+        assertEquals(
+            "SESSION-ROW — NO PROOF. NOTHING WAS SEALED.",
+            controller.armSentence.value?.text
+        )
+    }
+
+    @Test
+    fun frameThatNeverArrivesIsRescuedByTheWatchdog() = runTest {
+        // Issue #29 finding 1: after declareT0 the sampler
+        // retired and everything rode on one posted frame. If
+        // the frame never arrives (detached view), the watchdog
+        // hands the attempt back to the sampler, which declares
+        // t=0 again and re-posts — the seal still lands when a
+        // frame finally comes.
+        val controller = newController()
+        val l = 10_000L
+        witnesses.shieldMono = l + 30
+        witnesses.a11yMono = l + 40
+        now = l
+        controller.latch()
+        runCurrent()
+        tick(l + 60)
+        // All confirmed; a declaration frame is queued — and
+        // never pumped. Past the watchdog's patience, the
+        // attempt must still be Proving (not stranded-dead, not
+        // falsely sealed) and a fresh frame must be queued.
+        val framesBefore = frames.size
+        assertTrue(framesBefore > 0)
+        now = l + 210
+        advanceTimeBy(ArmProvingController.SEAL_WATCHDOG_MS + 100)
+        runCurrent()
+        assertTrue(controller.phase.value is ArmPhase.Proving)
+        assertTrue(frames.size > framesBefore)
+        // The rescued declaration seals on its frame.
+        pumpFrames()
+        runCurrent()
+        val phase = controller.phase.value
+        assertTrue(phase is ArmPhase.SealedRunning)
+        assertEquals(l + 210, (phase as ArmPhase.SealedRunning).t0Mono)
+    }
+
+    @Test
+    fun otherDoorSealPublishesTheRowsOwnAnchors() = runTest {
+        // Issue #29 finding 4: when the seal landed through the
+        // other door, the publication previously carried THIS
+        // attempt's computed t0. Here the REAL transition seals
+        // the row first (at L+999, through its own claim) — the
+        // controller's frame then finds the claim spent, and
+        // must publish the row's real anchor, L+999.
+        val controller = newController()
+        val l = 10_000L
+        witnesses.shieldMono = l + 30
+        witnesses.a11yMono = l + 40
+        now = l
+        controller.latch()
+        runCurrent()
+        tick(l + 60)
+        // The other door seals, on the production transition.
+        val sealedElsewhere = transition.executeSeal(
+            sessionId = 41,
+            t0Mono = l + 999,
+            sealRow = { port.sealSession(41, l + 999) },
+            publish = {}
+        )
+        assertTrue(sealedElsewhere)
+        now = l + 210
+        pumpFrames()
+        runCurrent()
+        val phase = controller.phase.value
+        assertTrue(phase is ArmPhase.SealedRunning)
+        assertEquals(l + 999, (phase as ArmPhase.SealedRunning).t0Mono)
     }
 
     @Test
