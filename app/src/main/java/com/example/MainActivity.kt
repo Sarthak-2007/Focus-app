@@ -320,9 +320,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // onCreate pins a light status bar exactly once; without this,
     // dark status glyphs sat on the night ground for the whole
     // session. Re-applied whenever the ground steps, and the day
-    // values are restored when it steps back.
-    LaunchedEffect(groundNight) {
-        enableEdgeToEdge(
+    // values are restored when it steps back. (This composable is
+    // top-level, so the bars are set through the host Activity
+    // from LocalContext, not the onCreate receiver.)
+    val hostActivity = context as? androidx.activity.ComponentActivity
+    LaunchedEffect(groundNight, hostActivity) {
+        hostActivity?.enableEdgeToEdge(
             statusBarStyle = if (groundNight) {
                 SystemBarStyle.dark(
                     android.graphics.Color.TRANSPARENT,
