@@ -1211,14 +1211,42 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 initialPage = launcherPage,
                 onClose = { launcherOpen = false },
                 onLaunchApp = { app ->
-                    launcherOpen = false
-                    runCatching {
-                        context.packageManager
-                            .getLaunchIntentForPackage(app.packageName)
-                            ?.let { launch ->
-                                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                context.startActivity(launch)
-                            }
+                    // TAP-TIME LAUNCH GATE (design-revamp salvage,
+                    // b027368): the entity handed in was composed when
+                    // the grid rendered — re-read the VM's live rows
+                    // at the tap and launch only what is still true
+                    // NOW. On any refusal: no launch, the launcher
+                    // stays open, nothing crashes.
+                    val liveApp = viewModel.apps.value
+                        .find { it.packageName == app.packageName }
+                    val tapSealed =
+                        viewModel.activeSession.value?.isActive == true
+                    val launchAllowed = liveApp != null &&
+                        liveApp.resolvedTier == com.example.data.AppBlockTier.OPEN &&
+                        tapSealed &&
+                        !viewModel.navigationLocked() &&
+                        // Defence in depth, even if OPEN: the Play
+                        // Store is an install vector, and browsers
+                        // sit behind only a partial site blocker.
+                        // BlockedAppEntity.category stores the
+                        // AppCategory enum's name (see
+                        // MonolithModels / repository writers).
+                        liveApp.packageName != "com.android.vending" &&
+                        liveApp.category != com.example.data.AppCategory.BROWSERS.name
+                    if (launchAllowed && liveApp != null) {
+                        // D-05 (2dac73e): close only once an intent
+                        // has actually started — closing first made
+                        // a failed launch a silent nothing.
+                        val started = runCatching {
+                            context.packageManager
+                                .getLaunchIntentForPackage(liveApp.packageName)
+                                ?.let { launch ->
+                                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    context.startActivity(launch)
+                                    true
+                                } ?: false
+                        }.getOrDefault(false)
+                        if (started) launcherOpen = false
                     }
                 },
                 onPeekApp = { app ->
