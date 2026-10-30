@@ -40,7 +40,18 @@ class TruthCar3CaptureBodyTest {
     fun captureBodyIsNeverInvented() = runBlocking {
         val dao = MonolithDatabase.getInstance(context).monolithDao()
         dao.clearAllCapturedNotifications()
-        dao.insertSession(
+        // This test runs against the PRODUCTION singleton DB (the
+        // listener resolves it internally), so every row written
+        // here must leave with the test: a leaked ACTIVE session
+        // falsifies other classes' no-active-session assertions
+        // (ReceiptClaimRepositoryTest documents exactly that
+        // damage) and a leaked LOCKED app row pollutes the catalog.
+        // The finally below covers every exit path — assertion
+        // failure included — deleting by the inserted row's own
+        // id / package via the DAO.
+        var sessionId: Long? = null
+        try {
+        sessionId = dao.insertSession(
             FocusSessionEntity(
                 intention = "Capture body test",
                 profileName = "CaptureBody",
@@ -67,9 +78,15 @@ class TruthCar3CaptureBodyTest {
             .setContentTitle("Mum")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .build()
+        // SDK 36's only public constructor is the @Deprecated
+        // 10-argument form — (pkg, opPkg, id, tag, uid, initialPid,
+        // score, notification, user, postTime). The 9-argument form
+        // this call was written against no longer exists, hence the
+        // third 0 (uid, initialPid, score — none of them read by
+        // the listener under test).
         val sbn = StatusBarNotification(
             "com.example.chat", "com.example.chat", 7, null,
-            0, 0, notification, Process.myUserHandle(),
+            0, 0, 0, notification, Process.myUserHandle(),
             System.currentTimeMillis()
         )
 
@@ -90,5 +107,10 @@ class TruthCar3CaptureBodyTest {
         val row = rows.first { it.packageName == "com.example.chat" }
         assertEquals("Mum", row.senderTitle)
         assertEquals("", row.messageBody)
+        } finally {
+            sessionId?.let { dao.deleteSessionById(it.toInt()) }
+            dao.deleteAppsByPackage(listOf("com.example.chat"))
+            dao.clearAllCapturedNotifications()
+        }
     }
 }

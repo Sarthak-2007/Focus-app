@@ -225,6 +225,88 @@ class SoundAndSocialTruthTest {
     }
 
     // =================================================================
+    // ISSUE #49 — SOUND ENGINE RESOURCE + FACT HONESTY
+    // =================================================================
+
+    /** #49-3: construction is free — no threads until a cue needs
+     *  a lane. On the audited tree, init started two threads and
+     *  the synth loop opened a PLAYING AudioTrack immediately. */
+    @Test
+    fun EngineConstructionStartsNoThreads() {
+        val engine = TactileSoundEngine(context)
+        assertFalse(
+            "a freshly constructed engine must not have started its lanes",
+            engine.threadsStartedForTest()
+        )
+        engine.stopAllAudio()
+    }
+
+    /** #49-4: the gate is @Volatile (happens-before for the synth
+     *  thread's unsynchronized read) — asserted on the field
+     *  itself, the exact property the audit found missing. */
+    @Test
+    fun SoundEnabledGateIsVolatile() {
+        val field = TactileSoundEngine::class.java.getDeclaredField("soundEnabled")
+        assertTrue(
+            "soundEnabled must be @Volatile",
+            java.lang.reflect.Modifier.isVolatile(field.modifiers)
+        )
+        val haptics = TactileSoundEngine::class.java.getDeclaredField("hapticsEnabled")
+        assertTrue(
+            "hapticsEnabled must be @Volatile",
+            java.lang.reflect.Modifier.isVolatile(haptics.modifiers)
+        )
+    }
+
+    /** #49-2: stopAllAudio is total and final — the engine leaves
+     *  the live registry and later cues enqueue nothing. */
+    @Test
+    fun StopAllAudioRemovesEngineAndSilencesIt() {
+        SoundEffectsSetting.setEnabled(context, true)
+        val engine = TactileSoundEngine(context)
+        val countWhileAlive = TactileSoundEngine.liveEngineCountForTest()
+        engine.stopAllAudio()
+        assertTrue(
+            "a stopped engine must leave the live registry",
+            TactileSoundEngine.liveEngineCountForTest() < countWhileAlive
+        )
+        engine.playRotaryDetent(680.0)
+        engine.playSealThrow()
+        assertEquals(
+            "a stopped engine must accept no further commands",
+            0,
+            engine.pendingCommandCount()
+        )
+        engine.stopAllAudio() // idempotent: a second teardown must not throw
+    }
+
+    /** #49-5: haptics is a persisted fact with the same push law
+     *  as sound — born from the fact, flipped on live engines by
+     *  the store, never an always-true stub. */
+    @Test
+    fun HapticsSettingIsAPersistedFact() {
+        assertTrue(SoundEffectsSetting.setHapticsEnabled(context, false))
+        assertFalse(SoundEffectsSetting.isHapticsEnabled(context))
+        val engine = TactileSoundEngine(context)
+        assertFalse("engine must be born from the haptics fact", engine.hapticsEnabled)
+        assertTrue(SoundEffectsSetting.setHapticsEnabled(context, true))
+        assertTrue("the store's push must reach live engines", engine.hapticsEnabled)
+        engine.stopAllAudio()
+    }
+
+    /** #49-5: setEnabled reports success truthfully (Boolean) and
+     *  a successful write is the one that reaches engines. */
+    @Test
+    fun SetEnabledReturnsCommitVerdict() {
+        val engine = TactileSoundEngine(context)
+        assertTrue(SoundEffectsSetting.setEnabled(context, false))
+        assertFalse(engine.soundEnabled)
+        assertTrue(SoundEffectsSetting.setEnabled(context, true))
+        assertTrue(engine.soundEnabled)
+        engine.stopAllAudio()
+    }
+
+    // =================================================================
     // UNA-02 — SOCIAL SITES HAS ITS SWITCH
     // =================================================================
 
@@ -365,13 +447,19 @@ class SoundAndSocialTruthTest {
         composeRule.setContent {
             val socialOn by vm.browserUrlBlockerEnabled.collectAsState()
             val snapshot by WatchStore.snapshots.collectAsState()
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
+                // shorts = true below is a premise, not filler: with
+                // the sniper OFF, the shorts row would print OFF from
+                // the first frame and break
+                // SocialBoardWordFollowsTheToggle's pre-toggle
+                // "OFF does not exist" assertion.
                 ParkDrawer(
                     visible = true,
                     snapshot = snapshot,
                     isSealed = false,
                     isNight = false,
                     soundEnabled = true,
+                    shortsReelsSniperEnabled = true,
                     soundEngine = vm.soundEngine,
                     socialSitesEnabled = socialOn,
                     onToggleSocialSites = { vm.toggleBrowserUrlBlocker() },
@@ -379,7 +467,8 @@ class SoundAndSocialTruthTest {
                     parkReturnTick = 0,
                     onDismiss = {},
                     onFixClick = {},
-                    onToggleSound = {}
+                    onToggleSound = {},
+                    onToggleShortsReelsSniper = {}
                 )
             }
         }
@@ -399,6 +488,11 @@ class SoundAndSocialTruthTest {
                 Thread.sleep(50L)
             }
         }
+        // Fail loudly (#91): silently giving up let the node
+        // assertions below run against a possibly still-rising
+        // sheet, passing/failing for timing reasons unrelated to
+        // the behaviour under test.
+        throw AssertionError("Park sheet did not settle (compose never idled) within 5s")
     }
 
     /** Poll-with-looper-idle until [condition] holds (the
