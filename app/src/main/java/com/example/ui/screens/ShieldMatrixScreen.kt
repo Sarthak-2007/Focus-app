@@ -147,9 +147,6 @@ fun ShieldMatrixScreen(
     // remember key re-seats it whenever the stored fact (re)loads.
     var selectedLoadoutIndex by remember(loadoutCapIndex) { mutableIntStateOf(loadoutCapIndex) }
 
-    val shutCount = remember(allApps) { allApps.count { it.resolvedTier == AppBlockTier.LOCKED } }
-    val peekCount = remember(allApps) { allApps.count { it.resolvedTier == AppBlockTier.PEEK_2M } }
-
     // =====================================================================
     // THE STANDING ORDERS, DE-DUPLICATED (Shield audit R-1; issue
     // #7). The slip's per-app lines are RETIRED: they enumerated
@@ -162,6 +159,8 @@ fun ShieldMatrixScreen(
     // exactly once on this screen, on the sled row that can also
     // change it.
     // =====================================================================
+    val shutCount = remember(allApps) { allApps.count { it.resolvedTier == AppBlockTier.LOCKED } }
+    val peekCount = remember(allApps) { allApps.count { it.resolvedTier == AppBlockTier.PEEK_2M } }
     val openCount = allApps.size - shutCount - peekCount
 
     // M6 (Mikro): return is memory — the list reopens where his thumb

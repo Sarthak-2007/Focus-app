@@ -335,7 +335,9 @@ data class FocusSessionEntity(
     // not stop at a finish. releaseFaultShield names the faulted
     // link; releaseRetriesDone counts the retry cadence's spent
     // attempts; releaseFaultedAtWallMillis is the fault's wall
-    // instant. Written only by the finish machine's fault path.
+    // instant. Set only by the finish machine's fault path; the
+    // flag (never the stamps) is cleared by the retry scheduler
+    // when the fault heals or is superseded (issue #47 F1).
     val releaseFaultShield: Boolean = false,
     val releaseRetriesDone: Int = 0,
     val releaseFaultedAtWallMillis: Long = 0L,
