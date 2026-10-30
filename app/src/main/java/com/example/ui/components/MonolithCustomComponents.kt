@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -41,7 +44,6 @@ import com.example.data.SystemGuardStatus
 import com.example.service.UsageAccess
 import com.example.service.WatchStore
 import com.example.ui.ArmPhase
-import com.example.ui.provenCount
 import com.example.service.Warrant
 import com.example.service.WarrantState
 import com.example.ui.theme.AnonymousProFamily
@@ -84,7 +86,8 @@ fun rememberMixedTypographyText(
     wordSuffix: String = "",
     wordColor: Color = MaterialTheme.colorScheme.onBackground,
     monoColor: Color = MaterialTheme.colorScheme.primary
-) = buildAnnotatedString {
+) = remember(wordPrefix, monoNumber, wordSuffix, wordColor, monoColor) {
+    buildAnnotatedString {
     if (wordPrefix.isNotEmpty()) {
         withStyle(
             SpanStyle(
@@ -117,6 +120,7 @@ fun rememberMixedTypographyText(
         ) {
             append(wordSuffix)
         }
+    }
     }
 }
 
@@ -194,7 +198,7 @@ fun BlockitActionChip(
     }
     val fg = when {
         isUndoStyle -> scheme.primaryContainer
-        isAccentArmed -> TokenColorOnPrimary
+        isAccentArmed -> OnInkFillDay
         isPrimaryInk -> onInkControlFill()
         else -> scheme.onBackground
     }
@@ -202,11 +206,11 @@ fun BlockitActionChip(
 
     Box(
         modifier = mod
-            .height(42.dp)
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(bg)
             .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -292,7 +296,7 @@ fun MonolithPullDownHeader(
                         .padding(end = 20.dp)
                         .then(
                             if (isSealed) Modifier
-                            else Modifier.clickable { onGuardLineTap() }
+                            else Modifier.sizeIn(minHeight = 48.dp).clickable(role = Role.Button) { onGuardLineTap() }
                         )
                         .testTag("header_guard_line")
                 )
@@ -313,22 +317,36 @@ fun MonolithPullDownHeader(
  * mass on the screen — so night fills use a warm dark step instead, with
  * cream kept for the text on top.
  */
+// Merge resolution vs main: main tokenised the same three values
+// under theme names (NightColorPrimary #FFE4CF, TokenColorOnPrimary
+// #FBF1EC, NightTextColorSecondary #9C8E84) - the #54 tokens now
+// alias the theme tokens; values are byte-identical, no visual change.
+// Issue #54 F3: the night steps are named tokens and the night
+// test exists exactly once. (Detection still derives from the
+// scheme itself — these components receive no explicit night
+// flag, and the scheme is the theme's own signal.)
+// Issue #6 F12 (value, landed on main while this branch was open):
+// night controls step DOWN to #2A2320 — at #4A423C the control fill
+// (1.86:1) out-lit the hero card (1.35:1) and broke the Lamp order.
+// The token carries main's stepped-down value.
+private val InkFillNight = Color(0xFF2A2320)
+private val OnInkFillNight = NightColorPrimary
+private val OnInkFillDay = TokenColorOnPrimary
+internal val StripMutedInkNight = NightTextColorSecondary
+
+@Composable
+private fun isNightScheme(): Boolean =
+    MaterialTheme.colorScheme.background.luminance() < 0.5f
+
 @Composable
 fun inkControlFill(): Color {
     val scheme = MaterialTheme.colorScheme
-    // Issue #6 F12 (value half): night controls step DOWN to
-    // #2A2320 — at #4A423C the control fill (1.86:1) out-lit the
-    // hero card (1.35:1) and broke the Lamp order. Blast radius
-    // noted: slide cap + STOP chair share this fill — they are
-    // all controls, so the sharing is correct. Full tokenisation
-    // remains F17's table at merge.
-    return if (scheme.background.luminance() < 0.5f) Color(0xFF2A2320) else scheme.onBackground
+    return if (isNightScheme()) InkFillNight else scheme.onBackground
 }
 
 @Composable
 fun onInkControlFill(): Color {
-    val scheme = MaterialTheme.colorScheme
-    return if (scheme.background.luminance() < 0.5f) NightColorPrimary else TokenColorOnPrimary
+    return if (isNightScheme()) OnInkFillNight else OnInkFillDay
 }
 
 // ============================================================================
@@ -346,269 +364,19 @@ fun onInkControlFill(): Color {
  *  between staircase tones, never to a colour. */
 enum class StripDensity { PASS, FAULT, UNKNOWN }
 
-/** The seam stamp's two marks for a warrant — Rosa's table and her
- *  grade definitions, which are binding on this print:
- *  - LIVE BIND: the enforcer is held by a live system bind in this
- *    process AND its pipeline root-stamped this residency's
- *    foreground AND the usage grant cross-check reads live. A claim
- *    about liveness and pipeline, explicitly NOT a claim that an
- *    intercept fired. (Rosa's filed definition also named a fourth
- *    leg — the accessibility grant string read live. SETTLED at
- *    the slide merge (Ren, Review F2): the definition is amended
- *    to the three legs actually read. The fourth is refused with
- *    reason: the system instantiates the accessibility service
- *    only when it is enabled and bound, so the instance's
- *    existence proves the grant more directly than re-reading
- *    the Settings string the substrate was built to retire.
- *    Settled alongside (Review F1): an unbound service maps to
- *    OFF by definition in liveWarrant — the UNPROVEN-unbound
- *    room is definitionally unreachable in production, not
- *    accidentally. Its seam branch STAYS: the function must
- *    remain total and truthful for any warrant handed to it —
- *    an earlier merge pass removed the branch and the lane's
- *    own table test caught the function printing BIND HELD
- *    for an unbound warrant. Reachability is liveWarrant's
- *    fact to state; print truth is this function's.)
- *  - BIND ONLY: liveness proven, pipeline (or a grant) unproven.
- *  - POSITIVE: the OFF it accompanies rests on a directly observed
- *    dead signal, not on silence or timeout.
- *  - NONE: nothing has been proven yet either way.
- *  The grade is taken over the wire's legs only — the system's
- *  service list, a system-delivered root-stamp event, a live
- *  AppOps read. No leg is the service's self-assertion (the
- *  shield-protecting leg is excluded from the LIVE conjuncts for
- *  exactly this reason), so the per-link SELF-REPORT machinery
- *  the chair's F6 note imagined is not built (PLAN-AUDIT, Orig
- *  F6: unenforceable as written; Rosa's definition already
- *  solved it). `END-TO-END` stays forbidden.
- *  Two of Rosa's rows degrade honestly on this substrate, which
- *  records neither an ever-held bit nor a bind-loss instant:
- *  `BIND LOST HH:MM` and `BIND NEVER HELD` are NOT printed — the
- *  left mark states the present-tense fact the legs prove
- *  (`BIND NOT HELD`). Null warrant → null: before this process's
- *  first read, the stamp line is blank. */
-internal fun seamMarksFor(warrant: Warrant?): Pair<String, String>? {
-    if (warrant == null) return null
-    return when (warrant.state) {
-        WarrantState.LIVE -> "BIND HELD · THIS VISIT" to "PROOF: LIVE BIND"
-        WarrantState.UNPROVEN -> when {
-            // Room (ii): unconfirmed — nothing proven either way.
-            // Production-unreachable (liveWarrant maps every
-            // unbound read to OFF by definition — settled at the
-            // slide merge, Review F1), but the function stays
-            // total and truthful for any warrant it is handed:
-            // an unbound warrant must never print BIND HELD.
-            !warrant.a11yBound -> "BIND UNCONFIRMED" to "PROOF: NONE"
-            // Held and stamped; a grant is what is unproven.
-            warrant.a11yStampedThisResidency -> "BIND HELD · THIS VISIT" to "PROOF: BIND ONLY"
-            // Room (i): held, unstamped this visit.
-            else -> "BIND HELD · UNSEEN" to "PROOF: BIND ONLY"
-        }
-        WarrantState.OFF -> when {
-            !warrant.a11yBound -> "BIND NOT HELD" to "PROOF: POSITIVE"
-            warrant.a11yStampedThisResidency -> "BIND HELD · THIS VISIT" to "PROOF: POSITIVE"
-            else -> "BIND HELD · UNSEEN" to "PROOF: POSITIVE"
-        }
-    }
-}
-
-/** The seam at a named instant (Truth Car 3, UNA2-03): while the
- *  read is fresh this is exactly [seamMarksFor]. Once the read is
- *  older than the board's own staleness threshold, the residency
- *  facts on the left do not age — bound is bound, a stamp is a
- *  stamp — but the PROOF does: the right mark admits the read's age
- *  ("PROOF: STALE") instead of claiming a currency it no longer
- *  holds. The warrant carries its read instant now; the print
- *  finally can tell. */
-internal fun seamMarksFor(warrant: Warrant?, nowMono: Long): Pair<String, String>? {
-    if (warrant == null) return null
-    if (!WatchStore.warrantStaleForPrint(warrant, nowMono)) return seamMarksFor(warrant)
-    val left = when {
-        !warrant.a11yBound -> "BIND NOT HELD"
-        warrant.a11yStampedThisResidency -> "BIND HELD · THIS VISIT"
-        else -> "BIND HELD · UNSEEN"
-    }
-    return left to "PROOF: STALE"
-}
-
-/** TIME's print (Uma): a pure function of a stored end-milli — the
- *  shipped ever-sliding finish line dies here; nothing about this
- *  text is remembered, and nothing here ticks. */
-internal fun endsAtText(endMillis: Long): String =
-    "ENDS " + SimpleDateFormat("HH:mm", Locale.US).format(Date(endMillis))
-
-/** The imprint's tenant (Emil): the seal keeps its count in every
- *  tense. Idle prints the future ONLY on a LIVE wire — over a dead
- *  or unproven wire the box is EMPTY (space held): printing WILL
- *  SHUT there is the register's worst lie, committed in type.
- *  Sealed prints the press-frozen count, never a live recount.
- *
- *  Truth Car 3 (UNA2-02): the count arrives SPLIT — [shut] the
- *  LOCKED tier, [peek] the PEEK_2M tier — and the tenant prints the
- *  split, as the Shield's header does. A PEEK app does not shut and
- *  is not held: it meets the airlock and a 2-minute lease. The old
- *  single count (LOCKED+PEEK under WILL SHUT / HELD) named the sum
- *  with the stronger verb; the number was real, the noun was the
- *  lie. Either figure unknown → the box is empty, never a guess.
- *
- *  Truth Car 3 (UNA2-04, Hale W-24): sealed, when the live wire
- *  has fallen to OFF ([wireNow]), the tenant keeps the seal's
- *  words but marks their tense on its face — the suffix
- *  " · AS SEALED" — while the BLOCK cell follows the seam's live
- *  word. When live and frozen agree, no suffix: a standing
- *  qualifier teaches the eye to skip it. */
-internal fun imprintTenantText(
-    isSealed: Boolean,
-    shut: Int?,
-    peek: Int?,
-    warrantState: WarrantState?,
-    wireNow: WarrantState? = null
-): String? {
-    if (isSealed) {
-        val s = shut ?: return null
-        val p = peek ?: return null
-        val split = splitTenantText(s, p, sealed = true) ?: return null
-        return if (wireNow == WarrantState.OFF) "$split · AS SEALED" else split
-    }
-    if (warrantState != WarrantState.LIVE) return null
-    val s = shut ?: return null
-    val p = peek ?: return null
-    return splitTenantText(s, p, sealed = false)
-}
-
-/** The split in Hale's W-23 grammar, mirroring the Shield's nouns:
- *  idle "{n} WILL SHUT · {m} PEEK", sealed "{n} HELD · {m} PEEK".
- *  Omission law: a zero segment never prints — n == 0 leaves
- *  "{m} PEEK" alone, and "0 WILL SHUT" is never a sentence. Both
- *  zero → null: the box stands empty rather than print a count
- *  of nothing under a verb. */
-private fun splitTenantText(shut: Int, peek: Int, sealed: Boolean): String? {
-    val shutPart = when {
-        shut > 0 -> if (sealed) "$shut HELD" else "$shut WILL SHUT"
-        else -> null
-    }
-    val peekPart = if (peek > 0) "$peek PEEK" else null
-    val parts = listOfNotNull(shutPart, peekPart)
-    if (parts.isEmpty()) return null
-    val split = parts.joinToString(" · ")
-    // R3b #160 (two-phones-tablet): the seal certifies THIS handset only.
-    // The sealed imprint says so at the moment of certification — the
-    // hold never reaches a second phone, a tablet or a laptop, and the
-    // words now carry that boundary instead of implying the person.
-    return if (sealed) "$split · THIS PHONE ONLY" else split
-}
-
-/** What the sentence slot's tap does (Suki): FIX goes to the pane
- *  that owns the lack; RETRY re-reads the wire. The cascade's
- *  sentences (step 4) carry a null action: a jam offers no verb —
- *  retry is the machine's, never his — and an annulment is a
- *  fact to read, not a door to tap. */
-enum class RefusalAction { FIX_ACCESSIBILITY, FIX_USAGE, RETRY_CHECK }
-
-data class RefusalSentence(val text: String, val action: RefusalAction?)
-
-/**
- * Suki's cause table, ONE sentence, causal priority — the a11y row
- * outranks the usage row because enforcement dies at the first leg.
- * The two standing sentences are Ren's chair ruling #4 verbatim;
- * the usage row is Suki's as filed. Healthy (LIVE) → null: the slot
- * renders its reserved emptiness.
- */
-internal fun refusalSentenceFor(warrant: Warrant?): RefusalSentence? {
-    if (warrant == null) return null
-    return when {
-        !warrant.a11yBound ->
-            RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
-        warrant.state == WarrantState.UNPROVEN && !warrant.a11yStampedThisResidency &&
-            warrant.usage != UsageAccess.UNSET ->
-            // The UNSET exclusion is the C3 lie's other door (finisher
-            // pass, fresh-eyes catch): with usage UNSET this row's
-            // "TAP TO RETRY" printed while the Deck's RETRY handler
-            // rerouted the tap to the Usage pane. UNSET falls through
-            // to its own row below and names the pane it opens.
-            RefusalSentence("CAN'T CHECK BLOCKING — TAP TO RETRY", RefusalAction.RETRY_CHECK)
-        warrant.usage == UsageAccess.DENIED ->
-            RefusalSentence("USAGE ACCESS IS OFF — TAP TO FIX", RefusalAction.FIX_USAGE)
-        warrant.usage == UsageAccess.UNSET ->
-            // Issue #6 C3/F9: UNSET is a known lack with a known
-            // owner — the sentence names the door the hand opens.
-            // "TAP TO RETRY" was the live lie: the Deck's tap on
-            // this row already routed to the Usage pane.
-            RefusalSentence("USAGE ACCESS IS OFF — TAP TO FIX", RefusalAction.FIX_USAGE)
-        warrant.state == WarrantState.OFF ->
-            RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
-        else -> null
-    }
-}
-
-/** The sentence slot at a named instant (Truth Car 3, UNA2-03): a
- *  sentence that orders a fix must ride a CURRENT read. On a stale
- *  read the slot keeps its reserved emptiness — the seam carries
- *  the STALE mark, and the Deck's ticker re-reads the wire within a
- *  tick of the threshold, so the silence is bounded. Demanding a fix
- *  off a minutes-old warrant (or withholding one) would be the
- *  print lying about the wire's present tense. */
-internal fun refusalSentenceFor(warrant: Warrant?, nowMono: Long): RefusalSentence? {
-    if (warrant == null) return null
-    if (WatchStore.warrantStaleForPrint(warrant, nowMono)) return null
-    return refusalSentenceFor(warrant)
-}
-
-/**
- * The cascade's jam sentence (step 4, Opal §F4): while an attempt
- * is JAMMED, the slot names the first unanswering link — names,
- * never a count — in the present tense of a machine still
- * working. It carries no action: the retry fires on the
- * machine's own clock and offers him no verb. Non-jammed phases
- * print nothing here (PROVING speaks through provingSentenceFor
- * below since issue #98; the annulment's past-tense sentence is
- * the controller's own armSentence, not this function's).
- */
-internal fun jamSentenceFor(phase: ArmPhase): RefusalSentence? {
-    if (phase !is ArmPhase.Jammed) return null
-    val first = phase.jamSet.minByOrNull { it.ordinal } ?: return null
-    return RefusalSentence(
-        text = "${first.displayName} DIDN'T ANSWER — STILL PROVING.",
-        action = null
-    )
-}
-
-/**
- * The cascade's proving sentence (issue #98, R3 arming journey):
- * while an attempt is PROVING, the slot names the work and counts
- * it — "CHECKING THE SEAL — 1 OF 3 PROVED" — derived from the
- * controller's own link marks via provenCount(), so the print can
- * never disagree with the machine it describes. Before this the
- * slot was explicitly null for Proving and the Deck rendered its
- * idle form for up to the 1500ms annulment deadline while real
- * blocking already ran: a silent black box indistinguishable from
- * a hang. It carries no action, on the jam's own law: proving
- * resolves by seal or annulment on the machine's clock (≤1500ms),
- * and the human's cancel door for this span is the slide's own
- * pre-latch undo (BlockitCoreViews) before the latch, and the
- * grace abort after the seal.
- */
-internal fun provingSentenceFor(phase: ArmPhase): RefusalSentence? {
-    if (phase !is ArmPhase.Proving) return null
-    return RefusalSentence(
-        text = "CHECKING THE SEAL — ${phase.provenCount()} OF 3 PROVED",
-        action = null
-    )
-}
-
 @Composable
 private fun stripToneColors(): StripTones {
     val scheme = MaterialTheme.colorScheme
-    val night = scheme.background.luminance() < 0.5f
+    val night = isNightScheme()
     return StripTones(
         recess = scheme.surfaceVariant,
         raised = if (night) NightColorSurfaceBright else TokenColorSurfaceBright,
         cap = if (night) NightColorSurfaceSheet else TokenColorSurfaceSheet,
         divider = scheme.outlineVariant,
         faultEdge = scheme.outline,
-        ordinaryInk = if (night) NightTextColorSecondary else scheme.onSurfaceVariant,
+        ordinaryInk = if (night) StripMutedInkNight else scheme.onSurfaceVariant,
         glyphInk = scheme.onSurface,
-        secondaryInk = if (night) NightTextColorSecondary else scheme.onSurfaceVariant
+        secondaryInk = if (night) StripMutedInkNight else scheme.onSurfaceVariant
     )
 }
 
@@ -633,6 +401,23 @@ private fun StripTones.ink(density: StripDensity): Color = when (density) {
     StripDensity.PASS -> ordinaryInk
     else -> glyphInk
 }
+
+// Issue #54 F5: strip state styles are allocated once, not per
+// recomposition of every cell.
+private val StripStateMonoStyle = TextStyle(
+    fontFamily = AnonymousProFamily,
+    fontWeight = FontWeight.Bold,
+    fontSize = 15.sp,
+    lineHeight = 20.sp,
+    letterSpacing = 0.sp
+)
+private val StripStateWordStyle = TextStyle(
+    fontFamily = AtkinsonHyperlegibleFamily,
+    fontWeight = FontWeight.Bold,
+    fontSize = 15.sp,
+    lineHeight = 20.sp,
+    letterSpacing = 0.5.sp
+)
 
 @Composable
 private fun StripCell(
@@ -659,23 +444,7 @@ private fun StripCell(
             Spacer(Modifier.height(1.dp))
             Text(
                 text = state,
-                style = if (mono) {
-                    TextStyle(
-                        fontFamily = AnonymousProFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        lineHeight = 20.sp,
-                        letterSpacing = 0.sp
-                    )
-                } else {
-                    TextStyle(
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        lineHeight = 20.sp,
-                        letterSpacing = 0.5.sp
-                    )
-                },
+                style = if (mono) StripStateMonoStyle else StripStateWordStyle,
                 color = tones.ink(density)
             )
         }
@@ -798,20 +567,14 @@ fun RefusalSentenceSlot(
         if (current != null) {
             Text(
                 text = current.text,
-                style = TextStyle(
-                    fontFamily = AtkinsonHyperlegibleFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    lineHeight = 20.sp,
-                    letterSpacing = 0.5.sp
-                ),
+                style = StripStateWordStyle,
                 color = tones.glyphInk.copy(alpha = alpha),
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .then(
                         when (val action = current.action) {
                             null -> Modifier
-                            else -> Modifier.clickable { onAction(action) }
+                            else -> Modifier.clickable(role = Role.Button) { onAction(action) }
                         }
                     )
             )
@@ -892,7 +655,7 @@ fun ImprintSlot(
             lipAlpha.animateTo(0f, tween(240))
         }
     }
-    val night = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val night = isNightScheme()
     val lipColor = if (night) {
         NightColorSurfaceSheet.copy(alpha = 0.35f * lipAlpha.value)
     } else {
