@@ -365,10 +365,10 @@ fun ShieldMatrixScreen(
                 onSelect = { level ->
                     // Stage, never apply (issue #107 #1) — resolved
                     // through the ONE index↔loadout mapping
-                    // (LoadoutStore, #58 F6): an index that seats
-                    // nothing stages nothing — the hand-written
-                    // `else -> SLEEP` silently meant SLEEP for any
-                    // garbage index and stays deleted.
+                    // (LoadoutStore, #58 F6 / Audit R1 #38): an
+                    // index that seats nothing stages nothing — the
+                    // hand-written `else -> SLEEP` silently meant
+                    // SLEEP for any garbage index and stays deleted.
                     com.example.data.LoadoutStore.loadoutAtCapIndex(level)?.let { loadout ->
                         pendingLoadout = loadout
                     }
