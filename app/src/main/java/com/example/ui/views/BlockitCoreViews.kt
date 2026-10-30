@@ -188,7 +188,7 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
             val family = android.graphics.fonts.FontFamily.Builder(
                 android.graphics.fonts.Font.Builder(resources, resId).build()
             ).build()
-            Typeface.CustomFallbackBuilder(family).setStyle(base.style).build()
+            Typeface.CustomFallbackBuilder(family).build()
         }.getOrDefault(base)
     }
 
