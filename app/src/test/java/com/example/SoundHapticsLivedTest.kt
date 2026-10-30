@@ -168,6 +168,11 @@ class SoundHapticsLivedTest {
         assertEquals(SoundAudibility.AUDIBLE, engine.currentAudibility())
     }
 
+    // Split into one setContent per test (WELLE-3 surge fix): the
+    // combined version called setContent twice in one test, which
+    // this compose-test version rejects with IllegalStateException
+    // (CI run 41012970418, failure at the second setParkContent).
+
     @Test
     fun ParkPrintsSilentWhenThePhoneCannotBeHeard() {
         val engine = TactileSoundEngine(context)
@@ -177,7 +182,16 @@ class SoundHapticsLivedTest {
             setParkContent(vm, soundEnabled = true)
             settlePark()
             composeRule.onNodeWithText("ON · SILENT").assertExists()
+        } finally {
+            db.close()
+        }
+    }
 
+    @Test
+    fun ParkPrintsPlainOnWhenThePhoneCanBeHeard() {
+        val engine = TactileSoundEngine(context)
+        val (vm, db) = newVm(engine)
+        try {
             setMusicVolume(6)
             setParkContent(vm, soundEnabled = true)
             settlePark()
