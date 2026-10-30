@@ -11,6 +11,7 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.MonolithDatabase
 import com.example.data.RoutineSchedule
+import com.example.service.MonolithShieldService
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -77,7 +78,24 @@ class MonolithWidgetProvider : AppWidgetProvider() {
             val now = System.currentTimeMillis()
             val session = dao.getActiveSessionSnapshot()?.takeIf { it.isActive }
             if (session != null) {
-                when {
+                // Issue #155, verifier residue (2): SEALED is a
+                // claim about the SHIELD, not about the row. It
+                // prints only when the shield's own truth proves
+                // it — protecting witness standing for this session
+                // AND a fresh persisted beat (WidgetSealTruth).
+                // A live row beside a dead/blind shield prints the
+                // honest unproven line, never SEALED.
+                val sealedProven = WidgetSealTruth.sealedProven(
+                    isActive = session.isActive,
+                    protecting = MonolithShieldService.protecting,
+                    protectingSessionId = MonolithShieldService.protectingSessionId,
+                    sessionId = session.id,
+                    beatWallMillis = session.shieldLastBeatWallMillis,
+                    nowWallMillis = now
+                )
+                if (!sealedProven) {
+                    "SESSION LIVE \u2022 SHIELD UNPROVEN \u2022 OPEN THE APP TO CHECK"
+                } else when {
                     session.isStopwatchMode ->
                         "SEALED \u2022 ${session.intention} \u2022 STOPWATCH, NO SET END"
                     session.windowEndMillis > now ->

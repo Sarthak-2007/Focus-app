@@ -322,7 +322,15 @@ class MonolithShieldService : Service() {
                     // the detached LOW notification below.
                     postSummons(
                         "SESSION COMPLETE",
-                        "Your session has ended. The receipt is on the Deck."
+                        "Your session has ended. The receipt is on the Deck.",
+                        // Issue #155, verifier residue (3b): the
+                        // completion moment posts TWO cards — the
+                        // expiring shield card below (F3) and this
+                        // summons. The summons previously had no
+                        // timeout and could linger forever,
+                        // re-creating the F3 ghost on the HIGH
+                        // channel. Same 45-minute expiry as F3.
+                        timeoutAfterMs = COMPLETION_TIMEOUT_MS
                     )
                     // Issue #155 (F3) + R3b #164 F2 (composed at the
                     // STURM-4 recovery merge): the completion receipt
@@ -430,28 +438,15 @@ class MonolithShieldService : Service() {
                 // Merge resolution (WELLE-4, #155 × #149): the grace
                 // subtitle rides on the #155 card — bigText,
                 // chronometer and badge number apply in both branches.
-                if (updated.elapsedSeconds <= 10 && !updated.isInSafeBreak) {
-                    updateNotification(
-                        title = "Monolith • ${updated.intention}",
-                        subtitle = if (updated.routineId != null) {
-                            "GRACE ${10 - updated.elapsedSeconds}S — ABORT BOOKED BY ROUTINE · TAP TO OPEN"
-                        } else {
-                            "GRACE ${10 - updated.elapsedSeconds}S — CANCEL FREE · TAP TO OPEN"
-                        },
-                        bigText = bigText,
-                        chronometerEndMillis = chronometerEndMillis,
-                        badgeNumber = badgeNumber
-                    )
-                } else {
-                    updateNotification(
-                        title = "Monolith • ${updated.intention}",
-                        subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} reaches blocked",
-                        bigText = bigText,
-                        chronometerEndMillis = chronometerEndMillis,
-                        badgeNumber = badgeNumber
-                    )
-                }
-
+                // Issue #155, verifier residue (3a): the flip runs
+                // BEFORE the card posts, and the card follows the
+                // flip's truth. The full session card previously
+                // posted unconditionally at this point in the loop —
+                // on an iteration where the flip could not happen
+                // (usage access revoked), the card went on implying
+                // protection that was not running and never reverted
+                // to the arming text. Now: protecting -> the full
+                // card; not protecting -> the honest arming card.
                 // Live Wire: the shield is PROTECTING only once a
                 // full monitor iteration has run under a live
                 // session - started is not protecting. The cascade
@@ -473,6 +468,30 @@ class MonolithShieldService : Service() {
                         MonolithNotificationListener.instance?.sweepActiveNotifications()
                     } catch (_: Exception) {}
                 }
+                if (!protecting) {
+                    updateNotification("Monolith", "Arming shield\u2026")
+                } else if (updated.elapsedSeconds <= 10 && !updated.isInSafeBreak) {
+                    updateNotification(
+                        title = "Monolith • ${updated.intention}",
+                        subtitle = if (updated.routineId != null) {
+                            "GRACE ${10 - updated.elapsedSeconds}S — ABORT BOOKED BY ROUTINE · TAP TO OPEN"
+                        } else {
+                            "GRACE ${10 - updated.elapsedSeconds}S — CANCEL FREE · TAP TO OPEN"
+                        },
+                        bigText = bigText,
+                        chronometerEndMillis = chronometerEndMillis,
+                        badgeNumber = badgeNumber
+                    )
+                } else {
+                    updateNotification(
+                        title = "Monolith • ${updated.intention}",
+                        subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} reaches blocked",
+                        bigText = bigText,
+                        chronometerEndMillis = chronometerEndMillis,
+                        badgeNumber = badgeNumber
+                    )
+                }
+
                 // Watch Store (chrome C3): ONE publication per
                 // iteration — the engine heartbeat plus a re-read of
                 // the two BIND items' present state (and, #81 F4,
@@ -784,7 +803,7 @@ class MonolithShieldService : Service() {
      *  Distinct id from the standing foreground notification, not
      *  ongoing, not only-alert-once — it arrives like news, because
      *  for the user who walked away, it is. */
-    private fun postSummons(title: String, text: String) {
+    private fun postSummons(title: String, text: String, timeoutAfterMs: Long = 0) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -813,6 +832,11 @@ class MonolithShieldService : Service() {
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
+            .apply {
+                // Issue #155 (3b): a timed summons expires like the
+                // F3 completion card instead of ghosting.
+                if (timeoutAfterMs > 0) setTimeoutAfter(timeoutAfterMs)
+            }
             .build()
         manager.notify(SUMMONS_NOTIFICATION_ID, notification)
     }
