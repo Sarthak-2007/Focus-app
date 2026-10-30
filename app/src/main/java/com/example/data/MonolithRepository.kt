@@ -3379,7 +3379,7 @@ class MonolithRepository(
      * (its 'still 60 min' refusal). Stopwatch sessions have no
      * target to extend and refuse.
      */
-    suspend fun extendActiveSession(addSeconds: Int = 900): Boolean {
+    suspend fun extendActiveSessionBySeconds(addSeconds: Int = 900): Boolean {
         val session = dao.getActiveSessionSnapshot() ?: return false
         if (!session.isActive || session.isStopwatchMode) return false
         val (verifiedElapsed, _) = computeVerifiedSessionElapsed(session)
