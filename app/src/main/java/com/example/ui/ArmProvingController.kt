@@ -8,6 +8,7 @@ import com.example.service.MonolithAccessibilityService
 import com.example.service.MonolithShieldService
 import com.example.service.RoutineHeartbeat
 import com.example.ui.components.RefusalSentence
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -153,6 +154,14 @@ interface ArmSessionPort {
     /** The active row's id on a fresh snapshot read, or null. */
     suspend fun activeSnapshotId(): Int?
 
+    /** The t=0 a sealed row actually carries — its re-anchored
+     *  startElapsedRealtimeMillis — or null while the row is
+     *  unsealed or gone. Read for the other-door publication:
+     *  when the seal landed through the routine door, the row's
+     *  own anchors are the truth, never this attempt's computed
+     *  candidate (issue #29 finding 4). */
+    suspend fun sealedRowT0Mono(sessionId: Int): Long?
+
     /** Re-anchor + re-sign at t=0. Boolean since Slice E
      *  (Klinke §4.3.2): false = the row is gone or no longer the
      *  active one — the transition must not sound the Throw. */
@@ -186,6 +195,10 @@ class RepositoryArmSessionPort(
 
     override suspend fun activeSnapshotId(): Int? =
         repository.activeSessionSnapshot()?.takeIf { it.isActive }?.id
+
+    override suspend fun sealedRowT0Mono(sessionId: Int): Long? =
+        repository.sessionById(sessionId)?.takeIf { it.isActive }
+            ?.startElapsedRealtimeMillis
 
     override suspend fun sealSession(sessionId: Int, t0Mono: Long): Boolean =
         repository.sealSession(sessionId, t0Mono)
@@ -250,7 +263,8 @@ class ArmProvingController(
     private val dwellMs: Long = DWELL_MS,
     private val deadlineMs: Long = DEADLINE_MS,
     private val annulMs: Long = ANNUL_MS,
-    private val sampleMs: Long = SAMPLE_MS
+    private val sampleMs: Long = SAMPLE_MS,
+    private val sealWatchdogMs: Long = SEAL_WATCHDOG_MS
 ) {
     private val _phase = MutableStateFlow<ArmPhase>(ArmPhase.Idle)
     val phase: StateFlow<ArmPhase> = _phase.asStateFlow()
@@ -276,6 +290,7 @@ class ArmProvingController(
     private var attemptSeq = 0L
     private var samplerJob: Job? = null
     private var sentenceClearJob: Job? = null
+    private var sealWatchdogJob: Job? = null
 
     /** Confirmations sampled before L1 resolved: timestamped by
      *  their witnesses, uncounted until L1 lands (a shield
@@ -373,10 +388,23 @@ class ArmProvingController(
         // snapshot's return, per the link's definition.
         val snapshotId = runCatching { port.activeSnapshotId() }.getOrNull()
         if (snapshotId == sessionId) {
+            // The snapshot read suspended: the attempt may have
+            // been annulled or superseded while it was in flight.
+            // Re-check before anything is published for it — the
+            // SESSION_EDGE reconcile fires ONLY inside this
+            // proved block, for a live attempt (issue #29
+            // finding 3: it previously fired unconditionally,
+            // even when the snapshot read failed and even for an
+            // attempt that died during the read).
+            if (attemptId in deadAttempts) {
+                runCatching { port.annulProvingSession(sessionId) }
+                return
+            }
+            if (_phase.value.attemptIdOrNull() != attemptId) return
             applyMark(attemptId, ArmLink.SESSION_ROW, clock())
             flushHeldMarks(attemptId)
+            port.onSessionStartedEdge()
         }
-        port.onSessionStartedEdge()
     }
 
     /** The sealed session's row has gone (completion, valve,
@@ -494,6 +522,7 @@ class ArmProvingController(
             }
 
             val now = clock()
+            var jammedThisIteration = false
             if (sampled is ArmPhase.Proving && now >= latchMono + deadlineMs) {
                 // DEADLINE (per-link 400ms timeouts, concurrent
                 // from L, + 100ms scheduling slack): the pending
@@ -511,6 +540,7 @@ class ArmProvingController(
                     jamSet = jamSet,
                     retryCount = 1
                 )
+                jammedThisIteration = true
                 playJamHaptics()
                 // Retry dispatch, jam set only: the shield is
                 // re-dispatched (its start re-proves the witness
@@ -523,8 +553,18 @@ class ArmProvingController(
                 }
             }
 
+            // The annulment judges the Jammed phase only on a
+            // LATER iteration than the one that declared it
+            // (issue #29 finding 2): a single clock leap across
+            // both deadlines previously annulled in the same
+            // iteration that set Jammed, so the jam was never
+            // rendered and the retry window collapsed to zero.
+            // The Jammed phase must stand for at least one
+            // sample cycle — its own sentence, its retry — before
+            // the final deadline can be read against it.
             val afterJam = _phase.value
-            if (afterJam is ArmPhase.Jammed &&
+            if (!jammedThisIteration &&
+                afterJam is ArmPhase.Jammed &&
                 now >= latchMono + annulMs &&
                 afterJam.pendingLinks().isNotEmpty()
             ) {
@@ -551,6 +591,34 @@ class ArmProvingController(
         val lastConfirm = links.values.filterIsInstance<LinkMark.Confirmed>().maxOf { it.mono }
         val candidate = maxOf(lastConfirm, latchMono + dwellMs)
         postT0Frame(attemptId, candidate)
+        // THE WATCHDOG (issue #29 finding 1): declareT0 retires
+        // the sampler, and everything after it rides on one
+        // posted frame and one launched seal act — a frame that
+        // never arrives (detached view), a seal act that hangs,
+        // or a launch that dies could previously strand the
+        // attempt in Proving forever, clocks running, nothing
+        // judging. The watchdog re-opens the case: if the seal
+        // landed through the other door, publish the row's own
+        // anchors; otherwise hand the attempt back to the
+        // sampler, whose clocks (still from L) judge it to jam
+        // and annulment like any unproven attempt. No attempt
+        // strands.
+        sealWatchdogJob?.cancel()
+        sealWatchdogJob = scope.launch {
+            delay(sealWatchdogMs)
+            val current = _phase.value
+            if (current.attemptIdOrNull() != attemptId) return@launch
+            val sessionId = current.sessionIdOrNull()
+            if (sessionId != null && transition.isSealed(sessionId)) {
+                val rowT0 = runCatching { port.sealedRowT0Mono(sessionId) }.getOrNull()
+                _phase.value = ArmPhase.SealedRunning(
+                    sessionId = sessionId,
+                    t0Mono = rowT0 ?: candidate
+                )
+            } else if (samplerJob?.isActive != true) {
+                samplerJob = scope.launch { runAttempt(attemptId) }
+            }
+        }
     }
 
     private fun postT0Frame(attemptId: Long, candidate: Long) {
@@ -589,20 +657,41 @@ class ArmProvingController(
             // from un-re-anchored anchors. Exactly once is the
             // transition's claim, not this frame's hope.
             scope.launch {
-                val sealedOk = transition.executeSeal(
-                    sessionId = sessionId,
-                    t0Mono = t0,
-                    sealRow = { port.sealSession(sessionId, t0) },
-                    publish = {
-                        _phase.value = ArmPhase.SealedRunning(sessionId = sessionId, t0Mono = t0)
-                    }
-                )
+                // A seal act that THROWS is a refused seal, not
+                // a stranded attempt (issue #29 finding 1): the
+                // exception is caught and judged by the same
+                // gate a false return faces. Cancellation is
+                // never swallowed.
+                val sealedOk = try {
+                    transition.executeSeal(
+                        sessionId = sessionId,
+                        t0Mono = t0,
+                        sealRow = { port.sealSession(sessionId, t0) },
+                        publish = {
+                            _phase.value = ArmPhase.SealedRunning(sessionId = sessionId, t0Mono = t0)
+                        }
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    false
+                }
                 if (!sealedOk) {
                     if (transition.isSealed(sessionId)) {
                         // The seal landed through the other door
                         // (the claim was already spent on a real
-                        // seal): the fact stands; publish it.
-                        _phase.value = ArmPhase.SealedRunning(sessionId = sessionId, t0Mono = t0)
+                        // seal): the fact stands; publish it —
+                        // with the ROW's real seal anchors, not
+                        // this attempt's computed candidate
+                        // (issue #29 finding 4: publishing the
+                        // invented t0 misstated when the session
+                        // actually began whenever the other door
+                        // sealed at a different instant).
+                        val rowT0 = runCatching { port.sealedRowT0Mono(sessionId) }.getOrNull()
+                        _phase.value = ArmPhase.SealedRunning(
+                            sessionId = sessionId,
+                            t0Mono = rowT0 ?: t0
+                        )
                     } else {
                         failSeal(attemptId)
                     }
@@ -699,6 +788,13 @@ class ArmProvingController(
         const val ANNUL_MS = 1500L
 
         const val SAMPLE_MS = 25L
+
+        /** The seal watchdog's patience after t=0 is declared:
+         *  the frame + seal act get this long to land before
+         *  the attempt is handed back to the sampler's clocks.
+         *  Generous beside the 210ms dwell and the frame's own
+         *  cadence; a healthy seal lands in milliseconds. */
+        const val SEAL_WATCHDOG_MS = 1_000L
 
         /** How long the annulment sentence stands in the slot. */
         const val SENTENCE_HOLD_MS = 10_000L
