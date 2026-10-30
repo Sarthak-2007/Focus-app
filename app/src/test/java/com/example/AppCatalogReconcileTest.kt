@@ -178,6 +178,23 @@ class AppCatalogReconcileTest {
     }
 
     @Test
+    fun collapseWindow_repeatInsideWindowIsSameLook_outsideIsSecondLook() {
+        // Fresh-eyes L3: the strikes must be two genuinely
+        // separate looks. Inside the window a repeat collapses;
+        // at/after the window it is a real second look.
+        val window = AppCatalogReconcile.SYNC_COLLAPSE_WINDOW_MILLIS
+        val t0 = 1_000_000L
+        assertTrue(AppCatalogReconcile.isCollapseRepeat(t0, t0))
+        assertTrue(AppCatalogReconcile.isCollapseRepeat(t0, t0 + window - 1))
+        assertTrue(!AppCatalogReconcile.isCollapseRepeat(t0, t0 + window))
+        assertTrue(!AppCatalogReconcile.isCollapseRepeat(t0, t0 + window + 60_000L))
+        // No completed sync yet is never a repeat, and neither is
+        // a clock that moved backwards.
+        assertTrue(!AppCatalogReconcile.isCollapseRepeat(0L, t0))
+        assertTrue(!AppCatalogReconcile.isCollapseRepeat(t0, t0 - 1L))
+    }
+
+    @Test
     fun reconcile_rememberedRuleRestoresTierAndLimitOnReturn() {
         // "com.returned" categorizes as SHOPPING (would be born
         // OPEN/30 by default) — the remembered LOCKED/45 must win.

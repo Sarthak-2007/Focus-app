@@ -107,6 +107,14 @@ class AppListTruthTest {
         assertNull(repository.pendingPruneNote())
 
         repository.ensureSeededAndSyncPackages()
+        // Issue #34: a prune needs two GENUINELY separate looks —
+        // the first look above only noted the ghost (and a repeat
+        // inside the collapse window would still be the same
+        // look). Age the last-sync stamp away and look again.
+        context.getSharedPreferences(
+            MonolithRepository.APP_LIST_PREFS_NAME, Context.MODE_PRIVATE
+        ).edit().putLong(MonolithRepository.LAST_CATALOG_SYNC_KEY, 0L).commit()
+        repository.ensureSeededAndSyncPackages()
 
         val table = dao.getAllAppsSnapshot()
         assertEquals(

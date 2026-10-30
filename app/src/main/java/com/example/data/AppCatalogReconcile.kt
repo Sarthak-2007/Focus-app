@@ -22,6 +22,15 @@ package com.example.data
  *   visibility-filtered result therefore cannot wipe the catalog:
  *   it would have to lie identically on two separate syncs, and
  *   even then the tombstone below keeps the loss reversible.
+ * - TWO STRIKES MEANS TWO GENUINELY SEPARATE LOOKS (fresh-eyes
+ *   L3). The ViewModel init, its own guard refresh, and PARK all
+ *   call the sync seconds apart against identical PackageManager
+ *   state, so without a guard ONE transiently-filtered query at
+ *   cold start satisfied both strikes in a single launch. Repeat
+ *   syncs inside [SYNC_COLLAPSE_WINDOW_MILLIS] of a completed sync
+ *   are collapsed by the caller (see [isCollapseRepeat]): they
+ *   return without touching the strike set at all. A second look
+ *   only counts once the window has passed.
  * - A PRUNED RULE IS REMEMBERED. The caller files the pruned rows'
  *   tiers/limits as remembered rules (prefs, no schema change) and
  *   passes them back as [rememberedRules]; a rediscovered package
@@ -115,6 +124,35 @@ object AppCatalogReconcile {
                     compareBy({ it.label.lowercase() }, { it.label })
                 )!!
         }
+
+    /** How long after a completed catalog sync a repeat sync is
+     *  the SAME look, not a second one (fresh-eyes L3). The
+     *  same-launch callers fire seconds apart — even a slow cold
+     *  start is a minute, not ten — while genuinely separate
+     *  looks (the next launch, a later guard refresh) sit far
+     *  outside it, so a truly-gone app is still pruned promptly
+     *  and a transiently-filtered query can never spend both
+     *  strikes at once. Ten minutes also sits under the
+     *  platform's own 15-minute periodic-work floor: nothing
+     *  legitimate is delayed longer than Android itself would
+     *  delay it. */
+    const val SYNC_COLLAPSE_WINDOW_MILLIS: Long = 10L * 60L * 1000L
+
+    /** True when a sync arriving at [nowMillis] is a repeat of
+     *  the look that completed at [lastSuccessfulSyncMillis] —
+     *  inside the collapse window — and must not touch the
+     *  strike set. No recorded sync (0) is never a repeat, and a
+     *  clock that moved backwards is never a repeat either: a
+     *  fresh look is the safe answer to a lying clock. */
+    fun isCollapseRepeat(
+        lastSuccessfulSyncMillis: Long,
+        nowMillis: Long,
+        windowMillis: Long = SYNC_COLLAPSE_WINDOW_MILLIS
+    ): Boolean {
+        if (lastSuccessfulSyncMillis <= 0L) return false
+        val elapsed = nowMillis - lastSuccessfulSyncMillis
+        return elapsed >= 0L && elapsed < windowMillis
+    }
 
     fun reconcile(
         existing: List<BlockedAppEntity>,
