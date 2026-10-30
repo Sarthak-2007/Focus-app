@@ -990,7 +990,15 @@ fun TactileDeckScreen(
                     .height(72.dp),
                 contentAlignment = Alignment.Center
             ) {
-                if (!isSessionRunning || shotActive || heldFinish || receiptState != null) {
+                // Issue #125 (armed-wrong F3): during the grace
+                // window the ABORT chip owns this address even while
+                // the seal shot is still detaining the slide — the
+                // free exit must not be physically absent for the
+                // first ~1050ms of its own 10s. The Δy = 0 address
+                // discipline is unchanged: same Box, same chip.
+                val graceChipDue = isSessionRunning && !heldFinish && receiptState == null &&
+                    activeSession != null && activeSession.elapsedSeconds <= 10
+                if ((!isSessionRunning || shotActive || heldFinish || receiptState != null) && !graceChipDue) {
                     // The slide holds this address through the seal
                     // (as the seated ghost), through the finish's
                     // detention, and through its own return — the
