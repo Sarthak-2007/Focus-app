@@ -58,6 +58,19 @@ class SledSwitchView(context: Context) : BlockitCanvasView(context) {
     var onToggleRequested: (() -> Unit)? = null
 
     /**
+     * Issue #56, fresh-eyes B: an optional host gate, consulted at
+     * the moment a complete press lands — AFTER the press discipline
+     * below, BEFORE any feedback. When it returns false the press is
+     * rejected SILENTLY: no firm click, no toggle. Without this, a
+     * host-side guard (Park's `interactive` gate) could stop the
+     * state change while this view still delivered the 8ms "thrown"
+     * haptic — felt confirmation for a change that never happened.
+     * Hosts that seat the sled ungated (Shield) leave this null and
+     * keep the original behaviour.
+     */
+    var gateCheck: (() -> Boolean)? = null
+
+    /**
      * PARK mode (chrome C4): the sled seated on PARK's ground. The
      * control is unchanged — same track, same throw, same engine it
      * gates — but the row's furniture is PARK's: no background fill,
@@ -164,13 +177,45 @@ class SledSwitchView(context: Context) : BlockitCanvasView(context) {
         }
     }
 
+    // Issue #56, finding 3: a toggle is a COMPLETE press that both
+    // starts and ends on this sled. The old body fired on ANY
+    // ACTION_UP — no DOWN tracking, no bounds check, no CANCEL
+    // handling — so a sheet scroll that merely ended over the sled
+    // (or a gesture the scroller cancelled) flipped a persisted
+    // setting. The rocker in this same file (AppRowSledToggleView)
+    // already keeps this discipline; the sled now does too.
+    private var pressStartedOnSled: Boolean = false
+
+    private fun insideSled(event: MotionEvent): Boolean =
+        event.x >= 0f && event.x <= width.toFloat() &&
+            event.y >= 0f && event.y <= height.toFloat()
+
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_UP) {
-            // §6: 8ms Firm click on SledSwitch throw!
-            fireFeel(8L)
-            onToggleRequested?.invoke()
-            return true
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                pressStartedOnSled = insideSled(event)
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                val completedHere = pressStartedOnSled && insideSled(event)
+                pressStartedOnSled = false
+                // Fresh-eyes B: the gate is consulted only by a
+                // COMPLETE press, and a rejected press is silent —
+                // the feel fires only behind gate acceptance.
+                if (completedHere && gateCheck?.invoke() != false) {
+                    // §6: 8ms Firm click on SledSwitch throw!
+                    fireFeel(8L)
+                    onToggleRequested?.invoke()
+                }
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                // The parent scroller took the gesture: no toggle,
+                // and the next UP (if any) must not find a stale press.
+                pressStartedOnSled = false
+                return true
+            }
         }
         return true
     }
@@ -234,9 +279,12 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
 
     // The throw (Vega P2 — shipped minus its overshoot keyframe, per
     // Gust's ruling: switches in this house seat, they don't bounce).
-    // The thumb drags 1:1; a release faster than ~800 dp/s carries to
-    // the far stop, a slow release snaps to the nearest. The plain
-    // tap on a stop is untouched.
+    // The thumb drags 1:1; a release faster than ~800 dp/s carries
+    // ONE stop from where the drag began (issue #141: the far-stop
+    // throw let a 7dp scroll nudge fling LOCKED straight to OPEN —
+    // the maximum weakening from the minimum gesture); a slow
+    // release snaps to the nearest. The plain tap on a stop is
+    // untouched.
     private var touchInRocker = false
     private var dragging = false
     private var downX = 0f
@@ -352,8 +400,11 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
         // Left margin glyph (Liv Part 3, adopted for the catalogue by
         // Gust): the tier as a shape a tired eye reads without
         // decoding the rocker — a solid brick for SHUT, the same
-        // brick hollow for PEEK, nothing for OPEN. The rocker stays
-        // the control; the margin becomes the display.
+        // brick hollow for PEEK, and for OPEN the brick hollow in
+        // the secondary tone (issue #141: OPEN used to draw nothing,
+        // so a flipped app was discoverable only by its absence —
+        // the glyph scale now fades solid -> hollow -> dim hollow,
+        // every tier has a shape).
         val glyphSize = dp(8f)
         val glyphLeft = dp(8f)
         val glyphTop = h * 0.5f - glyphSize / 2f
@@ -367,7 +418,11 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
                 paintStroke.strokeWidth = dp(1.4f)
                 canvas.drawRect(glyphLeft, glyphTop, glyphLeft + glyphSize, glyphTop + glyphSize, paintStroke)
             }
-            AppBlockTier.OPEN -> Unit
+            AppBlockTier.OPEN -> {
+                paintStroke.color = tokTextSecondary()
+                paintStroke.strokeWidth = dp(1.4f)
+                canvas.drawRect(glyphLeft, glyphTop, glyphLeft + glyphSize, glyphTop + glyphSize, paintStroke)
+            }
         }
 
         // App name: a decided app speaks bold in ink; an OPEN app is
@@ -491,6 +546,7 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
                 touchInRocker = event.x >= rLeft
                 if (touchInRocker) {
                     downX = event.x
+                    downY = event.y
                     dragStartIndex = rockerIndex
                     dragging = false
                     rockerAnimator?.cancel()
@@ -510,6 +566,22 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
                 if (longPressFired) return true
                 if (!touchInRocker) return true
                 velocityTracker?.addMovement(event)
+                // Issue #141: a gesture travelling mostly vertically is
+                // the list trying to scroll, not a throw — the rocker
+                // used to judge UP on x alone, so an unabsorbed scroll
+                // (short filtered list, edge pull) committed whatever
+                // tier the thumb happened to lift over. Vertical travel
+                // past the slop cancels the gesture exactly like the
+                // parent's ACTION_CANCEL: reseat, commit nothing.
+                val dy = kotlin.math.abs(event.y - downY)
+                if (dy > dp(24f) && dy > kotlin.math.abs(event.x - downX)) {
+                    touchInRocker = false
+                    dragging = false
+                    velocityTracker?.recycle()
+                    velocityTracker = null
+                    animateRockerTo(tierToIndex(currentTier).toFloat())
+                    return true
+                }
                 if (!dragging && kotlin.math.abs(event.x - downX) > dp(6f)) {
                     dragging = true
                 }
@@ -537,13 +609,27 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
                 if (!touchInRocker) return true
                 touchInRocker = false
                 velocityTracker?.addMovement(event)
+                // Belt-and-braces for a fast vertical flick whose MOVE
+                // never crossed the slop: vertical travel still means
+                // scroll, never a commit (issue #141).
+                if (kotlin.math.abs(event.y - downY) > dp(24f)) {
+                    dragging = false
+                    velocityTracker?.recycle()
+                    velocityTracker = null
+                    animateRockerTo(tierToIndex(currentTier).toFloat())
+                    return true
+                }
                 if (dragging) {
                     dragging = false
                     velocityTracker?.computeCurrentVelocity(1000)
                     val velocityDpPerSec = (velocityTracker?.xVelocity ?: 0f) / density
+                    // Issue #141: a flick carries ONE stop from where
+                    // the drag began — never two. LOCKED can reach
+                    // PEEK on a wild release, never OPEN.
+                    val startIdx = dragStartIndex.roundToInt().coerceIn(0, 2)
                     val target = when {
-                        velocityDpPerSec > FLICK_DP_PER_SEC -> 2
-                        velocityDpPerSec < -FLICK_DP_PER_SEC -> 0
+                        velocityDpPerSec > FLICK_DP_PER_SEC -> (startIdx + 1).coerceIn(0, 2)
+                        velocityDpPerSec < -FLICK_DP_PER_SEC -> (startIdx - 1).coerceIn(0, 2)
                         else -> rockerIndex.roundToInt().coerceIn(0, 2)
                     }
                     velocityTracker?.recycle()
@@ -577,7 +663,8 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
 
     private companion object {
         /** Vega P2's throw threshold: a release faster than this
-         *  carries the rocker to the far stop. */
+         *  carries the rocker ONE stop from the drag's start
+         *  (issue #141 — the far-stop throw is dead). */
         const val FLICK_DP_PER_SEC = 800f
     }
 }
