@@ -280,12 +280,27 @@ class MonolithShieldService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
+        // Issue #274 (R5 Platform): lock-screen redaction. The live
+        // title/subtitle carry the user's private intention text and
+        // urge count — on a locked phone anyone holding it could read
+        // both. VISIBILITY_PRIVATE + a generic public version: the
+        // owner (unlocked) sees the real session line, the lock screen
+        // sees only that Monolith is protecting a session.
+        val publicVersion = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("Monolith")
+            .setContentText("Focus session protected")
+            .setOngoing(true)
+            .setContentIntent(pendingIntent)
+            .build()
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
             .setContentText(subtitle)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicVersion)
             .setContentIntent(pendingIntent)
             .build()
     }
