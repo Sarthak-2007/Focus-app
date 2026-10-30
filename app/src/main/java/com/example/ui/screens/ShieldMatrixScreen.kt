@@ -769,6 +769,19 @@ fun ShieldMatrixScreen(
                         testTag = "shield_sniper_toggle"
                     )
                 }
+                // #335 F5: the detector-health line — first/last
+                // node, stale and slow-scan states, printed from
+                // the DetectorHealth record the services write.
+                Text(
+                    text = com.example.ui.components.detectorLineFor(
+                        com.example.service.DetectorHealth.snapshot(),
+                        SystemClock.elapsedRealtime()
+                    ).text,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("shield_detector_health_line")
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
