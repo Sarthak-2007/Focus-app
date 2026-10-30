@@ -41,7 +41,10 @@ object RoutineScheduler {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         val intent = chainPendingIntent(context, PendingIntent.FLAG_UPDATE_CURRENT) ?: return
         alarmManager.cancel(intent)
-        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, boundaryMillis, intent)
+        // Issue #319 F2: exact when the exact-alarm grant is held
+        // (ExactAlarm's one law), inexact otherwise — the chain
+        // stays a hint either way; the heartbeat reconciles.
+        ExactAlarm.setWakeup(alarmManager, boundaryMillis, intent)
     }
 
     fun cancelChain(context: Context) {
