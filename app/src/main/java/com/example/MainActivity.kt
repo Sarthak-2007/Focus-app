@@ -362,6 +362,27 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val themeEvaluation by viewModel.themeEvaluation.collectAsStateWithLifecycle()
     val guardLinePrint by viewModel.guardLinePrint.collectAsStateWithLifecycle()
     val watchSnapshot by viewModel.watchSnapshots.collectAsStateWithLifecycle()
+    // Issue #324, finding 4 (build half, relabelled: primer
+    // re-creation + binding + persisted step state): the
+    // permission sequence's persisted step. The store holds the
+    // in-flight FIX trip across process death; the standing step
+    // itself is DERIVED below from the sweep's live grants plus
+    // that in-flight record — never from a stored "done" bit.
+    val permissionStepStore = remember { com.example.data.PermissionStepStore(context) }
+    var permissionPrimerDismissed by remember { mutableStateOf(false) }
+    val permissionGrants = watchSnapshot.items.mapValues { (_, measurement) ->
+        measurement.perm == com.example.service.PermState.GRANTED
+    }
+    val permissionStep = com.example.data.PermissionStepLogic.currentStep(
+        permissionGrants, permissionStepStore.inFlightItem()
+    )
+    // A landed in-flight grant closes its trip in the store.
+    LaunchedEffect(watchSnapshot) {
+        val inFlight = permissionStepStore.inFlightItem()
+        if (inFlight != null && permissionGrants[inFlight] == true) {
+            permissionStepStore.clearInFlight()
+        }
+    }
     val dialMinutes by viewModel.dialMinutes.collectAsStateWithLifecycle()
     val studyBlocksCount by viewModel.studyBlocksCount.collectAsStateWithLifecycle()
     val studyPreset by viewModel.studyPreset.collectAsStateWithLifecycle()
@@ -647,6 +668,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     LaunchedEffect(parkOpen) {
         if (parkOpen) {
             viewModel.runWatchSweep()
+        } else {
+            // Issue #324 finding 4: primer dismissal is per
+            // Park-open — closing and reopening the Park (or a
+            // fresh process) raises the primer again at the
+            // persisted step. That reopening IS the resume.
+            permissionPrimerDismissed = false
         }
     }
 
@@ -738,6 +765,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // admin instead fires the official activation intent for this
     // app's own admin (issue #44), with Security Settings as fallback.
     fun openFixPane(item: com.example.service.WatchItemId) {
+        // Issue #324 finding 4: record the step BEFORE the trip —
+        // the persisted in-flight step is what a process death
+        // during the Settings stay resumes from.
+        permissionStepStore.beginTrip(item)
         // Issue #308: arm the return trip BEFORE the pane opens —
         // the service polls this item's grant and brings the user
         // back the moment it lands, instead of stranding them in
@@ -1471,11 +1502,30 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 )
             }
 
-            // The ShieldPermissionPrimerModal binding stays REMOVED
-            // (Slice D): its "COMMIT & ARM ANYWAY" path was the
-            // register's LR2-S1-18 — the slide reads the warrant
-            // itself now and refuses in the open, with the FIX
-            // routes on the sentence itself.
+            // Issue #324, finding 4 (build half, relabelled):
+            // the ShieldPermissionPrimerModal is RE-CREATED and
+            // bound here. This is NOT the Slice D modal restored:
+            // its "COMMIT & ARM ANYWAY" path (register LR2-S1-18)
+            // does not exist in the re-creation — the only action
+            // is FIX, routed through openFixPane to the step's own
+            // Settings pane, and arming still lives where Slice D
+            // put it: the warrant slide reads the grants itself
+            // and refuses in the open. The primer stands over an
+            // open Park while a measured board shows an ungranted
+            // step; the step derives from the live grants plus
+            // PermissionStepStore's persisted in-flight record, so
+            // an interrupted sequence resumes where it stopped.
+            com.example.ui.components.ShieldPermissionPrimerModal(
+                visible = parkOpen && watchSnapshot.items.isNotEmpty() &&
+                    permissionStep != null && !permissionPrimerDismissed,
+                currentStep = permissionStep,
+                grants = permissionGrants,
+                onFixClick = { item ->
+                    permissionPrimerDismissed = true
+                    openFixPane(item)
+                },
+                onDismiss = { permissionPrimerDismissed = true }
+            )
 
             // THE LAUNCHER BLOCK SURFACE: hosted under the Airlock,
             // so a fresh intercept's door always stands above it.
