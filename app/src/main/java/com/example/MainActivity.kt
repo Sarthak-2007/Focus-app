@@ -130,7 +130,6 @@ class MainActivity : ComponentActivity() {
 
             MyApplicationTheme(
                 darkTheme = darkTheme,
-                dynamicColor = false,
                 // Slice E (F-Z1 + Zug-II §5.1): the scheme pin —
                 // session-night applies only once the ground has
                 // STEPPED (t=0 + 400ms), never at the row's birth
