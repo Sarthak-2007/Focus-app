@@ -1007,17 +1007,35 @@ class MonolithRepository(
             if (!seedPrefs.getBoolean(SEED_TASKS_KEY, false)) {
                 seedPrefs.edit().putBoolean(SEED_TASKS_KEY, true).apply()
             }
-            // Deduplicate any duplicate tasks or sessions created by prior race conditions.
+            // Deduplicate ONLY true duplicates created by a prior
+            // double-insert race (issue #106, finding 1).
             // PERMANENCE GUARD: a COMPLETED task is a stored record (the
             // Drawer) — repeat-titled completions are the normal shape of
             // a year, and this pass must never delete one. Stored rows are
             // skipped entirely: not deleted, and not registered as a
             // dedup key against anything.
-            val seenTaskTitles = mutableSetOf<String>()
+            // The old key was title+status alone, so two DIFFERENT user
+            // tasks that happen to share a title ("Revision", "Read
+            // Chapter 4" for two subjects — both QUEUED) silently lost
+            // the later one at every launch, with no undo. A title is
+            // not an identity. A row is only a true duplicate when
+            // EVERY field that could distinguish two tasks matches an
+            // earlier row — title, status, category, sub-steps, estimate,
+            // seconds spent, queue order and completion stamps — i.e.
+            // the same insertion written twice, never two tasks the man
+            // wrote. Anything short of that is kept, both of them.
+            val seenExactTasks = mutableSetOf<String>()
             for (task in existingTasks.sortedBy { it.id }) {
                 if (task.resolvedStatus == TaskQueueStatus.COMPLETED) continue
-                val key = "${task.title.lowercase(java.util.Locale.ROOT)}|${task.status}"
-                if (!seenTaskTitles.add(key)) {
+                val key = listOf(
+                    task.title.lowercase(java.util.Locale.ROOT), task.status, task.categoryTag,
+                    task.notesOrSubsteps, task.estimatedMinutes.toString(),
+                    task.actualSecondsSpent.toString(), task.queueOrder.toString(),
+                    task.completedAtMillis.toString(),
+                    task.completedInSessionId.toString(),
+                    task.startedAtSessionElapsedSec?.toString() ?: "null"
+                ).joinToString("|")
+                if (!seenExactTasks.add(key)) {
                     dao.deleteTaskById(task.id)
                 }
             }
@@ -4762,24 +4780,31 @@ class MonolithRepository(
     ) {
         seedAccrualFromDisk(nowMono)
         val tasks = dao.getAllTasksSnapshot()
+        // ONLY an ACTIVE task accrues (issue #106, finding 4). The old
+        // QUEUED fallback crowned the queue head on the next tick —
+        // status flipped to ACTIVE and seconds started landing on it —
+        // so a task merely jotted down mid-session (kept QUEUED by
+        // addTaskToQueue's session guard) was hijacked into NOW by the
+        // ticker itself. No ACTIVE task means no task is billed:
+        // WallAccrual's null id advances the anchor without crediting,
+        // exactly as it does for a Safe Break.
         val activeTask = tasks.firstOrNull { it.resolvedStatus == TaskQueueStatus.ACTIVE }
-            ?: tasks.firstOrNull { it.resolvedStatus == TaskQueueStatus.QUEUED }
         // W3 #134: a live call pauses the task's clock exactly as
         // a Safe Break does — the anchor advances without
         // crediting, so call minutes never land in a task's
-        // stored seconds either.
+        // stored seconds either. (The QUEUED fallback an earlier
+        // main revision carried at this spot is deliberately NOT
+        // restored: it crowned the queue head ACTIVE on the next
+        // tick and billed it — issue #106, finding 4.)
         val credit = taskAccrual.observe(
             sessionId = session.id,
             accruingTaskId = if (!accrue || session.isInSafeBreak) null else activeTask?.id,
             nowMonoMillis = nowMono
         )
         persistAccrualAnchor()
-        if (activeTask != null && accrue && !session.isInSafeBreak &&
-            (credit > 0 || activeTask.resolvedStatus != TaskQueueStatus.ACTIVE)
-        ) {
+        if (activeTask != null && accrue && !session.isInSafeBreak && credit > 0) {
             dao.updateTask(
                 activeTask.copy(
-                    status = TaskQueueStatus.ACTIVE.name,
                     actualSecondsSpent = activeTask.actualSecondsSpent + credit
                 )
             )
@@ -4805,7 +4830,20 @@ class MonolithRepository(
         val existing = dao.getAllTasksSnapshot()
         val hasActive = existing.any { it.resolvedStatus == TaskQueueStatus.ACTIVE }
 
-        val shouldBeActive = promoteToActive || !hasActive
+        // Issue #106, finding 4: "no ACTIVE row exists" is NOT by
+        // itself a reason to crown the new task. While a session is
+        // running, a task typed into the composer is a jot-down for
+        // later — crowning it would move NOW onto it, push its title
+        // into the session's intention (the ViewModel's activeTask
+        // collector) and start billing session time to it. So the
+        // no-active force-promotion applies only while NO session
+        // runs: a first task added to an empty queue outside a
+        // session still becomes ACTIVE, as it always has. An
+        // explicit promoteToActive (the Airlock micro-step verb,
+        // whose whole act is "promote this to #1 now") is honoured
+        // in both worlds.
+        val sessionRunning = dao.getActiveSessionSnapshot()?.isActive == true
+        val shouldBeActive = promoteToActive || (!hasActive && !sessionRunning)
         if (shouldBeActive && hasActive) {
             existing.filter { it.resolvedStatus == TaskQueueStatus.ACTIVE }.forEach { prevActive ->
                 dao.updateTask(
@@ -4934,6 +4972,9 @@ class MonolithRepository(
             // later airlock lines claimed the session was armed
             // with, and it ran with NO seal check at all (ESR-02's
             // exact charge against this function).
+            // Issue #106, finding 2 is cured HERE, in a stronger
+            // form than the Wave-3B sealed-only refusal: no advance
+            // — sealed or not — ever rewrites the intention.
             return@withContext promoted
         }
         null
