@@ -40,6 +40,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
+import com.example.data.ClockText
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -111,6 +113,9 @@ fun TactileDeckScreen(
     dialMinutes: Int,
     studyBlocksCount: Int,
     activeTask: FocusTaskEntity?,
+    // R3b #163 F5: true when the NOW task already stood as
+    // yesterday's active task (the ViewModel's day-boundary note).
+    activeTaskFromYesterday: Boolean = false,
     queuedTasks: List<FocusTaskEntity>,
     capturedNotificationsCount: Int,
     soundEngine: TactileSoundEngine? = null,
@@ -130,6 +135,9 @@ fun TactileDeckScreen(
     // render harnesses that seat the Deck without a live break
     // keep composing; MainActivity wires the VM's verb.
     onEndSafeBreak: () -> Unit = {},
+    // Issue #283: the in-session extend verb — defaulted like
+    // onEndSafeBreak so render harnesses keep composing.
+    onExtendSession: () -> Unit = {},
     weeklyEmergencyTokensRemaining: Int = 1,
     // Slice D (the proof strip, the sentence slot, the imprint): the
     // host owns the wire; the screen renders its word.
@@ -320,7 +328,17 @@ fun TactileDeckScreen(
 
     val minsPart = displaySeconds / 60
     val secsPart = displaySeconds % 60
-    val primaryReadout = String.format(Locale.US, "%02d:%02d", minsPart, secsPart)
+    // Audit R3b #147: a running (or just-finished) stopwatch counts
+    // UP — the bare MM:SS read exactly like a countdown. The +
+    // prefix marks the direction on the hero readout; a timed
+    // session's countdown stays bare.
+    val countsUp = (finishState != null && finishState.frozenIsStopwatch) ||
+        (isSessionRunning && activeSession.isStopwatchMode)
+    val primaryReadout = if (countsUp) {
+        String.format(Locale.US, "+%02d:%02d", minsPart, secsPart)
+    } else {
+        String.format(Locale.US, "%02d:%02d", minsPart, secsPart)
+    }
 
     // True session span (BEYOND W3, verified against the engine): blocks
     // plus the 10-minute Safe Breaks BETWEEN them - n x block + (n-1) x 10.
@@ -424,7 +442,7 @@ fun TactileDeckScreen(
         // its PASS tone is a claim the wire stands behind — beside
         // a warrant that is not freshly LIVE the end prints at
         // UNKNOWN density, never PASS beside BLOCK OFF.
-        else -> endsAtText(nowFrame + totalSpanMinutes * 60_000L) to
+        else -> endsAtText(ClockText.is24Hour(LocalContext.current), nowFrame + totalSpanMinutes * 60_000L) to
             if (warrantPrintState == WarrantState.LIVE) StripDensity.PASS
             else StripDensity.UNKNOWN
     }
@@ -612,7 +630,7 @@ fun TactileDeckScreen(
             if (activeSession.isStopwatchMode) {
                 "NO END" to StripDensity.PASS
             } else {
-                endsAtText(nowFrame + activeSession.spanRemainingSeconds * 1000L) to StripDensity.PASS
+                endsAtText(ClockText.is24Hour(LocalContext.current), nowFrame + activeSession.spanRemainingSeconds * 1000L) to StripDensity.PASS
             }
         }
         pressLatchLive != null -> pressLatchLive.timeText to pressLatchLive.timeDensity
@@ -631,13 +649,23 @@ fun TactileDeckScreen(
         wireNow = liveWarrantState
     )
 
+    // Issue #143 (F6): the day/night step cross-fades at the
+    // root instead of cutting in one frame — both flips (the
+    // ground step at session start, the release when the finish
+    // clears) pass through this one animated colour.
+    val animatedBackground by androidx.compose.animation.animateColorAsState(
+        targetValue = scheme.background,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 450),
+        label = "deckBackgroundNightFade"
+    )
+
     // Wrapper (Ren): the scroll column takes the flexible space and the
     // commit bar is PINNED beneath it — adding tasks can grow the content
     // forever and the start control can never be pushed off-screen again.
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(scheme.background)
+            .background(animatedBackground)
             .testTag("tactile_deck_screen")
     ) {
     val deckScrollState = rememberScrollState()
@@ -746,7 +774,7 @@ fun TactileDeckScreen(
                         // far in he is. No more silent fait accompli.
                         isSessionRunning && activeSession.currentBlockIndex > 1 ->
                             "BLOCK ${activeSession.currentBlockIndex} · SINCE " +
-                                SimpleDateFormat("HH:mm", Locale.US).format(Date(activeSession.startWallTimeMillis))
+                                ClockText.timeOfDay(ClockText.is24Hour(LocalContext.current), activeSession.startWallTimeMillis)
                         // Issue #6 F4: SESSION RUNNING / TOTAL were
                         // wallpaper and die. A routine-born session
                         // prints its name; a hand-armed running
@@ -875,7 +903,15 @@ fun TactileDeckScreen(
                         view.soundEngine = soundEngine
                         view.minutesValue = dialMinutes
                         view.studyBlocksCount = studyBlocksCount
-                        view.isLockedSession = shotActive
+                        // Issue #126 F2: the wheel is a session
+                        // parameter — while an attempt is proving,
+                        // its parameters are already captured by
+                        // onLatch, so a turn here would silently
+                        // not apply. Lock it for the wait's span
+                        // (the view consumes and drops, its sealed
+                        // grammar) instead of letting it spin free
+                        // and lie about being settable.
+                        view.isLockedSession = shotActive || provingThisSession
                         view.onMinutesChanged = { mins -> onDialMinutesChanged(mins) }
                         view.onSeatTargetChanged = { seat -> wheelSeatPreview = seat }
                         view.onCycleBlocksCount = {
@@ -902,20 +938,42 @@ fun TactileDeckScreen(
                             .clip(RoundedCornerShape(12.dp))
                             .background(if (isStopwatchMode) inkControlFill() else scheme.surfaceVariant)
                             .border(1.dp, if (isStopwatchMode) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(12.dp))
-                            .clickable {
+                            // Issue #126 F2: FLOW is the other
+                            // session parameter on this card — the
+                            // same proving lock as the wheel's.
+                            .clickable(enabled = !provingThisSession) {
                                 onSelectStudyPreset(StudyModePreset.STOPWATCH_FLOW)
                                 onDialMinutesChanged(5)
                             }
                             .padding(horizontal = 10.dp, vertical = 5.dp)
                     ) {
-                        Text(
-                            text = "FLOW",
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = if (isStopwatchMode) onInkControlFill() else scheme.onBackground
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "FLOW",
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = if (isStopwatchMode) onInkControlFill() else scheme.onBackground
+                            )
+                            // Audit R3b #147: the preset's one law —
+                            // its 20-minute floor — printed on the
+                            // key itself, from the preset's own
+                            // badge constant, before anyone arms.
+                            // It was defined in the catalogue and
+                            // rendered nowhere.
+                            Text(
+                                text = StudyModePreset.STOPWATCH_FLOW.badge.uppercase(Locale.US),
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 8.5.sp,
+                                letterSpacing = 0.5.sp,
+                                color = if (isStopwatchMode) {
+                                    onInkControlFill().copy(alpha = 0.75f)
+                                } else {
+                                    scheme.onSurfaceVariant
+                                }
+                            )
+                        }
                     }
                     // Pia: the FINISHES line dies here — TIME's only
                     // home is the strip's TIME cell (a pure function;
@@ -1157,7 +1215,8 @@ fun TactileDeckScreen(
                 exitPhaseProvider = { exitPhase },
                 onCompleteActiveTask = onCompleteActiveTask,
                 onOpenTaskSequencer = onOpenTaskSequencer,
-                onToggleTaskSubStep = onToggleTaskSubStep
+                onToggleTaskSubStep = onToggleTaskSubStep,
+                activeTaskFromYesterday = activeTaskFromYesterday
             )
         }
 
@@ -1351,9 +1410,35 @@ fun TactileDeckScreen(
                             testTag = "grace_abort_button"
                         )
                     } else {
+                        // Audit R3b #147: past the stopwatch floor
+                        // this same tap is a clean, free finish —
+                        // requestDisarmChallenge completes the
+                        // session and never opens the valve. The
+                        // label says which door the tap opens:
+                        // FINISH SESSION with no token badge once
+                        // the floor is banked; the valve's true
+                        // name and price everywhere else.
+                        val stopwatchFloorMet = activeSession != null &&
+                            activeSession.isStopwatchMode &&
+                            activeSession.elapsedSeconds >=
+                                com.example.data.MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
                         BlockitActionChip(
-                            wordLabel = "EMERGENCY BREAK VALVE (60S HOLD)",
-                            monoBadge = "$weeklyEmergencyTokensRemaining/1 WEEK",
+                            wordLabel = if (stopwatchFloorMet) {
+                                "FINISH SESSION"
+                            } else {
+                                "EMERGENCY BREAK VALVE (60S HOLD)"
+                            },
+                            // R3b #163 F4: a spent valve used to wear
+                            // the same badge as a live one ("0/1 WEEK"
+                            // read as a state, not a wait). The spent
+                            // badge now names the wait itself — the
+                            // week turns on Monday (MonolithWeek).
+                            monoBadge = when {
+                                stopwatchFloorMet -> ""
+                                weeklyEmergencyTokensRemaining > 0 ->
+                                    "$weeklyEmergencyTokensRemaining/1 WEEK"
+                                else -> "0/1 WEEK · BACK MONDAY"
+                            },
                             isPrimaryInk = true,
                             onClick = onRequestDisarm,
                             modifier = Modifier
@@ -1378,8 +1463,17 @@ fun TactileDeckScreen(
                             "GRACE ${graceLeft}S — ABORT IS BOOKED BY THE ROUTINE · AFTER: VALVE, 60S HOLD"
                         graceLeft > 0 ->
                             "GRACE ${graceLeft}S — CANCEL FREE, NOTHING BOOKED · AFTER: VALVE, 60S HOLD"
+                        // R3b #163 F4 (fix-forward): the spent state
+                        // names its wait here too, exactly as the
+                        // valve chip's badge does — the week turns
+                        // on Monday (MonolithWeek).
                         else ->
-                            "GRACE SPENT · VALVE: 60S HOLD · $weeklyEmergencyTokensRemaining/1 WEEK"
+                            "GRACE SPENT · VALVE: 60S HOLD · " +
+                                if (weeklyEmergencyTokensRemaining > 0) {
+                                    "$weeklyEmergencyTokensRemaining/1 WEEK"
+                                } else {
+                                    "0/1 WEEK · BACK MONDAY"
+                                }
                     },
                     fontFamily = AnonymousProFamily,
                     fontSize = 9.5.sp,
@@ -1388,20 +1482,39 @@ fun TactileDeckScreen(
                     modifier = Modifier.padding(top = 6.dp)
                 )
             }
+            // Issue #283 (R5 supplement): the extend verb. A running
+            // session used to offer only endings (grace abort, the
+            // valve); the original's +15 lives here, under the
+            // standing grace/valve line, at the same 72dp chair
+            // height as the other session verbs. The repository
+            // caps it (no sale at 60+ minutes remaining).
+            if (activeSession != null && !activeSession.isStopwatchMode) {
+                Spacer(Modifier.height(8.dp))
+                BlockitActionChip(
+                    wordLabel = "EXTEND SESSION",
+                    monoBadge = "+15 MIN",
+                    isPrimaryInk = false,
+                    onClick = onExtendSession,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(72.dp),
+                    testTag = "extend_session_button"
+                )
+            }
             Spacer(Modifier.height(8.dp))
             RefusalSentenceSlot(
                 // The slot's tenant by phase (step 4): a JAMMED
                 // attempt names its unanswering link; PROVING names
-                // itself with its live proved count (issue #98 —
-                // the silent black box is closed: real blocking
-                // already runs during proving, so the frame must
-                // say the machine is checking, never render the
+                // itself with its live proved count (issues #98 +
+                // #126 F2 — the silent black box is closed: real
+                // blocking already runs during proving, so the frame
+                // must say the machine is checking, never render the
                 // idle form as if nothing had happened); an
                 // annulment's past-tense sentence stands until the
                 // controller clears it; a running session is
                 // silent; otherwise the wire's standing sentence.
                 sentence = when {
-                    armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase)
+                    armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase, nowMono)
                     armPhase is ArmPhase.Proving -> provingSentenceFor(armPhase)
                     isSessionRunning -> null
                     armSentence != null -> armSentence
@@ -1450,7 +1563,10 @@ private fun DeckTaskSection(
     exitPhaseProvider: () -> Int,
     onCompleteActiveTask: (Int) -> Unit,
     onOpenTaskSequencer: () -> Unit,
-    onToggleTaskSubStep: (Int, Int) -> Unit
+    onToggleTaskSubStep: (Int, Int) -> Unit,
+    // R3b #163 F5: true when the NOW task already stood as
+    // yesterday's active task (the ViewModel's day-boundary note).
+    activeTaskFromYesterday: Boolean = false
 ) {
     val scheme = MaterialTheme.colorScheme
     // Issue #50 F5 cure: keyed on the task id — a new active
@@ -1488,6 +1604,20 @@ private fun DeckTaskSection(
                             }
                         )
                 )
+                // R3b #163 F5: a NOW task that already stood as
+                // yesterday's active task says so on its face —
+                // it never poses as a fresh start chosen today.
+                if (activeTaskFromYesterday) {
+                    Text(
+                        text = "FROM YESTERDAY",
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 9.5.sp,
+                        letterSpacing = 1.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("now_task_from_yesterday")
+                    )
+                }
                 // DONE is a verb, so it wears an action's body
                 // (ESR-07): the same raised key-cap as the FLOW
                 // key — bare mono text beside the static QUEUE
