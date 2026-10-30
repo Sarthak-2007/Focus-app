@@ -761,6 +761,23 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                 closePark(dismissReceipt = false)
                             } else {
                                 openPark()
+                                // Issue #128 finding 4: the cap
+                                // travelled into the PARK zone
+                                // BEFORE this ask, and a refusal
+                                // (sealed / navigation-locked)
+                                // changes no state — no
+                                // recomposition would ever re-seat
+                                // it, so the band stood over the
+                                // blank zone printing a selection
+                                // that does not exist. On refusal:
+                                // the refusal knock (the same
+                                // voice as a refused navigation)
+                                // and the cap settles back onto
+                                // the committed stop.
+                                if (!parkOpen) {
+                                    viewModel.soundEngine.playSeatKnock(6, 0.2f, 320f)
+                                    view.settleCapTo(view.selectedTabIndex)
+                                }
                             }
                         }
                     },
