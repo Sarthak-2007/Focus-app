@@ -187,7 +187,7 @@ fun ShieldMatrixScreen(
     // and its absence before the first Room emission is not a
     // measured fact either (critic Salz C-3).
     val statusHeadline = blockingStatus?.headline
-        ?: "ENFORCEMENT NOT PROVEN — NO WITNESS READ YET"
+        ?: "CAN'T CHECK BLOCKING YET — GIVE IT A SECOND"
 
     // The catalogue's one enumeration, grouped by ruling.
     val catalogueGroups = remember(filteredApps) { filteredApps.groupedForCatalogue() }
@@ -329,7 +329,14 @@ fun ShieldMatrixScreen(
             // session is the live one, the print says so; otherwise
             // it names the cap's source as the hand pick it is.
             Text(
-                text = if (blockingStatus?.activeRoutineId != null) {
+                // Nagel N-4: the routine-governs claim is printed
+                // only under a LIVE headline — the derivation also
+                // carries activeRoutineId on its UNPROVEN/STALE
+                // returns, where this line would contradict the
+                // NOT BLOCKING sentence directly above it.
+                text = if (blockingStatus?.proof == ShieldBlockingProof.LIVE &&
+                    blockingStatus?.activeRoutineId != null
+                ) {
                     "A ROUTINE SESSION IS RUNNING — ITS LOADOUT GOVERNS, NOT THIS CAP"
                 } else {
                     "THIS CAP SHOWS YOUR LAST HAND PICK"

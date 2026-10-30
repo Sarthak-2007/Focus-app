@@ -7,6 +7,8 @@ import com.example.data.RoutineEntity
 import com.example.data.RoutineSchedule
 import com.example.data.SmartLoadout
 import com.example.data.groupedForCatalogue
+import com.example.service.UsageAccess
+import com.example.ui.ACCESS_PROOF_FRESH_MILLIS
 import com.example.ui.ShieldBlockingProof
 import com.example.ui.computeShieldBlockingStatus
 import com.example.ui.routineCapWord
@@ -60,6 +62,10 @@ class ShieldBlockingStatusTest {
         windowEndMillis = windowEnd, shieldLastBeatWallMillis = beatWall
     )
 
+    /** The monotonic instant every fixture reads "now" at, unless
+     *  a case ages a stamp against it. */
+    private val monoNow: Long = 1_000_000L
+
     private fun status(
         s: FocusSessionEntity?,
         nowWall: Long,
@@ -67,7 +73,10 @@ class ShieldBlockingStatusTest {
         shieldProtecting: Boolean = false,
         shieldSessionId: Int = -1,
         a11yBound: Boolean = false,
-        a11yArmedSessionId: Int = -1
+        a11yArmedSessionId: Int = -1,
+        usage: UsageAccess = UsageAccess.ALLOWED,
+        a11yRootMono: Long = monoNow,
+        nowMono: Long = monoNow
     ) = computeShieldBlockingStatus(
         session = s,
         shieldServiceRunning = shieldRunning,
@@ -75,7 +84,10 @@ class ShieldBlockingStatusTest {
         shieldProtectingSessionId = shieldSessionId,
         accessibilityBound = a11yBound,
         accessibilityArmedSessionId = a11yArmedSessionId,
-        nowWallMillis = nowWall
+        usageAccess = usage,
+        accessibilityLastRootMono = a11yRootMono,
+        nowWallMillis = nowWall,
+        nowMonoMillis = nowMono
     )
 
     private fun proved(s: FocusSessionEntity, nowWall: Long) = status(
@@ -163,7 +175,7 @@ class ShieldBlockingStatusTest {
         val s = session(startWall = start, beatWall = start)
         val st = proved(s, start + 60_000L)
         assertEquals(ShieldBlockingProof.STALE, st.proof)
-        assertEquals("NOT BLOCKING — SHIELD PROOF STALE", st.headline)
+        assertEquals("NOT BLOCKING — THE APP'S OWN CHECKS HAVE STOPPED", st.headline)
         assertFalse(st.isBlocking)
     }
 
@@ -198,12 +210,522 @@ class ShieldBlockingStatusTest {
     }
 
     @Test
-    fun safeBreak_liveHeadlineNamesPeekOpen() {
+    fun safeBreak_liveHeadlineLeadsWithWhatIsOpen() {
         val start = at(0, 10, 0)
         val s = session(startWall = start, beatWall = start, safeBreak = true)
         val st = proved(s, start)
         assertEquals(ShieldBlockingProof.LIVE, st.proof)
-        assertTrue(st.headline.contains("SAFE BREAK — PEEK APPS OPEN"))
+        // N-5: in a break the lead names what is OPEN; BLOCKING NOW
+        // as the lead is false for exactly the apps it counts.
+        assertEquals(
+            "ON A BREAK — PEEK APPS OPEN, THE REST STILL BLOCKED · ENDS 11:00",
+            st.headline
+        )
+        assertFalse(st.headline.startsWith("BLOCKING NOW"))
+    }
+
+    // ------------------------------------------------------------------
+    // The third witness: usage access (critic Nagel N-1)
+    // ------------------------------------------------------------------
+
+    @Test
+    fun usageDenied_blindDoor_neverBlockingNow_evenWithBothWitnesses() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start,
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            a11yBound = true, a11yArmedSessionId = s.id,
+            usage = UsageAccess.DENIED
+        )
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertEquals("USAGE ACCESS", st.missingProof)
+        assertEquals(
+            "NOT BLOCKING — NOT PROVEN: THE APP CAN'T SEE WHICH APP IS OPEN",
+            st.headline
+        )
+        assertFalse(st.isBlocking)
+    }
+
+    @Test
+    fun usageUnset_blindDoor_sameVerdictAsDenied() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start,
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            a11yBound = true, a11yArmedSessionId = s.id,
+            usage = UsageAccess.UNSET
+        )
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertEquals("USAGE ACCESS", st.missingProof)
+        assertFalse(st.isBlocking)
+    }
+
+    @Test
+    fun usageAndShieldMissing_headlineNamesUsage_missingProofNamesBoth() {
+        val s = session()
+        val st = status(s, at(0, 10, 0), usage = UsageAccess.DENIED)
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertEquals("SHIELD + ACCESSIBILITY + USAGE ACCESS", st.missingProof)
+        // Ranking: the grant only the user can give leads the line.
+        assertEquals(
+            "NOT BLOCKING — NOT PROVEN: THE APP CAN'T SEE WHICH APP IS OPEN",
+            st.headline
+        )
+    }
+
+    // ------------------------------------------------------------------
+    // The ACCESS leg's own staleness law (critic Nagel N-2)
+    // ------------------------------------------------------------------
+
+    @Test
+    fun accessibilityRootStampStale_pipelineUnproven_notBlocking() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start,
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            a11yBound = true, a11yArmedSessionId = s.id,
+            a11yRootMono = monoNow - ACCESS_PROOF_FRESH_MILLIS - 1L
+        )
+        assertEquals(ShieldBlockingProof.ACCESS_STALE, st.proof)
+        assertEquals(
+            "NOT BLOCKING — NOT PROVEN: NO FRESH SIGN THE APP IS WATCHING YOUR SCREEN",
+            st.headline
+        )
+        assertFalse(st.isBlocking)
+    }
+
+    @Test
+    fun accessibilityRootStampExactlyAtFreshLimit_isStillLive() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start,
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            a11yBound = true, a11yArmedSessionId = s.id,
+            a11yRootMono = monoNow - ACCESS_PROOF_FRESH_MILLIS
+        )
+        assertEquals(ShieldBlockingProof.LIVE, st.proof)
+        assertTrue(st.isBlocking)
+    }
+
+    @Test
+    fun accessibilityNeverAcquiredRoot_noProofEver_isStaleNotLive() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start,
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            a11yBound = true, a11yArmedSessionId = s.id,
+            a11yRootMono = 0L
+        )
+        assertEquals(ShieldBlockingProof.ACCESS_STALE, st.proof)
+        assertFalse(st.isBlocking)
+    }
+
+    @Test
+    fun accessibilityAndShieldMissing_headlineNamesAccessibility() {
+        val s = session()
+        val st = status(s, at(0, 10, 0))
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertEquals("SHIELD + ACCESSIBILITY", st.missingProof)
+        // Ranking: accessibility (a grant) leads over the shield
+        // (the app's own machinery).
+        assertEquals(
+            "NOT BLOCKING — NOT PROVEN: NO FRESH SIGN THE APP IS WATCHING YOUR SCREEN",
+            st.headline
+        )
+    }
+
+    @Test
+    fun shieldNeverFlipped_checksHaventStarted() {
+        val s = session()
+        val st = status(s, at(0, 10, 0), a11yBound = true, a11yArmedSessionId = s.id)
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertEquals("SHIELD", st.missingProof)
+        assertEquals("NOT BLOCKING — THE APP'S CHECKS HAVEN'T STARTED", st.headline)
+    }
+
+    // ------------------------------------------------------------------
+    // Closing tests (BAU-1 audit): isolation, precedence, boundaries
+    // ------------------------------------------------------------------
+
+    @Test
+    fun shieldIdMismatchAlone_neverBlocking() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start,
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = 99,
+            a11yBound = true, a11yArmedSessionId = s.id
+        )
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertEquals("SHIELD", st.missingProof)
+        assertEquals("NOT BLOCKING — THE APP'S CHECKS HAVEN'T STARTED", st.headline)
+        assertFalse(st.isBlocking)
+    }
+
+    @Test
+    fun accessibilityIdMismatchAlone_neverBlocking() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start,
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            a11yBound = true, a11yArmedSessionId = 99
+        )
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertEquals("ACCESSIBILITY", st.missingProof)
+        assertEquals(
+            "NOT BLOCKING — NOT PROVEN: NO FRESH SIGN THE APP IS WATCHING YOUR SCREEN",
+            st.headline
+        )
+        assertFalse(st.isBlocking)
+    }
+
+    @Test
+    fun shieldRunningButNeverFlipped_checksHaventStarted() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start,
+            shieldRunning = true, shieldProtecting = false, shieldSessionId = s.id,
+            a11yBound = true, a11yArmedSessionId = s.id
+        )
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertEquals("SHIELD", st.missingProof)
+        assertEquals("NOT BLOCKING — THE APP'S CHECKS HAVEN'T STARTED", st.headline)
+    }
+
+    @Test
+    fun shieldProtectingButServiceGone_neverBlocking() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start,
+            shieldRunning = false, shieldProtecting = true, shieldSessionId = s.id,
+            a11yBound = true, a11yArmedSessionId = s.id
+        )
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertEquals("SHIELD", st.missingProof)
+        assertFalse(st.isBlocking)
+    }
+
+    @Test
+    fun accessibilityArmedButUnbound_neverBlocking() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start,
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            a11yBound = false, a11yArmedSessionId = s.id
+        )
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertEquals("ACCESSIBILITY", st.missingProof)
+        assertFalse(st.isBlocking)
+    }
+
+    @Test
+    fun usageDenied_rootStale_unprovenUsageNotAccessStale() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start,
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            a11yBound = true, a11yArmedSessionId = s.id,
+            usage = UsageAccess.DENIED,
+            a11yRootMono = monoNow - ACCESS_PROOF_FRESH_MILLIS - 1L
+        )
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertEquals("USAGE ACCESS", st.missingProof)
+    }
+
+    @Test
+    fun usageDenied_beatStale_unprovenUsageNotStale() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start + 60_000L,
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            a11yBound = true, a11yArmedSessionId = s.id,
+            usage = UsageAccess.DENIED
+        )
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertEquals(
+            "NOT BLOCKING — NOT PROVEN: THE APP CAN'T SEE WHICH APP IS OPEN",
+            st.headline
+        )
+    }
+
+    @Test
+    fun accessMissing_rootStale_unprovenNotAccessStale() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start,
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            a11yRootMono = monoNow - ACCESS_PROOF_FRESH_MILLIS - 1L
+        )
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertEquals("ACCESSIBILITY", st.missingProof)
+    }
+
+    @Test
+    fun accessMissing_beatStale_unprovenNotStale() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start + 60_000L,
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id
+        )
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertEquals(
+            "NOT BLOCKING — NOT PROVEN: NO FRESH SIGN THE APP IS WATCHING YOUR SCREEN",
+            st.headline
+        )
+    }
+
+    @Test
+    fun rootStale_beatStale_accessStaleOutranksStale() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start + 60_000L,
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            a11yBound = true, a11yArmedSessionId = s.id,
+            a11yRootMono = monoNow - ACCESS_PROOF_FRESH_MILLIS - 1L
+        )
+        assertEquals(ShieldBlockingProof.ACCESS_STALE, st.proof)
+        assertFalse(st.isBlocking)
+    }
+
+    @Test
+    fun shieldMissing_beatStale_unprovenShieldNotStale() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start + 60_000L,
+            a11yBound = true, a11yArmedSessionId = s.id
+        )
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertEquals("SHIELD", st.missingProof)
+        assertEquals("NOT BLOCKING — THE APP'S CHECKS HAVEN'T STARTED", st.headline)
+    }
+
+    @Test
+    fun rootStale_shieldAlsoMissing_accessStale_diagnosticNamesBoth() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start,
+            a11yBound = true, a11yArmedSessionId = s.id,
+            a11yRootMono = monoNow - ACCESS_PROOF_FRESH_MILLIS - 1L
+        )
+        assertEquals(ShieldBlockingProof.ACCESS_STALE, st.proof)
+        assertEquals("SHIELD + ACCESSIBILITY", st.missingProof)
+        assertFalse(st.isBlocking)
+    }
+
+    @Test
+    fun wallBackwards_beatInFuture_isStaleNotLive() {
+        // The ruled behaviour (BAU-1 G2): a beat stamp ahead of the
+        // wall clock is unmeasurable — stale, never fresh. A dead
+        // loop must not read BLOCKING NOW for the whole set-back.
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = proved(s, start - 60_000L)
+        assertEquals(ShieldBlockingProof.STALE, st.proof)
+        assertFalse(st.isBlocking)
+    }
+
+    @Test
+    fun accessibilityRootStampInFuture_isStaleNotLive() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start,
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            a11yBound = true, a11yArmedSessionId = s.id,
+            a11yRootMono = monoNow + 60_000L
+        )
+        assertEquals(ShieldBlockingProof.ACCESS_STALE, st.proof)
+        assertFalse(st.isBlocking)
+    }
+
+    @Test
+    fun beatExactlyOneMillisecondPastGap_isStale() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = proved(s, start + 10_001L)
+        assertEquals(ShieldBlockingProof.STALE, st.proof)
+        assertEquals("", st.missingProof)
+        assertFalse(st.isBlocking)
+    }
+
+    @Test
+    fun neverBeatenRow_agesFromSessionStart() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = 0L)
+        assertEquals(ShieldBlockingProof.LIVE, proved(s, start + 10_000L).proof)
+        assertEquals(ShieldBlockingProof.STALE, proved(s, start + 10_001L).proof)
+    }
+
+    @Test
+    fun beatBeforeStart_startIsTheReference() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start - 60_000L)
+        assertEquals(ShieldBlockingProof.LIVE, proved(s, start + 5_000L).proof)
+    }
+
+    // Safe break × every failure state: the failure always outranks
+    // the break line (BAU-1 G4). A break inside an unproven wall
+    // must never print "THE REST STILL BLOCKED".
+    private fun breakSession() =
+        session(startWall = at(0, 10, 0), beatWall = at(0, 10, 0), safeBreak = true)
+
+    @Test
+    fun safeBreak_usageDenied_failureOutranksBreak() {
+        val s = breakSession()
+        val st = status(
+            s, at(0, 10, 0),
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            a11yBound = true, a11yArmedSessionId = s.id,
+            usage = UsageAccess.DENIED
+        )
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertFalse(st.headline.contains("ON A BREAK"))
+        assertFalse(st.isBlocking)
+    }
+
+    @Test
+    fun safeBreak_accessMissing_failureOutranksBreak() {
+        val s = breakSession()
+        val st = status(
+            s, at(0, 10, 0),
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id
+        )
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertFalse(st.headline.contains("ON A BREAK"))
+    }
+
+    @Test
+    fun safeBreak_rootStale_failureOutranksBreak() {
+        val s = breakSession()
+        val st = status(
+            s, at(0, 10, 0),
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            a11yBound = true, a11yArmedSessionId = s.id,
+            a11yRootMono = 0L
+        )
+        assertEquals(ShieldBlockingProof.ACCESS_STALE, st.proof)
+        assertFalse(st.headline.contains("ON A BREAK"))
+    }
+
+    @Test
+    fun safeBreak_shieldMissing_failureOutranksBreak() {
+        val s = breakSession()
+        val st = status(s, at(0, 10, 0), a11yBound = true, a11yArmedSessionId = s.id)
+        assertEquals(ShieldBlockingProof.UNPROVEN, st.proof)
+        assertEquals("NOT BLOCKING — THE APP'S CHECKS HAVEN'T STARTED", st.headline)
+    }
+
+    @Test
+    fun safeBreak_beatStale_failureOutranksBreak() {
+        val s = breakSession()
+        val st = proved(s, at(0, 10, 0) + 60_000L)
+        assertEquals(ShieldBlockingProof.STALE, st.proof)
+        assertEquals("NOT BLOCKING — THE APP'S OWN CHECKS HAVE STOPPED", st.headline)
+    }
+
+    @Test
+    fun usageDenied_accessMissingOnly_missingNamesBoth() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start,
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            usage = UsageAccess.DENIED
+        )
+        assertEquals("ACCESSIBILITY + USAGE ACCESS", st.missingProof)
+        assertEquals(
+            "NOT BLOCKING — NOT PROVEN: THE APP CAN'T SEE WHICH APP IS OPEN",
+            st.headline
+        )
+    }
+
+    @Test
+    fun usageDenied_shieldMissingOnly_missingNamesBoth() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start)
+        val st = status(
+            s, start,
+            a11yBound = true, a11yArmedSessionId = s.id,
+            usage = UsageAccess.DENIED
+        )
+        assertEquals("SHIELD + USAGE ACCESS", st.missingProof)
+    }
+
+    @Test
+    fun liveRoutine_missingProofIsEmpty_failureBranchesCarryRoutineId() {
+        val s = session(
+            profileName = "Routine: SLEEP", routineId = 3,
+            windowStart = at(0, 20, 0), windowEnd = at(1, 3, 30),
+            startWall = at(0, 20, 0), beatWall = at(0, 21, 0)
+        )
+        assertEquals("", proved(s, at(0, 21, 0)).missingProof)
+        val denied = status(
+            s, at(0, 21, 0),
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            a11yBound = true, a11yArmedSessionId = s.id,
+            usage = UsageAccess.DENIED
+        )
+        assertEquals(3, denied.activeRoutineId)
+        val stale = proved(s, at(0, 21, 0) + 60_000L)
+        assertEquals(ShieldBlockingProof.STALE, stale.proof)
+        assertEquals(3, stale.activeRoutineId)
+    }
+
+    @Test
+    fun routineWithBlankName_fallsBackToRoutineSession() {
+        val s = session(
+            profileName = "Routine: ", routineId = 3,
+            windowStart = at(0, 10, 0), windowEnd = at(0, 11, 0),
+            startWall = at(0, 10, 0), beatWall = at(0, 10, 0)
+        )
+        assertEquals(
+            "BLOCKING NOW — ROUTINE SESSION · ENDS 11:00",
+            proved(s, at(0, 10, 0)).headline
+        )
+    }
+
+    @Test
+    fun namelessProfile_printsPlainSession() {
+        val start = at(0, 10, 0)
+        val s = session(profileName = "", startWall = start, beatWall = start)
+        assertTrue(proved(s, start).headline.startsWith("BLOCKING NOW — SESSION"))
+    }
+
+    @Test
+    fun windowEndNotAfterStart_fallsBackToSpanEnd() {
+        val start = at(0, 10, 0)
+        val s = session(
+            windowStart = start, windowEnd = start,
+            startWall = start, beatWall = start,
+            targetSeconds = 3600, elapsedSeconds = 0
+        )
+        assertTrue(proved(s, start).headline.endsWith("· ENDS 11:00"))
+    }
+
+    @Test
+    fun safeBreak_stopwatch_breakHeadlineHasNoEnds() {
+        val start = at(0, 10, 0)
+        val s = session(startWall = start, beatWall = start, safeBreak = true, stopwatch = true)
+        assertEquals(
+            "ON A BREAK — PEEK APPS OPEN, THE REST STILL BLOCKED",
+            proved(s, start).headline
+        )
     }
 
     // ------------------------------------------------------------------

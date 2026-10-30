@@ -144,23 +144,6 @@ class MonolithShieldService : Service() {
                     subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped"
                 )
 
-                // Live Wire: the shield is PROTECTING only once a
-                // full monitor iteration has run under a live
-                // session - started is not protecting. The cascade
-                // witness (Opal L2) is stamped at the same flip:
-                // the session this iteration read, and the mono it
-                // flipped - CONFIRMED stamp for SHIELD-PROTECTING.
-                if (!protecting) {
-                    protecting = true
-                    protectingSessionId = updated.id
-                    protectingMono = SystemClock.elapsedRealtime()
-                    WatchStore.poke()
-                }
-                // Watch Store (chrome C3): ONE publication per
-                // iteration — the engine heartbeat plus a re-read of
-                // the two BIND items' present state.
-                WatchStore.onShieldIteration(protecting)
-
                 val nowMono = SystemClock.elapsedRealtime()
                 val blockedPackages = dao.getAllAppsSnapshot()
                     .filter { app ->
@@ -189,6 +172,34 @@ class MonolithShieldService : Service() {
                     }
                     startActivity(interceptIntent)
                 }
+
+                // Live Wire: the shield is PROTECTING only once a
+                // full monitor iteration has run under a live
+                // session - started is not protecting. A full
+                // iteration means: blocked set built, foreground
+                // queried, and the intercept launched if one was
+                // due — everything above this line. The flip used
+                // to sit before the blocked set was built, so the
+                // witness (and the status sentence, and the seal
+                // cascade reading the same stamp) could attest a
+                // pass that had enforced nothing (critic Nagel
+                // N-3). It sits here now, after the enforcement
+                // act and before the cadence sleep — the 2s delay
+                // is cadence, not iteration work, and the cascade's
+                // annul deadline cannot wait it out. The cascade
+                // witness (Opal L2) is stamped at the same flip:
+                // the session this iteration read, and the mono it
+                // flipped - CONFIRMED stamp for SHIELD-PROTECTING.
+                if (!protecting) {
+                    protecting = true
+                    protectingSessionId = updated.id
+                    protectingMono = SystemClock.elapsedRealtime()
+                    WatchStore.poke()
+                }
+                // Watch Store (chrome C3): ONE publication per
+                // iteration — the engine heartbeat plus a re-read of
+                // the two BIND items' present state.
+                WatchStore.onShieldIteration(protecting)
 
                 delay(2000L)
             }
@@ -257,9 +268,13 @@ class MonolithShieldService : Service() {
             internal set
 
         /** True only after startForeground succeeded AND a full
-         *  monitor iteration ran. The Live Wire reads this as a
-         *  post-latch cascade link and a strip fact - never as a
-         *  pre-arm conjunct (the shield starts WITH the session). */
+         *  monitor iteration ran — full meaning the iteration's
+         *  enforcement tail completed: blocked set built,
+         *  foreground queried, intercept launched if due (the
+         *  flip sits after that act, before the cadence delay).
+         *  The Live Wire reads this as a post-latch cascade link
+         *  and a strip fact - never as a pre-arm conjunct (the
+         *  shield starts WITH the session). */
         @Volatile
         var protecting: Boolean = false
             internal set
