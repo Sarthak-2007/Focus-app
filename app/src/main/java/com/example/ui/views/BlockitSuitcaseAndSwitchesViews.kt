@@ -58,6 +58,19 @@ class SledSwitchView(context: Context) : BlockitCanvasView(context) {
     var onToggleRequested: (() -> Unit)? = null
 
     /**
+     * Issue #56, fresh-eyes B: an optional host gate, consulted at
+     * the moment a complete press lands — AFTER the press discipline
+     * below, BEFORE any feedback. When it returns false the press is
+     * rejected SILENTLY: no firm click, no toggle. Without this, a
+     * host-side guard (Park's `interactive` gate) could stop the
+     * state change while this view still delivered the 8ms "thrown"
+     * haptic — felt confirmation for a change that never happened.
+     * Hosts that seat the sled ungated (Shield) leave this null and
+     * keep the original behaviour.
+     */
+    var gateCheck: (() -> Boolean)? = null
+
+    /**
      * PARK mode (chrome C4): the sled seated on PARK's ground. The
      * control is unchanged — same track, same throw, same engine it
      * gates — but the row's furniture is PARK's: no background fill,
@@ -164,13 +177,45 @@ class SledSwitchView(context: Context) : BlockitCanvasView(context) {
         }
     }
 
+    // Issue #56, finding 3: a toggle is a COMPLETE press that both
+    // starts and ends on this sled. The old body fired on ANY
+    // ACTION_UP — no DOWN tracking, no bounds check, no CANCEL
+    // handling — so a sheet scroll that merely ended over the sled
+    // (or a gesture the scroller cancelled) flipped a persisted
+    // setting. The rocker in this same file (AppRowSledToggleView)
+    // already keeps this discipline; the sled now does too.
+    private var pressStartedOnSled: Boolean = false
+
+    private fun insideSled(event: MotionEvent): Boolean =
+        event.x >= 0f && event.x <= width.toFloat() &&
+            event.y >= 0f && event.y <= height.toFloat()
+
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_UP) {
-            // §6: 8ms Firm click on SledSwitch throw!
-            fireFeel(8L)
-            onToggleRequested?.invoke()
-            return true
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                pressStartedOnSled = insideSled(event)
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                val completedHere = pressStartedOnSled && insideSled(event)
+                pressStartedOnSled = false
+                // Fresh-eyes B: the gate is consulted only by a
+                // COMPLETE press, and a rejected press is silent —
+                // the feel fires only behind gate acceptance.
+                if (completedHere && gateCheck?.invoke() != false) {
+                    // §6: 8ms Firm click on SledSwitch throw!
+                    fireFeel(8L)
+                    onToggleRequested?.invoke()
+                }
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                // The parent scroller took the gesture: no toggle,
+                // and the next UP (if any) must not find a stale press.
+                pressStartedOnSled = false
+                return true
+            }
         }
         return true
     }
