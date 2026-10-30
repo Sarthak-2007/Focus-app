@@ -13,7 +13,6 @@ import android.os.PowerManager
 import android.os.Process
 import android.provider.Settings
 import android.util.Log
-import com.example.MainActivity
 
 /**
  * Issue #308 (Audit R5 · Opal platform execution, finding 1): the
@@ -90,13 +89,10 @@ class PermissionReturnService : Service() {
     }
 
     private fun bringAppForward() {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                    Intent.FLAG_ACTIVITY_SINGLE_TOP
-            )
-        }
+        // ISSUE-67: addressed via the InterceptIntents seam (class
+        // name, identical flags) — no compile-time MainActivity
+        // reference from the service layer.
+        val intent = InterceptIntents.returnIntent(this)
         runCatching { startActivity(intent) }
             .onFailure { Log.w(TAG, "return launch refused: ${it.message}") }
     }

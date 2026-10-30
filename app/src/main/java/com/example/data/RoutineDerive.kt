@@ -116,9 +116,22 @@ object RoutineDerive {
         val finaliseDue = if (isSleep) {
             emptyList()
         } else {
-            mine.filter { s ->
+            val base = mine.filter { s ->
                 s.routineOutcome == null && (!s.isActive || s.windowEndMillis <= nowMillis)
             }.map { it.id }
+            // #153 F1 (CRITICAL): a routine switched OFF mid-window
+            // frees the day — its still-active session is finalise-
+            // due NOW, not at its stored window end. The heartbeat
+            // finalises it and stands the shield down in the same
+            // pass. (SLEEP rows keep the J2 stand-down path, widened
+            // in the heartbeat to disabled rows.)
+            if (!routine.enabled) {
+                (base + mine.filter { s ->
+                    s.isActive && s.routineOutcome == null
+                }.map { it.id }).distinct()
+            } else {
+                base
+            }
         }
 
         val judgement = if (isSleep) null else judgeLatestClosed(routine, nowMillis, sessions, settings)

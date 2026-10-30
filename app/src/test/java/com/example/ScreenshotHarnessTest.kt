@@ -143,7 +143,6 @@ class ScreenshotHarnessTest {
         } catch (e: Throwable) {
             // Infinite animations/ticker can keep the rule non-idle; capture anyway,
             // but say so (issue #66: no silent swallow).
-            println("HARNESS settle: waitForIdle failed, capturing anyway: $e")
         }
         ShadowLooper.idleMainLooper()
     }
@@ -165,7 +164,6 @@ class ScreenshotHarnessTest {
             FileOutputStream(out).use { fos -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos) }
             bitmap.recycle()
         }
-        println("HARNESS captured ${out.name} -> ${out.absolutePath} size=${out.length()}")
         // Issue #66: a capture that wrote nothing (or a non-PNG) is a FAILED
         // test, not a pass. Real, failable assertions on every capture.
         assertTrue("capture ${out.name} must exist", out.isFile)
@@ -185,10 +183,6 @@ class ScreenshotHarnessTest {
             if (viewModel.apps.value.isNotEmpty() && viewModel.profiles.value.isNotEmpty()) break
             Thread.sleep(250)
         }
-        println(
-            "HARNESS seeded apps=${viewModel.apps.value.size} profiles=${viewModel.profiles.value.size} " +
-                "tasks queued=${viewModel.queuedTasks.value.size} routines=${viewModel.routines.value.size}"
-        )
     }
 
     private fun setRootApp() {
@@ -260,7 +254,6 @@ class ScreenshotHarnessTest {
         }
         setRootApp()
         settle(1200)
-        println("HARNESS night darkTheme=${viewModel.darkTheme.value} eval=${viewModel.themeEvaluation.value.readout}")
 
         val shots = listOf(
             MonolithDestination.DECK to "n01_deck.png",
@@ -520,7 +513,6 @@ class ScreenshotHarnessTest {
                     outcome = "BLOCKED"
                 )
             )
-            println("HARNESS receipt seed: session id=$id outcome=$outcome endWall=$endWall")
         }
     }
 
@@ -536,19 +528,11 @@ class ScreenshotHarnessTest {
             if (viewModel.finishState.value != null) sawFinishState = true
             val receipt = viewModel.receiptState.value
             if (receipt != null) {
-                println(
-                    "HARNESS receipt issued: number=${receipt.numberPrint} kind=${receipt.kind} " +
-                        "outcome=${receipt.outcomeWord} faulted=${receipt.faulted} " +
-                        "shieldWasOff=${receipt.shieldWasOff} held=${receipt.heldAppsAtSeal}/${receipt.heldSitesAtSeal} " +
-                        "routineLabel=${receipt.routineLabelWithin} deflections=${receipt.deflections.size} " +
-                        "witnessedPath=$sawFinishState"
-                )
                 return true
             }
             ShadowSystemClock.advanceBy(Duration.ofMillis(100))
             Thread.sleep(50)
         }
-        println("HARNESS receipt NEVER issued within ${timeoutMs}ms (finishState seen=$sawFinishState)")
         return false
     }
 
@@ -594,7 +578,6 @@ class ScreenshotHarnessTest {
             pumpForReceipt()
         )
         settle(1200)
-        println("HARNESS receipt night darkTheme=${viewModel.darkTheme.value}")
         captureTo(File(nightDir, "n08_receipt.png"))
     }
 
@@ -712,7 +695,7 @@ class ScreenshotHarnessTest {
         captureTo(File(shotsDir, "hb4_detention_before_tap.png"))
         runCatching {
             composeRule.onNodeWithTag("header_guard_line").performClick()
-        }.onFailure { println("HARNESS hb4 guard tap raised: $it") }
+        }.onFailure { }
         settle(300)
         captureTo(File(shotsDir, "hb4_detention_after_guard_tap.png"))
         composeRule.onNodeWithTag("park_sheet").assertDoesNotExist()
@@ -882,7 +865,6 @@ class ScreenshotHarnessTest {
         failures += censusMissing
         for (case in cases) {
             val (a, b) = countIn(case.file, everywhere)
-            println("CENSUS ${case.label}: accent=$a banned=$b (allowance ${case.maxAccent})")
             if (b > 0) failures += "${case.label}: #FF8A5C present ($b px) — banned colour on screen"
             if (a > case.maxAccent) failures += "${case.label}: accent $a px over allowance ${case.maxAccent}"
         }
@@ -920,7 +902,6 @@ class ScreenshotHarnessTest {
             }
             val bandDp = if (maxY >= 0) (maxY - minY) / ppd else 0f
             val footDp = if (maxY >= 0) (img.height - minY) / ppd else 0f
-            println("CENSUS $label: deck accent total=$total band=${bandDp}dp foot=${footDp}dp banned=$bannedCount")
             if (bannedCount > 0) failures += "$label: #FF8A5C present"
             if (total < 500) failures += "$label: the slide cap is missing (accent $total px)"
             if (total > 26_000) failures += "$label: accent $total px — more than one cap"
@@ -936,7 +917,6 @@ class ScreenshotHarnessTest {
         )) {
             if (!f.isFile) { failures += "census input missing: ${f.path} ($label)"; continue }
             val (a, b) = countIn(f, everywhere)
-            println("CENSUS $label: accent=$a banned=$b (START text only)")
             if (b > 0) failures += "$label: #FF8A5C present ($b px)"
             if (a > 4000) failures += "$label: accent $a px — more than a verb's glyphs"
         }
