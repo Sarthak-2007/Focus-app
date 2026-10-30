@@ -9,12 +9,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * Issue #9 (Hof P-6) — the header Guard line's four states.
+ * Issue #9 (Hof P-6) — the header Guard line's states.
  * UNMEASURED used to print NOTHING, and blank read as fine on a
  * cold open; the line now prints `GUARD — NOT CHECKED` until the
- * counted set is measured. These tests pin all four prints.
- * DECLARED — written in the issue-9 cell, uncompiled (nobody
- * compiles in a cell); the suite's verdict belongs to Ren's build.
+ * set is measured. Ported onto main's six-item PERMISSIONS board
+ * (issue #109 F4) by W6-BAU-9: denominators are 6, fixtures grant
+ * all six, and guardLineFor's nullable return is read via ?.text.
  */
 class GuardLinePrintTest {
 
@@ -41,42 +41,42 @@ class GuardLinePrintTest {
     }
 
     private fun wholeSet(): Map<WatchItemId, PermState> =
-        WatchItemId.COUNTED.associateWith { PermState.GRANTED }
+        WatchItemId.PERMISSIONS.associateWith { PermState.GRANTED }
 
     @Test
     fun nullSnapshot_printsNotChecked() {
-        assertEquals("GUARD — NOT CHECKED", guardLineFor(null, 10_000L).text)
+        assertEquals("GUARD — NOT CHECKED", guardLineFor(null, 10_000L)?.text)
     }
 
     @Test
     fun unmeasuredCountedItem_printsNotChecked() {
-        // Three counted doors measured, the fourth never measured:
+        // Five of the six doors measured, one never measured:
         // no count may print — the set is not measured.
         val snap = snapshot(wholeSet() - WatchItemId.NOTIFICATION_LISTENER)
-        assertEquals("GUARD — NOT CHECKED", guardLineFor(snap, 10_000L).text)
+        assertEquals("GUARD — NOT CHECKED", guardLineFor(snap, 10_000L)?.text)
     }
 
     @Test
-    fun wholeSet_printsFourOfFour() {
+    fun wholeSet_printsSixOfSix() {
         val snap = snapshot(wholeSet())
-        assertEquals("GUARD 4/4", guardLineFor(snap, 10_000L).text)
+        assertEquals("GUARD 6/6", guardLineFor(snap, 10_000L)?.text)
     }
 
     @Test
     fun missingDoor_printsCountAndBareName() {
         val snap = snapshot(wholeSet() + (WatchItemId.USAGE_ACCESS to PermState.MISSING))
-        assertEquals("GUARD 3/4 — USAGE ACCESS", guardLineFor(snap, 10_000L).text)
+        assertEquals("GUARD 5/6 — USAGE ACCESS", guardLineFor(snap, 10_000L)?.text)
     }
 
     @Test
     fun staleDoor_printsCountAndStaleName() {
-        // ACCESSIBILITY measured at mono 10_000, the other three
+        // ACCESSIBILITY measured at mono 10_000, the other five
         // re-measured at 50_000; read at 56_000 — only the
         // accessibility grant is past the 45s stale threshold, so
         // it alone no longer counts. (Finisher fix: the original
-        // fixture measured all four at 10_000, which stales the
-        // whole set and prints 0/4 — the scenario never matched
-        // its own expectation until the fixture staggered.)
+        // fixture measured all doors at 10_000, which stales the
+        // whole set — the scenario never matched its own
+        // expectation until the fixture staggered.)
         val snap = snapshot(
             wholeSet(),
             monoFor = { item ->
@@ -84,8 +84,8 @@ class GuardLinePrintTest {
             }
         )
         assertEquals(
-            "GUARD 3/4 — ACCESSIBILITY STALE",
-            guardLineFor(snap, 56_000L).text
+            "GUARD 5/6 — ACCESSIBILITY STALE",
+            guardLineFor(snap, 56_000L)?.text
         )
     }
 }
