@@ -531,7 +531,23 @@ class MonolithRailView(context: Context) : BlockitCanvasView(context) {
                     return true
                 }
                 if (wasDragging) {
-                    commitStop(RailGeometry.nearestStop(capPos))
+                    // Issue #117 (one-hand-commute): a drag seats at
+                    // the nearest stop — EXCEPT PARK. PARK opens a
+                    // sheet, so it may only be seated when the finger
+                    // itself is inside the PARK zone at release
+                    // (position, never nearest-stop inference). The
+                    // old code let a jolted tap that crossed the 8dp
+                    // drag threshold slide the cap past the 3.5 round
+                    // point and seat PARK, opening a sheet the user
+                    // never asked for; such a release now seats at
+                    // LEDGER (3), the nearest real stop.
+                    var seat = RailGeometry.nearestStop(capPos)
+                    if (seat == RailGeometry.PARK_INDEX &&
+                        RailGeometry.stopForX(relX, recessW) != RailGeometry.PARK_INDEX
+                    ) {
+                        seat = 3
+                    }
+                    commitStop(seat)
                 } else {
                     // Issue #62 finding 4: a tap commits the stop under
                     // the RELEASE point, recomputed here from this

@@ -1,0 +1,4 @@
+# The committed install-over key must never be text-normalised: a
+# line-ending conversion would corrupt it silently (the workflow
+# fingerprint gate would catch it only after a broken push).
+debug.keystore binary
