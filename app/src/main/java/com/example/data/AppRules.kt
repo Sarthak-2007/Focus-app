@@ -79,7 +79,7 @@ data class AppRules(
 /** The ledger's total order: name (case-insensitive), then the
  *  unique package name — no tie can inherit feed order. */
 private val ledgerOrder: Comparator<BlockedAppEntity> =
-    compareBy<BlockedAppEntity> { it.appName.lowercase() }.thenBy { it.packageName }
+    compareBy<BlockedAppEntity> { it.appName.lowercase(java.util.Locale.ROOT) }.thenBy { it.packageName }
 
 /** Strictness rank for de-duplication: higher wins. A corrupt
  *  (unparseable) tier ranks below every real ruling. */

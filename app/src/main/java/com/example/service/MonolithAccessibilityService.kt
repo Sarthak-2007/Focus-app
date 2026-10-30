@@ -24,6 +24,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 /**
  * Enforces real-time platform-level protections during an active focus session:
@@ -184,7 +185,7 @@ internal fun unlistedAppMustBeShut(
  */
 internal fun matchEmbeddedBlockedDomain(contentText: String, domains: List<String>): String? {
     if (domains.isEmpty()) return null
-    val tokens = contentText.lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+    val tokens = contentText.lowercase(Locale.ROOT).split(Regex("\\s+")).filter { it.isNotEmpty() }
     if (tokens.isEmpty()) return null
     for (rawRule in domains) {
         val rule = parseSiteRule(rawRule) ?: continue
@@ -226,7 +227,7 @@ private data class UrlCandidate(
 )
 
 private fun parseUrlCandidate(text: String): UrlCandidate? {
-    var d = text.trim().lowercase()
+    var d = text.trim().lowercase(Locale.ROOT)
     if (d.isEmpty()) return null
     d = d.substringBefore('#')
     val queryString = d.substringAfter('?', "")
@@ -329,7 +330,7 @@ private fun ruleMatches(rule: SiteRule, candidate: UrlCandidate): Boolean {
  *  plausible host. Tolerates a missing scheme (users see bare
  *  hosts in some bars), userinfo, ports, paths, queries, fragments. */
 internal fun extractUrlHost(urlText: String): String? {
-    var rest = urlText.trim().lowercase()
+    var rest = urlText.trim().lowercase(Locale.ROOT)
     if (rest.isEmpty() || rest.contains(' ')) return null
     val schemeEnd = rest.indexOf("://")
     if (schemeEnd >= 0) rest = rest.substring(schemeEnd + 3)
@@ -451,7 +452,7 @@ internal val SETTINGS_PACKAGES = setOf(
  * locale Android ships.
  */
 internal fun isTamperActionViewId(viewIdResourceName: String?): Boolean {
-    val id = viewIdResourceName?.lowercase() ?: return false
+    val id = viewIdResourceName?.lowercase(Locale.ROOT) ?: return false
     return id.endsWith(":id/uninstall_button") ||
         id.endsWith(":id/force_stop_button") ||
         id.endsWith(":id/disable_button") ||
@@ -1219,7 +1220,7 @@ class MonolithAccessibilityService : AccessibilityService() {
      *  is dialog evidence in every locale Android ships. */
     private fun hasAlertDialogButtons(node: AccessibilityNodeInfo?, depth: Int = 0): Boolean {
         if (node == null || depth > 14) return false
-        val id = node.viewIdResourceName?.lowercase() ?: ""
+        val id = node.viewIdResourceName?.lowercase(Locale.ROOT) ?: ""
         if (id.endsWith("android:id/button1") || id.endsWith("android:id/button2") ||
             id.endsWith("android:id/button3")
         ) return true
@@ -1294,12 +1295,12 @@ class MonolithAccessibilityService : AccessibilityService() {
      *  the Monolith anchor, never the only door. */
     private fun hasUninstallAffordance(node: AccessibilityNodeInfo?, depth: Int = 0): Boolean {
         if (node == null || depth > 14) return false
-        val viewId = node.viewIdResourceName?.lowercase() ?: ""
+        val viewId = node.viewIdResourceName?.lowercase(Locale.ROOT) ?: ""
         if (viewId.contains("uninstall")) return true
         val className = node.className?.toString() ?: ""
         if (className.endsWith("Button")) {
             val label = (node.text?.toString() ?: node.contentDescription?.toString() ?: "")
-                .trim().lowercase()
+                .trim().lowercase(Locale.ROOT)
             if (label == "uninstall") return true
         }
         for (i in 0 until node.childCount) {
@@ -1358,8 +1359,8 @@ class MonolithAccessibilityService : AccessibilityService() {
 
     private fun isSelectedBottomTabShortsOrReels(node: AccessibilityNodeInfo?, rootHeightPx: Int): Boolean {
         if (node == null) return false
-        val desc = node.contentDescription?.toString()?.trim()?.lowercase() ?: ""
-        val text = node.text?.toString()?.trim()?.lowercase() ?: ""
+        val desc = node.contentDescription?.toString()?.trim()?.lowercase(Locale.ROOT) ?: ""
+        val text = node.text?.toString()?.trim()?.lowercase(Locale.ROOT) ?: ""
         if (node.isSelected && isFeedTabLabel(text, desc)) {
             val rect = Rect()
             val hasBounds = try { node.getBoundsInScreen(rect); true } catch (_: Exception) { false }
@@ -1372,7 +1373,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         // It takes the same bottom-nav bounds gate as the label
         // leg (#131): a selected channel tab or search chip whose
         // ID happens to name the feed is browsing, not watching.
-        val viewId = node.viewIdResourceName?.lowercase() ?: ""
+        val viewId = node.viewIdResourceName?.lowercase(Locale.ROOT) ?: ""
         if (node.isSelected && (
                 viewId.contains("shorts") || viewId.contains("reels") ||
                     viewId.contains("clips_tab") || viewId.contains("clips_entry")
@@ -1426,7 +1427,7 @@ class MonolithAccessibilityService : AccessibilityService() {
      *  the same don't-fire-mid-typing rule the URL door keeps. */
     private fun hasFocusedUrlBar(node: AccessibilityNodeInfo?, depth: Int = 0): Boolean {
         if (node == null || depth > 32) return false
-        val viewId = node.viewIdResourceName?.lowercase() ?: ""
+        val viewId = node.viewIdResourceName?.lowercase(Locale.ROOT) ?: ""
         if (node.isFocused && (
                 viewId.endsWith(":id/url_bar") ||
                     viewId.endsWith(":id/location_bar_edit_text") ||
@@ -1445,14 +1446,14 @@ class MonolithAccessibilityService : AccessibilityService() {
         out: MutableList<String>
     ) {
         if (node == null || depth > 32 || out.size >= 6) return
-        val viewId = node.viewIdResourceName?.lowercase() ?: ""
+        val viewId = node.viewIdResourceName?.lowercase(Locale.ROOT) ?: ""
         if (!node.isFocused && (
                 viewId.endsWith(":id/url_bar") ||
                     viewId.endsWith(":id/location_bar_edit_text") ||
                     viewId.endsWith(":id/mozac_browser_toolbar_url_view")
                 )
         ) {
-            node.text?.toString()?.lowercase()?.takeIf { it.isNotBlank() }?.let { out.add(it) }
+            node.text?.toString()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { out.add(it) }
         }
         for (i in 0 until node.childCount) {
             collectUrlBarTexts(node.getChild(i), depth + 1, out)
@@ -1467,7 +1468,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         for (i in 0 until node.childCount) {
             sb.append(collectWindowTextLowercase(node.getChild(i), depth + 1))
         }
-        return sb.toString().lowercase()
+        return sb.toString().lowercase(Locale.ROOT)
     }
 
     private fun launchInterceptScreen(

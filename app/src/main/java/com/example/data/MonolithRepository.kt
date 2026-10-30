@@ -154,6 +154,12 @@ class MonolithRepository(
         const val PEEK_DURATION_MILLIS = 120 * 1000L // 2-Minute Peek lease in ms
         const val PEEK_COOLDOWN_MILLIS = 20 * 60 * 1000L // 20-Minute Mandatory Cooldown
         const val STOPWATCH_MIN_FLOOR_SECONDS = 20 * 60 // 20-Minute Minimum Floor
+        // Issue #290 F1: FLOW's terminal cap — a count-up session
+        // auto-ends at 4 hours instead of running forever with no
+        // terminal rule of its own (Forest's stopwatch auto-stops
+        // at its cap). The ending books STOPWATCH_ENDED, the same
+        // lawful FLOW finish as the past-floor door.
+        const val STOPWATCH_MAX_CAP_SECONDS = 4 * 60 * 60 // 4-Hour FLOW Cap
         const val SAFE_BREAK_DURATION_SECONDS = 10 * 60 // 10-Minute Safe Break
         const val HMAC_TAMPER_PENALTY_SECONDS = 15 * 60 // 15-Minute Penalty Lock
 
@@ -666,7 +672,7 @@ class MonolithRepository(
             val seenTaskTitles = mutableSetOf<String>()
             for (task in existingTasks.sortedBy { it.id }) {
                 if (task.resolvedStatus == TaskQueueStatus.COMPLETED) continue
-                val key = "${task.title.lowercase()}|${task.status}"
+                val key = "${task.title.lowercase(java.util.Locale.ROOT)}|${task.status}"
                 if (!seenTaskTitles.add(key)) {
                     dao.deleteTaskById(task.id)
                 }
@@ -1042,6 +1048,11 @@ class MonolithRepository(
             // app the moment it settled into use.
             val usageEvents = usm.queryEvents(end - ForegroundDoor.WINDOW_MS, end)
                 ?: return null
+            // Issue #290 F4 disposition (merge-time truth): the
+            // event-stream cure landed on main first via issue
+            // #332 (ForegroundDoor, below) — this branch's own
+            // ForegroundEventStream implementation is withdrawn
+            // rather than shipping a second, competing fold.
             val events = mutableListOf<ForegroundDoor.FgEvent>()
             val event = android.app.usage.UsageEvents.Event()
             while (usageEvents.hasNextEvent()) {
@@ -1372,6 +1383,11 @@ class MonolithRepository(
     }
 
     suspend fun removeBlockedSite(domain: String) {
+        // Issue #304 F1: removing a blocked site loosens the seal —
+        // refused at the write boundary while a session is active
+        // (the ViewModel ratchet at #151 already warns on the hand
+        // path; this closes the verb itself for every caller).
+        if (dao.getActiveSessionSnapshot()?.isActive == true) return
         dao.deleteSite(domain)
     }
 
@@ -1730,6 +1746,17 @@ class MonolithRepository(
         // or telephony package can land on PEEK_2M, never on LOCKED,
         // so placing a call is always reachable.
         val nextTier = EssentialApps.floorTier(app.packageName, cycled)
+        // Issue #304 F1: the direction gate at the write boundary —
+        // while a session is sealed a cycle step that would loosen
+        // (LOCKED -> PEEK, PEEK -> OPEN) is refused here, not only
+        // in the ViewModel's ratchet, so no caller can weaken a
+        // sealed rule through this verb. OPEN -> LOCKED tightens
+        // and stays lawful mid-session.
+        if (dao.getActiveSessionSnapshot()?.isActive == true &&
+            SessionTierGate.loosens(app.resolvedTier, nextTier)
+        ) {
+            return app.resolvedTier
+        }
         val isBlockedFlag = nextTier != AppBlockTier.OPEN
         dao.setAppTier(app.packageName, isBlockedFlag, nextTier.name)
         // A ruling landed (#129 F1): the guess no longer stands
@@ -1740,6 +1767,16 @@ class MonolithRepository(
     }
 
     suspend fun setAppBlockTier(packageName: String, tier: AppBlockTier) {
+        // Issue #304 F1: same gate — a direct tier write that would
+        // loosen a sealed app's rule is refused at the repository,
+        // whoever the caller is.
+        if (dao.getActiveSessionSnapshot()?.isActive == true) {
+            val current = dao.getAllAppsSnapshot()
+                .firstOrNull { it.packageName == packageName }
+            if (current != null && SessionTierGate.loosens(current.resolvedTier, tier)) {
+                return
+            }
+        }
         // Issue #119, finding 5: the dialler floor — no caller may
         // classify the default dialler / telephony stack LOCKED.
         val effectiveTier = EssentialApps.floorTier(packageName, tier)
@@ -1763,6 +1800,14 @@ class MonolithRepository(
         // whatever (nothing) it was while the seal counted held.
         ensureSeededAndSyncPackages()
         val allApps = dao.getAllAppsSnapshot()
+        // Issue #304 F1: while a session is sealed the loadout lands
+        // tightening-only — each app keeps the stricter of its
+        // current tier and the preset's tier, so a mid-session
+        // loadout tap can never loosen every app at once (the exact
+        // hole the AppBlock head-to-head named). Unsealed, and at
+        // routine materialisation (which applies the loadout BEFORE
+        // its session starts), the preset lands whole, as before.
+        val sealed = dao.getActiveSessionSnapshot()?.isActive == true
         val updated = allApps.map { app ->
             // Issue #107: the tier rule is LoadoutRules.tierFor —
             // the same pure function the Shield preview prints its
@@ -1774,8 +1819,10 @@ class MonolithRepository(
             // (SLEEP essentials by package + the dialler floor), so
             // preview and commit carry them identically. Issue #129
             // F4: tierFor also takes the current tier, so a loadout
-            // never loosens LOCKED->OPEN on a category guess.
-            val tier = LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category, app.resolvedTier)
+            // never loosens LOCKED->OPEN on a category guess; the
+            // sealed-session gate then clamps whatever remains.
+            val desired = LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category, app.resolvedTier)
+            val tier = SessionTierGate.clampWhileSealed(app.resolvedTier, desired, sealed)
             app.copy(blockTier = tier.name).normalized()
         }
         dao.insertApps(updated)
@@ -1890,7 +1937,7 @@ class MonolithRepository(
 
     suspend fun addCustomApp(appName: String, packageName: String, category: AppCategory) {
         val cleanPkg = packageName.trim().ifEmpty {
-            "com.custom.${appName.lowercase().replace(" ", "")}"
+            "com.custom.${appName.lowercase(java.util.Locale.ROOT).replace(" ", "")}"
         }
         dao.insertApp(
             BlockedAppEntity(
@@ -2254,12 +2301,20 @@ class MonolithRepository(
         return Triple(settings.receiptSequence, settings.lastReceiptSessionId, settings.lastReceiptOutcome)
     }
 
-    /** HH:mm in the device's zone, for the WITHIN line. */
+    /** The WITHIN line's clock (#88): the device's own 12/24-hour
+     *  setting via [ClockText], never a pinned 24-hour format. */
     private fun hhmm(wallMillis: Long): String =
-        java.text.SimpleDateFormat("HH:mm", java.util.Locale.US).format(java.util.Date(wallMillis))
+        ClockText.timeOfDay(context, wallMillis)
 
-    private fun hhmm(minutesOfDay: Int): String =
-        String.format(java.util.Locale.US, "%02d:%02d", minutesOfDay / 60, minutesOfDay % 60)
+    private fun hhmm(minutesOfDay: Int): String {
+        val cal = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, (minutesOfDay / 60) % 24)
+            set(java.util.Calendar.MINUTE, minutesOfDay % 60)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        return ClockText.timeOfDay(context, cal.timeInMillis)
+    }
 
     /**
      * Reihe §3's assembly: the pending receipt's facts, from pure
@@ -2866,6 +2921,40 @@ class MonolithRepository(
      * 2. Count-Up Stopwatch Mode (counts upward past the 20m minimum lock floor)
      * 3. Multi-Block Study Cycles (1 to 4 blocks) with automatic 10-minute Safe Breaks in between
      */
+    /**
+     * Issue #283 (R5 supplement): the in-session extend verb the
+     * original ships (+15 min) and Monolith lacked entirely — a
+     * running session could only end or be broken, never lengthened.
+     * Extends the ACTIVE session's target by [addSeconds]. The
+     * target is HMAC-covered (see CryptoIntegrityManager
+     * .signSessionState's payload), so the row is re-signed in the
+     * same write; an unsigned extension would read as tampering on
+     * the next verified tick. Capped the way the original caps it:
+     * while an hour or more remains, no further extension is sold
+     * (its 'still 60 min' refusal). Stopwatch sessions have no
+     * target to extend and refuse.
+     */
+    suspend fun extendActiveSession(addSeconds: Int = 900): Boolean {
+        val session = dao.getActiveSessionSnapshot() ?: return false
+        if (!session.isActive || session.isStopwatchMode) return false
+        val (verifiedElapsed, _) = computeVerifiedSessionElapsed(session)
+        val effectiveTarget = session.targetDurationSeconds + session.penaltySecondsAdded
+        if (effectiveTarget - verifiedElapsed >= 3600) return false
+        val newTarget = session.targetDurationSeconds + addSeconds
+        val reSigned = session.copy(
+            targetDurationSeconds = newTarget,
+            hmacSignature = CryptoIntegrityManager.signSessionState(
+                session.startWallTimeMillis,
+                session.startElapsedRealtimeMillis,
+                session.bootCount,
+                newTarget,
+                session.isStopwatchMode
+            )
+        )
+        dao.updateSession(reSigned)
+        return true
+    }
+
     suspend fun updateSessionProgress(
         session: FocusSessionEntity,
         stampShieldBeat: Boolean = false
@@ -2940,6 +3029,34 @@ class MonolithRepository(
         accrueActiveTaskSeconds(session, nowMono)
 
         if (session.isStopwatchMode) {
+            // Issue #290 F1: FLOW's own terminal law — at the cap
+            // the session ends in this same tick (STOPWATCH_ENDED,
+            // completed, end stamped once), instead of copying
+            // elapsed into the row and running indefinitely until
+            // the user happens to find the valve.
+            if (verifiedElapsed >= STOPWATCH_MAX_CAP_SECONDS) {
+                val capped = session.copy(
+                    elapsedSeconds = STOPWATCH_MAX_CAP_SECONDS,
+                    startElapsedRealtimeMillis = newStartMono,
+                    bootCount = newBootCount,
+                    accumulatedBeforeRebootSeconds = newAccumulated,
+                    lastTickElapsedRealtimeMillis = nowMono,
+                    hmacSignature = newHmac,
+                    penaltySecondsAdded = penaltyAdd,
+                    tamperDetected = tamper,
+                    shieldLastBeatWallMillis = beatWall,
+                    isActive = false,
+                    completedSuccessfully = true,
+                    outcome = SessionOutcome.STOPWATCH_ENDED,
+                    endWallMillis = if (session.endWallMillis == 0L) {
+                        System.currentTimeMillis()
+                    } else {
+                        session.endWallMillis
+                    }
+                )
+                dao.updateSession(capped)
+                return capped
+            }
             val updated = session.copy(
                 elapsedSeconds = verifiedElapsed,
                 startElapsedRealtimeMillis = newStartMono,
@@ -3365,6 +3482,9 @@ class MonolithRepository(
     private suspend fun disarmRoutineSessionByBreak(active: FocusSessionEntity) {
         if (active.routineId == null) {
             val (_, tamper) = computeVerifiedSessionElapsed(active)
+            // Issue #287 F5: the routine-break door stamps the
+            // culprit too — same ending-write law as the manual door.
+            val (causePackage, causeKind) = failureCauseFor(active, "EMERGENCY_VALVE")
             dao.updateSession(
                 active.copy(
                     elapsedSeconds = active.elapsedSeconds,
@@ -3372,6 +3492,8 @@ class MonolithRepository(
                     completedSuccessfully = false,
                     tamperDetected = tamper,
                     outcome = SessionOutcome.VALVE_BROKE,
+                    failureCausePackage = causePackage,
+                    failureCauseKind = causeKind,
                     // RC-01: an ending write (unpublishable, but
                     // the row's end is the row's end).
                     endWallMillis = if (active.endWallMillis == 0L) {
@@ -3390,6 +3512,78 @@ class MonolithRepository(
         }
         finaliseRoutineSession(active, System.currentTimeMillis())
     }
+
+    /**
+     * Issue #287 F5: the failure-cause pair for a session that is
+     * ending broken. The package is the LAST deflection this
+     * session's record holds inside its own window — the blocked
+     * app he was reaching for when the end came (Forest's
+     * 'Your tree withers due to this app: %1$s', as a stored fact).
+     * The system pseudo-package the disarm doors log for partial
+     * stamps is never a culprit. No deflection on record → '' —
+     * the row then says only the kind, never an invented app.
+     */
+    private suspend fun failureCauseFor(
+        active: FocusSessionEntity,
+        kind: String
+    ): Pair<String, String> {
+        val now = System.currentTimeMillis()
+        val culprit = dao.getInterceptLogsBetween(active.startWallTimeMillis, now)
+            .filter {
+                it.sessionIntention == active.intention &&
+                    it.packageName != "com.monolith.system"
+            }
+            .lastOrNull()
+        return (culprit?.packageName ?: "") to kind
+    }
+
+    /**
+     * Issue #287 F7: add time to the ACTIVE session — the session
+     * verb Forest's extension timer provides and Monolith lacked
+     * (the only extend verb was the task's overtime). The new
+     * target is re-signed in the same write: the HMAC covers
+     * targetDurationSeconds, so an unsigned extension would read
+     * as tamper on the next tick. FLOW sessions refuse (their
+     * stored target is a floor, not a plan — extending FLOW is
+     * meaningless). Returns the updated row, or null when no
+     * session is active.
+     */
+    suspend fun extendActiveSession(extraMinutes: Int): FocusSessionEntity? =
+        withContext(Dispatchers.IO) {
+            val active = dao.getActiveSessionSnapshot() ?: return@withContext null
+            if (extraMinutes <= 0 || active.isStopwatchMode) return@withContext active
+            val newTarget = active.targetDurationSeconds + extraMinutes * 60
+            val hmac = CryptoIntegrityManager.signSessionState(
+                startWallTimeMillis = active.startWallTimeMillis,
+                startElapsedRealtimeMillis = active.startElapsedRealtimeMillis,
+                bootCount = active.bootCount,
+                targetDurationSeconds = newTarget,
+                isStopwatch = active.isStopwatchMode
+            )
+            val updated = active.copy(
+                targetDurationSeconds = newTarget,
+                hmacSignature = hmac
+            )
+            dao.updateSession(updated)
+            updated
+        }
+
+    /**
+     * Issue #287 F8: store the user's one reflection line against
+     * a finished session (Forest's Reflect, as a stored fact on
+     * the row). Refuses active rows — a reflection belongs to a
+     * session that has ended. Blank input clears nothing and
+     * writes nothing.
+     */
+    suspend fun setSessionReflection(sessionId: Int, note: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val trimmed = note.trim()
+            if (trimmed.isEmpty()) return@withContext false
+            val row = dao.getSessionById(sessionId) ?: return@withContext false
+            if (row.isActive) return@withContext false
+            dao.updateSession(row.copy(reflectionNote = trimmed))
+            true
+        }
 
     suspend fun disarmActiveSession(completed: Boolean, outcomeReason: String) {
         val active = dao.getActiveSessionSnapshot() ?: return
@@ -3445,7 +3639,20 @@ class MonolithRepository(
             outcomeReason == EMERGENCY_BREAK_REASON -> SessionOutcome.VALVE_BROKE
             completed && active.isStopwatchMode -> SessionOutcome.STOPWATCH_ENDED
             isGraceCancel -> SessionOutcome.GRACE_CANCEL
+            // Issue #290 F1: a FLOW session stopped under its floor
+            // books its own withered outcome, not generic early end.
+            !completed && active.isStopwatchMode &&
+                lawElapsed < STOPWATCH_MIN_FLOOR_SECONDS -> SessionOutcome.STOPWATCH_WITHERED
             else -> SessionOutcome.ENDED_EARLY
+        }
+        // Issue #287 F5: a broken session names its culprit in its
+        // own record, stamped at this same ending write.
+        val (causePackage, causeKind) = when (outcomeStamp) {
+            SessionOutcome.VALVE_BROKE ->
+                failureCauseFor(active, "EMERGENCY_VALVE")
+            SessionOutcome.ENDED_EARLY ->
+                failureCauseFor(active, "MANUAL_DISARM")
+            else -> "" to ""
         }
         // Issue #33 (audit R1): the ending write and its intercept
         // log commit together or not at all — a kill between them
@@ -3461,6 +3668,8 @@ class MonolithRepository(
             // door keeps the partial-stamp rule untouched.
             forgedArtifactId = flowForgedId ?: partialStampId,
             outcome = outcomeStamp,
+            failureCausePackage = causePackage,
+            failureCauseKind = causeKind,
             // RC-01: the disarm doors are ending writes too —
             // the FLOW door's stamp is what its slip's ENDED
             // reads (first stamp wins).
@@ -3500,7 +3709,7 @@ class MonolithRepository(
                 else -> true
             }
         }
-        val dayFmt = SimpleDateFormat("EEE", Locale.US)
+        val dayFmt = SimpleDateFormat("EEE", Locale.getDefault())
         val isoFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
         val result = mutableListOf<DailyFocusStat>()
 
@@ -3522,7 +3731,7 @@ class MonolithRepository(
 
             result.add(
                 DailyFocusStat(
-                    dayLabel = dayFmt.format(Date(startOfDay)).uppercase(Locale.US),
+                    dayLabel = dayFmt.format(Date(startOfDay)).uppercase(Locale.getDefault()),
                     dateIso = isoFmt.format(Date(startOfDay)),
                     totalMinutes = totalMins,
                     blocks25mCount = blocks25,

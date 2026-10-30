@@ -288,7 +288,7 @@ fun ShieldMatrixScreen(
         // AppRules' total order (issue #35): name, then package —
         // a name tie can never inherit feed/intercept order here.
         return lines.sortedWith(
-            compareBy<SlipLine> { it.app.appName.lowercase() }.thenBy { it.app.packageName }
+            compareBy<SlipLine> { it.app.appName.lowercase(java.util.Locale.ROOT) }.thenBy { it.app.packageName }
         )
     }
 
