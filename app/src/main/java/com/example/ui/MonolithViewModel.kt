@@ -1469,10 +1469,17 @@ class MonolithViewModel(
     }
 
     fun setDialMinutes(minutes: Int) {
+        // Issue #123 (finding 4): the wheel is the SINGLE voice for a
+        // dial change — it already fired its detent on
+        // DialPrecision's one pitch ladder before invoking this. This
+        // setter used to fire a SECOND playRotaryDetent at an
+        // unrelated pitch (440 + value x 2.8), so every detent
+        // sounded twice and the ladder contradicted itself. It now
+        // records the value in silence. Non-wheel callers (FLOW pill,
+        // precise-entry steppers) sound their own single effect at
+        // their own call sites, as they always have.
         val clamped = minutes.coerceIn(3, 180)
         if (clamped != _dialMinutes.value) {
-            val pitch = 440.0 + (clamped * 2.8)
-            soundEngine.playRotaryDetent(pitch)
             _dialMinutes.value = clamped
         }
     }

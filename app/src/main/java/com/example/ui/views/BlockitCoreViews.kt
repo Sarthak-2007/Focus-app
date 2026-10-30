@@ -361,6 +361,66 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
 }
 
 /**
+ * Issue #123 (dial-precision): the wheel's pure angle/value arithmetic,
+ * extracted so the precision law is unit-testable without a View.
+ *
+ * The scale is 1.8 degrees per minute from the strait's far shore
+ * (126 degrees = 10 minutes) to 432 degrees (= 180). FLOW seats at
+ * 108, across the strait whose centreline is 117.
+ *
+ * PRECISION LAW: every whole minute 10..180 is a real stop — 47 is
+ * as lawful as 45. The printed 5-minute ticks remain the scale's
+ * majors/minors (with 1-minute micro-ticks between them); they are
+ * print, not the limit of travel.
+ *
+ * HYSTERESIS LAW: under the finger a value changes only when the
+ * angle has crossed the midpoint toward the neighbour by
+ * [HYSTERESIS_MIN] minutes past it — a finger trembling on a
+ * boundary holds its value instead of toggling it (and re-firing
+ * its tick) on every crossing. Free motion and seating use the
+ * plain nearest-minute read: where the wheel lands is exact.
+ *
+ * DETENT PITCH LAW: ONE ladder speaks for a detent, here and only
+ * here — 340Hz at 5 minutes rising linearly to 880Hz at 180. Any
+ * other caller that reports a dial value must stay silent, or the
+ * user hears two pitches for one stop and the ladder lies.
+ */
+internal object DialPrecision {
+    const val FLOW_ANGLE = 108f
+    const val STRAIT_CENTRE = 117f
+    const val SCALE_ORIGIN = 126f
+    const val DEG_PER_MIN = 1.8f
+    const val HYSTERESIS_MIN = 0.22f
+
+    fun angleForMinutes(mins: Int): Float =
+        if (mins < 10) FLOW_ANGLE else SCALE_ORIGIN + (mins - 10) * DEG_PER_MIN
+
+    /** Plain nearest-minute read of an angle (FLOW north of the strait). */
+    fun valueForAngle(angle: Float): Int {
+        if (angle < STRAIT_CENTRE) return 5
+        return (10 + ((angle - SCALE_ORIGIN) / DEG_PER_MIN).roundToInt()).coerceIn(10, 180)
+    }
+
+    /** Drag read with boundary hysteresis around [current]. */
+    fun valueForAngle(angle: Float, current: Int): Int {
+        if (angle < STRAIT_CENTRE) return 5
+        if (current < 10) return valueForAngle(angle)
+        val raw = 10f + (angle - SCALE_ORIGIN) / DEG_PER_MIN
+        val nearest = raw.roundToInt().coerceIn(10, 180)
+        if (nearest == current) return current
+        return if (nearest > current) {
+            if (raw >= current + 0.5f + HYSTERESIS_MIN) (raw - HYSTERESIS_MIN).roundToInt().coerceIn(10, 180) else current
+        } else {
+            if (raw <= current - 0.5f - HYSTERESIS_MIN) (raw + HYSTERESIS_MIN).roundToInt().coerceIn(10, 180) else current
+        }
+    }
+
+    /** The single detent pitch ladder (see law above). */
+    fun detentPitchHz(minutes: Int): Float =
+        340f + ((minutes - 5).coerceIn(0, 175) / 175f) * 540f
+}
+
+/**
  * ============================================================================
  * 2. ROTARY WHEEL VIEW (DEVELOPER-GUIDE.pdf §4.1 & §4.2 #1 RotaryWheel.java)
  * ============================================================================
@@ -426,6 +486,11 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         }
 
     var onMinutesChanged: ((Int) -> Unit)? = null
+    /** Issue #123: the seat the current physics run will land on,
+     *  reported the moment the spring takes the wheel — the host
+     *  previews it ("LANDS 47") so where you let go is never a
+     *  surprise. Null when no seat is committed (coasting free). */
+    var onSeatTargetChanged: ((Int?) -> Unit)? = null
     var onCycleBlocksCount: (() -> Unit)? = null
     var onSetBlocksCount: ((Int) -> Unit)? = null
 
@@ -500,7 +565,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
     // one (theta, omega) integrator). The wheel's angle is UNWRAPPED:
     // FLOW seats at 108, the strait runs 108..126 (FLOW's landing step
     // 108..117, the smooth channel 117..126, centreline 117), numeric
-    // stops 10..180 sit at 9 degrees per 5 minutes from 126 to 432
+    // stops 10..180 sit at 1.8 degrees per minute from 126 to 432
     // (=72 on the canvas), and the 6-o'clock dead sector is the 36
     // degrees between 72 and 108. Total travel FLOW->180 is 324.
     // ------------------------------------------------------------------
@@ -510,24 +575,26 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
     private var physLastNanos: Long = 0L
     private var physStartNanos: Long = 0L
     private var physTravelDeg: Float = 0f // travel this run, for the seat knock's honesty
+    private var lastSeatPreview: Int? = null // last seat preview reported to the host
     private val choreographer: Choreographer = Choreographer.getInstance()
     private val physCallback = Choreographer.FrameCallback { nanos -> stepPhysics(nanos) }
 
     private fun minutesToAngle(mins: Int): Float {
         // ONE angle frame: FLOW is a seat, not the bottom of a ramp -
         // below 10 the value is the mode, and the mode sits across the
-        // strait at 108. Numeric stops keep the filed scale, 9 deg
-        // per 5 min, from the strait's far shore.
-        return if (mins < 10) 108f else 126f + (mins - 10) * 1.8f
+        // strait at 108. Numeric stops keep the filed scale, 1.8 deg
+        // per minute, from the strait's far shore. Issue #123: the
+        // scale is per-minute — a task-seeded 47 sits at its own true
+        // angle and reads back 47, never a rounded neighbour.
+        return DialPrecision.angleForMinutes(mins)
     }
 
     private fun valueForAngle(angle: Float): Int {
         // The strait's centreline is the value boundary: north of it
         // the wheel reads FLOW, south of it the numeric scale. Inside
         // the channel there are no values at all - the nearest shore
-        // speaks.
-        if (angle < 117f) return 5
-        return (10 + ((angle - 126f) / 9f).roundToInt() * 5).coerceIn(10, 180)
+        // speaks. Issue #123: nearest WHOLE minute, not nearest 5.
+        return DialPrecision.valueForAngle(angle)
     }
 
     /** Relative inertia of the loaded wheel: the block count has mass.
@@ -739,12 +806,29 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
             canvas.drawArc(boundsRect, 108f, 324f * sweepNormalized, false, paintStroke)
         }
 
-        // 3. True detent scale (Round 0 fix, W2 frame): ticks exist ONLY
-        // where the wheel can actually stop — every 5 minutes from 10
-        // to 180, 35 stops at 9 degrees each; majors every 30 min, mids
-        // every 15. Inside the strait there is no tick at all: the
+        // 3. True detent scale (Round 0 fix, W2 frame; issue #123
+        // precision pass): ticks exist ONLY where the wheel can
+        // actually stop. The wheel now stops on EVERY whole minute,
+        // so the print gains 1-minute micro-ticks — short, faint,
+        // engraved — between the 5-minute stops; the 5-minute ticks
+        // below keep their filed voices (majors every 30 min, mids
+        // every 15). Inside the strait there is no tick at all: the
         // break in the scale is a break in the print too. FLOW prints
         // as a word in the hero, never as a tick or a number here.
+        paintStroke.strokeWidth = dp(0.7f)
+        paintStroke.color = (0x59 shl 24) or (tokTextSecondary() and 0x00FFFFFF)
+        for (m in 10..180) {
+            if (m % 5 == 0) continue
+            val deg = minutesToAngle(m)
+            val rad = deg * (PI.toFloat() / 180f)
+            canvas.drawLine(
+                cx + cos(rad) * (outerR - dp(13.5f)),
+                cy + sin(rad) * (outerR - dp(13.5f)),
+                cx + cos(rad) * (outerR - dp(11f)),
+                cy + sin(rad) * (outerR - dp(11f)),
+                paintStroke
+            )
+        }
         for (m in 10..180 step 5) {
             val deg = minutesToAngle(m)
             val rad = deg * (PI.toFloat() / 180f)
@@ -791,7 +875,10 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         }
 
         // Rim numerals at the majors only (Anonymous Pro 15): the scale
-        // states the block length; the hero states the total.
+        // states the block length; the hero states the total — and
+        // since issue #123 the Deck ALSO prints both, in words, under
+        // the wheel ("47 MIN × 2 BLOCKS + BREAK = 1H 44M TOTAL"), so
+        // the split read is stated, never left to inference.
         paintMono.color = tokTextSecondary()
         paintMono.textSize = sp(15f)
         paintMono.textAlign = Paint.Align.CENTER
@@ -912,8 +999,11 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
             canvas.restore()
         }
 
-        // Hub = TETRAD CLOSURE (Vega, BEYOND W2): the count lives only
-        // as hub geometry - no numeral, no word. Eight wells (O10dp) on
+        // Hub = TETRAD CLOSURE (Vega, BEYOND W2): the hub itself stays
+        // pure geometry (the ritual object) — but since issue #123 the
+        // count ALSO lives as a printed numeral + word under the wheel
+        // on the Deck, because geometry alone let a stray hub tap add
+        // ~60 silent minutes. Eight wells (O10dp) on
         // the R40 ring in two tetrads: wells 1-4 on the upper arc
         // centred at 12 o'clock, wells 5-8 on the lower. At count 4
         // (and again at 8) the filled wells join into a solid bar on
@@ -1159,7 +1249,16 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
      *  gate has landed nowhere, and the seat knock at the spring's
      *  end is the coast's only report of arrival. */
     private fun applyValueFromAngle(fromDrag: Boolean) {
-        val newValue = valueForAngle(wheelAngleDeg)
+        // Issue #123: under the finger the read carries boundary
+        // hysteresis (DialPrecision) — trembling on a midpoint holds
+        // the value instead of toggling it and re-firing its tick on
+        // every crossing. In free motion the read is plain, so the
+        // coast reports the exact minute it passes.
+        val newValue = if (fromDrag) {
+            DialPrecision.valueForAngle(wheelAngleDeg, minutesValue)
+        } else {
+            valueForAngle(wheelAngleDeg)
+        }
         if (newValue == minutesValue) return
         val oldValue = minutesValue
         minutesValue = newValue
@@ -1169,7 +1268,14 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
             oldValue >= 10 && newValue < 10 ->
                 if (fromDrag) fireWeightedKnock(14, 0.8f, 300f) else fireFeel(1L, 340f)
             else -> {
-                val freq = 340f + ((newValue - 5) / 175f) * 540f
+                // ONE sound per detent, on the ONE ladder
+                // (DialPrecision.detentPitchHz): the ViewModel's
+                // setDialMinutes no longer sounds a second detent at
+                // an unrelated pitch for wheel-originated changes
+                // (issue #123, finding 4). The sound IS paired with
+                // a real haptic — playRotaryDetent/playMechanicalLatch
+                // each fire their calibrated waveform in the engine.
+                val freq = DialPrecision.detentPitchHz(newValue)
                 fireFeel(if (newValue % 15 == 0) 4L else 1L, freq)
             }
         }
@@ -1185,6 +1291,18 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         }
         physSpringTarget = null
         physOmega = 0f
+        reportSeatPreview(null)
+    }
+
+    /** Issue #123: report the committed seat to the host, once per
+     *  change — the Deck prints it under the wheel while the wheel
+     *  travels, so the landing is known before it happens. */
+    private fun reportSeatPreview(targetAngle: Float?) {
+        val value = targetAngle?.let { valueForAngle(it) }
+        if (value != lastSeatPreview) {
+            lastSeatPreview = value
+            onSeatTargetChanged?.invoke(value)
+        }
     }
 
     /** Hands the wheel to the integrator at release. A slow release
@@ -1205,6 +1323,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         ) {
             physSpringTarget = target
             physOmega = releaseOmega
+            reportSeatPreview(target)
         } else {
             physSpringTarget = null
             physOmega = releaseOmega.coerceIn(-1200f, 1200f)
@@ -1220,13 +1339,18 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         val springTarget = physSpringTarget
         if (springTarget != null) {
             // The well spring. Written per unit mass - stiffness and
-            // damping both scale with the load - so zeta holds 0.38
-            // (exactly two overshoots) and the seat lands inside
-            // 520ms at every count. FLOW's well is the deeper one:
-            // the filed 260 vs 210 survives as the ratio of rates.
+            // damping both scale with the load. Issue #123: zeta
+            // rises 0.38 -> 0.72 — the old spring overshot TWICE past
+            // the seat and re-seated the value elsewhere on every
+            // fumbled release, so where you let go was not where you
+            // landed. At 0.72 the wheel keeps ONE soft, living
+            // overshoot (the analog settle Sarthak's ritual runs on)
+            // and then seats, inside ~520ms at every count. FLOW's
+            // well is the deeper one: the filed 260 vs 210 survives
+            // as the ratio of rates.
             val omega0 = if (springTarget == 108f) 23.5f else 21f
             val accel = omega0 * omega0 * (springTarget - wheelAngleDeg) -
-                2f * 0.38f * omega0 * physOmega
+                2f * 0.72f * omega0 * physOmega
             physOmega += accel * dt
             wheelAngleDeg += physOmega * dt
             physTravelDeg += abs(wheelAngleDeg - prevAngle)
@@ -1265,6 +1389,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
             if ((prevAngle - 117f) * (wheelAngleDeg - 117f) < 0f) {
                 if (abs(physOmega) < 180f) {
                     physSpringTarget = if (prevAngle < 117f) 108f else 126f
+                    reportSeatPreview(physSpringTarget)
                 } else {
                     physOmega -= sign(physOmega) * 90f
                     fireWeightedKnock(10, 0.5f, 280f)
@@ -1283,6 +1408,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
                     frameNanos - physStartNanos > 1_400_000_000L
                 ) {
                     physSpringTarget = nearest
+                    reportSeatPreview(nearest)
                 }
             }
         }
