@@ -82,7 +82,11 @@ class WatchStoreRobolectricTest {
         var snap = WatchStore.snapshots.value
         assertNull(snap.measurement(WatchItemId.SHORTS_REELS))
 
-        // Parents granted, settings on, no suspension: RUNNING.
+        // Parents granted, settings on, no suspension: the blocking
+        // pair RUNNING. NOTIFICATIONS stays OFF — issue #109, F1:
+        // the listener is bound but NO session is active, and the
+        // listener captures nothing without one. Binding alone
+        // printing RUNNING was the false print.
         // Await the COMPLETE set (LAST PROVED), not the first
         // derived line: the six queries land in parallel, and a
         // sibling item's parent may still be in flight when the
@@ -93,6 +97,12 @@ class WatchStoreRobolectricTest {
         awaitSnapshot { s -> s.measurement(WatchItemId.SHORTS_REELS)?.interceptor == InterceptorState.RUNNING }
         snap = WatchStore.snapshots.value
         assertEquals(InterceptorState.RUNNING, snap.measurement(WatchItemId.SOCIAL_SITES)?.interceptor)
+        assertEquals(InterceptorState.OFF, snap.measurement(WatchItemId.NOTIFICATIONS)?.interceptor)
+
+        // A session goes active: now the capture is real and the
+        // line may print RUNNING.
+        WatchStore.updateInterceptorInputs(sessionActive = true)
+        snap = WatchStore.snapshots.value
         assertEquals(InterceptorState.RUNNING, snap.measurement(WatchItemId.NOTIFICATIONS)?.interceptor)
 
         // His suspension (the Safe Break): the blocking pair PAUSES;
@@ -102,6 +112,13 @@ class WatchStoreRobolectricTest {
         assertEquals(InterceptorState.PAUSED, snap.measurement(WatchItemId.SHORTS_REELS)?.interceptor)
         assertEquals(InterceptorState.PAUSED, snap.measurement(WatchItemId.SOCIAL_SITES)?.interceptor)
         assertEquals(InterceptorState.RUNNING, snap.measurement(WatchItemId.NOTIFICATIONS)?.interceptor)
+
+        // The session ends: the line falls back to OFF on the same
+        // binding — the capture stopped with the session.
+        WatchStore.updateInterceptorInputs(sessionActive = false, safeBreak = false)
+        snap = WatchStore.snapshots.value
+        assertEquals(InterceptorState.OFF, snap.measurement(WatchItemId.NOTIFICATIONS)?.interceptor)
+        WatchStore.updateInterceptorInputs(sessionActive = true)
 
         // Setting off: OFF regardless of parents.
         WatchStore.updateInterceptorInputs(shortsOn = false, safeBreak = false)
