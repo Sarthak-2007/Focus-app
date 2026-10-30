@@ -853,6 +853,11 @@ object RoutineSchedule {
      * fire, so they are never the next start. This one helper is
      * what the scheduler and every "next seal" reader (Deck
      * ribbon, widget) share, so they can never disagree.
+     *
+     * (Composed at the e1996c16 merge on the #152 branch: main's
+     * §3.6 helper supersedes the pause-stepping version this
+     * branch's fix-forward 2 added when no definition existed —
+     * same contract, one shared implementation.)
      */
     fun effectiveNextStartMillis(routine: RoutineEntity, nowMillis: Long): Long? {
         val r = routine.sanitized()

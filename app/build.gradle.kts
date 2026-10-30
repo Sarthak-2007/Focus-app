@@ -101,6 +101,10 @@ dependencies {
   // implementation(libs.androidx.camera.lifecycle)
   // implementation(libs.androidx.camera.view)
   implementation(libs.androidx.compose.material3)
+  // Issue #336: the one icon system (MonolithIcons). Extended set:
+  // the current core artifact no longer carries Shield/Schedule/
+  // Visibility/VpnKey/Chevrons/DarkMode/FlashOn/Pause (CI-proven).
+  implementation(libs.androidx.compose.material.icons.extended)
   implementation(libs.androidx.compose.ui)
   implementation(libs.androidx.compose.ui.graphics)
   implementation(libs.androidx.core.ktx)
