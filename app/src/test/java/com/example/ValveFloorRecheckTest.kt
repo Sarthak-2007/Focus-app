@@ -60,12 +60,32 @@ class ValveFloorRecheckTest {
         MonolithWeek.weekAnchorMillis(repo.honestNowMillis())
 
     private suspend fun resetWeekLedger(db: MonolithDatabase, anchor: Long) {
+        // Cycle-3 hardening (finisher): the reset is TOTAL, not
+        // week-scoped. Cycles 1–2 failed in-suite with the honest
+        // week and the wall week naming different ledgers (the #91
+        // hazard in both directions): a week-scoped delete leaves
+        // other weeks' rows — booked by earlier classes in this
+        // shared singleton — standing where a later read can see
+        // them. This suite owns the ledger while it runs: every
+        // spend row goes, and both candidate weeks must read empty
+        // before a seed is planted.
         db.openHelper.writableDatabase.execSQL(
-            "DELETE FROM emergency_break_spends WHERE weekAnchorMillis = $anchor"
+            "DELETE FROM emergency_break_spends"
         )
         assertEquals(
             "precondition: production week ledger empty after reset",
             0, db.monolithDao().getSpendsForWeek(anchor).size
+        )
+        assertEquals(
+            "precondition: wall week ledger empty after reset",
+            0,
+            db.monolithDao()
+                .getSpendsForWeek(MonolithWeek.weekAnchorMillis(System.currentTimeMillis()))
+                .size
+        )
+        assertEquals(
+            "precondition: spend ledger fully empty after reset",
+            0, db.monolithDao().getAllSpendsSnapshot().size
         )
     }
 
@@ -158,8 +178,8 @@ class ValveFloorRecheckTest {
                 0, dao.getAllSpendsSnapshot().count { it.sessionId == sessionId }
             )
             assertEquals(
-                "the week's token must still be whole",
-                1, repo.emergencyBreaksRemaining()
+                "the week's token must still be whole (read in the honest week production books in)",
+                1, repo.emergencyBreaksRemaining(repo.honestNowMillis())
             )
             // Session ended CLEANLY through the stopwatch door:
             // completed, STOPWATCH_ENDED, booked at the law figure —
@@ -198,8 +218,8 @@ class ValveFloorRecheckTest {
             val mySpends = dao.getAllSpendsSnapshot().filter { it.sessionId == sessionId }
             assertEquals("exactly one spend, naming this session", 1, mySpends.size)
             assertEquals(
-                "the week's token must be spent",
-                0, repo.emergencyBreaksRemaining()
+                "the week's token must be spent (read in the honest week production books in)",
+                0, repo.emergencyBreaksRemaining(repo.honestNowMillis())
             )
             assertNull(dao.getActiveSessionSnapshot())
             val broken = dao.getSessionHistorySnapshot().first { it.id == sessionId }
