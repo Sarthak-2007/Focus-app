@@ -33,6 +33,7 @@ import com.example.service.TactileSoundEngine
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.MonolithCurves
 import com.example.ui.theme.NightTextColorSecondary
+import com.example.ui.theme.TokenColorOnPrimary
 
 /**
  * The Shield screen's loadout selector (STUDY / WORK / SLEEP) as a
@@ -61,7 +62,7 @@ fun ShieldCapSelector(
     val scheme = MaterialTheme.colorScheme
     val words = listOf("STUDY", "WORK", "SLEEP")
     // REGISTER: the settled loadout marker line, both modes.
-    val marker = Color(0xFFFBF1EC)
+    val marker = TokenColorOnPrimary
     // Unselected stops print in the house text-2 tier (the rail's
     // unselected words, CHROME-BUILD-READY §2.3 / F-05): day
     // onSurfaceVariant IS text-2 (#5F5856), but at night

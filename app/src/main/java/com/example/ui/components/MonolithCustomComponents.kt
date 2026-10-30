@@ -48,6 +48,9 @@ import com.example.ui.theme.MonolithCurves
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.theme.NightColorSurfaceBright
 import com.example.ui.theme.NightColorSurfaceSheet
+import com.example.ui.theme.NightColorPrimary
+import com.example.ui.theme.NightTextColorSecondary
+import com.example.ui.theme.TokenColorOnPrimary
 import com.example.ui.theme.PillBadgeTextStyle
 import com.example.ui.theme.TokenColorSurfaceBright
 import com.example.ui.theme.TokenColorSurfaceSheet
@@ -190,7 +193,7 @@ fun BlockitActionChip(
     }
     val fg = when {
         isUndoStyle -> scheme.primaryContainer
-        isAccentArmed -> Color(0xFFFBF1EC)
+        isAccentArmed -> TokenColorOnPrimary
         isPrimaryInk -> onInkControlFill()
         else -> scheme.onBackground
     }
@@ -312,13 +315,19 @@ fun MonolithPullDownHeader(
 @Composable
 fun inkControlFill(): Color {
     val scheme = MaterialTheme.colorScheme
-    return if (scheme.background.luminance() < 0.5f) Color(0xFF4A423C) else scheme.onBackground
+    // Issue #6 F12 (value half): night controls step DOWN to
+    // #2A2320 — at #4A423C the control fill (1.86:1) out-lit the
+    // hero card (1.35:1) and broke the Lamp order. Blast radius
+    // noted: slide cap + STOP chair share this fill — they are
+    // all controls, so the sharing is correct. Full tokenisation
+    // remains F17's table at merge.
+    return if (scheme.background.luminance() < 0.5f) Color(0xFF2A2320) else scheme.onBackground
 }
 
 @Composable
 fun onInkControlFill(): Color {
     val scheme = MaterialTheme.colorScheme
-    return if (scheme.background.luminance() < 0.5f) Color(0xFFFFE4CF) else Color(0xFFFBF1EC)
+    return if (scheme.background.luminance() < 0.5f) NightColorPrimary else TokenColorOnPrimary
 }
 
 // ============================================================================
@@ -479,7 +488,13 @@ private fun splitTenantText(shut: Int, peek: Int, sealed: Boolean): String? {
     }
     val peekPart = if (peek > 0) "$peek PEEK" else null
     val parts = listOfNotNull(shutPart, peekPart)
-    return if (parts.isEmpty()) null else parts.joinToString(" · ")
+    if (parts.isEmpty()) return null
+    val split = parts.joinToString(" · ")
+    // R3b #160 (two-phones-tablet): the seal certifies THIS handset only.
+    // The sealed imprint says so at the moment of certification — the
+    // hold never reaches a second phone, a tablet or a laptop, and the
+    // words now carry that boundary instead of implying the person.
+    return if (sealed) "$split · THIS PHONE ONLY" else split
 }
 
 /** What the sentence slot's tap does (Suki): FIX goes to the pane
@@ -503,12 +518,22 @@ internal fun refusalSentenceFor(warrant: Warrant?): RefusalSentence? {
     return when {
         !warrant.a11yBound ->
             RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
-        warrant.state == WarrantState.UNPROVEN && !warrant.a11yStampedThisResidency ->
+        warrant.state == WarrantState.UNPROVEN && !warrant.a11yStampedThisResidency &&
+            warrant.usage != UsageAccess.UNSET ->
+            // The UNSET exclusion is the C3 lie's other door (finisher
+            // pass, fresh-eyes catch): with usage UNSET this row's
+            // "TAP TO RETRY" printed while the Deck's RETRY handler
+            // rerouted the tap to the Usage pane. UNSET falls through
+            // to its own row below and names the pane it opens.
             RefusalSentence("CAN'T CHECK BLOCKING — TAP TO RETRY", RefusalAction.RETRY_CHECK)
         warrant.usage == UsageAccess.DENIED ->
             RefusalSentence("USAGE ACCESS IS OFF — TAP TO FIX", RefusalAction.FIX_USAGE)
         warrant.usage == UsageAccess.UNSET ->
-            RefusalSentence("CAN'T CHECK BLOCKING — TAP TO RETRY", RefusalAction.RETRY_CHECK)
+            // Issue #6 C3/F9: UNSET is a known lack with a known
+            // owner — the sentence names the door the hand opens.
+            // "TAP TO RETRY" was the live lie: the Deck's tap on
+            // this row already routed to the Usage pane.
+            RefusalSentence("USAGE ACCESS IS OFF — TAP TO FIX", RefusalAction.FIX_USAGE)
         warrant.state == WarrantState.OFF ->
             RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
         else -> null
@@ -557,9 +582,9 @@ private fun stripToneColors(): StripTones {
         cap = if (night) NightColorSurfaceSheet else TokenColorSurfaceSheet,
         divider = scheme.outlineVariant,
         faultEdge = scheme.outline,
-        ordinaryInk = if (night) Color(0xFF9C8E84) else scheme.onSurfaceVariant,
+        ordinaryInk = if (night) NightTextColorSecondary else scheme.onSurfaceVariant,
         glyphInk = scheme.onSurface,
-        secondaryInk = if (night) Color(0xFF9C8E84) else scheme.onSurfaceVariant
+        secondaryInk = if (night) NightTextColorSecondary else scheme.onSurfaceVariant
     )
 }
 

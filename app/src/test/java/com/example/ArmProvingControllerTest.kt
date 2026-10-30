@@ -1,5 +1,13 @@
 package com.example
 
+import android.content.Context
+import android.os.VibratorManager
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
+import com.example.data.MonolithDatabase
+import com.example.data.MonolithRepository
+import com.example.service.SessionSealTransitionImpl
+import com.example.service.TactileSoundEngine
 import com.example.ui.ArmLink
 import com.example.ui.ArmPhase
 import com.example.ui.ArmProvingController
@@ -14,22 +22,70 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
+import org.robolectric.annotation.Config
 
 /**
- * Slice D step 4 — the cascade's clocks and ordering, proven
- * against fakes (Opal's test list: deadline/jam/annul, held-mark
- * ordering, the t=0 max() terms). The controller reads its
- * monotonic clock from the injected lambda; the sampler's delays
- * run on the test scheduler. Two clocks, advanced in step by
- * [tick], so every deadline lands on the exact iteration meant
- * to observe it.
+ * Slice D step 4 — the cascade's clocks and ordering (Opal's test
+ * list: deadline/jam/annul, held-mark ordering, the t=0 max()
+ * terms). The controller reads its monotonic clock from the
+ * injected lambda; the sampler's delays run on the test
+ * scheduler. Two clocks, advanced in step by [tick], so every
+ * deadline lands on the exact iteration meant to observe it.
+ *
+ * Audit R1 tests-1, findings 1+4: the seal act is NO LONGER a
+ * hand-written fake. The controller is wired to the REAL
+ * [SessionSealTransitionImpl] over a REAL [TactileSoundEngine]
+ * and repository, so the ordering this suite asserts (row →
+ * marker → publish → Throw) is production's ordering — the
+ * line-by-line proof lives in SessionSealTransitionProductionTest,
+ * and the production port/witness/singleton wiring in
+ * ArmProductionWiringTest. Fakes remain only at the controller's
+ * own injected seams: the session port (Android services + Room
+ * timing), the witnesses, the clock, and the vsync poster.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
 @OptIn(ExperimentalCoroutinesApi::class)
 class ArmProvingControllerTest {
+
+    private val context: Context
+        get() = ApplicationProvider.getApplicationContext()
+
+    private lateinit var db: MonolithDatabase
+    private lateinit var repository: MonolithRepository
+    private lateinit var engine: TactileSoundEngine
+
+    @Before
+    fun setup() {
+        db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        repository = MonolithRepository(context, db.monolithDao())
+        engine = TactileSoundEngine(context)
+        context.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().clear().commit()
+    }
+
+    @After
+    fun tearDown() {
+        db.close()
+    }
+
+    /** The last haptic waveform the real engine fired, or null. */
+    private fun lastVibrationPattern(): LongArray? {
+        val manager = context.getSystemService(VibratorManager::class.java)
+        return Shadows.shadowOf(manager.defaultVibrator).pattern?.copyOf()
+    }
 
     private var now = 0L
     private val frames = ArrayDeque<() -> Unit>()
@@ -47,6 +103,12 @@ class ArmProvingControllerTest {
         var startShieldCalls = 0
         var stopShieldCalls = 0
         var sealResult = true
+        /** The production seal marker as it stood INSIDE the row
+         *  step (wired to the real repository by the harness):
+         *  -1 proves the marker is written after the row, by the
+         *  real transition, never before it. */
+        var markerProbe: () -> Int = { Int.MIN_VALUE }
+        var markerAtSealRow: Int = Int.MIN_VALUE
 
         override suspend fun startSession(
             intention: String,
@@ -70,6 +132,7 @@ class ArmProvingControllerTest {
 
         override suspend fun sealSession(sessionId: Int, t0Mono: Long): Boolean {
             sealCalls += sessionId to t0Mono
+            markerAtSealRow = markerProbe()
             events += "seal"
             return sealResult
         }
@@ -93,50 +156,6 @@ class ArmProvingControllerTest {
         }
     }
 
-    /** Slice E: the transition fake — the seal act's ordering
-     *  (row → publish → Throw-last) is the contract under test. */
-    private class FakeTransition(private val events: MutableList<String>) :
-        com.example.service.SessionSealTransition {
-        private val claimed = mutableSetOf<Int>()
-        private val sealed = mutableSetOf<Int>()
-        var primeCalls = 0
-        var cancelCalls = 0
-
-        override fun primeForSeal() {
-            primeCalls++
-            events += "prime"
-        }
-
-        override fun cancelSealPrime() {
-            cancelCalls++
-        }
-
-        override suspend fun executeSeal(
-            sessionId: Int,
-            t0Mono: Long,
-            sealRow: suspend () -> Boolean,
-            publish: () -> Unit
-        ): Boolean {
-            if (!claimed.add(sessionId)) return false
-            if (!sealRow()) return false
-            sealed += sessionId
-            events += "marker"
-            publish()
-            events += "sound"
-            return true
-        }
-
-        override suspend fun proveAndSeal(sessionId: Int, latchMonoMs: Long?) =
-            com.example.service.SealVerdict.ANNULLED
-
-        override suspend fun recover(sessionId: Int, rowStartWallMs: Long, nowWallMs: Long) =
-            com.example.service.SealVerdict.ANNULLED
-
-        override fun isSealed(sessionId: Int): Boolean = sessionId in sealed
-
-        override fun isTombstoned(routineId: Int?, windowStartMillis: Long): Boolean = false
-    }
-
     private class FakeWitnesses : ArmWitnesses {
         var shieldMono: Long? = null
         var a11yMono: Long? = null
@@ -144,12 +163,16 @@ class ArmProvingControllerTest {
         override fun a11yArmedMono(sessionId: Int): Long? = a11yMono
     }
 
-    private lateinit var transition: FakeTransition
+    private lateinit var transition: SessionSealTransitionImpl
 
     private fun TestScope.newController(): ArmProvingController {
         port = FakePort(events)
+        port.markerProbe = { repository.sealedSessionIdFromMarker() }
         witnesses = FakeWitnesses()
-        transition = FakeTransition(events)
+        // The PRODUCTION transition (audit tests-1 #1): if its
+        // ordering changes, this suite's seal assertions change
+        // with it — there is no fake left to agree with itself.
+        transition = SessionSealTransitionImpl(context, engine, repository, clock = { now })
         return ArmProvingController(
             scope = backgroundScope,
             port = port,
@@ -260,9 +283,20 @@ class ArmProvingControllerTest {
         assertTrue(phase is ArmPhase.SealedRunning)
         assertEquals(l + 210, (phase as ArmPhase.SealedRunning).t0Mono)
         assertEquals(listOf(41 to l + 210), port.sealCalls)
-        // The re-anchor lands BEFORE the seal sound: the sound
-        // attests a sealed row, never an intention.
-        assertTrue(events.indexOf("seal") in 0 until events.indexOf("sound"))
+        // Production ordering, observed on the real transition:
+        // inside the row step the seal marker did not exist yet;
+        // by the time the phase published, the REAL transition
+        // had committed it — row → marker → publish.
+        assertEquals(-1, port.markerAtSealRow)
+        assertEquals(41, repository.sealedSessionIdFromMarker())
+        assertTrue(transition.isSealed(41))
+        // And the Throw — the real engine's seal waveform — fired
+        // as the act's last statement (the publish had already
+        // landed above; SessionSealTransitionProductionTest pins
+        // Throw-after-publish from inside the publish lambda).
+        assertTrue(
+            lastVibrationPattern()?.contentEquals(TactileSoundEngine.SEAL_THROW_TIMINGS) == true
+        )
         assertEquals(3, phase.provenCount())
     }
 
@@ -450,8 +484,14 @@ class ArmProvingControllerTest {
         assertEquals(ArmPhase.Idle, controller.phase.value)
         assertEquals(1, controller.annulCount.value)
         assertTrue(port.annulCalls.isEmpty())
-        assertTrue(!events.contains("sound"))
-        assertEquals(1, transition.cancelCalls)
+        // The real transition sealed nothing and sounded nothing:
+        // no marker in the real prefs, no claim held as sealed,
+        // and the real engine never fired the Throw's waveform.
+        assertEquals(-1, repository.sealedSessionIdFromMarker())
+        assertFalse(transition.isSealed(41))
+        assertFalse(
+            lastVibrationPattern()?.contentEquals(TactileSoundEngine.SEAL_THROW_TIMINGS) == true
+        )
         val sentence = controller.armSentence.value
         assertEquals("NOT SEALED — THE SESSION DIDN'T ANSWER.", sentence?.text)
     }
