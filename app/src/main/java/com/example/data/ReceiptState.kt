@@ -60,6 +60,11 @@ object SessionOutcome {
     /** The free grace cancel inside the opening window. */
     const val GRACE_CANCEL = "GRACE_CANCEL"
 
+    /** Audit R6 #341 F30: a session that was still active when its
+     *  successor was born — closed at the birth transaction with its
+     *  true end stamp, never left unclassified. */
+    const val SUPERSEDED = "SUPERSEDED"
+
     /** Ended early by his hand (the disarm challenge). */
     const val ENDED_EARLY = "ENDED_EARLY"
 
