@@ -133,6 +133,10 @@ fun TactileDeckScreen(
     // render harnesses that seat the Deck without a live break
     // keep composing; MainActivity wires the VM's verb.
     onEndSafeBreak: () -> Unit = {},
+    // Issue #143 F4: the DND gate's line (armed at the arm, sealed
+    // truth during the session) — defaulted null so harnesses and
+    // previews compose the standing Deck unchanged.
+    dndLine: String? = null,
     weeklyEmergencyTokensRemaining: Int = 1,
     // Slice D (the proof strip, the sentence slot, the imprint): the
     // host owns the wire; the screen renders its word.
@@ -1197,6 +1201,25 @@ fun TactileDeckScreen(
                 // a printed percent was the floored fraction's
                 // second lie. FLOW renders the empty track only.
             }
+        }
+
+        // Issue #143 F4: the DND gate's line stands under the
+        // instrument — set at the arm (what the seal will do
+        // about the phone's voice), replaced at the seal (what
+        // it did), gone at the finish. Absent when the gate has
+        // nothing truthful to print.
+        if (dndLine != null) {
+            Text(
+                text = dndLine,
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp)
+                    .testTag("dnd_gate_line")
+            )
         }
 
         // =====================================================================

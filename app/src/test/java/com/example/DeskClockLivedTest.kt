@@ -148,7 +148,7 @@ class DeskClockLivedTest {
     fun renderedClock_breakFaceAnnouncesAndTapDoesNotDismiss_holdDoes() {
         var dismissed = false
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = true, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = true) {
                 AlwaysOnDeskClockOverlay(
                     visible = true,
                     activeSession = row(inBreak = true, breakRemaining = 452),
@@ -167,7 +167,10 @@ class DeskClockLivedTest {
         composeRule.onNodeWithText("REMAINING").assertExists()
         // The task banner is suppressed through the break.
         composeRule.onNodeWithText("Physics").assertDoesNotExist()
-        composeRule.onNodeWithText("NIGHTSTAND DESK CLOCK • HOLD ANYWHERE TO EXIT").assertExists()
+        // Issue #143 F2: a sealed session's clock no longer wears
+        // the idle face — the eyebrow names the sealed break state
+        // (the exit instruction survives verbatim).
+        composeRule.onNodeWithText("SEALED — SAFE BREAK • HOLD ANYWHERE TO EXIT").assertExists()
 
         // A stray tap dismisses nothing.
         composeRule.onNodeWithTag("always_on_desk_clock_overlay").performClick()

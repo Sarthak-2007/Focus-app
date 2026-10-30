@@ -260,6 +260,16 @@ data class AirlockInterceptState(
      *  session): the door never invents one. */
     val sessionEndsAtMillis: Long? = null,
     val sessionIsStopwatch: Boolean = false,
+    /** Issue #143 F3: the sealed state's own facts for the Yield
+     *  sheet's answer — whether a Safe Break is running (and its
+     *  remaining seconds), and the session's block position. Read
+     *  off the live row at the intercept instant, like every other
+     *  fact on this state; a stopwatch carries 0/0 and the sheet
+     *  falls back to the session's own words. */
+    val sessionInSafeBreak: Boolean = false,
+    val safeBreakSecondsRemaining: Int = 0,
+    val sessionBlockIndex: Int = 0,
+    val sessionBlockCount: Int = 0,
     /** Audit R3b #147: a stopwatch session has no set end, but it
      *  DOES have a floor moment — the wall instant its clean exit
      *  opens (start + the 20-minute floor, on the session's own
@@ -365,6 +375,13 @@ class MonolithViewModel(
 
     private val _isAlwaysOnDeskClockVisible = MutableStateFlow(false)
     val isAlwaysOnDeskClockVisible: StateFlow<Boolean> = _isAlwaysOnDeskClockVisible.asStateFlow()
+
+    // Issue #143 F4: the Do-Not-Disturb gate's line. Set at arm
+    // (what WILL happen), replaced at the seal (what DID happen),
+    // cleared when the session ends and the gate restores. Null =
+    // nothing truthful to print (unreadable state, or no arm yet).
+    private val _dndLine = MutableStateFlow<String?>(null)
+    val dndLine: StateFlow<String?> = _dndLine.asStateFlow()
 
     private val _burnInFigure8MinuteStep = MutableStateFlow(0)
     val burnInFigure8MinuteStep: StateFlow<Int> = _burnInFigure8MinuteStep.asStateFlow()
@@ -1052,6 +1069,31 @@ class MonolithViewModel(
                 if (session == null) {
                     armProving.onActiveSessionGone()
                 }
+            }
+        }
+        // Issue #143 F4: the DND gate follows the seal's life,
+        // however the session was born (Deck arm or routine) and
+        // however it ends (finish, disarm, valve, annul — every
+        // ending funnels through this row going inactive). On the
+        // seal: engage if the gate's decision said Monolith may,
+        // then print the sealed truth. On the end: restore ONLY a
+        // gate Monolith itself engaged, and clear the line.
+        viewModelScope.launch {
+            var wasActive = false
+            activeSession.collect { session ->
+                val isActive = session?.isActive == true
+                if (isActive && !wasActive) {
+                    val engaged = com.example.service.DndGate.engageAtSeal(appContext)
+                    _dndLine.value = com.example.service.DndGate.sealedLine(
+                        engagedByMonolith = engaged ||
+                            com.example.service.DndGate.engagedByMonolith(appContext),
+                        currentFilter = com.example.service.DndGate.currentFilter(appContext)
+                    )
+                } else if (!isActive && wasActive) {
+                    com.example.service.DndGate.restoreAfterSession(appContext)
+                    _dndLine.value = null
+                }
+                wasActive = isActive
             }
         }
         // The seal freeze: capture at the session's birth, once —
@@ -2923,6 +2965,15 @@ class MonolithViewModel(
         _receiptState.value = null
         _finishNightHold.value = false
         sledReturnGate.clear()
+        // Issue #143 F4: arming CONSULTS Do-Not-Disturb — the
+        // check the app never made. The line states what the seal
+        // will do about the phone's own voice (already quiet /
+        // Monolith will silence + restore / Monolith cannot and
+        // says so), printed on the Deck from this instant; the
+        // gate itself acts at the seal (init collector above).
+        _dndLine.value = com.example.service.DndGate.armLine(
+            com.example.service.DndGate.currentDecision(appContext)
+        )
         armProving.onLatch(
             intention = _intentionText.value,
             profileName = _selectedProfileName.value,
@@ -3115,6 +3166,12 @@ class MonolithViewModel(
                 ?.takeIf { !it.isStopwatchMode }
                 ?.let { System.currentTimeMillis() + it.spanRemainingSeconds * 1000L },
             sessionIsStopwatch = active?.isStopwatchMode == true,
+            // Issue #143 F3: the sealed state's own facts, off the
+            // same live row — the Yield sheet answers with these.
+            sessionInSafeBreak = active?.isInSafeBreak == true,
+            safeBreakSecondsRemaining = active?.safeBreakSecondsRemaining ?: 0,
+            sessionBlockIndex = active?.currentBlockIndex ?: 0,
+            sessionBlockCount = active?.totalStudyBlocks ?: 0,
             stopwatchFloorAtMillis = active
                 ?.takeIf { it.isStopwatchMode }
                 ?.let {

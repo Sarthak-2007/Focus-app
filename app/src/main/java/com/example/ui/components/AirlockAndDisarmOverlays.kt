@@ -50,6 +50,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.CapturedNotificationEntity
+import com.example.data.NightDimMath
+import com.example.ui.nightDesaturate
 import com.example.data.DistractionTriggerReason
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
@@ -87,7 +89,11 @@ fun AlwaysOnDeskClockOverlay(
     activeTask: FocusTaskEntity?,
     dialMinutes: Int,
     burnInStep: Int,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    // Issue #143 F1/F5: the break-dim depth at this instant, fed by
+    // the host from the shield's published phase — the sealed face
+    // drains toward monochrome on the same curve as the dim.
+    dimAlpha: Float = 0f
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -217,15 +223,25 @@ fun AlwaysOnDeskClockOverlay(
                 .testTag("always_on_desk_clock_overlay"),
             contentAlignment = Alignment.Center
         ) {
+            // Issue #143 F2/F5: the SEALED face is not the idle
+            // face. Sealed, the whole column is drained toward
+            // monochrome (F5 — the night surfaces only) and the
+            // eyebrow + sealed lines below name the seal and carry
+            // BOTH session numbers (elapsed AND remaining); idle,
+            // the face keeps its colour and prints the dial for
+            // what it is. The burn-in wander above is untouched —
+            // the sealed face still shifts against burn-in.
+            val clockSealed = activeSession != null && activeSession.isActive
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .offset(x = burnDx.dp, y = burnDy.dp),
+                    .offset(x = burnDx.dp, y = burnDy.dp)
+                    .nightDesaturate(NightDimMath.deskClockSaturation(clockSealed, dimAlpha)),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
                 Text(
-                    text = "NIGHTSTAND DESK CLOCK • HOLD ANYWHERE TO EXIT",
+                    text = deskClockEyebrow(clockSealed, activeSession?.isInSafeBreak == true),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.sp,
@@ -262,6 +278,38 @@ fun AlwaysOnDeskClockOverlay(
                     letterSpacing = (-3).sp,
                     color = NightColorPrimary
                 )
+
+                // Issue #143 F2: the sealed face's own numbers —
+                // elapsed AND remaining together (the hero names
+                // only one direction). A stopwatch has no remaining
+                // to print, so its line carries elapsed alone; idle
+                // prints the one honest line that this is the dial.
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.testTag("desk_clock_sealed_lines")
+                ) {
+                    deskClockSealedLines(
+                        sealed = clockSealed,
+                        elapsedSeconds = if (activeSession?.isStopwatchMode == true) {
+                            activeSession.elapsedSeconds
+                        } else {
+                            activeSession?.spanElapsedSeconds ?: 0
+                        },
+                        remainingSeconds = if (activeSession?.isStopwatchMode == true) {
+                            null
+                        } else {
+                            activeSession?.spanRemainingSeconds
+                        }
+                    ).forEach { line ->
+                        Text(
+                            text = line,
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = NightColorPrimary.copy(alpha = 0.85f)
+                        )
+                    }
+                }
 
                 // The Safe Break announcement (finding 3): while a
                 // break runs, this line stands where the task banner
@@ -418,6 +466,79 @@ internal fun deskClockProgress(session: FocusSessionEntity?): Float = when {
     session != null && session.isActive ->
         (session.elapsedSeconds % 1200).toFloat() / 1200f
     else -> 0f
+}
+
+/**
+ * Issue #143 F2 — the desk clock's eyebrow: the face NAMES its
+ * state. Idle keeps the standing nightstand line; sealed, the
+ * eyebrow says SEALED (and names a running Safe Break), so the
+ * two states can never be mistaken for each other across a dark
+ * room. Pure — unit-tested.
+ */
+internal fun deskClockEyebrow(sealed: Boolean, inBreak: Boolean): String = when {
+    sealed && inBreak -> "SEALED — SAFE BREAK • HOLD ANYWHERE TO EXIT"
+    sealed -> "SEALED — NIGHT FACE • HOLD ANYWHERE TO EXIT"
+    else -> "NIGHTSTAND DESK CLOCK • HOLD ANYWHERE TO EXIT"
+}
+
+/**
+ * Issue #143 F2 — the desk clock's state lines. Sealed and timed:
+ * BOTH numbers, elapsed and remaining, from the span derivation
+ * the hero already trusts. Sealed stopwatch: elapsed alone — a
+ * stopwatch has no remaining and none is invented. Idle: the one
+ * honest line, that this is the dial and not a session — no
+ * session numbers are fabricated for a session that does not
+ * exist. Pure — unit-tested.
+ */
+internal fun deskClockSealedLines(
+    sealed: Boolean,
+    elapsedSeconds: Int,
+    remainingSeconds: Int?
+): List<String> {
+    if (!sealed) return listOf("NO SESSION SEALED — THIS IS THE DIAL, NOT A SESSION")
+    val elapsed = String.format(
+        Locale.US, "ELAPSED %02d:%02d",
+        elapsedSeconds.coerceAtLeast(0) / 60, elapsedSeconds.coerceAtLeast(0) % 60
+    )
+    if (remainingSeconds == null) return listOf(elapsed)
+    val remaining = String.format(
+        Locale.US, "REMAINING %02d:%02d",
+        remainingSeconds.coerceAtLeast(0) / 60, remainingSeconds.coerceAtLeast(0) % 60
+    )
+    return listOf(elapsed, remaining)
+}
+
+/**
+ * Issue #143 F3 — the sealed Yield sheet's own answer. The sheet
+ * that stands when a held app is tapped used to speak only in
+ * generic wall words; it now answers IN THE SEALED STATE'S OWN
+ * WORDS: which block holds the phone, or that a Safe Break is
+ * running and how much quiet is left, and that the tapped app
+ * stays held either way. A session with no blocks to name
+ * (stopwatch) falls back to the session itself — never an
+ * invented block. Pure — unit-tested.
+ */
+internal fun sealedYieldLine(
+    appName: String,
+    inBreak: Boolean,
+    breakRemainingSeconds: Int,
+    blockIndex: Int,
+    blockCount: Int
+): String {
+    val app = appName.ifBlank { "THIS APP" }.uppercase(Locale.US)
+    return when {
+        inBreak -> {
+            val left = breakRemainingSeconds.coerceAtLeast(0)
+            String.format(
+                Locale.US,
+                "SEALED — SAFE BREAK RUNNING · %02d:%02d OF QUIET LEFT · %s STAYS HELD UNTIL THE NEXT BLOCK SEALS",
+                left / 60, left % 60, app
+            )
+        }
+        blockCount > 0 && blockIndex > 0 ->
+            "SEALED — BLOCK $blockIndex OF $blockCount · $app STAYS HELD UNTIL THIS BLOCK ENDS"
+        else -> "SEALED — $app STAYS HELD UNTIL THE SESSION ENDS"
+    }
 }
 
 /**
@@ -958,6 +1079,28 @@ fun AirlockInterceptOverlay(
                         color = NightColorPrimary.copy(alpha = 0.8f)
                     )
                 }
+
+                // Issue #143 F3: the sealed state's own answer —
+                // the sheet the held app's tap raises now speaks
+                // AS the seal: which block holds the phone, or
+                // that a Safe Break is running and how much quiet
+                // is left, and that this app stays held either
+                // way. Before this the sheet answered a sealed
+                // tap with generic wall words only.
+                Text(
+                    text = sealedYieldLine(
+                        appName = state.interceptedAppName,
+                        inBreak = state.sessionInSafeBreak,
+                        breakRemainingSeconds = state.safeBreakSecondsRemaining,
+                        blockIndex = state.sessionBlockIndex,
+                        blockCount = state.sessionBlockCount
+                    ),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.5.sp,
+                    color = NightColorPrimary.copy(alpha = 0.9f),
+                    modifier = Modifier.testTag("airlock_sealed_yield_line")
+                )
 
                 // Hero Architectural Countdown Numeral (Space Mono)
                 // Issue #55: the transmute pulse is WIRED, not dead —
