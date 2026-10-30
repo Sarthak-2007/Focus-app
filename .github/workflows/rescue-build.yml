@@ -34,7 +34,7 @@ jobs:
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '21'  # issue #66 cluster-priority: same cure as agent/issue-2 f789cef — Robolectric 4.16 refuses SDK 36 on JDK 17
       # Issue #24: Gradle build cache (was: every run cold). Branch/PR
       # runs read the cache but never write it — main owns cache writes.
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
@@ -93,6 +93,28 @@ jobs:
         id: assemble
         run: ./gradlew --console=plain assembleDebug
 
+      # Install-over proof on the APK itself (SCHLUESSEL, loops
+      # L1/L15/L16): the verify step above proves the keystore FILE.
+      # This gate proves the built APK. If the debugConfig wiring is
+      # ever dropped, AGP silently falls back to a machine-generated
+      # ~/.android/debug.keystore: the file check stays green while
+      # the APK becomes uninstallable over the phone build. The gate
+      # runs BEFORE upload, so a wrongly-signed APK never becomes an
+      # artifact, and it dies loudly.
+      - name: Verify APK signer (install-over proof)
+        id: apksigner
+        run: |
+          APKSIGNER="$(command -v apksigner || echo "$ANDROID_HOME/build-tools/36.1.0/apksigner")"
+          AAPT2="$(command -v aapt2 || echo "$ANDROID_HOME/build-tools/36.1.0/aapt2")"
+          FP=$("$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | grep -m1 -o "[0-9a-f]\{64\}")
+          VC=$("$AAPT2" dump badging app/build/outputs/apk/debug/app-debug.apk | grep -m1 -o "versionCode='[0-9]*'" | grep -o "[0-9]*")
+          echo "apk_fingerprint=$FP" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VC" >> "$GITHUB_OUTPUT"
+          if [ "$FP" != "bd15ad5fe9b6964464c0f867c7ae96f61ddd34093b3877f6032befa1d10f27ff" ]; then
+            echo "::error::app-debug.apk signer $FP is not the install-over key bd15ad5f...27ff - this APK would NOT install over the Monolith on the phone. Refusing to upload it."
+            exit 1
+          fi
+          echo "APK signer verified: $FP - versionCode $VC"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: monolith-debug
@@ -118,6 +140,8 @@ jobs:
               echo "- APK in this run was built and uploaded AFTER its unit tests passed."
             fi
             echo "- Signing: committed debug keystore, SHA-256 ${{ steps.keystore.outputs.fingerprint }} — the key that signed the installed builds, so this APK installs over the Monolith on Sarthak's phone (versionCode permitting)."
+            echo "- APK signer gate (apksigner on the built APK): ${{ steps.apksigner.outcome }} - ${{ steps.apksigner.outputs.apk_fingerprint }}"
+            echo "- APK versionCode: ${{ steps.apksigner.outputs.version_code }} (batch-9 shipped 1 - an update must never go lower)"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Issue #24 (finding 3): the debug job above proves the phone

@@ -38,6 +38,13 @@ class DrawerPermanenceTest {
 
     @Before
     fun setup() {
+        // Day words live in SharedPreferences, NOT in the in-memory
+        // DB (#91): without clearing them, declareDayWord writes
+        // leak between tests/classes and defeat the isolation the
+        // in-memory DB promises. Same hygiene as
+        // SeedAndDayWordDrainTest / DrawerRenderTest.
+        context.getSharedPreferences("monolith_day_words", Context.MODE_PRIVATE)
+            .edit().clear().commit()
         db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -47,6 +54,8 @@ class DrawerPermanenceTest {
     @After
     fun tearDown() {
         db.close()
+        context.getSharedPreferences("monolith_day_words", Context.MODE_PRIVATE)
+            .edit().clear().commit()
     }
 
     private fun completedTask(title: String, completedAt: Long, notes: String = ""): FocusTaskEntity =

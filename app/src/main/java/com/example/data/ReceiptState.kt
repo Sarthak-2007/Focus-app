@@ -88,6 +88,14 @@ object FinishKind {
 fun finishKindOf(row: FocusSessionEntity, isSleepLoadout: Boolean, nowWallMillis: Long): String? {
     if (row.isActive) return null
     if (row.routineId != null) {
+        // Audit R1 #40: VALVE_BROKE's law is "No receipt, no №,
+        // ever" — and it binds routine rows too. Before this
+        // guard the routine branch read routineOutcome alone: a
+        // valve-broken row that the finalise funnel later stamped
+        // ATTENDED/PARTIAL would mint exactly the receipt its
+        // outcome forbids. (Only the SLEEP sub-branch below ever
+        // looked at row.outcome.)
+        if (row.outcome == SessionOutcome.VALVE_BROKE) return null
         return when {
             row.routineOutcome == WindowJudgement.ATTENDED.name -> FinishKind.ROUTINE_ATTENDED
             row.routineOutcome == WindowJudgement.PARTIAL.name -> FinishKind.ROUTINE_PARTIAL
@@ -225,7 +233,15 @@ object Detention {
     const val FAULT_DEADLINE_MS = 1520L
 
     fun rackStartMs(pawlLiftMs: Long?): Long =
-        maxOf(HELD_FRAME_MS, pawlLiftMs ?: Long.MAX_VALUE / 4)
+        // Audit R1 #40: an unlifted pawl deems the rack started at
+        // the ceiling — NOT at Long.MAX_VALUE/4. The old sentinel
+        // leaked into the ViewModel's detention tail
+        // (rackStartMs(null) + RACK_AFTER_PAWL_MS fed straight to
+        // delay()), parking the finish state for ~2^61 ms: on the
+        // faulted branch the finish NEVER retired in that process.
+        // receiptAtMs(null) is unchanged (1800 either way — the
+        // clamp saw to that); only the tail is cured.
+        maxOf(HELD_FRAME_MS, pawlLiftMs ?: RECEIPT_CEILING_MS)
 
     fun receiptAtMs(pawlLiftMs: Long?): Long {
         val r0 = rackStartMs(pawlLiftMs)
