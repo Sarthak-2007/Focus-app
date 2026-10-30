@@ -109,6 +109,13 @@ fun ShieldMatrixScreen(
     onToggleBrowserUrlBlocker: () -> Unit,
     routines: List<com.example.data.RoutineEntity> = emptyList(),
     showResetNote: Boolean = false,
+    onDismissResetNote: () -> Unit = {},
+    // Install-day disclosures (R3b #161): one-time notes owed at a
+    // fresh start and after an update, in the Shield's note family.
+    showFreshStartNote: Boolean = false,
+    showUpdateNote: Boolean = false,
+    onDismissFreshStartNote: () -> Unit = {},
+    onDismissUpdateNote: () -> Unit = {},
     onToggleRoutine: (com.example.data.RoutineEntity) -> Unit = {},
     onCycleRoutineLoadout: (com.example.data.RoutineEntity) -> Unit = {},
     onAdjustRoutineTime: (com.example.data.RoutineEntity, Boolean, Int) -> Unit = { _, _, _ -> },
@@ -317,17 +324,54 @@ fun ShieldMatrixScreen(
                 rightMonoNumber = com.example.data.RoutineSchedule.liveCount(routines).toString(),
                 rightWordSuffix = " ACTIVE"
             )
-            if (showResetNote) {
-                // One-time reseed strip (Freya §3.3): his schedule was
-                // reset to his real day; any row edit dismisses it.
+            if (showFreshStartNote) {
+                // R3b #161 (update-day): a fresh seed means this
+                // phone holds no Monolith past — said once, plainly,
+                // at first open, in the open instead of buried in
+                // the Drawer's PARK plate. Tap dismisses.
                 Text(
-                    text = "SCHEDULE RESET TO YOUR DAY — TAP ANY ROW TO CHANGE IT",
+                    text = "FRESH START ON THIS PHONE — NO PAST CAME WITH IT. IF YOU HAD MONOLITH BEFORE, ITS RECORD STAYED ON THAT PHONE: MONOLITH KEEPS EVERYTHING ON THE PHONE IT WAS MADE ON. TAP TO CLOSE.",
                     fontFamily = AnonymousProFamily,
                     fontSize = 11.sp,
                     color = scheme.primary,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 6.dp)
+                        .clickable { onDismissFreshStartNote() }
+                        .testTag("fresh_start_note")
+                )
+            }
+            if (showUpdateNote) {
+                // R3b #161: an update used to land in silence (the
+                // boot receiver swallowed MY_PACKAGE_REPLACED). Now
+                // the first open after an update says so, once.
+                Text(
+                    text = "MONOLITH UPDATED — THIS PHONE'S TASKS, HISTORY AND SHIELD CAME THROUGH THE UPDATE WITH IT. TAP TO CLOSE.",
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp)
+                        .clickable { onDismissUpdateNote() }
+                        .testTag("update_note")
+                )
+            }
+            if (showResetNote) {
+                // One-time reseed strip (Freya §3.3; R3b #161): his
+                // schedule was reset to his real day. The note now
+                // says what was NOT touched, and only his tap on
+                // the note itself dismisses it — obeying it (an
+                // edit) no longer erases the record.
+                Text(
+                    text = "AN UPDATE RESET YOUR ROUTINE TIMES TO YOUR DAY — YOUR TASKS, HISTORY AND SHIELD WERE NOT TOUCHED. TAP A ROW TO CHANGE A TIME. TAP THIS NOTE TO CLOSE IT.",
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp)
+                        .clickable { onDismissResetNote() }
                         .testTag("routine_reset_note")
                 )
             }

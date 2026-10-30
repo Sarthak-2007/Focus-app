@@ -503,25 +503,40 @@ class MonolithViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 75)
 
     /**
-     * The reset-note strip state (Freya §3.3): shown after the reseed
-     * until he edits any routine (which dismisses it) or it ages out
-     * at 14 days. Fresh installs never see it (reseed flag and dismiss
-     * flag are both set at seed time).
+     * The reset-note strip state (Freya §3.3; R3b #161): shown after
+     * the reseed until HE dismisses it by tapping the note — edits
+     * no longer erase it and it no longer ages out in silence.
+     * Fresh installs never see it (reseed flag and dismiss flag are
+     * both set at seed time); they get the fresh-start note instead.
      */
     val showRoutineResetNote: StateFlow<Boolean> = combine(
         repository.guardSettingsFlow,
         routines
-    ) { settings, routineList ->
-        if (settings == null || !settings.routineReseedV1Done || settings.routineReseedNoteDismissed) {
-            false
-        } else {
-            val targetNames = setOf("FASTED BLOCK", "DAY BLOCKS", "SLEEP")
-            val newestEdit = routineList.filter { it.name in targetNames }
-                .maxOfOrNull { it.scheduleEditedAtMillis } ?: 0L
-            newestEdit == 0L ||
-                System.currentTimeMillis() - newestEdit < 14L * 24L * 60L * 60L * 1000L
-        }
+    ) { settings, _ ->
+        settings != null && settings.routineReseedV1Done && !settings.routineReseedNoteDismissed
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    // Install-day disclosures (R3b #161): prefs-backed one-time
+    // notes, read at init; registerInstallOpen compares this
+    // build's version against the last version this phone opened.
+    private val _freshStartNoteVisible = MutableStateFlow(false)
+    val freshStartNoteVisible: StateFlow<Boolean> = _freshStartNoteVisible
+    private val _updateNoteVisible = MutableStateFlow(false)
+    val updateNoteVisible: StateFlow<Boolean> = _updateNoteVisible
+
+    fun dismissFreshStartNote() {
+        repository.dismissFreshStartNote()
+        _freshStartNoteVisible.value = false
+    }
+
+    fun dismissUpdateNote() {
+        repository.dismissUpdateNote()
+        _updateNoteVisible.value = false
+    }
+
+    fun dismissRoutineResetNote() {
+        viewModelScope.launch { repository.dismissRoutineResetNote() }
+    }
 
     val totalInterceptions: StateFlow<Int> = interceptLogs.combine(apps) { logs, appList ->
         val fromApps = appList.sumOf { it.interceptCount }
@@ -764,6 +779,8 @@ class MonolithViewModel(
                 undoDeleteStore.clear()
             }
         }
+        _freshStartNoteVisible.value = repository.freshStartNotePending()
+        _updateNoteVisible.value = repository.registerInstallOpen() || repository.updateNotePending()
         viewModelScope.launch {
             repository.ensureSeededAndSyncPackages()
             _pruneNote.value = repository.pendingPruneNote()
@@ -1500,12 +1517,14 @@ class MonolithViewModel(
 
     private fun persistRoutine(routine: com.example.data.RoutineEntity) {
         viewModelScope.launch {
-            // Every edit re-stamps the schedule and dismisses the
-            // reset note, then reconciles immediately (CRUD trigger).
+            // Every edit re-stamps the schedule, then reconciles
+            // immediately (CRUD trigger). The reset note is NOT
+            // dismissed here (R3b #161): obeying the note must not
+            // erase the record that a reset happened — only the
+            // user's tap on the note itself dismisses it.
             repository.updateRoutine(
                 routine.copy(scheduleEditedAtMillis = System.currentTimeMillis())
             )
-            repository.dismissRoutineResetNote()
             com.example.service.RoutineHeartbeat.tick(
                 appContext, com.example.service.RoutineHeartbeat.Source.CRUD, force = true
             )
