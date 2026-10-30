@@ -135,6 +135,13 @@ fun ShieldMatrixScreen(
     onUndoProfileApply: () -> Unit = {},
     onToggleShortsReelsSniper: () -> Unit,
     onToggleBrowserUrlBlocker: () -> Unit,
+    // Issue #339 (Second-pass F1): the Web Gate — block-all mode
+    // and its allowed-host list. Defaults keep harnesses unchanged.
+    webBlockAll: Boolean = false,
+    onToggleWebBlockAll: () -> Unit = {},
+    allowedWebHosts: List<String> = emptyList(),
+    onAddAllowedWebHost: (String) -> Unit = {},
+    onRemoveAllowedWebHost: (String) -> Unit = {},
     routines: List<com.example.data.RoutineEntity> = emptyList(),
     showResetNote: Boolean = false,
     onDismissResetNote: () -> Unit = {},
@@ -799,6 +806,99 @@ fun ShieldMatrixScreen(
                         onClick = onToggleBrowserUrlBlocker,
                         testTag = "shield_browser_blocker_toggle"
                     )
+                }
+                // #339 F1: the Web Gate row — block the whole web
+                // except the allowed hosts below.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "WEB GATE — BLOCK ALL BUT ALLOWED",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground
+                    )
+                    BlockitActionChip(
+                        wordLabel = if (webBlockAll) "ON" else "OFF",
+                        isPrimaryInk = webBlockAll,
+                        onClick = onToggleWebBlockAll,
+                        testTag = "shield_web_gate_toggle"
+                    )
+                }
+                if (webBlockAll) {
+                    var allowedHostText by remember { mutableStateOf("") }
+                    var allowedHostError by remember { mutableStateOf<String?>(null) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        BasicTextField(
+                            value = allowedHostText,
+                            onValueChange = { allowedHostText = it },
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 14.sp,
+                                color = scheme.onBackground
+                            ),
+                            cursorBrush = SolidColor(scheme.onBackground),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("shield_web_gate_host_input")
+                        )
+                        BlockitActionChip(
+                            wordLabel = "ALLOW",
+                            isPrimaryInk = true,
+                            onClick = {
+                                val normalised =
+                                    com.example.data.normaliseAllowedHost(allowedHostText)
+                                when {
+                                    allowedHostText.isBlank() -> Unit
+                                    normalised == null -> allowedHostError =
+                                        "NOT A HOST — CHECK THE ADDRESS AND TRY AGAIN"
+                                    allowedWebHosts.contains(normalised) -> allowedHostError =
+                                        "ALREADY ALLOWED"
+                                    else -> {
+                                        onAddAllowedWebHost(normalised)
+                                        allowedHostText = ""
+                                        allowedHostError = null
+                                    }
+                                }
+                            },
+                            testTag = "shield_web_gate_add"
+                        )
+                    }
+                    if (allowedHostError != null) {
+                        Text(
+                            text = allowedHostError!!,
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            color = scheme.onSurfaceVariant
+                        )
+                    }
+                    allowedWebHosts.forEach { host ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = host,
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 13.sp,
+                                color = scheme.onBackground
+                            )
+                            BlockitActionChip(
+                                wordLabel = "REMOVE",
+                                isPrimaryInk = false,
+                                onClick = { onRemoveAllowedWebHost(host) },
+                                testTag = "shield_web_gate_remove_$host"
+                            )
+                        }
+                    }
                 }
                 if (profiles.isNotEmpty()) {
                     Row(

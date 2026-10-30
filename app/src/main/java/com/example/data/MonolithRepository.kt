@@ -3396,6 +3396,11 @@ class MonolithRepository(
         // once, and a countdown tick (which never reaches this
         // function) stays silent.
         breakBoundaryKnock(true)
+        // Issue #339 (Second-pass F3): every break exit crosses
+        // here exactly once — disarm the break-end alarm; if the
+        // alarm already fired, its ledger entry stands and the
+        // cancel is a no-op.
+        com.example.service.BreakEndScheduler.cancel(context)
         return session.copy(
             currentBlockIndex = (session.currentBlockIndex + 1).coerceAtMost(session.totalStudyBlocks),
             isInSafeBreak = false,
@@ -3697,6 +3702,16 @@ class MonolithRepository(
                 shieldLastBeatWallMillis = beatWall
             )
             dao.updateSession(safeBreakSession)
+            // Issue #339 (Second-pass F3): the break's end is a
+            // SCHEDULED event from this entry, not a tick
+            // side-effect — arm the exact alarm + deduped
+            // 'Break's over' notification for the end instant, so
+            // a dead or stalled process cannot swallow the return.
+            com.example.service.BreakEndScheduler.schedule(
+                context,
+                safeBreakSession.id,
+                System.currentTimeMillis() + SAFE_BREAK_DURATION_SECONDS * 1000L
+            )
             // ST-03: the entry speaks here, at the flip — the
             // latch releases as the block lets go into the break.
             // This branch runs once per entry (the row it writes

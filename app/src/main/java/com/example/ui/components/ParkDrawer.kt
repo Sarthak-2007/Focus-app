@@ -541,6 +541,22 @@ fun ParkDrawer(
                     }
                 }
 
+                // Issue #339 (Second-pass F4): the criticality
+                // line — which single grant is fatal, stated as a
+                // state, above the board's per-item rows.
+                val availabilityLine = snapshot?.let {
+                    com.example.ui.components.availabilityLineFor(it, nowMono)
+                }
+                if (availabilityLine != null) {
+                    Text(
+                        text = availabilityLine.text,
+                        style = PillBadgeTextStyle,
+                        color = scheme.onBackground,
+                        modifier = Modifier.testTag("park_blocking_availability")
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // (2) The board: nine ruled lines, fixed order.
