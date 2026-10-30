@@ -3694,6 +3694,11 @@ class MonolithViewModel(
         } else {
             reasonBadge
         }
+        // Issue #101 F4: reaching for the same package again annuls
+        // any pending "Stayed Focused" bank for it — see
+        // transmuteImpulseAndReturn. Placed after the revalidation
+        // gates above, so only a real, lawful re-intercept annuls.
+        pendingReturnBanks.remove(packageName)?.cancel()
         soundEngine.playMechanicalLatch(true)
         val minted = mintAirlockState(
             packageName, appName, effectiveBadge, path, active, appEntity
@@ -4038,6 +4043,19 @@ class MonolithViewModel(
     }
 
 
+    // Issue #101 F4: a RETURN tap is an intention, not a
+    // behaviour. The "Stayed Focused" record (and the urges-stopped
+    // count it feeds via recordIntercept) is banked only once the
+    // return has SURVIVED — no re-intercept of the same package
+    // for RETURN_BANK_DELAY_MS. A re-intercept annuls the pending
+    // bank in triggerAirlockIntercept: the user reached again, so
+    // the earlier claim was never true and is never written.
+    // (Wave-3 cure 990e5f35, composed forward onto current main:
+    // the uninstall-guard outcome and the #124 frozen intention
+    // below postdate that commit and are preserved.)
+    private val pendingReturnBanks = mutableMapOf<String, Job>()
+    private val RETURN_BANK_DELAY_MS = 60_000L
+
     /**
      * The airlock's honest door (issue #114, finding 2): closes
      * the sheet and books the stayed-focused intercept. The
@@ -4051,24 +4069,45 @@ class MonolithViewModel(
         val state = _airlockState.value
         soundEngine.playHarmonicSeal(arming = true)
         _airlockState.value = state.copy(isVisible = false)
-        viewModelScope.launch {
-            // R3b #162 F4: a return from the Uninstall Guard door is
-            // not "Stayed Focused" and not a phantom reach — it is an
-            // uninstall attempt that turned back, and the log now
-            // says exactly that.
-            val uninstallAttempt = state.interceptPath ==
-                com.example.service.InterceptPath.UNINSTALL_GUARD
+        // R3b #162 F4: a return from the Uninstall Guard door is
+        // not "Stayed Focused" and not a phantom reach — it is an
+        // uninstall attempt that turned back, and the log now
+        // says exactly that. It banks at the tap as before: it
+        // never fed the urges-stopped count (countAsReach = false),
+        // so the #101 F4 delay does not apply to it.
+        val uninstallAttempt = state.interceptPath ==
+            com.example.service.InterceptPath.UNINSTALL_GUARD
+        if (uninstallAttempt) {
+            viewModelScope.launch {
+                repository.recordIntercept(
+                    packageName = state.interceptedPackageName.ifBlank { "com.zhiliaoapp.musically" },
+                    appName = state.interceptedAppName.ifBlank { "Blocked App" },
+                    // Issue #124: the frozen session intention as
+                    // recorded at intercept time — never backfilled
+                    // from the live draft.
+                    sessionIntention = state.sessionIntention,
+                    outcome = "Uninstall Attempt — Returned",
+                    triggerReason = state.selectedReason.shortTag,
+                    countAsReach = false
+                )
+            }
+            return
+        }
+        val pkg = state.interceptedPackageName.ifBlank { "com.zhiliaoapp.musically" }
+        val appName = state.interceptedAppName.ifBlank { "Blocked App" }
+        val intention = state.sessionIntention
+        val reason = state.selectedReason.shortTag
+        pendingReturnBanks.remove(pkg)?.cancel()
+        pendingReturnBanks[pkg] = viewModelScope.launch {
+            delay(RETURN_BANK_DELAY_MS)
             repository.recordIntercept(
-                packageName = state.interceptedPackageName.ifBlank { "com.zhiliaoapp.musically" },
-                appName = state.interceptedAppName.ifBlank { "Blocked App" },
-                // Issue #124: the frozen session intention as
-                // recorded at intercept time — never backfilled
-                // from the live draft.
-                sessionIntention = state.sessionIntention,
-                outcome = if (uninstallAttempt) "Uninstall Attempt — Returned" else "Stayed Focused",
-                triggerReason = state.selectedReason.shortTag,
-                countAsReach = !uninstallAttempt
+                packageName = pkg,
+                appName = appName,
+                sessionIntention = intention,
+                outcome = "Stayed Focused",
+                triggerReason = reason
             )
+            pendingReturnBanks.remove(pkg)
         }
     }
 
