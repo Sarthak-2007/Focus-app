@@ -237,7 +237,11 @@ fun ParkDrawer(
 
     val firstMissing = snapshot?.let { snap ->
         WatchItemId.PERMISSIONS.firstOrNull {
-            WatchStore.permPrintAt(snap, it, nowMono) == PermPrint.MISSING
+            // A stale denial is still a denial (#58 F1): the FIX
+            // key keeps targeting it, it just no longer PRINTS as
+            // current on the board below.
+            val print = WatchStore.permPrintAt(snap, it, nowMono)
+            print == PermPrint.MISSING || print == PermPrint.MISSING_STALE
         }
     }
 
@@ -474,6 +478,7 @@ fun ParkDrawer(
                                 PermPrint.GRANTED -> "GRANTED"
                                 PermPrint.MISSING -> "MISSING"
                                 PermPrint.STALE -> "STALE"
+                                PermPrint.MISSING_STALE -> "STALE"
                                 PermPrint.UNMEASURED -> null
                             },
                             wordIsLack = when (WatchStore.permPrintAt(snapshot, item, nowMono)) {

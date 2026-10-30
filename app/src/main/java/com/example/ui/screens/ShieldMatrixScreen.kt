@@ -355,11 +355,14 @@ fun ShieldMatrixScreen(
                 selectedIndex = selectedLoadoutIndex,
                 soundEngine = soundEngine,
                 onSelect = { level ->
-                    // Stage, never apply (issue #107 #1).
-                    pendingLoadout = when (level) {
-                        0 -> SmartLoadout.STUDY
-                        1 -> SmartLoadout.WORK_SPRINT
-                        else -> SmartLoadout.SLEEP
+                    // Stage, never apply (issue #107 #1) — resolved
+                    // through the ONE index↔loadout mapping
+                    // (LoadoutStore, #58 F6): an index that seats
+                    // nothing stages nothing — the hand-written
+                    // `else -> SLEEP` silently meant SLEEP for any
+                    // garbage index and stays deleted.
+                    com.example.data.LoadoutStore.loadoutAtCapIndex(level)?.let { loadout ->
+                        pendingLoadout = loadout
                     }
                 }
             )
@@ -370,11 +373,10 @@ fun ShieldMatrixScreen(
                         LoadoutRules.preview(loadout, allApps)
                     },
                     onApply = {
-                        selectedLoadoutIndex = when (loadout) {
-                            SmartLoadout.STUDY -> 0
-                            SmartLoadout.WORK_SPRINT -> 1
-                            SmartLoadout.SLEEP -> 2
-                        }
+                        // Reverse direction of the same ONE mapping
+                        // (#58 F6) — no second hand-written table.
+                        selectedLoadoutIndex =
+                            com.example.data.LoadoutStore.capIndexOf(loadout)
                         pendingLoadout = null
                         onApplySmartLoadout(loadout)
                     },
