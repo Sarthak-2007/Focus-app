@@ -21,6 +21,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
@@ -112,6 +114,17 @@ class HeldDoorStationarityTest {
         }
     }
 
+    // The overlay's wall reads the real monotonic clock, which
+    // Robolectric freezes; travelling past the wall means moving
+    // BOTH the shadow clock (what the overlay reads) and the
+    // compose test clock (what its ticker delays run on) — the
+    // same pairing the repo's other clock tests use.
+    private fun travelPastWall() {
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(11))
+        composeRule.mainClock.advanceBy(11_000L)
+        composeRule.waitForIdle()
+    }
+
     private fun returnBounds(): Rect =
         composeRule.onNodeWithTag("airlock_return_button")
             .fetchSemanticsNode().boundsInRoot
@@ -125,6 +138,7 @@ class HeldDoorStationarityTest {
 
         // OFFER: wall expired, the chip stands — RETURN unmoved.
         render(state(wallRunning = false, instance = 2L))
+        travelPastWall()
         assertEquals(counting, returnBounds())
         composeRule.onNodeWithTag("airlock_peek_button").assertExists()
 
@@ -146,6 +160,7 @@ class HeldDoorStationarityTest {
     @Test
     fun offerFramePrintsPeekNeverEmergencyPeek() {
         render(state(wallRunning = false, instance = 4L))
+        travelPastWall()
         // The dead name exists in no frame of the merged face.
         composeRule.onNodeWithText("EMERGENCY PEEK").assertDoesNotExist()
         composeRule.onNodeWithTag("airlock_peek_button").assertExists()
