@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,7 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -83,6 +84,17 @@ fun AlwaysOnDeskClockOverlay(
         // the clock shows. No FLAG_KEEP_SCREEN_ON existed anywhere in the
         // app, so the "always-on" clock died to the screen timeout. The
         // flag is restored on dispose.
+        //
+        // Issue #111 finding 1: KEEP_SCREEN_ON alone dies at the first
+        // power press / interruption that lands on the keyguard — the
+        // clock had NO lock-screen presence. While (and only while)
+        // this overlay is composed, the activity is also show-when-
+        // locked + turn-screen-on, so the clock itself stands over the
+        // keyguard and an interruption returns to the clock. Scoped
+        // deliberately: a static manifest/activity-wide showWhenLocked
+        // would ALSO float the Deck over the keyguard after the clock
+        // exits — the exact exposure finding 5 names. On dispose both
+        // grants are revoked before the Deck can inherit them.
         val clockView = LocalView.current
         DisposableEffect(visible) {
             var ctx: android.content.Context? = clockView.context
@@ -93,8 +105,28 @@ fun AlwaysOnDeskClockOverlay(
             }
             val window = activity?.window
             window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+                activity?.setShowWhenLocked(true)
+                activity?.setTurnScreenOn(true)
+            } else {
+                @Suppress("DEPRECATION")
+                window?.addFlags(
+                    android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                        android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                )
+            }
             onDispose {
                 window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+                    activity?.setShowWhenLocked(false)
+                    activity?.setTurnScreenOn(false)
+                } else {
+                    @Suppress("DEPRECATION")
+                    window?.clearFlags(
+                        android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                            android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                    )
+                }
             }
         }
         val displaySecs = if (activeSession != null && activeSession.isActive) {
@@ -111,25 +143,33 @@ fun AlwaysOnDeskClockOverlay(
         val ss = displaySecs % 60
         val timeText = String.format(Locale.US, "%02d:%02d", mm, ss)
 
-        // The old idle branch rendered a fabricated constant (0.65f) -
-        // a made-up progress on the nightstand clock, the surface he
-        // actually reads at night. Every branch below is a real
-        // derivation from the session, or honestly empty.
-        val progress = when {
-            // The desk clock tells SESSION time only, on the span
-            // derivation: a Safe Break earns no special rendering
-            // (Nacht's law - the break's one rendering is the Deck's
-            // BREAK eyebrow) and the bar never reads empty mid-
-            // session. The fabricated 0.65 constant stays dead.
-            activeSession != null && activeSession.isActive && !activeSession.isStopwatchMode ->
-                (activeSession.spanElapsedSeconds.toFloat() / activeSession.spanTargetSeconds.coerceAtLeast(1)).coerceIn(0.04f, 1f)
-            activeSession != null && activeSession.isActive ->
-                (activeSession.elapsedSeconds.toFloat() / 1200f).coerceIn(0.04f, 1f)
-            else -> 0f
-        }
+        // Issue #111 findings 3+4: the glance now NAMES what the
+        // number is (REMAINING vs ELAPSED — the two directions were
+        // indistinguishable), states the time of day and the
+        // session's end, and announces a Safe Break on THIS surface.
+        // The span number itself still never renders AS a break
+        // (the span law at MonolithModels stands: during a break the
+        // span keeps counting) — but the Deck's BREAK eyebrow, the
+        // break's other rendering, is COVERED by this full-screen
+        // overlay, so a user living on the clock learned nothing.
+        // The break line below is an announcement, not a second
+        // derivation: it reads isInSafeBreak + the break's own
+        // remaining seconds off the same row. The fabricated 0.65
+        // idle constant stays dead; every print is derived.
+        val progress = deskClockProgress(activeSession)
+        val modeLabel = deskClockModeLabel(activeSession)
+        val breakLine = deskClockBreakLine(activeSession)
+        // Time of day: read at composition. During a session the
+        // row ticks every second; idle, the burn-in step still
+        // steps every minute — the HH:mm print can never ride
+        // more than a minute stale.
+        val glanceLine = deskClockGlanceLine(System.currentTimeMillis(), activeSession)
 
-        val dx = ((burnInStep % 5) - 2) * 3
-        val dy = (((burnInStep / 5) % 5) - 2) * 3
+        // Issue #111 finding 2: a real figure-8 (lemniscate) wander
+        // in dp — see deskClockBurnInOffsetDp. The old 5x5 raster
+        // moved the 96sp numerals ±6 PIXELS, which is no wander at
+        // all on the pixels that matter.
+        val (burnDx, burnDy) = deskClockBurnInOffsetDp(burnInStep)
 
         Box(
             modifier = Modifier
@@ -137,7 +177,15 @@ fun AlwaysOnDeskClockOverlay(
                 // AOD ground is true black (Round 1a) — OLED pixels off,
                 // not the block-bar tone.
                 .background(Color.Black)
-                .clickable(onClick = onDismiss)
+                // Issue #111 finding 5: a stray TAP dismisses
+                // nothing. Exit is a deliberate long-press anywhere —
+                // a desk bump, a sleeve, a child's tap can neither
+                // kill the clock (and its KEEP_SCREEN_ON with it) nor
+                // land on the operative Deck. The header prints the
+                // gesture so the door is discoverable, not hidden.
+                .pointerInput(Unit) {
+                    detectTapGestures(onLongPress = { onDismiss() })
+                }
                 .padding(24.dp)
                 .testTag("always_on_desk_clock_overlay"),
             contentAlignment = Alignment.Center
@@ -145,16 +193,37 @@ fun AlwaysOnDeskClockOverlay(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .offset { IntOffset(dx, dy) },
+                    .offset(x = burnDx.dp, y = burnDy.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
                 Text(
-                    text = "NIGHTSTAND DESK CLOCK • TAP ANYWHERE TO EXIT",
+                    text = "NIGHTSTAND DESK CLOCK • HOLD ANYWHERE TO EXIT",
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.sp,
                     color = NightColorPrimary.copy(alpha = 0.6f)
+                )
+
+                Text(
+                    text = glanceLine,
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = NightColorPrimary.copy(alpha = 0.75f),
+                    modifier = Modifier.testTag("desk_clock_glance_line")
+                )
+
+                // The number's name: without it a countdown and a
+                // count-up were the same bare digits from across a desk.
+                Text(
+                    text = modeLabel,
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    letterSpacing = 2.sp,
+                    color = NightColorPrimary.copy(alpha = 0.75f),
+                    modifier = Modifier.testTag("desk_clock_mode_label")
                 )
 
                 // Hero architectural Space Mono numerals (112sp)
@@ -166,6 +235,23 @@ fun AlwaysOnDeskClockOverlay(
                     letterSpacing = (-3).sp,
                     color = NightColorPrimary
                 )
+
+                // The Safe Break announcement (finding 3): while a
+                // break runs, this line stands where the task banner
+                // would — the user on the clock is told to step away
+                // and how much break is left, instead of watching
+                // their task title roll on and spending the break
+                // at the desk unknowing.
+                if (breakLine != null) {
+                    Text(
+                        text = breakLine,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        color = NightColorPrimary,
+                        modifier = Modifier.testTag("desk_clock_break_line")
+                    )
+                }
 
                 // Full-bleed TimelineBar progress strip
                 Box(
@@ -193,7 +279,10 @@ fun AlwaysOnDeskClockOverlay(
                 // fabricated a name for a session nobody named,
                 // and a blank intention printed an empty box.
                 val bannerText = deskClockBannerText(activeTask?.title, activeSession?.intention)
-                if (bannerText != null) {
+                // During a Safe Break the break line above replaces
+                // the banner: printing the task's name through the
+                // break was exactly how the clock kept him working.
+                if (bannerText != null && breakLine == null) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -223,6 +312,86 @@ fun AlwaysOnDeskClockOverlay(
  */
 internal fun deskClockBannerText(taskTitle: String?, intention: String?): String? =
     taskTitle?.takeIf { it.isNotBlank() } ?: intention?.takeIf { it.isNotBlank() }
+
+/**
+ * Issue #111 finding 2 — the burn-in wander, as a pure function.
+ * A lemniscate (figure-8): x = 26·sin θ, y = 13·sin 2θ, θ advancing
+ * 2π per 60 steps; the VM steps once a minute, so the face traces
+ * one full figure-8 per hour, moving several dp every minute and
+ * reaching ±26dp horizontally / ±13dp vertically. The old raster
+ * was ±6 raw PIXELS on a 5x5 grid — the 96sp numerals effectively
+ * never left their pixels. Returns (dxDp, dyDp).
+ */
+internal fun deskClockBurnInOffsetDp(step: Int): Pair<Float, Float> {
+    val theta = ((step % 60) + 60) % 60 * (2.0 * Math.PI / 60.0)
+    val dx = 26.0 * kotlin.math.sin(theta)
+    val dy = 13.0 * kotlin.math.sin(2.0 * theta)
+    return dx.toFloat() to dy.toFloat()
+}
+
+/**
+ * Issue #111 finding 4 — the hero number's name. A timed session
+ * counts DOWN (REMAINING), a stopwatch counts UP (ELAPSED), and
+ * with no live session the dial's own setting is what stands
+ * (SET TIME). The bare digits never carry the direction again.
+ */
+internal fun deskClockModeLabel(session: FocusSessionEntity?): String = when {
+    session != null && session.isActive && session.isStopwatchMode -> "ELAPSED"
+    session != null && session.isActive -> "REMAINING"
+    else -> "SET TIME"
+}
+
+/**
+ * Issue #111 finding 4 — the glance line: day + time of day, and
+ * for a timed session its end (start + the whole span, the model's
+ * own derivation — never now + remaining, which would slide); a
+ * stopwatch honestly states it has no set end; no session, no end
+ * is invented.
+ */
+internal fun deskClockGlanceLine(nowMillis: Long, session: FocusSessionEntity?): String {
+    val dayTime = java.text.SimpleDateFormat("EEE d MMM • HH:mm", Locale.US)
+        .format(java.util.Date(nowMillis)).uppercase(Locale.US)
+    return when {
+        session != null && session.isActive && !session.isStopwatchMode ->
+            dayTime + " • " + endsAtText(
+                session.startWallTimeMillis + session.spanTargetSeconds * 1000L
+            )
+        session != null && session.isActive -> "$dayTime • NO SET END"
+        else -> dayTime
+    }
+}
+
+/**
+ * Issue #111 finding 3 — the Safe Break announcement. Non-null
+ * ONLY while the row says a break is actually running; the count
+ * is the break's OWN remaining seconds (safeBreakSecondsRemaining),
+ * never the span's. Outside a break this surface prints nothing
+ * about breaks — no standing decoration, no false alarm.
+ */
+internal fun deskClockBreakLine(session: FocusSessionEntity?): String? {
+    if (session == null || !session.isActive || !session.isInSafeBreak) return null
+    val left = session.safeBreakSecondsRemaining.coerceAtLeast(0)
+    return String.format(
+        Locale.US, "SAFE BREAK • %02d:%02d LEFT — STEP AWAY", left / 60, left % 60
+    )
+}
+
+/**
+ * Issue #111 finding 4 — the progress strip's one derivation.
+ * Timed: the span fraction, floored at 0.04 so a live session
+ * never reads empty. Stopwatch: there is NO target, so a fill-to-
+ * full bar was a lie that pinned at "finished" after 20 minutes —
+ * the bar now cycles within each 20-minute lap and can only touch
+ * full at the instant a lap rolls over. Idle: honestly empty.
+ */
+internal fun deskClockProgress(session: FocusSessionEntity?): Float = when {
+    session != null && session.isActive && !session.isStopwatchMode ->
+        (session.spanElapsedSeconds.toFloat() / session.spanTargetSeconds.coerceAtLeast(1))
+            .coerceIn(0.04f, 1f)
+    session != null && session.isActive ->
+        (session.elapsedSeconds % 1200).toFloat() / 1200f
+    else -> 0f
+}
 
 /**
  * The withheld peek's cooldown print (Truth Car 3, SIL-3; Hale
