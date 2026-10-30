@@ -418,8 +418,6 @@ class MonolithViewModel(
     private val _showNotificationDigestSheet = MutableStateFlow(false)
     val showNotificationDigestSheet: StateFlow<Boolean> = _showNotificationDigestSheet.asStateFlow()
 
-
-
     // Truth Car 3 (UNA-03): the printed state is born from the
     // persisted fact itself, not from whichever engine this VM
     // was handed — the print and the fact are one read, so PARK
@@ -1759,7 +1757,6 @@ class MonolithViewModel(
 
     fun tryStartSledReturn(sessionId: Int): Boolean = sledReturnGate.tryStart(sessionId)
 
-
     /** The slide factory's fraction (Schlitten §2.3): seated
      *  while a session runs or a return is pending; home in
      *  every other world. */
@@ -2141,7 +2138,6 @@ class MonolithViewModel(
         }
     }
 
-
     fun toggleChecklistItem(id: Int) {
         completeTaskAndAdvance(id)
     }
@@ -2363,10 +2359,10 @@ class MonolithViewModel(
         }
     }
 
-    /** Issue #287 F7: add time to the ACTIVE session itself
-     *  (never the task) — the session-extension verb. The
-     *  repository re-signs the row in the same write. */
-    fun extendActiveSession(extraMinutes: Int = 10) {
+    /** The ONE session-extend wrapper (composed #283 + #287 F7):
+     *  +15 minutes on the running session by default — the cap and
+     *  the HMAC re-sign live in the repository verb. */
+    fun extendActiveSession(extraMinutes: Int = 15) {
         viewModelScope.launch {
             repository.extendActiveSession(extraMinutes)
         }
@@ -2675,7 +2671,6 @@ class MonolithViewModel(
             activeTaskDayStore.taskIdOn(yesterdayIso) == task.id
     }
 
-
     fun toggleTaskSubStep(taskId: Int, stepIndex: Int) {
         soundEngine.playRotaryDetent(640.0)
         viewModelScope.launch {
@@ -2953,7 +2948,6 @@ class MonolithViewModel(
         }
     }
 
-
     /** Suki's hand-back tick: one 5ms @ 0.4 seat-knock as the
      *  sentence slot returns to empty on the wire's recovery. Fired
      *  by the slot's stability beat, never by a state swap. */
@@ -3011,12 +3005,6 @@ class MonolithViewModel(
                 MonolithRepository.EVIDENCE_E4_HOLD_START, System.currentTimeMillis()
             )
         }
-    }
-
-    /** Issue #283: +15 minutes on the running session — the cap
-     *  and the HMAC re-sign live in the repository verb. */
-    fun extendActiveSession() {
-        viewModelScope.launch { repository.extendActiveSession() }
     }
 
     fun requestDisarmChallenge() {

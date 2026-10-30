@@ -1624,7 +1624,6 @@ class MonolithRepository(
         return session
     }
 
-
     suspend fun cycleAppBlockTier(app: BlockedAppEntity): AppBlockTier {
         val cycled = when (app.resolvedTier) {
             AppBlockTier.LOCKED -> AppBlockTier.PEEK_2M
@@ -2751,38 +2750,40 @@ class MonolithRepository(
      * 3. Multi-Block Study Cycles (1 to 4 blocks) with automatic 10-minute Safe Breaks in between
      */
     /**
-     * Issue #283 (R5 supplement): the in-session extend verb the
-     * original ships (+15 min) and Monolith lacked entirely — a
-     * running session could only end or be broken, never lengthened.
-     * Extends the ACTIVE session's target by [addSeconds]. The
-     * target is HMAC-covered (see CryptoIntegrityManager
-     * .signSessionState's payload), so the row is re-signed in the
-     * same write; an unsigned extension would read as tampering on
-     * the next verified tick. Capped the way the original caps it:
-     * while an hour or more remains, no further extension is sold
-     * (its 'still 60 min' refusal). Stopwatch sessions have no
-     * target to extend and refuse.
+     * The ONE session-extend verb (composed #283 + #287 F7 — the two
+     * implementations that landed in parallel are unified here;
+     * there is no second extend verb). Adds [extraMinutes] to the
+     * ACTIVE session's target and re-signs the row in the same
+     * write: the HMAC covers targetDurationSeconds (see
+     * CryptoIntegrityManager.signSessionState), so an unsigned
+     * extension would read as tampering on the next verified tick.
+     * The original's no-sale cap (#283): while an hour or more
+     * remains, no further extension is sold (its 'still 60 min'
+     * refusal). Stopwatch sessions have no target to extend and
+     * refuse. Returns the updated row, or null when refused or no
+     * session is active.
      */
-    suspend fun extendActiveSession(addSeconds: Int = 900): Boolean {
-        val session = dao.getActiveSessionSnapshot() ?: return false
-        if (!session.isActive || session.isStopwatchMode) return false
-        val (verifiedElapsed, _) = computeVerifiedSessionElapsed(session)
-        val effectiveTarget = session.targetDurationSeconds + session.penaltySecondsAdded
-        if (effectiveTarget - verifiedElapsed >= 3600) return false
-        val newTarget = session.targetDurationSeconds + addSeconds
-        val reSigned = session.copy(
-            targetDurationSeconds = newTarget,
-            hmacSignature = CryptoIntegrityManager.signSessionState(
-                session.startWallTimeMillis,
-                session.startElapsedRealtimeMillis,
-                session.bootCount,
-                newTarget,
-                session.isStopwatchMode
+    suspend fun extendActiveSession(extraMinutes: Int = 15): FocusSessionEntity? =
+        withContext(Dispatchers.IO) {
+            val session = dao.getActiveSessionSnapshot() ?: return@withContext null
+            if (extraMinutes <= 0 || !session.isActive || session.isStopwatchMode) return@withContext null
+            val (verifiedElapsed, _) = computeVerifiedSessionElapsed(session)
+            val effectiveTarget = session.targetDurationSeconds + session.penaltySecondsAdded
+            if (effectiveTarget - verifiedElapsed >= 3600) return@withContext null
+            val newTarget = session.targetDurationSeconds + extraMinutes * 60
+            val updated = session.copy(
+                targetDurationSeconds = newTarget,
+                hmacSignature = CryptoIntegrityManager.signSessionState(
+                    session.startWallTimeMillis,
+                    session.startElapsedRealtimeMillis,
+                    session.bootCount,
+                    newTarget,
+                    session.isStopwatchMode
+                )
             )
-        )
-        dao.updateSession(reSigned)
-        return true
-    }
+            dao.updateSession(updated)
+            updated
+        }
 
     suspend fun updateSessionProgress(
         session: FocusSessionEntity,
@@ -3309,37 +3310,6 @@ class MonolithRepository(
             .lastOrNull()
         return (culprit?.packageName ?: "") to kind
     }
-
-    /**
-     * Issue #287 F7: add time to the ACTIVE session — the session
-     * verb Forest's extension timer provides and Monolith lacked
-     * (the only extend verb was the task's overtime). The new
-     * target is re-signed in the same write: the HMAC covers
-     * targetDurationSeconds, so an unsigned extension would read
-     * as tamper on the next tick. FLOW sessions refuse (their
-     * stored target is a floor, not a plan — extending FLOW is
-     * meaningless). Returns the updated row, or null when no
-     * session is active.
-     */
-    suspend fun extendActiveSession(extraMinutes: Int): FocusSessionEntity? =
-        withContext(Dispatchers.IO) {
-            val active = dao.getActiveSessionSnapshot() ?: return@withContext null
-            if (extraMinutes <= 0 || active.isStopwatchMode) return@withContext active
-            val newTarget = active.targetDurationSeconds + extraMinutes * 60
-            val hmac = CryptoIntegrityManager.signSessionState(
-                startWallTimeMillis = active.startWallTimeMillis,
-                startElapsedRealtimeMillis = active.startElapsedRealtimeMillis,
-                bootCount = active.bootCount,
-                targetDurationSeconds = newTarget,
-                isStopwatch = active.isStopwatchMode
-            )
-            val updated = active.copy(
-                targetDurationSeconds = newTarget,
-                hmacSignature = hmac
-            )
-            dao.updateSession(updated)
-            updated
-        }
 
     /**
      * Issue #287 F8: store the user's one reflection line against
