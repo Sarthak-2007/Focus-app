@@ -8,7 +8,6 @@ import android.util.Log
 import com.example.data.AppBlockTier
 import com.example.data.AppCategory
 import com.example.data.CapturedNotificationEntity
-import com.example.data.MonolithDatabase
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -293,7 +292,7 @@ class MonolithNotificationListener : NotificationListenerService() {
         val otpLike = NotificationCapturePolicy.looksLikeOneTimeCode(title, text)
 
         scope.launch {
-            val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
+            val dao = com.example.AppContainer.dao(applicationContext) // ISSUE-67: single construction point
             // Issue #45 (C5): the session question is asked about
             // the POST TIME, not about now — a coroutine scheduled
             // after the session ended still captures a message
@@ -433,7 +432,7 @@ class MonolithNotificationListener : NotificationListenerService() {
         val seen = key?.let { dedupe.forget(it) }
 
         scope.launch {
-            val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
+            val dao = com.example.AppContainer.dao(applicationContext) /* ISSUE-67: single construction point */
             val target = seen ?: run {
                 val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
                 SeenCapture(
@@ -459,7 +458,7 @@ class MonolithNotificationListener : NotificationListenerService() {
      *  [MAX_CAPTURED_ROWS] rows. Failures surface through the
      *  scope's exception handler — logged, never silent. */
     private suspend fun pruneCaptured(latestPostTimeMillis: Long) {
-        val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
+        val dao = com.example.AppContainer.dao(applicationContext) /* ISSUE-67: single construction point */
         dao.pruneCapturedNotificationsOlderThan(latestPostTimeMillis - RETENTION_MILLIS)
         dao.trimCapturedNotificationsToNewest(MAX_CAPTURED_ROWS)
     }

@@ -4,8 +4,6 @@ import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import com.example.data.GuardSettingsEntity
-import com.example.data.MonolithDatabase
-import com.example.data.MonolithRepository
 import com.example.data.RoutineDerive
 import com.example.data.SmartLoadout
 import kotlinx.coroutines.CancellationException
@@ -116,7 +114,7 @@ object RoutineHeartbeat {
      *  the failure above is already in the log. */
     private suspend fun recoverChainAfterFailure(appContext: Context) {
         try {
-            val dao = MonolithDatabase.getInstance(appContext).monolithDao()
+            val dao = com.example.AppContainer.dao(appContext) // ISSUE-67: single construction point
             val now = System.currentTimeMillis()
             val boundary = RoutineDerive.nextBoundaryMillis(dao.getAllRoutinesSnapshot(), now)
             RoutineScheduler.rearmChain(appContext, recoveryRearmMillis(boundary, now))
@@ -147,9 +145,9 @@ object RoutineHeartbeat {
     }
 
     private suspend fun reconcileOnce(appContext: Context) {
-        val database = MonolithDatabase.getInstance(appContext)
-        val dao = database.monolithDao()
-        val repository = MonolithRepository(appContext, dao)
+        // ISSUE-67: construction via the single point.
+        val dao = com.example.AppContainer.dao(appContext)
+        val repository = com.example.AppContainer.repository(appContext)
 
         // Issue #82 (clock-attacks F2): the reconcile's "now" is
         // the HONEST now (monotonic-anchored), never the raw wall
