@@ -129,6 +129,10 @@ fun ShieldMatrixScreen(
     onUndoProfileApply: () -> Unit = {},
     onToggleShortsReelsSniper: () -> Unit,
     onToggleBrowserUrlBlocker: () -> Unit,
+    // Issue #337 F1: the accessibility-shortcut binding state and
+    // its deep link. Defaults keep render harnesses unchanged.
+    accessibilityShortcutSet: Boolean = false,
+    onOpenAccessibilityShortcutSettings: () -> Unit = {},
     routines: List<com.example.data.RoutineEntity> = emptyList(),
     showResetNote: Boolean = false,
     onDismissResetNote: () -> Unit = {},
@@ -732,6 +736,28 @@ fun ShieldMatrixScreen(
                         isPrimaryInk = shortsReelsSniperEnabled,
                         onClick = onToggleShortsReelsSniper,
                         testTag = "shield_sniper_toggle"
+                    )
+                }
+                // #337 F1: the accessibility shortcut — the second,
+                // system-level activation path for the service. The
+                // chip names the binding's actual state and opens
+                // the exact system screen where it is made.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "ACCESSIBILITY SHORTCUT",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground
+                    )
+                    BlockitActionChip(
+                        wordLabel = if (accessibilityShortcutSet) "SET" else "BIND",
+                        isPrimaryInk = accessibilityShortcutSet,
+                        onClick = onOpenAccessibilityShortcutSettings,
+                        testTag = "shield_a11y_shortcut_chip"
                     )
                 }
                 Row(
