@@ -3,10 +3,26 @@ name: rescue-build
 on:
   workflow_dispatch:
   push:
+  pull_request:
+
+# Issue #24: least privilege — this workflow only reads the repo.
+permissions:
+  contents: read
+
+# Issue #24: per-PR/per-ref concurrency. PR syncs cancel their own stale
+# runs; a push to main is NEVER cancelled by another event (the group key
+# differs and cancel-in-progress is false outside pull_request).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Issue #24 (finding 5): every action is pinned to a commit SHA (the v4
+# tag each resolves to, verified via ls-remote) and the runner image is
+# pinned to ubuntu-24.04 — no floating tags, no floating image.
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Wave-2 (issue #3): the 360-minute platform default meant one
     # hung daemon could eat a large share of the monthly minutes.
     # Longest legitimate run so far is ~6 minutes; 25 is generous
@@ -14,69 +30,80 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: '21'  # issue #66 cluster-priority: same cure as agent/issue-2 f789cef — Robolectric 4.16 refuses SDK 36 on JDK 17
+      # Issue #24: Gradle build cache (was: every run cold). Branch/PR
+      # runs read the cache but never write it — main owns cache writes.
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      # Issue #24 (finding 5): sdkmanager is taken from PATH when the
+      # runner provides it; the $ANDROID_HOME path is only a fallback.
+      # License output goes to a log whose tail is shown on failure —
+      # never to /dev/null, never swallowed by || true.
       - name: Install SDK platform 36.1
         run: |
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          SDKMANAGER="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
+          yes | "$SDKMANAGER" --licenses > /tmp/sdk-licenses.log 2>&1 || { echo "::warning::sdkmanager license step failed — see log tail"; tail -20 /tmp/sdk-licenses.log; }
           "$SDKMANAGER" "platforms;android-36.1" "build-tools;36.1.0"
 
-      # ISSUE-3 FIX (Wave-2, landed on agent/issue-3 by Fuge's cell;
-      # first filed as ci/rescue-build.draft.yml by Fern's cell).
+      # Issue #24 + Sarthak's install-over order (Oct 30, 05:22 IST):
+      # debug.keystore is COMMITTED (0a00e95) and is the exact key that
+      # signed the builds installed on his phone (SHA-256
+      # BD:15:AD:5F...27:FF, the monolith-batch8/batch9 signer).
+      # app/build.gradle.kts signs debug with signingConfig
+      # "debugConfig" -> storeFile ${rootDir}/debug.keystore.
       #
-      # app/build.gradle.kts signs the debug build with signingConfig
-      # "debugConfig" -> storeFile ${rootDir}/debug.keystore (standard
-      # Android debug key: password "android", alias
-      # "androiddebugkey"). debug.keystore is .gitignore line 18 —
-      # never committed — so every clean runner failed
-      # :app:validateSigningDebug (runs #4-#7, identical, after full
-      # Kotlin compilation had passed).
-      #
-      # Generate the identical standard key at the repo root, where
-      # debugConfig expects it, before assembling. keytool ships with
-      # the JDK installed above; no new dependency, no repo change,
-      # no binary in history. The guard keeps a locally committed
-      # keystore (if Ren ever chooses that route) untouched.
-      - name: Generate debug keystore (issue #3 fix)
+      # The old issue-#3 cure minted a fresh standard key on every
+      # clean runner. Under the install-over order that is now a
+      # DEFECT: an APK signed by a fresh key cannot install over his
+      # installed app. So this step VERIFIES the committed key and
+      # dies loudly on any mismatch — no key is ever generated here.
+      - name: Verify committed debug keystore (install-over key)
+        id: keystore
         run: |
-          if [ -f debug.keystore ]; then
-            echo "debug.keystore already present — using it as-is"
-          else
-            keytool -genkeypair -v \
-              -keystore debug.keystore \
-              -storepass android \
-              -keypass android \
-              -alias androiddebugkey \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
+          EXPECTED="BD:15:AD:5F:E9:B6:96:44:64:C0:F8:67:C7:AE:96:F6:1D:DD:34:09:3B:38:77:F6:03:2B:EF:A1:D1:0F:27:FF"
+          if [ ! -f debug.keystore ]; then
+            echo "::error::debug.keystore missing from checkout — refusing to build an APK that could not install over the installed Monolith."
+            exit 1
           fi
+          FP=$(keytool -list -v -keystore debug.keystore -storepass android -alias androiddebugkey 2>/dev/null | grep -m1 "SHA256:" | sed 's/.*SHA256: *//')
+          echo "fingerprint=$FP" >> "$GITHUB_OUTPUT"
+          if [ "$FP" != "$EXPECTED" ]; then
+            echo "::error::debug.keystore SHA-256 '$FP' does not match the install-over key '$EXPECTED' — refusing to sign with the wrong key."
+            exit 1
+          fi
+          echo "Signing key verified: $FP"
+
+      # Issue #24 (finding 1): unit tests run BEFORE the artifact is
+      # built or uploaded. Single job on purpose: parallel jobs would
+      # split the run across two checkouts and two Gradle homes inside
+      # GitHub's included-minutes budget. If tests fail the job stops
+      # here — no APK is produced at all.
+      - name: Unit tests
+        id: tests
+        run: |
+          chmod +x gradlew
+          ./gradlew --console=plain testDebugUnitTest
 
       - name: Assemble debug
         id: assemble
-        run: |
-          chmod +x gradlew
-          ./gradlew --console=plain assembleDebug
+        run: ./gradlew --console=plain assembleDebug
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: monolith-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 3
 
-      - name: Unit tests
-        id: tests
-        run: ./gradlew --console=plain testDebugUnitTest
-
-      # Wave-2 (Feel/Finisher pass): the run page must tell the truth
-      # in plain words without anyone opening a log. This APK is
-      # uploaded BEFORE the test step, so while tests are red the
-      # artifact is UNTESTED — the summary says so, every run.
+      # Wave-2 (Feel/Finisher pass), corrected by issue #24: the run
+      # page tells the truth in plain words without anyone opening a
+      # log. Since finding 1 was fixed, the artifact is built and
+      # uploaded ONLY after its unit tests pass — the summary says
+      # which of those two things happened, every run.
       - name: Verdict summary
         if: always()
         run: |
@@ -86,6 +113,101 @@ jobs:
             echo "- Unit tests executed: ${{ steps.tests.outcome != 'skipped' }}"
             echo "- Unit test verdict: ${{ steps.tests.outcome }}"
             if [ "${{ steps.tests.outcome }}" != "success" ]; then
-              echo "- ⚠️ The uploaded APK is UNTESTED in this run — its unit tests did not pass. Do not treat it as proven."
+              echo "- ⚠️ NO APK was uploaded in this run — the artifact is only built after unit tests pass."
+            else
+              echo "- APK in this run was built and uploaded AFTER its unit tests passed."
             fi
+            echo "- Signing: committed debug keystore, SHA-256 ${{ steps.keystore.outputs.fingerprint }} — the key that signed the installed builds, so this APK installs over the Monolith on Sarthak's phone (versionCode permitting)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Issue #24 (finding 3): the debug job above proves the phone
+  # artifact. This second job proves everything else the audit found
+  # unexercised — lint and the full release pipeline (release Kotlin,
+  # proguard files, release signing path). It runs in parallel and
+  # uploads nothing.
+  #
+  # Release signing uses a THROWAWAY key minted inside this runner
+  # and nowhere else: the release APK is discarded, never uploaded,
+  # never installable over anything — it exists only to prove the
+  # release path compiles and signs end to end. Real release signing
+  # provisioning is issue #25. The debug/phone artifact is untouched
+  # by this job and never uses a generated key (see build job).
+  #
+  # Instrumented tests (connectedAndroidTest) are deliberately NOT
+  # here: the only androidTest in the tree is the template
+  # ExampleInstrumentedTest, and an emulator job costs ~10+ slow,
+  # flaky minutes per run to prove a template. Priced and recorded
+  # as STANDS-BLOCKED in issue #24's closing record.
+  proof:
+    name: Lint + release proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Install SDK platform 36.1
+        run: |
+          SDKMANAGER="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
+          yes | "$SDKMANAGER" --licenses > /tmp/sdk-licenses.log 2>&1 || { echo "::warning::sdkmanager license step failed — see log tail"; tail -20 /tmp/sdk-licenses.log; }
+          "$SDKMANAGER" "platforms;android-36.1" "build-tools;36.1.0"
+
+      - name: Lint (debug)
+        id: lint
+        run: |
+          chmod +x gradlew
+          ./gradlew --console=plain lintDebug
+
+      # The lint report is evidence, not decoration: the first proof
+      # run (40998544148) found 62 pre-existing app-code lint errors
+      # (first: NewApi java.time.ZoneId at minSdk 24,
+      # AirlockAndDisarmOverlays.kt:275) that belong to the owning
+      # code issues, not to this workflow. Uploaded so they can be
+      # dispositioned name-by-name instead of buried in a log.
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lint-results-debug
+          path: |
+            app/build/reports/lint-results-debug.txt
+            app/build/reports/lint-results-debug.html
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # !cancelled(): a lint failure must not hide the release
+      # verdict — the two proofs are independent and both print.
+      - name: Assemble release (throwaway CI-only key, APK discarded)
+        if: ${{ !cancelled() }}
+        id: release
+        run: |
+          keytool -genkeypair -v \
+            -keystore "$RUNNER_TEMP/ci-upload.jks" \
+            -storepass ci-proof-only \
+            -keypass ci-proof-only \
+            -alias upload \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Monolith CI Proof,O=CI,C=US"
+          KEYSTORE_PATH="$RUNNER_TEMP/ci-upload.jks" \
+          STORE_PASSWORD=ci-proof-only \
+          KEY_PASSWORD=ci-proof-only \
+            ./gradlew --console=plain assembleRelease
+
+      - name: Proof summary
+        if: always()
+        run: |
+          {
+            echo "## Proof verdict — ${{ github.ref_name }} · ${{ github.sha }}"
+            echo "- Lint (debug): ${{ steps.lint.outcome }}"
+            echo "- Release assemble (release compile + proguard + signing path): ${{ steps.release.outcome }}"
+            echo "- The release APK was signed with a throwaway key made inside this runner and DISCARDED — do not install it. Real release signing is issue #25."
+            echo "- Instrumented tests are not run (template-only androidTest; emulator job priced as STANDS-BLOCKED in issue #24)."
           } >> "$GITHUB_STEP_SUMMARY"

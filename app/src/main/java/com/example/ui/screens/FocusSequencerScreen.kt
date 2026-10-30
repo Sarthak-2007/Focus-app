@@ -58,6 +58,14 @@ import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.theme.MonolithCurves
+import com.example.ui.theme.SequencerEdgeDay1
+import com.example.ui.theme.SequencerEdgeDay2
+import com.example.ui.theme.SequencerEdgeDay3
+import com.example.ui.theme.SequencerEdgeNight1
+import com.example.ui.theme.SequencerEdgeNight2
+import com.example.ui.theme.SequencerEdgeNight3
+import com.example.ui.theme.SequencerHairlineNight
+import com.example.ui.theme.TokenColorSecondaryContainer
 import com.example.ui.views.TaskHorizonBarView
 import kotlinx.coroutines.delay
 
@@ -404,9 +412,9 @@ fun FocusSequencerScreen(
                                 .height(1.dp)
                                 .background(
                                     if (effectiveNight) {
-                                        androidx.compose.ui.graphics.Color(0xFF8F8888).copy(alpha = 0.18f)
+                                        SequencerHairlineNight.copy(alpha = 0.18f)
                                     } else {
-                                        androidx.compose.ui.graphics.Color(0xFF615B5A).copy(alpha = 0.18f)
+                                        TokenColorSecondaryContainer.copy(alpha = 0.18f)
                                     }
                                 )
                         )
@@ -731,15 +739,15 @@ private fun TaskLeafItem(
             val night = scheme.background.luminance() < 0.5f
             val edgeTones = if (night) {
                 listOf(
-                    androidx.compose.ui.graphics.Color(0xFF4E4847),
-                    androidx.compose.ui.graphics.Color(0xFF3B3735),
-                    androidx.compose.ui.graphics.Color(0xFF2D2927)
+                    SequencerEdgeNight1,
+                    SequencerEdgeNight2,
+                    SequencerEdgeNight3
                 )
             } else {
                 listOf(
-                    androidx.compose.ui.graphics.Color(0xFFA8A39F),
-                    androidx.compose.ui.graphics.Color(0xFFBDB7B4),
-                    androidx.compose.ui.graphics.Color(0xFFCCC7C3)
+                    SequencerEdgeDay1,
+                    SequencerEdgeDay2,
+                    SequencerEdgeDay3
                 )
             }
             Canvas(modifier = Modifier.matchParentSize()) {
