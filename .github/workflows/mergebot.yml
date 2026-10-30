@@ -39,7 +39,7 @@ jobs:
             echo "== conflict segments ==" >> /tmp/report.txt
             for f in $(git diff --name-only --diff-filter=U); do
               echo "--- $f" >> /tmp/report.txt
-              grep -n -A 30 '<<<<<<<' "$f" | head -120 >> /tmp/report.txt
+              grep -n -A 30 '<<<<<<<' "$f" | head -500 >> /tmp/report.txt
             done
             python3 /tmp/resolve113.py > /tmp/resolver-out.txt 2>&1
             RES_RC=$?
