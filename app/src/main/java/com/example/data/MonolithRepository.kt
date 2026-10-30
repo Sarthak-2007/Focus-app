@@ -728,8 +728,13 @@ class MonolithRepository(
      *    Advancing the phone's system clock forward by +2 hours is ignored because elapsed time is anchored to
      *    `SystemClock.elapsedRealtime()`.
      * 2. Across device reboots (`LOCKED_BOOT_COMPLETED` where `currentBoot != session.bootCount` or
-     *    `nowMono < session.lastTickElapsedRealtimeMillis`), preserves `session.accumulatedBeforeRebootSeconds`
-     *    and adds `(nowMono / 1000L).toInt()`, so a reboot never resets or skips the timer.
+     *    `nowMono < session.lastTickElapsedRealtimeMillis`), preserves the elapsed banked before
+     *    the reboot and credits NOTHING for the unobserved interval — neither the powered-off
+     *    downtime nor the new boot's uptime before this first post-reboot tick. That time was
+     *    never witnessed by the shield or the session clock, so booking it as focus was a
+     *    fabrication (Audit R3 #113, finding 5). A reboot neither resets the timer nor
+     *    inflates it: the count resumes from the banked figure and ticks from the re-anchor
+     *    [updateSessionProgress] persists.
      * 3. Verifies the AndroidKeyStore `HmacSHA256` signature via `CryptoIntegrityManager.verifySessionState`.
      */
     fun computeVerifiedSessionElapsed(session: FocusSessionEntity): Pair<Int, Boolean> {
@@ -745,15 +750,25 @@ class MonolithRepository(
 
         return if (!rebootOccurred && session.startElapsedRealtimeMillis > 0L && nowMono >= session.startElapsedRealtimeMillis) {
             val monoElapsedSec = ((nowMono - session.startElapsedRealtimeMillis) / 1000L).coerceAtLeast(0L)
+            // The drift test is SEGMENT-local: it compares wall against
+            // mono since the pair of anchors was set — and every
+            // re-anchor in this codebase (seal, block advance, reboot)
+            // moves BOTH anchors to the same frame, so the comparison
+            // never spans a boot or a block boundary.
             val drift = abs(wallElapsedSec - monoElapsedSec)
             val tamper = drift > 90L || !hmacValid
             Pair((session.accumulatedBeforeRebootSeconds + monoElapsedSec.toInt()), tamper)
         } else {
             // Device rebooted during an active lock (LOCKED_BOOT_COMPLETED):
-            // Resume from accumulated elapsed seconds prior to reboot + seconds elapsed since current boot
+            // resume from the elapsed banked before the reboot, and credit
+            // NOTHING for the interval nobody witnessed — the old form added
+            // the device's ENTIRE uptime at this tick, booking hours the
+            // phone may have sat unguarded as focus time (Audit R3 #113,
+            // finding 5). Tamper here is the signature's verdict alone:
+            // a reboot is not a clock crime, and the wall/mono drift test
+            // is meaningless across a boot boundary (finding 4).
             val priorElapsed = max(session.accumulatedBeforeRebootSeconds, session.elapsedSeconds)
-            val sinceRebootSec = (nowMono / 1000L).toInt().coerceAtLeast(0)
-            Pair(priorElapsed + sinceRebootSec, !hmacValid)
+            Pair(priorElapsed, !hmacValid)
         }
     }
 
@@ -1643,7 +1658,8 @@ class MonolithRepository(
             routineLabelWithin = routineLabel,
             bankedBreakSeconds = banked,
             shieldWasOff = row.outcome == SessionOutcome.ELAPSED_SHIELD_GAP,
-            deflections = deflections
+            deflections = deflections,
+            penaltySecondsAdded = row.penaltySecondsAdded
         )
     }
 
@@ -1731,7 +1747,8 @@ class MonolithRepository(
             faulted = faulted,
             deflections = pending.deflections,
             restored = false,
-            receiptPublishedMonoMs = 0L
+            receiptPublishedMonoMs = 0L,
+            penaltySecondsAdded = pending.penaltySecondsAdded
         )
     }
 
@@ -1783,7 +1800,8 @@ class MonolithRepository(
             faulted = row.releaseFaultShield,
             deflections = pending.deflections,
             restored = true,
-            receiptPublishedMonoMs = 0L
+            receiptPublishedMonoMs = 0L,
+            penaltySecondsAdded = pending.penaltySecondsAdded
         )
     }
 
@@ -1936,6 +1954,7 @@ class MonolithRepository(
         stampShieldBeat: Boolean = false
     ): FocusSessionEntity {
         val nowMono = SystemClock.elapsedRealtime()
+        val nowWall = System.currentTimeMillis()
         val currentBoot = querySystemBootCount()
         // Slice E (Nocke §2.2): the shield's own tick stamps its
         // beat into every copy this function persists — the beat
@@ -1947,15 +1966,25 @@ class MonolithRepository(
         val penaltyAdd = if (tamper && session.penaltySecondsAdded == 0) HMAC_TAMPER_PENALTY_SECONDS else session.penaltySecondsAdded
         val effectiveTarget = session.targetDurationSeconds + penaltyAdd
 
-        // Re-anchor if device rebooted so subsequent ticks on the new boot stay monotonic
+        // Re-anchor if device rebooted so subsequent ticks on the new boot stay monotonic.
+        // BOTH anchors move to this frame — the seal's own law (sealSession:
+        // "Both anchors move to the same frame so the mono/wall cross-check
+        // stays consistent"), which this path used to break: it moved the
+        // mono anchor and left the wall anchor at the session's start, so
+        // every later tick compared wall-since-start against
+        // mono-since-reboot, the drift read permanently > 90s, and an
+        // honest reboot branded the user a tamperer and drew the 15-minute
+        // penalty (Audit R3 #113, finding 4). The re-sign covers the NEW
+        // anchor pair, exactly as the seal's re-sign does.
         val rebootDetected = (session.bootCount > 0 && currentBoot != session.bootCount) ||
             (session.lastTickElapsedRealtimeMillis > 0L && nowMono < session.lastTickElapsedRealtimeMillis)
         val newAccumulated = if (rebootDetected) verifiedElapsed else session.accumulatedBeforeRebootSeconds
         val newStartMono = if (rebootDetected) nowMono else session.startElapsedRealtimeMillis
+        val newStartWall = if (rebootDetected) nowWall else session.startWallTimeMillis
         val newBootCount = if (rebootDetected) currentBoot else session.bootCount
         val newHmac = if (rebootDetected) {
             CryptoIntegrityManager.signSessionState(
-                session.startWallTimeMillis,
+                newStartWall,
                 newStartMono,
                 newBootCount,
                 session.targetDurationSeconds,
@@ -1970,6 +1999,7 @@ class MonolithRepository(
         if (session.isStopwatchMode) {
             val updated = session.copy(
                 elapsedSeconds = verifiedElapsed,
+                startWallTimeMillis = newStartWall,
                 startElapsedRealtimeMillis = newStartMono,
                 bootCount = newBootCount,
                 accumulatedBeforeRebootSeconds = newAccumulated,
@@ -2074,6 +2104,7 @@ class MonolithRepository(
 
         val updated = session.copy(
             elapsedSeconds = verifiedElapsed.coerceAtMost(effectiveTarget),
+            startWallTimeMillis = newStartWall,
             startElapsedRealtimeMillis = newStartMono,
             bootCount = newBootCount,
             accumulatedBeforeRebootSeconds = newAccumulated,

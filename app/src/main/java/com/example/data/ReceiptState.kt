@@ -150,7 +150,12 @@ data class PendingReceipt(
     val routineLabelWithin: String?,
     val bankedBreakSeconds: Int,
     val shieldWasOff: Boolean,
-    val deflections: List<ReceiptDeflection>
+    val deflections: List<ReceiptDeflection>,
+    // Audit R3 #113, finding 4: the tamper penalty the row carries,
+    // threaded so the slip can NAME it — before this the penalty
+    // silently stretched the plan (it is inside spanTargetSeconds)
+    // and no surface ever mentioned it.
+    val penaltySecondsAdded: Int = 0
 )
 
 /**
@@ -182,7 +187,10 @@ data class ReceiptState(
     val faulted: Boolean,
     val deflections: List<ReceiptDeflection>,
     val restored: Boolean,
-    val receiptPublishedMonoMs: Long
+    val receiptPublishedMonoMs: Long,
+    // Audit R3 #113, finding 4: see PendingReceipt — the slip
+    // prints the penalty its plan silently included.
+    val penaltySecondsAdded: Int = 0
 ) {
     /** The printed №: zero-padded to a minimum of 3, never
      *  truncated (№ 048 … № 1048). */
