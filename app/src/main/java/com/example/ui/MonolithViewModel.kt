@@ -20,6 +20,7 @@ import com.example.data.DistractionTriggerReason
 import com.example.data.FocusProfileEntity
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
+import com.example.data.InterceptInsight
 import com.example.data.InterceptLogEntity
 import com.example.data.KineticArtifact
 import com.example.data.MonolithRepository
@@ -857,6 +858,19 @@ class MonolithViewModel(
 
     val interceptLogs: StateFlow<List<InterceptLogEntity>> = repository.interceptLogsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
+     * Issues #251/#253/#254/#255 (Audit R5, DURCH-E): the intercept
+     * log read back — per-app tallies and resist rates, per-trigger
+     * tallies, attempts per hour and the danger hour — derived by
+     * [InterceptInsight.derive] from the same rows that feed
+     * [totalInterceptions]. No surface consumes this yet on purpose:
+     * where (or whether) it is printed is the redesign's call
+     * (issue #18); the computation itself was the missing piece.
+     */
+    val interceptInsight: StateFlow<InterceptInsight> = interceptLogs
+        .map { logs -> InterceptInsight.derive(logs) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), InterceptInsight.EMPTY)
 
     // Issue #143: the finish + ground flows are declared BEFORE
     // the theme evaluation on purpose — its combine reads them
