@@ -2,32 +2,38 @@ import re
 import subprocess
 import sys
 
-# STURM3-11 mergebot resolver v2 for agent/issue-113 vs current main.
-# Every rule below is pattern-matched to a conflict segment STURM3-11
-# read and decided by hand (see mergebot/status-113.txt history and
-# issue #113). Any segment that matches NO rule aborts the merge —
-# nothing is guessed.
+# STURM3-11 mergebot resolver for agent/issue-113 vs current main.
+# Every rule is pattern-matched to a conflict segment STURM3-11 read
+# and decided by hand (see mergebot/status-113.txt history, issue
+# #113). Any segment matching NO rule aborts the merge — nothing is
+# guessed.
 #
-# Rules:
-#  R1 both-added (MonolithRepository receipt assembly x3,
-#     ReceiptState x2): our block adds penaltySecondsAdded, their
-#     block adds forgedArtifactName at the same anchor. Both are
-#     independent named args / defaulted fields — keep BOTH, comma
-#     after our block's last line.
-#  R2 anchor declaration (MonolithRepository): our declares nowWall
-#     (needed by #113 F4's newStartWall) + old boot call; their has
-#     only the nullable boot call main's merged surroundings expect
-#     (Int?). Keep nowWall + their declaration.
-#  R3 finish controller (MonolithViewModel): our single arm
-#     `else -> onFinishE0(row, kind, witnessed = false)` retires the
-#     >10-min discard per Audit R3 #113 F3; their arms keep the
-#     discard for manual finishes (Audit R1 #40). R3 is the later,
-#     specific judgment and subsumes #40's sleep exemption (sleep
-#     stand-downs issue unwitnessed through the same arm). Take OUR.
-#  R4 sentence when (TactileDeckScreen): Jammed line from THEIR
-#     (main's newer jamSentenceFor(armPhase, nowMono) signature),
-#     Proving line from THEIR (main #98 provingSentenceFor), running
-#     line from OUR (#113 F2b refusalSentenceFor while running).
+# Round-1 rules:
+#  R1 both-added receipt fields/args (penalty + forged at one anchor).
+#  R2 anchor declaration (nowWall kept + nullable boot probe).
+#  R3 finish controller: #113's arm retires the >10-min discard
+#     (subsumes R1 #40's sleep exemption; #40's discard retired).
+#  R4 sentence when: Jammed+Proving from main, running arm from #113.
+#  R5 re-anchor block: #113 comment + newStartWall, main's guards.
+# Round-2 rules (main moved again):
+#  R6 both-added single-line assignments at one anchor (Repository
+#     receipt assembly: penaltySecondsAdded + openExposureApps).
+#  R7 receipt assembly overlap: our penalty+forged vs their
+#     forged+heldShut+heldPeek — emit penalty, forged, heldShut,
+#     heldPeek (commas between).
+#  R8 ReceiptState fields: our penaltySecondsAdded vs their
+#     openExposureApps (#129 F3) — keep both.
+#  R9 ReceiptSheet parallel if-blocks (penalty line + open-exposure
+#     line share one Text continuation): emit our block, the shared
+#     continuation, then their block; the file's own continuation
+#     completes theirs.
+#  R10 computeVerifiedSessionElapsed reboot branch: take MAIN's
+#     #81 F3 form. #113 F5's absolute "never credit uptime" form is
+#     superseded by main's later, deliberate law: uptime of the
+#     CURRENT (witnessed) boot credits; an unwitnessed boot span
+#     (boot-count delta >= 2, TamperWitness) convicts as tamper.
+#     Documented on issue #113; RebootTruthRepositoryTest re-based
+#     to the composed doctrine in the same port.
 
 SEG = re.compile(r"<<<<<<< [^\n]*\n(.*?)\n=======\n(.*?)\n>>>>>>> [^\n]*\n", re.S)
 
@@ -36,12 +42,79 @@ def lines(block):
     return block.split("\n")
 
 
+def with_comma(line):
+    return line if line.rstrip().endswith(",") else line + ","
+
+
+def rule_r7(our, their):
+    if (
+        "penaltySecondsAdded" in our
+        and "forgedArtifactName" in our
+        and "heldShutAtSeal" in their
+        and "heldPeekAtSeal" in their
+    ):
+        def grab(block, needle):
+            for l in lines(block):
+                if needle in l:
+                    return l
+            return None
+
+        pen = grab(our, "penaltySecondsAdded")
+        forg = grab(their, "forgedArtifactName") or grab(our, "forgedArtifactName")
+        shut = grab(their, "heldShutAtSeal")
+        peek = grab(their, "heldPeekAtSeal")
+        if pen and forg and shut and peek:
+            return "\n".join([with_comma(pen), with_comma(forg), with_comma(shut), peek]) + "\n"
+    return None
+
+
 def rule_r1(our, their):
     if "penaltySecondsAdded" in our and "forgedArtifactName" in their:
         ol = lines(our)
-        if not ol[-1].rstrip().endswith(","):
-            ol[-1] = ol[-1] + ","
+        ol[-1] = with_comma(ol[-1])
         return "\n".join(ol + lines(their)) + "\n"
+    return None
+
+
+def rule_r8(our, their):
+    if "val penaltySecondsAdded" in our and "val openExposureApps" in their:
+        tl = lines(their)
+        tl[-1] = with_comma(tl[-1])
+        return our + "\n" + "\n".join(tl) + "\n"
+    return None
+
+
+def rule_r6(our, their):
+    ol, tl = lines(our), lines(their)
+    if (
+        len(ol) == 1
+        and len(tl) == 1
+        and "penaltySecondsAdded = " in ol[0]
+        and " = " in tl[0]
+        and "forgedArtifactName" not in ol[0]
+        and "forgedArtifactName" not in tl[0]
+    ):
+        return with_comma(ol[0]) + "\n" + with_comma(tl[0]) + "\n"
+    return None
+
+
+def rule_r9(our, their):
+    if "receipt.penaltySecondsAdded > 0" in our and "receipt.openExposureApps.isNotEmpty()" in their:
+        continuation = [
+            "                        fontFamily = AtkinsonHyperlegibleFamily,",
+            "                        fontWeight = FontWeight.Bold,",
+            "                        fontSize = 12.sp,",
+            "                        color = scheme.onBackground",
+            "                    )",
+            "                }",
+        ]
+        return our + "\n" + "\n".join(continuation) + "\n" + their + "\n"
+    return None
+
+
+def rule_r10(our, their):
+    if "Pair(priorElapsed, !hmacValid)" in our and "TamperWitness.unwitnessedBoot" in their:
+        return their + "\n"
     return None
 
 
@@ -82,12 +155,6 @@ def rule_r4(our, their):
 
 
 def rule_r5(our, their):
-    # Re-anchor block (MonolithRepository): our carries #113 F4's
-    # both-anchors law (comment + newStartWall); their carries the
-    # nullable boot probe's guards (null-checked rebootDetected,
-    # `currentBoot ?: session.bootCount`). Resolved: our comment,
-    # their reboot/accumulated/mono lines, our newStartWall, their
-    # newBootCount.
     if "val newStartWall" in our and "currentBoot ?: session.bootCount" in their:
         ol, tl = lines(our), lines(their)
 
@@ -103,21 +170,18 @@ def rule_r5(our, their):
 
         i_reboot = idx(ol, "val rebootDetected")
         i_t_mono = idx(tl, "val newStartMono")
+        i_t_reboot = idx(tl, "val rebootDetected")
         new_start_wall = grab(ol, "val newStartWall")
         new_boot_count = grab(tl, "val newBootCount")
-        if i_reboot < 0 or i_t_mono < 0 or not new_start_wall or not new_boot_count:
+        if i_reboot < 0 or i_t_mono < 0 or i_t_reboot < 0 or not new_start_wall or not new_boot_count:
             return None
         comment = ol[:i_reboot]
-        theirs_head = tl[: i_t_mono + 1]
-        # drop their leading comment line(s): everything before
-        # their `val rebootDetected`.
-        i_t_reboot = idx(tl, "val rebootDetected")
         theirs_head = tl[i_t_reboot : i_t_mono + 1]
         return "\n".join(comment + theirs_head + [new_start_wall, new_boot_count]) + "\n"
     return None
 
 
-RULES = [rule_r1, rule_r2, rule_r3, rule_r4, rule_r5]
+RULES = [rule_r7, rule_r10, rule_r9, rule_r8, rule_r6, rule_r1, rule_r2, rule_r3, rule_r4, rule_r5]
 
 files = subprocess.check_output(
     ["git", "diff", "--name-only", "--diff-filter=U"], text=True
