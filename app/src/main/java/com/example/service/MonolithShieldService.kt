@@ -25,6 +25,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -75,6 +78,7 @@ class MonolithShieldService : Service() {
         // startForeground has actually succeeded - no instance, no
         // flag, no rumour.
         instance = this
+        WatchStore.bind(applicationContext)
         WatchStore.poke()
         startMonitoringLoop()
 
@@ -88,6 +92,10 @@ class MonolithShieldService : Service() {
 
         monitorJob = serviceScope.launch {
             var iteration = 0
+            // Audit R3b #146: break-transition witness for the
+            // summons — the loop remembers the last tick's break
+            // state so the flip out of a break posts exactly once.
+            var wasInSafeBreak = false
             while (isActive) {
                 iteration++
                 // Routine heartbeat cadence (rebuild §2.2): first pass,
@@ -120,6 +128,14 @@ class MonolithShieldService : Service() {
                     RoutineHeartbeat.tickAsync(
                         applicationContext, RoutineHeartbeat.Source.SESSION_EDGE
                     )
+                    // Audit R3b #146: the ending is news for the
+                    // user who stayed away — it also sounds on the
+                    // summons channel, not only as a silent edit to
+                    // the detached LOW notification below.
+                    postSummons(
+                        "SESSION COMPLETE",
+                        "Your session has ended. The receipt is on the Deck."
+                    )
                     // Issue #155 (F3): the completion receipt stays
                     // findable via DETACH, but it is no longer an
                     // ongoing card — it dismisses on tap and expires
@@ -136,6 +152,17 @@ class MonolithShieldService : Service() {
                     stopSelf()
                     break
                 }
+
+                // Audit R3b #146: the break just expired under a
+                // user who is away by design — summon them on the
+                // HIGH channel as the next block starts, once.
+                if (wasInSafeBreak && !updated.isInSafeBreak) {
+                    postSummons(
+                        "BREAK OVER",
+                        "Block ${updated.currentBlockIndex} of ${updated.totalStudyBlocks} has started."
+                    )
+                }
+                wasInSafeBreak = updated.isInSafeBreak
 
                 val timeFormatted = when {
                     updated.isInSafeBreak -> {
@@ -246,7 +273,13 @@ class MonolithShieldService : Service() {
                     .map { it.packageName }
                     .toSet()
 
-                val foregroundBlockedPkg = repository.queryForegroundBlockedApp(blockedPackages)
+                // Issue #99 F1: a package whose peek lease just
+                // expired is evicted on this poll even though its
+                // lastTimeUsed is minutes stale (stay-put user).
+                val expiredPeeks = com.example.data.expiredPeekPackages(
+                    dao.getAllAppsSnapshot(), nowMono
+                )
+                val foregroundBlockedPkg = repository.queryForegroundBlockedApp(blockedPackages, expiredPeeks)
                 if (foregroundBlockedPkg != null && foregroundBlockedPkg != applicationContext.packageName) {
                     val blockedApp = dao.getAllAppsSnapshot().find { it.packageName == foregroundBlockedPkg }
                     val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
@@ -359,6 +392,43 @@ class MonolithShieldService : Service() {
         )
     }
 
+    /** Audit R3b #146: post an ALERTING summons on the HIGH channel.
+     *  Distinct id from the standing foreground notification, not
+     *  ongoing, not only-alert-once — it arrives like news, because
+     *  for the user who walked away, it is. */
+    private fun postSummons(title: String, text: String) {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                SUMMONS_CHANNEL_ID,
+                "Session summons",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Break-over and session-end calls back to the desk"
+                setShowBadge(false)
+            }
+            manager.createNotificationChannel(channel)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            1,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notification = NotificationCompat.Builder(this, SUMMONS_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+        manager.notify(SUMMONS_NOTIFICATION_ID, notification)
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
@@ -375,10 +445,19 @@ class MonolithShieldService : Service() {
     }
 
     companion object {
+        // Issue #28: the instance's presence as a FLOW, so waiters
+        // (the finish detention) suspend on the flip instead of
+        // busy-polling the raw field every 25ms.
+        private val _instancePresent = MutableStateFlow(false)
+        val instancePresent: StateFlow<Boolean> = _instancePresent.asStateFlow()
+
         // Live Wire registry (Ines): in-memory only, never persisted.
         @Volatile
         var instance: MonolithShieldService? = null
-            internal set
+            internal set(value) {
+                field = value
+                _instancePresent.value = value != null
+            }
 
         /** True only after startForeground succeeded AND a full
          *  monitor iteration ran. The Live Wire reads this as a
@@ -412,6 +491,13 @@ class MonolithShieldService : Service() {
         /** Issue #155 (F5): present (true) on the shield card's content
          *  intent; MainActivity routes such a launch to SHIELD. */
         const val EXTRA_FROM_SHIELD_NOTIFICATION = "com.example.EXTRA_FROM_SHIELD_NOTIFICATION"
+        // Audit R3b #146: the summons channel — HIGH importance, its
+        // own notification id, used ONLY for the two moments the user
+        // is away from the phone by design (break expiry, session
+        // end). The standing countdown stays on the silent LOW
+        // channel; a summons must be capable of being heard.
+        const val SUMMONS_CHANNEL_ID = "monolith_summons_channel"
+        const val SUMMONS_NOTIFICATION_ID = 4097
         const val ACTION_START_SHIELD = "com.example.action.START_SHIELD"
         const val ACTION_STOP_SHIELD = "com.example.action.STOP_SHIELD"
         const val EXTRA_INTERCEPTED_PACKAGE = "extra_intercepted_package"
