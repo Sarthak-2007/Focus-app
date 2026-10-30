@@ -136,6 +136,22 @@ fun ReceiptSheet(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                // WELLE-5 / #253-36: the slip carries its maker's
+                // name. The faulted sheet stays title-less (F-W1),
+                // so the brand prints only on a sound slip, above
+                // its title. The footer below is exact and untouched
+                // — the study record really does live in YPT; what
+                // was missing was Monolith's own name on its artefact.
+                if (!receipt.faulted) {
+                    Text(
+                        text = "MONOLITH",
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 9.sp,
+                        letterSpacing = 2.sp,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
