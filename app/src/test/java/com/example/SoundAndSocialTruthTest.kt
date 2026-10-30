@@ -176,7 +176,9 @@ class SoundAndSocialTruthTest {
         // Out-of-band write (bypasses setEnabled's push — e.g. a
         // restore): the standing engine's cache is stale until
         // the next bind re-reads the fact into it.
-        context.getSharedPreferences(
+        // Issue #83: the fact's file moved to device-protected
+        // storage — an out-of-band write lands where the bind reads.
+        (context.createDeviceProtectedStorageContext() ?: context).getSharedPreferences(
             SoundEffectsSetting.PREFS_NAME, Context.MODE_PRIVATE
         ).edit().putBoolean(SoundEffectsSetting.KEY_ENABLED, true).commit()
         SessionSealTransitions.get(context)
@@ -488,6 +490,11 @@ class SoundAndSocialTruthTest {
                 Thread.sleep(50L)
             }
         }
+        // Fail loudly (#91): silently giving up let the node
+        // assertions below run against a possibly still-rising
+        // sheet, passing/failing for timing reasons unrelated to
+        // the behaviour under test.
+        throw AssertionError("Park sheet did not settle (compose never idled) within 5s")
     }
 
     /** Poll-with-looper-idle until [condition] holds (the

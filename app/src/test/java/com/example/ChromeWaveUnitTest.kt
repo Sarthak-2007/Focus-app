@@ -303,12 +303,18 @@ class ChromeWaveUnitTest {
         assertTrue(!day.isNight)
         assertEquals("AUTO · DAY — NO ROUTINE OWNS IT", day.readout)
 
+        // Audit R3b #116 (finding 1): a disabled or paused SLEEP
+        // routine no longer costs the dark UI — clock night owns
+        // the theme at 21:30 even when no routine does. (Before
+        // the fix these two asserted DAY: darkness was hostage to
+        // accepting SLEEP's blocking.)
         val disabled = evaluateTheme(
             sessionActive = false,
             routines = listOf(sleepRoutine(20 * 60, 3 * 60 + 30, enabled = false)),
             nowMillis = at2130
         )
-        assertTrue(!disabled.isNight)
+        assertTrue(disabled.isNight)
+        assertEquals("AUTO · NIGHT — CLOCK 20:00–06:00", disabled.readout)
 
         val paused = evaluateTheme(
             sessionActive = false,
@@ -317,6 +323,16 @@ class ChromeWaveUnitTest {
             ),
             nowMillis = at2130
         )
-        assertTrue(!paused.isNight)
+        assertTrue(paused.isNight)
+        assertEquals("AUTO · NIGHT — CLOCK 20:00–06:00", paused.readout)
+
+        // Midday with SLEEP disabled stays DAY: the clock step is
+        // a night signal, not a permanent dark mode.
+        val disabledDay = evaluateTheme(
+            sessionActive = false,
+            routines = listOf(sleepRoutine(20 * 60, 3 * 60 + 30, enabled = false)),
+            nowMillis = at1200
+        )
+        assertTrue(!disabledDay.isNight)
     }
 }
