@@ -2856,6 +2856,20 @@ class MonolithViewModel(
         }
     }
 
+    /**
+     * Issue #119, finding 2: the Airlock's own emergency-break entry.
+     * The airlock closes and the SAME disarm challenge the Deck chip
+     * opens takes its place — identical token cost, identical 60s
+     * continuous hold, identical session-ending effect, decided by
+     * the same repository path. No new exit machinery: placement
+     * only. (No "Stayed Focused" intercept is recorded — the user
+     * did not stay; the break's own ledger records what happened.)
+     */
+    fun requestDisarmFromAirlock() {
+        _airlockState.value = _airlockState.value.copy(isVisible = false)
+        requestDisarmChallenge()
+    }
+
     fun transmuteImpulseAndReturn() {
         val state = _airlockState.value
         soundEngine.playHarmonicSeal(arming = true)

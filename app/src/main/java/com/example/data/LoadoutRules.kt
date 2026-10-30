@@ -18,7 +18,7 @@ object LoadoutRules {
         categoryName: String
     ): AppBlockTier {
         val lower = "$packageName $appName".lowercase()
-        return when (loadout) {
+        val rawTier = when (loadout) {
             SmartLoadout.STUDY -> when {
                 lower.contains("youtube") || lower.contains("chrome") ||
                     categoryName == AppCategory.MESSAGING.name ->
@@ -38,16 +38,17 @@ object LoadoutRules {
                 else -> AppBlockTier.OPEN
             }
             SmartLoadout.SLEEP -> {
-                if (lower.contains("dialer") || lower.contains("phone") ||
-                    lower.contains("clock") || lower.contains("alarm") ||
-                    lower.contains("maps")
-                ) {
-                    AppBlockTier.OPEN
-                } else {
-                    AppBlockTier.LOCKED
-                }
+                // Issue #119, finding 4: essentials by PACKAGE, not
+                // substring luck — a stock Camera (com.android.camera2)
+                // and Waze (com.waze) contain none of the old five
+                // substrings and were LOCKED all night. EssentialApps
+                // keeps the substring test only as a superset fallback.
+                EssentialApps.sleepLoadoutTierFor(packageName, appName)
             }
         }
+        // Issue #119, finding 5: the dialler floor binds every
+        // loadout — the dialler can never be classified LOCKED.
+        return EssentialApps.floorTier(packageName, rawTier)
     }
 
     /** How many of [apps] would change tier if [loadout] applied,

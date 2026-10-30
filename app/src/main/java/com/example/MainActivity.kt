@@ -1041,7 +1041,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onOpenPeekApps = {
                     launcherPage = LauncherPage.PEEK
                     launcherOpen = true
-                }
+                },
+                onRequestEmergencyBreak = viewModel::requestDisarmFromAirlock
             )
 
             // Issue #99 F2: the peek countdown pill — the one
