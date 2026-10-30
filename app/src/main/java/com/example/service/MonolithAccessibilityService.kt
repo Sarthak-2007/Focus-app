@@ -13,6 +13,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.example.MainActivity
 import com.example.data.AppBlockTier
+import com.example.data.BlockedBrowserDomains
 import com.example.data.GuardSettingsEntity
 import com.example.data.MonolithDatabase
 import kotlinx.coroutines.CancellationException
@@ -85,33 +86,199 @@ enum class InterceptPath {
 }
 
 /**
- * The browser blocker's matching core, pure (Truth Car 3, UNA-06;
- * Wave-3 #42): the FIRST stored domain that is the URL's HOST or a
- * parent of it, or null. Host-exact matching replaced raw substring
- * matching: before the cure, a stored domain appearing anywhere in
- * the URL text — a query parameter, a path segment, another site's
- * subdomain label (`notyoutube.com`, `youtube.com.evil.example`) —
- * fired the blocker, and the false positives were indistinguishable
- * from real hits. The list it receives IS the enforced list —
- * callers pass the user's stored sites unchanged, so an empty list
- * matches nothing. There is no factory fallback anywhere upstream
- * of this function.
+ * The browser blocker's matching core, pure (Truth Car 3, UNA-06):
+ * the FIRST stored domain the URL text contains, or null. The list
+ * it receives IS the enforced list — callers pass the user's stored
+ * sites unchanged, so an empty list matches nothing. There is no
+ * factory fallback anywhere upstream of this function.
+ *
+ * Issue #79 (Audit R2, url-blocker-bypasses #1/#2/#4): the matcher
+ * no longer does a raw substring contains() over the URL-bar text.
+ * Both sides are parsed and canonicalised:
+ *  - the visited URL's host is extracted (userinfo/port/trailing
+ *    dot stripped, subdomains of a blocked host match, lookalike
+ *    hosts and query-string mentions do NOT — the substring matcher
+ *    blocked both, and missed everything below);
+ *  - stored rules are canonicalised through
+ *    [BlockedBrowserDomains.normalizeDomain] at match time, so
+ *    rules stored dead by the old normaliser ("instagram.com.",
+ *    "instagram.com:443") start matching with no data migration;
+ *  - known proxy wrappers are unwrapped to their origin host:
+ *    Google Translate's `<origin-with-hyphens>.translate.goog`
+ *    serving form and `translate.google.com/translate?u=<target>`;
+ *  - the Shorts rule ("youtube.com/shorts") matches the same Short
+ *    in its other URL spellings — youtube.com/watch?v= and
+ *    youtu.be/<id> — without widening into all of YouTube: the
+ *    home/channel pages stay open under it.
+ * Returns the matched rule's canonical host — the identity the
+ * intercept screen prints.
  */
 internal fun matchBlockedDomain(urlText: String, domains: List<String>): String? {
-    val host = extractUrlHost(urlText) ?: return null
-    // Returns the NORMALISED stored domain (a "*.youtube.com" entry
-    // reports as "youtube.com") — the value names the blocked site
-    // on the intercept screen, so it must be the site, not the
-    // pattern syntax the user happened to type.
-    return domains.asSequence()
-        .map { raw ->
-            raw.trim().lowercase()
-                .removePrefix("*.").substringBefore('/').substringBefore(':')
-        }
-        .firstOrNull { domain ->
-            domain.isNotEmpty() && (host == domain || host.endsWith(".$domain"))
-        }
+    if (domains.isEmpty()) return null
+    val candidates = urlCandidates(urlText)
+    if (candidates.isEmpty()) return null
+    for (rawRule in domains) {
+        val rule = parseSiteRule(rawRule) ?: continue
+        if (candidates.any { ruleMatches(rule, it) }) return rule.host
+    }
+    return null
 }
+
+/**
+ * Issue #79, finding 3 (detectable residue): an embedded player's
+ * URL, where the accessibility tree exposes it as page text, names
+ * the blocked host inside an `/embed` URL token
+ * ("youtube.com/embed/…", "tiktok.com/embed/v2/…",
+ * "instagram.com/p/…/embed/"). A plain textual mention of a blocked
+ * domain is NOT an embed and never matches — allowed pages that
+ * talk about a blocked service stay open. Path rules (e.g.
+ * youtube.com/shorts) do not fire here: an embed URL cannot prove
+ * the embedded video is a Short, so that part of the finding is
+ * honestly undetectable from the tree and stays documented as
+ * residue in the issue report, not papered over.
+ */
+internal fun matchEmbeddedBlockedDomain(contentText: String, domains: List<String>): String? {
+    if (domains.isEmpty()) return null
+    val tokens = contentText.lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+    if (tokens.isEmpty()) return null
+    for (rawRule in domains) {
+        val rule = parseSiteRule(rawRule) ?: continue
+        if (rule.path != null) continue
+        // STURM3-02 hardening (adversarial pass on the WELLE fix): the
+        // token's host is PARSED and compared exactly / as a subdomain,
+        // never substring-matched — the original token.contains(host)
+        // fired on lookalike hosts ("notinstagram.com/embed/…") and on
+        // attacker parents ("instagram.com.evil.com/embed/…"), the same
+        // false-block class finding 1's matcher rewrite eliminated.
+        val hit = tokens.any { token ->
+            val candidate = parseUrlCandidate(token) ?: return@any false
+            val hostMatches = candidate.host == rule.host ||
+                candidate.host.endsWith("." + rule.host)
+            hostMatches && candidate.path.contains("/embed")
+        }
+        if (hit) return rule.host
+    }
+    return null
+}
+
+/** A canonicalised stored rule: host plus optional path prefix. */
+private data class SiteRule(val host: String, val path: String?)
+
+private fun parseSiteRule(raw: String): SiteRule? {
+    val canonical = BlockedBrowserDomains.normalizeDomain(raw) ?: return null
+    val host = canonical.substringBefore('/').removePrefix("*.")
+    val path = if (canonical.contains('/')) "/" + canonical.substringAfter('/') else null
+    return SiteRule(host, path)
+}
+
+/** One parsed candidate URL the visited page may actually be. */
+private data class UrlCandidate(
+    val host: String,
+    val path: String,
+    val query: Map<String, String>,
+    /** True when the URL was spelled as a youtu.be short link. */
+    val isShortLink: Boolean
+)
+
+private fun parseUrlCandidate(text: String): UrlCandidate? {
+    var d = text.trim().lowercase()
+    if (d.isEmpty()) return null
+    d = d.substringBefore('#')
+    val queryString = d.substringAfter('?', "")
+    d = d.substringBefore('?')
+    d = d.removePrefix("https://").removePrefix("http://").removePrefix("//")
+    if (d.isEmpty()) return null
+    val slash = d.indexOf('/')
+    val authority = if (slash >= 0) d.substring(0, slash) else d
+    val path = if (slash >= 0) d.substring(slash) else ""
+    var host = authority.substringAfterLast('@').substringBefore(':')
+    host = host.trim().trimEnd('.').removePrefix("www.").trimEnd('.')
+    if (host.isEmpty() || !host.contains('.')) return null
+    val query = mutableMapOf<String, String>()
+    if (queryString.isNotEmpty()) {
+        for (pair in queryString.split('&')) {
+            if (pair.isEmpty()) continue
+            val key = pair.substringBefore('=').trim()
+            val value = try {
+                java.net.URLDecoder.decode(pair.substringAfter('=', ""), "UTF-8")
+            } catch (_: Exception) {
+                pair.substringAfter('=', "")
+            }
+            if (key.isNotEmpty()) query[key] = value
+        }
+    }
+    return UrlCandidate(
+        host = host,
+        path = path,
+        query = query,
+        isShortLink = host == "youtu.be" || host.endsWith(".youtu.be")
+    )
+}
+
+/**
+ * The candidate set for one URL-bar text: the URL as visited, plus
+ * its unwrapped origin when a known proxy wrapper serves it.
+ */
+private fun urlCandidates(urlText: String): List<UrlCandidate> {
+    val base = parseUrlCandidate(urlText) ?: return emptyList()
+    val out = mutableListOf(base)
+    // Google Translate proxy, host-suffix form: the entire blocked
+    // site is served under <origin>.translate.goog with the origin
+    // host's dots rewritten to hyphens (and literal hyphens doubled).
+    if (base.host.endsWith(".translate.goog")) {
+        val encoded = base.host.removeSuffix(".translate.goog")
+        val originHost = encoded
+            .replace("--", "\u0001")
+            .replace('-', '.')
+            .replace("\u0001", "-")
+            .removePrefix("www.")
+        if (originHost.contains('.')) {
+            out.add(base.copy(host = originHost, isShortLink = false))
+        }
+    }
+    // Google Translate proxy, query form: translate.google.com/
+    // translate?u=<target URL> (also the googleusercontent host).
+    if (base.host == "translate.google.com" ||
+        base.host == "translate.googleusercontent.com"
+    ) {
+        val target = base.query["u"]
+        if (!target.isNullOrEmpty()) {
+            parseUrlCandidate(target)?.let { out.add(it) }
+        }
+    }
+    return out
+}
+
+private fun ruleMatches(rule: SiteRule, candidate: UrlCandidate): Boolean {
+    // youtu.be/<id> IS youtube.com/watch?v=<id> in another spelling.
+    val effectiveHost = if (candidate.isShortLink) "youtube.com" else candidate.host
+    val hostMatches = effectiveHost == rule.host || effectiveHost.endsWith("." + rule.host)
+    if (!hostMatches) return false
+    val rulePath = rule.path ?: return true
+    if (candidate.path == rulePath || candidate.path.startsWith("$rulePath/")) return true
+    // Shorts, alternate spellings (finding 2): a Short opened as a
+    // watch page or a short link is the same class as /shorts/<id>.
+    // Deliberately NOT wider: the YouTube home page, channel pages
+    // and search stay open under the Shorts rule.
+    if (rule.host == "youtube.com" && rulePath == "/shorts") {
+        if (candidate.isShortLink) return true
+        if (candidate.path == "/watch" && candidate.query.containsKey("v")) return true
+    }
+    return false
+}
+
+/**
+ * Merge resolution (STURM3-02, #79 onto Wave-3 #42 main): main's
+ * own host-exact matchBlockedDomain is SUPERSEDED by the #79
+ * matcher above — same host-exact semantics (lookalikes, query
+ * mentions and evil parents never match), plus path rules,
+ * proxy unwrapping and Shorts spellings. Main's extractUrlHost
+ * is kept verbatim below: Wave3Issue42AccessibilityTest imports
+ * it and other callers use it. One compatibility fix in the #79
+ * matcher: parseSiteRule strips a leading "*." from a stored
+ * rule's host, so wildcard entries ("*.youtube.com") match and
+ * report the bare domain, exactly as #42's matcher did.
+ */
 
 /** The host of a URL-bar text, or null when the text carries no
  *  plausible host. Tolerates a missing scheme (users see bare
@@ -397,7 +564,11 @@ class MonolithAccessibilityService : AccessibilityService() {
     private data class EventFacts(
         val tamperSurface: Boolean = false,
         val sniperFeedVisible: Boolean = false,
-        val browserUrlTexts: List<String> = emptyList()
+        val browserUrlTexts: List<String> = emptyList(),
+        /** Issue #79 finding 3: the browser window's text, captured
+         *  for the embed scan at match time in the worker. Empty
+         *  while a URL bar is focused (never fire mid-typing). */
+        val browserContentText: String = ""
     )
 
     private data class EventSnapshot(
@@ -713,6 +884,11 @@ class MonolithAccessibilityService : AccessibilityService() {
                 extractBrowserUrlTexts(rootNode)
             } else {
                 emptyList()
+            },
+            browserContentText = if (isSupportedBrowser(pkgName) && !hasFocusedUrlBar(rootNode)) {
+                collectWindowTextLowercase(rootNode)
+            } else {
+                ""
             }
         )
     }
@@ -800,6 +976,12 @@ class MonolithAccessibilityService : AccessibilityService() {
             val userDomains = dao.getAllSitesSnapshot().map { it.domain }
             val matchedDomain = snapshot.facts.browserUrlTexts.firstNotNullOfOrNull { urlText ->
                 matchBlockedDomain(urlText, userDomains)
+            } ?: snapshot.facts.browserContentText.takeIf { it.isNotEmpty() }?.let {
+                // Issue #79 finding 3 (detectable part): the URL bar
+                // is clean, but a blocked service's embed may be
+                // playing inside this allowed page — where the tree
+                // exposes the embed's address as page text.
+                matchEmbeddedBlockedDomain(it, userDomains)
             }
             if (matchedDomain != null) {
                 performGlobalAction(GLOBAL_ACTION_BACK)
@@ -1095,6 +1277,25 @@ class MonolithAccessibilityService : AccessibilityService() {
         val texts = mutableListOf<String>()
         collectUrlBarTexts(rootNode, 0, texts)
         return texts
+    }
+
+    /** Issue #79: is a URL-bar node currently focused (the user is
+     *  typing an address)? Mirrors [collectUrlBarTexts]' ID-suffix
+     *  logic. While true, the embed content scan stays silent —
+     *  the same don't-fire-mid-typing rule the URL door keeps. */
+    private fun hasFocusedUrlBar(node: AccessibilityNodeInfo?, depth: Int = 0): Boolean {
+        if (node == null || depth > 32) return false
+        val viewId = node.viewIdResourceName?.lowercase() ?: ""
+        if (node.isFocused && (
+                viewId.endsWith(":id/url_bar") ||
+                    viewId.endsWith(":id/location_bar_edit_text") ||
+                    viewId.endsWith(":id/mozac_browser_toolbar_url_view")
+                )
+        ) return true
+        for (i in 0 until node.childCount) {
+            if (hasFocusedUrlBar(node.getChild(i), depth + 1)) return true
+        }
+        return false
     }
 
     private fun collectUrlBarTexts(
