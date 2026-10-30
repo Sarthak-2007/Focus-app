@@ -3189,7 +3189,7 @@ class MonolithViewModel(
     /** Issue #283: +15 minutes on the running session — the cap
      *  and the HMAC re-sign live in the repository verb. */
     fun extendActiveSession() {
-        viewModelScope.launch { repository.extendActiveSession() }
+        viewModelScope.launch { repository.extendActiveSessionBySeconds() }
     }
 
     fun requestDisarmChallenge() {
