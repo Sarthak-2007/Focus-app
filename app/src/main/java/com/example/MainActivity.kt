@@ -893,6 +893,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     appsSplit = appsSplit,
                                     deckWarrant = deckWarrant,
                                     sealFreeze = sealFreeze,
+                                    // Issue #4 B-C1: the Bolt fold's
+                                    // shield-beat input, from the
+                                    // WatchStore snapshot this host
+                                    // already collects.
+                                    shieldHeartbeatMono = watchSnapshot.engineHeartbeatMono,
+                                    shieldProtecting = watchSnapshot.engineProtecting,
                                     armPhase = armPhase,
                                     armSentence = armSentence,
                                     armResetKey = armAnnulCount,

@@ -67,10 +67,12 @@ import com.example.service.WarrantState
 // The two stale laws stay separate, as they must: the warrant's
 // 45 s monotonic print law (WatchStore.STALE_AFTER_MS) reaches
 // the fold as [BoltInputs.printState] / [BoltInputs.readStale];
-// the shield's 10 s wall beat law is NOT merged into it — the
-// shield-beat input (B-C1's full form) remains owed VM plumbing
-// and is named as such in the closer disposition, never faked
-// here from the warrant's clock.
+// the shield's 10 s beat law (MonolithRepository's
+// SHIELD_GAP_THRESHOLD_MILLIS, over the shield loop's heartbeat)
+// reaches it as [BoltInputs.shieldStale] — B-C1, landed by the
+// DURCH-A4 port pass. Neither law is computed from the other's
+// clock: the host derives each boolean from its own source and
+// the fold only consumes them.
 //
 // The bar takes a 60dp address in the pinned stack (THE BOLT
 // §8.1: housing 53→60dp, FEILE's grid — see SealBarParams), and
@@ -263,11 +265,13 @@ enum class SealBarState {
 
     /** Seal SHUT, pin dropped, lamp DARK, window SHUTTERED
      *  (KRALL K-2's missing face): the session was sealed and
-     *  the raw wire still reads LIVE, but the read has aged past
-     *  the warrant's 45 s print law — it was holding; proof has
-     *  gone dark. Distinct from RUNNING_UNPROVEN in pixels (the
-     *  shutter) and in tense (proof existed and expired, vs
-     *  never proven now). */
+     *  proof has gone dark — either the raw wire still reads
+     *  LIVE but the read has aged past the warrant's 45 s print
+     *  law, or the shield's own beat has died (B-C1: not
+     *  protecting, or heartbeat past the 10 s gap threshold).
+     *  It was holding; proof has gone dark. Distinct from
+     *  RUNNING_UNPROVEN in pixels (the shutter) and in tense
+     *  (proof existed and expired, vs never proven now). */
     STALE,
 
     /** Seal SHUT, pose unchanged (no back-off — pose is truth).
@@ -329,9 +333,16 @@ data class BoltFace(val state: SealBarState, val window: BoltWindow)
  * law), [readStale] is warrantStaleForPrint over it ∧ raw LIVE
  * (kept separate because printState alone cannot distinguish
  * "stale LIVE" from "raw UNPROVEN" — that distinction IS the
- * STALE face). [frozenState] is the seal freeze: it attests the
- * seal act only, carries no read instant, and can never light a
- * lamp by itself (the series law, H-6).
+ * STALE face). [shieldStale] is B-C1's input: the host's
+ * shield-beat verdict — while a session runs, the shield loop
+ * is not protecting, or its heartbeat (WatchStore's
+ * engineHeartbeatMono, stamped by onShieldIteration) is older
+ * than the repository's 10 s shield-gap threshold. It is a
+ * SEPARATE law from [readStale]: a fresh warrant print cannot
+ * cure a dead shield beat, and a live shield beat cannot cure
+ * a stale warrant read. [frozenState] is the seal freeze: it
+ * attests the seal act only, carries no read instant, and can
+ * never light a lamp by itself (the series law, H-6).
  */
 data class BoltInputs(
     val sessionRunning: Boolean,
@@ -339,6 +350,7 @@ data class BoltInputs(
     val hasRead: Boolean,
     val liveRaw: WarrantState?,
     val readStale: Boolean,
+    val shieldStale: Boolean = false,
     val printState: WarrantState?,
     val frozenState: WarrantState?,
     val isStopwatch: Boolean,
@@ -371,7 +383,8 @@ fun endingSoonThresholdFor(
  *
  * detention held → DETENTION_FAULT · live OFF (running) →
  * OFF_WHILE_RUNNING (UNA2-04: frozen never consulted) · stale ∧
- * raw LIVE (running) → STALE · live/print UNPROVEN or frozen ≠
+ * raw LIVE (running) → STALE · shield beat stale (running,
+ * B-C1) → STALE · live/print UNPROVEN or frozen ≠
  * LIVE (running) → RUNNING_UNPROVEN / FLOW_UNPROVEN · stopwatch
  * proven → FLOW · remaining ≤ span-floored threshold →
  * ENDING_SOON · proven timed → RUNNING · idle: OFF → OFF ·
@@ -399,6 +412,17 @@ fun boltStateFor(inputs: BoltInputs): BoltFace {
         // UNPROVEN at this point; readStale is what tells them
         // apart.)
         if (inputs.readStale && inputs.liveRaw == WarrantState.LIVE) {
+            return BoltFace(SealBarState.STALE, BoltWindow.SHUTTERED)
+        }
+        // B-C1 (KANTE, DESIGN §8 — BLOCKING input charge): the
+        // shield beat is dead while a session runs — the loop
+        // stopped protecting, or its heartbeat aged past the
+        // 10 s shield-gap threshold. The warrant read may still
+        // be fresh; it proves the bind, not the shield's beat.
+        // Same shuttered face as warrant-staleness (proof gone
+        // dark while the pose holds), reached by its own row so
+        // the two stale laws never merge into one threshold.
+        if (inputs.shieldStale) {
             return BoltFace(SealBarState.STALE, BoltWindow.SHUTTERED)
         }
         val unproven = !inputs.hasRead ||

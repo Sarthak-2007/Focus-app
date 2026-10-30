@@ -76,8 +76,12 @@ way, not lost.
    the cold-read-of-record require humans + a device. OWED.
 6. **K-8 remainder** — keyframed throw (0/24/62/94), pin-at-seat,
    2 dp SEATED sink: the 50 ms tween stands, named INTERIM in code.
-7. **B-C1 shield-beat form** — the fold reads the warrant's 45 s law
-   only; the shield's 10 s beat input remains owed VM plumbing.
+7. **B-C1 shield-beat form** — ~~the fold reads the warrant's 45 s law
+   only; the shield's 10 s beat input remains owed VM plumbing.~~
+   **LANDED** in the DURCH-A4 re-seat pass (see the addendum below):
+   `BoltInputs.shieldStale`, derived host-side from the WatchStore
+   snapshot's shield heartbeat under the repository's 10 s
+   shield-gap threshold, as its own fold row to STALE.
 8. **REL-TB merge** (K-7 remainder) — bar semantics node + refusal
    sentence node merge: a Deck composition change, still owed.
 9. **K-10** — the Blockit comparison stands downgraded to Sarthak's
@@ -98,3 +102,48 @@ cargo, owned by their own lanes; and merges of since-landed main.
 Nothing on the branch is deleted; the branch stays on the remote.
 
 — DURCH-A4, under DURCH-A, for Ren.
+
+## Addendum — DURCH-A4 re-seat pass (B-C1 landed, CI read)
+
+**Seat:** DURCH-A4 (re-seat; the first port seat's PR #500 was found
+open on arrival, its CI read taken by this seat).
+
+- **B-C1 landed.** `SealBar.kt`: `BoltInputs.shieldStale` (default
+  false, so every existing fold call-site and test constructor is
+  unchanged) + a dedicated fold row — running ∧ shieldStale →
+  STALE / SHUTTERED, placed after the warrant-stale row and before
+  the unproven row, so neither stale law can mask the other.
+  `TactileDeckScreen`: new defaulted params `shieldHeartbeatMono`
+  / `shieldProtecting`; `shieldStale` derived there (running ∧
+  (¬protecting ∨ no beat ∨ beat older than
+  `MonolithRepository.SHIELD_GAP_THRESHOLD_MILLIS`)), re-evaluated
+  on the screen's existing 5 s mono tick — a shield that dies
+  mid-session therefore shutters the window within one tick +
+  the 10 s gap, with no new clock. `MainActivity`: passes
+  `watchSnapshot.engineHeartbeatMono` / `engineProtecting` (the
+  snapshot it already collects). Tests:
+  `SealBarStateTest.runningShieldBeatDeadIsStaleEvenWithAFreshWarrant`
+  (fresh-print STALE, FLOW shuttered, OFF outranks, idle unaffected).
+- **CI read on the port head (859a4912, runs 41061324615 +
+  41061708379):** both failed at `compileDebugKotlin` — and every
+  error is in files this PR does not touch, on code that is
+  identical on live main: `MonolithViewModel.kt:1939`
+  `repository.receiptForSession` unresolved (caller landed without
+  the repository verb; healer PR #496 is open for exactly this) and
+  `MonolithWidgetProvider.kt:95-101`
+  `RoutineSchedule.effectiveNextStartMillis` unresolved (the
+  widget lane's missing verb). Zero errors in `SealBar.kt`,
+  `TactileDeckScreen.kt`, or either #4 test file. This is the
+  known main compile-red set the healers are curing in clusters —
+  it blocks the unit-test read and therefore the merge, and it is
+  named here and on the issue as the exact blocker. The original
+  fold branch's own CI (run 41027303594, a8c3a5ac) did reach
+  Assemble debug SUCCESS + the suite executing, on its older base.
+- **TAP CAN COMMIT** re-verified on this tree by this seat:
+  `SlideToStartView.endDrag` classifies a tap (`isTap`), routes it
+  through `startMesh` → `startSeat` → `latchFrame` →
+  `onSlideCommitted` on a LIVE latch read — a tap commits; the
+  fold neither adds nor removes that path, and the bar itself is
+  not a handle (DESIGN §1/§7.3).
+
+— DURCH-A4 (re-seat), under DURCH-A.

@@ -30,6 +30,7 @@ class SealBarStateTest {
         hasRead: Boolean = true,
         raw: WarrantState? = WarrantState.LIVE,
         stale: Boolean = false,
+        shieldStale: Boolean = false,
         print: WarrantState? = WarrantState.LIVE,
         frozen: WarrantState? = WarrantState.LIVE,
         stopwatch: Boolean = false,
@@ -41,6 +42,7 @@ class SealBarStateTest {
         hasRead = hasRead,
         liveRaw = raw,
         readStale = stale,
+        shieldStale = shieldStale,
         printState = print,
         frozenState = frozen,
         isStopwatch = stopwatch,
@@ -86,6 +88,42 @@ class SealBarStateTest {
         )
         assertEquals(SealBarState.STALE, face.state)
         assertEquals(BoltWindow.SHUTTERED, face.window)
+    }
+
+    // Row 3b — B-C1 (DURCH-A4 port pass): running with a FRESH
+    // warrant print but a dead shield beat folds to STALE, never
+    // RUNNING — the warrant proves the bind, not the shield's
+    // beat, and the two stale laws are not merged: this row
+    // fires with readStale = false and print LIVE.
+    @Test
+    fun runningShieldBeatDeadIsStaleEvenWithAFreshWarrant() {
+        val face = boltStateFor(
+            inputs(running = true, raw = WarrantState.LIVE, stale = false,
+                shieldStale = true, print = WarrantState.LIVE,
+                frozen = WarrantState.LIVE, remaining = 3600, span = 3600)
+        )
+        assertEquals(SealBarState.STALE, face.state)
+        assertEquals(BoltWindow.SHUTTERED, face.window)
+        // Stopwatch sessions shutter the same way — no FLOW lamp
+        // may burn over a dead shield beat.
+        val flow = boltStateFor(
+            inputs(running = true, stopwatch = true, shieldStale = true)
+        )
+        assertEquals(SealBarState.STALE, flow.state)
+        // And the OFF row still outranks it: a live OFF wire is
+        // the open face, not the stale one.
+        val off = boltStateFor(
+            inputs(running = true, raw = WarrantState.OFF,
+                shieldStale = true, print = WarrantState.OFF,
+                frozen = WarrantState.LIVE, remaining = 3600, span = 3600)
+        )
+        assertEquals(SealBarState.OFF_WHILE_RUNNING, off.state)
+        // At idle the shield row does not exist: no session pose
+        // is held, so a dead beat cannot shutter an idle window.
+        val idle = boltStateFor(
+            inputs(running = false, shieldStale = true, frozen = null)
+        )
+        assertEquals(SealBarState.BLOCKING, idle.state)
     }
 
     // Row 4a — running + live UNPROVEN wire (issue #6 C5(b)'s

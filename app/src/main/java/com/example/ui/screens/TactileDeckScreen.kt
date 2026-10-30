@@ -163,6 +163,16 @@ fun TactileDeckScreen(
     appsSplit: com.example.ui.MonolithViewModel.AppsSplit? = null,
     deckWarrant: Warrant? = null,
     sealFreeze: com.example.ui.MonolithViewModel.SealFreeze? = null,
+    // Issue #4 B-C1 (the Bolt fold's shield-beat input): the
+    // shield loop's heartbeat from the host's WatchStore
+    // snapshot — engineHeartbeatMono (elapsedRealtime, stamped
+    // by onShieldIteration) and whether that beat reported the
+    // shield protecting. Defaulted (no beat, not protecting) so
+    // render harnesses keep composing; the fold only reads the
+    // derived staleness while a session runs, and a harness with
+    // no live shield honestly derives stale for a running row.
+    shieldHeartbeatMono: Long = 0L,
+    shieldProtecting: Boolean = false,
     warrantProvider: () -> Warrant = {
         Warrant(
             state = WarrantState.UNPROVEN,
@@ -665,14 +675,24 @@ fun TactileDeckScreen(
     // once) plus the seal freeze and the session facts into
     // BoltInputs, and boltStateFor returns the face. The two stale
     // laws are NOT merged: the fold reads the warrant's 45 s
-    // monotonic print law (printState / warrantStaleForPrint); the
-    // shield's 10 s wall beat law is not an input to this face
-    // (B-C1's shield-beat form remains owed VM plumbing, named in
-    // the closer disposition). B-C2's finish input was already at
+    // monotonic print law (printState / warrantStaleForPrint) AND,
+    // as its own separate input, the shield's 10 s beat law
+    // (B-C1, landed in the DURCH-A4 port pass): while a session
+    // runs, a shield that is not protecting, or whose heartbeat
+    // (onShieldIteration's stamp, re-evaluated on this screen's
+    // 5 s mono tick) is older than the repository's shield-gap
+    // threshold, folds to STALE — a fresh warrant print cannot
+    // cure a dead shield beat. B-C2's finish input was already at
     // this host (finishState / heldFinish) and is now actually
     // passed. APPS keeps its one remaining home in the imprint
     // directly below (HOLLIS H-5: flagged for Ren's ruling — the
     // fold does not read appsCell).
+    val shieldStale = isSessionRunning && (
+        !shieldProtecting ||
+            shieldHeartbeatMono <= 0L ||
+            nowMono - shieldHeartbeatMono >
+                com.example.data.MonolithRepository.SHIELD_GAP_THRESHOLD_MILLIS
+        )
     val boltFace = boltStateFor(
         BoltInputs(
             sessionRunning = isSessionRunning,
@@ -683,6 +703,7 @@ fun TactileDeckScreen(
                 it.state == WarrantState.LIVE &&
                     com.example.service.WatchStore.warrantStaleForPrint(it, nowMono)
             } ?: false,
+            shieldStale = shieldStale,
             printState = warrantPrintState,
             frozenState = frozenState,
             isStopwatch = isStopwatchMode,
