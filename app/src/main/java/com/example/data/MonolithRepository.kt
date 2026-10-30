@@ -3493,6 +3493,13 @@ class MonolithRepository(
     }
 
     /**
+     * Renamed extendActiveSession -> extendActiveSessionByMinutes
+     * (WELLE-7 finisher, PR #399 train): issue #283's same-named
+     * verb (addSeconds: Int = 900) landed on main alongside this
+     * one and the two Int overloads clashed on the JVM signature,
+     * breaking main's compile for every PR. Both verbs keep their
+     * exact semantics; only this one's name changed.
+     *
      * Issue #287 F7: add time to the ACTIVE session — the session
      * verb Forest's extension timer provides and Monolith lacked
      * (the only extend verb was the task's overtime). The new
@@ -3503,7 +3510,7 @@ class MonolithRepository(
      * meaningless). Returns the updated row, or null when no
      * session is active.
      */
-    suspend fun extendActiveSession(extraMinutes: Int): FocusSessionEntity? =
+    suspend fun extendActiveSessionByMinutes(extraMinutes: Int): FocusSessionEntity? =
         withContext(Dispatchers.IO) {
             val active = dao.getActiveSessionSnapshot() ?: return@withContext null
             if (extraMinutes <= 0 || active.isStopwatchMode) return@withContext active
