@@ -80,3 +80,39 @@ and priced for scheduling.
   Intentionality, Synchronous collaboration, Technical execution,
   Interaction-detail, MaxImpl, Improver, Designer) — no distinct ruling
   on a measurement question; covered by the lead. *bundle-covered*
+
+---
+
+# CELL-B ADDENDUM (WELLE-2 surge, Oct 30) — fresh census + first extraction
+
+Re-measured on current main (post-merge 8a407b7, brace-matched census):
+
+| # | Function | FLUT (0a00e95) | CELL-B (current main) | Verdict |
+|---|---|---|---|---|
+| 1 | TactileDeckScreen | 1,008 lines | **102–1166, 1,065 lines, depth 8, 11 LaunchedEffect** | STANDS, grew +57 |
+| 2 | DrawerScreen | 679 lines | **148–885, 738 lines, depth 10** | STANDS, grew +59 |
+| 3 | MonolithRootApp | 721 lines | **190–1043, 854 lines, depth 10, nested closePark/openPark/openFixPane** | STANDS, grew +133 |
+| 4 | ShieldMatrixScreen | 544 lines | **90–788, 699 lines, depth 8** | STANDS, grew +155 |
+| 5 | updateSessionProgress | 169 lines, 5 writes | **2054–2229, 176 lines, exactly 5 dao.updateSession writes** | STANDS |
+
+**Extraction landed in this addendum (finding 4, partial):** the nested
+helper `slipLines(tier)` was hoisted out of ShieldMatrixScreen's body to a
+top-level private function with its three captures (rules, restingFlips,
+allApps) as explicit parameters; all three call sites updated. The
+mid-body nested-helper defect named in the finding is gone and the
+derivation is unit-testable in isolation. The function's overall span is
+unchanged in kind — the remaining catalogue/filter/routine-editor
+sections still live in the one composable.
+
+**Why the rest is not extracted in this pass (exact blockers, unchanged
+from FLUT's pricing, re-confirmed):** each remaining split is a
+behaviour-preserving extraction on a surface other lanes are actively
+reshaping, and the proof standard (identical behaviour) needs CI +
+render-harness comparison per step; CI cycles on this repo run through
+a congested egress and the surge window does not fit 4 sequential
+extract-verify cycles. Prices stand as filed above (0.5–2 builder-days
+each + proof). Sequencing rule stands: splits follow the redesigns of
+these surfaces, never precede them — with the slipLines hoist as the
+exception that proves the rule (a pure derivation, zero behaviour risk).
+
+— CELL-B (WELLE-2)

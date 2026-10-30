@@ -238,34 +238,6 @@ fun ShieldMatrixScreen(
         }
     }
 
-    /** The slip's lines for one section: committed lines in place,
-     *  plus any line resting here after a flip — and a line resting
-     *  elsewhere is suppressed here, so an app is present in exactly
-     *  one section at any instant. */
-    fun slipLines(tier: AppBlockTier): List<SlipLine> {
-        val committed = when (tier) {
-            AppBlockTier.PEEK_2M -> rules.peek
-            AppBlockTier.LOCKED -> rules.shut
-            AppBlockTier.OPEN -> rules.open
-        }
-        val lines = mutableListOf<SlipLine>()
-        for (app in committed) {
-            val resting = restingFlips[app.packageName]
-            if (resting != null && resting.from != tier) continue
-            lines += SlipLine(app = app, word = app.resolvedTier, resting = null)
-        }
-        for ((pkg, resting) in restingFlips) {
-            if (resting.from != tier) continue
-            val app = allApps.firstOrNull { it.packageName == pkg } ?: continue
-            if (app.resolvedTier == tier) continue
-            lines += SlipLine(app = app, word = resting.to, resting = resting)
-        }
-        // AppRules' total order (issue #35): name, then package —
-        // a name tie can never inherit feed/intercept order here.
-        return lines.sortedWith(
-            compareBy<SlipLine> { it.app.appName.lowercase() }.thenBy { it.app.packageName }
-        )
-    }
 
     LazyColumn(
         state = listState,
@@ -472,7 +444,7 @@ fun ShieldMatrixScreen(
                     )
                 }
             }
-            val peekLines = slipLines(AppBlockTier.PEEK_2M)
+            val peekLines = slipLines(AppBlockTier.PEEK_2M, rules, restingFlips, allApps)
             item { SlipSectionHeader(word = "PEEK") }
             if (peekLines.isEmpty()) {
                 item { SlipNoneLine() }
@@ -493,7 +465,7 @@ fun ShieldMatrixScreen(
                     )
                 }
             }
-            val shutLines = slipLines(AppBlockTier.LOCKED)
+            val shutLines = slipLines(AppBlockTier.LOCKED, rules, restingFlips, allApps)
             item { SlipSectionHeader(word = "SHUT") }
             if (shutLines.isEmpty()) {
                 item { SlipNoneLine() }
@@ -520,7 +492,7 @@ fun ShieldMatrixScreen(
             // only by the absence nobody audits. The open rulings are
             // printed like the others; a line tap shuts the app
             // (the book amends in both directions).
-            val openLines = slipLines(AppBlockTier.OPEN)
+            val openLines = slipLines(AppBlockTier.OPEN, rules, restingFlips, allApps)
             item { SlipSectionHeader(word = "OPEN") }
             if (openLines.isEmpty()) {
                 item { SlipNoneLine() }
@@ -1064,6 +1036,45 @@ private data class RestingFlip(
 
 /** One printed line of the book: the app, the ruling word it wears
  *  right now, and its rest state when it is mid-flip. */
+/** Issue #90: hoisted out of ShieldMatrixScreen's body — it was a
+ *  nested local helper defined mid-composable; as a top-level
+ *  function its three captures (rules, restingFlips, allApps) are
+ *  explicit parameters and the derivation is testable in isolation.
+ *
+ *  The slip's lines for one section: committed lines in place,
+ *  plus any line resting here after a flip — and a line resting
+ *  elsewhere is suppressed here, so an app is present in exactly
+ *  one section at any instant. */
+private fun slipLines(
+    tier: AppBlockTier,
+    rules: com.example.data.AppRules,
+    restingFlips: Map<String, RestingFlip>,
+    allApps: List<BlockedAppEntity>
+): List<SlipLine> {
+    val committed = when (tier) {
+        AppBlockTier.PEEK_2M -> rules.peek
+        AppBlockTier.LOCKED -> rules.shut
+        AppBlockTier.OPEN -> rules.open
+    }
+    val lines = mutableListOf<SlipLine>()
+    for (app in committed) {
+        val resting = restingFlips[app.packageName]
+        if (resting != null && resting.from != tier) continue
+        lines += SlipLine(app = app, word = app.resolvedTier, resting = null)
+    }
+    for ((pkg, resting) in restingFlips) {
+        if (resting.from != tier) continue
+        val app = allApps.firstOrNull { it.packageName == pkg } ?: continue
+        if (app.resolvedTier == tier) continue
+        lines += SlipLine(app = app, word = resting.to, resting = resting)
+    }
+    // AppRules' total order (issue #35): name, then package —
+    // a name tie can never inherit feed/intercept order here.
+    return lines.sortedWith(
+        compareBy<SlipLine> { it.app.appName.lowercase() }.thenBy { it.app.packageName }
+    )
+}
+
 private data class SlipLine(
     val app: BlockedAppEntity,
     val word: AppBlockTier,
