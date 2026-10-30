@@ -299,6 +299,8 @@ class MonolithRepository(
         /** Chrome's prefs file + PARK's first-run bit (chrome C4). */
         const val CHROME_PREFS_NAME = "monolith_chrome"
         const val PARK_INTRO_DONE_KEY = "park_intro_done"
+        /** Issue #70 F3: the Deck primer's first-run bit. */
+        const val DECK_PRIMER_DONE_KEY = "deck_primer_done"
 
         /** Audit R1 #41: the shared WallAccrual anchor's disk
          *  home (see seedAccrualFromDisk / persistAccrualAnchor). */
@@ -961,6 +963,20 @@ class MonolithRepository(
     fun parkIntroPending(): Boolean =
         context.getSharedPreferences(CHROME_PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(PARK_INTRO_DONE_KEY, false).not()
+
+    // Issue #70 F3: the Deck primer's gate — the same one-bit
+    // pattern as the PARK intro. Pending until the first session
+    // has ever run; the Deck prints its three lines only while
+    // this is pending (and no session is live and the warrant is
+    // OFF), then never again.
+    fun deckPrimerPending(): Boolean =
+        context.getSharedPreferences(CHROME_PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(DECK_PRIMER_DONE_KEY, false).not()
+
+    fun markDeckPrimerDone() {
+        context.getSharedPreferences(CHROME_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putBoolean(DECK_PRIMER_DONE_KEY, true).apply()
+    }
 
     // ------------------------------------------------------------------
     // THE PRUNE NOTE (Mikro M5): accumulate — read — clear.
