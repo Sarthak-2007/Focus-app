@@ -38,6 +38,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.SystemGuardStatus
+import com.example.data.ClockText
 import com.example.service.UsageAccess
 import com.example.service.WatchStore
 import com.example.ui.ArmPhase
@@ -65,7 +66,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextStyle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
@@ -424,8 +424,8 @@ internal fun seamMarksFor(warrant: Warrant?, nowMono: Long): Pair<String, String
 /** TIME's print (Uma): a pure function of a stored end-milli — the
  *  shipped ever-sliding finish line dies here; nothing about this
  *  text is remembered, and nothing here ticks. */
-internal fun endsAtText(endMillis: Long): String =
-    "ENDS " + SimpleDateFormat("HH:mm", Locale.US).format(Date(endMillis))
+internal fun endsAtText(is24Hour: Boolean, endMillis: Long): String =
+    "ENDS " + ClockText.timeOfDay(is24Hour, endMillis)
 
 /** The imprint's tenant (Emil): the seal keeps its count in every
  *  tense. Idle prints the future ONLY on a LIVE wire — over a dead

@@ -166,7 +166,7 @@ data class FocusTaskEntity(
         }
 
         fun defaultSubStepsForCategory(title: String, category: String): List<TaskSubStep> {
-            return when (category.lowercase()) {
+            return when (category.lowercase(java.util.Locale.ROOT)) {
                 "code" -> listOf(
                     TaskSubStep(0, "Trace base cases & data invariants", false),
                     TaskSubStep(1, "Implement core algorithm logic", false),
@@ -528,7 +528,7 @@ object BlockedBrowserDomains {
      * into a stored domain ("youtube.com/shorts"). Null = not a usable site.
      */
     fun normalizeDomain(raw: String): String? {
-        var d = raw.trim().lowercase()
+        var d = raw.trim().lowercase(java.util.Locale.ROOT)
         if (d.isEmpty()) return null
         d = d.removePrefix("https://").removePrefix("http://")
         d = d.substringBefore('?').substringBefore('#')

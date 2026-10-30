@@ -240,9 +240,9 @@ class TruthCar3InterceptTest {
         // SIL-1 (Hale W-28): timed → the span end; stopwatch → no
         // set end; neither → no line, never an invented end.
         val end = 1_700_000_000_000L
-        assertEquals("SESSION " + endsAtText(end), airlockSessionLine(end, false))
-        assertEquals("SESSION RUNNING · NO SET END", airlockSessionLine(null, true))
-        assertNull(airlockSessionLine(null, false))
+        assertEquals("SESSION " + endsAtText(true, end), airlockSessionLine(true, end, false))
+        assertEquals("SESSION RUNNING · NO SET END", airlockSessionLine(true, null, true))
+        assertNull(airlockSessionLine(true, null, false))
     }
 
     @Test

@@ -41,6 +41,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.CapturedNotificationEntity
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
 import com.example.data.DistractionTriggerReason
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
@@ -240,8 +242,8 @@ internal fun peekCooldownPrint(secondsRemaining: Int): String {
  * [endsAtText]'s instant; a stopwatch states that it has no set
  * end; no session, no line. The door never invents an end.
  */
-internal fun airlockSessionLine(endsAtMillis: Long?, isStopwatch: Boolean): String? = when {
-    endsAtMillis != null -> "SESSION " + endsAtText(endsAtMillis)
+internal fun airlockSessionLine(is24Hour: Boolean, endsAtMillis: Long?, isStopwatch: Boolean): String? = when {
+    endsAtMillis != null -> "SESSION " + endsAtText(is24Hour, endsAtMillis)
     isStopwatch -> "SESSION RUNNING · NO SET END"
     else -> null
 }
@@ -271,12 +273,16 @@ internal fun peekPriceText(cooldownMillis: Long): String {
  *  capture is from today, d MMM · HH:mm when it is not — yesterday's
  *  held rows legitimately sit in this morning's snapshot, and the
  *  AS OF stamp dates the snapshot, not the rows. */
-private fun captureTimeLabel(timestampMillis: Long): String {
+private fun captureTimeLabel(is24Hour: Boolean, timestampMillis: Long): String {
     val zone = java.time.ZoneId.systemDefault()
     val captureDate = java.time.Instant.ofEpochMilli(timestampMillis).atZone(zone).toLocalDate()
-    val pattern = if (captureDate == java.time.LocalDate.now(zone)) "HH:mm" else "d MMM · HH:mm"
-    return java.text.SimpleDateFormat(pattern, java.util.Locale.US)
-        .format(java.util.Date(timestampMillis))
+    // #88: the time half follows the system 12/24-hour setting; the
+    // day half names the day in the device locale when it is not today.
+    return if (captureDate == java.time.LocalDate.now(zone)) {
+        ClockText.timeOfDay(is24Hour, timestampMillis)
+    } else {
+        ClockText.dayAndTime(is24Hour, timestampMillis)
+    }
 }
 
 /**
@@ -336,8 +342,7 @@ fun CapturedNotificationsDigestSheet(
                             Text(
                                 text = rememberMixedTypographyText(
                                     wordPrefix = "HELD · AS OF ",
-                                    monoNumber = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
-                                        .format(java.util.Date(frozenAtMillis)),
+                                    monoNumber = ClockText.timeOfDay(LocalContext.current, frozenAtMillis),
                                     wordColor = scheme.onBackground,
                                     monoColor = scheme.primaryContainer
                                 ),
@@ -415,7 +420,7 @@ fun CapturedNotificationsDigestSheet(
                                 ) {
                                     Text(
                                         text = if (frozenMode) {
-                                            "${item.appName} • ${item.senderTitle} • ${captureTimeLabel(item.timestampMillis)}"
+                                            "${item.appName} • ${item.senderTitle} • ${captureTimeLabel(ClockText.is24Hour(LocalContext.current), item.timestampMillis)}"
                                         } else {
                                             "${item.appName} • ${item.senderTitle}"
                                         },
@@ -629,7 +634,7 @@ fun AirlockInterceptOverlay(
                 // SIL-1 / Hale W-28: under the app name, the door
                 // states the session's end — its own statement,
                 // from the session's own numbers.
-                airlockSessionLine(state.sessionEndsAtMillis, state.sessionIsStopwatch)?.let { line ->
+                airlockSessionLine(ClockText.is24Hour(LocalContext.current), state.sessionEndsAtMillis, state.sessionIsStopwatch)?.let { line ->
                     Text(
                         text = line,
                         fontFamily = AtkinsonHyperlegibleFamily,

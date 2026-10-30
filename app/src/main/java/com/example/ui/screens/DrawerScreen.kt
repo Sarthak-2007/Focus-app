@@ -39,6 +39,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.PaddingValues
 import com.example.data.CurioCatalog
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
 import com.example.data.DayWordStore
 import com.example.data.DrawerDay
 import com.example.data.FocusTaskEntity
@@ -47,7 +49,6 @@ import com.example.data.StoredMonth
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import kotlinx.coroutines.delay
-import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Date
@@ -108,15 +109,15 @@ private fun buildDayGroups(
 
 private fun headingLabel(date: LocalDate, withYear: Boolean): String {
     val pattern = if (withYear) "EEE d MMM yyyy" else "EEE d MMM"
-    return DateTimeFormatter.ofPattern(pattern, Locale.US).format(date).uppercase(Locale.US)
+    return DateTimeFormatter.ofPattern(pattern, Locale.getDefault()).format(date).uppercase(Locale.getDefault())
 }
 
 private fun monthLabel(year: Int, month: Int): String =
-    DateTimeFormatter.ofPattern("MMMM yyyy", Locale.US)
-        .format(LocalDate.of(year, month, 1)).uppercase(Locale.US)
+    DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault())
+        .format(LocalDate.of(year, month, 1)).uppercase(Locale.getDefault())
 
-private fun clockTime(millis: Long): String =
-    SimpleDateFormat("HH:mm", Locale.US).format(Date(millis))
+private fun clockTime(context: android.content.Context, millis: Long): String =
+    ClockText.timeOfDay(context, millis)
 
 /** The app's duration voice for a stored "spent": 45 SEC · 24 MIN · 1H 05M. */
 private fun spentLabel(totalSeconds: Int): String {
@@ -201,9 +202,9 @@ fun DrawerScreen(
         val finishDate = java.time.Instant.ofEpochMilli(detail.completedAtMillis)
             .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
         val dateLine = if (finishDate.year == LocalDate.now().year) {
-            "${headingLabel(finishDate, withYear = false)} · ${clockTime(detail.completedAtMillis)}"
+            "${headingLabel(finishDate, withYear = false)} · ${clockTime(LocalContext.current, detail.completedAtMillis)}"
         } else {
-            "${headingLabel(finishDate, withYear = true)} · ${clockTime(detail.completedAtMillis)}"
+            "${headingLabel(finishDate, withYear = true)} · ${clockTime(LocalContext.current, detail.completedAtMillis)}"
         }
         LazyColumn(
             modifier = Modifier
@@ -872,7 +873,7 @@ private fun DayHeading(
                         color = if (active) scheme.onBackground else scheme.onSurfaceVariant,
                         modifier = Modifier
                             .clickable { onDeclareTodayWord(if (active) null else word) }
-                            .testTag("declare_word_${word.lowercase()}")
+                            .testTag("declare_word_${word.lowercase(java.util.Locale.ROOT)}")
                     )
                 }
             }
@@ -910,7 +911,7 @@ private fun StoredRow(task: FocusTaskEntity, onClick: () -> Unit) {
                 color = scheme.onSurfaceVariant
             )
             Text(
-                text = clockTime(task.completedAtMillis),
+                text = clockTime(LocalContext.current, task.completedAtMillis),
                 fontFamily = AnonymousProFamily,
                 fontSize = 10.5.sp,
                 color = scheme.onSurfaceVariant

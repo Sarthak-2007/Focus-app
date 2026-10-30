@@ -27,10 +27,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.ReceiptState
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.theme.MonolithCurves
-import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
@@ -115,13 +116,13 @@ fun ReceiptSheet(
                 val planned = receipt.plannedSeconds
                 ReceiptMonoLine(
                     text = if (planned != null) {
-                        "ARMED ${hhmm(receipt.armWallMs)} · PLANNED ${longSpan(planned)}"
+                        "ARMED ${hhmm(LocalContext.current, receipt.armWallMs)} · PLANNED ${longSpan(planned)}"
                     } else {
-                        "ARMED ${hhmm(receipt.armWallMs)}"
+                        "ARMED ${hhmm(LocalContext.current, receipt.armWallMs)}"
                     }
                 )
                 ReceiptMonoLine(
-                    text = "ENDED ${hhmm(receipt.endedAtWallMs)} · ${receipt.outcomeWord}"
+                    text = "ENDED ${hhmm(LocalContext.current, receipt.endedAtWallMs)} · ${receipt.outcomeWord}"
                 )
                 receipt.routineLabelWithin?.let { label ->
                     ReceiptMonoLine(text = label)
@@ -138,7 +139,7 @@ fun ReceiptSheet(
                 }
                 receipt.deflections.forEach { d ->
                     ReceiptMonoLine(
-                        text = "${hhmm(d.atWallMillis)} · ${d.appName}",
+                        text = "${hhmm(LocalContext.current, d.atWallMillis)} · ${d.appName}",
                         dim = true
                     )
                 }
@@ -196,8 +197,8 @@ private fun ReceiptMonoLine(text: String, dim: Boolean = false) {
     )
 }
 
-private fun hhmm(wallMillis: Long): String =
-    SimpleDateFormat("HH:mm", Locale.US).format(Date(wallMillis))
+private fun hhmm(context: android.content.Context, wallMillis: Long): String =
+    ClockText.timeOfDay(context, wallMillis)
 
 /** The long-form dialect (F-W1): `50 MIN`, `1H 00M` — the same
  *  span classes the Deck's hero prints, never the short form. */

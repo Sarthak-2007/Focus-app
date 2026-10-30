@@ -349,8 +349,8 @@ class MonolithAccessibilityService : AccessibilityService() {
 
     private fun isSelectedBottomTabShortsOrReels(node: AccessibilityNodeInfo?): Boolean {
         if (node == null) return false
-        val desc = node.contentDescription?.toString()?.trim()?.lowercase() ?: ""
-        val text = node.text?.toString()?.trim()?.lowercase() ?: ""
+        val desc = node.contentDescription?.toString()?.trim()?.lowercase(java.util.Locale.ROOT) ?: ""
+        val text = node.text?.toString()?.trim()?.lowercase(java.util.Locale.ROOT) ?: ""
         if (node.isSelected && (
                 desc == "shorts" || desc == "reels" ||
                     text == "shorts" || text == "reels" ||
@@ -393,7 +393,7 @@ class MonolithAccessibilityService : AccessibilityService() {
                 for (node in nodes) {
                     // Do NOT trigger while the address bar is focused and the user is actively typing
                     if (node.isFocused) continue
-                    val urlText = node.text?.toString()?.lowercase() ?: continue
+                    val urlText = node.text?.toString()?.lowercase(java.util.Locale.ROOT) ?: continue
                     val matched = matchBlockedDomain(urlText, domains)
                     if (matched != null) return matched
                 }
@@ -410,7 +410,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         for (i in 0 until node.childCount) {
             sb.append(collectWindowTextLowercase(node.getChild(i), depth + 1))
         }
-        return sb.toString().lowercase()
+        return sb.toString().lowercase(java.util.Locale.ROOT)
     }
 
     private fun launchInterceptScreen(

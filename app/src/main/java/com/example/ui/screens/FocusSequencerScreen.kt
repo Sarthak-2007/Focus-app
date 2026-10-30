@@ -48,6 +48,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.FocusTaskEntity
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
 import com.example.service.TactileSoundEngine
 import com.example.ui.components.BlockitActionChip
 import com.example.ui.components.inkControlFill
@@ -342,8 +344,7 @@ fun FocusSequencerScreen(
                     )
                     Text(
                         text = "FINISHED ${
-                            java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
-                                .format(java.util.Date(lastFinished.completedAtMillis))
+                            ClockText.timeOfDay(LocalContext.current, lastFinished.completedAtMillis)
                         }",
                         fontFamily = AnonymousProFamily,
                         fontSize = 10.5.sp,

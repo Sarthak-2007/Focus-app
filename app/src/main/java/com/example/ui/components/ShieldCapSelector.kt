@@ -1,4 +1,6 @@
 package com.example.ui.components
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
@@ -82,8 +84,14 @@ fun ShieldCapSelector(
     ) {
         val pad = 3.dp
         val cellW = (maxWidth - pad * 2) / 3
+        // #88: the word Row and the tap zones mirror in RTL, but a
+        // physical offset(x) does not — in an RTL locale the cap sat
+        // over the WRONG word while the mirrored zones fired the
+        // original index. Mirror the travel: LTR formula untouched.
+        val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
         val capOffset by animateDpAsState(
-            targetValue = pad + cellW * selectedIndex,
+            targetValue = if (isRtl) maxWidth - pad - cellW * (selectedIndex + 1)
+                          else pad + cellW * selectedIndex,
             animationSpec = MonolithCurves.specA(260),
             label = "capTravel"
         )
