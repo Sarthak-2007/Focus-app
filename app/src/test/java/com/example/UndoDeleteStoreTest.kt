@@ -7,6 +7,7 @@ import com.example.data.TaskQueueStatus
 import com.example.data.UndoDeleteStore
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -45,19 +46,81 @@ class UndoDeleteStoreTest {
     fun roundTrip_restoresEveryField() {
         store.clear()
         val original = task()
-        store.save(original, deletedAtWallMillis = 9_876_000L)
+        // Audit R1 #41: save reports commit()'s verdict.
+        assertTrue(
+            store.save(
+                original,
+                deletedAtWallMillis = 9_876_000L,
+                deletedAtElapsedMillis = 555_000L
+            )
+        )
 
         // A fresh store instance — the process-death read path.
         val restored = UndoDeleteStore(context).load()
         assertEquals(original, restored?.first)
         assertEquals(9_876_000L, restored?.second)
+        assertEquals(555_000L, restored?.third)
     }
 
     @Test
     fun clear_leavesNothingToRevive() {
-        store.save(task(), deletedAtWallMillis = 1L)
+        store.save(task(), deletedAtWallMillis = 1L, deletedAtElapsedMillis = 1L)
         store.clear()
         assertNull(store.load())
+    }
+
+    /**
+     * Audit R1 #41: the window is judged on the monotonic stamp
+     * when it survives — the wall clock only across a reboot.
+     */
+    @Test
+    fun remaining_judgedByMonotonicClock_whenStampUsable() {
+        // Wall rolled BACK an hour; monotonic says 6 s passed:
+        // the undo stays expired (wall alone resurrected it).
+        assertTrue(
+            UndoDeleteStore.remainingMillis(
+                deletedAtWallMillis = 10_000_000L,
+                deletedAtElapsedMillis = 500_000L,
+                nowWallMillis = 10_000_000L - 3_600_000L,
+                nowElapsedMillis = 506_000L
+            ) < 0L
+        )
+        // Wall jumped FORWARD an hour; monotonic says 2 s
+        // passed: the undo stays alive (wall alone stole it).
+        assertEquals(
+            3_000L,
+            UndoDeleteStore.remainingMillis(
+                deletedAtWallMillis = 10_000_000L,
+                deletedAtElapsedMillis = 500_000L,
+                nowWallMillis = 10_000_000L + 3_600_000L,
+                nowElapsedMillis = 502_000L
+            )
+        )
+    }
+
+    @Test
+    fun remaining_fallsBackToWall_acrossRebootOrLegacy() {
+        // New boot: the monotonic stamp lies AHEAD of the fresh
+        // monotonic clock — unusable; the wall clock judges.
+        assertEquals(
+            3_000L,
+            UndoDeleteStore.remainingMillis(
+                deletedAtWallMillis = 10_000_000L,
+                deletedAtElapsedMillis = 900_000L,
+                nowWallMillis = 10_002_000L,
+                nowElapsedMillis = 2_000L
+            )
+        )
+        // A pre-monotonic copy (stamp -1): wall judges, and an
+        // expired window stays expired.
+        assertTrue(
+            UndoDeleteStore.remainingMillis(
+                deletedAtWallMillis = 10_000_000L,
+                deletedAtElapsedMillis = -1L,
+                nowWallMillis = 10_006_000L,
+                nowElapsedMillis = 2_000L
+            ) < 0L
+        )
     }
 
     @Test

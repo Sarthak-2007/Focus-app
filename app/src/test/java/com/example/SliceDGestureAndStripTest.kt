@@ -213,15 +213,15 @@ class StripDerivationsTest {
         // state; over a wire that reads OFF at the print instant
         // the words stand but carry their tense — " · AS SEALED".
         assertEquals(
-            "7 HELD",
+            "7 HELD · THIS PHONE ONLY",
             imprintTenantText(true, 7, 0, WarrantState.OFF)
         )
         assertEquals(
-            "1 HELD",
+            "1 HELD · THIS PHONE ONLY",
             imprintTenantText(true, 1, 0, WarrantState.LIVE)
         )
         assertEquals(
-            "7 HELD · AS SEALED",
+            "7 HELD · THIS PHONE ONLY · AS SEALED",
             imprintTenantText(true, 7, 0, WarrantState.LIVE, wireNow = WarrantState.OFF)
         )
         assertNull(imprintTenantText(true, null, 0, WarrantState.LIVE))
@@ -251,7 +251,7 @@ class StripDerivationsTest {
             imprintTenantText(false, 3, 2, WarrantState.LIVE)
         )
         assertEquals(
-            "3 HELD · 2 PEEK",
+            "3 HELD · 2 PEEK · THIS PHONE ONLY",
             imprintTenantText(true, 3, 2, WarrantState.LIVE)
         )
         assertEquals(
@@ -264,7 +264,7 @@ class StripDerivationsTest {
             imprintTenantText(false, 0, 1, WarrantState.LIVE)
         )
         assertEquals(
-            "3 PEEK",
+            "3 PEEK · THIS PHONE ONLY",
             imprintTenantText(true, 0, 3, WarrantState.LIVE)
         )
         assertNull(imprintTenantText(false, 0, 0, WarrantState.LIVE))

@@ -90,6 +90,30 @@ data class PruneNote(
     val rulesRemoved: Boolean
 )
 
+/** Issue #99 F1: how long after a peek lease's end its package still
+ *  counts as "just expired" for eviction purposes. The shield polls
+ *  every 2s, so this only needs to cover the first polls after
+ *  expiry; 15 minutes is generous without resurrecting old leases. */
+const val EXPIRED_PEEK_EVICTION_WINDOW_MILLIS = 15 * 60 * 1000L
+
+/**
+ * Issue #99 F1 (pure, unit-tested): the packages whose peek lease
+ * has expired inside the eviction window — lease end recorded,
+ * in the past, and not so far in the past that the row is history.
+ * A lease end of 0 (never leased / already closed) never qualifies.
+ */
+internal fun expiredPeekPackages(
+    apps: List<BlockedAppEntity>,
+    nowMono: Long,
+    windowMillis: Long = EXPIRED_PEEK_EVICTION_WINDOW_MILLIS
+): Set<String> = apps
+    .filter { app ->
+        val end = app.activePeekUntilElapsedRealtime
+        end > 0L && end <= nowMono && (nowMono - end) <= windowMillis
+    }
+    .map { it.packageName }
+    .toSet()
+
 class MonolithRepository(
     private val context: Context,
     private val dao: MonolithDao
@@ -153,6 +177,14 @@ class MonolithRepository(
         const val CHROME_PREFS_NAME = "monolith_chrome"
         const val PARK_INTRO_DONE_KEY = "park_intro_done"
 
+        /** Audit R1 #41: the shared WallAccrual anchor's disk
+         *  home (see seedAccrualFromDisk / persistAccrualAnchor). */
+        const val ACCRUAL_PREFS_NAME = "monolith_wall_accrual"
+        const val ACCRUAL_KEY_SESSION = "session_id"
+        const val ACCRUAL_KEY_TASK = "task_id"
+        const val ACCRUAL_KEY_MONO = "last_mono_millis"
+        const val ACCRUAL_KEY_BOOT = "boot_count"
+
         /** The closed declared-word list (DayWordStore.WORDS).
          *  Never TEST: the drain refuses any other word, so no
          *  test-day row can ever reach `day_notes`. */
@@ -191,6 +223,27 @@ class MonolithRepository(
         const val APP_LIST_PREFS_NAME = "monolith_app_list"
         const val PRUNE_NOTE_COUNT_KEY = "prune_note_count"
         const val PRUNE_NOTE_RULES_KEY = "prune_note_rules_removed"
+
+        /** The catalog memory (Wave 3, issue #34): the two-strike
+         *  strike set and the pruned-rule tombstones, in the same
+         *  prefs file — the schema stays frozen at v12, and a
+         *  ruling's survival needs no column in the table it left.
+         *  ABSENT_ONCE: packages absent at the last sync (a prune
+         *  needs a second consecutive absence). REMEMBERED_RULES:
+         *  "pkg|TIER|limit" strings for pruned rows, restored
+         *  ahead of factory presets if the package returns. */
+        const val ABSENT_ONCE_KEY = "catalog_absent_once"
+        const val REMEMBERED_RULES_KEY = "catalog_remembered_rules"
+
+        /** When the last catalog sync COMPLETED (wall millis,
+         *  fresh-eyes L3): the anchor of the collapse window —
+         *  a non-forced sync inside
+         *  [AppCatalogReconcile.SYNC_COLLAPSE_WINDOW_MILLIS] of
+         *  this instant is the same look repeating itself and
+         *  returns without touching the strike set. Stamped only
+         *  after a reconcile actually ran (a failed/empty query
+         *  is not a successful sync and starts no window). */
+        const val LAST_CATALOG_SYNC_KEY = "catalog_last_sync_ms"
     }
 
     /** The seal marker's session id, or -1 when no seal has ever
@@ -213,7 +266,9 @@ class MonolithRepository(
         return if (legacy >= 0) fromSet + legacy else fromSet
     }
 
-    suspend fun ensureSeededAndSyncPackages() = withContext(Dispatchers.IO) {
+    suspend fun ensureSeededAndSyncPackages(
+        forceCatalogSync: Boolean = false
+    ) = withContext(Dispatchers.IO) {
         seedMutex.withLock {
         if (dao.getAllSitesSnapshot().isEmpty()) {
             dao.insertSites(BlockedBrowserDomains.defaultDomains.map { BlockedSiteEntity(it) })
@@ -227,6 +282,12 @@ class MonolithRepository(
         // reseed transform once (Sten §2).
         if (dao.getAllRoutinesSnapshot().isEmpty()) {
             dao.insertRoutines(routineTargets())
+            // R3b #161 (update-day): an empty routines table means
+            // this install has never seeded — a first install, a
+            // wiped phone and a new phone are indistinguishable from
+            // inside, so the seed owes the user one honest sentence
+            // at first open instead of a silent factory state.
+            InstallNoteStore(context).markFreshStart()
             val fresh = dao.getGuardSettingsSnapshot()
             if (fresh != null && !fresh.routineReseedV1Done) {
                 dao.insertGuardSettings(
@@ -237,11 +298,35 @@ class MonolithRepository(
             reseedRoutinesV1()
         }
         try {
+            // THE COLLAPSE GUARD (fresh-eyes L3): the two-strike
+            // prune is only as honest as the distance between the
+            // strikes. The ViewModel's init calls this sync and
+            // then its guard refresh calls it AGAIN seconds later
+            // (PARK's open does the same) — identical
+            // PackageManager state, so one transiently-filtered
+            // cold-start query used to satisfy both strikes in a
+            // single launch and prune. A non-forced call inside
+            // the window after a completed sync therefore skips
+            // the reconcile entirely: it touches no strikes, files
+            // no tombstones, prunes nothing. The rest of this
+            // seeding pass (sites, profiles, tasks, the day-word
+            // drain) is idempotent and still runs. A forced call,
+            // and any call after the window, is a genuinely
+            // separate look and reconciles normally.
+            val collapseRepeat = !forceCatalogSync &&
+                AppCatalogReconcile.isCollapseRepeat(
+                    lastSuccessfulSyncMillis = loadLastCatalogSyncMillis(),
+                    nowMillis = System.currentTimeMillis()
+                )
             val pm = context.packageManager
             val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
                 addCategory(Intent.CATEGORY_LAUNCHER)
             }
             val resolvedList = pm.queryIntentActivities(mainIntent, 0)
+            // The main activity per package (its launch intent's
+            // component), resolved once per package — the reconcile's
+            // dedupe rule lets it win over shortcut activities.
+            val mainActivityByPackage = mutableMapOf<String, String?>()
             val installed = resolvedList.mapNotNull { resolveInfo ->
                 val pkg = resolveInfo.activityInfo?.packageName ?: return@mapNotNull null
                 if (pkg == context.packageName || pkg.startsWith("com.android.settings")) {
@@ -249,30 +334,45 @@ class MonolithRepository(
                 }
                 val label = resolveInfo.loadLabel(pm)?.toString()
                     ?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                InstalledPackage(pkg, label)
+                val mainActivity = mainActivityByPackage.getOrPut(pkg) {
+                    runCatching {
+                        pm.getLaunchIntentForPackage(pkg)?.component?.className
+                    }.getOrNull()
+                }
+                InstalledPackage(
+                    pkg, label,
+                    isMainActivity = mainActivity != null &&
+                        mainActivity == resolveInfo.activityInfo?.name
+                )
             }
             // THE CATALOG IS THE PHONE'S TRUTH (Ordner lane, Sarthak's
             // complaint Oct 29 22:40: the list carried apps he never
             // installed). There is no blind factory seed any more:
-            // this sync reconciles the table to exactly the installed
-            // launchable set — rows for absent packages are PRUNED,
-            // present packages are discovered without a cap, and the
+            // this sync reconciles the table to the installed
+            // launchable set — rows for packages absent on TWO
+            // consecutive syncs are PRUNED (with their rulings filed
+            // in the catalog memory first, issue #34), present
+            // packages are discovered without a cap, and the
             // factory presets survive only as birth rules applied to
             // packages that actually exist on this phone. An empty
             // query result can only mean the query failed (the
             // <queries> declaration in the manifest makes every
             // launcher app visible), so an empty result skips the
             // reconcile entirely rather than pruning his rules away.
-            if (installed.isNotEmpty()) {
+            if (installed.isNotEmpty() && !collapseRepeat) {
                 val existingRows = dao.getAllAppsSnapshot()
                 val plan = AppCatalogReconcile.reconcile(
                     existing = existingRows,
                     installed = installed,
                     usageMinutes = queryRealTodayUsageMinutes(),
-                    categorize = ::categorizePackage
+                    categorize = ::categorizePackage,
+                    previouslyAbsent = loadAbsentOnce(),
+                    rememberedRules = loadRememberedRules()
                 )
                 if (plan.toInsert.isNotEmpty()) {
                     dao.insertApps(plan.toInsert)
+                    // A restored package's tombstone is spent.
+                    forgetRememberedRules(plan.toInsert.map { it.packageName })
                 }
                 plan.usageUpdates.forEach { dao.updateApp(it) }
                 if (plan.toPrune.isNotEmpty()) {
@@ -284,6 +384,10 @@ class MonolithRepository(
                     val prunedRows = existingRows.filter {
                         it.packageName in plan.toPrune
                     }
+                    // Issue #34: file the rulings BEFORE the rows
+                    // leave, so a returning package is reborn with
+                    // its own ruling, never a silent OPEN.
+                    rememberPrunedRules(prunedRows)
                     recordPruneNote(
                         appsRemoved = prunedRows.size,
                         rulesRemoved = prunedRows.any {
@@ -292,6 +396,16 @@ class MonolithRepository(
                     )
                     dao.deleteAppsByPackage(plan.toPrune)
                 }
+                // The strike set for the next sync: only packages
+                // absent for the FIRST time here. A package absent
+                // twice has been pruned above; one present again
+                // clears itself by not being absent.
+                saveAbsentOnce(plan.pendingPrune.toSet())
+                // The sync completed: this instant anchors the
+                // collapse window (L3). Only a reconcile that
+                // actually ran earns the stamp — an empty query
+                // above is a failed look and starts no window.
+                saveLastCatalogSyncMillis(System.currentTimeMillis())
             }
         } catch (_: Exception) {
             // Safe fallback if package querying is restricted
@@ -515,6 +629,67 @@ class MonolithRepository(
             .apply()
     }
 
+    // ------------------------------------------------------------------
+    // THE CATALOG MEMORY (issue #34): strike set + rule tombstones.
+    // ------------------------------------------------------------------
+
+    private fun loadLastCatalogSyncMillis(): Long =
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .getLong(LAST_CATALOG_SYNC_KEY, 0L)
+
+    private fun saveLastCatalogSyncMillis(millis: Long) {
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putLong(LAST_CATALOG_SYNC_KEY, millis).apply()
+    }
+
+    private fun loadAbsentOnce(): Set<String> =
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .getStringSet(ABSENT_ONCE_KEY, emptySet())
+            ?.toSet() ?: emptySet()
+
+    private fun saveAbsentOnce(packages: Set<String>) {
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putStringSet(ABSENT_ONCE_KEY, packages).apply()
+    }
+
+    /** Remembered rulings, decoded: "pkg|TIER|limit" per entry.
+     *  A malformed entry is skipped, never fatal. */
+    private fun loadRememberedRules(): Map<String, AppRulePreset> {
+        val raw = context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .getStringSet(REMEMBERED_RULES_KEY, emptySet()) ?: emptySet()
+        return raw.mapNotNull { entry ->
+            val parts = entry.split("|")
+            if (parts.size != 3) return@mapNotNull null
+            val tier = runCatching { AppBlockTier.valueOf(parts[1]) }.getOrNull()
+                ?: return@mapNotNull null
+            val limit = parts[2].toIntOrNull() ?: return@mapNotNull null
+            parts[0] to AppRulePreset(tier, limit)
+        }.toMap()
+    }
+
+    private fun rememberPrunedRules(rows: List<BlockedAppEntity>) {
+        if (rows.isEmpty()) return
+        val prefs = context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+        val kept = (prefs.getStringSet(REMEMBERED_RULES_KEY, emptySet()) ?: emptySet())
+            .filter { entry -> rows.none { it.packageName == entry.substringBefore("|") } }
+        val encoded = rows.map {
+            "${it.packageName}|${it.resolvedTier.name}|${it.dailyLimitMinutes}"
+        }
+        prefs.edit()
+            .putStringSet(REMEMBERED_RULES_KEY, (kept + encoded).toSet())
+            .apply()
+    }
+
+    private fun forgetRememberedRules(packages: List<String>) {
+        if (packages.isEmpty()) return
+        val prefs = context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getStringSet(REMEMBERED_RULES_KEY, emptySet()) ?: return
+        val kept = raw.filter { it.substringBefore("|") !in packages }
+        if (kept.size != raw.size) {
+            prefs.edit().putStringSet(REMEMBERED_RULES_KEY, kept.toSet()).apply()
+        }
+    }
+
     fun markParkIntroDone() {
         context.getSharedPreferences(CHROME_PREFS_NAME, Context.MODE_PRIVATE)
             .edit().putBoolean(PARK_INTRO_DONE_KEY, true).apply()
@@ -539,7 +714,13 @@ class MonolithRepository(
     // (AppCatalogReconcile.kt) so it is unit-testable; this stays
     // as the reconcile's categorize seam. (Issue #107's top-level
     // categorizePackage in the same file delegates to it too —
-    // one classifier, two seams, no drift.)
+    // one classifier, two seams, no drift.) Fresh-eyes L2's
+    // whole-token matching lives in that same classifier — the
+    // old substring matcher here called the Play Store a game.
+    // Survivor safety, verified for L2: reconcile copies ONLY
+    // this category (plus label and usage) onto an existing row;
+    // a survivor's tier and limit are never re-priced by a sync,
+    // so a corrected category can never move an existing ruling.
     private fun categorizePackage(pkg: String, label: String): AppCategory =
         AppCategorizer.categorize(pkg, label)
 
@@ -551,8 +732,17 @@ class MonolithRepository(
             val end = System.currentTimeMillis()
             val start = end - (12 * 60 * 60 * 1000L)
             val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end)
-            stats?.associate {
-                it.packageName to ((it.totalTimeInForeground / 60_000L).toInt().coerceAtLeast(0))
+            // Fix 4: buckets SUM per package (the pure
+            // AppCatalogReconcile.aggregateUsageMinutes) — the
+            // old associate{} kept only the last bucket and
+            // under-reported any multi-bucket app.
+            stats?.let { rows ->
+                AppCatalogReconcile.aggregateUsageMinutes(
+                    rows.map {
+                        it.packageName to
+                            ((it.totalTimeInForeground / 60_000L).toInt().coerceAtLeast(0))
+                    }
+                )
             } ?: emptyMap()
         } catch (_: Exception) {
             emptyMap()
@@ -576,7 +766,23 @@ class MonolithRepository(
         }
     }
 
-    fun queryForegroundBlockedApp(blockedPackages: Set<String>): String? {
+    fun queryForegroundBlockedApp(blockedPackages: Set<String>): String? =
+        queryForegroundBlockedApp(blockedPackages, emptySet())
+
+    /**
+     * Issue #99 F1: packages whose peek lease has JUST expired. A
+     * stay-put user inside the peeked app has a [lastTimeUsed] from
+     * when the app was opened — minutes stale by expiry — so the
+     * ordinary 8-second freshness filter is structurally blind to
+     * exactly the user the expiry must evict. For a package in
+     * [expiredPeekPackages] the freshness filter is waived and the
+     * usage window widened: the package is treated as
+     * foreground-blocked on this poll regardless of lastTimeUsed age.
+     */
+    fun queryForegroundBlockedApp(
+        blockedPackages: Set<String>,
+        expiredPeekPackages: Set<String>
+    ): String? {
         if (!hasUsageStatsPermission() || blockedPackages.isEmpty()) return null
         if (isPhoneOrVoipCallActive()) return null
         return try {
@@ -585,9 +791,14 @@ class MonolithRepository(
             val end = System.currentTimeMillis()
             val start = end - 15_000L
             val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end)
+                ?: return null
+            val expiredHit = stats
+                .filter { it.packageName in expiredPeekPackages && it.packageName in blockedPackages }
+                .maxByOrNull { it.lastTimeUsed }
+            if (expiredHit != null) return expiredHit.packageName
             val recent = stats
-                ?.filter { it.packageName in blockedPackages && it.lastTimeUsed >= (end - 8_000L) }
-                ?.maxByOrNull { it.lastTimeUsed }
+                .filter { it.packageName in blockedPackages && it.lastTimeUsed >= (end - 8_000L) }
+                .maxByOrNull { it.lastTimeUsed }
             recent?.packageName
         } catch (_: Exception) {
             null
@@ -685,6 +896,35 @@ class MonolithRepository(
      *  Drawer cabinet's forged state (chrome C10). */
     suspend fun forgedArtifactIds(): Set<String> =
         dao.getForgedArtifactIds().toSet()
+
+    /**
+     * The cabinet's forge record per artifact (Issue #110,
+     * finding 5): how many sessions forged each id, and the most
+     * recent forge instant. Computed from the session rows the
+     * app already stores — forgedArtifactId plus the row's end
+     * stamp (falling back to its start for pre-v11 rows) — so no
+     * new storage is needed; the old DISTINCT read collapsed all
+     * of this away. The Partial Stamp's id is counted here too:
+     * it is a real stamp on real sessions, and the cabinet now
+     * carries a catalog entry for it.
+     */
+    suspend fun forgeStats(): Map<String, ForgeStat> {
+        val stats = mutableMapOf<String, ForgeStat>()
+        for (session in dao.getSessionHistorySnapshot()) {
+            val artifactId = session.forgedArtifactId ?: continue
+            val forgedAt = if (session.endWallMillis > 0L) {
+                session.endWallMillis
+            } else {
+                session.startWallTimeMillis
+            }
+            val prev = stats[artifactId]
+            stats[artifactId] = ForgeStat(
+                count = (prev?.count ?: 0) + 1,
+                lastForgedAtMillis = maxOf(prev?.lastForgedAtMillis ?: 0L, forgedAt)
+            )
+        }
+        return stats
+    }
 
     fun hasOverlayPermission(): Boolean {
         return try {
@@ -939,7 +1179,29 @@ class MonolithRepository(
         dao.markRoutineReseedV1Done()
     }
 
-    /** Any routine edit dismisses the reset note (Freya §3.3). */
+    // -- Install-day disclosures (R3b #161) ----------------------
+
+    fun freshStartNotePending(): Boolean = InstallNoteStore(context).freshStartPending()
+
+    fun dismissFreshStartNote() = InstallNoteStore(context).dismissFreshStart()
+
+    /** Registers this open against the version this phone last
+     *  opened; true when an update landed since. */
+    fun registerInstallOpen(): Boolean {
+        val version = runCatching {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
+        }.getOrDefault(0L)
+        return InstallNoteStore(context).registerOpen(version)
+    }
+
+    fun updateNotePending(): Boolean = InstallNoteStore(context).updatePending()
+
+    fun dismissUpdateNote() = InstallNoteStore(context).dismissUpdate()
+
+    /** The reset note is dismissed ONLY by the user's own tap on
+     *  it — never by obeying it (R3b #161: an edit used to erase
+     *  the only record that a reset happened). */
     suspend fun dismissRoutineResetNote() {
         val settings = dao.getGuardSettingsSnapshot() ?: return
         if (!settings.routineReseedNoteDismissed) {
@@ -1507,7 +1769,12 @@ class MonolithRepository(
      * prints. Valve / grace / early endings never call this —
      * they publish nothing and leave no gap in the sequence.
      */
-    suspend fun claimReceiptNumber(sessionId: Int, outcomeWord: String): Int {
+    suspend fun claimReceiptNumber(
+        sessionId: Int,
+        outcomeWord: String,
+        faulted: Boolean = false,
+        faultWallMillis: Long = 0L
+    ): Int {
         val database = MonolithDatabase.getInstance(context)
         return database.withTransaction {
             // Seed-if-absent INSIDE the transaction: the claim's
@@ -1530,9 +1797,21 @@ class MonolithRepository(
             // files. The row ends the coincidence.)
             val row = dao.getSessionById(sessionId)
             if (row != null && row.receiptNumber > 0) {
+                // Audit R1 #40: the release-fault stamp rides the
+                // claim transaction even on the latch path — a
+                // faulted publish must never leave a claimed
+                // receipt whose fault record a crash could strand
+                // (rehydration reads releaseFaultShield as the
+                // receipt's faulted flag, forever).
+                if (faulted && !row.releaseFaultShield) {
+                    dao.stampReleaseFault(sessionId, faultWallMillis)
+                }
                 return@withTransaction row.receiptNumber
             }
             if (settings.lastReceiptSessionId == sessionId && settings.receiptSequence > 0) {
+                if (faulted && row != null && !row.releaseFaultShield) {
+                    dao.stampReleaseFault(sessionId, faultWallMillis)
+                }
                 return@withTransaction settings.receiptSequence
             }
             val next = settings.receiptSequence + 1
@@ -1550,6 +1829,15 @@ class MonolithRepository(
             // back together, so a № can never exist without its
             // row wearing it.
             dao.stampReceiptNumber(sessionId, next)
+            // Audit R1 #40: the fault stamp joins the same
+            // transaction — claim, № stamp and fault record now
+            // commit or roll back as ONE act. (publishReceipt used
+            // to stamp the fault in a separate write after the
+            // claim; a crash in the gap left a claimed receipt
+            // whose faulted flag rehydrated as false forever.)
+            if (faulted) {
+                dao.stampReleaseFault(sessionId, faultWallMillis)
+            }
             next
         }
     }
@@ -1731,17 +2019,30 @@ class MonolithRepository(
         val row = dao.getSessionById(pending.sessionId) ?: return null
         val isSleep = row.routineId?.let { dao.getRoutineById(it)?.loadoutName } ==
             SmartLoadout.SLEEP.name
-        val kindNow = finishKindOf(row, isSleep, System.currentTimeMillis()) ?: return null
+        // Audit R1 #40 (publish side): the stand-down was already
+        // classified at E0; a wall-clock rollback in the seconds
+        // since must not refuse its publish. Judge the stand-down
+        // on the floored clock, max(now, windowEnd) — the same
+        // floor rehydrateReceipt applies to claimed rows.
+        val judgeNow = if (pending.kind == FinishKind.ROUTINE_SLEEP_STANDDOWN) {
+            maxOf(System.currentTimeMillis(), row.windowEndMillis)
+        } else {
+            System.currentTimeMillis()
+        }
+        val kindNow = finishKindOf(row, isSleep, judgeNow) ?: return null
         if (kindNow != pending.kind) return null
         // The once-gate (Zettel Z1): a session whose receipt
         // already stands publishes nothing twice — the claim's
         // latch alone would hand back the standing № and let a
         // second slip be built over it.
         if (standingReceipt()?.second == pending.sessionId) return null
-        val number = claimReceiptNumber(pending.sessionId, pending.outcomeWord)
-        if (faulted) {
-            dao.stampReleaseFault(pending.sessionId, System.currentTimeMillis())
-        }
+        // Audit R1 #40: the fault stamp is part of the claim
+        // transaction now (see claimReceiptNumber) — no separate
+        // post-claim write exists for a crash to strand.
+        val number = claimReceiptNumber(
+            pending.sessionId, pending.outcomeWord,
+            faulted = faulted, faultWallMillis = System.currentTimeMillis()
+        )
         return ReceiptState(
             sessionId = pending.sessionId,
             number = number,
@@ -1785,7 +2086,19 @@ class MonolithRepository(
         if (row.isActive) return null
         val isSleep = row.routineId?.let { dao.getRoutineById(it)?.loadoutName } ==
             SmartLoadout.SLEEP.name
-        val kind = finishKindOf(row, isSleep, System.currentTimeMillis()) ?: return null
+        // Audit R1 #40: a CLAIMED receipt (the row wears its №)
+        // is durable proof the finish fired — a wall-clock
+        // rollback must not un-finish it. For claimed rows the
+        // predicate's clock is floored at the row's own window
+        // end, so the SLEEP stand-down's `windowEndMillis <= now`
+        // gate can never swing shut behind a rollback. Unclaimed
+        // rows keep the raw wall clock: nothing is owed them.
+        val judgeNow = if (row.receiptNumber > 0) {
+            maxOf(System.currentTimeMillis(), row.windowEndMillis)
+        } else {
+            System.currentTimeMillis()
+        }
+        val kind = finishKindOf(row, isSleep, judgeNow) ?: return null
         val endedAt = if (row.routineId != null && row.windowEndMillis > 0L) {
             row.windowEndMillis
         } else {
@@ -1823,11 +2136,35 @@ class MonolithRepository(
     suspend fun latchShieldGapIfStale(nowWallMillis: Long): Boolean {
         val active = dao.getActiveSessionSnapshot() ?: return false
         if (active.shieldGapSeen || active.outcome.isNotEmpty()) return false
-        val beatRef = maxOf(active.shieldLastBeatWallMillis, active.startWallTimeMillis)
+        // Audit R2 #95: a row whose beat is 0 predates the beat
+        // column (pre-v10) — there is no beat evidence to judge
+        // from, and measuring from the session's start would
+        // convict it instantly for a gap that was never observed.
+        // Adopt it: stamp the beat now and judge from here.
+        if (active.shieldLastBeatWallMillis == 0L) {
+            dao.adoptShieldBeat(active.id, nowWallMillis)
+            return false
+        }
+        // Audit R2 #95: the law judges only intervals the app was
+        // installed for. Install downtime during an update is not
+        // a shield gap, so the reference never sits before the
+        // moment the current build landed on the phone.
+        val beatRef = maxOf(
+            active.shieldLastBeatWallMillis,
+            active.startWallTimeMillis,
+            appLastUpdateMillis()
+        )
         if (nowWallMillis - beatRef <= SHIELD_GAP_THRESHOLD_MILLIS) return false
         dao.latchShieldGap(active.id)
         return true
     }
+
+    /** Wall time the installed package last landed on this phone
+     *  (the install time on a first install), or 0 when unreadable.
+     *  The shield-gap law's update exemption (Audit R2 #95). */
+    private fun appLastUpdateMillis(): Long = runCatching {
+        context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
+    }.getOrDefault(0L)
 
     /** ST-03 (Truth Car 3): the break boundaries' voice, fired AT
      *  the flips in this machinery — the block→break entry below
@@ -1854,7 +2191,33 @@ class MonolithRepository(
      *  door creates honours the setting exactly as the screen's
      *  engine does. */
     internal var breakBoundaryKnock: (engaged: Boolean) -> Unit = { engaged ->
-        breakSoundEngine.playMechanicalLatch(engaged)
+        // Audit R3b #146: the break EXIT is a summons, not a tick —
+        // the user is away from the phone by design at that moment,
+        // so the exit speaks with the full summons voice. The entry
+        // (engaged = false) keeps the plain latch: the user is
+        // present, mid-flow, when a block lets go into its break.
+        if (engaged) {
+            breakSoundEngine.playBreakEndSummons()
+        } else {
+            breakSoundEngine.playMechanicalLatch(false)
+        }
+    }
+
+    /** T-minus-60 warning seam (Audit R3b #146): fired once when the
+     *  Safe Break countdown crosses 60 seconds remaining, so the
+     *  walking user feels the deadline coming instead of meeting it
+     *  as a fait accompli. Default is the engine's warning knock. */
+    internal var breakWarningKnock: () -> Unit = {
+        breakSoundEngine.playBreakWarningKnock()
+    }
+
+    /** Audit R3b #148: the T-60 block warning — one latch knock,
+     *  fired by the countdown branch at the 60-seconds-left
+     *  crossing. Its own seam (tests and the summons work on the
+     *  #146 branch can re-voice it without touching the boundary
+     *  knock's contract). */
+    internal var blockWarningKnock: () -> Unit = {
+        breakSoundEngine.playMechanicalLatch(true)
     }
 
     private val breakSoundEngine: TactileSoundEngine by lazy {
@@ -2018,11 +2381,23 @@ class MonolithRepository(
         // two tickers drive this function, and a per-call decrement
         // drained a 600s break in ~400 wall seconds (Bus, 09:30 IST).
         if (session.isInSafeBreak) {
-            val nextBreakRemaining = breakRemainingAfter(
+            // Audit R1 #41: the tick computes the (remaining,
+            // anchor) PAIR and the pair is what persists — the
+            // old code stored the truncated remaining beside the
+            // FULL current instant, discarding the sub-second
+            // remainder every tick (breaks overran by ~30 s).
+            val (nextBreakRemaining, nextBreakAnchor) = breakTickAfter(
                 storedRemaining = session.safeBreakSecondsRemaining,
                 lastTickMonoMillis = session.lastTickElapsedRealtimeMillis,
                 nowMonoMillis = nowMono
             )
+            // Audit R3b #146: one warning knock as the countdown
+            // crosses 60 seconds remaining — the stored remainder
+            // above the line, the wall-derived remainder at/below
+            // it. Crossing-based, so it fires exactly once.
+            if (session.safeBreakSecondsRemaining > 60 && nextBreakRemaining in 1..60) {
+                breakWarningKnock()
+            }
             return if (nextBreakRemaining == 0) {
                 // Expiry: the break ran its full length in force,
                 // and the taken ledger books exactly that (ST-02's
@@ -2040,12 +2415,29 @@ class MonolithRepository(
             } else {
                 val updatedBreak = session.copy(
                     safeBreakSecondsRemaining = nextBreakRemaining,
-                    lastTickElapsedRealtimeMillis = nowMono,
+                    lastTickElapsedRealtimeMillis = nextBreakAnchor,
                     shieldLastBeatWallMillis = beatWall
                 )
                 dao.updateSession(updatedBreak)
                 updatedBreak
             }
+        }
+
+        // Audit R3b #148: the block's last minute announces
+        // itself. The flip into the break was the first signal a
+        // block was ending — this crossing (the row's own stamped
+        // elapsed passing the 60-seconds-left mark, read against
+        // this tick's verified elapsed) fires ONE warning knock,
+        // once per crossing; a penalty extension that pushes the
+        // deadline back out re-arms it, truthfully. The "+2 MIN"
+        // extension verb the persona asked for cannot live here:
+        // the target is inside the session's HMAC, and mutating it
+        // mid-session would invalidate the seal — that piece is
+        // priced and parked, not improvised.
+        val remainingNow = effectiveTarget - verifiedElapsed
+        val remainingPrev = effectiveTarget - session.elapsedSeconds
+        if (remainingPrev > 60 && remainingNow in 1..60) {
+            blockWarningKnock()
         }
 
         val blockFinished = verifiedElapsed >= effectiveTarget
@@ -2093,8 +2485,20 @@ class MonolithRepository(
             session.outcome
         } else {
             val nowWall = System.currentTimeMillis()
-            val beatRef = maxOf(session.shieldLastBeatWallMillis, session.startWallTimeMillis)
-            if (session.shieldGapSeen || nowWall - beatRef > SHIELD_GAP_THRESHOLD_MILLIS) {
+            // Audit R2 #95: the reference also never sits before
+            // the current build landed (update downtime is not a
+            // gap), and a beat of 0 is a pre-v10 row — no beat
+            // evidence exists, so the beat test alone cannot
+            // convict it; only the latch can, and the latch adopts
+            // beat-0 rows instead of judging them.
+            val beatRef = maxOf(
+                session.shieldLastBeatWallMillis,
+                session.startWallTimeMillis,
+                appLastUpdateMillis()
+            )
+            if (session.shieldGapSeen ||
+                (session.shieldLastBeatWallMillis > 0L && nowWall - beatRef > SHIELD_GAP_THRESHOLD_MILLIS)
+            ) {
                 SessionOutcome.ELAPSED_SHIELD_GAP
             } else {
                 SessionOutcome.ELAPSED_CLEAN
@@ -2337,10 +2741,21 @@ class MonolithRepository(
             }
         }
         val (verifiedElapsed, tamper) = computeVerifiedSessionElapsed(active)
-        val isGraceCancel = outcomeReason.contains("Grace Cancel", ignoreCase = true)
-        val bankedElapsed = if (isGraceCancel) 0 else max(verifiedElapsed, active.elapsedSeconds)
+        // Audit R3b #149: the 10-second law, enforced where the
+        // booking happens — not only by one chip's visibility. The
+        // grace classification requires the anchor-derived elapsed
+        // (the same max the bank uses) to be inside the window; a
+        // "Grace Cancel" reason arriving late books as an early
+        // end instead of laundering itself through the string.
+        val lawElapsed = max(verifiedElapsed, active.elapsedSeconds)
+        val isGraceCancel = outcomeReason.contains("Grace Cancel", ignoreCase = true) &&
+            lawElapsed <= 10
+        val bankedElapsed = if (isGraceCancel) 0 else lawElapsed
         val partialStampId = if (!completed && !isGraceCancel && bankedElapsed >= 60) {
-            "partial_stamp"
+            // Issue #110, finding 5: the id is the named constant
+            // whose catalog entry (PARTIAL_STAMP_ARTIFACT) the
+            // cabinet carries — the stamp matches a real row now.
+            PARTIAL_STAMP_ID
         } else {
             active.forgedArtifactId
         }
@@ -2436,7 +2851,48 @@ class MonolithRepository(
     // TIMEBOXED TASK QUEUE (SOLAR QUEUE) OPERATIONS
     // =========================================================================
 
-    private val taskAccrual = WallAccrual()
+    // Audit R1 #41: the accrual is the process-wide shared
+    // instance. A per-repository instance here silently undid
+    // WallAccrual's dedup — MainActivity, the Shield service,
+    // the routine heartbeat and the seal transition each build
+    // their own repository, and every instance credited the
+    // full delta independently.
+    private val taskAccrual = WallAccrual.shared
+
+    // The shared anchor, persisted (Audit R1 #41): the anchor
+    // used to be volatile and consumed BEFORE the credit was
+    // durably written — a process death between observe() and
+    // the task write lost the interval twice over (anchor gone,
+    // credit unwritten). The anchor now lives on disk too:
+    // seeded into the shared instance before each observe,
+    // rewritten after it. Same-boot only: the stored boot count
+    // and a monotonic sanity check reject anchors from a
+    // previous boot, whose elapsedRealtime base differs.
+    private val accrualPrefs by lazy {
+        context.getSharedPreferences(ACCRUAL_PREFS_NAME, android.content.Context.MODE_PRIVATE)
+    }
+
+    private fun seedAccrualFromDisk(nowMono: Long) {
+        if (!accrualPrefs.contains(ACCRUAL_KEY_MONO)) return
+        val boot = accrualPrefs.getInt(ACCRUAL_KEY_BOOT, -1)
+        val mono = accrualPrefs.getLong(ACCRUAL_KEY_MONO, 0L)
+        if (boot != querySystemBootCount() || mono > nowMono) return
+        taskAccrual.seed(
+            sessionId = accrualPrefs.getInt(ACCRUAL_KEY_SESSION, -1),
+            taskId = accrualPrefs.getInt(ACCRUAL_KEY_TASK, -1),
+            lastMonoMillis = mono
+        )
+    }
+
+    private fun persistAccrualAnchor() {
+        val (sessionId, taskId, mono) = taskAccrual.anchorSnapshot() ?: return
+        accrualPrefs.edit()
+            .putInt(ACCRUAL_KEY_SESSION, sessionId)
+            .putInt(ACCRUAL_KEY_TASK, taskId)
+            .putLong(ACCRUAL_KEY_MONO, mono)
+            .putInt(ACCRUAL_KEY_BOOT, querySystemBootCount())
+            .apply()
+    }
 
     /**
      * Credits the active task with WALL time, never with tick calls.
@@ -2450,6 +2906,7 @@ class MonolithRepository(
      * break minutes never land in a task's stored seconds.
      */
     private suspend fun accrueActiveTaskSeconds(session: FocusSessionEntity, nowMono: Long) {
+        seedAccrualFromDisk(nowMono)
         val tasks = dao.getAllTasksSnapshot()
         val activeTask = tasks.firstOrNull { it.resolvedStatus == TaskQueueStatus.ACTIVE }
             ?: tasks.firstOrNull { it.resolvedStatus == TaskQueueStatus.QUEUED }
@@ -2458,6 +2915,7 @@ class MonolithRepository(
             accruingTaskId = if (session.isInSafeBreak) null else activeTask?.id,
             nowMonoMillis = nowMono
         )
+        persistAccrualAnchor()
         if (activeTask != null && !session.isInSafeBreak &&
             (credit > 0 || activeTask.resolvedStatus != TaskQueueStatus.ACTIVE)
         ) {
@@ -2630,11 +3088,24 @@ class MonolithRepository(
      * man never gave.
      */
     private fun completedTaskSummaryEntry(task: FocusTaskEntity): String {
-        val actualMins = (task.actualSecondsSpent / 60).coerceAtLeast(1)
+        // Issue #110 (vault-history-lived, finding 3): the actual
+        // segment prints the task's REAL accrued time. The old
+        // coerceAtLeast(1) inflated every sub-minute completion —
+        // including tasks ticked done with no session ever run
+        // (0 accrued seconds) — to "1m actual": a printed minute
+        // that never happened, on the receipt of the very session
+        // that proves it didn't. Zero accrued seconds says so;
+        // a real sub-minute accrual says "<1m", never a whole
+        // minute it did not reach.
+        val actualSegment = when {
+            task.actualSecondsSpent <= 0 -> "no session time"
+            task.actualSecondsSpent < 60 -> "<1m actual"
+            else -> "${task.actualSecondsSpent / 60}m actual"
+        }
         return if (task.estimatedMinutes > 0) {
-            "${task.title} (${task.estimatedMinutes}m est / ${actualMins}m actual)"
+            "${task.title} (${task.estimatedMinutes}m est / $actualSegment)"
         } else {
-            "${task.title} (${actualMins}m actual)"
+            "${task.title} ($actualSegment)"
         }
     }
 
@@ -2852,7 +3323,15 @@ class MonolithRepository(
      *  index, or the word would be filed nowhere. Word months come
      *  from BOTH word stores (see allDayWords). */
     suspend fun storedMonths(): List<StoredMonth> {
-        val fromTasks = dao.getStoredMonths()
+        // Audit R1 #37: months are filed by the ONE filing function
+        // (DrawerDay) from raw instants — the SQL twin that used to
+        // compute this in SQLite disagreed with it on DST days.
+        val fromTasks = dao.getStoredCompletionInstants()
+            .map { instant ->
+                val (year, month) = DrawerDay.filingYearMonth(instant)
+                StoredMonth(year, month)
+            }
+            .distinct()
         val fromWords = allDayWords().keys.mapNotNull { iso ->
             runCatching {
                 val date = java.time.LocalDate.parse(iso)
@@ -2872,6 +3351,28 @@ class MonolithRepository(
         )
     }
 
+    /** Word-aware Drawer search (#158 F2): the day words a query
+     *  names. A query names a word when its trimmed, upper-cased
+     *  form equals a word in the closed list (DayWordStore.WORDS /
+     *  [DAY_WORDS]) or is a prefix of one ("IL" names ILL). Pure —
+     *  the matching rule lives in one place, shared by the
+     *  suspend read below and any caller already holding the
+     *  words map. */
+    fun dayWordsMatching(query: String, allWords: Map<String, String>): Map<String, String> {
+        val q = query.trim().uppercase(Locale.US)
+        if (q.isEmpty()) return emptyMap()
+        val matched = DAY_WORDS.filter { word -> word == q || word.startsWith(q) }
+        if (matched.isEmpty()) return emptyMap()
+        return allWords.filterValues { it in matched }
+    }
+
+    /** Every declared date carrying a word [query] names, from
+     *  [allDayWords] — prefs ∪ day_notes, so a word-only day (no
+     *  stored task on it) is found too. Empty when the query names
+     *  no day word. */
+    suspend fun searchDayWords(query: String): Map<String, String> =
+        dayWordsMatching(query, allDayWords())
+
     // Declared day words (REST / ILL / FAMILY) live in TWO stores
     // by design of the two builds that carry them: DayWordStore
     // (SharedPreferences — the Drawer's capture surface writes
@@ -2890,8 +3391,23 @@ class MonolithRepository(
         return fromTable + dayWordStore.all()
     }
 
-    fun declareDayWord(dateIso: String, word: String?) {
-        dayWordStore.put(dateIso, word)
+    /** Declare (or clear, with null) the word for [dateIso].
+     *  Returns whether the prefs write reached disk (DayWordStore's
+     *  commit verdict — Audit R1 #37: the result used to be
+     *  discarded, so a failed write still displayed as declared).
+     *
+     *  A CLEAR reaches BOTH stores: before this fix it removed only
+     *  the prefs key, so a word that had drained into day_notes at
+     *  seed-sync resurrected on the very next union read and could
+     *  never be undeclared. The table row is deleted only when the
+     *  prefs removal committed — if that failed, nothing about the
+     *  clear is presented as done. */
+    suspend fun declareDayWord(dateIso: String, word: String?): Boolean {
+        val committed = dayWordStore.put(dateIso, word)
+        if (committed && word == null) {
+            dao.deleteDayNote(dateIso)
+        }
+        return committed
     }
 
     /**
