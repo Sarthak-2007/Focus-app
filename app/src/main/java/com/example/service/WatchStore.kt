@@ -168,7 +168,13 @@ data class WatchSnapshot(
      *  values, and a bare copy() of a data class is equal to the
      *  value it copies, so the old poke could never notify a
      *  collector. */
-    val pokeGen: Long = 0L
+    val pokeGen: Long = 0L,
+    /** Issue #122: the latest battery snapshot (level / saver /
+     *  charging / exemption), published by the BATTERY sweep
+     *  query and by the shield loop. PARK's BATTERY line prints
+     *  THIS, not the exemption bit alone. Null = never read —
+     *  the line then falls back to the perm print, as before. */
+    val battery: com.example.data.BatterySnapshot? = null
 ) {
     fun measurement(item: WatchItemId): WatchMeasurement? = items[item]
 
@@ -417,6 +423,14 @@ object WatchStore {
             }
             next
         }
+    }
+
+    /** Issue #122: publish the latest battery snapshot. The perm
+     *  measurement for BATTERY stays the exemption bit (that is
+     *  the FIX door's business); this carries the battery itself
+     *  for PARK's line. */
+    fun publishBattery(snapshot: com.example.data.BatterySnapshot) {
+        publish { current -> current.copy(battery = snapshot) }
     }
 
     /**
