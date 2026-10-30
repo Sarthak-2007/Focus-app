@@ -86,6 +86,10 @@ class MonolithShieldService : Service() {
 
         monitorJob = serviceScope.launch {
             var iteration = 0
+            // Audit R3b #146: break-transition witness for the
+            // summons — the loop remembers the last tick's break
+            // state so the flip out of a break posts exactly once.
+            var wasInSafeBreak = false
             while (isActive) {
                 iteration++
                 // Routine heartbeat cadence (rebuild §2.2): first pass,
@@ -117,11 +121,33 @@ class MonolithShieldService : Service() {
                     RoutineHeartbeat.tickAsync(
                         applicationContext, RoutineHeartbeat.Source.SESSION_EDGE
                     )
+                    // Audit R3b #146: the ending is news for the
+                    // user who stayed away — it also sounds on the
+                    // summons channel, not only as a silent edit to
+                    // the detached LOW notification below.
+                    postSummons(
+                        "SESSION COMPLETE",
+                        "Your session has ended. The receipt is on the Deck."
+                    )
+                    // R3b #164 F2: the low notification's old line
+                    // promised an "Unlocked desk toy" in a "Break
+                    // tab" — neither exists anywhere in the app.
                     updateNotification("Session Complete", "Your receipt is waiting in the Ledger.")
                     stopForeground(STOP_FOREGROUND_DETACH)
                     stopSelf()
                     break
                 }
+
+                // Audit R3b #146: the break just expired under a
+                // user who is away by design — summon them on the
+                // HIGH channel as the next block starts, once.
+                if (wasInSafeBreak && !updated.isInSafeBreak) {
+                    postSummons(
+                        "BREAK OVER",
+                        "Block ${updated.currentBlockIndex} of ${updated.totalStudyBlocks} has started."
+                    )
+                }
+                wasInSafeBreak = updated.isInSafeBreak
 
                 val timeFormatted = when {
                     updated.isInSafeBreak -> {
@@ -143,10 +169,27 @@ class MonolithShieldService : Service() {
                     }
                 }
 
-                updateNotification(
-                    title = "Monolith • ${updated.intention}",
-                    subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped"
-                )
+                // Audit R3b #149: the grace window exists off the
+                // Deck too. During the window the shield's own
+                // notification counts it down — its tap already
+                // opens the app to the Deck chip — and for a
+                // routine-born row it names the booking instead of
+                // promising free.
+                if (updated.elapsedSeconds <= 10 && !updated.isInSafeBreak) {
+                    updateNotification(
+                        title = "Monolith • ${updated.intention}",
+                        subtitle = if (updated.routineId != null) {
+                            "GRACE ${10 - updated.elapsedSeconds}S — ABORT BOOKED BY ROUTINE · TAP TO OPEN"
+                        } else {
+                            "GRACE ${10 - updated.elapsedSeconds}S — CANCEL FREE · TAP TO OPEN"
+                        }
+                    )
+                } else {
+                    updateNotification(
+                        title = "Monolith • ${updated.intention}",
+                        subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped"
+                    )
+                }
 
                 // Live Wire: the shield is PROTECTING only once a
                 // full monitor iteration has run under a live
@@ -196,6 +239,7 @@ class MonolithShieldService : Service() {
                         // This door's blocked set already excludes a leased PEEK app
                         // (the filter above), so a lease sold here is honoured (UNA2-01).
                         putExtra(EXTRA_INTERCEPT_PATH, InterceptPath.SHIELD_APP.name)
+                        putExtra(EXTRA_INTERCEPT_NONCE, InterceptNonce.mint(applicationContext))
                     }
                     startActivity(interceptIntent)
                 }
@@ -243,6 +287,43 @@ class MonolithShieldService : Service() {
     private fun updateNotification(title: String, subtitle: String) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(NOTIFICATION_ID, buildNotification(title, subtitle))
+    }
+
+    /** Audit R3b #146: post an ALERTING summons on the HIGH channel.
+     *  Distinct id from the standing foreground notification, not
+     *  ongoing, not only-alert-once — it arrives like news, because
+     *  for the user who walked away, it is. */
+    private fun postSummons(title: String, text: String) {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                SUMMONS_CHANNEL_ID,
+                "Session summons",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Break-over and session-end calls back to the desk"
+                setShowBadge(false)
+            }
+            manager.createNotificationChannel(channel)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            1,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notification = NotificationCompat.Builder(this, SUMMONS_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+        manager.notify(SUMMONS_NOTIFICATION_ID, notification)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -298,6 +379,13 @@ class MonolithShieldService : Service() {
             internal set
         const val CHANNEL_ID = "monolith_shield_channel"
         const val NOTIFICATION_ID = 4096
+        // Audit R3b #146: the summons channel — HIGH importance, its
+        // own notification id, used ONLY for the two moments the user
+        // is away from the phone by design (break expiry, session
+        // end). The standing countdown stays on the silent LOW
+        // channel; a summons must be capable of being heard.
+        const val SUMMONS_CHANNEL_ID = "monolith_summons_channel"
+        const val SUMMONS_NOTIFICATION_ID = 4097
         const val ACTION_START_SHIELD = "com.example.action.START_SHIELD"
         const val ACTION_STOP_SHIELD = "com.example.action.STOP_SHIELD"
         const val EXTRA_INTERCEPTED_PACKAGE = "extra_intercepted_package"
@@ -308,6 +396,11 @@ class MonolithShieldService : Service() {
          *  WHICH door — and only lease-honouring doors may sell a
          *  peek. Written by both intercept launchers. */
         const val EXTRA_INTERCEPT_PATH = "extra_intercept_path"
+        /** Issue #68 F5, Tier 2: the single-use provenance nonce
+         *  (see [InterceptNonce]). Written by both intercept
+         *  launchers; required by MainActivity before any
+         *  intercept extra is honoured. */
+        const val EXTRA_INTERCEPT_NONCE = "extra_intercept_nonce"
 
         fun startShield(context: Context) {
             try {
