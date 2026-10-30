@@ -23,6 +23,12 @@ import org.robolectric.shadows.ShadowLooper
  * notification it had captured. On the IDLE Deck the chip now
  * stands whenever anything stands captured — and, just as
  * binding, an empty capture seats no door at all.
+ *
+ * (Surge port, STURM3-11: the harness call is adapted to the
+ * Deck's current signature on main — the task/checklist/profile
+ * parameters the old Deck took were retired by the Deck's own
+ * rework; the defaulted host seams are left at their defaults.
+ * The finding's two assertions are unchanged.)
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], qualifiers = "w400dp-h800dp")
@@ -45,37 +51,17 @@ class HeldDoorRenderTest {
                     activeSession = null,
                     dialMinutes = 50,
                     studyBlocksCount = 1,
-                    studyPreset = com.example.data.StudyModePreset.POMODORO_25_5,
-                    checklist = emptyList(),
                     activeTask = null,
                     queuedTasks = emptyList(),
-                    completedTasksCount = 0,
-                    totalQueueMinutes = 0,
-                    selectedProfileName = "Default",
-                    intentionText = "Deep Study",
-                    totalFocusedMinutes = 0,
-                    totalInterceptions = 0,
-                    profiles = emptyList(),
-                    apps = emptyList(),
-                    shortsReelsSniperEnabled = true,
-                    browserUrlBlockerEnabled = true,
                     capturedNotificationsCount = capturedCount,
                     soundEngine = com.example.service.TactileSoundEngine(context),
                     isDarkTheme = false,
                     onDialMinutesChanged = {},
                     onSelectStudyPreset = {},
                     onSetStudyBlocksCount = {},
-                    onToggleChecklistItem = {},
-                    onAddChecklistItem = {},
                     onCompleteActiveTask = {},
-                    onDeferActiveTask = {},
-                    onExtendActiveTaskOvertime = {},
-                    onAddQuickTaskToQueue = { _, _ -> },
                     onToggleTaskSubStep = { _, _ -> },
                     onOpenTaskSequencer = {},
-                    onOpenCurioVault = {},
-                    onIntentionChanged = {},
-                    onProfileSelected = {},
                     onArmSession = {},
                     onRequestDisarm = {},
                     onCancelWithinGraceWindow = {},
