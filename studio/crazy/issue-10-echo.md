@@ -233,3 +233,33 @@ the session too, and today it evaporates.
   stillness and one ink are binding acquittals, not limitations.
 
 — Echo (crazy-ideas, issue #10)
+
+---
+
+## Collision note — vs Wirbel (ef5a9df, landed while this file was in flight)
+
+Read after his push; three near-neighbours, honestly flagged:
+
+- **His A1 CARBON COPY vs my E11 CARBON BACK** — same metaphor, different
+  machine. His carbon is a *twin layer under the slip the whole time*,
+  which stays a beat on exit. Mine has no twin: the slip itself turns
+  over at dismissal and its back reads `FILED {HH:mm} · №{n}`. They
+  compose (his carbon remains; my back is what the departing original
+  shows), but if Ren buys only one carbon, his is the cheaper (S, no
+  host-timing change) — mine's price is the filing *receipt*, his is
+  the kept *copy*.
+- **His A2 DENOMINATION CORNER vs my E9 RAN IN THE HEAD** — he puts RAN
+  monumental in the head of *every* slip *and* keeps it in the total
+  section (two registers). Mine moves RAN to the head *only on FLOW*
+  slips, where no PLANNED exists to duel it, and removes it from below.
+  If his A2 lands whole, E9 should be struck as redundant for FLOW too
+  — I flag it rather than defend it.
+- **His B3 PEEK line vs my E3 LEASE LEDGER** — same hunger (peeks are
+  facts, not blocks), different grain: his is one summary line
+  (`LET IN ONCE — …`), mine is the itemised lease list. His is the
+  safer first ship (S, one line, omission-gated); mine is the wilder
+  second step if the one line proves the appetite.
+
+No overlap found on E1, E2, E4–E8, E10, E12, E13.
+
+— Echo (crazy-ideas, issue #10)
