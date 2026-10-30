@@ -55,6 +55,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
+import com.example.service.InterceptConsumptionStore
 import com.example.service.InterceptNonce
 import com.example.service.InterceptPath
 import com.example.service.MonolithDeviceAdminReceiver
@@ -80,6 +81,24 @@ import com.example.ui.screens.ShieldMatrixScreen
 import com.example.ui.screens.TactileDeckScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.views.MonolithRailView
+
+/** Issue #78 (Audit R2, ipc-intents): the system Settings app's
+ *  package — the ONLY lawful home of every Settings pane this app
+ *  navigates to. */
+internal const val SYSTEM_SETTINGS_PACKAGE = "com.android.settings"
+
+/**
+ * A Settings intent PINNED to the system Settings app. An unpinned
+ * implicit Settings intent enters system-wide resolution: any
+ * installed app declaring a matching intent-filter can be picked
+ * and present a fake Settings pane in place of the real one. The
+ * FIX routes hand the user to permission panes for THIS app's own
+ * protection grants — that hand-off is never offered to a resolver.
+ */
+internal fun pinnedSettingsIntent(action: String, data: Uri? = null): Intent {
+    val intent = if (data != null) Intent(action, data) else Intent(action)
+    return intent.setPackage(SYSTEM_SETTINGS_PACKAGE)
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -169,35 +188,63 @@ class MainActivity : ComponentActivity() {
     private fun handleIncomingInterceptIntent(intent: Intent?, viewModel: MonolithViewModel) {
         if (intent == null) return
         val pkg = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
-        if (!pkg.isNullOrBlank()) {
-            // Issue #68 F5, Tier 2 — provenance before trust: this
-            // activity is exported (LAUNCHER), so any installed app
-            // can send these extras. Honour them only with the
-            // single-use nonce an in-app service minted moments ago
-            // (InterceptNonce); without one the extras are dropped
-            // here and never reach the airlock.
-            val nonce = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_NONCE)
-            if (!InterceptNonce.consume(applicationContext, nonce)) {
-                intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
-                intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
-                intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_NONCE)
-                return
-            }
-            val name = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
-                ?: "Short-Form Feed"
-            val badge = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
-                ?: "Locked"
-            // WHICH door fired (Truth Car 3, UNA2-01): the peek
-            // offer is computed per-path — an extra that is missing
-            // or names no known door parses to UNKNOWN, and UNKNOWN
-            // never offers a peek.
-            val path = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
-                ?.let { runCatching { InterceptPath.valueOf(it) }.getOrNull() }
-                ?: InterceptPath.UNKNOWN
-            viewModel.triggerAirlockIntercept(pkg, name, badge, path)
+        if (pkg.isNullOrBlank()) return
+        // Issue #68 F5, Tier 2 — provenance before trust: this
+        // activity is exported (LAUNCHER), so any installed app
+        // can send these extras. Honour them only with the
+        // single-use nonce an in-app service minted moments ago
+        // (InterceptNonce); without one the extras are dropped
+        // here and never reach the airlock.
+        val nonce = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_NONCE)
+        if (!InterceptNonce.consume(applicationContext, nonce)) {
             intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
             intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
+            intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_NONCE)
+            intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_ID)
+            return
         }
+        val name = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
+            ?: "Short-Form Feed"
+        val badge = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
+            ?: "Locked"
+        // WHICH door fired (Truth Car 3, UNA2-01): the peek
+        // offer is computed per-path — an extra that is missing
+        // or names no known door parses to UNKNOWN, and UNKNOWN
+        // never offers a peek.
+        val path = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
+            ?.let { runCatching { InterceptPath.valueOf(it) }.getOrNull() }
+            ?: InterceptPath.UNKNOWN
+        // Issue #78: consumption is PERSISTED, not just in-memory.
+        // The platform retains the launching intent and redelivers
+        // it intact after process death, so removeExtra on this
+        // copy alone let the same stale Airlock fire again. The
+        // firing's id is marked consumed (synchronous commit)
+        // BEFORE the Airlock can show; an already-consumed
+        // redelivery is dropped, and a delivery whose consumption
+        // cannot be persisted is dropped too (fail closed — the
+        // enforcement door fires a fresh intercept if the user is
+        // actually standing in the blocked app). Id-less deliveries
+        // are fingerprinted from their extras: the same stale copy
+        // redelivered is the same fingerprint. (Merge note,
+        // STURM3-15: the nonce gate above runs first — it is the
+        // provenance proof; this store is the redelivery memory.
+        // A lawful firing carries both, and must pass both.)
+        val interceptId = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?: InterceptConsumptionStore.fingerprint(pkg, name, badge, path.name)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_ID)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_NONCE)
+        if (InterceptConsumptionStore.isConsumed(this, interceptId)) return
+        if (!InterceptConsumptionStore.markConsumed(this, interceptId)) return
+        // The showing itself is revalidated in the VM against the
+        // live session and the package's live tier/lease — a
+        // first-delivered but long-delayed intent does not resurrect
+        // an Airlock its facts no longer support.
+        viewModel.triggerAirlockInterceptFromIntent(pkg, name, badge, path)
     }
 
     // Issue #27 (finding 2): there is deliberately NO onDestroy
@@ -575,7 +622,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     fun launchSettings(intent: Intent, what: String) {
         runCatching { context.startActivity(intent) }
             .onFailure {
-                runCatching { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
+                runCatching { context.startActivity(pinnedSettingsIntent(Settings.ACTION_SETTINGS)) }
                     .onFailure {
                         android.widget.Toast.makeText(
                             context,
@@ -583,6 +630,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                             android.widget.Toast.LENGTH_LONG
                         ).show()
                     }
+
             }
     }
 
@@ -597,9 +645,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         PermissionReturnService.arm(context, item)
         when (item) {
             com.example.service.WatchItemId.ACCESSIBILITY ->
-                launchSettings(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "ACCESSIBILITY")
+                launchSettings(pinnedSettingsIntent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "ACCESSIBILITY")
             com.example.service.WatchItemId.USAGE_ACCESS ->
-                launchSettings(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS), "USAGE ACCESS")
+                launchSettings(pinnedSettingsIntent(Settings.ACTION_USAGE_ACCESS_SETTINGS), "USAGE ACCESS")
             com.example.service.WatchItemId.DEVICE_ADMIN -> {
                 // Issue #44: ask Android for THIS admin through the
                 // official activation intent — the old hardcoded
@@ -620,17 +668,17 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 }
                 runCatching { context.startActivity(requestAdmin) }
                     .getOrElse {
-                        launchSettings(Intent(Settings.ACTION_SECURITY_SETTINGS), "DEVICE ADMIN")
+                        launchSettings(pinnedSettingsIntent(Settings.ACTION_SECURITY_SETTINGS), "DEVICE ADMIN")
                     }
             }
             com.example.service.WatchItemId.NOTIFICATION_LISTENER ->
                 launchSettings(
-                    Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"),
+                    pinnedSettingsIntent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"),
                     "NOTIFICATION ACCESS"
                 )
             com.example.service.WatchItemId.OVERLAY ->
                 launchSettings(
-                    Intent(
+                    pinnedSettingsIntent(
                         Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                         Uri.parse("package:${context.packageName}")
                     ),
@@ -642,7 +690,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 // the AOSP battery pane alone leaves the boot receiver
                 // dead. Each vendor component is a guess that may not
                 // exist on this build; walk the list, then fall back
-                // to the AOSP battery trip as shipped on main.
+                // to the AOSP battery trip.
+                // Issue #78 (merge, STURM3-15): the AOSP fallbacks
+                // below go through pinnedSettingsIntent like every
+                // other Settings route — main's #94 flow arrived with
+                // them bare, which would have reopened the unpinned-
+                // intent finding on this one pane.
                 val gate = com.example.data.OemPolicy.currentGate()
                 val autostartOpened = gate !=
                     com.example.data.OemPolicy.AutostartGate.NONE &&
@@ -653,20 +706,20 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                 .isSuccess
                         }
                 if (!autostartOpened) {
-                    val direct = Intent(
+                    val direct = pinnedSettingsIntent(
                         Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                         Uri.parse("package:${context.packageName}")
                     )
                     runCatching { context.startActivity(direct) }
                         .getOrElse {
                             launchSettings(
-                                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+                                pinnedSettingsIntent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
                                 "BATTERY"
                             )
                         }
                 }
             }
-            else -> launchSettings(Intent(Settings.ACTION_SETTINGS), item.name)
+            else -> launchSettings(pinnedSettingsIntent(Settings.ACTION_SETTINGS), item.name)
         }
     }
 
@@ -790,15 +843,16 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     warrantProvider = viewModel::armWarrantNow,
                                     onFixBlockingAccess = {
                                         launchSettings(
-                                            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
+                                            pinnedSettingsIntent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
                                             "ACCESSIBILITY"
                                         )
                                     },
                                     onFixUsageAccess = {
                                         launchSettings(
-                                            Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS),
+                                            pinnedSettingsIntent(Settings.ACTION_USAGE_ACCESS_SETTINGS),
                                             "USAGE ACCESS"
                                         )
+
                                     },
                                     onRetryBlockingCheck = viewModel::refreshDeckWarrant,
                                     onHandBackTick = viewModel::playHandBackTick,

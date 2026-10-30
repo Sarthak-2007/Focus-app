@@ -1140,6 +1140,15 @@ class MonolithAccessibilityService : AccessibilityService() {
             putExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME, appName)
             putExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE, reasonBadge)
             putExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH, path.name)
+            // Issue #78: unique firing id — MainActivity persists
+            // its consumption before showing the Airlock, so a
+            // process-death redelivery of this intent is dropped.
+            putExtra(
+                MonolithShieldService.EXTRA_INTERCEPT_ID,
+                java.util.UUID.randomUUID().toString()
+            )
+            // Issue #68 F5, Tier 2: single-use provenance nonce —
+            // MainActivity honours no intercept extra without one.
             putExtra(
                 MonolithShieldService.EXTRA_INTERCEPT_NONCE,
                 InterceptNonce.mint(applicationContext)

@@ -1934,6 +1934,11 @@ class MonolithRepository(
      *  L1 snapshot witness reads through this). */
     suspend fun activeSessionSnapshot(): FocusSessionEntity? = dao.getActiveSessionSnapshot()
 
+    /** All app rows as a one-shot read (Issue #78: the Airlock's
+     *  intent revalidation reads the tier from the store, never
+     *  from a possibly-stale flow or the intent's own extras). */
+    suspend fun appsSnapshot(): List<BlockedAppEntity> = dao.getAllAppsSnapshot()
+
     /** Any session row by id (Slice E: the finish machine's and
      *  the seal transition's reads). */
     suspend fun sessionById(id: Int): FocusSessionEntity? = dao.getSessionById(id)

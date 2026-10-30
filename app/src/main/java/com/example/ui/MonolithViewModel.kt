@@ -188,6 +188,44 @@ internal fun peekOfferFor(
         !pillActive
 
 /**
+ * Issue #78 (Audit R2, ipc-intents): may an Airlock raised from an
+ * INTENT be shown at all? The intent is evidence that a door fired
+ * at some point in the past — possibly before a process death — so
+ * showing is re-derived from the LIVE facts, never from the
+ * intent's extras:
+ *  - no active session, no Airlock (every firing door is itself
+ *    session-gated; a session that has since ended voids the
+ *    firing with it);
+ *  - on the two app-tier doors the package must still carry a
+ *    non-OPEN tier, must not be free under the Safe Break's peek
+ *    pass, and must not already hold the live peek lease the
+ *    enforcement is honouring;
+ *  - the sniper / site / guard / unknown doors intercept packages
+ *    that legitimately have no row or an OPEN row (a browser, the
+ *    Settings app), so for them the live session IS the whole
+ *    revalidation — their peek offer is already always off
+ *    (see [peekOfferFor]).
+ * Pure, so the matrix is unit-tested door by door.
+ */
+internal fun airlockIntentRevalidated(
+    path: InterceptPath,
+    tier: AppBlockTier?,
+    sessionActive: Boolean,
+    inSafeBreak: Boolean,
+    peekLeaseLive: Boolean
+): Boolean {
+    if (!sessionActive) return false
+    return when (path) {
+        InterceptPath.APP_TIER, InterceptPath.SHIELD_APP ->
+            tier != null &&
+                tier != AppBlockTier.OPEN &&
+                !(inSafeBreak && tier == AppBlockTier.PEEK_2M) &&
+                !peekLeaseLive
+        else -> true
+    }
+}
+
+/**
  * Issue #55: the withheld reason for a peek offer, computed from
  * live facts — used at intercept time AND when a grant is refused,
  * so the standing overlay always prints the current truth. A
@@ -211,6 +249,7 @@ internal fun peekWithheldFor(
     pillActive -> PeekWithheld.ALREADY_ACTIVE
     cooldownLeft > 0 -> PeekWithheld.COOLDOWN
     else -> null
+
 }
 
 data class AirlockInterceptState(
@@ -2995,6 +3034,41 @@ class MonolithViewModel(
         }
     }
 
+    /**
+     * Issue #78: the INTENT door into the Airlock. Unlike the
+     * in-app doors (the Launcher's peek list, warm and on-screen),
+     * an intent may be a stale redelivery, so the showing is
+     * revalidated against one-shot store reads — the live session
+     * row and the package's live tier/lease — before the Airlock
+     * state is touched. A firing that no longer holds is dropped
+     * silently: the enforcement doors will fire a fresh one if the
+     * user is actually standing in a blocked app.
+     */
+    fun triggerAirlockInterceptFromIntent(
+        packageName: String,
+        appName: String,
+        reasonBadge: String = "Locked",
+        path: InterceptPath = InterceptPath.UNKNOWN
+    ) {
+        viewModelScope.launch {
+            val session = runCatching { repository.activeSessionSnapshot() }.getOrNull()
+            val entity = runCatching { repository.appsSnapshot() }.getOrNull()
+                ?.find { it.packageName == packageName }
+            val leaseLive = entity != null &&
+                entity.resolvedTier == AppBlockTier.PEEK_2M &&
+                SystemClock.elapsedRealtime() < entity.activePeekUntilElapsedRealtime
+            if (!airlockIntentRevalidated(
+                    path = path,
+                    tier = entity?.resolvedTier,
+                    sessionActive = session?.isActive == true,
+                    inSafeBreak = session?.isInSafeBreak == true,
+                    peekLeaseLive = leaseLive
+                )
+            ) return@launch
+            triggerAirlockIntercept(packageName, appName, reasonBadge, path)
+        }
+    }
+
     fun triggerAirlockIntercept(
         packageName: String,
         appName: String,
@@ -3012,6 +3086,24 @@ class MonolithViewModel(
         if (active?.isActive != true) return
 
         val appEntity = apps.value.find { it.packageName == packageName }
+        // Issue #78, warm-door half of the same law: the showing
+        // must ALSO still hold against the live tier, the Safe
+        // Break's peek pass and a live peek lease (the intent door
+        // above runs the same predicate against one-shot store
+        // snapshots). Main's Tier-1 gate already proved the session
+        // active, so the predicate's session term is true here; its
+        // per-door tier/lease terms are the part this adds.
+        val leaseLive = appEntity != null &&
+            appEntity.resolvedTier == AppBlockTier.PEEK_2M &&
+            SystemClock.elapsedRealtime() < appEntity.activePeekUntilElapsedRealtime
+        if (!airlockIntentRevalidated(
+                path = path,
+                tier = appEntity?.resolvedTier,
+                sessionActive = true,
+                inSafeBreak = active.isInSafeBreak,
+                peekLeaseLive = leaseLive
+            )
+        ) return
         // On the two per-app doors (the only lease-honouring ones)
         // the claim is about a ruled row: the row must exist, must
         // not be OPEN, and the badge prints from the row — never
