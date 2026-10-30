@@ -374,7 +374,12 @@ class MonolithNotificationListener : NotificationListenerService() {
                     try {
                         cancelNotification(key)
                     } catch (error: Exception) {
-                        Log.w(TAG, "cancelNotification failed for $pkg", error)
+                        // #338 F2: diagnostics stay content-free —
+                        // no package names in logcat. Freedom's
+                        // release build logs blocked packages and
+                        // URLs; this line was Monolith's one leak
+                        // of that kind.
+                        Log.w(TAG, "cancelNotification failed", error)
                     }
                 }
             }
