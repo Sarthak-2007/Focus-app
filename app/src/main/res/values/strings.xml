@@ -2,7 +2,9 @@
     <string name="app_name">Monolith</string>
     <string name="accessibility_service_label">Monolith Distraction Airlock</string>
     <string name="accessibility_service_description">During an active Monolith focus session only, Monolith reads the content of the foreground window on this device to detect blocked app launches, Shorts and Reels feeds, blocked website addresses in the browser, and tampering in Settings or the installer, and presents the Intention Airlock screen. Everything is processed on this device; nothing is sent anywhere.</string>
-    <string name="device_admin_description">Prevents Monolith being uninstalled or deactivated while a focus session is active, so an armed block cannot be removed mid-session.</string>
+    <string name="device_admin_label">Monolith Device Admin</string>
+    <string name="device_admin_description">Shows a warning when Monolith\'s device admin is about to be turned off. It only adds friction and a warning — Android still lets you deactivate it and uninstall Monolith; it does not prevent either.</string>
+    <string name="device_admin_add_explanation">Turning this on only lets Monolith show a warning if you later go to turn its device admin off. It adds friction and a warning — it does not prevent deactivation or uninstall, and Android still lets you do both.</string>
     <string name="notification_channel_name">Monolith Active Shield</string>
     <string name="notification_channel_desc">Displays real-time monotonic focus timer and active app shield telemetry.</string>
     <string name="tab_deck">Focus</string>
@@ -19,7 +21,6 @@
     <string name="ritual_emergency_valve">60S EMERGENCY BREAK VALVE (1/WK)</string>
     <string name="ritual_grace_cancel">10S ACCIDENTAL-START GRACE CANCEL</string>
     <string name="ritual_bag_tiles">SEALED APP BAG</string>
-    <string name="ritual_tower_monument">FOCUS ACCUMULATION TOWER</string>
     <string name="ritual_day_faders">7-DAY RHYTHM FADERS</string>
     <string name="ritual_session_receipt">CRYPTOGRAPHIC SESSION RECEIPT</string>
     <string name="ritual_airlock_wall">INTENTION AIRLOCK CHAMBER</string>
