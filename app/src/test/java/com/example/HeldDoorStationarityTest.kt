@@ -2,6 +2,9 @@ package com.example
 
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -68,7 +71,12 @@ class HeldDoorStationarityTest {
             sessionIntention = "Finish the problem set",
             canUse2MinutePeek = canPeek,
             interceptInstanceId = instance,
-            interceptedAtMonoMillis = if (wallRunning) now else now - 60_000L,
+            // An expired wall is stamped at the monotonic epoch
+            // (1L): always positive, always long past — a relative
+            // "now minus a minute" can go negative under
+            // Robolectric's young clock, and the overlay lawfully
+            // discards a non-positive stamp and restarts the wall.
+            interceptedAtMonoMillis = if (wallRunning) now else 1L,
             peekCooldownEndsAtMonoMillis =
                 if (cooldownSecs > 0) now + cooldownSecs * 1000L else 0L,
             peekCooldownRemainingSeconds = cooldownSecs,
@@ -77,17 +85,29 @@ class HeldDoorStationarityTest {
         )
     }
 
+    // One composition per test (the Android compose rule forbids
+    // a second setContent); visits swap the held state instead —
+    // which is also the more honest frame change: same
+    // composition, new door state.
+    private var heldState by mutableStateOf<AirlockInterceptState?>(null)
+    private var mounted = false
+
     private fun render(state: AirlockInterceptState) {
+        heldState = state
+        if (mounted) return
+        mounted = true
         composeRule.setContent {
             MyApplicationTheme(darkTheme = true, isFocusSessionActive = true) {
-                AirlockInterceptOverlay(
-                    state = state,
-                    onSelectReason = {},
-                    onTransmuteParticleTap = {},
-                    onReturnToFocus = {},
-                    onTake2MinutePeek = {},
-                    onEndSessionInstead = {}
-                )
+                heldState?.let {
+                    AirlockInterceptOverlay(
+                        state = it,
+                        onSelectReason = {},
+                        onTransmuteParticleTap = {},
+                        onReturnToFocus = {},
+                        onTake2MinutePeek = {},
+                        onEndSessionInstead = {}
+                    )
+                }
             }
         }
     }
