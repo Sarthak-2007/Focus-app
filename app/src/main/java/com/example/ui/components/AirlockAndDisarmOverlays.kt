@@ -626,6 +626,33 @@ internal fun airlockStakeLine(emergencyBreaksRemaining: Int): String? = when {
         "EMERGENCY BREAK: $emergencyBreaksRemaining LEFT THIS WEEK"
 }
 
+/** English ordinal for the attempt mirror ("1ST", "2ND", "3RD",
+ *  "4TH" — the 11/12/13 teens take TH, never ST/ND/RD). */
+internal fun attemptOrdinal(n: Int): String {
+    val suffix = when {
+        n % 100 in 11..13 -> "TH"
+        n % 10 == 1 -> "ST"
+        n % 10 == 2 -> "ND"
+        n % 10 == 3 -> "RD"
+        else -> "TH"
+    }
+    return "$n$suffix"
+}
+
+/**
+ * Issue #254 F12 (Audit R5): the attempt mirror the door prints
+ * under the app name — which reach today this is, counted from
+ * the intercept ledger. The per-app count used to be buried in
+ * a buried row (BlockedAppEntity.interceptCount) and never stood
+ * at the decision point. 0 = not carried (previews, tests, or
+ * the count not yet read back): the door prints nothing rather
+ * than inventing a number.
+ */
+internal fun airlockAttemptLine(todayAttempts: Int): String? = when {
+    todayAttempts <= 0 -> null
+    else -> "${attemptOrdinal(todayAttempts)} REACH TODAY"
+}
+
 /**
  * The cooldown's SCOPE, printed beside its price (issue #114,
  * finding 3): the cooldown is per app — this app's timer says
@@ -1060,6 +1087,20 @@ fun AirlockInterceptOverlay(
                     fontSize = 24.sp,
                     color = NightColorPrimary
                 )
+
+                // Issue #254 F12 (Audit R5): the attempt mirror —
+                // under the app name, the door states which reach
+                // today this is, counted from the intercept ledger.
+                airlockAttemptLine(state.todayAttempts)?.let { line ->
+                    Text(
+                        text = line,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary,
+                        modifier = Modifier.testTag("airlock_attempt_line")
+                    )
+                }
 
                 // SIL-1 / Hale W-28: under the app name, the door
                 // states the session's end — its own statement,

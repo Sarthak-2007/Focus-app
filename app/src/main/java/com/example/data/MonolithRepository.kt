@@ -259,6 +259,24 @@ class MonolithRepository(
     val activeSessionFlow: Flow<FocusSessionEntity?> = dao.getActiveSessionFlow()
     val sessionHistoryFlow: Flow<List<FocusSessionEntity>> = dao.getSessionHistoryFlow()
     val interceptLogsFlow: Flow<List<InterceptLogEntity>> = dao.getInterceptLogsFlow()
+
+    /** Issue #254 F12 (Audit R5): today's reach count for one
+     *  package, counted from the intercept ledger itself via the
+     *  uncapped evidence query (getInterceptLogsBetween) — never
+     *  the 500-capped display flow above. The Airlock's attempt
+     *  mirror prints this number; a print that can disagree with
+     *  the ledger it names is a lie waiting for its frame. */
+    suspend fun interceptAttemptsToday(packageName: String, nowMillis: Long): Int {
+        val dayStart = java.util.Calendar.getInstance().apply {
+            timeInMillis = nowMillis
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        return dao.getInterceptLogsBetween(dayStart, nowMillis)
+            .count { it.packageName == packageName }
+    }
     val capturedNotificationsFlow: Flow<List<CapturedNotificationEntity>> = dao.getCapturedNotificationsFlow()
     val allTasksFlow: Flow<List<FocusTaskEntity>> = dao.getAllTasksFlow()
     val allSitesFlow: Flow<List<BlockedSiteEntity>> = dao.getAllSitesFlow()
