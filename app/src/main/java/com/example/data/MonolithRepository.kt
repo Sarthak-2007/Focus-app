@@ -150,10 +150,11 @@ class MonolithRepository(
         const val CHROME_PREFS_NAME = "monolith_chrome"
         const val PARK_INTRO_DONE_KEY = "park_intro_done"
 
-        /** The closed declared-word list (DayWordStore.WORDS).
-         *  Never TEST: the drain refuses any other word, so no
-         *  test-day row can ever reach `day_notes`. */
-        val DAY_WORDS: Set<String> = setOf("REST", "ILL", "FAMILY")
+        /** The suggested declared words (DayWordStore.WORDS).
+         *  Since issue #137 (F4) the vocabulary is open: the drain
+         *  accepts any word DayWordStore.normalize accepts, and
+         *  refuses only what cannot normalise. */
+        val DAY_WORDS: Set<String> = DayWordStore.WORDS.toSet()
 
         /** Slice E (Nocke §2.2): the shield-gap law — a beat older
          *  than this (5 missed 2s beats) classifies the session
@@ -433,12 +434,12 @@ class MonolithRepository(
      * Runs inside every seed-sync (the first seed-sync after the
      * 8→9 upgrade performs the move) and is idempotent: drained
      * keys are removed from prefs, so a later run finds nothing
-     * to move. Only words in [DAY_WORDS] drain. Anything else in
-     * the prefs file — an unknown word, a non-string value — is
+     * to move. Only words DayWordStore.normalize accepts drain
+     * (issue #137, F4 — the vocabulary is open; [DAY_WORDS] is
+     * only the suggested list). Anything else in the prefs file
+     * — a word that cannot normalise, a non-string value — is
      * left exactly where it lies: never silently dropped, and
-     * never stored, so a TEST row in day_notes is impossible by
-     * this refusal (the word list is closed; this app does not
-     * know test days). A date already present in the table takes
+     * never stored. A date already present in the table takes
      * the prefs value: until drained, prefs is the capture of
      * record.
      */
@@ -502,7 +503,7 @@ class MonolithRepository(
         if (captured.isEmpty()) return
         val drained = captured.mapNotNull { (dateIso, value) ->
             val word = value as? String ?: return@mapNotNull null
-            if (word in DAY_WORDS) DayNoteEntity(dateIso = dateIso, word = word) else null
+            DayWordStore.normalize(word)?.let { DayNoteEntity(dateIso = dateIso, word = it) }
         }
         if (drained.isEmpty()) return
         dao.insertDayNotes(drained)
@@ -1027,9 +1028,18 @@ class MonolithRepository(
         val remainderSec = ((session.windowEndMillis -
             maxOf(session.windowStartMillis, session.startWallTimeMillis)) / 1000L).coerceAtLeast(0L)
         val yardstickSec = if (lateFire) remainderSec else windowSec
+        // Issue #137, F1c/F5: a window on an excused date (its
+        // filing date carries ILL / REST / FAMILY) can never be
+        // stamped MISSED — the sub-floor arm books UNKNOWN, the
+        // existing "prints nothing, books nothing" judgement, so
+        // the durable row never contradicts the declared word.
+        // Attendance he actually gave still judges ATTENDED /
+        // PARTIAL on its own evidence.
+        val excused = session.windowStartMillis > 0L && isExcusedFilingDate(session.windowStartMillis)
         val outcome = when {
             attended < ATTENDANCE_FLOOR_SECONDS ->
-                if (lateFire) WindowJudgement.LATE_FIRE else WindowJudgement.MISSED
+                if (excused) WindowJudgement.UNKNOWN
+                else if (lateFire) WindowJudgement.LATE_FIRE else WindowJudgement.MISSED
             attended >= yardstickSec - ATTENDANCE_FLOOR_SECONDS -> WindowJudgement.ATTENDED
             else -> WindowJudgement.PARTIAL
         }
@@ -2857,6 +2867,14 @@ class MonolithRepository(
     suspend fun allDayWords(): Map<String, String> {
         val fromTable = dao.getAllDayNotesSnapshot().associate { it.dateIso to it.word }
         return fromTable + dayWordStore.all()
+    }
+
+    /** Issue #137, F1: true when the filing date of [millis]
+     *  (DrawerDay's 03:30 rule — the date the Drawer files words
+     *  under) carries an excuse word in either word store. */
+    suspend fun isExcusedFilingDate(millis: Long): Boolean {
+        val iso = DrawerDay.dateIso(DrawerDay.filingDate(millis))
+        return DayWordStore.isExcuse(allDayWords()[iso])
     }
 
     fun declareDayWord(dateIso: String, word: String?) {

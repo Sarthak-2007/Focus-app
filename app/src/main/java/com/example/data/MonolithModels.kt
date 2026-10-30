@@ -782,13 +782,13 @@ data class GuardSettingsEntity(
  * A declared day word (F-SCH-1 — the Drawer's `day_notes` table,
  * riding Migration 8→9). [dateIso] is the filing date
  * (yyyy-MM-dd); [word] is his authored declaration for that day,
- * one of the closed list REST / ILL / FAMILY, printed beside the
- * date's heading in the Drawer. It is a word, never a number,
- * and it is never folded into any total.
+ * printed beside the date's heading in the Drawer. It is a word,
+ * never a number, and it is never folded into any total.
  *
- * Never TEST: this app does not know test days (Ren's test-date
- * kill). The prefs drain that populates this table refuses any
- * word outside the closed list, so no TEST row can ever exist.
+ * The vocabulary is open (issue #137, F4): the suggested list is
+ * REST / ILL / FAMILY / TRAVEL / WORK, and the prefs drain that
+ * populates this table accepts any word DayWordStore.normalize
+ * accepts, refusing only what cannot normalise.
  */
 @Entity(tableName = "day_notes")
 data class DayNoteEntity(
