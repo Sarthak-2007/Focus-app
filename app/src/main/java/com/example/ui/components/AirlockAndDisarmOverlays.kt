@@ -45,6 +45,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -561,6 +562,26 @@ internal fun peekPriceText(cooldownMillis: Long): String {
 }
 
 /**
+ * Issue #325 (Audit R5, Zario visual): the stake line the door
+ * prints under the session's end — the week's emergency-break
+ * balance, on the surface where the decision happens (Zario draws
+ * its economy on every intercept; Monolith's balance lived only
+ * on the Deck). At zero the state is STATED, not hidden: a spent
+ * valve is a fact the user is owed at the wall, in words. A
+ * negative balance means the state was not carried (previews,
+ * tests) and the door prints nothing rather than inventing one.
+ */
+internal fun airlockStakeLine(emergencyBreaksRemaining: Int): String? = when {
+    emergencyBreaksRemaining < 0 -> null
+    emergencyBreaksRemaining == 0 ->
+        "EMERGENCY BREAK: NONE LEFT THIS WEEK — THE VALVE IS SPENT"
+    emergencyBreaksRemaining == 1 ->
+        "EMERGENCY BREAK: 1 LEFT THIS WEEK"
+    else ->
+        "EMERGENCY BREAK: $emergencyBreaksRemaining LEFT THIS WEEK"
+}
+
+/**
  * The cooldown's SCOPE, printed beside its price (issue #114,
  * finding 3): the cooldown is per app — this app's timer says
  * nothing about any other peek app's. Until this line existed the
@@ -572,6 +593,30 @@ internal fun peekPriceText(cooldownMillis: Long): String {
  */
 internal fun peekCooldownScopeText(): String =
     "THE COOLDOWN IS PER APP — OTHER PEEK APPS KEEP THEIR OWN TIMERS"
+
+/**
+ * Issue #102 (peek-lived, finding 5): the peek offer's terms, in
+ * the app's own words, printed BEFORE the peek is taken. The peek
+ * chip is labelled "2-MINUTE PEEK" while the token-spending door
+ * is "EMERGENCY BREAK" — this line is what tells the user the two
+ * are different doors: the peek spends no weekly break and does
+ * not end the session. Pure, so the wording is unit-tested.
+ * (Ported from PR #351's peekTermsText — its pill/enforcer build
+ * was superseded by #114/#99 on main; this sentence was not.)
+ */
+internal fun peekTermsText(): String =
+    "THE PEEK DOES NOT SPEND YOUR EMERGENCY BREAK AND DOES NOT END THE SESSION"
+
+/**
+ * Issue #102 (peek-lived, finding 4): the withheld peek's reason
+ * stands on the door from the FIRST second — it is not gated on
+ * the breath countdown finishing. Before this, the reason block
+ * waited for `countdownSecs == 0`, so a user who returned from a
+ * peek (or hit a cooldown) stared at a wall that explained
+ * nothing for a second countdown. Pure decision, unit-tested;
+ * the countdown deliberately plays no part in it.
+ */
+internal fun peekWithheldReasonVisible(peekReady: Boolean): Boolean = !peekReady
 
 /**
  * What waits at the end of the breath, printed DURING the breath
@@ -988,6 +1033,19 @@ fun AirlockInterceptOverlay(
                     )
                 }
 
+                // Issue #325 (Audit R5, Zario): the stake stands on
+                // the door — the week's break balance at the moment
+                // of decision, including the spent state at zero.
+                airlockStakeLine(state.emergencyBreaksRemaining)?.let { line ->
+                    Text(
+                        text = line,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f),
+                        modifier = Modifier.testTag("airlock_stake_line")
+                    )
+                }
+
                 // Hero Architectural Countdown Numeral (Space Mono)
                 // Issue #55: the transmute pulse is WIRED, not dead —
                 // tapping the numeral during the wall fires it (the
@@ -1013,7 +1071,14 @@ fun AirlockInterceptOverlay(
                         text = "ACTIVE INTENTION: ${state.sessionIntention}",
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 12.5.sp,
-                        color = NightColorPrimary.copy(alpha = 0.8f)
+                        color = NightColorPrimary.copy(alpha = 0.8f),
+                        // Issue #124: bounded at the moment of
+                        // temptation — a legacy over-long stored
+                        // intention ellipsises at two lines instead
+                        // of flooding the wall. (New rows are capped
+                        // at the arm snapshot in startSession.)
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
@@ -1116,6 +1181,14 @@ fun AirlockInterceptOverlay(
                         fontSize = 12.5.sp,
                         color = NightColorPrimary.copy(alpha = 0.8f)
                     )
+                    // Issue #102, finding 5: the terms stand with
+                    // the preview — the peek is not the break.
+                    Text(
+                        text = peekTermsText(),
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f)
+                    )
                 }
 
                 if (countdownSecs == 0 && peekReady) {
@@ -1150,14 +1223,25 @@ fun AirlockInterceptOverlay(
                         fontSize = 12.5.sp,
                         color = NightColorPrimary.copy(alpha = 0.8f)
                     )
+                    // Issue #102, finding 5: the terms stand on
+                    // the offer itself, before the tap.
+                    Text(
+                        text = peekTermsText(),
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f)
+                    )
                 }
 
                 // The withheld peek prints its state AND its reason
                 // (Held Door Truth Baseline): cooldown with its
                 // live remaining time, or the running pill named.
                 // Doors that never owed a peek carry withheld ==
-                // null and print nothing here.
-                if (countdownSecs == 0 && !peekReady) {
+                // null and print nothing here. Issue #102, finding
+                // 4: the reason is NOT gated on the breath countdown
+                // — it shows from the first second, not after a
+                // second countdown (see peekWithheldReasonVisible).
+                if (peekWithheldReasonVisible(peekReady)) {
                     when (state.peekWithheld) {
                         PeekWithheld.COOLDOWN -> {
                             if (cooldownSecs > 0) {

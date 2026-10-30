@@ -100,6 +100,17 @@ data class PruneNote(
     val rulesRemoved: Boolean
 )
 
+/**
+ * W3 #130 (browser-as-loophole, finding 5): the held-sites count a
+ * receipt may claim — the stored list's size ONLY when the browser
+ * blocker is actually on. With the blocker switched off the
+ * session holds no sites at all, whatever the list holds; claiming
+ * the list size printed held sites that were never once checked.
+ * Pure, mirroring countHeldApps' one-derivation law.
+ */
+internal fun heldSitesCount(siteCount: Int, browserBlockerEnabled: Boolean): Int =
+    if (browserBlockerEnabled) siteCount else 0
+
 /** Issue #99 F1: how long after a peek lease's end its package still
  *  counts as "just expired" for eviction purposes. The shield polls
  *  every 2s, so this only needs to cover the first polls after
@@ -228,6 +239,14 @@ class MonolithRepository(
     companion object {
         private const val TAG = "MonolithRepository"
         private val seedMutex = Mutex()
+        /** Issue #124 (typing-intention): the intention is a short,
+         *  sharp declaration the user authors — never a paragraph.
+         *  Every arm path funnels through [startSession], which
+         *  trims and caps the snapshot to this length; the draft
+         *  writer (MonolithViewModel.setIntentionText) caps at the
+         *  same bound so the box can never hold more than a session
+         *  can store. */
+        const val MAX_INTENTION_CHARS = 80
         const val PEEK_DURATION_SECONDS = 120 // 2-Minute Peek
         const val PEEK_DURATION_MILLIS = 120 * 1000L // 2-Minute Peek lease in ms
         const val PEEK_COOLDOWN_MILLIS = 20 * 60 * 1000L // 20-Minute Mandatory Cooldown
@@ -2468,7 +2487,16 @@ class MonolithRepository(
         )
 
         val session = FocusSessionEntity(
-            intention = intention.ifBlank { "Deep Uninterrupted Study" },
+            // Issue #124 (typing-intention): the intention is
+            // frozen HERE, at birth, exactly as declared — trimmed
+            // and capped, and a blank stays blank. The old ifBlank
+            // substitution forged a stock phrase ("Deep
+            // Uninterrupted Study") and read it back to the user
+            // as their own declaration; a user who declares
+            // nothing has declared nothing, and every surface
+            // downstream (receipt title, airlock line, shield
+            // notification) prints this row's words or nothing.
+            intention = intention.trim().take(MAX_INTENTION_CHARS),
             profileName = profileName,
             targetDurationSeconds = targetSecs,
             elapsedSeconds = 0,
@@ -2496,6 +2524,12 @@ class MonolithRepository(
             // first/last evidence stamps stay 0 until E2/E4 land.
             evidenceMask = if (routineId != null) EVIDENCE_E1_START else 0
         ).sanitized() // Issue #32 F2: write-boundary sanitize (startSession funnel)
+        // Issue #152: witness the zone this arming is lived in,
+        // keyed by the arm instant, so the receipt can print its
+        // ARMED time truthfully after a landing. Written at this
+        // funnel because it is the ONLY session birthplace — a
+        // capture anywhere else would miss a door.
+        armZoneStore.put(wallNow, java.time.ZoneId.systemDefault().id)
         // Slice E (Fader's writer law): the held counts are captured
         // INSIDE the birth transaction, from the same snapshot that
         // deactivates the predecessor — the set the shield will
@@ -2511,7 +2545,14 @@ class MonolithRepository(
             // stored on the row, never a receipt-time re-count
             // against tiers that may have changed since.
             val (heldShut, heldPeek) = countHeldAppsSplit(snapshotApps)
-            val heldSites = dao.getAllSitesSnapshot().size
+            // W3 #130 (recomposed at the DURCH-D landing): sites are
+            // held only when the blocker that enforces them is on —
+            // the same toggle the service reads per event (default
+            // ON when no row exists).
+            val heldSites = heldSitesCount(
+                dao.getAllSitesSnapshot().size,
+                dao.getGuardSettingsSnapshot()?.browserBlockerEnabled ?: true
+            )
             dao.deactivateAllSessions()
             val id = dao.insertSession(
                 session.copy(
@@ -2708,47 +2749,7 @@ class MonolithRepository(
         }
     }
 
-    /** Issue #135 F2: rebuild the slip for ANY session that already
-     *  claimed its № — the re-issue door behind the Deck's LAST
-     *  RECEIPT. Settled form only (restored = true, no mono stamp):
-     *  it never re-claims, never re-mints, and the row's own
-     *  receiptNumber is the № it prints. Null when the row is gone,
-     *  still active, never claimed a №, or no longer a finish. */
-    suspend fun receiptForSession(sessionId: Int): ReceiptState? {
-        val row = dao.getSessionById(sessionId) ?: return null
-        if (row.isActive || row.receiptNumber <= 0) return null
-        val isSleep = row.routineId?.let { dao.getRoutineById(it)?.loadoutName } ==
-            SmartLoadout.SLEEP.name
-        val kind = finishKindOf(row, isSleep, System.currentTimeMillis()) ?: return null
-        val endedAt = if (row.routineId != null && row.windowEndMillis > 0L) {
-            row.windowEndMillis
-        } else {
-            row.startWallTimeMillis +
-                (row.lastTickElapsedRealtimeMillis - row.startElapsedRealtimeMillis)
-                    .coerceAtLeast(0L)
-        }
-        val pending = assemblePendingReceipt(sessionId, kind, endedAt) ?: return null
-        return ReceiptState(
-            sessionId = sessionId,
-            number = row.receiptNumber,
-            kind = pending.kind,
-            outcomeWord = pending.outcomeWord,
-            title = pending.title,
-            armWallMs = pending.armWallMs,
-            endedAtWallMs = pending.endedAtWallMs,
-            plannedSeconds = pending.plannedSeconds,
-            sealedElapsedSeconds = pending.sealedElapsedSeconds,
-            heldAppsAtSeal = pending.heldAppsAtSeal,
-            heldSitesAtSeal = pending.heldSitesAtSeal,
-            routineLabelWithin = pending.routineLabelWithin,
-            bankedBreakSeconds = pending.bankedBreakSeconds,
-            shieldWasOff = pending.shieldWasOff,
-            faulted = row.releaseFaultShield,
-            deflections = pending.deflections,
-            restored = true,
-            receiptPublishedMonoMs = 0L
-        )
-    }
+
 
     /** The standing receipt's identity, for rehydration (Z6 case
      *  b): (№, sessionId, outcomeWord) when a receipt stands. */
@@ -2762,6 +2763,26 @@ class MonolithRepository(
      *  setting via [ClockText], never a pinned 24-hour format. */
     private fun hhmm(wallMillis: Long): String =
         ClockText.timeOfDay(context, wallMillis)
+
+    /** Issue #152: [hhmm] in an explicit zone — the WITHIN line's
+     *  frozen window was lived in the arm zone, not in whatever
+     *  zone the phone sits in when the slip is assembled. Composed
+     *  with #88 on merge: the pattern follows the device's own
+     *  12/24-hour setting and locale (ClockText's law), only the
+     *  zone is explicit. */
+    private fun hhmm(wallMillis: Long, zone: java.time.ZoneId): String {
+        val pattern = if (android.text.format.DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a"
+        val format = java.text.SimpleDateFormat(pattern, java.util.Locale.getDefault())
+        format.timeZone = java.util.TimeZone.getTimeZone(zone)
+        return format.format(java.util.Date(wallMillis))
+    }
+
+    /** Issue #152: the UTC offset in force for [zone] at
+     *  [wallMillis], as printed ("+05:30"; UTC is "+00:00"). */
+    private fun zoneOffsetLabel(wallMillis: Long, zone: java.time.ZoneId): String {
+        val offset = zone.rules.getOffset(java.time.Instant.ofEpochMilli(wallMillis))
+        return if (offset == java.time.ZoneOffset.UTC) "+00:00" else offset.id
+    }
 
     private fun hhmm(minutesOfDay: Int): String {
         val cal = java.util.Calendar.getInstance().apply {
@@ -2807,9 +2828,25 @@ class MonolithRepository(
         // instant lends its line; the BY… form never prints.
         val routineLabel: String? = if (row.routineId != null) {
             val name = row.profileName.removePrefix(ROUTINE_PROFILE_PREFIX).trim()
+            // Issue #152: the frozen window was lived in the arm
+            // zone (witnessed at the session's birth — ArmZoneStore).
+            // When the phone has since landed in another zone, the
+            // WITHIN line prints the lived window in that zone with
+            // its offset named, instead of silently re-rendering
+            // the instants in the arrival zone. Same zone (the
+            // overwhelming case) the print is exactly as before.
+            val armZone = armZoneStore.zoneFor(row.startWallTimeMillis)
+                ?.let { id -> runCatching { java.time.ZoneId.of(id) }.getOrNull() }
+            val crossedZones = armZone != null && armZone != java.time.ZoneId.systemDefault()
             if (name.isNotEmpty() && row.windowEndMillis > row.windowStartMillis) {
-                "WITHIN ${name.uppercase(java.util.Locale.US)} · " +
-                    "${hhmm(row.windowStartMillis)}–${hhmm(row.windowEndMillis)}"
+                if (crossedZones) {
+                    "WITHIN ${name.uppercase(java.util.Locale.US)} · " +
+                        "${hhmm(row.windowStartMillis, armZone!!)}–${hhmm(row.windowEndMillis, armZone)} " +
+                        "(${zoneOffsetLabel(row.windowStartMillis, armZone)})"
+                } else {
+                    "WITHIN ${name.uppercase(java.util.Locale.US)} · " +
+                        "${hhmm(row.windowStartMillis)}–${hhmm(row.windowEndMillis)}"
+                }
             } else {
                 null
             }
@@ -3043,7 +3080,8 @@ class MonolithRepository(
             penaltySecondsAdded = pending.penaltySecondsAdded,
             forgedArtifactName = pending.forgedArtifactName,
             heldShutAtSeal = pending.heldShutAtSeal,
-            heldPeekAtSeal = pending.heldPeekAtSeal
+            heldPeekAtSeal = pending.heldPeekAtSeal,
+            armZoneId = armZoneStore.zoneFor(pending.armWallMs)
         )
     }
 
@@ -3076,6 +3114,18 @@ class MonolithRepository(
         if (row.receiptNumber <= 0) return null
         return rehydrateReceipt(sessionId, row.receiptNumber)
     }
+
+    /** Issue #135 F2 (re-issue): the Deck's LAST RECEIPT door -
+     *  the standing slip for ONE session, rebuilt settled from
+     *  its row. The ViewModel's publishReceipt facade calls this
+     *  first: a session that claimed its № re-derives its slip
+     *  here (the #157 rehydration - restored, its fault read from
+     *  the row's own fault shield) and never re-claims; a session
+     *  that claimed nothing returns null and the caller falls
+     *  through to discovery. Re-issue is a read: it claims
+     *  nothing and stamps nothing. */
+    suspend fun receiptForSession(sessionId: Int): ReceiptState? =
+        rehydrateReceipt(sessionId)
 
     /** The Vault's receipts index (issue #157): every claimed
      *  session, newest № first, carrying only what its row
@@ -3159,7 +3209,8 @@ class MonolithRepository(
             penaltySecondsAdded = pending.penaltySecondsAdded,
             forgedArtifactName = pending.forgedArtifactName,
             heldShutAtSeal = pending.heldShutAtSeal,
-            heldPeekAtSeal = pending.heldPeekAtSeal
+            heldPeekAtSeal = pending.heldPeekAtSeal,
+            armZoneId = armZoneStore.zoneFor(pending.armWallMs)
         )
     }
 
@@ -4041,7 +4092,7 @@ class MonolithRepository(
      * meaningless). Returns the updated row, or null when no
      * session is active.
      */
-    suspend fun extendActiveSessionReturningSession(extraMinutes: Int): FocusSessionEntity? =
+    suspend fun extendActiveSession(extraMinutes: Int): FocusSessionEntity? =
         withContext(Dispatchers.IO) {
             val active = dao.getActiveSessionSnapshot() ?: return@withContext null
             if (extraMinutes <= 0 || active.isStopwatchMode) return@withContext active
@@ -4456,10 +4507,14 @@ class MonolithRepository(
         if (nextUp != null) {
             val promoted = nextUp.copy(status = TaskQueueStatus.ACTIVE.name, queueOrder = 0)
             dao.updateTask(promoted)
-            if (currentSession != null) {
-                currentSession = currentSession.copy(intention = promoted.title)
-                dao.updateSession(currentSession)
-            }
+            // Issue #124 (typing-intention) + ESR-02: the promotion
+            // is queue bookkeeping ONLY. The running session's
+            // intention was frozen at arm time and is never
+            // rewritten here — the old copy(intention =
+            // promoted.title) silently changed what the receipt and
+            // later airlock lines claimed the session was armed
+            // with, and it ran with NO seal check at all (ESR-02's
+            // exact charge against this function).
             return@withContext promoted
         }
         null
@@ -4558,19 +4613,14 @@ class MonolithRepository(
         )
         dao.updateTask(promoted)
 
-        val activeSession = dao.getActiveSessionSnapshot()
-        if (activeSession != null) {
-            // ESR-02 (Hale's S1, dying in Slice E): a SEALED
-            // session's intention is the receipt's title source —
-            // rewriting it under the seal would falsify the slip.
-            // The seal marker (F-K1) is the repository-level
-            // witness: while the active row is the sealed row, the
-            // intention write is refused. The promotion itself —
-            // the Tasks surface's own bookkeeping — proceeds.
-            if (sealedSessionIdFromMarker() != activeSession.id) {
-                dao.updateSession(activeSession.copy(intention = promoted.title))
-            }
-        }
+        // Issue #124 (typing-intention): NO session write happens
+        // here at all. ESR-02 refused the intention rewrite only
+        // for the SEALED row; the freeze is now total — a session's
+        // intention is what the user declared at arm time, for the
+        // session's whole life, sealed or not, because it is the
+        // receipt's title source and the airlock's quoted words.
+        // The promotion above is the Tasks surface's own
+        // bookkeeping and proceeds on its own.
         promoted
     }
 
@@ -4764,6 +4814,10 @@ class MonolithRepository(
     // matching the drain's own precedence.
     private val dayWordStore by lazy { DayWordStore(context) }
 
+    /** Issue #152: the arm-zone capture for receipts (see
+     *  ArmZoneStore). Written at the one birth funnel below. */
+    private val armZoneStore by lazy { ArmZoneStore(context) }
+
     fun dayWords(): Map<String, String> = dayWordStore.all()
 
     suspend fun allDayWords(): Map<String, String> {
@@ -4783,6 +4837,27 @@ class MonolithRepository(
      *  prefs removal committed — if that failed, nothing about the
      *  clear is presented as done. */
     suspend fun declareDayWord(dateIso: String, word: String?): Boolean {
+        // Issue #152 (honest-travel-day F1): never rewrite a past
+        // day across a landing. Filing dates are local, so after a
+        // westbound landing "today" can BE a date that already
+        // carries a word declared in the departure zone — that
+        // date was a lived past day, and the Drawer's law is that
+        // it files words, it does not rewrite past days. A change
+        // to a DIFFERENT word for such a date, made from a
+        // different zone than the standing declaration's witnessed
+        // zone, is refused (false — the caller must not present it
+        // as declared). Same-zone changes stay free all day, and
+        // words with no zone witness (declared before the witness
+        // existed) are not refused on a guess.
+        if (word != null) {
+            val existing = allDayWords()[dateIso]
+            val witnessedZone = dayWordStore.declaredZone(dateIso)
+            if (existing != null && existing != word && witnessedZone != null &&
+                witnessedZone != java.time.ZoneId.systemDefault().id
+            ) {
+                return false
+            }
+        }
         val committed = dayWordStore.put(dateIso, word)
         if (committed && word == null) {
             dao.deleteDayNote(dateIso)

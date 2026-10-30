@@ -322,7 +322,14 @@ data class ReceiptState(
     val forgedArtifactName: String? = null,
     // W-41: see PendingReceipt.heldShutAtSeal.
     val heldShutAtSeal: Int = -1,
-    val heldPeekAtSeal: Int = -1
+    val heldPeekAtSeal: Int = -1,
+    // Issue #152: the IANA zone the session was ARMED in, captured
+    // at the birth funnel (ArmZoneStore). Null when unknown (a
+    // session armed before the capture existed). The slip renders
+    // ARMED in this zone — with its offset printed — whenever it
+    // differs from the zone in force at render; a receipt's times
+    // must say where they live.
+    val armZoneId: String? = null
 ) {
     /** The printed №: zero-padded to a minimum of 3, never
      *  truncated (№ 048 … № 1048). */

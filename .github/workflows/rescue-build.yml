@@ -153,7 +153,7 @@ jobs:
             fi
             echo "- Signing: committed debug keystore, SHA-256 ${{ steps.keystore.outputs.fingerprint }} — the key that signed the installed builds, so this APK installs over the Monolith on Sarthak's phone (versionCode permitting)."
             echo "- APK signer gate (apksigner on the built APK): ${{ steps.apksigner.outcome }} - ${{ steps.apksigner.outputs.apk_fingerprint }}"
-            echo "- APK versionCode: ${{ steps.apksigner.outputs.version_code }} (batch-9 shipped 1 - an update must never go lower)"
+            echo "- APK versionCode: ${{ steps.apksigner.outputs.version_code }} (epoch-minutes scheme, issue #25 ruling: computed in the build, never hand-set, never lower than any previous build)"
             echo "- Screenshots: separate job in this same run — its artifact is screens-${{ github.sha }} when the harness passes (Robolectric renders of THIS tree; states the harness cannot render are named on issue #382, never faked)."
           } >> "$GITHUB_STEP_SUMMARY"
 

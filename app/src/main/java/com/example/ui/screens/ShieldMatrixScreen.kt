@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.graphics.Bitmap
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -9,6 +10,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -26,6 +28,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -50,6 +53,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -99,6 +104,7 @@ import kotlinx.coroutines.delay
  * - ShieldCapSelector for discrete 3-position Loadout selection (STUDY / WORK / SLEEP).
  * - AppRowSledToggleView ultra-minimal installed app rows with 3-stop sled switches (SHUT / PEEK / OPEN).
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun ShieldMatrixScreen(
     allApps: List<BlockedAppEntity>,
@@ -946,8 +952,20 @@ fun ShieldMatrixScreen(
                 color = scheme.onSurfaceVariant,
                 modifier = Modifier.testTag("shield_catalog_scope_line")
             )
-            Spacer(modifier = Modifier.height(8.dp))
+        }
 
+        // Issue #142: the search bar and the category chips PIN to
+        // the top of the list (stickyHeader). Finding an app used
+        // to start with scrolling back up the page; now the strip
+        // stays where the results are, and the query can be refined
+        // or cleared in place (the ✕ at the bar's end).
+        stickyHeader {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(scheme.background)
+                    .padding(vertical = 8.dp)
+            ) {
             // Recessed 12dp search bar
             Box(
                 modifier = Modifier
@@ -958,31 +976,47 @@ fun ShieldMatrixScreen(
                     .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.CenterStart
             ) {
-                if (searchQuery.isEmpty()) {
-                    Text(
-                        text = "Filter apps by name or package…",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 13.sp,
-                        color = scheme.onSurfaceVariant
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        if (searchQuery.isEmpty()) {
+                            Text(
+                                text = "Filter apps by name or package…",
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 13.sp,
+                                color = scheme.onSurfaceVariant
+                            )
+                        }
+                        BasicTextField(
+                            value = searchQuery,
+                            onValueChange = onSearchQueryChanged,
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = scheme.onBackground
+                            ),
+                            // The accent law (chrome C7): a caret is furniture,
+                            // not a commit — it wears ink, never the accent.
+                            cursorBrush = SolidColor(scheme.onBackground),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("shield_search_input")
+                        )
+                    }
+                    if (searchQuery.isNotEmpty()) {
+                        Text(
+                            text = "✕",
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 13.sp,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clickable { onSearchQueryChanged("") }
+                                .padding(start = 8.dp)
+                                .testTag("shield_search_clear")
+                        )
+                    }
                 }
-                BasicTextField(
-                    value = searchQuery,
-                    onValueChange = onSearchQueryChanged,
-                    singleLine = true,
-                    textStyle = TextStyle(
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        color = scheme.onBackground
-                    ),
-                    // The accent law (chrome C7): a caret is furniture,
-                    // not a commit — it wears ink, never the accent.
-                    cursorBrush = SolidColor(scheme.onBackground),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("shield_search_input")
-                )
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -1008,6 +1042,41 @@ fun ShieldMatrixScreen(
                         onClick = { onSelectCategory(if (selectedCategory == cat) null else cat) }
                     )
                 }
+            }
+            // The zero-result line pins WITH the search strip
+            // (issue #142, closure fix): the answer stays on screen
+            // while the query is refined, instead of living in a
+            // list item the catalogue can scroll past. The line's
+            // semantics are unchanged - an empty list is answered
+            // in print, never with a void (Liv/Gust); a search hit
+            // under another category says exactly that (fresh-eyes
+            // L7); the existence check uses the SAME match as the
+            // filter (appMatchesQuery, #107/#142), and the search
+            // line never claims an app is absent from the phone.
+            if (filteredApps.isEmpty()) {
+                val existsOutsideFilter = searchQuery.isNotBlank() && allApps.any {
+                    com.example.ui.appMatchesQuery(it, searchQuery)
+                }
+                Text(
+                    text = when {
+                        searchQuery.isNotBlank() && existsOutsideFilter ->
+                            "THAT NAME IS ON THIS PHONE — NOT IN THIS CATEGORY"
+                        searchQuery.isNotBlank() && selectedCategory != null ->
+                            "NO MATCH FOR THAT SEARCH IN ${selectedCategory.label.uppercase()} — TRY THE APP'S NAME OR ITS PACKAGE NAME"
+                        searchQuery.isNotBlank() ->
+                            "NO MATCH FOR THAT SEARCH — TRY THE APP'S NAME OR ITS PACKAGE NAME"
+                        selectedCategory != null ->
+                            "NO APPS IN THIS CATEGORY ON THIS PHONE"
+                        else -> "NO APPS ON THIS PHONE"
+                    },
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .padding(top = 8.dp)
+                        .testTag("shield_no_match_line")
+                )
+            }
             }
         }
 
@@ -1079,6 +1148,211 @@ fun ShieldMatrixScreen(
                     color = scheme.onSurfaceVariant,
                     modifier = Modifier.testTag("shield_no_match_line")
                 )
+        // =====================================================================
+        // SECTION 5B: THE GUARDS (issue #51 F1 cure) — the sniper,
+        // the browser blocker and the profiles were wired from
+        // MainActivity to real ViewModel functions and rendered
+        // NOWHERE; this section is their UI. The switches sit
+        // directly above BLOCKED WEBSITES, whose header claimed
+        // sites were blocked with no switch in reach.
+        // =====================================================================
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                FullBleedSectionHeader(
+                    titleWord = "GUARDS",
+                    rightWordPrefix = "",
+                    rightMonoNumber = "",
+                    rightWordSuffix = ""
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "SHORTS & REELS SNIPER",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground
+                    )
+                    BlockitActionChip(
+                        wordLabel = if (shortsReelsSniperEnabled) "ON" else "OFF",
+                        isPrimaryInk = shortsReelsSniperEnabled,
+                        onClick = onToggleShortsReelsSniper,
+                        testTag = "shield_sniper_toggle"
+                    )
+                }
+                // #335 F5: the detector-health line — first/last
+                // node, stale and slow-scan states, printed from
+                // the DetectorHealth record the services write.
+                Text(
+                    text = com.example.ui.components.detectorLineFor(
+                        com.example.service.DetectorHealth.snapshot(),
+                        SystemClock.elapsedRealtime()
+                    ).text,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("shield_detector_health_line")
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "BROWSER URL BLOCKER",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground
+                    )
+                    BlockitActionChip(
+                        wordLabel = if (browserUrlBlockerEnabled) "ON" else "OFF",
+                        isPrimaryInk = browserUrlBlockerEnabled,
+                        onClick = onToggleBrowserUrlBlocker,
+                        testTag = "shield_browser_blocker_toggle"
+                    )
+                }
+                if (profiles.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        profiles.forEach { profile ->
+                            FilterWord(
+                                label = profile.name.uppercase(),
+                                selected = profile.name == selectedProfileName,
+                                onClick = { onSelectProfile(profile) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // =====================================================================
+        // SECTION 6: BLOCKED WEBSITES — the editor transplanted from
+        // the dissolved Guard screen (chrome wave). The Guard
+        // screen's section, moved whole: same rows, same add field,
+        // same wiring — the list below is the list the blocker
+        // enforces (the plate in PARK says so: SITES: KEPT WITH
+        // APPS ON SHIELD).
+        // =====================================================================
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                FullBleedSectionHeader(
+                    titleWord = "BLOCKED WEBSITES",
+                    rightWordPrefix = "",
+                    rightMonoNumber = blockedSites.size.toString(),
+                    rightWordSuffix = " SITES"
+                )
+
+                blockedSites.forEach { domain ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = domain,
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 14.sp,
+                            color = scheme.onBackground
+                        )
+                        BlockitActionChip(
+                            wordLabel = "REMOVE",
+                            onClick = { onRemoveSite(domain) }
+                        )
+                    }
+                }
+
+                // Issue #51 F3 cure: saveable — the draft is no
+                // longer destroyed when this LazyColumn item is
+                // disposed on scroll.
+                var newSiteText by rememberSaveable { mutableStateOf("") }
+                var siteError by rememberSaveable { mutableStateOf<String?>(null) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(scheme.surfaceVariant)
+                            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        if (newSiteText.isEmpty()) {
+                            Text(
+                                text = "Add a site — e.g. news.ycombinator.com",
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 13.sp,
+                                color = scheme.onSurfaceVariant
+                            )
+                        }
+                        BasicTextField(
+                            value = newSiteText,
+                            onValueChange = { newSiteText = it },
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 14.sp,
+                                color = scheme.onBackground
+                            ),
+                            // The accent law (chrome C7): ink caret.
+                            cursorBrush = SolidColor(scheme.onBackground),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("shield_site_input")
+                        )
+                    }
+                    BlockitActionChip(
+                        wordLabel = "ADD",
+                        isPrimaryInk = true,
+                        onClick = {
+                            // Issue #51 F2 cure (ported from agent/issue-7's
+                            // R-3 truth fix): a rejected ADD PRINTS WHY and
+                            // KEEPS the text. The old form cleared the field
+                            // unconditionally — MonolithRepository.addBlockedSite
+                            // rejects an unnormalisable domain (returns false)
+                            // and the ViewModel swallows that Boolean, so
+                            // garbage vanished as if saved. The screen judges
+                            // with the repository's own normaliser, so the
+                            // verdict it prints is the verdict the store gives.
+                            val normalised = BlockedBrowserDomains.normalizeDomain(newSiteText)
+                            when {
+                                newSiteText.isBlank() -> Unit
+                                normalised == null -> siteError =
+                                    "NOT A SITE — CHECK THE ADDRESS AND TRY AGAIN"
+                                blockedSites.contains(normalised) -> siteError =
+                                    "ALREADY ON THE LIST"
+                                else -> {
+                                    onAddSite(newSiteText)
+                                    newSiteText = ""
+                                    siteError = null
+                                }
+                            }
+                        }
+                    )
+                }
+                val err = siteError
+                if (err != null) {
+                    Text(
+                        text = err,
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("shield_site_error")
+                    )
+                }
             }
         }
     }
@@ -1366,6 +1640,15 @@ private fun LoadoutPreviewPanel(
 private fun fmtRoutineTime(minutes: Int): String =
     "%02d:%02d".format(minutes / 60, minutes % 60)
 
+/** Issue #152: the current local UTC offset ("+05:30"; UTC is
+ *  "+00:00"), printed beside routine times so the zone a printed
+ *  wall time lives in is never left implicit. */
+private fun localOffsetLabel(): String {
+    val offset = java.time.ZoneId.systemDefault().rules
+        .getOffset(java.time.Instant.now())
+    return if (offset == java.time.ZoneOffset.UTC) "+00:00" else offset.id
+}
+
 private fun routineDaysLabel(mask: Int): String = when (mask) {
     127 -> "DAILY"
     31 -> "MON–FRI"
@@ -1468,11 +1751,16 @@ private fun RoutineRow(
                     maxLines = 1
                 )
                 Text(
-                    // R-5's marker rides the meta line: RUNNING NOW
-                    // only when the active session's own routineId
-                    // names this routine.
+                    // Issue #152: a routine's printed times are
+                    // LOCAL wall times in the zone in force — the
+                    // line now says so, with the current offset,
+                    // so after a landing no printed routine time
+                    // is ambiguous about which zone it means.
+                    // R-5's marker rides the same meta line: RUNNING
+                    // NOW only when the active session's own
+                    // routineId names this routine.
                     text = "${routineDaysLabel(routine.daysMask)} · " +
-                        "${routineLoadoutLabel(routine.loadoutName)}" +
+                        "${routineLoadoutLabel(routine.loadoutName)} · LOCAL ${localOffsetLabel()}" +
                         routineRunningNowSuffix(routine, activeRoutineId),
                     fontFamily = AnonymousProFamily,
                     fontSize = 12.sp,
@@ -2016,37 +2304,69 @@ private fun CatalogueAppRow(
         runCatching { AppCategory.valueOf(app.category) }.getOrNull()
     }
     Column(modifier = Modifier.fillMaxWidth()) {
-        AndroidView(
-            factory = { ctx ->
-                AppRowSledToggleView(ctx).apply {
-                    this.soundEngine = soundEngine
-                }
-            },
-            update = { view ->
-                view.isNightMode = effectiveNight
-                view.soundEngine = soundEngine
-                view.appName = app.appName
-                view.currentTier = app.resolvedTier
-                // R-11 core (issue #7): the sled is a Canvas —
-                // without this the row is silent to TalkBack and
-                // Shield cannot be operated by ear. The description
-                // carries name + tier.
-                view.contentDescription = "${app.appName}, ${tierWord(app.resolvedTier)}"
-
+        // Issue #142 (closure pass, STURM-4): the app's real icon
+        // beside the sled — the audit's twin-apps charge ("Clock"
+        // vs "Clock", identical truncated prefixes) is answered by
+        // the icon AND the package line below, not the package
+        // alone. Same PackageManager pattern as the launcher
+        // tiles (LauncherBlockScreen); a package with no icon
+        // simply leaves the slot empty.
+        val rowContext = LocalContext.current
+        val rowIcon: Bitmap? = remember(app.packageName) {
+            runCatching {
+                val drawable = rowContext.packageManager.getApplicationIcon(app.packageName)
+                val bmp = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
+                val canvas = android.graphics.Canvas(bmp)
+                drawable.setBounds(0, 0, 96, 96)
+                drawable.draw(canvas)
+                bmp
+            }.getOrNull()
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (rowIcon != null) {
+                Image(
+                    bitmap = rowIcon.asImageBitmap(),
+                    contentDescription = app.appName,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .padding(end = 10.dp)
+                        .testTag("app_icon_${app.packageName}")
+                )
+            }
+            AndroidView(
+                factory = { ctx ->
+                    AppRowSledToggleView(ctx).apply {
+                        this.soundEngine = soundEngine
+                    }
+                },
+                update = { view ->
+                    view.isNightMode = effectiveNight
+                    view.soundEngine = soundEngine
+                    view.appName = app.appName
+                    view.currentTier = app.resolvedTier
+                    // R-11 core (issue #7): the sled is a Canvas —
+                    // without this the row is silent to TalkBack and
+                    // Shield cannot be operated by ear. The description
+                    // carries name + tier.
+                    view.contentDescription = "${app.appName}, ${tierWord(app.resolvedTier)}"
                 // Issue #140: the daily limit, printed on the row,
-                // and the hold that steps it — see MonolithViewModel
+                // and the hold that steps it - see MonolithViewModel
                 // .cycleAppDailyLimit.
                 view.usageCaption = "USED ${app.todayUsageMinutes} OF ${app.dailyLimitMinutes} MIN TODAY"
                 view.onDailyLimitLongPress = { onCycleDailyLimit(app) }
-                view.onTierSelected = { newTier ->
-                    onSetAppTier(app.packageName, newTier)
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(54.dp)
-                .testTag("app_row_${app.packageName}")
-        )
+                    view.onTierSelected = { newTier ->
+                        onSetAppTier(app.packageName, newTier)
+                    }
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(54.dp)
+                    .testTag("app_row_${app.packageName}")
+            )
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2078,5 +2398,19 @@ private fun CatalogueAppRow(
                 color = scheme.onSurfaceVariant
             )
         }
+        // Issue #142: the package name, printed on every row.
+        // Similar-named apps (and the twin builds a long name
+        // truncates into sameness on the sled) are told apart by
+        // the one string that is never shared.
+        Text(
+            text = app.packageName,
+            fontFamily = AnonymousProFamily,
+            fontSize = 10.sp,
+            letterSpacing = 1.sp,
+            color = scheme.onSurfaceVariant,
+            modifier = Modifier
+                .padding(vertical = 1.dp)
+                .testTag("app_package_${app.packageName}")
+        )
     }
 }
