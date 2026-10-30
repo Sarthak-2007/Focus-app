@@ -23,9 +23,12 @@ val WarmTactileStudioColorScheme = lightColorScheme(
     onSecondary = TokenColorOnSecondaryContainer,
     secondaryContainer = TokenColorSecondaryContainer,
     onSecondaryContainer = TokenColorOnSecondaryContainer,
-    tertiary = ElectricIris,
-    onTertiary = TokenColorOnPrimary,
-    tertiaryContainer = SoftPeriwinkle,
+    // Tertiary names the token it IS (issue #63): the old alias
+    // "ElectricIris" was this same grey wearing a violet name, and the
+    // dark scheme smuggled it in as a light token in night clothing.
+    tertiary = TokenColorSecondaryContainer,
+    onTertiary = TokenColorOnSecondaryContainer,
+    tertiaryContainer = TokenColorSurfaceVariant,
     onTertiaryContainer = TokenColorPrimary,
     background = TokenColorBackground,
     onBackground = TokenTextColorPrimary,
@@ -35,8 +38,28 @@ val WarmTactileStudioColorScheme = lightColorScheme(
     onSurfaceVariant = TokenColorOnSurfaceVariant,
     error = TokenAlert,
     onError = TokenColorOnPrimary,
+    errorContainer = TokenColorSurfaceVariant,
+    onErrorContainer = TokenAlert,
     outline = TokenColorOutline,
-    outlineVariant = TokenColorOutlineVariant
+    outlineVariant = TokenColorOutlineVariant,
+    // Issue #63: EVERY slot the app consumes is wired — surfaceBright is
+    // rendered by Airlock/Receipt/Deck, so the raised surfaces now take
+    // the tokens that exist for that role (#FAF6F0 day / #362C27 night)
+    // instead of Material3 library defaults. Container staircase steps
+    // across the existing tokens only; inverse pair is the block bar
+    // with cream on it (12.81:1, computed); scrim is true black.
+    surfaceBright = TokenColorSurfaceBright,
+    surfaceDim = TokenColorSurfaceVariant,
+    surfaceContainerLowest = TokenColorSurfaceBright,
+    surfaceContainerLow = TokenColorSurface,
+    surfaceContainer = TokenColorSurfaceSheet,
+    surfaceContainerHigh = TokenColorSurfaceVariant,
+    surfaceContainerHighest = TokenColorSurfaceVariant,
+    inverseSurface = TokenBlockBarSurface,
+    inverseOnSurface = TokenColorOnPrimary,
+    inversePrimary = TokenColorPrimaryContainer,
+    scrim = TokenTrueBlack,
+    surfaceTint = TokenColorPrimary
 )
 
 val SealedVaultNightColorScheme = darkColorScheme(
@@ -48,34 +71,52 @@ val SealedVaultNightColorScheme = darkColorScheme(
     onSecondary = NightColorOnSecondaryContainer,
     secondaryContainer = NightColorSecondaryContainer,
     onSecondaryContainer = NightColorOnSecondaryContainer,
-    tertiary = ElectricIris,
-    onTertiary = NightColorPrimary,
+    // Tertiary is a NIGHT token now (issue #63) — was ElectricIris, a
+    // light-mode alias (#615B5A day grey). Pairs computed: onTertiary
+    // cream on #4A423C = 8.08:1; onTertiaryContainer #EDE3D8 on
+    // #362C27 = 10.72:1.
+    tertiary = NightColorSecondaryContainer,
+    onTertiary = NightColorOnSecondaryContainer,
     tertiaryContainer = NightColorSurfaceBright,
-    onTertiaryContainer = NightColorPrimary,
+    onTertiaryContainer = NightColorOnSurface,
     background = NightColorBackground,
     onBackground = NightTextColorPrimary,
     surface = NightColorSurface,
     onSurface = NightColorOnSurface,
     surfaceVariant = NightColorSurfaceVariant,
     onSurfaceVariant = NightColorOnSurfaceVariant,
-    error = NightColorPrimaryContainer,
-    // Chrome C7 (the accent law): the night error slot is re-voiced
-    // to the locked night accent #F47442 — #FF8A5C (NightAlert) was
-    // a fourth orange living in the scheme, outside the accent set;
-    // it leaves the screen set here. (NightAlert stays in the
-    // palette file as a token definition; nothing renders it.)
-    // Measured (Round 0b): cream #FFE4CF on NightAlert #FF8A5C is 1.95:1 —
-    // illegible. The dark on-primary ink gives 8.1:1. (onTertiary and
-    // onTertiaryContainer were audited in the same pass: cream on their
-    // containers measures 5.6:1 and 11.9:1, so they stay.)
+    // Error is NightAlert again (issue #63): the token was dead because
+    // the slot had been re-voiced to the accent, which made "error"
+    // indistinguishable from "primary action". NightAlert #FF8A5C on
+    // the night ground computes 7.90:1, and its onError ink
+    // NightColorOnPrimary on it computes 7.98:1 — both pass. (The old
+    // 1.95:1 figure was CREAM on NightAlert; the ink is dark, not cream.)
+    error = NightAlert,
     onError = NightColorOnPrimary,
+    errorContainer = NightColorSurfaceBright,
+    onErrorContainer = NightAlert,
     outline = NightColorOutline,
-    outlineVariant = NightColorOutlineVariant
+    outlineVariant = NightColorOutlineVariant,
+    // Same full wiring as day (issue #63): staircase across night tokens
+    // only — recessed variant below ground, raised bright, sheet cap.
+    // Inverse pair: cream surface, dark ink on it (15.23:1, computed).
+    surfaceBright = NightColorSurfaceBright,
+    surfaceDim = NightColorSurfaceVariant,
+    surfaceContainerLowest = NightColorSurfaceVariant,
+    surfaceContainerLow = NightColorBackground,
+    surfaceContainer = NightColorSurfaceBright,
+    surfaceContainerHigh = NightColorSurfaceSheet,
+    surfaceContainerHighest = NightColorSurfaceSheet,
+    inverseSurface = NightColorPrimary,
+    inverseOnSurface = NightColorOnPrimary,
+    inversePrimary = NightColorPrimaryContainer,
+    scrim = TokenTrueBlack,
+    surfaceTint = NightColorPrimary
 )
 
-val ObsidianSolarColorScheme = WarmTactileStudioColorScheme
-val SunlitPaperLightColorScheme = WarmTactileStudioColorScheme
-val WarmIndigoDuskDarkColorScheme = SealedVaultNightColorScheme
+// (Issue #63: the three scheme aliases that duplicated these two
+// schemes under other names — ObsidianSolar / SunlitPaperLight /
+// WarmIndigoDuskDark — had zero call sites and are deleted.)
 
 // Strictly two corner radii across the app: 12.dp (small) and 24.dp (large) per DEVELOPER-GUIDE.pdf §3
 val MonolithShapes = Shapes(
@@ -100,8 +141,14 @@ private object NoRippleIndication : IndicationNodeFactory {
 
 @Composable
 fun MyApplicationTheme(
-    darkTheme: Boolean = false,
-    dynamicColor: Boolean = false,
+    // No default (issue #63): the caller owns the night decision — the
+    // ViewModel's theme evaluation (routines + session, chrome C4), NOT
+    // the OS flag; a default `false` here lied that day was the norm.
+    // There is deliberately no dynamicColor parameter: it was accepted
+    // and never read (MainActivity hard-coded it false). Wallpaper
+    // dynamic colour can NEVER take this app over — the brand palette
+    // is law, and a wallpaper hue could literally introduce green.
+    darkTheme: Boolean,
     isFocusSessionActive: Boolean = false,
     content: @Composable () -> Unit
 ) {

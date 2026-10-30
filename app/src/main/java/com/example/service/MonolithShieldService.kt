@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -11,6 +12,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.example.MainActivity
@@ -18,12 +20,16 @@ import com.example.R
 import com.example.data.AppBlockTier
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -59,16 +65,39 @@ class MonolithShieldService : Service() {
         } else {
             0
         }
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            buildNotification("Monolith Locked", "Protecting your focus session..."),
-            fgsType
-        )
+        // Guarded startForeground (issue #43, finding 3): on
+        // targetSdk 36 a specialUse FGS start can throw
+        // (ForegroundServiceStartNotAllowedException /
+        // SecurityException). An unguarded throw here would leave
+        // a zombie — the caller believes a shield was requested,
+        // the system has a dying service, and no loop ever runs.
+        // On failure: clear every witness, stopSelf, and return
+        // START_NOT_STICKY so nothing advertises protection that
+        // does not exist.
+        try {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                buildNotification("Monolith Locked", "Protecting your focus session..."),
+                fgsType
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground failed; standing down instead of zombifying", e)
+            if (instance === this) {
+                instance = null
+            }
+            protecting = false
+            protectingSessionId = -1
+            protectingMono = 0L
+            WatchStore.onShieldIteration(protecting = false)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         // Live Wire registry (Ines): the instance exists only once
         // startForeground has actually succeeded - no instance, no
         // flag, no rumour.
         instance = this
+        WatchStore.bind(applicationContext)
         WatchStore.poke()
         startMonitoringLoop()
 
@@ -82,8 +111,22 @@ class MonolithShieldService : Service() {
 
         monitorJob = serviceScope.launch {
             var iteration = 0
+            // Audit R3b #146: break-transition witness for the
+            // summons — the loop remembers the last tick's break
+            // state so the flip out of a break posts exactly once.
+            var wasInSafeBreak = false
             while (isActive) {
                 iteration++
+                // Per-iteration guard (issue #43, finding 1): one
+                // Room / usage-stats / heartbeat exception must NOT
+                // cancel this job while the foreground notification
+                // and a stale protecting=true stay alive — that was
+                // the lying-zombie failure. A failed iteration
+                // publishes protecting=false for its witness, logs,
+                // waits one cadence, and the loop CONTINUES. Only
+                // CancellationException escapes (structured
+                // cancellation is not a failure).
+                try {
                 // Routine heartbeat cadence (rebuild §2.2): first pass,
                 // then ~every 30 s (15 iterations of the 2 s loop), so a
                 // window boundary is reconciled within half a minute
@@ -113,11 +156,33 @@ class MonolithShieldService : Service() {
                     RoutineHeartbeat.tickAsync(
                         applicationContext, RoutineHeartbeat.Source.SESSION_EDGE
                     )
-                    updateNotification("Session Complete", "Unlocked desk toy ready in your Break tab.")
+                    // Audit R3b #146: the ending is news for the
+                    // user who stayed away — it also sounds on the
+                    // summons channel, not only as a silent edit to
+                    // the detached LOW notification below.
+                    postSummons(
+                        "SESSION COMPLETE",
+                        "Your session has ended. The receipt is on the Deck."
+                    )
+                    // R3b #164 F2: the low notification's old line
+                    // promised an "Unlocked desk toy" in a "Break
+                    // tab" — neither exists anywhere in the app.
+                    updateNotification("Session Complete", "Your receipt is waiting in the Ledger.")
                     stopForeground(STOP_FOREGROUND_DETACH)
                     stopSelf()
                     break
                 }
+
+                // Audit R3b #146: the break just expired under a
+                // user who is away by design — summon them on the
+                // HIGH channel as the next block starts, once.
+                if (wasInSafeBreak && !updated.isInSafeBreak) {
+                    postSummons(
+                        "BREAK OVER",
+                        "Block ${updated.currentBlockIndex} of ${updated.totalStudyBlocks} has started."
+                    )
+                }
+                wasInSafeBreak = updated.isInSafeBreak
 
                 val timeFormatted = when {
                     updated.isInSafeBreak -> {
@@ -139,10 +204,27 @@ class MonolithShieldService : Service() {
                     }
                 }
 
-                updateNotification(
-                    title = "Monolith • ${updated.intention}",
-                    subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped"
-                )
+                // Audit R3b #149: the grace window exists off the
+                // Deck too. During the window the shield's own
+                // notification counts it down — its tap already
+                // opens the app to the Deck chip — and for a
+                // routine-born row it names the booking instead of
+                // promising free.
+                if (updated.elapsedSeconds <= 10 && !updated.isInSafeBreak) {
+                    updateNotification(
+                        title = "Monolith • ${updated.intention}",
+                        subtitle = if (updated.routineId != null) {
+                            "GRACE ${10 - updated.elapsedSeconds}S — ABORT BOOKED BY ROUTINE · TAP TO OPEN"
+                        } else {
+                            "GRACE ${10 - updated.elapsedSeconds}S — CANCEL FREE · TAP TO OPEN"
+                        }
+                    )
+                } else {
+                    updateNotification(
+                        title = "Monolith • ${updated.intention}",
+                        subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped"
+                    )
+                }
 
                 // Live Wire: the shield is PROTECTING only once a
                 // full monitor iteration has run under a live
@@ -175,23 +257,141 @@ class MonolithShieldService : Service() {
                     .map { it.packageName }
                     .toSet()
 
-                val foregroundBlockedPkg = repository.queryForegroundBlockedApp(blockedPackages)
+                // Foreground detection (issue #43, finding 2):
+                // prefer the accessibility service's real
+                // TYPE_WINDOW_STATE_CHANGED witness when that
+                // service is bound; UsageStats is only the fallback
+                // when no witness exists (see ForegroundSelection).
+                // The call bypass is checked here as well because
+                // the witness path does not go through the
+                // repository's UsageStats query that checked it
+                // before — a call must never be blocked on either
+                // path. The 2 s cadence is unchanged.
+                // Issue #99 F1 composes on the fallback path: a
+                // package whose peek lease just expired is evicted
+                // on this poll even though its lastTimeUsed is
+                // minutes stale (stay-put user) — the two-arg query
+                // waives the freshness filter for expired peeks.
+                // On the witness path the same eviction is natural:
+                // an expired lease puts the package back in
+                // blockedPackages and the witness IS that package.
+                val expiredPeeks = com.example.data.expiredPeekPackages(
+                    dao.getAllAppsSnapshot(), nowMono
+                )
+                val a11yForeground = if (MonolithAccessibilityService.instance != null) {
+                    MonolithAccessibilityService.foregroundPackage
+                } else {
+                    null
+                }
+                val foregroundBlockedPkg = if (repository.isPhoneOrVoipCallActive()) {
+                    null
+                } else {
+                    ForegroundSelection.selectBlockedForeground(
+                        accessibilityForeground = a11yForeground,
+                        blockedPackages = blockedPackages,
+                        usageStatsFallback = { repository.queryForegroundBlockedApp(blockedPackages, expiredPeeks) }
+                    )
+                }
                 if (foregroundBlockedPkg != null && foregroundBlockedPkg != applicationContext.packageName) {
                     val blockedApp = dao.getAllAppsSnapshot().find { it.packageName == foregroundBlockedPkg }
                     val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                         putExtra(EXTRA_INTERCEPTED_PACKAGE, foregroundBlockedPkg)
                         putExtra(EXTRA_INTERCEPTED_APP_NAME, blockedApp?.appName ?: "Blocked App")
-                        putExtra(EXTRA_INTERCEPT_BADGE, blockedApp?.resolvedTier?.badge ?: "Locked")
+                        putExtra(EXTRA_INTERCEPT_BADGE, blockedApp?.resolvedTier?.badge ?: "Shut")
                         // This door's blocked set already excludes a leased PEEK app
                         // (the filter above), so a lease sold here is honoured (UNA2-01).
                         putExtra(EXTRA_INTERCEPT_PATH, InterceptPath.SHIELD_APP.name)
+                        putExtra(EXTRA_INTERCEPT_NONCE, InterceptNonce.mint(applicationContext))
                     }
-                    startActivity(interceptIntent)
+                    // Issue #94 (F2): never a bare background launch —
+                    // a dropped launch stamps itself and falls back
+                    // to a tappable notification (InterceptLaunch).
+                    InterceptLaunch.launch(
+                        applicationContext, interceptIntent,
+                        blockedApp?.appName ?: "Blocked App"
+                    )
                 }
 
                 delay(2000L)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e(TAG, "monitor iteration $iteration failed; loop continues", e)
+                    protecting = false
+                    protectingSessionId = -1
+                    protectingMono = 0L
+                    WatchStore.onShieldIteration(protecting = false)
+                    // One cadence before the next attempt. If the
+                    // scope was cancelled during this wait, the
+                    // CancellationException from delay propagates —
+                    // it is thrown from the catch block, not caught
+                    // by it.
+                    delay(2000L)
+                }
             }
+        }
+    }
+
+    /**
+     * Local stop on the live instance (issue #43, finding 5): the
+     * fallback when stopShield's service dispatch itself fails.
+     * Performs exactly the ACTION_STOP_SHIELD branch's work.
+     */
+    internal fun requestLocalStop() {
+        protecting = false
+        protectingSessionId = -1
+        protectingMono = 0L
+        WatchStore.onShieldIteration(protecting = false)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    /**
+     * Task removal (issue #43, finding 4): START_STICKY alone was
+     * the whole resurrection plan. When the user swipes the app
+     * away mid-session, schedule a near-immediate one-shot alarm
+     * that re-dispatches the shield start, in addition to
+     * START_STICKY. Only a protecting shield reschedules — a
+     * stopped shield stays stopped. Force-stop recovery is NOT
+     * claimed: after a force-stop no code runs until the user
+     * relaunches, by platform design.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (ShieldRestartPolicy.shouldScheduleRestart(protecting)) {
+            scheduleRestartAlarm()
+        }
+        super.onTaskRemoved(rootIntent)
+    }
+
+    private fun scheduleRestartAlarm() {
+        try {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+            if (alarmManager == null) {
+                Log.e(TAG, "onTaskRemoved: no AlarmManager; cannot schedule shield restart")
+                return
+            }
+            val intent = Intent(applicationContext, MonolithShieldService::class.java).apply {
+                action = ACTION_START_SHIELD
+            }
+            val pending = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                PendingIntent.getForegroundService(
+                    applicationContext, RESTART_REQUEST_CODE, intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            } else {
+                PendingIntent.getService(
+                    applicationContext, RESTART_REQUEST_CODE, intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            }
+            alarmManager.setAndAllowWhileIdle(
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                SystemClock.elapsedRealtime() + ShieldRestartPolicy.RESTART_DELAY_MS,
+                pending
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "onTaskRemoved: scheduling shield restart failed", e)
         }
     }
 
@@ -220,12 +420,27 @@ class MonolithShieldService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
+        // Issue #274 (R5 Platform): lock-screen redaction. The live
+        // title/subtitle carry the user's private intention text and
+        // urge count — on a locked phone anyone holding it could read
+        // both. VISIBILITY_PRIVATE + a generic public version: the
+        // owner (unlocked) sees the real session line, the lock screen
+        // sees only that Monolith is protecting a session.
+        val publicVersion = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("Monolith")
+            .setContentText("Focus session protected")
+            .setOngoing(true)
+            .setContentIntent(pendingIntent)
+            .build()
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
             .setContentText(subtitle)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicVersion)
             .setContentIntent(pendingIntent)
             .build()
     }
@@ -233,6 +448,43 @@ class MonolithShieldService : Service() {
     private fun updateNotification(title: String, subtitle: String) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(NOTIFICATION_ID, buildNotification(title, subtitle))
+    }
+
+    /** Audit R3b #146: post an ALERTING summons on the HIGH channel.
+     *  Distinct id from the standing foreground notification, not
+     *  ongoing, not only-alert-once — it arrives like news, because
+     *  for the user who walked away, it is. */
+    private fun postSummons(title: String, text: String) {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                SUMMONS_CHANNEL_ID,
+                "Session summons",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Break-over and session-end calls back to the desk"
+                setShowBadge(false)
+            }
+            manager.createNotificationChannel(channel)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            1,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notification = NotificationCompat.Builder(this, SUMMONS_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+        manager.notify(SUMMONS_NOTIFICATION_ID, notification)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -251,10 +503,19 @@ class MonolithShieldService : Service() {
     }
 
     companion object {
+        // Issue #28: the instance's presence as a FLOW, so waiters
+        // (the finish detention) suspend on the flip instead of
+        // busy-polling the raw field every 25ms.
+        private val _instancePresent = MutableStateFlow(false)
+        val instancePresent: StateFlow<Boolean> = _instancePresent.asStateFlow()
+
         // Live Wire registry (Ines): in-memory only, never persisted.
         @Volatile
         var instance: MonolithShieldService? = null
-            internal set
+            internal set(value) {
+                field = value
+                _instancePresent.value = value != null
+            }
 
         /** True only after startForeground succeeded AND a full
          *  monitor iteration ran. The Live Wire reads this as a
@@ -277,8 +538,17 @@ class MonolithShieldService : Service() {
         @Volatile
         var protectingMono: Long = 0L
             internal set
+        const val TAG = "MonolithShield"
+        const val RESTART_REQUEST_CODE = 0x5211
         const val CHANNEL_ID = "monolith_shield_channel"
         const val NOTIFICATION_ID = 4096
+        // Audit R3b #146: the summons channel — HIGH importance, its
+        // own notification id, used ONLY for the two moments the user
+        // is away from the phone by design (break expiry, session
+        // end). The standing countdown stays on the silent LOW
+        // channel; a summons must be capable of being heard.
+        const val SUMMONS_CHANNEL_ID = "monolith_summons_channel"
+        const val SUMMONS_NOTIFICATION_ID = 4097
         const val ACTION_START_SHIELD = "com.example.action.START_SHIELD"
         const val ACTION_STOP_SHIELD = "com.example.action.STOP_SHIELD"
         const val EXTRA_INTERCEPTED_PACKAGE = "extra_intercepted_package"
@@ -289,6 +559,11 @@ class MonolithShieldService : Service() {
          *  WHICH door — and only lease-honouring doors may sell a
          *  peek. Written by both intercept launchers. */
         const val EXTRA_INTERCEPT_PATH = "extra_intercept_path"
+        /** Issue #68 F5, Tier 2: the single-use provenance nonce
+         *  (see [InterceptNonce]). Written by both intercept
+         *  launchers; required by MainActivity before any
+         *  intercept extra is honoured. */
+        const val EXTRA_INTERCEPT_NONCE = "extra_intercept_nonce"
 
         fun startShield(context: Context) {
             try {
@@ -300,8 +575,13 @@ class MonolithShieldService : Service() {
                 } else {
                     context.startService(intent)
                 }
-            } catch (_: Exception) {
-                // Safe ignore in test environments
+            } catch (e: Exception) {
+                // Issue #43, finding 3: failures are LOGGED, never
+                // swallowed — a silent catch here hid real FGS
+                // start failures from every caller (boot included).
+                // The catch itself stays: a start helper must not
+                // crash its caller (e.g. a boot receiver).
+                Log.e(TAG, "startShield dispatch failed", e)
             }
         }
 
@@ -310,9 +590,31 @@ class MonolithShieldService : Service() {
                 val intent = Intent(context, MonolithShieldService::class.java).apply {
                     action = ACTION_STOP_SHIELD
                 }
-                context.startService(intent)
-            } catch (_: Exception) {
-                // Safe ignore
+                // Issue #43, finding 5: dispatch like startShield —
+                // startForegroundService on API 26+. The old plain
+                // startService threw IllegalStateException from the
+                // background, the catch swallowed it, and the stop
+                // silently never reached the service.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "stopShield dispatch failed; trying direct local stop", e)
+                // Direct local-stop fallback on the live instance:
+                // if the dispatch cannot reach the service, stop
+                // the instance we can already see.
+                try {
+                    val live = instance
+                    if (live != null) {
+                        live.requestLocalStop()
+                    } else {
+                        Log.e(TAG, "stopShield: no live instance for local-stop fallback")
+                    }
+                } catch (fallbackError: Exception) {
+                    Log.e(TAG, "stopShield local-stop fallback failed", fallbackError)
+                }
             }
         }
     }

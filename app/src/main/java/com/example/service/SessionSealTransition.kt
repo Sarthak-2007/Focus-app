@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.util.Log
 import android.content.Context
 import android.os.SystemClock
 import com.example.data.MonolithDatabase
@@ -19,9 +20,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Throw. A seal that cannot complete does not sound.
  *
  * Process-scoped single instance ([SessionSealTransitions]): the
- * claim set and the annulment tombstones are per-process facts —
- * a fresh process re-derives them from the seal marker and the
- * rows themselves (recovery, below).
+ * claim set is a per-process fact (a claim is one process's
+ * attempt). The annulment tombstones are NOT (issue #48): they
+ * persist in the seal prefs beside the marker, because annulment
+ * deletes the row — memory was the only record, and a refused
+ * routine window resurrected on process death.
  */
 interface SessionSealTransition {
 
@@ -88,7 +91,11 @@ class SessionSealTransitionImpl(
 
     private val claimed = mutableSetOf<Int>()
     private val sealed = mutableSetOf<Int>()
-    private val tombstones = mutableSetOf<Pair<Int, Long>>()
+
+    /** Annulment tombstones, loaded from the seal prefs on first
+     *  touch (issue #48): the refusal outlives the process, like
+     *  the row deletion it accompanies. */
+    private val tombstones: MutableSet<Pair<Int, Long>> by lazy { loadPersistedTombstones() }
     private val proving = AtomicBoolean(false)
 
     override fun primeForSeal() = engine.primeForSeal()
@@ -102,7 +109,7 @@ class SessionSealTransitionImpl(
      *  hand out a transition whose engine carries anything but
      *  the fact as it stands at bind time. */
     fun resyncSoundFromPersistedFact() {
-        engine.soundEnabled = SoundEffectsSetting.isEnabled(appContext)
+        engine.resyncSoundEnabledFromFact()
     }
 
     /** Test seam: this transition's engine's sound gate, as bound. */
@@ -110,16 +117,120 @@ class SessionSealTransitionImpl(
 
     private fun claim(sessionId: Int): Boolean = synchronized(claimed) { claimed.add(sessionId) }
 
+    /** Serializes the marker's read-modify-write (verifier pass,
+     *  issue #48): two doors sealing different sessions
+     *  concurrently must not lose one another's id from the
+     *  persisted set — each writer reads the standing set and
+     *  writes back the union, so the pair of operations locks. */
+    private val markerLock = Any()
+
     /** The seal marker (F-K1): committed synchronously BEFORE
      *  the Throw sounds, so a process dying mid-seal leaves
      *  proof on disk that the seal landed — recovery then adopts
-     *  instead of re-sounding a Throw for a seal already heard. */
+     *  instead of re-sounding a Throw for a seal already heard.
+     *  Issue #48: the in-memory add is synchronized (isSealed and
+     *  recover already read/add under the same lock; this write
+     *  raced them), and the marker records EVERY sealed session
+     *  in a persisted id set — the legacy single int alone let a
+     *  second seal erase the first session's only on-disk proof.
+     *  The int still lands, as the latest-seal witness ESR-02 and
+     *  older readers consult. */
     private fun writeSealMarker(sessionId: Int) {
-        sealed += sessionId
+        synchronized(sealed) { sealed += sessionId }
+        synchronized(markerLock) {
+            val prefs = appContext.getSharedPreferences(
+                MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE
+            )
+            fun attemptCommit(): Boolean = prefs.edit()
+                .putInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, sessionId)
+                .putLong(MonolithRepository.SEAL_MARKER_WALL_KEY, System.currentTimeMillis())
+                .putStringSet(
+                    MonolithRepository.SEAL_MARKER_SESSIONS_KEY,
+                    persistedSealedIds() + sessionId.toString()
+                )
+                .commit()
+            // Truth (issue #76): commit()'s Boolean is the only
+            // evidence the proof reached disk. The original code
+            // discarded it, so a failed commit left this process
+            // (and the in-memory claim above) believing a seal that
+            // recovery — which reads disk — would never find. Now:
+            // commit, retry once, and if disk still refuses, strike
+            // the in-memory claim and throw rather than let a Throw
+            // sound over a seal that was never proven.
+            if (!attemptCommit() && !attemptCommit()) {
+                synchronized(sealed) { sealed -= sessionId }
+                Log.e("SessionSealTransition", "seal marker commit() failed twice for session $sessionId")
+                throw IllegalStateException("seal marker not on disk for session $sessionId")
+            }
+        }
+    }
+
+    private fun persistedSealedIds(): Set<String> =
+        appContext.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+            .getStringSet(MonolithRepository.SEAL_MARKER_SESSIONS_KEY, emptySet())
+            .orEmpty()
+
+    /** Rollback for a seal that did not complete (issue #48): when
+     *  [executeSeal]'s publish throws after the marker committed,
+     *  the marker must not keep testifying to a seal that never
+     *  published — strike this session from the in-memory set and,
+     *  where the persisted slots name it, from disk (the legacy
+     *  int falls back to another still-sealed session, or clears).
+     *  Recovery then reads the truth — marker absent, row young —
+     *  and re-proves, instead of adopting a seal that never
+     *  sounded as if it had been heard. */
+    private fun clearSealMarker(sessionId: Int) {
+        synchronized(sealed) { sealed -= sessionId }
+        synchronized(markerLock) {
+            val prefs = appContext.getSharedPreferences(
+                MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE
+            )
+            val ids = persistedSealedIds()
+            val namesThis = prefs.getInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, -1) == sessionId
+            if (!namesThis && sessionId.toString() !in ids) return
+            val editor = prefs.edit()
+            val remaining = ids - sessionId.toString()
+            if (sessionId.toString() in ids) {
+                editor.putStringSet(MonolithRepository.SEAL_MARKER_SESSIONS_KEY, remaining)
+            }
+            if (namesThis) {
+                val fallback = remaining.firstNotNullOfOrNull { it.toIntOrNull() }
+                if (fallback != null) {
+                    editor.putInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, fallback)
+                } else {
+                    editor.remove(MonolithRepository.SEAL_MARKER_SESSION_KEY)
+                }
+            }
+            editor.commit()
+        }
+    }
+
+    private fun loadPersistedTombstones(): MutableSet<Pair<Int, Long>> {
+        val raw = appContext.getSharedPreferences(
+            MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE
+        ).getStringSet(TOMBSTONES_KEY, emptySet()).orEmpty()
+        return raw.mapNotNull { entry ->
+            val parts = entry.split(':')
+            val id = parts.getOrNull(0)?.toIntOrNull()
+            val start = parts.getOrNull(1)?.toLongOrNull()
+            if (id != null && start != null) id to start else null
+        }.toMutableSet()
+    }
+
+    /** Persist the tombstone set (issue #48). Entries whose window
+     *  start is older than [TOMBSTONE_KEEP_MS] can never be
+     *  consulted again — the heartbeat derives over a 48h lookback
+     *  — and are pruned here, so the set stays the size of the
+     *  refusal horizon, not of the install's life. */
+    private fun persistTombstones() {
+        val now = System.currentTimeMillis()
+        val live = synchronized(tombstones) {
+            tombstones.removeAll { (_, start) -> now - start > TOMBSTONE_KEEP_MS }
+            tombstones.map { (id, start) -> "$id:$start" }.toSet()
+        }
         appContext.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
-            .putInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, sessionId)
-            .putLong(MonolithRepository.SEAL_MARKER_WALL_KEY, System.currentTimeMillis())
+            .putStringSet(TOMBSTONES_KEY, live)
             .commit()
     }
 
@@ -138,14 +249,26 @@ class SessionSealTransitionImpl(
             return false
         }
         writeSealMarker(sessionId)
-        publish()
+        // Issue #48: publish is guarded. A throwing publish used
+        // to leave the committed marker testifying "sealed and
+        // heard" over a seal that never published and never
+        // sounded — and recovery would adopt it silently, forever.
+        // Now the marker is struck and the act reports failure;
+        // the claim stays spent (above), so nothing re-seals in
+        // this process, and recovery re-proves from the true
+        // marker-absent state.
+        val published = runCatching { publish() }.isSuccess
+        if (!published) {
+            clearSealMarker(sessionId)
+            return false
+        }
         engine.playSealThrow()
         return true
     }
 
     override fun isSealed(sessionId: Int): Boolean =
         synchronized(sealed) { sessionId in sealed } ||
-            repository.sealedSessionIdFromMarker() == sessionId
+            sessionId in repository.sealedSessionIdsFromMarker()
 
     override fun isTombstoned(routineId: Int?, windowStartMillis: Long): Boolean =
         routineId != null && synchronized(tombstones) {
@@ -183,7 +306,7 @@ class SessionSealTransitionImpl(
         rowStartWallMs: Long,
         nowWallMs: Long
     ): SealVerdict {
-        if (repository.sealedSessionIdFromMarker() == sessionId) {
+        if (sessionId in repository.sealedSessionIdsFromMarker()) {
             synchronized(sealed) { sealed += sessionId }
             return SealVerdict.SEALED
         }
@@ -251,6 +374,11 @@ class SessionSealTransitionImpl(
                         synchronized(tombstones) {
                             tombstones += (dead.routineId to dead.windowStartMillis)
                         }
+                        // Issue #48: the refusal is persisted in
+                        // the same breath — the row is being
+                        // deleted, so this write is the only record
+                        // that survives process death.
+                        persistTombstones()
                     }
                     // The shield stops only if it is still ours.
                     if (MonolithShieldService.protectingSessionId == sessionId ||
@@ -285,6 +413,15 @@ class SessionSealTransitionImpl(
          *  proving death interrupted; older is an older build's
          *  seal (F-K1's fork premise, as ruled). */
         const val RECOVERY_YOUNG_WINDOW_MS = 600_000L
+
+        /** The annulment tombstones' prefs key (issue #48), in the
+         *  seal marker's own prefs file. */
+        const val TOMBSTONES_KEY = "annulled_windows"
+
+        /** How long a tombstone is kept: the heartbeat's derive
+         *  lookback is 48h; past this horizon (48h + a day's
+         *  margin) no derivation can name the window again. */
+        const val TOMBSTONE_KEEP_MS = 72L * 60L * 60L * 1000L
     }
 }
 
