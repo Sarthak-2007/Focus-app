@@ -309,6 +309,23 @@ fun ParkDrawer(
                     style = DrawerHeaderTextStyle,
                     color = scheme.onBackground
                 )
+                if (isSealed) {
+                    // Issue #109, F2: a seal landing under an open
+                    // drawer used to hide the FIX key and freeze the
+                    // sleds in silence — the drawer never said it had
+                    // gone read-only or why. Now it prints it, at the
+                    // head, where the change is lived. The lock itself
+                    // is HOLD-absolutely and stays; only the silence
+                    // was the defect.
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "SEALED — READ-ONLY. A SESSION IS RUNNING: " +
+                            "THE BOARD CAN BE READ, NOT CHANGED, UNTIL IT ENDS.",
+                        style = PillBadgeTextStyle,
+                        color = scheme.onBackground,
+                        modifier = Modifier.testTag("park_sealed_note")
+                    )
+                }
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
