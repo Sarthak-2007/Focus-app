@@ -37,6 +37,15 @@ import org.robolectric.annotation.GraphicsMode
  * visit classes — screen-space invariance, not just within a
  * visit.
  *
+ * SCOPE OF THIS PROOF (reworded on the record, issue #11, B-3):
+ * each frame above is a FRESH composition (setContent per state,
+ * new interceptNonce per render). What is proven is cross-render
+ * bounds equality across the state matrix — RETURN's address is
+ * a function of the door's state, not of visit history. What is
+ * NOT proven: one live composition travelling wall→0 with no
+ * recomposition seam. That stronger proof remains owed; no claim
+ * in this file asserts it.
+ *
  * The frames are evidence for the overlay's rendering only —
  * the same honesty rule as the tree's other render tests.
  */
