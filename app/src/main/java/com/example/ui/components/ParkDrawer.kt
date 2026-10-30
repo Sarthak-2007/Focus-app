@@ -729,8 +729,12 @@ fun ParkDrawer(
                         .height(52.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // #131 truth scope: the sled arms the FEED
+                    // sniper only — it never policed long-form,
+                    // home feeds, Stories or DMs (those are the
+                    // app tier's job), so the plate says FEED.
                     Text(
-                        text = "SHORTS + REELS",
+                        text = "SHORTS + REELS FEED",
                         style = PillBadgeTextStyle,
                         color = scheme.onSurfaceVariant
                     )
