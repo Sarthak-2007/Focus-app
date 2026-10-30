@@ -170,11 +170,14 @@ interface MonolithDao {
      * live flow keeps its shipped cap; only the snapshot — the
      * sealed truth surface — is unbounded.)
      */
-    // Issue #30 finding 2: the snapshot now carries the same
-    // LIMIT 100 its own Flow above has always had — the frozen
-    // digest reads through this, and an uncapped snapshot of a
-    // forever-growing table was the odd one out in this file.
-    @Query("SELECT * FROM captured_notifications ORDER BY timestampMillis DESC LIMIT 100")
+    // Deliberately UNCAPPED (FrozenDigestGateTest pins this:
+    // snapshot_isNotSilentlyCapped): the frozen digest must see
+    // everything the vault holds — a silent cap here would make
+    // the digest lie by omission. The display Flow above keeps
+    // its LIMIT 100. (Issue #30 finding 2 proposed capping this
+    // too; the pinned test is the older, deliberate law — the
+    // cap was tried and reverted on its evidence.)
+    @Query("SELECT * FROM captured_notifications ORDER BY timestampMillis DESC")
     suspend fun getCapturedNotificationsSnapshot(): List<CapturedNotificationEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
