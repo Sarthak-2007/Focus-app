@@ -118,6 +118,19 @@ internal fun seamMarksFor(warrant: Warrant?, nowMono: Long): Pair<String, String
 internal fun endsAtText(is24Hour: Boolean, endMillis: Long): String =
     "ENDS " + ClockText.timeOfDay(is24Hour, endMillis)
 
+/**
+ * #127 (glance-time-remaining, finding 3): the ONE derivation of a
+ * session's end instant — a single fresh wall-clock read plus the
+ * span remaining at that same moment. The Deck strip used to add the
+ * per-second span to a wall clock re-read only at minute boundaries
+ * (nowFrame), so its ENDS drifted up to a minute early and disagreed
+ * with the Airlock's fresh one-shot computation. Every surface now
+ * calls this with its own fresh `System.currentTimeMillis()`; the
+ * print itself stays [endsAtText] / ClockText (system 12/24h, #88).
+ */
+internal fun sessionEndsAtMillis(nowMillis: Long, spanRemainingSeconds: Int): Long =
+    nowMillis + spanRemainingSeconds.coerceAtLeast(0) * 1000L
+
 /** The imprint's tenant (Emil): the seal keeps its count in every
  *  tense. Idle prints the future ONLY on a LIVE wire — over a dead
  *  or unproven wire the box is EMPTY (space held): printing WILL

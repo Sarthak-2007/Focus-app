@@ -98,6 +98,37 @@
             </intent-filter>
         </activity>
 
+        <!-- Issue #305 (F2): launcher icon variants. Both aliases ship
+             DISABLED — .MainActivity's own entry stays the one live
+             launcher icon until the PARK picker row (the priced F2
+             residue) enables a variant via PackageManager. Re-authored
+             2026-10-31 (K7) from lost commit b486565. -->
+        <activity-alias
+            android:name=".LauncherIconMark"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_mark"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".LauncherIconMonogram"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_monogram"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- Direct-Boot Aware Foreground Service for active focus session & call-aware usage polling -->
         <!-- Issue #328 (Audit R5, Zario): stopWithTask=false — a
              Recents swipe of the Monolith task must not take the

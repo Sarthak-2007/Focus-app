@@ -77,6 +77,7 @@ import com.example.ui.components.RefusalSentenceSlot
 import com.example.ui.components.StripDensity
 import com.example.ui.components.RefusalSentence
 import com.example.ui.components.endsAtText
+import com.example.ui.components.sessionEndsAtMillis
 import com.example.ui.components.imprintTenantText
 import com.example.ui.components.jamSentenceFor
 import com.example.ui.components.provingSentenceFor
@@ -442,21 +443,14 @@ fun TactileDeckScreen(
 
     // =====================================================================
     // SLICE D — the strip's derivations (Uma/Rosa/Emil). TIME is a pure
-    // function of now + a span; it is re-derived at minute boundaries
-    // from a frame clock, never stored, never slid. The imprint's count
+    // function of now + a span; it is re-derived fresh at composition
+    // (#127 finding 3: the old minute-boundary frame clock is retired —
+    // it made the strip's ENDS drift up to a minute early against the
+    // Airlock's fresh read), never stored, never slid. The imprint's count
     // freezes at the seal (host-side, Emil's −1 law): the first
     // composition that sees a running session captures the then-live
     // count and the BLOCK verdict, keyed by the session's id.
     // =====================================================================
-    var nowFrame by remember { mutableStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            val now = System.currentTimeMillis()
-            nowFrame = now
-            kotlinx.coroutines.delay(60_000L - (now % 60_000L) + 50L)
-        }
-    }
-
     val liveWarrantState = deckWarrant?.state
     // The print tense law (Truth Car 3, UNA2-03/04): every warrant
     // print in this frame is judged against the warrant's READ
@@ -491,7 +485,7 @@ fun TactileDeckScreen(
         // its PASS tone is a claim the wire stands behind — beside
         // a warrant that is not freshly LIVE the end prints at
         // UNKNOWN density, never PASS beside BLOCK OFF.
-        else -> endsAtText(ClockText.is24Hour(LocalContext.current), nowFrame + totalSpanMinutes * 60_000L) to
+        else -> endsAtText(ClockText.is24Hour(LocalContext.current), sessionEndsAtMillis(System.currentTimeMillis(), totalSpanMinutes * 60)) to
             if (warrantPrintState == WarrantState.LIVE) StripDensity.PASS
             else StripDensity.UNKNOWN
     }
@@ -679,7 +673,12 @@ fun TactileDeckScreen(
             if (activeSession.isStopwatchMode) {
                 "NO END" to StripDensity.PASS
             } else {
-                endsAtText(ClockText.is24Hour(LocalContext.current), nowFrame + activeSession.spanRemainingSeconds * 1000L) to StripDensity.PASS
+                // #127 finding 3: fresh wall clock at THIS composition
+                // (the session flow re-emits every second), never the
+                // minute-boundary nowFrame — mixing a minute-stale
+                // clock with a per-second countdown drifted ENDS up
+                // to a minute early and disagreed with the Airlock.
+                endsAtText(ClockText.is24Hour(LocalContext.current), sessionEndsAtMillis(System.currentTimeMillis(), activeSession.spanRemainingSeconds)) to StripDensity.PASS
             }
         }
         pressLatchLive != null -> pressLatchLive.timeText to pressLatchLive.timeDensity
@@ -954,6 +953,26 @@ fun TactileDeckScreen(
                     text = heroAnnotated,
                     style = DialClockTextStyle.copy(color = heroGlyph, letterSpacing = heroTracking),
                     textAlign = TextAlign.Center
+                )
+            }
+
+            // #127 finding 1: the hero's number is per-BLOCK (or, in a
+            // break, the break's — main's #148 derivation above); the
+            // strip's ENDS and the desk clock are per-SESSION. Both are
+            // true, so the hero now carries its scope in print directly
+            // under the digits: a glance reads which truth the big
+            // number is, and the session's own remaining time beside
+            // it. Same Anonymous Pro eyebrow register as the card's
+            // other print — no new surface, no redesign.
+            if (showRunningForm && activeSession != null) {
+                Text(
+                    text = activeSession.glanceCaption,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().testTag("deck_hero_glance_caption")
                 )
             }
 
@@ -1321,6 +1340,7 @@ fun TactileDeckScreen(
                 task = activeTask,
                 queuedCount = queuedTasks.size,
                 shotActive = shotActive,
+                isSessionRunning = isSessionRunning,
                 exitPhaseProvider = { exitPhase },
                 onCompleteActiveTask = onCompleteActiveTask,
                 onOpenTaskSequencer = onOpenTaskSequencer,
@@ -1709,6 +1729,7 @@ private fun DeckTaskSection(
     task: FocusTaskEntity,
     queuedCount: Int,
     shotActive: Boolean,
+    isSessionRunning: Boolean,
     exitPhaseProvider: () -> Int,
     onCompleteActiveTask: (Int) -> Unit,
     onOpenTaskSequencer: () -> Unit,
@@ -1721,6 +1742,22 @@ private fun DeckTaskSection(
     // Issue #50 F5 cure: keyed on the task id — a new active
     // task never inherits the previous task's expansion state.
     var stepsExpanded by remember(task.id) { mutableStateOf(false) }
+    // Issue #128 finding 5 (ported into this section at the main
+    // merge — the branch's inline form died with the extraction):
+    // DONE under a live seal takes TWO taps, so one stray touch
+    // cannot complete the task and advance the queue — a false
+    // completion would falsify the session's task record. The
+    // first tap arms the cap (it re-prints SURE?); only a second
+    // tap on the armed cap completes. Unsealed, DONE stays one
+    // tap exactly as before. The arm dies on its own after ~2.6s
+    // and whenever the active task changes (keyed remember).
+    var doneArmed by remember(task.id) { mutableStateOf(false) }
+    LaunchedEffect(doneArmed) {
+        if (doneArmed) {
+            kotlinx.coroutines.delay(2600L)
+            doneArmed = false
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1781,11 +1818,21 @@ private fun DeckTaskSection(
                         // Input death (Zug-II §4.6): the task
                         // verbs' HANDLERS are removed by state
                         // during the shot — not greyed, gone.
-                        .clickable(enabled = !shotActive) { onCompleteActiveTask(task.id) }
+                        // Issue #128 finding 5: while a session
+                        // runs, the first tap only arms the cap
+                        // (SURE?); the second completes.
+                        .clickable(enabled = !shotActive) {
+                            if (!isSessionRunning || doneArmed) {
+                                doneArmed = false
+                                onCompleteActiveTask(task.id)
+                            } else {
+                                doneArmed = true
+                            }
+                        }
                         .padding(horizontal = 10.dp, vertical = 5.dp)
                 ) {
                     Text(
-                        text = stringResource(R.string.label_done),
+                        text = if (isSessionRunning && doneArmed) stringResource(R.string.key_sure) else stringResource(R.string.label_done),
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.sp,
