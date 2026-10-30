@@ -2193,6 +2193,13 @@ class MonolithRepository(
         return true
     }
 
+    /** Issue #83: erase the intercept behaviour log — the delete
+     *  path intercept_logs never had. Called by the digest clear
+     *  so a user erasure covers the log as well as the digests. */
+    suspend fun clearInterceptLogs() {
+        dao.deleteAllInterceptLogs()
+    }
+
     // =========================================================================
     // WEEKLY EMERGENCY BREAK — THE TOKEN (TOKEN-SPEC §§2–5)
     // The token is a fact derived from the append-only spend ledger,

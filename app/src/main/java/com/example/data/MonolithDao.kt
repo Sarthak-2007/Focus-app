@@ -170,6 +170,14 @@ interface MonolithDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertInterceptLog(log: InterceptLogEntity)
 
+    // Issue #83: the erasure path — intercept_logs was append-only
+    // forever with no production delete at all. The digest clear
+    // (MonolithViewModel.clearAllCapturedNotifications) calls this
+    // through the repository so a user clear actually erases the
+    // behaviour log too.
+    @Query("DELETE FROM intercept_logs")
+    suspend fun deleteAllInterceptLogs()
+
     // Captured Notifications (Silent Notification Catcher & Persistent Digest)
     @Query("SELECT * FROM captured_notifications ORDER BY timestampMillis DESC LIMIT 100")
     fun getCapturedNotificationsFlow(): Flow<List<CapturedNotificationEntity>>

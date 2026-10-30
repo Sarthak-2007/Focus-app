@@ -1686,6 +1686,11 @@ class MonolithViewModel(
             if (repository.clearAllCapturedNotifications()) {
                 soundEngine.playMechanicalLatch(false)
             }
+            // Issue #83: the same erasure clears the intercept
+            // behaviour log — it had no production delete path at
+            // all, so a "clear" that left it standing was not an
+            // erasure.
+            repository.clearInterceptLogs()
         }
     }
 
