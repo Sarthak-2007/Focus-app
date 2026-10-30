@@ -126,6 +126,9 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <!-- Issue #122: battery events (both on the implicit-broadcast exemption list) — the receiver refreshes the shield's battery warning even if the service's own dynamic receiver has not been re-registered yet. -->
+                <action android:name="android.intent.action.BATTERY_LOW" />
+                <action android:name="android.os.action.POWER_SAVE_MODE_CHANGED" />
             </intent-filter>
             <!-- Issue #81 F5: a component state change anywhere
                  (including Monolith's own components via adb /
