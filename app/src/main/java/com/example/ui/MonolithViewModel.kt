@@ -838,6 +838,35 @@ class MonolithViewModel(
                 undoDeleteStore.clear()
             }
         }
+        // Issue #87 (process-death F2): peek-pill rehydration. The
+        // Room lease survives process death (the services keep
+        // honouring it), but the pill was VM-only state minted only
+        // by start2MinutePeek \u2014 after death mid-peek the app stayed
+        // unblocked with no countdown showing and no way to end the
+        // peek early. Re-mint the pill from a still-live lease,
+        // exactly as start2MinutePeek mints it; the per-second ticker
+        // then derives the remaining time from the same lease end,
+        // so pill, row and face retire together. A lease whose end
+        // has passed (peekSecondsRemaining == null) mints nothing.
+        viewModelScope.launch {
+            val snapshot = runCatching {
+                repository.allAppsFlow.first { it.isNotEmpty() }
+            }.getOrNull() ?: return@launch
+            if (_floatingPeekPill.value.isActive) return@launch
+            val nowMono = SystemClock.elapsedRealtime()
+            val live = snapshot.firstOrNull {
+                peekSecondsRemaining(it.activePeekUntilElapsedRealtime, nowMono) != null
+            } ?: return@launch
+            val remaining = peekSecondsRemaining(
+                live.activePeekUntilElapsedRealtime, nowMono
+            ) ?: return@launch
+            _floatingPeekPill.value = FloatingPeekPillState(
+                isActive = true,
+                packageName = live.packageName,
+                appName = live.appName,
+                secondsRemaining = remaining
+            )
+        }
         viewModelScope.launch {
             repository.ensureSeededAndSyncPackages()
             _pruneNote.value = repository.pendingPruneNote()
