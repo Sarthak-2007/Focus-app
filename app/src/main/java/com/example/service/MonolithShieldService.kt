@@ -219,13 +219,31 @@ class MonolithShieldService : Service() {
                     .map { it.packageName }
                     .toSet()
 
+                // Issue #290 F5: screen state is a first-class
+                // input to this loop. While the screen is off /
+                // the device is locked-idle there is no foreground
+                // to police — the session's clock above still
+                // ticks (locked-away study counts), but no
+                // foreground guess is acted on, so a stale
+                // lastTimeUsed can never fire an intercept at a
+                // dark screen or the instant of unlock.
+                val screenInteractive = try {
+                    (getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager)
+                        ?.isInteractive ?: true
+                } catch (_: Exception) {
+                    true
+                }
                 // Issue #99 F1: a package whose peek lease just
                 // expired is evicted on this poll even though its
                 // lastTimeUsed is minutes stale (stay-put user).
                 val expiredPeeks = com.example.data.expiredPeekPackages(
                     dao.getAllAppsSnapshot(), nowMono
                 )
-                val foregroundBlockedPkg = repository.queryForegroundBlockedApp(blockedPackages, expiredPeeks)
+                val foregroundBlockedPkg = if (screenInteractive) {
+                    repository.queryForegroundBlockedApp(blockedPackages, expiredPeeks)
+                } else {
+                    null
+                }
                 if (foregroundBlockedPkg != null && foregroundBlockedPkg != applicationContext.packageName) {
                     val blockedApp = dao.getAllAppsSnapshot().find { it.packageName == foregroundBlockedPkg }
                     val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {

@@ -36,6 +36,13 @@ object SessionOutcome {
     /** FLOW ended by its lawful door past the floor. */
     const val STOPWATCH_ENDED = "STOPWATCH_ENDED"
 
+    /** Issue #290 F1: FLOW stopped by hand UNDER its 20-minute
+     *  floor — the withered record (Forest books a sub-minimum
+     *  stopwatch stop as a withered tree). Distinct from
+     *  ENDED_EARLY so the record names what actually happened;
+     *  never a finish (FLOW_FINISH requires STOPWATCH_ENDED). */
+    const val STOPWATCH_WITHERED = "STOPWATCH_WITHERED"
+
     /** The 60s valve was held to completion: the token was spent
      *  and the session BROKE. No receipt, no №, ever. */
     const val VALVE_BROKE = "VALVE_BROKE"

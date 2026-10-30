@@ -2,6 +2,7 @@ package com.example.data
 
 import android.app.AppOpsManager
 import android.app.admin.DevicePolicyManager
+import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.ComponentName
 import android.content.Context
@@ -134,6 +135,12 @@ class MonolithRepository(
         const val PEEK_DURATION_MILLIS = 120 * 1000L // 2-Minute Peek lease in ms
         const val PEEK_COOLDOWN_MILLIS = 20 * 60 * 1000L // 20-Minute Mandatory Cooldown
         const val STOPWATCH_MIN_FLOOR_SECONDS = 20 * 60 // 20-Minute Minimum Floor
+        // Issue #290 F1: FLOW's terminal cap — a count-up session
+        // auto-ends at 4 hours instead of running forever with no
+        // terminal rule of its own (Forest's stopwatch auto-stops
+        // at its cap). The ending books STOPWATCH_ENDED, the same
+        // lawful FLOW finish as the past-floor door.
+        const val STOPWATCH_MAX_CAP_SECONDS = 4 * 60 * 60 // 4-Hour FLOW Cap
         const val SAFE_BREAK_DURATION_SECONDS = 10 * 60 // 10-Minute Safe Break
         const val HMAC_TAMPER_PENALTY_SECONDS = 15 * 60 // 15-Minute Penalty Lock
 
@@ -788,6 +795,13 @@ class MonolithRepository(
                 .filter { it.packageName in expiredPeekPackages && it.packageName in blockedPackages }
                 .maxByOrNull { it.lastTimeUsed }
             if (expiredHit != null) return expiredHit.packageName
+            // Issue #290 F4: the event stream is the primary truth
+            // — an ordered RESUMED/PAUSED fold over the same window
+            // (see ForegroundEventStream). Only when it names no
+            // candidate (empty stream on some OEM builds) does the
+            // door fall back to the lastTimeUsed recency guess.
+            val eventForeground = foregroundFromUsageEvents(usm, blockedPackages, start, end)
+            if (eventForeground != null) return eventForeground
             val recent = stats
                 .filter { it.packageName in blockedPackages && it.lastTimeUsed >= (end - 8_000L) }
                 .maxByOrNull { it.lastTimeUsed }
@@ -795,6 +809,38 @@ class MonolithRepository(
         } catch (_: Exception) {
             null
         }
+    }
+
+    /**
+     * Issue #290 F4: fold the UsageEvents stream for [start, end]
+     * into a foreground verdict over [blockedPackages]. Returns
+     * null when the stream is unavailable or names no blocked
+     * package — the caller then falls back to lastTimeUsed.
+     */
+    private fun foregroundFromUsageEvents(
+        usm: UsageStatsManager,
+        blockedPackages: Set<String>,
+        start: Long,
+        end: Long
+    ): String? {
+        val usageEvents = usm.queryEvents(start, end) ?: return null
+        val event = UsageEvents.Event()
+        val folded = ArrayList<ForegroundEventStream.Event>()
+        while (usageEvents.hasNextEvent()) {
+            usageEvents.getNextEvent(event)
+            val type = event.eventType
+            if (type != ForegroundEventStream.ACTIVITY_RESUMED &&
+                type != ForegroundEventStream.ACTIVITY_PAUSED &&
+                type != ForegroundEventStream.ACTIVITY_STOPPED
+            ) {
+                continue
+            }
+            val pkg = event.packageName ?: continue
+            if (pkg !in blockedPackages) continue
+            folded.add(ForegroundEventStream.Event(pkg, type, event.timeStamp))
+        }
+        if (folded.isEmpty()) return null
+        return ForegroundEventStream.foregroundPackage(folded, blockedPackages)
     }
 
     /** Usage access as AppOps actually reports it: three-valued.
@@ -2352,6 +2398,34 @@ class MonolithRepository(
         accrueActiveTaskSeconds(session, nowMono)
 
         if (session.isStopwatchMode) {
+            // Issue #290 F1: FLOW's own terminal law — at the cap
+            // the session ends in this same tick (STOPWATCH_ENDED,
+            // completed, end stamped once), instead of copying
+            // elapsed into the row and running indefinitely until
+            // the user happens to find the valve.
+            if (verifiedElapsed >= STOPWATCH_MAX_CAP_SECONDS) {
+                val capped = session.copy(
+                    elapsedSeconds = STOPWATCH_MAX_CAP_SECONDS,
+                    startElapsedRealtimeMillis = newStartMono,
+                    bootCount = newBootCount,
+                    accumulatedBeforeRebootSeconds = newAccumulated,
+                    lastTickElapsedRealtimeMillis = nowMono,
+                    hmacSignature = newHmac,
+                    penaltySecondsAdded = penaltyAdd,
+                    tamperDetected = tamper,
+                    shieldLastBeatWallMillis = beatWall,
+                    isActive = false,
+                    completedSuccessfully = true,
+                    outcome = SessionOutcome.STOPWATCH_ENDED,
+                    endWallMillis = if (session.endWallMillis == 0L) {
+                        System.currentTimeMillis()
+                    } else {
+                        session.endWallMillis
+                    }
+                )
+                dao.updateSession(capped)
+                return capped
+            }
             val updated = session.copy(
                 elapsedSeconds = verifiedElapsed,
                 startElapsedRealtimeMillis = newStartMono,
@@ -2754,6 +2828,10 @@ class MonolithRepository(
             outcomeReason == EMERGENCY_BREAK_REASON -> SessionOutcome.VALVE_BROKE
             completed && active.isStopwatchMode -> SessionOutcome.STOPWATCH_ENDED
             isGraceCancel -> SessionOutcome.GRACE_CANCEL
+            // Issue #290 F1: a FLOW session stopped under its floor
+            // books its own withered outcome, not generic early end.
+            !completed && active.isStopwatchMode &&
+                lawElapsed < STOPWATCH_MIN_FLOOR_SECONDS -> SessionOutcome.STOPWATCH_WITHERED
             else -> SessionOutcome.ENDED_EARLY
         }
         dao.updateSession(
