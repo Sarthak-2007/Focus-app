@@ -62,6 +62,13 @@
                 android:value="Active app-blocking focus session timer and usage monitor" />
         </service>
 
+        <!-- Issue #308: polls the grant during a permission FIX trip
+             and returns the user to the app the moment it lands. -->
+        <service
+            android:name=".service.PermissionReturnService"
+            android:enabled="true"
+            android:exported="false" />
+
         <!-- Direct-Boot Aware Window, Shorts/Reels Sniper, Settings Blocker & URL Bar Interceptor -->
         <service
             android:name=".service.MonolithAccessibilityService"
