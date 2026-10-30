@@ -1,4 +1,6 @@
 package com.example.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -270,6 +272,16 @@ fun TactileDeckScreen(
         }
     }
     val shot = sealShot
+    // Audit R6 #341 F65: the seal shot's live blur is the single
+    // most GPU-expensive frame in the app, spent on the weakest
+    // GPUs. On a low-RAM device the shot keeps its scale/rise (near
+    // free) and drops the blur entirely instead of frame-dropping
+    // the signature moment.
+    val deckContext = androidx.compose.ui.platform.LocalContext.current
+    val lowRamDevice = remember {
+        (deckContext.getSystemService(android.content.Context.ACTIVITY_SERVICE)
+            as? android.app.ActivityManager)?.isLowRamDevice == true
+    }
     LaunchedEffect(shot) {
         if (shot == null || shot.preExisting) return@LaunchedEffect
         // The ghosts take their posts before the first shot frame.
@@ -785,7 +797,7 @@ fun TactileDeckScreen(
                             if (android.os.Build.VERSION.SDK_INT >=
                                 android.os.Build.VERSION_CODES.S
                             ) {
-                                val b = 24f * shot.blurT * (1f - shot.blurT)
+                                val b = if (lowRamDevice) 0f else 24f * shot.blurT * (1f - shot.blurT)
                                 renderEffect = if (b > 0f) {
                                     android.graphics.RenderEffect
                                         .createBlurEffect(
@@ -802,7 +814,7 @@ fun TactileDeckScreen(
                                 android.os.Build.VERSION_CODES.S
                             ) {
                                 val blurDp =
-                                    (6f * 4f * shot.blurT * (1f - shot.blurT)).dp
+                                    (if (lowRamDevice) 0f else 6f * 4f * shot.blurT * (1f - shot.blurT)).dp
                                 if (blurDp > 0.dp) Modifier.blur(blurDp)
                                 else Modifier
                             } else {
@@ -1065,7 +1077,7 @@ fun TactileDeckScreen(
                                 // padding on the box, an under-48dp
                                 // target under an 11sp label).
                                 modifier = Modifier.padding(vertical = 13.dp),
-                                text = "FLOW",
+                                text = stringResource(R.string.deck_flow),
                                 fontFamily = AnonymousProFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 11.sp,
@@ -1735,7 +1747,7 @@ private fun DeckTaskSection(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "NOW",
+                    text = stringResource(R.string.deck_now),
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 10.5.sp,
@@ -1792,7 +1804,7 @@ private fun DeckTaskSection(
                         .padding(horizontal = 10.dp, vertical = 5.dp)
                 ) {
                     Text(
-                        text = "DONE",
+                        text = stringResource(R.string.label_done),
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.sp,
@@ -1801,7 +1813,7 @@ private fun DeckTaskSection(
                     )
                 }
                 Text(
-                    text = "QUEUE ${queuedCount}",
+                    text = stringResource(R.string.deck_queue, queuedCount),
                     fontFamily = AnonymousProFamily,
                     fontSize = 11.sp,
                     color = scheme.onSurfaceVariant,

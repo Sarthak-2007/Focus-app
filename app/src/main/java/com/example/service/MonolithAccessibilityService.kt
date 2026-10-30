@@ -12,6 +12,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.example.MLog
+import com.example.MainActivity
 import com.example.data.AppBlockTier
 import com.example.data.BlockedBrowserDomains
 import com.example.data.DEFAULT_SURFACE_RULES
@@ -478,7 +479,17 @@ internal val MARKET_PACKAGES = setOf(
  *  clear, or uninstall Monolith. */
 internal val SETTINGS_PACKAGES = setOf(
     "com.android.settings",
-    "com.miui.securitycenter"
+    "com.miui.securitycenter",
+    // Audit R6 #341 F03: the OEM security centres where Monolith's
+    // survival switches (autostart, battery, permission revocation)
+    // actually live on Xiaomi/ColorOS/FuntouchOS phones. Before
+    // this the guard never matched them, so no intercept, no BACK
+    // and no log fired there during a session.
+    "com.miui.permcenter",
+    "com.coloros.safecenter",
+    "com.oppo.safe",
+    "com.iqoo.secure",
+    "com.vivo.permissionmanager"
 )
 
 /**
