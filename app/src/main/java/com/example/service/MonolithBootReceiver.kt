@@ -3,6 +3,7 @@ package com.example.service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import com.example.data.MonolithDatabase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -35,12 +36,19 @@ import kotlinx.coroutines.launch
  */
 class MonolithBootReceiver : BroadcastReceiver() {
 
-    private val exceptionHandler = CoroutineExceptionHandler { _, _ ->
+    companion object {
+        const val TAG = "MonolithBoot"
+    }
+
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         // Last line of defence only: every action group below already
         // catches its own failures. An exception reaching this handler
         // must still never crash the process from inside goAsync's
-        // window — the failure is contained here, silently, matching
-        // the codebase's safe-ignore convention for receiver work.
+        // window — but containment is never silence (PR CHECK,
+        // Tyler's review of the #44 landing): the failure is LOGGED,
+        // with its stack, so a boot that failed to restore the shield
+        // leaves a findable trace instead of a quiet lie.
+        Log.e(TAG, "uncaught boot failure reached the receiver handler", throwable)
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + exceptionHandler)
@@ -67,7 +75,7 @@ class MonolithBootReceiver : BroadcastReceiver() {
                 val pendingResult = goAsync()
                 scope.launch {
                     try {
-                        runGuardedBootAction {
+                        runGuardedBootAction("time-changed-tick") {
                             RoutineHeartbeat.tick(
                                 appContext, RoutineHeartbeat.Source.TIME_CHANGED, force = true
                             )
@@ -85,7 +93,7 @@ class MonolithBootReceiver : BroadcastReceiver() {
         // even a database-open failure is then contained to its own
         // group instead of skipping every group below it.
         // Group 1 — the boot stamp, once per real boot.
-        runGuardedBootAction {
+        runGuardedBootAction("boot-stamp") {
             if (bootStampDue(action)) {
                 MonolithDatabase.getInstance(appContext).monolithDao()
                     .stampLastBoot(System.currentTimeMillis())
@@ -95,7 +103,7 @@ class MonolithBootReceiver : BroadcastReceiver() {
         // Group 2 — shield FIRST, before the slow reconcile: if a
         // session is already active, it is shielded now, so a slow
         // or failed tick cannot lose the shield.
-        runGuardedBootAction {
+        runGuardedBootAction("shield-before-tick") {
             val active = MonolithDatabase.getInstance(appContext).monolithDao()
                 .getActiveSessionSnapshot()
             if (shouldRaiseBootShield(active != null, active?.isActive == true)) {
@@ -104,14 +112,14 @@ class MonolithBootReceiver : BroadcastReceiver() {
         }
 
         // Group 3 — the heartbeat reconcile itself.
-        runGuardedBootAction {
+        runGuardedBootAction("heartbeat-tick") {
             RoutineHeartbeat.tick(appContext, bootHeartbeatSource(action), force = true)
         }
 
         // Group 4 — shield AGAIN after the tick: the tick may have
         // finalised the session that was active, so raise the shield
         // only if one remains active afterwards.
-        runGuardedBootAction {
+        runGuardedBootAction("shield-after-tick") {
             val active = MonolithDatabase.getInstance(appContext).monolithDao()
                 .getActiveSessionSnapshot()
             if (shouldRaiseBootShield(active != null, active?.isActive == true)) {
@@ -127,14 +135,26 @@ class MonolithBootReceiver : BroadcastReceiver() {
  * the following groups, and never skips goAsync's finish. Genuine
  * cancellation is not a failure and is always rethrown.
  */
-internal suspend fun runGuardedBootAction(block: suspend () -> Unit) {
+internal suspend fun runGuardedBootAction(
+    name: String = "unnamed",
+    reportFailure: (String, Exception) -> Unit = { failedName, failure ->
+        Log.e(MonolithBootReceiver.TAG, "boot action '$failedName' failed", failure)
+    },
+    block: suspend () -> Unit
+) {
     try {
         block()
     } catch (e: CancellationException) {
         throw e
-    } catch (_: Exception) {
-        // Contained: the remaining boot groups still run — see the
-        // MonolithBootReceiver KDoc.
+    } catch (e: Exception) {
+        // Contained AND loud (PR CHECK, Tyler's review of the #44
+        // landing): the remaining boot groups still run, but the
+        // failure is reported — group name and stack — through
+        // [reportFailure], whose production default is Log.e. A
+        // boot group that failed must never read as a boot that
+        // worked. (The seam exists so unit tests can prove the
+        // report fires; the default is the loud one.)
+        reportFailure(name, e)
     }
 }
 

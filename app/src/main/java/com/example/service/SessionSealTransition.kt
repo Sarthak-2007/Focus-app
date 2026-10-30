@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.util.Log
 import android.content.Context
 import android.os.SystemClock
 import com.example.data.MonolithDatabase
@@ -137,8 +138,10 @@ class SessionSealTransitionImpl(
     private fun writeSealMarker(sessionId: Int) {
         synchronized(sealed) { sealed += sessionId }
         synchronized(markerLock) {
-            appContext.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
+            val prefs = appContext.getSharedPreferences(
+                MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE
+            )
+            fun attemptCommit(): Boolean = prefs.edit()
                 .putInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, sessionId)
                 .putLong(MonolithRepository.SEAL_MARKER_WALL_KEY, System.currentTimeMillis())
                 .putStringSet(
@@ -146,6 +149,19 @@ class SessionSealTransitionImpl(
                     persistedSealedIds() + sessionId.toString()
                 )
                 .commit()
+            // Truth (issue #76): commit()'s Boolean is the only
+            // evidence the proof reached disk. The original code
+            // discarded it, so a failed commit left this process
+            // (and the in-memory claim above) believing a seal that
+            // recovery — which reads disk — would never find. Now:
+            // commit, retry once, and if disk still refuses, strike
+            // the in-memory claim and throw rather than let a Throw
+            // sound over a seal that was never proven.
+            if (!attemptCommit() && !attemptCommit()) {
+                synchronized(sealed) { sealed -= sessionId }
+                Log.e("SessionSealTransition", "seal marker commit() failed twice for session $sessionId")
+                throw IllegalStateException("seal marker not on disk for session $sessionId")
+            }
         }
     }
 
@@ -223,6 +239,26 @@ class SessionSealTransitionImpl(
         t0Mono: Long,
         sealRow: suspend () -> Boolean,
         publish: () -> Unit
+    ): Boolean = executeSealProvenance(sessionId, t0Mono, sealRow, publish, unattended = false)
+
+    /**
+     * Issue #150 (recovery closure): provenance for the Throw.
+     * The interface's [executeSeal] is the Deck door — the user is
+     * present, hand on the phone, arming their own block — so its
+     * Throw is an attended voice. The proving doors ([prove],
+     * reached from the routine heartbeat's proveAndSeal and from
+     * relaunch recovery) fire with nobody touching the phone:
+     * their Throw is unattended, and Do Not Disturb must bind it
+     * in the engine exactly as it binds the break boundaries and
+     * the finish cascade. The interface signature is unchanged
+     * (test fakes override it); provenance travels on this impl.
+     */
+    private suspend fun executeSealProvenance(
+        sessionId: Int,
+        t0Mono: Long,
+        sealRow: suspend () -> Boolean,
+        publish: () -> Unit,
+        unattended: Boolean
     ): Boolean {
         if (!claim(sessionId)) return false
         val ok = runCatching { sealRow() }.getOrDefault(false)
@@ -246,7 +282,7 @@ class SessionSealTransitionImpl(
             clearSealMarker(sessionId)
             return false
         }
-        engine.playSealThrow()
+        engine.playSealThrow(unattended = unattended)
         return true
     }
 
@@ -332,11 +368,12 @@ class SessionSealTransitionImpl(
                     val lastConfirm = maxOf(l1, l2, l3)
                     val t0 = maxOf(lastConfirm, latchMono + DWELL_MS)
                     if (now >= t0) {
-                        val sealedOk = executeSeal(
+                        val sealedOk = executeSealProvenance(
                             sessionId = sessionId,
                             t0Mono = t0,
                             sealRow = { repository.sealSession(sessionId, t0) },
-                            publish = {}
+                            publish = {},
+                            unattended = true
                         )
                         return if (sealedOk) SealVerdict.SEALED else SealVerdict.ANNULLED
                     }
