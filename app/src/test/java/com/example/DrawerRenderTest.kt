@@ -113,9 +113,18 @@ class DrawerRenderTest {
         val deadline = System.currentTimeMillis() + 45_000
         while (System.currentTimeMillis() < deadline) {
             ShadowLooper.idleMainLooper()
-            if (viewModel.apps.value.isNotEmpty() && viewModel.profiles.value.isNotEmpty()) break
+            if (viewModel.apps.value.isNotEmpty() && viewModel.profiles.value.isNotEmpty()) return
             Thread.sleep(250)
         }
+        // Fail loudly (#91): silently proceeding after the timeout
+        // rendered an EMPTY drawer and passed green — this class
+        // has no assertions of its own, so a swallowed seed timeout
+        // was undetectable. Same idiom as
+        // WatchStoreRobolectricTest's awaitSnapshot.
+        throw AssertionError(
+            "seed never landed within 45s: apps=${viewModel.apps.value.size}, " +
+                "profiles=${viewModel.profiles.value.size}"
+        )
     }
 
     private fun capture(name: String) {
