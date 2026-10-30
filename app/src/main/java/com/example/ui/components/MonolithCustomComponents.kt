@@ -33,7 +33,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import android.view.HapticFeedbackConstants
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -79,6 +81,29 @@ import java.util.Locale
  * Helper to build mixed-typography strings where words render in Google Sans / PlusJakartaSans
  * and every number renders in Space Mono / JetBrainsMono (DEVELOPER-GUIDE.pdf §2).
  */
+/**
+ * Issue #282 (R5 supplement): press feedback as a component-level
+ * invariant. Indication is purged app-wide (Theme.kt's
+ * NoRippleIndication — controls answer with position, fill and
+ * sound, never a wash), so a Compose control wired with a bare
+ * clickable gave the user no feedback of any kind: no ripple, no
+ * buzz, no click. This wrapper fires the platform haptic tick on
+ * every press, so every clickable primitive in this file answers
+ * the finger. Canvas views keep their richer TactileSoundEngine
+ * voices; this is the Compose floor, not a replacement for them.
+ */
+@Composable
+fun Modifier.monolithClickable(
+    role: Role? = Role.Button,
+    onClick: () -> Unit
+): Modifier {
+    val view = LocalView.current
+    return clickable(role = role) {
+        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        onClick()
+    }
+}
+
 @Composable
 fun rememberMixedTypographyText(
     wordPrefix: String,
@@ -210,7 +235,7 @@ fun BlockitActionChip(
             .clip(RoundedCornerShape(12.dp))
             .background(bg)
             .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
-            .clickable(role = Role.Button, onClick = onClick)
+            .monolithClickable(onClick = onClick)
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -296,7 +321,7 @@ fun MonolithPullDownHeader(
                         .padding(end = 20.dp)
                         .then(
                             if (isSealed) Modifier
-                            else Modifier.sizeIn(minHeight = 48.dp).clickable(role = Role.Button) { onGuardLineTap() }
+                            else Modifier.sizeIn(minHeight = 48.dp).monolithClickable { onGuardLineTap() }
                         )
                         .testTag("header_guard_line")
                 )
@@ -574,7 +599,7 @@ fun RefusalSentenceSlot(
                     .then(
                         when (val action = current.action) {
                             null -> Modifier
-                            else -> Modifier.clickable(role = Role.Button) { onAction(action) }
+                            else -> Modifier.monolithClickable { onAction(action) }
                         }
                     )
             )

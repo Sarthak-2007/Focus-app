@@ -18,10 +18,24 @@ object LoadoutRules {
         categoryName: String
     ): AppBlockTier {
         val lower = "$packageName $appName".lowercase()
-        return when (loadout) {
+        val rawTier = when (loadout) {
             SmartLoadout.STUDY -> when {
-                lower.contains("youtube") || lower.contains("chrome") ||
-                    categoryName == AppCategory.MESSAGING.name ->
+                // Issue #133 (study-on-phone-itself, finding 1): the
+                // study surfaces themselves — browsers (Chrome-hosted
+                // classes, PDFs, Classroom) and YouTube lectures —
+                // are OPEN in the loadout built for them; the old
+                // rule rationed them to 2m Peek, unusable for a
+                // 50-minute lecture. YouTube's guessed category is
+                // SHORT_VIDEO, so this check comes before the
+                // category locks; the Shorts/Reels sniper (armed
+                // separately by the STUDY pick) stays the guard on
+                // the short-form feed inside YouTube.
+                categoryName == AppCategory.BROWSERS.name ||
+                    lower.contains("youtube") || lower.contains("chrome") ->
+                    AppBlockTier.OPEN
+                categoryName == AppCategory.EDUCATION.name ->
+                    AppBlockTier.OPEN
+                categoryName == AppCategory.MESSAGING.name ->
                     AppBlockTier.PEEK_2M
                 categoryName == AppCategory.SHORT_VIDEO.name ||
                     categoryName == AppCategory.SOCIAL.name ||
@@ -38,16 +52,17 @@ object LoadoutRules {
                 else -> AppBlockTier.OPEN
             }
             SmartLoadout.SLEEP -> {
-                if (lower.contains("dialer") || lower.contains("phone") ||
-                    lower.contains("clock") || lower.contains("alarm") ||
-                    lower.contains("maps")
-                ) {
-                    AppBlockTier.OPEN
-                } else {
-                    AppBlockTier.LOCKED
-                }
+                // Issue #119, finding 4: essentials by PACKAGE, not
+                // substring luck — a stock Camera (com.android.camera2)
+                // and Waze (com.waze) contain none of the old five
+                // substrings and were LOCKED all night. EssentialApps
+                // keeps the substring test only as a superset fallback.
+                EssentialApps.sleepLoadoutTierFor(packageName, appName)
             }
         }
+        // Issue #119, finding 5: the dialler floor binds every
+        // loadout — the dialler can never be classified LOCKED.
+        return EssentialApps.floorTier(packageName, rawTier)
     }
 
     /** Issue #304 F1: would applying [loadout] loosen ANY app's
