@@ -595,6 +595,44 @@ data class FocusSessionEntity(
 
     val spanRemainingSeconds: Int
         get() = (spanTargetSeconds - spanElapsedSeconds).coerceAtLeast(0)
+
+    // #127 (glance-time-remaining, finding 1): the labelled scope of
+    // every number a glance can meet. Per-block remaining and whole-
+    // session (span) remaining are BOTH true — the lie was printing
+    // either one unlabelled, so two surfaces could answer the same
+    // question with different numbers. Every running surface that
+    // prints a time now also prints this caption's scope words, or
+    // the scope word for its own number, so a two-second glance
+    // always knows WHICH truth it is reading. (Recomposed onto main:
+    // the hero's own seconds stay main's #148 derivation — during a
+    // Safe Break the Deck hero reads safeBreakSecondsRemaining
+    // directly; this caption is the only F2 piece added here.)
+    val glanceCaption: String
+        get() = when {
+            isStopwatchMode -> "ELAPSED · NO SET END"
+            isInSafeBreak ->
+                "BREAK ${formatSessionDuration(safeBreakSecondsRemaining)} LEFT" +
+                    " · SESSION ${formatSessionDuration(spanRemainingSeconds)} LEFT"
+            totalStudyBlocks > 1 ->
+                "BLOCK $currentBlockIndex/$totalStudyBlocks" +
+                    " · ${formatSessionDuration(remainingSeconds)} LEFT IN BLOCK" +
+                    " · SESSION ${formatSessionDuration(spanRemainingSeconds)} LEFT"
+            else -> "SESSION ${formatSessionDuration(spanRemainingSeconds)} LEFT"
+        }
+}
+
+/**
+ * #127: one duration print for glance surfaces. Under an hour it is
+ * MM:SS; at an hour or more it is H:MM:SS — never "170:00", which a
+ * glance reads as a broken clock, not as 2 hours 50 minutes.
+ */
+fun formatSessionDuration(totalSeconds: Int): String {
+    val s = totalSeconds.coerceAtLeast(0)
+    val h = s / 3600
+    val m = (s % 3600) / 60
+    val sec = s % 60
+    return if (h > 0) String.format(java.util.Locale.US, "%d:%02d:%02d", h, m, sec)
+    else String.format(java.util.Locale.US, "%02d:%02d", m, sec)
 }
 
 /**

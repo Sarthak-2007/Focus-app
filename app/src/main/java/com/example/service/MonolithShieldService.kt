@@ -358,9 +358,16 @@ class MonolithShieldService : Service() {
 
                 val timeFormatted = when {
                     updated.isInSafeBreak -> {
-                        val bMin = updated.safeBreakSecondsRemaining / 60
-                        val bSec = updated.safeBreakSecondsRemaining % 60
-                        String.format("Safe Break %02d:%02d • Block %d/%d", bMin, bSec, updated.currentBlockIndex, updated.totalStudyBlocks)
+                        // #127 finding 2: the break count is labelled
+                        // as the break's, and the session's remaining
+                        // rides beside it — never a bare 00:00-style
+                        // finished reading anywhere during a break.
+                        val breakLeft = com.example.data.formatSessionDuration(updated.safeBreakSecondsRemaining)
+                        val sessionLeft = com.example.data.formatSessionDuration(updated.spanRemainingSeconds)
+                        String.format(
+                            "Safe Break %s left • %s left in session • Block %d/%d done",
+                            breakLeft, sessionLeft, updated.currentBlockIndex, updated.totalStudyBlocks
+                        )
                     }
                     updated.isStopwatchMode -> {
                         val mins = updated.elapsedSeconds / 60
@@ -368,11 +375,22 @@ class MonolithShieldService : Service() {
                         String.format("Stopwatch +%02d:%02d (20m floor)", mins, secs)
                     }
                     else -> {
-                        val effectiveTarget = updated.targetDurationSeconds + updated.penaltySecondsAdded
-                        val remainingSec = (effectiveTarget - updated.elapsedSeconds).coerceAtLeast(0)
-                        val mins = remainingSec / 60
-                        val secs = remainingSec % 60
-                        String.format("%02d:%02d left • Block %d/%d", mins, secs, updated.currentBlockIndex, updated.totalStudyBlocks)
+                        // #127 finding 1: this is the one zero-tap
+                        // glance (lock screen), so it must not answer
+                        // with the per-block number alone while the
+                        // desk clock answers with the session's. Both
+                        // scopes, both labelled, from the model's own
+                        // derivations (remainingSeconds / span).
+                        val blockLeft = com.example.data.formatSessionDuration(updated.remainingSeconds)
+                        val sessionLeft = com.example.data.formatSessionDuration(updated.spanRemainingSeconds)
+                        if (updated.totalStudyBlocks > 1) {
+                            String.format(
+                                "%s left in block %d/%d • %s left in session",
+                                blockLeft, updated.currentBlockIndex, updated.totalStudyBlocks, sessionLeft
+                            )
+                        } else {
+                            String.format("%s left in session", sessionLeft)
+                        }
                     }
                 }
 

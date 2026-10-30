@@ -75,6 +75,7 @@ import com.example.ui.components.RefusalSentenceSlot
 import com.example.ui.components.StripDensity
 import com.example.ui.components.RefusalSentence
 import com.example.ui.components.endsAtText
+import com.example.ui.components.sessionEndsAtMillis
 import com.example.ui.components.imprintTenantText
 import com.example.ui.components.jamSentenceFor
 import com.example.ui.components.provingSentenceFor
@@ -662,7 +663,17 @@ fun TactileDeckScreen(
             if (activeSession.isStopwatchMode) {
                 "NO END" to StripDensity.PASS
             } else {
-                endsAtText(ClockText.is24Hour(LocalContext.current), nowFrame + activeSession.spanRemainingSeconds * 1000L) to StripDensity.PASS
+                // #127 finding 3: fresh wall clock at THIS composition
+                // (the session flow re-emits every second), never the
+                // minute-boundary nowFrame — mixing a minute-stale
+                // clock with a per-second countdown drifted ENDS up
+                // to a minute early and disagreed with the Airlock.
+                // nowFrame still serves the idle plan cell, whose span
+                // is a static plan, not a countdown.
+                endsAtText(
+                    ClockText.is24Hour(LocalContext.current),
+                    sessionEndsAtMillis(System.currentTimeMillis(), activeSession.spanRemainingSeconds)
+                ) to StripDensity.PASS
             }
         }
         pressLatchLive != null -> pressLatchLive.timeText to pressLatchLive.timeDensity
@@ -913,6 +924,25 @@ fun TactileDeckScreen(
                 )
             }
 
+            // #127 finding 1: the hero's number is per-BLOCK (or, in a
+            // break, the break's — main's #148 derivation above); the
+            // strip's ENDS and the desk clock are per-SESSION. Both
+            // are true, so the hero now carries its scope in print
+            // directly under the digits: a glance reads which truth
+            // the big number is, and the session's own remaining time
+            // beside it. Same Anonymous Pro eyebrow register as the
+            // card's other print — no new surface, no redesign.
+            if (showRunningForm && activeSession != null) {
+                Text(
+                    text = activeSession.glanceCaption,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().testTag("deck_hero_glance_caption")
+                )
+            }
             if (!showRunningForm && !isStopwatchMode) {
                 // Issue #98 (R3 arming journey): the multiplier,
                 // printed as a reading — the hero above states only
