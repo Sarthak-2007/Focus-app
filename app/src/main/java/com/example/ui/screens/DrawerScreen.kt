@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -1013,7 +1014,7 @@ fun DrawerScreen(
                                         .sizeIn(minHeight = 48.dp, minWidth = 48.dp)
                                         .padding(vertical = 14.dp)
                                         .testTag("drawer_month_prev")
-                                        .androidx.compose.foundation.layout.size(16.dp)
+                                        .size(16.dp)
                                 )
                             }
                             if (newerMonth != null) {
@@ -1028,7 +1029,7 @@ fun DrawerScreen(
                                         .sizeIn(minHeight = 48.dp, minWidth = 48.dp)
                                         .padding(vertical = 14.dp)
                                         .testTag("drawer_month_next")
-                                        .androidx.compose.foundation.layout.size(16.dp)
+                                        .size(16.dp)
                                 )
                             }
                             Text(
@@ -1220,7 +1221,7 @@ fun DrawerScreen(
                                 imageVector = com.example.ui.theme.MonolithIcons.ChevronRight,
                                 contentDescription = null,
                                 tint = scheme.onSurfaceVariant,
-                                modifier = Modifier.androidx.compose.foundation.layout.size(14.dp)
+                                modifier = Modifier.size(14.dp)
                             )
                         }
                         HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)

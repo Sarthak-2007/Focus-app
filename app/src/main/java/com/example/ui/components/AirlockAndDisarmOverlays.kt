@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -1201,7 +1202,7 @@ fun PeekCountdownPill(
                     .clickable { onEndEarly() }
                     .testTag("peek_pill_end_button")
                     .padding(horizontal = 4.dp)
-                    .androidx.compose.foundation.layout.size(16.dp)
+                    .size(16.dp)
             )
         }
     }
