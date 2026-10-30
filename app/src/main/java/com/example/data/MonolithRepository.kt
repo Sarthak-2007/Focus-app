@@ -1863,6 +1863,22 @@ class MonolithRepository(
         return true
     }
 
+    /** Issue #81 F4: latch the gap NOW, without the staleness law.
+     *  For blindness observed directly, not inferred from a stale
+     *  beat: the shield process is alive and beating, but its
+     *  foreground sight (Usage Access) has been revoked mid-session,
+     *  so the door is dead while the beat stays fresh and
+     *  [latchShieldGapIfStale] can never fire. Same latch, same
+     *  guards — an already-latched or already-classified row is
+     *  left alone. The finish then classifies ELAPSED_SHIELD_GAP,
+     *  never ELAPSED_CLEAN. */
+    suspend fun latchShieldGapNow(): Boolean {
+        val active = dao.getActiveSessionSnapshot() ?: return false
+        if (active.shieldGapSeen || active.outcome.isNotEmpty()) return false
+        dao.latchShieldGap(active.id)
+        return true
+    }
+
     /** ST-03 (Truth Car 3): the break boundaries' voice, fired AT
      *  the flips in this machinery — the block→break entry below
      *  and [advancePastBreak], the one exit both the timer and the
@@ -2128,7 +2144,16 @@ class MonolithRepository(
         } else {
             val nowWall = System.currentTimeMillis()
             val beatRef = maxOf(session.shieldLastBeatWallMillis, session.startWallTimeMillis)
-            if (session.shieldGapSeen || nowWall - beatRef > SHIELD_GAP_THRESHOLD_MILLIS) {
+            // Issue #81 F4: a finish may certify ELAPSED_CLEAN only
+            // if the shield can still SEE at the ending write. Usage
+            // Access revoked mid-session leaves the beat fresh (the
+            // process lives) while the foreground door is dead —
+            // the latchShieldGapNow stamps cover the revoked span,
+            // and this fresh read covers a session that completes
+            // on the very tick blindness begins.
+            if (session.shieldGapSeen || nowWall - beatRef > SHIELD_GAP_THRESHOLD_MILLIS ||
+                !hasUsageStatsPermission()
+            ) {
                 SessionOutcome.ELAPSED_SHIELD_GAP
             } else {
                 SessionOutcome.ELAPSED_CLEAN
