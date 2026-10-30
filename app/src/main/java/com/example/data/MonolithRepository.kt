@@ -1507,20 +1507,18 @@ class MonolithRepository(
                 return@withTransaction settings.receiptSequence
             }
             val next = settings.receiptSequence + 1
-            // Targeted write (§7.5): the claim touches its four
-            // columns and no other — a whole-row REPLACE here
-            // would clobber settings written since the read.
-            dao.writeReceiptClaim(
+            // Targeted write (§7.5) as the DAO's own @Transaction
+            // composite (issue #30 finding 3): the claim touches
+            // its four columns and no other, and the № is stamped
+            // on the session row inside the same composite
+            // (RC-04) — claim and stamp commit or roll back
+            // together, so a № can never exist without its row
+            // wearing it, for this caller and every future one.
+            dao.writeReceiptClaimAndStamp(
                 sessionId = sessionId,
                 outcome = outcomeWord,
-                sequence = next,
-                receiptSessionId = sessionId
+                sequence = next
             )
-            // The № is stamped on the session row in the SAME
-            // transaction (RC-04): claim and stamp commit or roll
-            // back together, so a № can never exist without its
-            // row wearing it.
-            dao.stampReceiptNumber(sessionId, next)
             next
         }
     }
@@ -2834,7 +2832,15 @@ class MonolithRepository(
     }
 
     suspend fun searchStoredTasks(query: String, offset: Int): StoredPage {
-        val fetched = dao.searchStoredTasks(query.trim(), DRAWER_PAGE_SIZE + 1, offset)
+        // Issue #30 finding 5: escape the LIKE wildcards in the
+        // user's words — the DAO's ESCAPE '\' clause makes \%, \_
+        // and \\ match literally, so searching "50%" finds "50%"
+        // instead of everything containing "50".
+        val escaped = query.trim()
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        val fetched = dao.searchStoredTasks(escaped, DRAWER_PAGE_SIZE + 1, offset)
         return StoredPage(
             rows = fetched.take(DRAWER_PAGE_SIZE),
             hasEarlier = fetched.size > DRAWER_PAGE_SIZE
