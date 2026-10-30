@@ -1,0 +1,68 @@
+name: mergebot-s11-114
+
+on:
+  push:
+    branches: [mergebot/s11-114]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mergebot-s11-114
+  cancel-in-progress: false
+
+jobs:
+  merge114:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: agent/issue-114
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Merge main into agent/issue-114 (STURM3-11 surge port)
+        shell: bash
+        run: |
+          set +e
+          git config user.name "STURM3-11 mergebot"
+          git config user.email "mergebot@localhost"
+          git fetch origin main mergebot/s11-114
+          git show origin/mergebot/s11-114:mergebot/resolve114.py > /tmp/resolve114.py
+          git merge origin/main --no-edit -m "Merge main into agent/issue-114 (STURM3-11 surge port)"
+          MERGE_RC=$?
+          STATUS="clean"
+          : > /tmp/report.txt
+          if [ $MERGE_RC -ne 0 ]; then
+            echo "== unmerged files ==" >> /tmp/report.txt
+            git diff --name-only --diff-filter=U >> /tmp/report.txt
+            echo "== conflict segments ==" >> /tmp/report.txt
+            for f in $(git diff --name-only --diff-filter=U); do
+              echo "--- $f" >> /tmp/report.txt
+              grep -n -A 30 '<<<<<<<' "$f" | head -500 >> /tmp/report.txt
+            done
+            python3 /tmp/resolve114.py > /tmp/resolver-out.txt 2>&1
+            RES_RC=$?
+            echo "== resolver rc=$RES_RC ==" >> /tmp/report.txt
+            cat /tmp/resolver-out.txt >> /tmp/report.txt
+            if [ $RES_RC -ne 0 ]; then
+              git merge --abort
+              STATUS="aborted"
+            else
+              git add -A
+              git commit --no-edit
+              STATUS="resolved"
+            fi
+          fi
+          if [ "$STATUS" != "aborted" ]; then
+            git push origin HEAD:agent/issue-114
+            PUSH_RC=$?
+            if [ $PUSH_RC -ne 0 ]; then STATUS="push-failed"; fi
+          fi
+          { echo "status=$STATUS rc_merge=$MERGE_RC utc=$(date -u +%FT%TZ)"; cat /tmp/report.txt; } > /tmp/mbstatus.txt
+          git checkout -B mergebot/s11-114 origin/mergebot/s11-114
+          mkdir -p mergebot
+          cp /tmp/mbstatus.txt mergebot/status-114.txt
+          git add mergebot/status-114.txt
+          git commit -m "mergebot status 114: $STATUS [skip ci]" || true
+          git push origin HEAD:mergebot/s11-114
