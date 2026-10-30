@@ -19,14 +19,11 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
-import com.example.MainActivity
 import com.example.MLog
 import com.example.R
 import com.example.data.AppBlockTier
 import com.example.data.MonolithDatabase
-import com.example.data.MonolithRepository
 import com.example.widget.MonolithWidgetProvider
-import com.example.MLog
 import com.example.data.batteryShieldWarning
 import com.example.data.readBatterySnapshot
 import java.util.UUID
