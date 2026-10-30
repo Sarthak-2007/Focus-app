@@ -13,11 +13,14 @@ import com.example.ui.theme.MyApplicationTheme
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 
 /**
  * Issue #55 (verifier test gaps), rendered half — deterministic
@@ -27,6 +30,24 @@ import org.robolectric.annotation.Config
  *    the withheld line for the peek chip with no re-trigger;
  *  - a same-package re-intercept (new instance, fresh stamp)
  *    resets the wall: chip gone, numeral back at 05.
+ *
+ * #166 floor cure (DURCH-D, family AirlockOverlayIssue55RenderTest):
+ * root cause was a stale harness assumption, NOT a production
+ * defect. The overlay gates the peek chip behind the 5-second
+ * breathing wall (`countdownSecs == 0 && peekReady`), and the
+ * wall is deadline-derived from the intercept's monotonic stamp
+ * — both correct, and the pure math is pinned green by
+ * AirlockOverlayIssue55Test. These render tests used stamp 1L as
+ * "ancient", but under Robolectric the shadow monotonic clock
+ * starts near zero, so 1L is only ~0 ms old at composition: the
+ * wall legitimately stands at 05, the chip never composes, and
+ * all three tests failed at the peek node (census run
+ * 41034113823: AssertionError at lines 67, 102, 122). The
+ * fix-forward that introduced 1L (7d57e9f9) asserted the expired
+ * path was exercised; the census proves it was not. Cure is
+ * test-side only: pin the shadow clock 60 s past boot in setUp
+ * so a 1L stamp is genuinely ancient on the first frame. No
+ * assertion changed, no production code touched.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -34,6 +55,21 @@ class AirlockOverlayIssue55RenderTest {
 
     @get:Rule
     val composeRule = createAndroidComposeRule<ComponentActivity>()
+
+    @Before
+    fun pinShadowClockPastTheWall() {
+        // See class KDoc (#166): Robolectric's shadow monotonic
+        // clock starts near zero, so the tests' ancient-but-
+        // positive 1L stamps read as brand-new intercepts and the
+        // 5 s wall never stands expired on the first frame.
+        // Advancing the shadow clock a full minute before any
+        // composition makes 1L genuinely ancient — the expired-
+        // wall premise every case below is written against. The
+        // re-intercept case still stamps SystemClock.elapsed-
+        // Realtime() at body time, i.e. "now" on this pinned
+        // clock, so its fresh full wall is unaffected.
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(60))
+    }
 
     private fun setAirlock(state: AirlockInterceptState) {
         composeRule.setContent {
@@ -108,7 +144,9 @@ class AirlockOverlayIssue55RenderTest {
         // First intercept: wall long expired, peek on offer.
         // (Stamps are 1L — ancient but positive: Robolectric's
         // shadow elapsedRealtime is tiny, so now-10_000 would go
-        // negative and trip the state's fresh-stamp fallback.)
+        // negative and trip the state's fresh-stamp fallback.
+        // 1L only reads as ancient because setUp pins the shadow
+        // clock 60 s past boot — #166, see class KDoc.)
         setAirlock(
             AirlockInterceptState(
                 isVisible = true,
