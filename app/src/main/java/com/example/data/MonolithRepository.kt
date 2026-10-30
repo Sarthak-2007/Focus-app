@@ -1373,6 +1373,12 @@ class MonolithRepository(
             // first/last evidence stamps stay 0 until E2/E4 land.
             evidenceMask = if (routineId != null) EVIDENCE_E1_START else 0
         )
+        // Issue #152: witness the zone this arming is lived in,
+        // keyed by the arm instant, so the receipt can print its
+        // ARMED time truthfully after a landing. Written at this
+        // funnel because it is the ONLY session birthplace — a
+        // capture anywhere else would miss a door.
+        armZoneStore.put(wallNow, java.time.ZoneId.systemDefault().id)
         // Slice E (Fader's writer law): the held counts are captured
         // INSIDE the birth transaction, from the same snapshot that
         // deactivates the predecessor — the set the shield will
@@ -1731,7 +1737,8 @@ class MonolithRepository(
             faulted = faulted,
             deflections = pending.deflections,
             restored = false,
-            receiptPublishedMonoMs = 0L
+            receiptPublishedMonoMs = 0L,
+            armZoneId = armZoneStore.zoneFor(pending.armWallMs)
         )
     }
 
@@ -1783,7 +1790,8 @@ class MonolithRepository(
             faulted = row.releaseFaultShield,
             deflections = pending.deflections,
             restored = true,
-            receiptPublishedMonoMs = 0L
+            receiptPublishedMonoMs = 0L,
+            armZoneId = armZoneStore.zoneFor(pending.armWallMs)
         )
     }
 
@@ -2851,6 +2859,10 @@ class MonolithRepository(
     // prefs (freshest, undrained) wins over the table on conflict,
     // matching the drain's own precedence.
     private val dayWordStore by lazy { DayWordStore(context) }
+
+    /** Issue #152: the arm-zone capture for receipts (see
+     *  ArmZoneStore). Written at the one birth funnel below. */
+    private val armZoneStore by lazy { ArmZoneStore(context) }
 
     fun dayWords(): Map<String, String> = dayWordStore.all()
 

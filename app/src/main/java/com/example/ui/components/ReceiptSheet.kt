@@ -109,19 +109,50 @@ fun ReceiptSheet(
                     )
                 }
 
+                // Issue #152: the slip's times say where they
+                // live. ARMED renders in the zone the arming was
+                // actually lived in (captured at the session's
+                // birth funnel — ReceiptState.armZoneId) whenever
+                // that zone differs from the zone in force at
+                // render, and both lines then carry their UTC
+                // offsets: a traveller reading the slip after
+                // landing sees the departure wall time he lived,
+                // labelled — not the same instant silently
+                // re-rendered in the arrival zone, which put the
+                // slip at war with his boarding pass and his own
+                // memory while DURATION arithmetic (monotonic)
+                // kept agreeing. Same zone — the overwhelming
+                // case — the print is exactly as before.
+                val renderZone = java.time.ZoneId.systemDefault()
+                val armZone = receipt.armZoneId?.let { id ->
+                    runCatching { java.time.ZoneId.of(id) }.getOrNull()
+                }
+                val crossedZones = armZone != null && armZone != renderZone
+                val armedPrint = if (crossedZones) {
+                    "${hhmm(receipt.armWallMs, armZone!!)} " +
+                        "(${offsetLabel(receipt.armWallMs, armZone)})"
+                } else {
+                    hhmm(receipt.armWallMs)
+                }
+                val endedPrint = if (crossedZones) {
+                    "${hhmm(receipt.endedAtWallMs)} " +
+                        "(${offsetLabel(receipt.endedAtWallMs, renderZone)})"
+                } else {
+                    hhmm(receipt.endedAtWallMs)
+                }
                 // RC-02: a FLOW slip has no PLANNED segment —
                 // the line carries ARMED alone rather than a
                 // floor dressed as a plan.
                 val planned = receipt.plannedSeconds
                 ReceiptMonoLine(
                     text = if (planned != null) {
-                        "ARMED ${hhmm(receipt.armWallMs)} · PLANNED ${longSpan(planned)}"
+                        "ARMED $armedPrint · PLANNED ${longSpan(planned)}"
                     } else {
-                        "ARMED ${hhmm(receipt.armWallMs)}"
+                        "ARMED $armedPrint"
                     }
                 )
                 ReceiptMonoLine(
-                    text = "ENDED ${hhmm(receipt.endedAtWallMs)} · ${receipt.outcomeWord}"
+                    text = "ENDED $endedPrint · ${receipt.outcomeWord}"
                 )
                 receipt.routineLabelWithin?.let { label ->
                     ReceiptMonoLine(text = label)
@@ -198,6 +229,20 @@ private fun ReceiptMonoLine(text: String, dim: Boolean = false) {
 
 private fun hhmm(wallMillis: Long): String =
     SimpleDateFormat("HH:mm", Locale.US).format(Date(wallMillis))
+
+/** [hhmm] in an explicit zone (issue #152's ARMED line). */
+private fun hhmm(wallMillis: Long, zone: java.time.ZoneId): String {
+    val format = SimpleDateFormat("HH:mm", Locale.US)
+    format.timeZone = java.util.TimeZone.getTimeZone(zone)
+    return format.format(Date(wallMillis))
+}
+
+/** The UTC offset in force for [zone] at [wallMillis], as the
+ *  slip prints it ("+05:30"; UTC prints "+00:00", never "Z"). */
+private fun offsetLabel(wallMillis: Long, zone: java.time.ZoneId): String {
+    val offset = zone.rules.getOffset(java.time.Instant.ofEpochMilli(wallMillis))
+    return if (offset == java.time.ZoneOffset.UTC) "+00:00" else offset.id
+}
 
 /** The long-form dialect (F-W1): `50 MIN`, `1H 00M` — the same
  *  span classes the Deck's hero prints, never the short form. */

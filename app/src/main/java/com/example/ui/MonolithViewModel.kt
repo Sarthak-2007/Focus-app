@@ -780,6 +780,25 @@ class MonolithViewModel(
             refreshSystemGuard()
             _sevenDayStats.value = repository.compute7DayHistory()
         }
+        // Issue #152: the Drawer's current month follows the
+        // traveller. _drawerMonth is born at ViewModel creation
+        // and was otherwise re-derived only when the VAULT opens,
+        // so an app left open across a landing kept printing the
+        // departure month as current indefinitely (a timezone
+        // change re-anchors every filing date). This slow ticker
+        // re-derives it — only while the user has not pinned a
+        // month by browsing; refreshDrawer() clears the pin.
+        viewModelScope.launch {
+            while (true) {
+                delay(60_000L)
+                if (!drawerMonthPinnedByUser) {
+                    val current = com.example.data.DrawerDay.filingYearMonth(
+                        System.currentTimeMillis()
+                    )
+                    if (current != _drawerMonth.value) refreshDrawer()
+                }
+            }
+        }
         viewModelScope.launch {
             activeTask.collect { task ->
                 if (task != null) {
@@ -1864,6 +1883,13 @@ class MonolithViewModel(
     val dayWords: StateFlow<Map<String, String>> = _dayWords.asStateFlow()
 
     private var drawerOffset = 0
+
+    /** Issue #152: true once the user pins a Drawer month by
+     *  browsing (selectDrawerMonth). While unpinned, the slow
+     *  ticker in init keeps _drawerMonth on the current filing
+     *  month — across timezone changes included; refreshDrawer()
+     *  clears the pin (the landing is the ruling's default view). */
+    private var drawerMonthPinnedByUser = false
     private var drawerSearchOffset = 0
     private var drawerSearchJob: Job? = null
 
@@ -1874,16 +1900,23 @@ class MonolithViewModel(
      *  allDayWords() — the union of the prefs capture and the
      *  drained day_notes table, so a word survives its own drain. */
     fun refreshDrawer() {
+        drawerMonthPinnedByUser = false
         _drawerMonth.value = com.example.data.DrawerDay.filingYearMonth(System.currentTimeMillis())
         viewModelScope.launch {
             _storedMonths.value = repository.storedMonths()
             _dayWords.value = repository.allDayWords()
             _forgedArtifactIds.value = repository.forgedArtifactIds()
             selectDrawerMonth(_drawerMonth.value.first, _drawerMonth.value.second)
+            // The refresh's own selection is the default view,
+            // not a user's pin — clear the pin selectDrawerMonth
+            // just set, so the issue-#152 ticker keeps following
+            // the current filing month after this refresh.
+            drawerMonthPinnedByUser = false
         }
     }
 
     fun selectDrawerMonth(year: Int, month: Int) {
+        drawerMonthPinnedByUser = true
         _drawerMonth.value = year to month
         drawerOffset = 0
         _drawerRows.value = emptyList()
