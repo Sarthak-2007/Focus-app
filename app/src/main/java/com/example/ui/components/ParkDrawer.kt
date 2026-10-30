@@ -898,8 +898,19 @@ fun ParkDrawer(
                                                         amplitude01 = if (isNight) 0.06f else 0.1f,
                                                         pitchHz = 300f
                                                     )
-                                                    onRecheck()
-                                                    tryAwaitRelease()
+                                                    // Issue #9, Zahn Z-11
+                                                    // (RE-CHECK form): the
+                                                    // dispatch commits on
+                                                    // RELEASE, like FIX —
+                                                    // a scroll that merely
+                                                    // starts on this key
+                                                    // fires no sweep. The
+                                                    // knock stays on DOWN:
+                                                    // it is furniture, not
+                                                    // a commit.
+                                                    val released =
+                                                        tryAwaitRelease()
+                                                    if (released) onRecheck()
                                                     recheckPressed = false
                                                 }
                                             )
