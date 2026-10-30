@@ -54,6 +54,9 @@ val CenteredNumericLineHeightStyle = LineHeightStyle(
 
 // Monolith type ladder (TYPE-RAMP-TABLE, Set's audit, Oct 29 2026):
 // six sizes only - 104 / 72 / 50 / 22 / 15 / 10 - no two tiers within 1.4x.
+// Issue #63: the 50 tier is REAL now — DisplayUnitTextStyle below backs
+// displaySmall and the Deck hero's unit spans; before, the ladder claim
+// was false (50.sp existed only as an inline SpanStyle in TactileDeck).
 // The old lying font aliases (SpaceGrotesk / PlusJakartaSans / JetBrainsMono
 // / DmSans) are dead; call sites name the real families. BentoMetric (36sp,
 // off-ladder, unused) is dead. The Atkinson "Medium" is dead - the family
@@ -79,6 +82,25 @@ val DeskClockTextStyle = TextStyle(
     letterSpacing = (-3.0).sp,
     platformStyle = TightNumericPlatformStyle,
     lineHeightStyle = CenteredNumericLineHeightStyle
+)
+
+/** H3 - display unit tier: the 50sp unit span riding the 72sp hero digits. */
+val DisplayUnitTextStyle = TextStyle(
+    fontFamily = SoraFamily,
+    fontWeight = FontWeight.Bold,
+    fontSize = 50.sp,
+    lineHeight = 50.sp,
+    letterSpacing = (-1.5).sp,
+    platformStyle = TightNumericPlatformStyle,
+    lineHeightStyle = CenteredNumericLineHeightStyle
+)
+
+/** Dense B1 - same 15sp tier, tighter leading for stacked rows. */
+val BodySmallTextStyle = TextStyle(
+    fontFamily = AtkinsonHyperlegibleFamily,
+    fontWeight = FontWeight.Normal,
+    fontSize = 15.sp,
+    lineHeight = 20.sp
 )
 
 /** L1 - the engraved plate: every micro-label, and nothing else. */
@@ -153,14 +175,26 @@ val TaskActiveTitleTextStyle = TextStyle(
 val Typography = Typography(
     displayLarge = DeskClockTextStyle,
     displayMedium = DialClockTextStyle,
+    // Issue #63: all 15 Material3 slots are assigned — displaySmall,
+    // headlineSmall and titleSmall previously fell back to STOCK
+    // Material type (default font, off-ladder sizes) in any component
+    // that reached for them.
+    displaySmall = DisplayUnitTextStyle,
     headlineLarge = DrawerHeaderTextStyle,
     headlineMedium = DrawerHeaderTextStyle,
+    headlineSmall = DrawerHeaderTextStyle,
     titleLarge = TaskActiveTitleTextStyle,
     titleMedium = PrimaryButtonTextStyle,
-    bodyLarge = AppTitleTextStyle,
+    titleSmall = AppTitleTextStyle,
+    // bodyLarge was AppTitleTextStyle — a BOLD title style wearing a
+    // body slot (issue #63). Body slots are the honest 400 body tier;
+    // bodySmall is the same tier with dense leading, not a clone.
+    bodyLarge = BodyTextStyle,
     bodyMedium = BodyTextStyle,
-    bodySmall = BodyTextStyle,
-    labelLarge = PillBadgeTextStyle,
+    bodySmall = BodySmallTextStyle,
+    // labelLarge is the button-word tier (Sora 15 bold); the two small
+    // label slots share the single L1 badge tier the ladder allows.
+    labelLarge = PrimaryButtonTextStyle,
     labelMedium = PillBadgeTextStyle,
     labelSmall = PillBadgeTextStyle
 )

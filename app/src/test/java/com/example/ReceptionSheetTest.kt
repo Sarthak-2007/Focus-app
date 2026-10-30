@@ -498,7 +498,7 @@ class ReceptionSheetTest {
             now
         )
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 ReceptionSheet(
                     visible = true,
                     snapshot = snap,

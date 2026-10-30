@@ -41,13 +41,41 @@ internal fun breakRemainingAfter(
     storedRemaining: Int,
     lastTickMonoMillis: Long,
     nowMonoMillis: Long
-): Int {
+): Int = breakTickAfter(storedRemaining, lastTickMonoMillis, nowMonoMillis).first
+
+/**
+ * The break tick as a PAIR (Audit R1 #41): the new remaining
+ * seconds AND the anchor the caller must persist with them.
+ *
+ * [breakRemainingAfter] alone truncated to whole seconds while
+ * its repository caller persisted the FULL current instant as
+ * the new anchor — the sub-second remainder (up to 999 ms) was
+ * discarded every tick, so a break drained slower than wall time
+ * by roughly one partial second per tick (~30 s of overrun on a
+ * 600 s break at a ~1 s cadence; worse under two tickers). The
+ * pair advances the anchor by exactly the whole seconds the
+ * remaining was charged for, keeping the fraction in the anchor
+ * — the same conservation [WallAccrual.observe] already applies
+ * to task accrual. Callers persisting a break tick persist THIS
+ * pair, never (remaining, now).
+ */
+internal fun breakTickAfter(
+    storedRemaining: Int,
+    lastTickMonoMillis: Long,
+    nowMonoMillis: Long
+): Pair<Int, Long> {
     // No "unstamped" sentinel: break entry always stamps the tick,
     // and 0 is a legitimate anchor value (first millisecond after
     // boot) — a guard here froze the countdown's first second when
     // this was unit-tested from a zero anchor.
     val elapsedSeconds = ((nowMonoMillis - lastTickMonoMillis) / 1000L).coerceAtLeast(0L)
-    return (storedRemaining - elapsedSeconds).coerceAtLeast(0L).toInt()
+    val remaining = (storedRemaining - elapsedSeconds).coerceAtLeast(0L).toInt()
+    val anchor = if (elapsedSeconds > 0L) {
+        lastTickMonoMillis + elapsedSeconds * 1000L
+    } else {
+        lastTickMonoMillis
+    }
+    return remaining to anchor
 }
 
 class WallAccrual {
@@ -56,6 +84,45 @@ class WallAccrual {
     private var taskId: Int = -1
     private var lastMonoMillis: Long = 0L
     private var anchored: Boolean = false
+
+    companion object {
+        /**
+         * The ONE accrual for the whole process (Audit R1 #41).
+         * The dedup above is per-INSTANCE state — and every
+         * MonolithRepository used to mint its own instance while
+         * MainActivity, the Shield service, the routine heartbeat
+         * and the seal transition each construct their own
+         * repository. Two live instances each credited the FULL
+         * delta: the double-credit this class exists to kill,
+         * resurrected one level up. Repositories now all observe
+         * through [shared]; the second ticker finds the delta
+         * already consumed, as designed.
+         */
+        val shared: WallAccrual = WallAccrual()
+    }
+
+    /**
+     * Re-anchor from a persisted snapshot (Audit R1 #41): after
+     * process death the repository reseeds the shared instance
+     * from disk so the death gap is judged by [observe] like any
+     * other interval instead of vanishing. A no-op when this
+     * instance already holds an anchor — the live anchor is
+     * always fresher than the stored one.
+     */
+    @Synchronized
+    fun seed(sessionId: Int, taskId: Int, lastMonoMillis: Long) {
+        if (anchored) return
+        this.sessionId = sessionId
+        this.taskId = taskId
+        this.lastMonoMillis = lastMonoMillis
+        this.anchored = true
+    }
+
+    /** The current anchor, for persistence: (sessionId, taskId,
+     *  lastMonoMillis), or null while unanchored. */
+    @Synchronized
+    fun anchorSnapshot(): Triple<Int, Int, Long>? =
+        if (anchored) Triple(sessionId, taskId, lastMonoMillis) else null
 
     /**
      * Returns the whole seconds to credit to [accruingTaskId] for

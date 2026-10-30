@@ -2,4 +2,13 @@
 <resources>
 
     <style name="Theme.MyApplication" parent="android:Theme.DeviceDefault.NoActionBar" />
+
+    <!-- Issue #282 (R5 supplement): a real launch surface. Until now
+         the single DeviceDefault theme served every surface, so a
+         cold start flashed the system default before Compose drew.
+         The launcher activity opens on the app's own vellum ground
+         (the launcher background) and hands over to Compose. -->
+    <style name="Theme.MyApplication.Splash" parent="android:Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@drawable/ic_launcher_background</item>
+    </style>
 </resources>
