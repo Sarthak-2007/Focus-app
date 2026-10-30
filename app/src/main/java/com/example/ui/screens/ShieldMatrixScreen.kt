@@ -573,6 +573,13 @@ fun ShieldMatrixScreen(
                 rightWordPrefix = "SHOWING ",
                 rightMonoNumber = filteredApps.size.toString()
             )
+            Text(
+                text = "APPS ON THIS PHONE ONLY — NOTHING HERE CAN HOLD AN APP ON ANOTHER DEVICE",
+                fontFamily = AnonymousProFamily,
+                fontSize = 10.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.testTag("shield_catalog_scope_line")
+            )
             Spacer(modifier = Modifier.height(8.dp))
 
             // Recessed 12dp search bar

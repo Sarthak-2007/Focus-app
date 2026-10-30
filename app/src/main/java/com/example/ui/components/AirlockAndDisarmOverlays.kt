@@ -435,7 +435,7 @@ fun CapturedNotificationsDigestSheet(
                 }
                 if (frozenMode && frozenAtMillis != null) {
                     Text(
-                        text = "Everything here is as of the time above. Nothing here opens. Anything newer waits until the session ends.",
+                        text = "Everything here is as of the time above. Nothing here opens. Anything newer waits here until the session ends — it does not wait on your other screens.",
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 13.sp,
                         color = scheme.onSurfaceVariant
