@@ -31,11 +31,9 @@ import org.robolectric.annotation.Config
  * 2. F-SCH-1 DRAIN. Declared day words captured in the prefs
  *    file `monolith_day_words` (the Drawer lane's DayWordStore
  *    contract: dateIso → word) drain into the `day_notes` Room
- *    table at seed-sync. Since issue #137 (F4) the vocabulary
- *    is open: any word DayWordStore.normalize accepts drains,
- *    suggestions and custom words alike. A word that cannot
- *    normalise is refused and left sitting in prefs: never
- *    stored, never silently dropped.
+ *    table at seed-sync. Only the closed word list drains —
+ *    REST / ILL / FAMILY. A TEST word is refused and left
+ *    sitting in prefs: never stored, never silently dropped.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -117,38 +115,62 @@ class SeedAndDayWordDrainTest {
     }
 
     @Test
-    fun seedSync_drainsDeclaredWords_refusesInvalidAndNonStrings_idempotent() = runBlocking {
+    fun seedSync_drainsDeclaredWords_refusesTestAndNonStrings_idempotent() = runBlocking {
         prefs.edit()
             .putString("2026-10-26", "REST")
             .putString("2026-10-27", "ILL")
-            .putString("2026-10-28", "TWO WORDS")
+            .putString("2026-10-28", "TEST")
             .putInt("2026-10-29", 42)
-            .putString("2026-10-30", "TRAVEL")
             .commit()
 
         repository.ensureSeededAndSyncPackages()
         val dao = db.monolithDao()
 
-        // Every normalisable word drained, in date order —
-        // the custom/suggested TRAVEL included (issue #137, F4).
+        // Only the closed list drained, in date order.
         assertEquals(
             listOf(
                 DayNoteEntity("2026-10-26", "REST"),
-                DayNoteEntity("2026-10-27", "ILL"),
-                DayNoteEntity("2026-10-30", "TRAVEL")
+                DayNoteEntity("2026-10-27", "ILL")
             ),
             dao.getAllDayNotesSnapshot()
         )
         // The refused entries stay in prefs, untouched and visible:
-        // the two-token word was never stored and never silently dropped.
-        assertEquals("TWO WORDS", prefs.getString("2026-10-28", null))
+        // TEST was never stored and never silently dropped.
+        assertEquals("TEST", prefs.getString("2026-10-28", null))
         assertEquals(42, prefs.getInt("2026-10-29", -1))
         assertEquals(2, prefs.all.size)
 
         // Second seed-sync: a strict no-op for the table and prefs.
         repository.ensureSeededAndSyncPackages()
-        assertEquals(3, dao.getAllDayNotesSnapshot().size)
+        assertEquals(2, dao.getAllDayNotesSnapshot().size)
         assertEquals(2, prefs.all.size)
+    }
+
+    // Audit R1 #37 (HIGH): clearing a word that had drained into
+    // Room used to resurrect on the next union read — the clear
+    // removed only the (already drained, hence absent) prefs key
+    // and no DELETE for day_notes existed. The clear must now
+    // reach the table, and the word must stay gone.
+    @Test
+    fun clear_afterDrain_removesWordFromUnionForever() = runBlocking {
+        prefs.edit().putString("2026-10-26", "REST").commit()
+        repository.ensureSeededAndSyncPackages()
+        val dao = db.monolithDao()
+        assertEquals(
+            listOf(DayNoteEntity("2026-10-26", "REST")),
+            dao.getAllDayNotesSnapshot()
+        )
+        assertEquals("REST", repository.allDayWords()["2026-10-26"])
+
+        val cleared = repository.declareDayWord("2026-10-26", null)
+
+        assertTrue("the prefs removal must report its commit verdict", cleared)
+        assertTrue(dao.getAllDayNotesSnapshot().isEmpty())
+        assertTrue(repository.allDayWords().isEmpty())
+
+        // And the date is declarable again afterwards.
+        assertTrue(repository.declareDayWord("2026-10-26", "ILL"))
+        assertEquals("ILL", repository.allDayWords()["2026-10-26"])
     }
 
     @Test

@@ -38,6 +38,13 @@ class DrawerPermanenceTest {
 
     @Before
     fun setup() {
+        // Day words live in SharedPreferences, NOT in the in-memory
+        // DB (#91): without clearing them, declareDayWord writes
+        // leak between tests/classes and defeat the isolation the
+        // in-memory DB promises. Same hygiene as
+        // SeedAndDayWordDrainTest / DrawerRenderTest.
+        context.getSharedPreferences("monolith_day_words", Context.MODE_PRIVATE)
+            .edit().clear().commit()
         db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -47,6 +54,8 @@ class DrawerPermanenceTest {
     @After
     fun tearDown() {
         db.close()
+        context.getSharedPreferences("monolith_day_words", Context.MODE_PRIVATE)
+            .edit().clear().commit()
     }
 
     private fun completedTask(title: String, completedAt: Long, notes: String = ""): FocusTaskEntity =
@@ -268,6 +277,20 @@ class DrawerPermanenceTest {
         assertEquals(0L, task.completedAtMillis)
     }
 
+    // #158 F2: a day word is searchable — by the word itself and
+    // by a prefix of it — including a word-only day with no
+    // stored task on it; a query naming no word finds none.
+    @Test
+    fun searchDayWords_findsWordOnlyDays_byWordAndPrefix() = runBlocking {
+        repo.declareDayWord("2026-08-14", "ILL")
+        repo.declareDayWord("2026-08-20", "REST")
+        assertEquals(mapOf("2026-08-14" to "ILL"), repo.searchDayWords("ILL"))
+        assertEquals(mapOf("2026-08-14" to "ILL"), repo.searchDayWords("il"))
+        assertEquals(mapOf("2026-08-20" to "REST"), repo.searchDayWords(" REST "))
+        assertTrue(repo.searchDayWords("physics").isEmpty())
+        assertTrue(repo.searchDayWords("").isEmpty())
+    }
+
     // A declared word with no tasks still puts its month in the
     // index — otherwise the word is filed nowhere (Selbst).
     @Test
@@ -276,12 +299,8 @@ class DrawerPermanenceTest {
         assertEquals("ILL", repo.dayWords()["2026-08-14"])
         val months = repo.storedMonths().map { it.year to it.month }
         assertTrue(months.contains(2026 to 8))
-        // Issue #137, F4: the vocabulary is open — a custom word
-        // he names himself is accepted; only a word that cannot
-        // normalise (here: two tokens) is refused.
-        repo.declareDayWord("2026-08-15", "GRIEF")
-        assertEquals("GRIEF", repo.dayWords()["2026-08-15"])
-        repo.declareDayWord("2026-08-16", "TWO WORDS")
-        assertNull(repo.dayWords()["2026-08-16"])
+        // The closed word list refuses anything else, TEST included.
+        repo.declareDayWord("2026-08-15", "TEST")
+        assertNull(repo.dayWords()["2026-08-15"])
     }
 }
