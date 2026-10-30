@@ -343,6 +343,12 @@ class MonolithShieldService : Service() {
                     protectingSessionId = updated.id
                     protectingMono = SystemClock.elapsedRealtime()
                     WatchStore.poke()
+                    // Issue #80 finding 4: the session just armed —
+                    // sweep notifications blocked apps posted BEFORE
+                    // this moment through the listener's capture path.
+                    try {
+                        MonolithNotificationListener.instance?.sweepActiveNotifications()
+                    } catch (_: Exception) {}
                 }
                 // Watch Store (chrome C3): ONE publication per
                 // iteration — the engine heartbeat plus a re-read of

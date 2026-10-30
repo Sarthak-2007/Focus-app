@@ -566,6 +566,14 @@ class MonolithAccessibilityService : AccessibilityService() {
         val tamperSurface: Boolean = false,
         val sniperFeedVisible: Boolean = false,
         val browserUrlTexts: List<String> = emptyList(),
+        /** Issue #80 findings 3+5 (STURM3-13 port): this window's
+         *  node texts, bounded (depth 12 / 200 texts, focused nodes
+         *  skipped), captured for non-browser packages so the worker
+         *  can judge loaded URLs in any host (Custom Tabs, in-app
+         *  WebViews) and content on launcher/Assistant surfaces.
+         *  Supported browsers keep their dedicated URL-bar door and
+         *  carry an empty list here. */
+        val windowTexts: List<String> = emptyList(),
         /** Issue #79 finding 3: the browser window's text, captured
          *  for the embed scan at match time in the worker. Empty
          *  while a URL bar is focused (never fire mid-typing). */
@@ -877,7 +885,20 @@ class MonolithAccessibilityService : AccessibilityService() {
             pkgName == "com.google.android.youtube" ||
             pkgName == "com.instagram.android" ||
             isSupportedBrowser(pkgName)
-        if (!needsRoot) return EventFacts()
+        // Issue #80 (STURM3-13 port): non-browser windows carry
+        // their texts for the any-host URL door and the surface
+        // door — including packages whose other doors need no root
+        // at all. The #92 sweep routes every window through this
+        // same capture, so PiP/split/Custom-Tab windows are judged
+        // with their own package, not the foreground one.
+        val windowTexts = if (isSupportedBrowser(pkgName)) {
+            emptyList()
+        } else {
+            val out = mutableListOf<String>()
+            collectNodeTexts(rootNode, out, 0)
+            out
+        }
+        if (!needsRoot) return EventFacts(windowTexts = windowTexts)
         return EventFacts(
             tamperSurface = isPackageInstallerOrTamperSettings(pkgName, rootNode),
             sniperFeedVisible = detectShortsOrReelsFeed(rootNode),
@@ -886,12 +907,31 @@ class MonolithAccessibilityService : AccessibilityService() {
             } else {
                 emptyList()
             },
+            windowTexts = windowTexts,
             browserContentText = if (isSupportedBrowser(pkgName) && !hasFocusedUrlBar(rootNode)) {
                 collectWindowTextLowercase(rootNode)
             } else {
                 ""
             }
         )
+    }
+
+    /** Issue #80's bounded tree walk: depth- and count-capped,
+     *  skips focused (being-typed) nodes. */
+    private fun collectNodeTexts(
+        node: AccessibilityNodeInfo?,
+        out: MutableList<String>,
+        depth: Int
+    ) {
+        if (node == null || depth > 12 || out.size > 200) return
+        if (!node.isFocused) {
+            node.text?.toString()?.let { out.add(it) }
+            node.contentDescription?.toString()?.let { out.add(it) }
+        }
+        for (i in 0 until node.childCount) {
+            if (out.size > 200) return
+            collectNodeTexts(node.getChild(i), out, depth + 1)
+        }
     }
 
     /** The ONE worker's per-event body: sequential, single-flight,
@@ -993,6 +1033,68 @@ class MonolithAccessibilityService : AccessibilityService() {
                     path = InterceptPath.SITE
                 )
                 return
+            }
+        }
+
+        // 4b. Any-host loaded-URL door + host-surface door
+        // (Issue #80 findings 3+5, STURM3-13 port). Step 4 polices
+        // the five supported browsers' URL bars; a blocked site
+        // loaded inside Gmail, Telegram, a Custom Tab or any other
+        // app's WebView used to sail past every door. The shape
+        // gate is load-bearing: only a text that LOOKS like a
+        // loaded URL (no whitespace, domain/path shape) can fire —
+        // prose mentioning a domain never does. Peek leases and
+        // the persisted Guard toggle are honoured exactly as in
+        // step 4. The #92 sweep feeds other windows' snapshots
+        // through this same step under their own package.
+        if (!leaseLive && (guardSettings?.browserBlockerEnabled ?: true) &&
+            !isSupportedBrowser(pkgName) && snapshot.facts.windowTexts.isNotEmpty()
+        ) {
+            val userDomains = dao.getAllSitesSnapshot().map { it.domain }
+            val loadedHit = snapshot.facts.windowTexts.firstNotNullOfOrNull { text ->
+                matchBlockedDomainInLoadedUrl(text, userDomains)
+            }
+            if (loadedHit != null) {
+                performGlobalAction(GLOBAL_ACTION_BACK)
+                launchInterceptScreen(
+                    packageName = pkgName,
+                    appName = loadedHit,
+                    reasonBadge = "Site Blocked",
+                    path = InterceptPath.SITE
+                )
+                return
+            }
+            // Finding 5: launcher widgets / Discover and the
+            // Assistant render OTHER apps' content under the host's
+            // package. Judge the surface by what it NAMES: a
+            // content-length node naming a non-OPEN app fires for
+            // that app. A bare icon label can never fire — the home
+            // grid is exactly that, and intercepting the launcher
+            // itself in a loop would be a cure worse than the
+            // finding. UNKNOWN path: this door cannot honour a
+            // peek lease for the named app, so it offers none.
+            if (surfaceHostKindFor(pkgName) != SurfaceHostKind.OTHER) {
+                val blockedNames = appsSnapshot
+                    .filter { it.resolvedTier != AppBlockTier.OPEN }
+                    .map { it.appName }
+                val named = surfaceNodeTextNamesBlockedApp(
+                    snapshot.facts.windowTexts, blockedNames
+                )
+                if (named != null) {
+                    val namedRule = appsSnapshot.firstOrNull { it.appName == named }
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                    launchInterceptScreen(
+                        packageName = namedRule?.packageName ?: pkgName,
+                        appName = named,
+                        reasonBadge = if (surfaceHostKindFor(pkgName) == SurfaceHostKind.LAUNCHER) {
+                            "Widget / Feed Blocked"
+                        } else {
+                            "Assistant Blocked"
+                        },
+                        path = InterceptPath.UNKNOWN
+                    )
+                    return
+                }
             }
         }
 

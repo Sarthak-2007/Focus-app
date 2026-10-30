@@ -6,6 +6,7 @@ import android.app.usage.UsageStatsManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.LauncherApps
 import android.media.AudioManager
 import android.os.Build
 import android.os.Process
@@ -421,7 +422,7 @@ class MonolithRepository(
             // component), resolved once per package — the reconcile's
             // dedupe rule lets it win over shortcut activities.
             val mainActivityByPackage = mutableMapOf<String, String?>()
-            val installed = resolvedList.mapNotNull { resolveInfo ->
+            val installedFromPm = resolvedList.mapNotNull { resolveInfo ->
                 val pkg = resolveInfo.activityInfo?.packageName ?: return@mapNotNull null
                 if (pkg == context.packageName || pkg.startsWith("com.android.settings")) {
                     return@mapNotNull null
@@ -439,6 +440,57 @@ class MonolithRepository(
                         mainActivity == resolveInfo.activityInfo?.name
                 )
             }
+            // Issue #80 finding 1 (partial): the PackageManager
+            // query above only sees the CALLING profile. LauncherApps
+            // additionally enumerates the other profiles this user
+            // owns (work profile, dual-app/clone user), so a package
+            // installed only there is at least DISCOVERED and not
+            // pruned from the catalog. Per-profile rules remain
+            // impossible from one install — see the #80 report.
+            val profiled = installedFromPm.map {
+                ProfiledInstalledPackage(
+                    it.packageName, it.label, Process.myUserHandle().toString()
+                )
+            }.toMutableList()
+            try {
+                val launcherApps =
+                    context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as? LauncherApps
+                if (launcherApps != null) {
+                    for (profile in launcherApps.profiles) {
+                        val activities = try {
+                            launcherApps.getActivityList(null, profile)
+                        } catch (_: Exception) {
+                            null
+                        } ?: continue
+                        for (info in activities) {
+                            val pkg = info.componentName?.packageName ?: continue
+                            if (pkg == context.packageName ||
+                                pkg.startsWith("com.android.settings")
+                            ) {
+                                continue
+                            }
+                            val label = info.label?.toString()
+                                ?.takeIf { it.isNotBlank() } ?: continue
+                            profiled.add(
+                                ProfiledInstalledPackage(pkg, label, profile.toString())
+                            )
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                // Discovery stays exactly as complete as the old
+                // single-profile query when LauncherApps refuses.
+            }
+            // STURM3-13 port note: the calling-profile entries keep
+            // their isMainActivity flags (issue #34's dedupe rule
+            // depends on them), so the merged catalog is the PM list
+            // plus ONLY the packages other profiles add — the pure
+            // mergeProfiledInstalls view decides which those are.
+            val pmPackages = installedFromPm.map { it.packageName }.toSet()
+            val installed = installedFromPm +
+                AppCatalogReconcile.mergeProfiledInstalls(profiled)
+                    .filter { it.packageName !in pmPackages }
+
             // THE CATALOG IS THE PHONE'S TRUTH (Ordner lane, Sarthak's
             // complaint Oct 29 22:40: the list carried apps he never
             // installed). There is no blind factory seed any more:

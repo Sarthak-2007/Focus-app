@@ -188,6 +188,31 @@ class MonolithNotificationListener : NotificationListenerService() {
         instance = this
         WatchStore.bind(applicationContext)
         WatchStore.onNotificationListenerBound(true)
+        // Issue #80 finding 4: a (re)bind is a session door too —
+        // notifications a blocked app posted while this listener
+        // was unbound are sitting in the shade right now.
+        sweepActiveNotifications()
+    }
+
+    /**
+     * Issue #80 finding 4: sweep the ALREADY-POSTED shade through
+     * the exact same capture-and-cancel path as a live post.
+     * Before this, onNotificationPosted was the only entry point,
+     * so anything posted before the session armed (or while the
+     * listener was unbound) stayed readable and actionable —
+     * inline reply included — for the whole session.
+     * Called on listener connect and once per shield arm (the
+     * shield service's protecting flip), which together cover
+     * "session starts after the posts" and "listener binds after
+     * the posts". No-ops when no session covers a post: the shared
+     * handler re-checks the session covering each post time itself
+     * (issue #45's post-time rule).
+     */
+    fun sweepActiveNotifications() {
+        val posted = try { activeNotifications } catch (_: Exception) { null } ?: return
+        for (sbn in posted) {
+            handleNotification(sbn)
+        }
     }
 
     override fun onListenerDisconnected() {
@@ -210,7 +235,13 @@ class MonolithNotificationListener : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
-        val notification = sbn?.notification ?: return
+        handleNotification(sbn ?: return)
+    }
+
+    /** One path for live posts AND the pre-posted sweep (#80-4):
+     *  identical gates, identical capture, identical cancel. */
+    private fun handleNotification(sbn: StatusBarNotification) {
+        val notification = sbn.notification ?: return
         val pkg = sbn.packageName ?: return
         if (pkg == applicationContext.packageName || pkg.startsWith("com.android.systemui")) return
 
