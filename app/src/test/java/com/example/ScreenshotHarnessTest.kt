@@ -101,7 +101,14 @@ class ScreenshotHarnessTest {
             File("app/shots-redirect.txt")
         ).firstOrNull { it.isFile }
         val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        File(target ?: System.getenv("MONOLITH_SHOTS_DIR") ?: "build/outputs/screenshots")
+        // Issue #66 finisher cure: a redirect naming a directory that cannot
+        // be created on THIS machine (a lane-local absolute path committed by
+        // accident poisoned every CI capture with FileNotFoundException at
+        // the FileOutputStream below) must fall through to the next
+        // candidate instead of being honoured blindly.
+        listOfNotNull(target, System.getenv("MONOLITH_SHOTS_DIR"), "build/outputs/screenshots")
+            .map { File(it) }
+            .first { it.mkdirs() || it.isDirectory }
     }
 
     @Before

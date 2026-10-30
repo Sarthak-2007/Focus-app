@@ -65,8 +65,11 @@ class DrawerRenderTest {
     private val shotsDir: File = run {
         val redirect = listOf(File("shots-redirect.txt"), File("../shots-redirect.txt"), File("app/shots-redirect.txt")).firstOrNull { it.isFile } // issue #66 cluster-priority: was a hardcoded author-machine path
         val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-            ?: System.getenv("MONOLITH_SHOTS_DIR") ?: "build/outputs/drawer-shots"
-        File(target).apply { mkdirs() }
+        // Finisher cure (issue #66): a redirect target that cannot be created on this
+        // machine falls through to the next candidate instead of poisoning every capture.
+        listOfNotNull(target, System.getenv("MONOLITH_SHOTS_DIR"), "build/outputs/drawer-shots")
+            .map { File(it) }
+            .first { it.mkdirs() || it.isDirectory }
     }
 
     @Before

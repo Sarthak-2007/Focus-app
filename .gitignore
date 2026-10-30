@@ -21,3 +21,7 @@ debug.keystore
 *.jks
 my-upload-key.jks
 keystore.properties
+
+# Lane-local render redirect (issue #66 finisher cure): each lane tree drops its
+# own untracked copy; a committed one poisoned CI captures with a dead absolute path.
+shots-redirect.txt
