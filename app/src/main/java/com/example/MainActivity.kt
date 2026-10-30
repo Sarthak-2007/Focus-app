@@ -31,6 +31,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,14 +41,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
 import com.example.service.InterceptPath
 import com.example.service.MonolithShieldService
-import com.example.service.TactileSoundEngine
 import com.example.service.WatchStore
 import com.example.ui.MonolithDestination
 import com.example.ui.ArmPhase
@@ -70,7 +70,12 @@ import com.example.ui.views.MonolithRailView
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var soundEngine: TactileSoundEngine
+    // Issue #27 (finding 1): intercept intents that arrive while
+    // the Activity is alive (singleTop re-delivery lands in
+    // onNewIntent) are bridged into composition through this
+    // state. setIntent() alone is invisible to Compose, which is
+    // how re-intercepts used to be silently dropped.
+    private var pendingInterceptIntent by mutableStateOf<Intent?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -90,22 +95,36 @@ class MainActivity : ComponentActivity() {
 
         val database = MonolithDatabase.getInstance(applicationContext)
         val repository = MonolithRepository(applicationContext, database.monolithDao())
-        soundEngine = TactileSoundEngine(applicationContext)
+        // Issue #27 (finding 2): the ViewModel is obtained through
+        // the provider BEFORE any engine exists. On recreation the
+        // provider returns the retained instance and the Factory's
+        // create() never runs — no orphaned sound engine, and the
+        // retained ViewModel's engine is never stopped by an
+        // Activity's onDestroy (its death is onCleared's job).
+        val rootViewModel = ViewModelProvider(
+            this,
+            MonolithViewModel.Factory(
+                appContext = applicationContext,
+                repository = repository
+            )
+        )[MonolithViewModel::class.java]
+        pendingInterceptIntent = intent
 
         setContent {
-            val viewModel: MonolithViewModel = viewModel(
-                factory = MonolithViewModel.Factory(
-                    appContext = applicationContext,
-                    repository = repository,
-                    soundEngine = soundEngine
-                )
-            )
+            val viewModel = rootViewModel
             val darkTheme by viewModel.darkTheme.collectAsStateWithLifecycle()
             val activeSessionForTheme by viewModel.activeSession.collectAsStateWithLifecycle()
             val shotGround by viewModel.shotGround.collectAsStateWithLifecycle()
 
-            LaunchedEffect(Unit) {
-                handleIncomingInterceptIntent(intent, viewModel)
+            // Issue #27 (finding 1): every pending intent — the
+            // launch intent AND any onNewIntent re-delivery — is
+            // handled exactly once, then cleared.
+            LaunchedEffect(pendingInterceptIntent) {
+                val pending = pendingInterceptIntent
+                if (pending != null) {
+                    handleIncomingInterceptIntent(pending, viewModel)
+                    pendingInterceptIntent = null
+                }
             }
 
             MyApplicationTheme(
@@ -129,6 +148,10 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // Issue #27 (finding 1): bridge the re-delivered intent
+        // into composition — without this, a re-intercept while
+        // the Activity is alive never reaches the Airlock.
+        pendingInterceptIntent = intent
     }
 
     private fun handleIncomingInterceptIntent(intent: Intent?, viewModel: MonolithViewModel) {
@@ -152,12 +175,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        if (::soundEngine.isInitialized) {
-            soundEngine.stopAllAudio()
-        }
-    }
+    // Issue #27 (finding 2): there is deliberately NO onDestroy
+    // audio stop here any more. The old override stopped the
+    // Activity's own engine field — which WAS the retained
+    // ViewModel's engine — on every rotation, killing all sound
+    // until process death. The ViewModel stops its engine in
+    // onCleared(), the one true end of its life.
 }
 
 @Composable
@@ -273,7 +296,11 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // PARK's invocation — it is never dismissed by a timer. (The
     // nav/PARK effect itself sits below, beside the PARK state
     // it reads.)
-    var dismissedReceiptSessionId by remember { mutableStateOf(-1) }
+    // Issue #27 (finding 4): host state is rememberSaveable, not
+    // plain remember — a rotation must not resurrect a dismissed
+    // receipt, snap PARK shut mid-diagnosis, or restart the
+    // return-tick diagnostic.
+    var dismissedReceiptSessionId by rememberSaveable { mutableStateOf(-1) }
 
     // ------------------------------------------------------------------
     // PARK state (chrome C4). The drawer is invoked by arrival (the
@@ -281,8 +308,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // while the store has never measured — by itself at first
     // composition. While sealed it cannot be invoked at all.
     // ------------------------------------------------------------------
-    var parkOpen by remember { mutableStateOf(false) }
-    var parkReturnTick by remember { mutableStateOf(0) }
+    var parkOpen by rememberSaveable { mutableStateOf(false) }
+    var parkReturnTick by rememberSaveable { mutableStateOf(0) }
 
     // THE LAUNCHER (Sarthak's ruling, Oct 30 04:29 IST): while the
     // phone is sealed, the block surface is a launcher. It opens
@@ -365,6 +392,31 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         BackHandler { viewModel.navigateTo(MonolithDestination.DECK) }
     }
 
+    // Issue #27 (finding 3): full-screen overlays own Back. Before
+    // this handler, Back on the DECK fell through to the default
+    // dispatcher and FINISHED the Activity — including from the
+    // Airlock, where Back was an escape hatch out of the
+    // intercept. Priority: the Airlock holds (Back is consumed,
+    // no exit — the door's own RETURN/PEEK are the only ways
+    // out), then the disarm challenge (Back = keep focusing),
+    // then the desk clock, the digest sheet, and the receipt.
+    val receiptStandingForBack = receiptState != null &&
+        dismissedReceiptSessionId != receiptState!!.sessionId &&
+        currentDestination == MonolithDestination.DECK
+    BackHandler(
+        enabled = airlockState.isVisible || disarmChallenge.isVisible ||
+            isAlwaysOnDeskClockVisible || showNotificationDigestSheet ||
+            receiptStandingForBack
+    ) {
+        when {
+            airlockState.isVisible -> Unit // the door holds; Back is not an exit
+            disarmChallenge.isVisible -> viewModel.dismissDisarmChallenge()
+            isAlwaysOnDeskClockVisible -> viewModel.toggleAlwaysOnDeskClock(false)
+            showNotificationDigestSheet -> viewModel.toggleNotificationDigestSheet(false)
+            receiptStandingForBack -> dismissedReceiptSessionId = receiptState!!.sessionId
+        }
+    }
+
     val selectedTabIndex = when (currentDestination) {
         MonolithDestination.DECK -> 0
         MonolithDestination.SHIELD -> 1
@@ -372,52 +424,72 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         MonolithDestination.VAULT -> 3
     }
 
+    // Issue #27 (finding 5): a FIX trip must never die silently.
+    // Every Settings launch goes through here: the exact pane
+    // first; if the OEM throws, the generic Settings home is the
+    // fallback; if even that fails, the user is TOLD, in words,
+    // instead of being stranded on a dead tap.
+    fun launchSettings(intent: Intent, what: String) {
+        runCatching { context.startActivity(intent) }
+            .onFailure {
+                runCatching { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
+                    .onFailure {
+                        android.widget.Toast.makeText(
+                            context,
+                            "COULDN'T OPEN SETTINGS FOR $what — OPEN ANDROID SETTINGS AND GRANT IT FROM APPS",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+            }
+    }
+
     // The FIX key's panes: the exact Settings pane per grant,
     // including the device-admin pane the app has never had.
     fun openFixPane(item: com.example.service.WatchItemId) {
-        runCatching {
-            when (item) {
-                com.example.service.WatchItemId.ACCESSIBILITY ->
-                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                com.example.service.WatchItemId.USAGE_ACCESS ->
-                    context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
-                com.example.service.WatchItemId.DEVICE_ADMIN -> {
-                    val direct = Intent().setComponent(
-                        android.content.ComponentName(
-                            "com.android.settings",
-                            "com.android.settings.DeviceAdminSettings"
-                        )
+        when (item) {
+            com.example.service.WatchItemId.ACCESSIBILITY ->
+                launchSettings(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "ACCESSIBILITY")
+            com.example.service.WatchItemId.USAGE_ACCESS ->
+                launchSettings(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS), "USAGE ACCESS")
+            com.example.service.WatchItemId.DEVICE_ADMIN -> {
+                val direct = Intent().setComponent(
+                    android.content.ComponentName(
+                        "com.android.settings",
+                        "com.android.settings.DeviceAdminSettings"
                     )
-                    runCatching { context.startActivity(direct) }
-                        .getOrElse {
-                            context.startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
-                        }
-                }
-                com.example.service.WatchItemId.NOTIFICATION_LISTENER ->
-                    context.startActivity(
-                        Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
-                    )
-                com.example.service.WatchItemId.OVERLAY ->
-                    context.startActivity(
-                        Intent(
-                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:${context.packageName}")
-                        )
-                    )
-                com.example.service.WatchItemId.BATTERY -> {
-                    val direct = Intent(
-                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                        Uri.parse("package:${context.packageName}")
-                    )
-                    runCatching { context.startActivity(direct) }
-                        .getOrElse {
-                            context.startActivity(
-                                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-                            )
-                        }
-                }
-                else -> Unit
+                )
+                runCatching { context.startActivity(direct) }
+                    .getOrElse {
+                        launchSettings(Intent(Settings.ACTION_SECURITY_SETTINGS), "DEVICE ADMIN")
+                    }
             }
+            com.example.service.WatchItemId.NOTIFICATION_LISTENER ->
+                launchSettings(
+                    Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"),
+                    "NOTIFICATION ACCESS"
+                )
+            com.example.service.WatchItemId.OVERLAY ->
+                launchSettings(
+                    Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:${context.packageName}")
+                    ),
+                    "DISPLAY OVER OTHER APPS"
+                )
+            com.example.service.WatchItemId.BATTERY -> {
+                val direct = Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:${context.packageName}")
+                )
+                runCatching { context.startActivity(direct) }
+                    .getOrElse {
+                        launchSettings(
+                            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+                            "BATTERY"
+                        )
+                    }
+            }
+            else -> launchSettings(Intent(Settings.ACTION_SETTINGS), item.name)
         }
     }
 
@@ -539,10 +611,16 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     },
                                     warrantProvider = viewModel::armWarrantNow,
                                     onFixBlockingAccess = {
-                                        runCatching { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                                        launchSettings(
+                                            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
+                                            "ACCESSIBILITY"
+                                        )
                                     },
                                     onFixUsageAccess = {
-                                        runCatching { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
+                                        launchSettings(
+                                            Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS),
+                                            "USAGE ACCESS"
+                                        )
                                     },
                                     onRetryBlockingCheck = viewModel::refreshDeckWarrant,
                                     onHandBackTick = viewModel::playHandBackTick,
