@@ -111,6 +111,9 @@ fun TactileDeckScreen(
     dialMinutes: Int,
     studyBlocksCount: Int,
     activeTask: FocusTaskEntity?,
+    // R3b #163 F5: true when the NOW task already stood as
+    // yesterday's active task (the ViewModel's day-boundary note).
+    activeTaskFromYesterday: Boolean = false,
     queuedTasks: List<FocusTaskEntity>,
     capturedNotificationsCount: Int,
     soundEngine: TactileSoundEngine? = null,
@@ -631,13 +634,23 @@ fun TactileDeckScreen(
         wireNow = liveWarrantState
     )
 
+    // Issue #143 (F6): the day/night step cross-fades at the
+    // root instead of cutting in one frame — both flips (the
+    // ground step at session start, the release when the finish
+    // clears) pass through this one animated colour.
+    val animatedBackground by androidx.compose.animation.animateColorAsState(
+        targetValue = scheme.background,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 450),
+        label = "deckBackgroundNightFade"
+    )
+
     // Wrapper (Ren): the scroll column takes the flexible space and the
     // commit bar is PINNED beneath it — adding tasks can grow the content
     // forever and the start control can never be pushed off-screen again.
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(scheme.background)
+            .background(animatedBackground)
             .testTag("tactile_deck_screen")
     ) {
     val deckScrollState = rememberScrollState()
@@ -733,7 +746,11 @@ fun TactileDeckScreen(
                     // left; the break is a fact, so it renders.
                     text = when {
                         isSessionRunning && activeSession.isInSafeBreak ->
-                            "BREAK · ${(activeSession.safeBreakSecondsRemaining + 59) / 60} MIN"
+                            // R3b #164 F3: the free automatic pause is
+                            // the SAFE BREAK — never the bare word
+                            // BREAK, which belongs to the once-a-week
+                            // emergency valve.
+                            "SAFE BREAK · ${(activeSession.safeBreakSecondsRemaining + 59) / 60} MIN"
                         // Audit R3b #146: a user returning late to a
                         // later block is told when that block began —
                         // startWallTimeMillis is re-anchored at the
@@ -871,7 +888,15 @@ fun TactileDeckScreen(
                         view.soundEngine = soundEngine
                         view.minutesValue = dialMinutes
                         view.studyBlocksCount = studyBlocksCount
-                        view.isLockedSession = shotActive
+                        // Issue #126 F2: the wheel is a session
+                        // parameter — while an attempt is proving,
+                        // its parameters are already captured by
+                        // onLatch, so a turn here would silently
+                        // not apply. Lock it for the wait's span
+                        // (the view consumes and drops, its sealed
+                        // grammar) instead of letting it spin free
+                        // and lie about being settable.
+                        view.isLockedSession = shotActive || provingThisSession
                         view.onMinutesChanged = { mins -> onDialMinutesChanged(mins) }
                         view.onSeatTargetChanged = { seat -> wheelSeatPreview = seat }
                         view.onCycleBlocksCount = {
@@ -898,7 +923,10 @@ fun TactileDeckScreen(
                             .clip(RoundedCornerShape(12.dp))
                             .background(if (isStopwatchMode) inkControlFill() else scheme.surfaceVariant)
                             .border(1.dp, if (isStopwatchMode) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(12.dp))
-                            .clickable {
+                            // Issue #126 F2: FLOW is the other
+                            // session parameter on this card — the
+                            // same proving lock as the wheel's.
+                            .clickable(enabled = !provingThisSession) {
                                 onSelectStudyPreset(StudyModePreset.STOPWATCH_FLOW)
                                 onDialMinutesChanged(5)
                             }
@@ -1153,7 +1181,8 @@ fun TactileDeckScreen(
                 exitPhaseProvider = { exitPhase },
                 onCompleteActiveTask = onCompleteActiveTask,
                 onOpenTaskSequencer = onOpenTaskSequencer,
-                onToggleTaskSubStep = onToggleTaskSubStep
+                onToggleTaskSubStep = onToggleTaskSubStep,
+                activeTaskFromYesterday = activeTaskFromYesterday
             )
         }
 
@@ -1349,7 +1378,16 @@ fun TactileDeckScreen(
                     } else {
                         BlockitActionChip(
                             wordLabel = "EMERGENCY BREAK VALVE (60S HOLD)",
-                            monoBadge = "$weeklyEmergencyTokensRemaining/1 WEEK",
+                            // R3b #163 F4: a spent valve used to wear
+                            // the same badge as a live one ("0/1 WEEK"
+                            // read as a state, not a wait). The spent
+                            // badge now names the wait itself — the
+                            // week turns on Monday (MonolithWeek).
+                            monoBadge = if (weeklyEmergencyTokensRemaining > 0) {
+                                "$weeklyEmergencyTokensRemaining/1 WEEK"
+                            } else {
+                                "0/1 WEEK · BACK MONDAY"
+                            },
                             isPrimaryInk = true,
                             onClick = onRequestDisarm,
                             modifier = Modifier
@@ -1388,16 +1426,16 @@ fun TactileDeckScreen(
             RefusalSentenceSlot(
                 // The slot's tenant by phase (step 4): a JAMMED
                 // attempt names its unanswering link; PROVING names
-                // itself with its live proved count (issue #98 —
-                // the silent black box is closed: real blocking
-                // already runs during proving, so the frame must
-                // say the machine is checking, never render the
+                // itself with its live proved count (issues #98 +
+                // #126 F2 — the silent black box is closed: real
+                // blocking already runs during proving, so the frame
+                // must say the machine is checking, never render the
                 // idle form as if nothing had happened); an
                 // annulment's past-tense sentence stands until the
                 // controller clears it; a running session is
                 // silent; otherwise the wire's standing sentence.
                 sentence = when {
-                    armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase)
+                    armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase, nowMono)
                     armPhase is ArmPhase.Proving -> provingSentenceFor(armPhase)
                     isSessionRunning -> null
                     armSentence != null -> armSentence
@@ -1446,7 +1484,10 @@ private fun DeckTaskSection(
     exitPhaseProvider: () -> Int,
     onCompleteActiveTask: (Int) -> Unit,
     onOpenTaskSequencer: () -> Unit,
-    onToggleTaskSubStep: (Int, Int) -> Unit
+    onToggleTaskSubStep: (Int, Int) -> Unit,
+    // R3b #163 F5: true when the NOW task already stood as
+    // yesterday's active task (the ViewModel's day-boundary note).
+    activeTaskFromYesterday: Boolean = false
 ) {
     val scheme = MaterialTheme.colorScheme
     // Issue #50 F5 cure: keyed on the task id — a new active
@@ -1484,6 +1525,20 @@ private fun DeckTaskSection(
                             }
                         )
                 )
+                // R3b #163 F5: a NOW task that already stood as
+                // yesterday's active task says so on its face —
+                // it never poses as a fresh start chosen today.
+                if (activeTaskFromYesterday) {
+                    Text(
+                        text = "FROM YESTERDAY",
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 9.5.sp,
+                        letterSpacing = 1.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("now_task_from_yesterday")
+                    )
+                }
                 // DONE is a verb, so it wears an action's body
                 // (ESR-07): the same raised key-cap as the FLOW
                 // key — bare mono text beside the static QUEUE

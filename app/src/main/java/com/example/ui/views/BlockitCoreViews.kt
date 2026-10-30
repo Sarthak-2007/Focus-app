@@ -14,7 +14,6 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.view.Choreographer
 import android.view.MotionEvent
-import android.view.VelocityTracker
 import android.view.View
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -515,9 +514,8 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
     }
 
     private var wheelAngleDeg: Float = minutesToAngle(50)
-    private var lastTouchAngleDeg: Float = 0f
+    private var lastTouchAngleDeg: Float? = null // issue #117: last raw touch angle for relative-delta turning
     private var isDragging: Boolean = false
-    private var velocityTracker: VelocityTracker? = null
 
     // ------------------------------------------------------------------
     // BEYOND W2 frame + physics (Vega's Strait and Loaded Wheel; Dario's
@@ -1095,9 +1093,13 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
                     return true
                 }
                 isDragging = true
-                velocityTracker?.recycle()
-                velocityTracker = VelocityTracker.obtain().apply { addMovement(event) }
-                updateMinutesFromTouch(dx, dy)
+                // Issue #117 (one-hand-commute): the dial is
+                // RELATIVE now. DOWN only records where the finger
+                // landed — it never rewrites the value. The old
+                // absolute call teleported the wheel to the touched
+                // point's atan2 angle on first contact, so one
+                // jolted touch on a bus rewrote the session length.
+                lastTouchAngleDeg = rawCanvasDeg(dx, dy)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -1114,8 +1116,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
                     }
                 }
                 if (isDragging) {
-                    velocityTracker?.addMovement(event)
-                    updateMinutesFromTouch(dx, dy)
+                    updateMinutesFromDelta(dx, dy)
                 }
                 return true
             }
@@ -1150,25 +1151,17 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
                 }
                 if (isDragging) {
                     isDragging = false
-                    // Release hands the wheel to the integrator (Dario's
-                    // one (theta, omega) state): whatever angular
-                    // velocity the finger leaves in the wheel is the
-                    // coast's opening condition. The old projection
-                    // (omega x 0.18s, then a canned animator) is gone -
-                    // a wheel that is thrown now travels, pays the
-                    // strait's toll if it crosses, and is caught by the
-                    // wells or falls back from the gate, in the open.
-                    var omegaDeg = 0f
-                    val vt = velocityTracker
-                    if (vt != null && event.actionMasked == MotionEvent.ACTION_UP) {
-                        vt.computeCurrentVelocity(1000)
-                        val r2 = (dx * dx + dy * dy).coerceAtLeast(1f)
-                        omegaDeg = (((dx * vt.yVelocity - dy * vt.xVelocity) / r2) * (180.0 / PI).toFloat())
-                            .coerceIn(-1200f, 1200f)
-                    }
-                    velocityTracker?.recycle()
-                    velocityTracker = null
-                    startPhysics(omegaDeg)
+                    lastTouchAngleDeg = null
+                    // Issue #117: NO FLING. The old release read the
+                    // VelocityTracker omega (up to ±1200 deg/s) and
+                    // coasted the wheel for up to 1,400ms — a bus
+                    // jolt at release was indistinguishable from a
+                    // deliberate throw and rewrote the session length
+                    // after the finger left. Release now hands the
+                    // wheel to the well spring at ZERO velocity: it
+                    // seats at the nearest stop to where the finger
+                    // actually left it, and nowhere else.
+                    startPhysics(0f)
                 }
                 parent?.requestDisallowInterceptTouchEvent(false)
                 return true
@@ -1177,23 +1170,32 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         return super.onTouchEvent(event)
     }
 
-    private fun updateMinutesFromTouch(dx: Float, dy: Float) {
+    /** The touched point's raw canvas angle, 0..360. */
+    private fun rawCanvasDeg(dx: Float, dy: Float): Float {
         var deg = (atan2(dy, dx) * (180.0 / PI)).toFloat()
         if (deg < 0f) deg += 360f
-        // Unwrap into the travel frame: canvas 72..360 stays as is,
-        // canvas 0..72 wraps to 360..432, and touches inside the
-        // 36-degree dead sector (72..108 at 6 o'clock) clamp to the
-        // nearer shore - the sector's upper half belongs to the 180
-        // end, its lower half to FLOW.
-        val unwrapped = when {
-            deg < 72f -> deg + 360f
-            deg < 90f -> 432f
-            deg < 108f -> 108f
-            else -> deg
-        }
-        // Under the finger the wheel is 1:1 at every load - mass
-        // never fakes position; it speaks only in free motion.
-        wheelAngleDeg = unwrapped.coerceIn(108f, 432f)
+        return deg
+    }
+
+    /**
+     * Issue #117: relative-delta turning. The wheel moves by the
+     * finger's angular DELTA since the last frame — never to the
+     * finger's absolute angle — so where a jolted thumb first lands
+     * (or lurches to) cannot teleport the value; only actual turning
+     * motion turns it. The signed delta is normalised to [-180, 180]
+     * so the 0/360 wrap costs nothing, and the travel clamp is the
+     * same 108..432 frame as before: a delta that would push past
+     * either end simply lands on the end, exactly as the absolute
+     * wheel did. Under the finger the wheel stays 1:1 at every load.
+     */
+    private fun updateMinutesFromDelta(dx: Float, dy: Float) {
+        val raw = rawCanvasDeg(dx, dy)
+        val last = lastTouchAngleDeg
+        lastTouchAngleDeg = raw
+        if (last == null) return
+        val delta = ((raw - last + 540f) % 360f) - 180f
+        if (delta == 0f) return
+        wheelAngleDeg = (wheelAngleDeg + delta).coerceIn(108f, 432f)
         applyValueFromAngle(fromDrag = true)
         invalidate()
     }
@@ -1506,18 +1508,18 @@ internal object SlideGestureMath {
  *   ζ=0.40); a hard-stop clamp at x ≥ 1.00 in a ≤5ms substep IS
  *   onLatch; the 14ms @ 0.85 latch knock fires by travel predicate
  *   at 0.97, in-step, before the latch.
- * - The tap is a first-class order (Rhea): hit-tested on the cap
- *   (drawn rect inflated 8dp in x, full track height in y); a press
- *   ≥90ms released on a live wire runs the driven mesh (140ms bezier
- *   to 0.92, exit velocity exactly 0) + the shared seat spring; a
- *   second touch during the mesh or the seat (any time before the
- *   latch frame) aborts it on the same integrator;
- *   an aborted mesh/seat has dispatched nothing, provably (enforcement
- *   dispatches only at the latch; the verdict is a read-only value).
+ * - A tap is NOT an order (issue #117, superseding Rhea's tap law):
+ *   hit-tested on the cap (drawn rect inflated 8dp in x, full track
+ *   height in y), but a press of ANY duration released without travel
+ *   dispatches nothing — a ≥90ms pocket/bag press physically cannot
+ *   seal a session. The ONLY commit is the cap dragged under contact
+ *   to the catch (position, never pointer-up/velocity/fling). A tap
+ *   on a dead wire earns the refusal sequence; on a live wire it is
+ *   answered like a brush: 1dp sink, one dull knock, zero travel.
  *   A press <90ms is a brush: 1dp sink, one dull knock, zero travel.
  * - Print (Aldo): the badge is DEAD (the hero owns the total). The cap
  *   words print on the track face in the shipped label's home, at
- *   plate: SLIDE OR TAP TO START at rest and frozen through every
+ *   plate: SLIDE TO START at rest and frozen through every
  *   drag state; TAP AGAIN TO UNDO through the whole pre-latch travel
  *   (mesh + seat — issue #98; it printed only inside the 140ms mesh
  *   before, a window no human could use).
@@ -1616,6 +1618,9 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
     private var retreatTouched: Boolean = false
 
     private var latchKnockFired: Boolean = false
+
+    // Issue #126 F3: the seated cap's refusal-knock throttle.
+    private var lastSeatedKnockMs: Long = 0L
 
     // The commutator floor (Vega, review V-1): the displayed value
     // at which this SEAT run began — the catch crossing for a drag,
@@ -1872,7 +1877,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         }
 
         // 2. The cap words, on the track face at plate (Aldo/F16): a
-        // compile-time constant per machine state — SLIDE OR TAP TO
+        // compile-time constant per machine state — SLIDE TO
         // START at rest and frozen through every drag state; TAP AGAIN
         // TO UNDO through the whole pre-latch travel (MESH and SEAT).
         // Issue #98: the undo words once printed only inside the
@@ -1952,6 +1957,24 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                 // where the grace abort owns the escape.
                 if (mode == Mode.MESH || mode == Mode.SEAT) {
                     startAbortReturn()
+                    return true
+                }
+                // Issue #126 F3: a DOWN on the SEATED cap is a
+                // re-slide against an attempt already in flight
+                // (the proving wait — the sealed ghost carries
+                // sealedGate and never reaches here). It still
+                // dispatches nothing, but it is no longer swallowed
+                // in silence: one dull knock in the brush's
+                // vocabulary (the sound engine's own gate decides
+                // audibility) says the attempt exists and this
+                // touch changed nothing. Throttled, so hammering
+                // the cap cannot machine-gun the knock.
+                if (mode == Mode.SEATED) {
+                    val nowMs = System.currentTimeMillis()
+                    if (nowMs - lastSeatedKnockMs >= 250L) {
+                        lastSeatedKnockMs = nowMs
+                        fireWeightedKnock(10, 0.55f, 220f)
+                    }
                     return true
                 }
                 // A DOWN inside a running machine or a live drag is not
@@ -2187,8 +2210,18 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                 postDelayed({ invalidate() }, 150L)
                 return
             }
-            // A classified tap: the wire at UP owns the outcome (Joss:
-            // the tap path's F0 is the UP frame).
+            // Issue #117 (one-hand-commute, CRITICAL): a tap is NOT
+            // an order any more. The old tap path ran the driven mesh
+            // to 0.92 on pointer-up alone, so a ≥90ms pocket/bag press
+            // on the cap sealed a session the user never chose.
+            // Completion is now by cap POSITION only: the cap must be
+            // dragged under contact to the catch (SlideGestureMath
+            // .commits in applyDragPosition) — never by pointer-up
+            // inference, velocity, or fling. A classified tap on a
+            // dead wire still earns the full refusal (Joss J-3, as
+            // the brush branch above); on a live wire it is a
+            // non-order contact, answered exactly like a brush:
+            // 1dp sink, one dull knock, zero travel, nothing seated.
             val upRead = readWarrant()
             attemptWarrant = upRead
             if (upRead == WarrantState.OFF) {
@@ -2197,17 +2230,12 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                 startRefusal(knockFirst = true)
                 return
             }
-            // Rosa's catch-pin governs taps too (review F3): on an
-            // UNPROVEN wire the mesh drives only to the catch, and
-            // the refusal runs FROM the catch — travel past 0.84 on
-            // an unproven wire is the breach, whatever the entry.
-            startMesh(
-                target = if (upRead == WarrantState.UNPROVEN) {
-                    SlideGestureMath.CATCH
-                } else {
-                    0.92f
-                }
-            )
+            sinkUntilMs = System.currentTimeMillis() + 140L
+            fireWeightedKnock(10, 0.55f, 220f)
+            mode = Mode.REST
+            onPressEnd?.invoke()
+            invalidate()
+            postDelayed({ invalidate() }, 150L)
             return
         }
 
@@ -2511,7 +2539,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         // Aldo: the cap words are compile-time constants (Teo: no
         // state input at all). The badge that once printed the block
         // length here is dead — the hero owns the total.
-        private const val WORDS_START = "SLIDE OR TAP TO START"
+        private const val WORDS_START = "SLIDE TO START"
         private const val WORDS_UNDO = "TAP AGAIN TO UNDO"
 
         // The latch knock's pitch (Cato §1.3, via Vega review V-2):
