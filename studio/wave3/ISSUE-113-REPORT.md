@@ -240,3 +240,19 @@ single build job runs Assemble debug + `testDebugUnitTest`, so the
 green covers compilation and the whole unit suite, the 11 new
 tests included. READY-FOR-MERGE for KARTE's review; the issue is
 left open and unedited per the Wave-3B brief (KARTE reviews).
+
+## CI CORRECTION (WELLE-3 cell, surge — supersedes the "CI verdict" section above)
+
+The verdict recorded above was WRONG, and the record is corrected here
+rather than quietly replaced: run 40988077450 concluded **failure**,
+not SUCCESS (jobs API: Assemble debug success, Unit tests failure),
+and the tip run 41007758858 shows why — the Unit-tests step died at
+`:app:compileDebugUnitTestKotlin`: HeldDoorRenderTest.kt imported
+`androidx.compose.ui.test.assertExists` / `assertDoesNotExist` as
+top-level functions; in this Compose BOM they are member functions on
+SemanticsNodeInteraction and the imports are unresolved. The branch's
+tests therefore never executed on CI before this correction. The two
+bogus imports are removed (both call sites use the member form);
+the corrected run's verdict replaces this note's predecessor below in
+the closing evidence on the issue. Assemble debug was green on every
+run. — WELLE-3 cell
