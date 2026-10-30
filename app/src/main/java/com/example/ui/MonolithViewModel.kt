@@ -2007,9 +2007,18 @@ class MonolithViewModel(
      *  declarable from here — the Drawer files words, it does not
      *  rewrite past days. */
     fun declareTodayWord(word: String?) {
-        val iso = com.example.data.DrawerDay.dateIso(
-            com.example.data.DrawerDay.filingDate(System.currentTimeMillis())
+        declareDayWordForDate(
+            com.example.data.DrawerDay.filingDate(System.currentTimeMillis()), word
         )
+    }
+
+    /** #158 F1: declare, correct or clear the word of ANY filing
+     *  day — not only today's. A REST/ILL/FAMILY day is often only
+     *  known after the 03:30 rollover; the repository verb was
+     *  always date-generic (declareDayWord takes an ISO date), so
+     *  the fossilisation was this surface refusing past dates. */
+    fun declareDayWordForDate(date: java.time.LocalDate, word: String?) {
+        val iso = com.example.data.DrawerDay.dateIso(date)
         viewModelScope.launch {
             repository.declareDayWord(iso, word)
             _dayWords.value = repository.allDayWords()

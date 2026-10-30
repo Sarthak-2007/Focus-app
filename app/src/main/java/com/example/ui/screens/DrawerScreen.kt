@@ -163,6 +163,7 @@ fun DrawerScreen(
     onQueryChange: (String) -> Unit,
     onLoadEarlierSearch: () -> Unit,
     onDeclareTodayWord: (String?) -> Unit,
+    onDeclareDayWord: (java.time.LocalDate, String?) -> Unit,
     // The cabinet (chrome C10): the curios' new home. The Drawer is
     // storage; the cabinet is its furniture — the six artifacts as
     // ruled rows, their forged state read from real sessions, their
@@ -690,7 +691,8 @@ fun DrawerScreen(
                             group = group,
                             isToday = group.date == today,
                             isSealed = isSealed,
-                            onDeclareTodayWord = onDeclareTodayWord
+                            onDeclareTodayWord = onDeclareTodayWord,
+                            onDeclareDayWord = onDeclareDayWord
                         )
                     }
                     items(group.rows, key = { "search-${it.id}" }) { task ->
@@ -823,7 +825,8 @@ fun DrawerScreen(
                             group = group,
                             isToday = group.date == today,
                             isSealed = isSealed,
-                            onDeclareTodayWord = onDeclareTodayWord
+                            onDeclareTodayWord = onDeclareTodayWord,
+                            onDeclareDayWord = onDeclareDayWord
                         )
                     }
                     items(group.rows, key = { "month-${it.id}" }) { task ->
@@ -861,7 +864,8 @@ fun DrawerScreen(
                             ),
                             isToday = true,
                             isSealed = isSealed,
-                            onDeclareTodayWord = onDeclareTodayWord
+                            onDeclareTodayWord = onDeclareTodayWord,
+                            onDeclareDayWord = onDeclareDayWord
                         )
                     }
                     item {
@@ -919,7 +923,8 @@ fun DrawerScreen(
                                 group = group,
                                 isToday = group.date == today,
                                 isSealed = isSealed,
-                                onDeclareTodayWord = onDeclareTodayWord
+                                onDeclareTodayWord = onDeclareTodayWord,
+                            onDeclareDayWord = onDeclareDayWord
                             )
                         }
                         items(group.rows, key = { "land-${it.id}" }) { task ->
@@ -967,7 +972,8 @@ private fun DayHeading(
     group: DrawerDayGroup,
     isToday: Boolean,
     isSealed: Boolean,
-    onDeclareTodayWord: (String?) -> Unit
+    onDeclareTodayWord: (String?) -> Unit,
+    onDeclareDayWord: (java.time.LocalDate, String?) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -984,6 +990,37 @@ private fun DayHeading(
             color = scheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 6.dp)
         )
+        // #158 F1: a past day's heading opens its word picker on
+        // tap — declare, correct or clear a word after rollover.
+        var pastPickerOpen by remember { mutableStateOf(false) }
+        if (!isToday && !isSealed) {
+            Text(
+                text = if (group.word == null) "DECLARE DAY WORD" else "CHANGE DAY WORD",
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontSize = 11.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier
+                    .clickable { pastPickerOpen = !pastPickerOpen }
+                    .testTag("declare_past_word_toggle")
+            )
+        }
+        if (!isToday && !isSealed && pastPickerOpen) {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                DayWordStore.WORDS.forEach { word ->
+                    val active = group.word == word
+                    Text(
+                        text = word,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = if (active) scheme.onBackground else scheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clickable { onDeclareDayWord(group.date, if (active) null else word) }
+                            .testTag("declare_past_word_${word.lowercase()}")
+                    )
+                }
+            }
+        }
         if (isToday && !isSealed) {
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 DayWordStore.WORDS.forEach { word ->
