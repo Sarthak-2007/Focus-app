@@ -13,6 +13,11 @@ batch 4 shipped 12:26 IST (sha a414972de18bc213), suite 112/112
 green, DB v9. All file/line citations are to that tree, read
 first-hand this seating.
 
+**STALE BASE (Issue #71):** written against sha a414972 / DB v9 /
+suite 112/112. Current main is e29acdf / DB v12
+(MonolithDatabase.kt:25). All file:line citations below are
+unverified against current main until re-based.
+
 **Law read first-hand for this spec:** MASTER-PLAN §2.5, §6
 (2930–3410), §8 (4079–4889); DESIGNERS-PLAN §8 (the floor document);
 REGISTER (staircase, specular, accent budget, gate values);
