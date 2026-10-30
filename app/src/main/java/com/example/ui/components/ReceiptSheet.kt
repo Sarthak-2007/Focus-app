@@ -189,6 +189,14 @@ fun ReceiptSheet(
                         text = "HELD ${receipt.heldAppsAtSeal} APPS · ${receipt.heldSitesAtSeal} SITES ON THIS PHONE"
                     )
                 }
+                // Audit R3b #145: the completion moment names its
+                // reward — the curio this finish forged, on the slip
+                // itself, in the same mono register as the HELD line.
+                receipt.forgedArtifactName?.let { forgedName ->
+                    ReceiptMonoLine(
+                        text = "FORGED — ${forgedName.uppercase(Locale.US)}"
+                    )
+                }
                 if (receipt.bankedBreakSeconds > 0) {
                     // #57: exact span — the old `/ 60` printed a
                     // false `0 MIN` for 1–59 banked seconds and

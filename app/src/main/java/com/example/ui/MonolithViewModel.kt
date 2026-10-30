@@ -2095,6 +2095,13 @@ class MonolithViewModel(
     private val _forgedArtifactIds = MutableStateFlow<Set<String>>(emptySet())
     val forgedArtifactIds: StateFlow<Set<String>> = _forgedArtifactIds.asStateFlow()
 
+    /** Audit R3b #145: the cabinet's provenance — forging sessions
+     *  per artifact id, re-read with the Drawer like the id set. */
+    private val _curioForgeRecords =
+        MutableStateFlow<Map<String, List<FocusSessionEntity>>>(emptyMap())
+    val curioForgeRecords: StateFlow<Map<String, List<FocusSessionEntity>>> =
+        _curioForgeRecords.asStateFlow()
+
     /** The cabinet's forge record (Issue #110, finding 5): per
      *  artifact, how many sessions forged it and when the most
      *  recent forge happened — re-read with the Drawer, from the
@@ -2188,6 +2195,7 @@ class MonolithViewModel(
                 _storedMonths.value = repository.storedMonths()
                 _dayWords.value = repository.allDayWords()
                 _forgedArtifactIds.value = repository.forgedArtifactIds()
+                _curioForgeRecords.value = repository.curioForgeRecords()
                 _forgeStats.value = repository.forgeStats()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e

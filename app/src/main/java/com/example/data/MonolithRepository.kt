@@ -983,6 +983,31 @@ class MonolithRepository(
     suspend fun forgedArtifactIds(): Set<String> =
         dao.getForgedArtifactIds().toSet()
 
+    /** Audit R3b #145: per-artifact forge provenance for the
+     *  cabinet — the forging sessions themselves, so a duplicate
+     *  forge is a counted second entry with its own date, not a
+     *  silent no-op against a DISTINCT set. */
+    suspend fun curioForgeRecords(): Map<String, List<FocusSessionEntity>> =
+        dao.getForgingSessions().groupBy { it.forgedArtifactId!! }
+
+    /** Audit R3b #145: the forge draw, cured of the unweighted
+     *  lottery. Un-forged artifacts draw first (a finish should
+     *  EARN something new while anything new remains); the pick
+     *  among them is seeded by the finishing session's own facts —
+     *  sealed seconds, tasks completed, blocks run — so the draw
+     *  is a function of the effort that earned it, not a shuffle.
+     *  Once the whole catalogue stands forged, the same seeded
+     *  pick runs over all six and the duplicate is recorded by
+     *  the cabinet's provenance like any other forge. */
+    internal suspend fun drawCurioId(session: FocusSessionEntity): String {
+        val forged = dao.getForgedArtifactIds().toSet()
+        val fresh = CurioCatalog.artifacts.filter { it.id !in forged }
+        val pool = if (fresh.isNotEmpty()) fresh else CurioCatalog.artifacts
+        val seed = session.elapsedSeconds / 60 + session.tasksCompletedCount * 7 +
+            session.currentBlockIndex * 13 + session.totalStudyBlocks
+        return pool[Math.floorMod(seed, pool.size)].id
+    }
+
     /**
      * The cabinet's forge record per artifact (Issue #110,
      * finding 5): how many sessions forged each id, and the most
@@ -2096,7 +2121,12 @@ class MonolithRepository(
             routineLabelWithin = routineLabel,
             bankedBreakSeconds = banked,
             shieldWasOff = row.outcome == SessionOutcome.ELAPSED_SHIELD_GAP,
-            deflections = deflections
+            deflections = deflections,
+            // Audit R3b #145: the forged curio's name rides the
+            // slip — read off the row's own stamp, never re-drawn.
+            forgedArtifactName = row.forgedArtifactId?.let { forgedId ->
+                CurioCatalog.artifacts.firstOrNull { it.id == forgedId }?.name
+            }
         )
     }
 
@@ -2197,7 +2227,8 @@ class MonolithRepository(
             faulted = faulted,
             deflections = pending.deflections,
             restored = false,
-            receiptPublishedMonoMs = 0L
+            receiptPublishedMonoMs = 0L,
+            forgedArtifactName = pending.forgedArtifactName
         )
     }
 
@@ -2261,7 +2292,8 @@ class MonolithRepository(
             faulted = row.releaseFaultShield,
             deflections = pending.deflections,
             restored = true,
-            receiptPublishedMonoMs = 0L
+            receiptPublishedMonoMs = 0L,
+            forgedArtifactName = pending.forgedArtifactName
         )
     }
 
@@ -2625,7 +2657,7 @@ class MonolithRepository(
         // finalise funnel, which runs off evidence, not off the clock.
         val isRoutineSession = session.routineId != null
         val forgedId = if (allBlocksCompleted && !isRoutineSession) {
-            CurioCatalog.artifacts.shuffled().first().id
+            drawCurioId(session)
         } else null
 
         // Slice E (Nocke §2.3): the ending write classifies the
@@ -2932,6 +2964,20 @@ class MonolithRepository(
         } else {
             active.forgedArtifactId
         }
+        // Audit R3b #145: the FLOW door is a finish like any other —
+        // a hand-completed stopwatch span forges, exactly as the
+        // cabinet's printed rule promises. (The progress machine
+        // early-returns stopwatch rows, so this door is the only
+        // ending write a FLOW finish ever crosses.) Routine-born
+        // rows stay fenced: no forge from any hand door while the
+        // routines rethink owns their judgement.
+        val flowForgedId = if (completed && active.isStopwatchMode &&
+            active.routineId == null && active.forgedArtifactId == null
+        ) {
+            drawCurioId(active)
+        } else {
+            null
+        }
         // Slice E (Nocke §2.3): the disarm doors classify the
         // outcome at this same ending write. The valve's string
         // is the constant, never free text; FLOW's past-floor
@@ -2951,7 +2997,10 @@ class MonolithRepository(
             isActive = false,
             completedSuccessfully = completed,
             tamperDetected = tamper,
-            forgedArtifactId = partialStampId,
+            // Audit R3b #145: a hand-completed FLOW span forges at
+            // this door (flowForgedId, computed above); every other
+            // door keeps the partial-stamp rule untouched.
+            forgedArtifactId = flowForgedId ?: partialStampId,
             outcome = outcomeStamp,
             // RC-01: the disarm doors are ending writes too —
             // the FLOW door's stamp is what its slip's ENDED
