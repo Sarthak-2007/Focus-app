@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -239,7 +240,7 @@ fun ShieldMatrixScreen(
     // its absence before the first Room emission is not a measured
     // fact either (critic Salz C-3).
     val statusHeadline = blockingStatus?.headline
-        ?: "ENFORCEMENT NOT PROVEN — NO WITNESS READ YET"
+        ?: "CAN'T CHECK BLOCKING YET — GIVE IT A SECOND"
 
     // R-1, second half (issue #7): the catalogue groups by ruling
     // (see groupedForCatalogue) — PEEK before SHUT, OPEN last, a
@@ -332,26 +333,40 @@ fun ShieldMatrixScreen(
         // toggle or a session row alone.
         // =====================================================================
         item {
-            // Wave-2 finish cure (issue #7): the wave-1 form painted
-            // every not-blocking state in scheme.error — 3.49:1 by
-            // day, the most important line on the screen at its
-            // least readable. Now: FULL INK in every state; the
-            // state is carried by the verb and a solidity glyph
-            // (solid = the wall stands, hollow = it does not),
-            // never by colour alone. The slot is a fixed 40dp so a
-            // re-strike never shoves the screen.
+            // Wave-2 finish cure (PANZER/SAUM/POLITUR/LUFT, one voice):
+            // the wave-1 form painted every not-blocking state in
+            // scheme.error — 3.49:1 by day, the most important line
+            // on the screen at its least readable. Now: FULL INK in
+            // every state; the state is carried by the verb and a
+            // 10dp solidity glyph (solid = the wall stands, hollow =
+            // it does not), never by colour alone. The slot rests
+            // at 40dp so a re-strike never shoves the screen, but
+            // grows rather than clips when a long failure headline
+            // wraps at large font scales (GEFUEHL-R: a fixed 40dp
+            // slot squeezed three wrapped lines into mush for
+            // exactly the large-text users who need it most).
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(40.dp)
+                    .heightIn(min = 40.dp)
                     .semantics { contentDescription = statusHeadline },
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // The lamp, felt in half a second (GEFUEHL-R):
+                // ● the wall stands, ◐ a break (half open, half
+                // held), ○ the wall is down, ◌ not yet known —
+                // four states the eye separates without reading.
                 Text(
-                    text = if (blockingStatus?.proof == ShieldBlockingProof.LIVE) "●" else "○",
+                    text = when {
+                        blockingStatus == null -> "◌"
+                        blockingStatus.proof == ShieldBlockingProof.LIVE &&
+                            blockingStatus.headline.startsWith("ON A BREAK") -> "◐"
+                        blockingStatus.proof == ShieldBlockingProof.LIVE -> "●"
+                        else -> "○"
+                    },
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
+                    fontSize = 18.sp,
                     color = scheme.onBackground
                 )
                 Spacer(modifier = Modifier.width(8.dp))
@@ -366,10 +381,29 @@ fun ShieldMatrixScreen(
                     },
                     label = "shield_blocking_status"
                 ) { headline ->
+                    // The lead is the half-second read (GEFUEHL-R):
+                    // BLOCKING NOW / NOT BLOCKING / ON A BREAK /
+                    // CAN'T CHECK at 16sp bold — it never wraps;
+                    // the reason tail follows at 13sp normal, same
+                    // ink (weight contrast only, never a dimmer
+                    // colour). Every headline carries the " — "
+                    // split; a headline without one prints whole.
+                    val splitAt = headline.indexOf(" — ")
+                    val styled = if (splitAt < 0) {
+                        AnnotatedString(headline)
+                    } else {
+                        buildAnnotatedString {
+                            withStyle(SpanStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold)) {
+                                append(headline.substring(0, splitAt))
+                            }
+                            withStyle(SpanStyle(fontSize = 13.sp, fontWeight = FontWeight.Normal)) {
+                                append(headline.substring(splitAt))
+                            }
+                        }
+                    }
                     Text(
-                        text = headline,
+                        text = styled,
                         fontFamily = AnonymousProFamily,
-                        fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
                         color = scheme.onBackground,
                         modifier = Modifier.testTag("shield_blocking_status")
@@ -473,7 +507,16 @@ fun ShieldMatrixScreen(
             // otherwise it names the cap's source as the hand pick
             // it is.
             Text(
-                text = if (blockingStatus?.activeRoutineId != null) {
+                // Nagel N-4: the routine-governs claim is printed
+                // only under a LIVE headline. The derivation carries
+                // activeRoutineId only on its LIVE return (every
+                // failure branch leaves it null), and this gate
+                // stays as the second lock — either one alone keeps
+                // the line from contradicting the NOT BLOCKING
+                // sentence directly above it.
+                text = if (blockingStatus?.proof == ShieldBlockingProof.LIVE &&
+                    blockingStatus?.activeRoutineId != null
+                ) {
                     "A ROUTINE SESSION IS RUNNING — ITS LOADOUT GOVERNS, NOT THIS CAP"
                 } else {
                     "THIS CAP SHOWS YOUR LAST HAND PICK"

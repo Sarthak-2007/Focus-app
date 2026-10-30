@@ -721,9 +721,10 @@ class MonolithViewModel(
      * Shield's status sentence (Shield audit R-5; issue #7): the
      * one derivation (computeShieldBlockingStatus in
      * ShieldBlockingStatus.kt) fed from the living witnesses — the
-     * shield service's protecting flip and the accessibility
-     * service's session-armed stamp, the same pair the arm
-     * cascade requires. Refreshed on the per-second ticker, on
+     * shield service's protecting flip, the accessibility
+     * service's session-armed stamp and root-window stamp, and a
+     * live usage-access read (the third witness, critic Nagel
+     * N-1/N-2). Refreshed on the per-second ticker, on
      * every Watch Store emission (the shield loop pokes the store
      * each iteration, so a witness flip lands here within its
      * beat), and on every session emission. Null until the first
@@ -745,7 +746,18 @@ class MonolithViewModel(
                 com.example.service.MonolithAccessibilityService.instance != null,
             accessibilityArmedSessionId =
                 com.example.service.MonolithAccessibilityService.armedSessionId,
-            nowWallMillis = System.currentTimeMillis()
+            // The third witness (critic Nagel N-1): sampled live
+            // here, in the same frame as the other two — one
+            // AppOps mode check, the same cost standingWarrant
+            // already pays at these triggers.
+            usageAccess = repository.usageAccess(),
+            // The ACCESS leg's liveness stamp (critic Nagel N-2):
+            // the last accessibility event that acquired a root
+            // window, aged by the derivation under its own law.
+            accessibilityLastRootMono =
+                com.example.service.MonolithAccessibilityService.lastRootMono,
+            nowWallMillis = System.currentTimeMillis(),
+            nowMonoMillis = android.os.SystemClock.elapsedRealtime()
         )
     }
 
