@@ -52,6 +52,7 @@ import com.example.data.BlockedAppEntity
 import com.example.data.FocusProfileEntity
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
+import com.example.data.MonolithRepository
 import com.example.data.StudyChecklistItem
 import com.example.data.StudyModePreset
 import com.example.service.TactileSoundEngine
@@ -138,6 +139,14 @@ fun TactileDeckScreen(
     // keep composing; MainActivity wires the VM's verb.
     onEndSafeBreak: () -> Unit = {},
     weeklyEmergencyTokensRemaining: Int = 1,
+    // Issue #103 F1: true when the active session is a non-SLEEP
+    // routine session — those never take the generic grace path;
+    // ending one is judged by the routine funnel (MISSED / PARTIAL
+    // / ATTENDED). The host computes it from the live routine row;
+    // defaulted false so render harnesses keep the manual-session
+    // rendering. When true the grace chip must not promise a free,
+    // unrecorded cancel it cannot deliver.
+    isActiveRoutineJudged: Boolean = false,
     // Slice D (the proof strip, the sentence slot, the imprint): the
     // host owns the wire; the screen renders its word.
     appsCellCount: Int? = null,
@@ -1026,21 +1035,62 @@ fun TactileDeckScreen(
                             .testTag("slide_to_start_view")
                     )
                 } else {
-                    val withinGraceWindow = activeSession != null && activeSession.elapsedSeconds <= 10
+                    val withinGraceWindow = activeSession != null &&
+                        activeSession.elapsedSeconds <= MonolithRepository.GRACE_WINDOW_SECONDS
+                    // Issue #103 F3: past the stopwatch 20-minute
+                    // floor, this same tap is a FREE, instant,
+                    // successful finish — no hold, no token spent.
+                    // The chip must say so; it may not keep wearing
+                    // the valve's label and price.
+                    val stopwatchFloorMet = activeSession?.isStopwatchMode == true &&
+                        activeSession.elapsedSeconds >= MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
                     if (withinGraceWindow) {
+                        if (isActiveRoutineJudged) {
+                            // Issue #103 F1: a non-SLEEP routine
+                            // session never takes the grace path —
+                            // the repository diverts it to the
+                            // routine funnel, which JUDGES the
+                            // window (MISSED / PARTIAL / ATTENDED).
+                            // Same tap, same funnel (no redesign
+                            // under the routines freeze) — but the
+                            // chip names the real cost instead of
+                            // promising a free grace cancel.
+                            BlockitActionChip(
+                                wordLabel = "END ROUTINE · WILL BE JUDGED",
+                                monoBadge = "${MonolithRepository.GRACE_WINDOW_SECONDS - (activeSession?.elapsedSeconds ?: 0)}s",
+                                isPrimaryInk = true,
+                                onClick = onCancelWithinGraceWindow,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(58.dp),
+                                testTag = "routine_judged_end_button"
+                            )
+                        } else {
+                            BlockitActionChip(
+                                wordLabel = "GRACE WINDOW ABORT",
+                                monoBadge = "${MonolithRepository.GRACE_WINDOW_SECONDS - (activeSession?.elapsedSeconds ?: 0)}s",
+                                // E5b B6 (Horiz §2): the grace chip
+                                // exits the accent with the rest — it
+                                // takes the primary-ink form, and its
+                                // badge follows the app-wide badge rule.
+                                isPrimaryInk = true,
+                                onClick = onCancelWithinGraceWindow,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(58.dp),
+                                testTag = "grace_abort_button"
+                            )
+                        }
+                    } else if (stopwatchFloorMet) {
                         BlockitActionChip(
-                            wordLabel = "GRACE WINDOW ABORT",
-                            monoBadge = "${10 - (activeSession?.elapsedSeconds ?: 0)}s",
-                            // E5b B6 (Horiz §2): the grace chip
-                            // exits the accent with the rest — it
-                            // takes the primary-ink form, and its
-                            // badge follows the app-wide badge rule.
+                            wordLabel = "FINISH STOPWATCH · NO BREAK SPENT",
+                            monoBadge = "PAST 20M FLOOR",
                             isPrimaryInk = true,
-                            onClick = onCancelWithinGraceWindow,
+                            onClick = onRequestDisarm,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(58.dp),
-                            testTag = "grace_abort_button"
+                            testTag = "stopwatch_finish_button"
                         )
                     } else {
                         BlockitActionChip(

@@ -107,6 +107,13 @@ class MonolithRepository(
         const val PEEK_DURATION_MILLIS = 120 * 1000L // 2-Minute Peek lease in ms
         const val PEEK_COOLDOWN_MILLIS = 20 * 60 * 1000L // 20-Minute Mandatory Cooldown
         const val STOPWATCH_MIN_FLOOR_SECONDS = 20 * 60 // 20-Minute Minimum Floor
+        /** The grace-cancel window, in VERIFIED elapsed seconds
+         *  (issue #103 F2): the Deck renders this same number, and
+         *  [disarmActiveSession] enforces it in the ending write —
+         *  a "Grace Cancel" arriving after it books the session's
+         *  real elapsed as an ordinary early end instead of
+         *  zeroing its history. */
+        const val GRACE_WINDOW_SECONDS = 10
         const val SAFE_BREAK_DURATION_SECONDS = 10 * 60 // 10-Minute Safe Break
         const val HMAC_TAMPER_PENALTY_SECONDS = 15 * 60 // 15-Minute Penalty Lock
 
@@ -128,8 +135,10 @@ class MonolithRepository(
 
         // Attendance evidence mask bits (Sten §1.6.1). E1 is set at
         // materialise; E2 on foreground return; E3 by finalise when a
-        // blocked attempt landed inside the window; E4 when the 60s
-        // valve hold starts.
+        // blocked attempt landed inside the window; E4 when a 60s
+        // valve hold BANKS its first 15-second chamber (issue #103
+        // F4) — a momentary grip stamps nothing, so an abandoned
+        // valve attempt cannot manufacture attendance minutes.
         const val EVIDENCE_E1_START = 1
         const val EVIDENCE_E2_FOREGROUND = 2
         const val EVIDENCE_E3_INTERCEPT = 4
@@ -925,7 +934,9 @@ class MonolithRepository(
 
     /**
      * Stamps an attendance-evidence bit on the active routine session
-     * (E2 foreground return, E4 valve hold start). first/last evidence
+     * (E2 foreground return, E4 valve hold BANKED — the valve only
+     * calls this once a 15-second chamber has locked, never on a
+     * momentary grip; issue #103 F4). first/last evidence
      * stamps track the earliest/latest E2/E4 instants. No-ops for
      * manual sessions and when nothing is active.
      */
@@ -2219,8 +2230,11 @@ class MonolithRepository(
      * runs inside the transaction). A hold that completes across the
      * Monday boundary spends against the COMPLETION instant's week
      * (§4.2). Banks, slips and abandoned attempts never reach this
-     * function and write nothing (§4.3); the grace-cancel path never
-     * passes through here (§4.4).
+     * function and write no SPEND (§4.3); the grace-cancel path never
+     * passes through here (§4.4). One scoped exception outside this
+     * ledger (issue #103 F4): a BANKED chamber — never a momentary
+     * grip, slip or un-banked abandon — stamps E4 attendance
+     * evidence via [recordAttendanceEvidence].
      */
     suspend fun completeEmergencyBreak(): BreakResult {
         val database = MonolithDatabase.getInstance(context)
@@ -2308,7 +2322,16 @@ class MonolithRepository(
             }
         }
         val (verifiedElapsed, tamper) = computeVerifiedSessionElapsed(active)
-        val isGraceCancel = outcomeReason.contains("Grace Cancel", ignoreCase = true)
+        // Issue #103 F2: the 10-second grace deadline is enforced
+        // HERE, in the ending write, against the verified elapsed —
+        // not merely rendered by the Deck from the tick-maintained
+        // counter. A "Grace Cancel" string arriving late (stale or
+        // frozen counter, late-delivered tap) is NOT a grace cancel:
+        // it falls through as an ordinary early end below, banking
+        // the session's real elapsed and writing its intercept log,
+        // so a late tap can never zero real history.
+        val isGraceCancel = outcomeReason.contains("Grace Cancel", ignoreCase = true) &&
+            verifiedElapsed <= GRACE_WINDOW_SECONDS
         val bankedElapsed = if (isGraceCancel) 0 else max(verifiedElapsed, active.elapsedSeconds)
         val partialStampId = if (!completed && !isGraceCancel && bankedElapsed >= 60) {
             "partial_stamp"

@@ -528,6 +528,8 @@ class AppRowSledToggleView(context: Context) : BlockitCanvasView(context) {
  *   the drain instantly; accrual resumes after a 250ms re-seat. The
  *   catch-click at the floor says: the bank held you.
  * - The weekly token is spent only at the full 60 held seconds.
+ * - Attendance evidence (E4) is stamped only when a chamber banks
+ *   (15 held seconds), never on a grip (issue #103 F4).
  */
 class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
 
@@ -544,10 +546,13 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
 
     var onEmergencyBreakCompleted: (() -> Unit)? = null
 
-    /** Fired the moment a hold begins (ACTION_DOWN taking the grip).
-     *  The routines rebuild stamps E4 attendance evidence on this —
-     *  starting the 60 s hold is itself proof he showed up. */
-    var onHoldStarted: (() -> Unit)? = null
+    /** Fired when a hold BANKS a chamber (each locked 15-second
+     *  step), never on ACTION_DOWN. The routines rebuild stamps E4
+     *  attendance evidence on this (issue #103 F4): a momentary
+     *  grip — even a 1-second accidental touch before any bank —
+     *  stamps nothing, so abandoning the valve cannot manufacture
+     *  phantom attendance minutes. */
+    var onHoldBanked: (() -> Unit)? = null
 
     private var isHolding: Boolean = false
     private var heldMs: Long = 0L
@@ -590,6 +595,9 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
             if (bankIndex > lastBankIndex) {
                 lastBankIndex = bankIndex
                 bankedMs = bankIndex * bankIntervalMs
+                // Issue #103 F4: the bank is the earliest honest
+                // evidence instant — 15 real held seconds, not a grip.
+                onHoldBanked?.invoke()
                 val pitch = when (bankIndex) {
                     1 -> 560f
                     2 -> 470f
@@ -730,7 +738,8 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
                 }
                 segmentBaseMs = heldMs
                 isHolding = true
-                onHoldStarted?.invoke()
+                // No evidence callback fires on the grip itself
+                // (issue #103 F4) — see onHoldBanked.
                 removeCallbacks(holdTickRunnable)
                 post(holdTickRunnable)
                 return true
