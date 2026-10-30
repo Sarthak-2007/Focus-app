@@ -64,6 +64,10 @@ android {
     buildConfig = true
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
+  dependenciesInfo {
+    includeInApk = false
+    includeInBundle = true
+  }
 }
 
 // Finisher (Klappe): JDK 21 strong encapsulation blocks Robolectric's
@@ -91,11 +95,6 @@ tasks.withType<Test>().configureEach {
     "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
     "--add-opens=java.desktop/java.awt.font=ALL-UNNAMED"
   )
-}
-  dependenciesInfo {
-    includeInApk = false
-    includeInBundle = true
-  }
 }
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
