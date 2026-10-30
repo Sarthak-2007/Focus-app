@@ -3621,7 +3621,16 @@ class MonolithRepository(
         // an artifact — booked seconds and outcome come only from the
         // finalise funnel, which runs off evidence, not off the clock.
         val isRoutineSession = session.routineId != null
-        val forgedId = if (allBlocksCompleted && !isRoutineSession) {
+        // Issue #8, Werkbank Pin 1 (idempotence): the draw runs ONCE
+        // per session, ever. A session that already carries a stamp
+        // never re-draws — two tickers drive this path, and a stale
+        // pre-completion copy re-deriving completion must not
+        // overwrite what the span actually forged (the Drawer's law:
+        // what was filed stays filed). The FLOW door below already
+        // guards the same way; this door now matches it.
+        val forgedId = if (allBlocksCompleted && !isRoutineSession &&
+            session.forgedArtifactId == null
+        ) {
             drawCurioId(session)
         } else null
 

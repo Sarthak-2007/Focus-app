@@ -1,7 +1,6 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,7 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -33,7 +31,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
@@ -292,9 +289,25 @@ fun DrawerScreen(
         }
     }
     val today = DrawerDay.filingDate(nowMillis)
+    // Issue #8: tomorrow under the same 03:30 filing rule — the
+    // day that begins at the next boundary, fileable tonight.
+    val tomorrow = today.plusDays(1)
     val currentYearMonth = DrawerDay.filingYearMonth(nowMillis)
     val searching = drawerQuery.isNotBlank()
     val globallyEmpty = storedMonths.isEmpty() && dayWords.isEmpty()
+    // Issue #8, Regal G7 (via PR #403's shelf cure, re-ported by
+    // DURCH-A8 to the kept INDEX): month-index membership is
+    // strictly-before-current under the 03:30 filing rule. The
+    // repository union deliberately keeps a future word-month (the
+    // filing zone needs it the night tomorrow's word is filed
+    // across a month seam) — but a future month must never stand
+    // in the index of earlier months, presented as the nearest
+    // past. The repository is NOT touched; the index was the
+    // wrong consumer, so the index is what filters.
+    val indexedMonths = storedMonths.filter { month ->
+        month.year * 12 + month.month <
+            currentYearMonth.first * 12 + currentYearMonth.second
+    }
 
     // #158 F2: the words the search rendering stands on, derived
     // from the REAL dayWords map — never emptyMap(), never the
@@ -443,7 +456,19 @@ fun DrawerScreen(
                         color = scheme.onBackground
                     )
                     Text(
-                        text = detail.categoryTag,
+                        // Issue #8 wave-2 (via PR #428, re-ported by
+                        // DURCH-A8): the estimate rides the provenance
+                        // voice — category line, meta ink — instead of
+                        // standing as a second body-size fact stacked
+                        // against SPENT. It prints only where one was
+                        // actually given (MINUTES DIE): a name-only
+                        // task has no estimate, never an invented
+                        // "ESTIMATE 0 MIN".
+                        text = if (detail.estimatedMinutes > 0) {
+                            "${detail.categoryTag} · ESTIMATE ${detail.estimatedMinutes} MIN"
+                        } else {
+                            detail.categoryTag
+                        },
                         fontFamily = AnonymousProFamily,
                         fontSize = 11.sp,
                         letterSpacing = 1.sp,
@@ -456,19 +481,8 @@ fun DrawerScreen(
                         color = scheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    // Estimate and actual as two separate plain facts —
-                    // never a delta, never a percentage. The estimate
-                    // prints only where one was actually given
-                    // (MINUTES DIE): a name-only task has no estimate
-                    // line, never an invented "ESTIMATE 0 MIN".
-                    if (detail.estimatedMinutes > 0) {
-                        Text(
-                            text = "ESTIMATE ${detail.estimatedMinutes} MIN",
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 13.sp,
-                            color = scheme.onBackground
-                        )
-                    }
+                    // SPENT stands alone as the detail's one body
+                    // fact — never a delta, never a percentage.
                     Text(
                         // Issue #110, finding 2: SPENT IN TOTAL —
                         // the lifetime accrual, filed under the
@@ -498,7 +512,12 @@ fun DrawerScreen(
                                     fontWeight = FontWeight.Medium,
                                     fontSize = 12.5.sp,
                                     color = if (step.isDone) scheme.onSurfaceVariant else scheme.onBackground,
-                                    textDecoration = if (step.isDone) TextDecoration.LineThrough else TextDecoration.None,
+                                    // Issue #8: strike-through is a
+                                    // working surface's verb — in the
+                                    // archive it makes finished work
+                                    // look graded. Killed; the ink
+                                    // distinction alone carries done.
+                                    textDecoration = TextDecoration.None,
                                     modifier = Modifier.weight(1f)
                                 )
                                 Text(
@@ -901,24 +920,30 @@ fun DrawerScreen(
             )
         }
 
-        // Search — one field. While
-        // sealed it is composed but input-disabled: reading is
-        // free, typing is an edit.
+        // Search — one entry line. Live under seal (issue #8):
+        // reading is free and a query edits nothing stored.
         item {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(scheme.surfaceVariant)
-                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
-                    .padding(horizontal = 12.dp),
-                contentAlignment = Alignment.CenterStart
-            ) {
+            // Issue #8 wave-2 (AUDIT-drawer §2, via PR #428 /
+            // W6-BAU-8, re-ported by DURCH-A8): the capsule is
+            // dead — the field is a ruled ENTRY LINE: 0dp radius,
+            // no fill, no border box, one 1dp bottom rule, 44dp,
+            // typed text keeping the placeholder's costume
+            // (Anonymous Pro 12sp). Search is ENABLED while
+            // sealed: a query mutates nothing stored, so
+            // "findable in seconds" holds in the sealed state;
+            // the old inert box invited typing it refused while
+            // printing TYPE TO FIND A TASK.
+            Column(modifier = Modifier.weight(1f)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
                 if (drawerQuery.isEmpty()) {
                     Text(
                         text = "TYPE TO FIND A TASK",
@@ -931,12 +956,12 @@ fun DrawerScreen(
                 BasicTextField(
                     value = drawerQuery,
                     onValueChange = onQueryChange,
-                    enabled = !isSealed,
+                    enabled = true,
                     singleLine = true,
                     textStyle = TextStyle(
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 12.sp,
+                        letterSpacing = 1.sp,
                         color = scheme.onBackground
                     ),
                     cursorBrush = SolidColor(scheme.onSurfaceVariant),
@@ -944,6 +969,8 @@ fun DrawerScreen(
                         .fillMaxWidth()
                         .testTag("drawer_search_input")
                 )
+                }
+                HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
             }
             // Issue #52 F2 cure, placement corrected by the C7
             // art panel: the escape sits BESIDE the field as a
@@ -979,7 +1006,7 @@ fun DrawerScreen(
             if (searchGroups.isEmpty()) {
                 item {
                     Text(
-                        text = "NOTHING STORED UNDER “$drawerQuery”",
+                        text = "NO STORED TASK UNDER “$drawerQuery”",
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 13.sp,
                         color = scheme.onSurfaceVariant,
@@ -1007,7 +1034,28 @@ fun DrawerScreen(
                         )
                     }
                     items(group.rows, key = { "search-${it.id}" }) { task ->
-                        StoredRow(task = task, onClick = { selectedTaskId = task.id })
+                        // A hit must show its reason (issue #8,
+                        // AUDIT-drawer §2, via PR #428): when the
+                        // match lives in a substep — not the title
+                        // or category — the row prints that step as
+                        // a second line.
+                        val q = drawerQuery.trim()
+                        val matchedStep = if (
+                            q.isNotEmpty() &&
+                            !task.title.contains(q, ignoreCase = true) &&
+                            !task.categoryTag.contains(q, ignoreCase = true)
+                        ) {
+                            task.subSteps.firstOrNull {
+                                it.title.contains(q, ignoreCase = true)
+                            }?.title
+                        } else {
+                            null
+                        }
+                        StoredRow(
+                            task = task,
+                            matchedStepTitle = matchedStep,
+                            onClick = { selectedTaskId = task.id }
+                        )
                     }
                 }
                 if (drawerSearchHasEarlier) {
@@ -1031,7 +1079,7 @@ fun DrawerScreen(
                         onClick = { viewName = DrawerView.LANDING.name }
                     )
                 }
-                items(storedMonths, key = { "month-${it.year}-${it.month}" }) { month ->
+                items(indexedMonths, key = { "month-${it.year}-${it.month}" }) { month ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1263,7 +1311,10 @@ fun DrawerScreen(
                     // sick day in the first week, before anything was
                     // ever finished, is exactly when a word needs
                     // declaring (Selbst × Neu). Today's heading
-                    // carries it under the empty line.
+                    // carries it under the empty line — and
+                    // tomorrow's stands beside it (issue #8): the
+                    // first-week sick night files the coming day
+                    // too, before anything was ever finished.
                     item {
                         DayHeading(
                             group = DrawerDayGroup(
@@ -1273,6 +1324,19 @@ fun DrawerScreen(
                             ),
                             canDeclare = !isSealed,
                             onDeclareWord = onDeclareTodayWord
+                        )
+                    }
+                    item {
+                        DayHeading(
+                            group = DrawerDayGroup(
+                                date = tomorrow,
+                                rows = emptyList(),
+                                word = dayWords[DrawerDay.dateIso(tomorrow)]
+                            ),
+                            canDeclare = !isSealed,
+                            onDeclareWord = { word ->
+                                onDeclareDayWord(tomorrow, word)
+                            }
                         )
                     }
                     item {
@@ -1343,6 +1407,32 @@ fun DrawerScreen(
                         )
                         HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
                     }
+                    // Issue #8 (AUDIT-drawer §4 — the audit's worst
+                    // finding, via PR #428): TOMORROW is fileable
+                    // the night before. When tomorrow carries no
+                    // group of its own on this landing (nothing
+                    // stored, no word yet — or it falls in the next
+                    // filing month), its heading stands at the head
+                    // of the day-lines, newest first like the groups
+                    // under it, so a sick man at 01:00 files ILL for
+                    // the coming day in 2 taps and sleeps. Once
+                    // declared, the word retires to print like any
+                    // filed day.
+                    if (landingGroups.none { it.date == tomorrow }) {
+                        item(key = "land-head-tomorrow") {
+                            DayHeading(
+                                group = DrawerDayGroup(
+                                    date = tomorrow,
+                                    rows = emptyList(),
+                                    word = dayWords[DrawerDay.dateIso(tomorrow)]
+                                ),
+                                canDeclare = !isSealed,
+                                onDeclareWord = { word ->
+                                    onDeclareDayWord(tomorrow, word)
+                                }
+                            )
+                        }
+                    }
                     // The current month, newest first. An empty current
                     // month renders in SILENCE under the ALL MONTHS row —
                     // no absence line greets a month that has barely begun.
@@ -1351,6 +1441,7 @@ fun DrawerScreen(
                             DayHeading(
                                 group = group,
                                 canDeclare = !isSealed && (group.date == today ||
+                                    group.date == tomorrow ||
                                     (group.date == today.minusDays(1) && group.word == null)),
                                 onDeclareWord = { word ->
                                     if (group.date == today) onDeclareTodayWord(word)
@@ -1419,13 +1510,20 @@ private fun DayHeading(
             },
             fontFamily = AnonymousProFamily,
             fontWeight = FontWeight.Bold,
-            fontSize = 11.sp,
+            // Issue #8 (SPITZ Charge 10a, via PR #428): one heading
+            // voice — 10.5sp, the size every other Drawer heading
+            // print uses; the search headings already share it.
+            fontSize = 10.5.sp,
             letterSpacing = 1.sp,
             color = scheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 6.dp)
         )
         if (canDeclare) {
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            // Issue #8 (SPITZ Charge 9 / Demand 4, via PR #403):
+            // the ruled mis-tap geometry — 24dp between words and
+            // 4dp of horizontal padding per word, so a 1 AM
+            // fat-finger lands on the word it meant.
+            Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                 DayWordStore.WORDS.forEach { word ->
                     val active = group.word == word
                     Text(
@@ -1433,13 +1531,22 @@ private fun DayHeading(
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.sp,
-                        color = if (active) scheme.onBackground else scheme.onSurfaceVariant,
+                        // Issue #8 (SPITZ Charge 10b): bright =
+                        // asking. An undeclared line prints at full
+                        // ink; once a word is declared the line
+                        // retires to print (variant) — except the
+                        // declared word itself, which stays full.
+                        color = if (group.word == null || active) {
+                            scheme.onBackground
+                        } else {
+                            scheme.onSurfaceVariant
+                        },
                         modifier = Modifier
                             .clickable(
                                 role = androidx.compose.ui.semantics.Role.Button
                             ) { onDeclareWord(if (active) null else word) }
                             .sizeIn(minHeight = 48.dp)
-                            .padding(vertical = 12.dp)
+                            .padding(horizontal = 4.dp, vertical = 12.dp)
                             .testTag("declare_word_${word.lowercase(java.util.Locale.ROOT)}")
                     )
                 }
@@ -1452,7 +1559,11 @@ private fun DayHeading(
  *  spent (printed TOTAL — see the file header, Issue #110). No
  *  estimate, no checkbox, no bar, no rank. */
 @Composable
-private fun StoredRow(task: FocusTaskEntity, onClick: () -> Unit) {
+private fun StoredRow(
+    task: FocusTaskEntity,
+    matchedStepTitle: String? = null,
+    onClick: () -> Unit
+) {
     val scheme = MaterialTheme.colorScheme
     Column(
         modifier = Modifier
@@ -1474,6 +1585,19 @@ private fun StoredRow(task: FocusTaskEntity, onClick: () -> Unit) {
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
+        // Search only: the step that matched, printed as the
+        // row's reason (issue #8, AUDIT-drawer §2). Null
+        // everywhere else.
+        if (matchedStepTitle != null) {
+            Text(
+                text = matchedStepTitle,
+                fontFamily = AnonymousProFamily,
+                fontSize = 10.5.sp,
+                color = scheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 text = task.categoryTag,
