@@ -88,3 +88,25 @@ nothing about how the app works, looks or feels changes.
   forced. *bundle-covered*
 - Remaining named seats — no distinct ruling on a repo-hygiene question;
   covered by the lead. *bundle-covered*
+
+---
+
+## CELL-A ADDENDUM — fresh-main re-verification (Oct 30, WELLE-2)
+
+Re-measured against current main (4378dae, PR #357 era) after merging
+main into agent/issue-89 (merge aa58792):
+
+- Finding 1 (public/ 9,273,474 B): FIXED ON MAIN — the #84 lane
+  (PR #247, merged) deleted the whole public/ tree; `git ls-tree` on
+  current main: 0 public/ files. The wave-3 STANDS-BLOCKED is moot:
+  the shelf prune this report priced was executed by #84.
+- Finding 2 (.tempmediaStorage 2,464,656 B): FIXED — deleted by this
+  branch (dcfdf7c) and independently on main; 0 tempmedia files on
+  current main; .aistudio/ is now gitignored wholesale on main.
+- Finding 3 (triple encodings, 3,293,819 B recoverable): FIXED ON MAIN
+  — the encodings lived inside public/, deleted with it by #84.
+- Finding 4 (launcher PNGs): VERIFIED still present on current main —
+  10 PNGs, 41,314 bytes exactly. Disposition STANDS-BLOCKED, priced
+  41,314 B: they are the only launcher icon on API 24–25 (minSdk 24);
+  deleting them is a user-facing downgrade and a minSdk decision that
+  is Sarthak's, not a hygiene branch's. — CELL-A
