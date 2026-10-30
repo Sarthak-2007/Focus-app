@@ -302,6 +302,16 @@ class SoundAndSocialTruthTest {
         // origin under Robolectric.
         val node = composeRule.onNodeWithTag("park_social_sled").performScrollTo()
         node.assertIsDisplayed()
+        // Round 9 hardening (run 41085438231): the FIRST tap landed,
+        // the SECOND timed out - after the toggle, recomposition and
+        // the re-scroll leave the paused Robolectric looper holding
+        // layout work, so bounds read immediately can be a mid-scroll
+        // position and the dispatch lands off-view. Settle fully
+        // (compose idle + looper drain + compose idle) before reading
+        // the node's window bounds.
+        composeRule.waitForIdle()
+        ShadowLooper.idleMainLooper()
+        composeRule.waitForIdle()
         val bounds = node.fetchSemanticsNode().boundsInWindow
         val activity = composeRule.activity
         val root = activity.window.decorView
