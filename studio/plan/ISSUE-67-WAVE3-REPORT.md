@@ -208,6 +208,36 @@ Total remainder programme: ~9–10 focused days, sequenced as above.
   re-pushed; the final branch CI run and the post-merge main CI run are
   recorded in the closing issue comment (run URLs + verdicts).
 
+### Final CI story (addendum, recorded at closure)
+
+- Batch (a2) initially failed assemble on two defects of THIS branch —
+  recorded, not hidden: `InterceptIntents` used a corrected spelling
+  `EXTRA_INTERCEPTED_BADGE` where the codebase's constant is
+  `EXTRA_INTERCEPT_BADGE`, and an inline comment ate a comma in
+  ShieldService's notification PendingIntent. Both fixed in aa4793a's
+  parent commit; no test or behaviour was touched to get green.
+- Main moved twice more during the pass (issue-2 → 73aaeae; then #35/#47/
+  #61/#62/#17/design-revamp → 892da87). Second rebase conflicted only in
+  ReleaseRetryScheduler (resolved by keeping #47's targeted read verbatim
+  and applying only the container routing) and surfaced one NEW
+  getInstance site #47 had added in RoutineHeartbeat
+  (recoverChainAfterFailure) — routed through AppContainer in c90849e.
+- Baseline comparison (the honest yardstick): main @73aaeae's own run
+  (40973388591) executed 258 tests with **37 failures** — the baseline is
+  red. This branch's run at the same base (40978204767) executed 264 with
+  38: the delta was two one-run flakes (RoutinesFinalise history test —
+  a UTC-midnight day-bucket flake: main ran 23:46 UTC, this run crossed
+  00:00 UTC mid-suite; TruthCar3 una07 — an
+  UncaughtExceptionsBeforeTest pollution flake) and one baseline failure
+  flipping to pass (SoundEngineBirthOrder).
+- **Final branch run 40984790641 (tip c90849e, base 892da87): assemble
+  debug GREEN; 321 tests executed, 37 failed — the failing set is
+  name-for-name identical to the main baseline set.** None of the
+  intervening lanes' new tests fail; all 6 new FocusDomainTest tests
+  pass. The 37 baseline failures are other lanes' territory (incl. the
+  DB v11→v12 migration tests, which the merge order reserves to
+  Konto's train — flagged, not forced).
+
 ## 7. Seat verdicts (20 seats, signed)
 
 - **Crazy-ideas** — Proposed replacing the intercept Intent entirely with a
