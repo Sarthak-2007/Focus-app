@@ -447,7 +447,7 @@ class SoundAndSocialTruthTest {
         composeRule.setContent {
             val socialOn by vm.browserUrlBlockerEnabled.collectAsState()
             val snapshot by WatchStore.snapshots.collectAsState()
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 // shorts = true below is a premise, not filler: with
                 // the sniper OFF, the shorts row would print OFF from
                 // the first frame and break

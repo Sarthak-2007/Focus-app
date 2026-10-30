@@ -43,12 +43,25 @@ class LoadoutStore(context: Context) {
         private const val PREFS_NAME = "monolith_loadout"
         private const val KEY_LAST_HAND_LOADOUT = "last_hand_loadout"
 
+        /** The cap's stops in order: the ONE source for the
+         *  index↔loadout mapping (issue #58 F6). Both directions
+         *  derive from this list — ShieldCapSelector renders its
+         *  stops from it and ShieldMatrixScreen resolves a tapped
+         *  index through [loadoutAtCapIndex] — so the mapping can
+         *  never drift between three hand-written copies again,
+         *  and an out-of-range index resolves to null instead of
+         *  silently meaning SLEEP via an `else` branch. */
+        val CAP_ORDER: List<SmartLoadout> = listOf(
+            SmartLoadout.STUDY, SmartLoadout.WORK_SPRINT, SmartLoadout.SLEEP
+        )
+
         /** Cap positions, ShieldCapSelector's order: the ONE mapping
          *  between a loadout and its seat on the cap. */
-        fun capIndexOf(loadout: SmartLoadout): Int = when (loadout) {
-            SmartLoadout.STUDY -> 0
-            SmartLoadout.WORK_SPRINT -> 1
-            SmartLoadout.SLEEP -> 2
-        }
+        fun capIndexOf(loadout: SmartLoadout): Int = CAP_ORDER.indexOf(loadout)
+
+        /** The loadout seated at cap [index], or null when the
+         *  index seats nothing — callers must face the null, never
+         *  guess a loadout for a garbage index. */
+        fun loadoutAtCapIndex(index: Int): SmartLoadout? = CAP_ORDER.getOrNull(index)
     }
 }

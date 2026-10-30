@@ -626,6 +626,18 @@ data class KineticArtifact(
     val lore: String
 )
 
+/**
+ * One artifact's forge record, derived from real session rows
+ * (Issue #110, finding 5): how many sessions forged it, and the
+ * wall instant of the most recent forge. [lastForgedAtMillis] is
+ * the forging session's end stamp where one exists (endWallMillis,
+ * v11+), else its start — never an invented instant.
+ */
+data class ForgeStat(
+    val count: Int,
+    val lastForgedAtMillis: Long
+)
+
 /** The app's two-digit counter voice (Truth Car 2, DRW-08): 01…09,
  *  then 10, 11 — never "010". One formatter for every surface that
  *  numbers a sub-step (Tasks leaf, Deck task line, Drawer detail);
@@ -945,6 +957,27 @@ data class GuardSettingsEntity(
 data class DayNoteEntity(
     @PrimaryKey val dateIso: String,
     val word: String
+)
+
+/**
+ * The Partial Stamp's honest identity (Issue #110, finding 5).
+ * An early-ended session that banked at least a minute stamps
+ * [PARTIAL_STAMP_ID] as its forgedArtifactId (the disarm doors in
+ * MonolithRepository). Before this entry existed, that id matched
+ * NO catalog row: the cabinet's DISTINCT read swallowed it, and a
+ * real record of real minutes stood in no cabinet and answered to
+ * no name. The stamp is not a forged artifact and never prints as
+ * one — it is the mark of a span that ended early, and its lore
+ * says exactly that.
+ */
+const val PARTIAL_STAMP_ID = "partial_stamp"
+
+val PARTIAL_STAMP_ARTIFACT = KineticArtifact(
+    id = PARTIAL_STAMP_ID,
+    serialCode = "Stamp 07",
+    name = "Partial Stamp",
+    subtitle = "A Span Ended Early",
+    lore = "Not a forged curio. When a sealed span ends early with at least a minute banked, the session is stamped partial — the minutes were real, the finish was not. It stands here so the record has a name, never as a prize."
 )
 
 object CurioCatalog {

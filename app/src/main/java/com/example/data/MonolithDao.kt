@@ -66,6 +66,42 @@ interface MonolithDao {
     @Query("SELECT * FROM focus_sessions WHERE isActive = 1 ORDER BY id DESC LIMIT 1")
     suspend fun getActiveSessionSnapshot(): FocusSessionEntity?
 
+    /**
+     * Issue #45 (C5): the session covering a given wall instant —
+     * the notification capture path decides "was a session active
+     * when this notification was POSTED" against sbn.postTime, not
+     * against whenever its coroutine happens to be scheduled. A
+     * coroutine delayed past a session's end used to read
+     * getActiveSessionSnapshot(), find nothing, and silently drop a
+     * message that was genuinely captured during the session.
+     *
+     * The covering predicate, by row shape:
+     * - isActive: the session is still running, and it started at
+     *   or before the instant — it covers it.
+     * - endWallMillis > 0 (the v11 ending stamp): the session's
+     *   true span is exactly [startWallTimeMillis, endWallMillis];
+     *   the instant must lie inside it.
+     * - endWallMillis = 0 (a legacy row ended before the stamp
+     *   existed): no exact end survives, so the bound is the
+     *   session's own maximum span, priced from its stored fields
+     *   the same way FocusSessionEntity.spanTargetSeconds prices
+     *   it — totalStudyBlocks × (target + penalty) plus one
+     *   600-second Safe Break between blocks. This can only
+     *   over-cover a legacy row that ended early; it can never
+     *   miss a message posted while that session truly ran,
+     *   because no real run exceeds its own span target.
+     */
+    @Query(
+        "SELECT * FROM focus_sessions WHERE startWallTimeMillis <= :instantMillis AND (" +
+            "isActive = 1 " +
+            "OR (endWallMillis > 0 AND :instantMillis <= endWallMillis) " +
+            "OR (endWallMillis = 0 AND :instantMillis <= startWallTimeMillis + " +
+            "(totalStudyBlocks * (targetDurationSeconds + penaltySecondsAdded) + " +
+            "(totalStudyBlocks - 1) * 600) * 1000)" +
+            ") ORDER BY startWallTimeMillis DESC LIMIT 1"
+    )
+    suspend fun getSessionCoveringInstant(instantMillis: Long): FocusSessionEntity?
+
     @Query("SELECT * FROM focus_sessions ORDER BY startWallTimeMillis DESC")
     fun getSessionHistoryFlow(): Flow<List<FocusSessionEntity>>
 
@@ -100,6 +136,13 @@ interface MonolithDao {
     // the same instant.
     @Query("UPDATE focus_sessions SET shieldGapSeen = 1 WHERE id = :id")
     suspend fun latchShieldGap(id: Int)
+
+    // The beat adoption (Audit R2 #95): a pre-v10 row's first
+    // post-upgrade judgement stamps the beat instead of convicting
+    // the row from its session start. Guarded on the beat still
+    // being 0 so a racing tick's real beat is never overwritten.
+    @Query("UPDATE focus_sessions SET shieldLastBeatWallMillis = :millis WHERE id = :id AND shieldLastBeatWallMillis = 0")
+    suspend fun adoptShieldBeat(id: Int, millis: Long)
 
     // The release-fault record (Draht): written once per fault by
     // the finish machine; the retry cadence increments its own
@@ -196,6 +239,54 @@ interface MonolithDao {
     @Query("DELETE FROM captured_notifications")
     suspend fun clearAllCapturedNotifications()
 
+    // Issue #45 (C5) retention: captured bodies are plaintext
+    // message content, so the table is bounded — the insert path
+    // prunes by age and caps the row count after every insert.
+    // The bounds (7 days / newest 200) live in
+    // MonolithNotificationListener; these are the two deletes it
+    // runs. The trim orders by timestamp then id so that, among
+    // rows sharing a postTime, the later inserts survive.
+    @Query("DELETE FROM captured_notifications WHERE timestampMillis < :cutoffMillis")
+    suspend fun pruneCapturedNotificationsOlderThan(cutoffMillis: Long)
+
+    @Query(
+        "DELETE FROM captured_notifications WHERE id NOT IN " +
+            "(SELECT id FROM captured_notifications ORDER BY timestampMillis DESC, id DESC LIMIT :keep)"
+    )
+    suspend fun trimCapturedNotificationsToNewest(keep: Int)
+
+    // Issue #45 (C5): the identity of one stored capture — the
+    // package, the title and body AS STORED (senderTitle is the
+    // title after the app-name fallback), and the row's
+    // timestampMillis, which is the notification's sbn.postTime
+    // snapshot. The dedupe-replace path finds the superseded row
+    // by this quadruple before deleting it; the removal path
+    // deletes by the same quadruple so a recalled message cannot
+    // resurrect in the digest.
+    @Query(
+        "SELECT * FROM captured_notifications WHERE packageName = :packageName " +
+            "AND senderTitle = :senderTitle AND messageBody = :messageBody " +
+            "AND timestampMillis = :timestampMillis ORDER BY id DESC LIMIT 1"
+    )
+    suspend fun findCapturedNotificationMatching(
+        packageName: String,
+        senderTitle: String,
+        messageBody: String,
+        timestampMillis: Long
+    ): CapturedNotificationEntity?
+
+    @Query(
+        "DELETE FROM captured_notifications WHERE packageName = :packageName " +
+            "AND senderTitle = :senderTitle AND messageBody = :messageBody " +
+            "AND timestampMillis = :timestampMillis"
+    )
+    suspend fun deleteCapturedNotificationMatching(
+        packageName: String,
+        senderTitle: String,
+        messageBody: String,
+        timestampMillis: Long
+    ): Int
+
     // Timeboxed Task Queue (Solar Queue)
     @Query("SELECT * FROM focus_tasks ORDER BY CASE status WHEN 'ACTIVE' THEN 0 WHEN 'QUEUED' THEN 1 WHEN 'DEFERRED' THEN 2 ELSE 3 END, queueOrder ASC, id ASC")
     fun getAllTasksFlow(): Flow<List<FocusTaskEntity>>
@@ -224,8 +315,8 @@ interface MonolithDao {
     // retention is permanent. Every read is paged (LIMIT + OFFSET,
     // newest first, id tiebreak for a total order) — no read may
     // silently cap the record. Filing day/month follow the 03:30
-    // rule (DrawerDay): the months index subtracts the same 210
-    // minutes inside SQLite that DrawerDay subtracts in Kotlin.
+    // rule (DrawerDay) — computed in Kotlin only; the old SQLite
+    // twin disagreed with it on DST days and is dead (Audit R1 #37).
     // =========================================================================
 
     // The page size is the CALLER's (Truth Car 2, DRW-04): the
@@ -235,8 +326,18 @@ interface MonolithDao {
     @Query("SELECT * FROM focus_tasks WHERE status = 'COMPLETED' AND completedAtMillis >= :fromMillis AND completedAtMillis < :toMillis ORDER BY completedAtMillis DESC, id DESC LIMIT :limit OFFSET :offset")
     suspend fun getStoredPage(fromMillis: Long, toMillis: Long, limit: Int, offset: Int): List<FocusTaskEntity>
 
-    @Query("SELECT CAST(strftime('%Y', (completedAtMillis / 1000) - 12600, 'unixepoch', 'localtime') AS INTEGER) AS year, CAST(strftime('%m', (completedAtMillis / 1000) - 12600, 'unixepoch', 'localtime') AS INTEGER) AS month FROM focus_tasks WHERE status = 'COMPLETED' AND completedAtMillis > 0 GROUP BY year, month ORDER BY year DESC, month DESC")
-    suspend fun getStoredMonths(): List<StoredMonth>
+    // Audit R1 #37: the months index used to be computed in SQL by
+    // subtracting 12,600 ELAPSED seconds from the epoch and taking
+    // SQLite 'localtime' — a different function from DrawerDay's
+    // wall-clock filing rule on DST days (verified divergence at
+    // the 2026-11-01 America/New_York fall-back month boundary:
+    // the same completion filed under October in Kotlin and
+    // November in SQL). There is now ONE filing function: the DAO
+    // returns raw completion instants and the repository groups
+    // them through DrawerDay.filingYearMonth. No SQL date math
+    // remains to disagree with it.
+    @Query("SELECT completedAtMillis FROM focus_tasks WHERE status = 'COMPLETED' AND completedAtMillis > 0")
+    suspend fun getStoredCompletionInstants(): List<Long>
 
     @Query("SELECT * FROM focus_tasks WHERE status = 'COMPLETED' AND completedAtMillis > 0 AND (title LIKE '%' || :q || '%' OR categoryTag LIKE '%' || :q || '%' OR notesOrSubsteps LIKE '%' || :q || '%') ORDER BY completedAtMillis DESC, id DESC LIMIT :limit OFFSET :offset")
     suspend fun searchStoredTasks(q: String, limit: Int, offset: Int): List<FocusTaskEntity>
@@ -367,4 +468,12 @@ interface MonolithDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDayNotes(notes: List<DayNoteEntity>)
+
+    /** Audit R1 #37: clearing a declared word must reach the
+     *  drained table too — before this, no DELETE for day_notes
+     *  existed anywhere, so a word that had drained from prefs to
+     *  Room could never be undeclared (the clear removed only the
+     *  already-absent prefs key and the union read resurrected it). */
+    @Query("DELETE FROM day_notes WHERE dateIso = :dateIso")
+    suspend fun deleteDayNote(dateIso: String)
 }
