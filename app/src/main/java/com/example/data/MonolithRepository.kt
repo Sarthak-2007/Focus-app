@@ -77,15 +77,22 @@ data class SystemGuardStatus(
 }
 
 /**
- * The three outcomes of a valve-completed emergency break (TOKEN-SPEC
- * §4.1) — exactly these, no fourth. [RefusedNoToken] leaves the session
- * sealed and writes nothing; [Completed] means the spend row and the
- * disarm committed in the same transaction.
+ * The outcomes of a valve completion (TOKEN-SPEC §4.1). The three
+ * BREAK outcomes are exactly these, no fourth: [RefusedNoToken]
+ * leaves the session sealed and writes nothing; [Completed] means
+ * the spend row and the disarm committed in the same transaction.
+ * [CompletedCleanlyAtFloor] is not a break outcome at all — it is
+ * what the valve's completion callback returns when the booking
+ * layer finds there was nothing to break: a stopwatch session whose
+ * 20-minute floor was already met at completion time (issue #147
+ * reopened, Findings 2/3 seam), ended cleanly through the ordinary
+ * disarm door with NO spend row written.
  */
 sealed interface BreakResult {
     object Completed : BreakResult
     object RefusedNoToken : BreakResult
     object NoActiveSession : BreakResult
+    object CompletedCleanlyAtFloor : BreakResult
 }
 
 /**
@@ -3978,6 +3985,33 @@ class MonolithRepository(
         return database.withTransaction {
             val active = dao.getActiveSessionSnapshot()
                 ?: return@withTransaction BreakResult.NoActiveSession
+            // Issue #147 REOPENED (Findings 2/3 seam): the floor
+            // re-check. The valve overlay opens on a snapshot of the
+            // banked elapsed; a 60-second hold — or a long wait with
+            // the overlay open — can cross the 20-minute stopwatch
+            // floor AFTER that snapshot, and the Deck chip would by
+            // then read FINISH SESSION. Booking a token spend on the
+            // stale snapshot would charge the week's only break for
+            // a stop the app itself prints as free. So the floor is
+            // re-judged HERE, at booking time, against the same
+            // authoritative figure the disarm door books by —
+            // lawElapsed = max(verified, banked) — and a floor-met
+            // stopwatch session ends through that same clean door
+            // (completed, STOPWATCH_ENDED): no spend row is written
+            // and no VALVE_BROKE is booked. The check runs inside
+            // this transaction, before the token check, so a clean
+            // end can never interleave with a spend.
+            if (active.isStopwatchMode) {
+                val (verifiedElapsed, _) = computeVerifiedSessionElapsed(active)
+                val lawElapsed = max(verifiedElapsed, active.elapsedSeconds)
+                if (lawElapsed >= STOPWATCH_MIN_FLOOR_SECONDS) {
+                    disarmActiveSession(
+                        completed = true,
+                        outcomeReason = "Stopwatch Completed"
+                    )
+                    return@withTransaction BreakResult.CompletedCleanlyAtFloor
+                }
+            }
             // Issue #82 (clock-attacks F3): the week's anchor is
             // computed from the HONEST now, never the raw wall
             // clock — travelling the date into any other week used
