@@ -24,6 +24,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -252,10 +255,19 @@ class MonolithShieldService : Service() {
     }
 
     companion object {
+        // Issue #28: the instance's presence as a FLOW, so waiters
+        // (the finish detention) suspend on the flip instead of
+        // busy-polling the raw field every 25ms.
+        private val _instancePresent = MutableStateFlow(false)
+        val instancePresent: StateFlow<Boolean> = _instancePresent.asStateFlow()
+
         // Live Wire registry (Ines): in-memory only, never persisted.
         @Volatile
         var instance: MonolithShieldService? = null
-            internal set
+            internal set(value) {
+                field = value
+                _instancePresent.value = value != null
+            }
 
         /** True only after startForeground succeeded AND a full
          *  monitor iteration ran. The Live Wire reads this as a

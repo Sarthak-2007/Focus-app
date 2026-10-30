@@ -399,36 +399,33 @@ class MonolithViewModel(
         list.filter { it.resolvedStatus == TaskQueueStatus.DEFERRED }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val totalQueueMinutes: StateFlow<Int> = tasks.map { list ->
+    // Issue #28 (finding 5): the total combines BOTH sources —
+    // the old tasks-only map read _dialMinutes.value as a stale
+    // snapshot, so turning the dial alone never recomputed the
+    // total until an unrelated task emission happened.
+    val totalQueueMinutes: StateFlow<Int> = combine(tasks, _dialMinutes) { list, dial ->
         list.filter {
             it.resolvedStatus == TaskQueueStatus.ACTIVE || it.resolvedStatus == TaskQueueStatus.QUEUED
-        }.sumOf { it.estimatedMinutes }.coerceAtLeast(_dialMinutes.value)
+        }.sumOf { it.estimatedMinutes }.coerceAtLeast(dial)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 50)
 
+    // Issue #28: an empty queue is an empty checklist. The old
+    // code invented three hard-coded tasks ("Finish Chapter 4
+    // Problem Set", "Synthesize Lecture 9…", "Debug Dynamic
+    // Programming…") whenever the real list was empty — fabricated
+    // work presented as his. Now the map is the truth, only.
     val checklist: StateFlow<List<StudyChecklistItem>> = tasks.map { list ->
-        if (list.isEmpty()) {
-            listOf(
-                StudyChecklistItem(1, "Finish Chapter 4 Problem Set (#1–6)", false),
-                StudyChecklistItem(2, "Synthesize Lecture 9 Architecture Notes", false),
-                StudyChecklistItem(3, "Debug Dynamic Programming Memo Table", false)
+        list.map { task ->
+            StudyChecklistItem(
+                id = task.id,
+                title = task.title,
+                isDone = task.resolvedStatus == TaskQueueStatus.COMPLETED
             )
-        } else {
-            list.map { task ->
-                StudyChecklistItem(
-                    id = task.id,
-                    title = task.title,
-                    isDone = task.resolvedStatus == TaskQueueStatus.COMPLETED
-                )
-            }
         }
     }.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5000),
-        listOf(
-            StudyChecklistItem(1, "Finish Chapter 4 Problem Set (#1–6)", false),
-            StudyChecklistItem(2, "Synthesize Lecture 9 Architecture Notes", false),
-            StudyChecklistItem(3, "Debug Dynamic Programming Memo Table", false)
-        )
+        emptyList()
     )
 
     private val _selectedProfileName = MutableStateFlow("Study Loadout")
@@ -457,17 +454,20 @@ class MonolithViewModel(
     val disarmChallenge: StateFlow<DisarmChallengeState> = _disarmChallenge.asStateFlow()
 
     private val _systemGuardStatus = MutableStateFlow(
+        // Issue #28: the pre-check state must not invent facts —
+        // integrity unproven (false), boot count and launcher
+        // count unknown (0) until refreshSystemGuard measures.
         SystemGuardStatus(
             hasUsageStatsPermission = false,
             hasOverlayPermission = false,
             isAccessibilityServiceEnabled = false,
             isNotificationListenerEnabled = false,
             isDeviceAdminEnabled = false,
-            isMonotonicClockIntact = true,
-            isHmacSignatureValid = true,
+            isMonotonicClockIntact = false,
+            isHmacSignatureValid = false,
             clockDriftSeconds = 0L,
-            systemBootCount = 1,
-            installedLauncherAppsCount = 12
+            systemBootCount = 0,
+            installedLauncherAppsCount = 0
         )
     )
     val systemGuardStatus: StateFlow<SystemGuardStatus> = _systemGuardStatus.asStateFlow()
@@ -563,8 +563,11 @@ class MonolithViewModel(
             }
         }.sumOf { it.elapsedSeconds }
         val activeSecs = active?.elapsedSeconds ?: 0
-        ((completedSecs + activeSecs) / 60).coerceAtLeast(35)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 75)
+        // Issue #28: the real sum, nothing else. The old
+        // coerceAtLeast(35) floor and the stateIn initial of 75
+        // printed focus minutes nobody ever studied.
+        (completedSecs + activeSecs) / 60
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     /**
      * The reset-note strip state (Freya §3.3): shown after the reseed
@@ -803,7 +806,14 @@ class MonolithViewModel(
     val shotGround: StateFlow<ShotGround> = _shotGround.asStateFlow()
     private var shotGroundJob: Job? = null
 
-    private val handledFinishIds = mutableSetOf<Int>()
+    // Issue #28 (finding 4a): this set is touched from the
+    // sessionHistory collector, onFinishE0's launched coroutines
+    // and the public publishReceipt facade — a plain MutableSet
+    // raced. The synchronized set makes every add/remove/read
+    // atomic; the persisted claim latch remains the cross-process
+    // guarantee, this is the in-process one.
+    private val handledFinishIds: MutableSet<Int> =
+        java.util.Collections.synchronizedSet(mutableSetOf())
     private var finishControllerStarted = false
 
     init {
@@ -1327,13 +1337,23 @@ class MonolithViewModel(
             var pawlLiftMs: Long? = null
             var halted = false
             var issuedReceipt: com.example.data.ReceiptState? = null
+            // Issue #28 (finding 4b): the pawl lift is waited on
+            // REACTIVELY — a child suspends on the shield's
+            // instance-presence flow and stamps the offset when it
+            // flips. The old loop busy-polled `instance == null`
+            // on every 25ms detention tick. (The 25ms cadence
+            // below remains, but it now only advances the
+            // detention's own issue arithmetic, not a spin-check
+            // on another component's field.)
+            val pawlWait = launch {
+                com.example.service.MonolithShieldService.instancePresent
+                    .first { present -> !present }
+                if (pawlLiftMs == null) {
+                    pawlLiftMs = SystemClock.elapsedRealtime() - e0Mono
+                }
+            }
             while (true) {
                 val offset = SystemClock.elapsedRealtime() - e0Mono
-                if (pawlLiftMs == null &&
-                    com.example.service.MonolithShieldService.instance == null
-                ) {
-                    pawlLiftMs = offset
-                }
                 val issueAt = com.example.data.Detention.issueOffsetMs(pawlLiftMs, halted, offset)
                 if (issueAt != null && offset >= issueAt) {
                     val faulted = com.example.data.Detention.isFaulted(pawlLiftMs, halted, offset)
@@ -1366,6 +1386,7 @@ class MonolithViewModel(
                 }
                 delay(25L)
             }
+            pawlWait.cancel()
             // The detention's tail: the finish state stands until
             // the rack has completed (R0 + 280), then retires —
             // the receipt state carries the slip from here.
@@ -1881,13 +1902,22 @@ class MonolithViewModel(
     fun extendActiveTaskOvertime(extraMinutes: Int = 5) {
         val currentActive = activeTask.value ?: return
         soundEngine.playRotaryDetent(760.0)
-        viewModelScope.launch {
-            val updated = repository.extendTaskEstimate(currentActive.id, extraMinutes)
-            if (updated != null && activeSession.value?.isActive != true) {
-                _dialMinutes.value = updated.estimatedMinutes
-            }
+        // Issue #28 (finding 2): ONE writer for the dial. The old
+        // code wrote _dialMinutes synchronously (+extra, clamped)
+        // AND again from the launched coroutine (the repository's
+        // updated estimate) — whichever landed last won, so the
+        // extension could double-apply or be silently overwritten.
+        // Now the tap writes the dial exactly once (instant, as
+        // before), the coroutine only persists the task's new
+        // estimate, and the session guard the async path used to
+        // carry now guards the one write: while a session is
+        // active the dial is the session's, not the task's.
+        if (activeSession.value?.isActive != true) {
+            _dialMinutes.value = (_dialMinutes.value + extraMinutes).coerceIn(5, 180)
         }
-        _dialMinutes.value = (_dialMinutes.value + extraMinutes).coerceIn(5, 180)
+        viewModelScope.launch {
+            repository.extendTaskEstimate(currentActive.id, extraMinutes)
+        }
     }
 
     // =========================================================================

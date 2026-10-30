@@ -48,11 +48,14 @@ data class SystemGuardStatus(
     val isAccessibilityServiceEnabled: Boolean = false,
     val isNotificationListenerEnabled: Boolean = false,
     val isDeviceAdminEnabled: Boolean = false,
-    val isMonotonicClockIntact: Boolean = true,
-    val isHmacSignatureValid: Boolean = true,
+    // Issue #28: unmeasured is NOT intact. The old defaults (true /
+    // true / 1 / 12) let every surface print security facts that
+    // were never checked. Unknown now reads as unknown.
+    val isMonotonicClockIntact: Boolean = false,
+    val isHmacSignatureValid: Boolean = false,
     val clockDriftSeconds: Long = 0L,
-    val systemBootCount: Int = 1,
-    val installedLauncherAppsCount: Int = 12
+    val systemBootCount: Int = 0,
+    val installedLauncherAppsCount: Int = 0
 ) {
     val readinessCount: Int
         get() = listOf(
@@ -775,8 +778,11 @@ class MonolithRepository(
 
     suspend fun getSystemGuardStatus(): SystemGuardStatus = withContext(Dispatchers.IO) {
         val active = dao.getActiveSessionSnapshot()
-        var clockIntact = true
-        var hmacIntact = true
+        // Issue #28: with no active session there is nothing to
+        // measure against — intact stays false (unproven), never
+        // a free pass printed as a fact.
+        var clockIntact = false
+        var hmacIntact = false
         var driftSeconds = 0L
 
         if (active != null) {
