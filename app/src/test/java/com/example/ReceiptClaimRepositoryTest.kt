@@ -2,6 +2,8 @@ package com.example
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.example.data.AppBlockTier
+import com.example.data.BlockedAppEntity
 import com.example.data.FinishKind
 import com.example.data.FocusSessionEntity
 import com.example.data.MonolithDatabase
@@ -65,7 +67,11 @@ class ReceiptClaimRepositoryTest {
         isStopwatchMode = stopwatch,
         outcome = outcome,
         heldAppsAtSeal = 3,
-        heldSitesAtSeal = 2
+        heldSitesAtSeal = 2,
+        // Issue #10 (W-41): the tier split of the 3 held apps —
+        // 2 SHUT + 1 PEEK — must thread assembly → publish intact.
+        heldShutAtSeal = 2,
+        heldPeekAtSeal = 1
     )
 
     /**
@@ -107,6 +113,9 @@ class ReceiptClaimRepositoryTest {
         )
         assertEquals(3, receipt.heldAppsAtSeal)
         assertEquals(2, receipt.heldSitesAtSeal)
+        // Issue #10 (W-41): the split survived the publish.
+        assertEquals(2, receipt.heldShutAtSeal)
+        assertEquals(1, receipt.heldPeekAtSeal)
         assertFalse(receipt.faulted)
 
         // A second publish of the same finish — even freshly
@@ -142,6 +151,38 @@ class ReceiptClaimRepositoryTest {
      * RC-01: the row's persisted end stamp wins over any endedAt
      * derived at assembly time.
      */
+    /**
+     * Issue #10 (W-41): the split derivation itself — SHUT and
+     * PEEK counted separately, OPEN excluded, a corrupt tier
+     * string failing CLOSED to SHUT (the #32 resolution law),
+     * and the split always summing to the total on the same list.
+     */
+    @Test
+    fun heldSplit_countsTiersSeparately_andSumsToTotal() {
+        fun app(pkg: String, tier: String, blocked: Boolean = true) = BlockedAppEntity(
+            packageName = pkg,
+            appName = pkg,
+            category = "Social",
+            isBlocked = blocked,
+            blockTier = tier
+        )
+        val repo = repository()
+        val apps = listOf(
+            app("a", AppBlockTier.LOCKED.name),
+            app("b", AppBlockTier.LOCKED.name),
+            app("c", AppBlockTier.PEEK_2M.name),
+            app("d", AppBlockTier.PEEK_2M.name),
+            app("e", AppBlockTier.PEEK_2M.name),
+            app("f", AppBlockTier.OPEN.name, blocked = false),
+            app("g", "GARBAGE", blocked = true)
+        )
+        val (shut, peek) = repo.countHeldAppsSplit(apps)
+        assertEquals(3, shut)
+        assertEquals(3, peek)
+        assertEquals(repo.countHeldApps(apps), shut + peek)
+        assertEquals(6, repo.countHeldApps(apps))
+    }
+
     @Test
     fun truthCar2_rowStampAndAssembly() = runBlocking {
         val repo = repository()
@@ -247,6 +288,36 @@ class ReceiptClaimRepositoryTest {
             FinishKind.ROUTINE_ATTENDED,
             finishKindOf(row(routineId = 5, routineOutcome = "ATTENDED"), false, now)
         )
+        // Audit R1 #40: VALVE_BROKE binds routine rows too — a
+        // judgement the finalise funnel stamps later never
+        // revives the receipt the outcome forbids.
+        assertNull(
+            finishKindOf(
+                row(
+                    outcome = SessionOutcome.VALVE_BROKE,
+                    routineId = 5, routineOutcome = "ATTENDED"
+                ),
+                false, now
+            )
+        )
+        assertNull(
+            finishKindOf(
+                row(
+                    outcome = SessionOutcome.VALVE_BROKE,
+                    routineId = 5, routineOutcome = "PARTIAL"
+                ),
+                false, now
+            )
+        )
+        assertNull(
+            finishKindOf(
+                row(
+                    outcome = SessionOutcome.VALVE_BROKE,
+                    routineId = 5, routineOutcome = null, windowEnd = 5_000_000L
+                ),
+                true, now
+            )
+        )
         val partial = row(routineId = 5, routineOutcome = "PARTIAL")
         assertEquals(FinishKind.ROUTINE_PARTIAL, finishKindOf(partial, false, now))
         assertFalse(finishPulses(FinishKind.ROUTINE_PARTIAL, partial))
@@ -264,5 +335,53 @@ class ReceiptClaimRepositoryTest {
                 isSleepLoadout = true, nowWallMillis = now
             )
         )
+        // Audit R1 #40 (rehydration floor): a stand-down row whose
+        // window end is still ahead of the (rolled-back) wall
+        // clock judges null on the raw clock — and STANDDOWN on
+        // the claimed row's floored clock, max(now, windowEnd),
+        // which is what rehydrateReceipt now feeds the predicate
+        // for any row wearing a claimed №.
+        val rolledBack = row(
+            routineId = 5, routineOutcome = null, windowEnd = now + 5_000_000L
+        )
+        assertNull(finishKindOf(rolledBack, true, now))
+        assertEquals(
+            FinishKind.ROUTINE_SLEEP_STANDDOWN,
+            finishKindOf(
+                rolledBack, true,
+                maxOf(now, rolledBack.windowEndMillis)
+            )
+        )
+    }
+
+    /**
+     * Audit R1 #40: the release-fault stamp rides the claim
+     * transaction. After a faulted claim the row wears BOTH its №
+     * and its fault record — there is no interleaving (and no
+     * crash window) in which one exists without the other, which
+     * is what rehydration's `faulted = row.releaseFaultShield`
+     * has always assumed.
+     */
+    @Test
+    fun faultedClaim_stampsFaultWithTheClaim() = runBlocking {
+        val repo = repository()
+        val db = MonolithDatabase.getInstance(context)
+        val dao = db.monolithDao()
+        val id = dao.insertSession(endedRow(SessionOutcome.ELAPSED_CLEAN)).toInt()
+        val number = repo.claimReceiptNumber(
+            id, "ENDED", faulted = true, faultWallMillis = 4242L
+        )
+        val row = dao.getSessionById(id)!!
+        assertEquals(number, row.receiptNumber)
+        assertTrue(row.releaseFaultShield)
+        assertEquals(4242L, row.releaseFaultedAtWallMillis)
+        // A clean re-claim of the same session mints nothing and
+        // leaves the fault record standing.
+        assertEquals(
+            number,
+            repo.claimReceiptNumber(id, "ENDED", faulted = false)
+        )
+        assertTrue(dao.getSessionById(id)!!.releaseFaultShield)
+        dao.deleteSessionById(id)
     }
 }
