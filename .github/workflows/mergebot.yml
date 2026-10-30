@@ -32,13 +32,22 @@ jobs:
           git merge origin/main --no-edit -m "Merge main into agent/issue-113 (STURM3-11 surge port)"
           MERGE_RC=$?
           STATUS="clean"
+          : > /tmp/report.txt
           if [ $MERGE_RC -ne 0 ]; then
-            python3 /tmp/resolve113.py
+            echo "== unmerged files ==" >> /tmp/report.txt
+            git diff --name-only --diff-filter=U >> /tmp/report.txt
+            echo "== conflict segments ==" >> /tmp/report.txt
+            for f in $(git diff --name-only --diff-filter=U); do
+              echo "--- $f" >> /tmp/report.txt
+              grep -n -A 30 '<<<<<<<' "$f" | head -120 >> /tmp/report.txt
+            done
+            python3 /tmp/resolve113.py > /tmp/resolver-out.txt 2>&1
             RES_RC=$?
+            echo "== resolver rc=$RES_RC ==" >> /tmp/report.txt
+            cat /tmp/resolver-out.txt >> /tmp/report.txt
             if [ $RES_RC -ne 0 ]; then
               git merge --abort
               STATUS="aborted"
-              git diff --name-only --diff-filter=U > /tmp/conflicts.txt 2>/dev/null
             else
               git add -A
               git commit --no-edit
@@ -50,8 +59,7 @@ jobs:
             PUSH_RC=$?
             if [ $PUSH_RC -ne 0 ]; then STATUS="push-failed"; fi
           fi
-          echo "status=$STATUS rc_merge=$MERGE_RC utc=$(date -u +%FT%TZ)" > /tmp/mbstatus.txt
-          cat /tmp/conflicts.txt >> /tmp/mbstatus.txt 2>/dev/null
+          { echo "status=$STATUS rc_merge=$MERGE_RC utc=$(date -u +%FT%TZ)"; cat /tmp/report.txt; } > /tmp/mbstatus.txt
           git checkout -B mergebot/s11 origin/mergebot/s11
           mkdir -p mergebot
           cp /tmp/mbstatus.txt mergebot/status-113.txt
