@@ -1556,6 +1556,21 @@ class MonolithViewModel(
     }
 
     fun removeBlockedSite(domain: String) {
+        // Issue #151 (friend-holds-the-phone): the site list now
+        // carries the same one-way ratchet as the app tiers.
+        // Removing a site WEAKENS the seal — the accessibility
+        // service re-reads the list per event, so the domain
+        // stopped matching inside the very session that was
+        // supposed to be sealed — and anyone holding the phone
+        // could do it: no session check existed on this verb,
+        // unlike tiers (setAppBlockTier) and daily limits. During
+        // an active session the verb refuses with the ratchet's
+        // own warning. Adding a site only tightens, and stays
+        // lawful mid-session, exactly as a tightening tier does.
+        if (activeSession.value?.isActive == true) {
+            triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT UNBLOCK '${domain.uppercase()}' DURING ACTIVE VAULT")
+            return
+        }
         soundEngine.playMechanicalLatch(false)
         viewModelScope.launch { repository.removeBlockedSite(domain) }
     }
