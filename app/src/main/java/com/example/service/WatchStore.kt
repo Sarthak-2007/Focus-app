@@ -607,7 +607,11 @@ object WatchStore {
         val sweepStart = pendingSweepStartWall
         if (sweepStart > 0L) {
             val perms = WatchItemId.PERMISSIONS.mapNotNull { next.items[it] }
-            val completedAt = if (perms.size == WatchItemId.PERMISSIONS.size &&
+            // Statement form (W6-BAU-9F compile cure): the landed
+            // draft bound this if to a val with no else branch —
+            // a Kotlin expression error; the val was never read
+            // (the block shadows it with its own completedAt).
+            if (perms.size == WatchItemId.PERMISSIONS.size &&
                 perms.all { it.measuredWall >= sweepStart }
             ) {
                 val completedAt = perms.maxOf { it.measuredWall }
