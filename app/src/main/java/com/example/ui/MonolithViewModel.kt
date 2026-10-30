@@ -2578,7 +2578,7 @@ class MonolithViewModel(
      *  repository re-signs the row in the same write. */
     fun extendActiveSession(extraMinutes: Int = 10) {
         viewModelScope.launch {
-            repository.extendActiveSessionReturningSession(extraMinutes)
+            repository.extendActiveSession(extraMinutes)
         }
     }
 
