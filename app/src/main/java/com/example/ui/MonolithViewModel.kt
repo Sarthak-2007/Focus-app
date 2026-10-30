@@ -61,16 +61,27 @@ enum class MonolithDestination(val route: String, val label: String) {
  * readout, so the two can never disagree. (1) a session is active →
  * NIGHT, the session owns it; (2) else an enabled, unpaused SLEEP
  * window is active → NIGHT, that routine owns it and is named as
- * printed on its Shield row; (3) else DAY, owned by nothing — and
- * the readout says so. Window state comes from the one derivation
- * (RoutineDerive), never a second computation.
+ * printed on its Shield row; (3) else CLOCK/SYSTEM night → NIGHT,
+ * the night itself owns it (Audit R3b #116: darkness was hostage
+ * to accepting a blocking routine — pausing or disabling SLEEP to
+ * stop its blocking also cost the dark UI, and at 04:00 the app
+ * opened in full light; the one [com.example.service.NightSignal]
+ * now owns this step, the same signal the desk clock, the seal
+ * shot and the sound engine read); (4) else DAY, owned by nothing
+ * — and the readout says so. Window state comes from the one
+ * derivation (RoutineDerive), never a second computation.
+ *
+ * Because step (3) holds night until 06:00, a session or SLEEP
+ * window ending at night can no longer cut to the light scheme in
+ * a dark room: night is held till morning by construction.
  */
 data class ThemeEvaluation(val isNight: Boolean, val readout: String)
 
 fun evaluateTheme(
     sessionActive: Boolean,
     routines: List<com.example.data.RoutineEntity>,
-    nowMillis: Long
+    nowMillis: Long,
+    systemNight: Boolean = false
 ): ThemeEvaluation {
     if (sessionActive) {
         return ThemeEvaluation(true, "AUTO · NIGHT — SESSION ACTIVE")
@@ -86,14 +97,19 @@ fun evaluateTheme(
                 com.example.data.WindowState.OPEN_HELD
             )
     }
-    return if (owner != null) {
+    if (owner != null) {
         val start = String.format(
             Locale.US, "%02d:%02d", owner.startMinutes / 60, owner.startMinutes % 60
         )
-        ThemeEvaluation(true, "AUTO · NIGHT — ${owner.name} $start")
-    } else {
-        ThemeEvaluation(false, "AUTO · DAY — NO ROUTINE OWNS IT")
+        return ThemeEvaluation(true, "AUTO · NIGHT — ${owner.name} $start")
     }
+    if (systemNight) {
+        return ThemeEvaluation(true, "AUTO · NIGHT — SYSTEM DARK MODE")
+    }
+    if (com.example.service.NightSignal.isNightAt(nowMillis)) {
+        return ThemeEvaluation(true, "AUTO · NIGHT — CLOCK 20:00–06:00")
+    }
+    return ThemeEvaluation(false, "AUTO · DAY — NO ROUTINE OWNS IT")
 }
 
 /**
@@ -452,8 +468,13 @@ class MonolithViewModel(
     // ------------------------------------------------------------------
     // THE THEME EVALUATION (chrome C4). One evaluation, two readers:
     // the scheme (through darkTheme) and PARK's printed readout.
-    // Re-derived on a 1-second stamp so a routine boundary swaps the
-    // scheme on its frame — a 0ms cut, never a fade.
+    // Re-derived on a 1-second stamp so a boundary swaps the scheme
+    // within a second of its frame. (Audit R3b #116: the old note
+    // here boasted "a 0ms cut, never a fade" — that cut, fired when
+    // a session/SLEEP window ended at night, floodlit a half-asleep
+    // user. Clock night in the evaluation now holds the night
+    // scheme until 06:00, so no boundary inside the night can cut
+    // to light at all.)
     // ------------------------------------------------------------------
     private val _themeNow = MutableStateFlow(System.currentTimeMillis())
 
@@ -462,7 +483,12 @@ class MonolithViewModel(
         activeSession,
         _themeNow
     ) { routineList, session, now ->
-        evaluateTheme(session?.isActive == true, routineList, now)
+        // The system signal, read live at each derivation: the
+        // phone's own dark mode is a night witness beside the clock.
+        val systemNight = (appContext.resources.configuration.uiMode and
+            android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
+        evaluateTheme(session?.isActive == true, routineList, now, systemNight)
     }.stateIn(
         viewModelScope, SharingStarted.Eagerly,
         ThemeEvaluation(false, "AUTO · DAY — NO ROUTINE OWNS IT")
@@ -950,7 +976,10 @@ class MonolithViewModel(
                 // The theme evaluation's clock stamp (chrome C4):
                 // a routine boundary re-derives the evaluation —
                 // and with it the scheme — within a second of its
-                // frame, as a cut.
+                // frame. Inside clock night the evaluation holds
+                // NIGHT (see evaluateTheme step 3), so a boundary
+                // at night changes the readout's owner, never the
+                // scheme: no floodlight cut in a dark room.
                 _themeNow.value = System.currentTimeMillis()
                 // Shift Always-On Desk Clock figure-8 coordinates every 60 seconds to prevent OLED burn-in
                 if (tickSecondCounter % 60 == 0) {
