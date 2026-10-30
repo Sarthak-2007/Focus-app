@@ -221,7 +221,7 @@ class ExampleRobolectricTest {
     @Test
     fun `verify 3-stop switch labels and partial-credit session banking`() = runBlocking {
         assertEquals("Shut", AppBlockTier.LOCKED.label)
-        assertEquals("2m Knock", AppBlockTier.PEEK_2M.label)
+        assertEquals("2m Peek", AppBlockTier.PEEK_2M.label)
         assertEquals("Open", AppBlockTier.OPEN.label)
 
         // Start a 25-minute session and simulate 5 minutes elapsed before unlatching early

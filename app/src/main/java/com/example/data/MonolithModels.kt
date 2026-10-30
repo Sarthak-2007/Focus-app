@@ -18,12 +18,12 @@ enum class AppBlockTier(
 ) {
     LOCKED(
         label = "Shut",
-        badge = "Blocked",
+        badge = "Shut",
         description = "Blocked while a focus session or protection schedule is active",
-        displayLabel = "Blocked"
+        displayLabel = "Shut"
     ),
     PEEK_2M(
-        label = "2m Knock",
+        label = "2m Peek",
         badge = "2m Peek",
         description = "Allows a mindful 2-minute check-in for urgent messages + 20m cooldown",
         displayLabel = "2m Peek"

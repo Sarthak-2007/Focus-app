@@ -206,21 +206,21 @@ class CascadeDeckRenderTest {
         composeRule.onNodeWithTag("slide_to_start_view").assertExists()
         composeRule.onNodeWithTag("request_disarm_button").assertDoesNotExist()
         composeRule.onNodeWithTag("grace_abort_button").assertDoesNotExist()
-        composeRule.onNodeWithText("SHIELD DIDN'T ANSWER — STILL PROVING.").assertDoesNotExist()
+        composeRule.onNodeWithText("THE SHIELD DIDN'T ANSWER — STILL CHECKING.").assertDoesNotExist()
         capture("cascade_proving_day.png")
     }
 
     @Test
     fun jammedNamesTheUnansweringLink() {
         setDeck(jammed(), dark = false)
-        composeRule.onNodeWithText("SHIELD DIDN'T ANSWER — STILL PROVING.").assertIsDisplayed()
+        composeRule.onNodeWithText("THE SHIELD DIDN'T ANSWER — STILL CHECKING.").assertIsDisplayed()
         capture("cascade_jammed_day.png")
     }
 
     @Test
     fun jammedNamesTheUnansweringLinkAtNight() {
         setDeck(jammed(), dark = true)
-        composeRule.onNodeWithText("SHIELD DIDN'T ANSWER — STILL PROVING.").assertIsDisplayed()
+        composeRule.onNodeWithText("THE SHIELD DIDN'T ANSWER — STILL CHECKING.").assertIsDisplayed()
         capture("cascade_jammed_night.png")
     }
 

@@ -542,7 +542,7 @@ internal fun jamSentenceFor(phase: ArmPhase): RefusalSentence? {
     if (phase !is ArmPhase.Jammed) return null
     val first = phase.jamSet.minByOrNull { it.ordinal } ?: return null
     return RefusalSentence(
-        text = "${first.displayName} DIDN'T ANSWER — STILL PROVING.",
+        text = "${first.plainName} DIDN'T ANSWER — STILL CHECKING.",
         action = null
     )
 }

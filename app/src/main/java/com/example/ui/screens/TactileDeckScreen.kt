@@ -613,7 +613,7 @@ fun TactileDeckScreen(
                     // left; the break is a fact, so it renders.
                     text = when {
                         isSessionRunning && activeSession.isInSafeBreak ->
-                            "BREAK · ${(activeSession.safeBreakSecondsRemaining + 59) / 60} MIN"
+                            "SAFE BREAK · ${(activeSession.safeBreakSecondsRemaining + 59) / 60} MIN"
                         showRunningForm -> "SESSION RUNNING"
                         else -> "TOTAL"
                     },

@@ -111,6 +111,7 @@ private val PLATE_BODY = listOf(
     "HOLD: 60 SECONDS, BANKED EVERY 15 · ONE BREAK A WEEK",
     "PEEK: 2 MINUTES, THEN SHUT AGAIN",
     "COLOUR IS A VERB: ORANGE = COMMIT · INK = SHUT · GREY = PEEK · PORCELAIN = OPEN",
+    "BIND: MONOLITH IS ATTACHED · PROOF: IT JUST CHECKED · SEAL: THE SESSION IS SHUT",
     // UNA-05 (Truth Car 3, words half; Hale W-11, Una's brief):
     // the "FIRED AS SET" clause is STRUCK in this lane. It was
     // falsified on his phone (Oct 29, 20:00 SLEEP no-fire) and the
@@ -119,7 +120,7 @@ private val PLATE_BODY = listOf(
     // restoration is a merge-time act on that evidence, not before.
     "ROUTINES: SET BY HAND ON SHIELD",
     "SITES: KEPT WITH APPS ON SHIELD · DATA: ON THIS PHONE ONLY",
-    "STUDY HOURS: IN YPT",
+    "STUDY HOURS: IN YEOLPUMTA",
     "SOUND: FLOAT-PCM, 4 PARTIALS · POWER: YOUR PHONE"
 )
 
