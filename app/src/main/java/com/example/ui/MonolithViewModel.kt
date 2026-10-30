@@ -195,12 +195,19 @@ enum class PeekWithheld { COOLDOWN, ALREADY_ACTIVE, PEEK_OFF, TIER_LOCKED }
 /**
  * The one peek-offer computation (Truth Car 3, UNA2-01). The offer
  * exists ONLY where a lease can actually be honoured:
- *  - the door must read the lease (APP_TIER / SHIELD_APP — the
- *    sniper, the site blocker and the uninstall guard never do, and
- *    the guard's package is unlisted: startPeekLease would write
- *    to no row and the "peek" would protect nothing),
+ *  - the door must read the lease (APP_TIER / SHIELD_APP / SITE —
+ *    the sniper and the uninstall guard never do, and the guard's
+ *    package is unlisted: startPeekLease would write to no row and
+ *    the "peek" would protect nothing),
  *  - the package must have a row (a null entity never defaults ON),
- *  - its tier must be PEEK_2M, its cooldown spent, no pill active.
+ *  - its cooldown spent, no pill active,
+ *  - and, on the app doors, its tier must be PEEK_2M.
+ * W3 #130: the SITE door's lease is domain-scoped, not tier-scoped —
+ * the browser's own tier governs the app door (an OPEN Chrome is a
+ * legitimate study browser), while the site list is what the site
+ * door holds. Requiring PEEK_2M there would leave blocked sites
+ * with no peek at all in exactly the sessions where the browser is
+ * open: unlimited-or-nothing, the finding's inverted web.
  * Pure, so the offer matrix is unit-tested door by door.
  */
 internal fun peekOfferFor(
@@ -210,6 +217,10 @@ internal fun peekOfferFor(
     pillActive: Boolean
 ): Boolean {
     if (!path.canHonourPeekLease || entity == null || pillActive) return false
+    // W3 #130: the SITE door's lease is domain-scoped, not tier-scoped —
+    // on that door the offer turns on the cooldown alone (the browser's
+    // own tier governs the app door, never the site door).
+    if (path == InterceptPath.SITE) return cooldownLeftSeconds == 0
     // Issue #120 (otp-banking-mid-session): FINANCE is essential
     // infrastructure. A LOCKED bank/UPI/authenticator still offers
     // the peek — the alternative was ending the session through
@@ -286,9 +297,16 @@ internal fun peekWithheldFor(
     // which #120 carved out: a finance row owes the withheld reason
     // below (its tier may be LOCKED while the peek is still on the
     // table), so finance rows fall through instead of stopping here.
-    appEntity?.resolvedTier == AppBlockTier.LOCKED &&
+    // W3 #130 (recomposed at the DURCH-D landing): the SITE door is
+    // exempt from BOTH tier branches — its offer is not tier-gated
+    // (see peekOfferFor), so a withheld site peek is owed its reason
+    // (PEEK_OFF / ALREADY_ACTIVE / COOLDOWN below) regardless of the
+    // browser's app tier, never TIER_LOCKED and never silence.
+    path != InterceptPath.SITE &&
+        appEntity?.resolvedTier == AppBlockTier.LOCKED &&
         appEntity?.category != AppCategory.FINANCE.name -> PeekWithheld.TIER_LOCKED
-    appEntity?.resolvedTier != AppBlockTier.PEEK_2M &&
+    path != InterceptPath.SITE &&
+        appEntity?.resolvedTier != AppBlockTier.PEEK_2M &&
         appEntity?.category != AppCategory.FINANCE.name -> null
     // Hale W-30: a peek length of zero is its own reason — the peek
     // is OFF, not cooling down.
@@ -2585,7 +2603,7 @@ class MonolithViewModel(
      *  repository re-signs the row in the same write. */
     fun extendActiveSession(extraMinutes: Int = 10) {
         viewModelScope.launch {
-            repository.extendActiveSessionReturningSession(extraMinutes)
+            repository.extendActiveSession(extraMinutes)
         }
     }
 
@@ -3572,6 +3590,13 @@ class MonolithViewModel(
         }
         val pkg = state.interceptedPackageName
         val name = state.interceptedAppName.ifBlank { "2m Peek App" }
+        // W3 #130: a peek granted on the SITE door is scoped to the
+        // one domain that door intercepted (the airlock's app name
+        // IS the matched domain there) — the lease rides the
+        // browser's row below, the tag carries its scope.
+        if (state.interceptPath == InterceptPath.SITE && state.interceptedAppName.isNotBlank()) {
+            com.example.service.SitePeekStore.grant(state.interceptedAppName, pkg)
+        }
         soundEngine.playMechanicalLatch(true)
         _airlockState.value = state.copy(isVisible = false)
         // Issue #99 F4 + Issue #114 F1 (merge de-duplication by
@@ -3625,6 +3650,8 @@ class MonolithViewModel(
         val peek = _floatingPeekPill.value
         if (!peek.isActive) return
         soundEngine.playHarmonicSeal(arming = true)
+        // W3 #130: the site peek's scope tag dies with its lease.
+        com.example.service.SitePeekStore.clearIf(peek.packageName)
         _floatingPeekPill.value = FloatingPeekPillState(isActive = false)
         viewModelScope.launch {
             repository.recordPeekEnded(peek.packageName)

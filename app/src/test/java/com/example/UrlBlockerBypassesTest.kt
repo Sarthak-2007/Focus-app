@@ -263,6 +263,16 @@ class UrlBlockerBypassesTest {
         // An embedded YouTube video cannot be proven a Short from
         // its embed URL, so the Shorts path rule stays out of the
         // embed scan — that residue is documented, not papered over.
-        assertNull(matchEmbeddedBlockedDomain("youtube.com/embed/abc123", defaults))
+        assertNull(matchEmbeddedBlockedDomain("youtube.com/embed/abc123", listOf("youtube.com/shorts")))
+        // W3 #130 composition (GESTALT ruling on the #130 landing,
+        // flagged in ISSUE-130-WAVE3-REPORT): #130's seed adds the
+        // bare "youtube.com" rule to defaults, and a bare host rule
+        // DOES fire on embeds — so on defaults the same embed now
+        // matches by the seeded host rule, never by the Shorts
+        // path rule (which still never fires here, proven above).
+        assertEquals(
+            "youtube.com",
+            matchEmbeddedBlockedDomain("youtube.com/embed/abc123", defaults)
+        )
     }
 }

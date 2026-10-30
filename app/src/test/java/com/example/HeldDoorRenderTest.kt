@@ -46,7 +46,7 @@ class HeldDoorRenderTest {
 
     private fun setIdleDeck(capturedCount: Int) {
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 TactileDeckScreen(
                     activeSession = null,
                     dialMinutes = 50,
