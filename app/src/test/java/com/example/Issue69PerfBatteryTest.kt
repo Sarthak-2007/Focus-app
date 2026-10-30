@@ -101,6 +101,22 @@ class Issue69PerfBatteryTest {
     }
 
     @Test
+    fun f1_dialerIsNeverInTheBlockedSet() {
+        // W3 #134, composed at the merge with main: the dialer
+        // exclusion rides the same one-snapshot derivation.
+        val now = 1_000_000L
+        val rows = listOf(
+            app("dialer", AppBlockTier.LOCKED),
+            app("locked", AppBlockTier.LOCKED)
+        )
+        val iteration = shieldIterationApps(
+            rows, isInSafeBreak = false, nowMono = now,
+            isDialerPackage = { it == "dialer" }
+        )
+        assertEquals(setOf("locked"), iteration.blockedPackages)
+    }
+
+    @Test
     fun f1_safeBreakUnblocksPeekTier() {
         val now = 1_000_000L
         val rows = listOf(app("peek", AppBlockTier.PEEK_2M, leaseEnd = 0L))
@@ -135,6 +151,17 @@ class Issue69PerfBatteryTest {
         assertTrue(
             guard.shouldPost(
                 shieldNotificationKey("Monolith • Study", "24:00 left • 4 reaches blocked", "big", 3)
+            )
+        )
+        // A grant lost mid-session changes the repair set (#337,
+        // composed at the merge) -> re-post even with identical
+        // text, so the repair button appears with the truth.
+        assertTrue(
+            guard.shouldPost(
+                shieldNotificationKey(
+                    "Monolith • Study", "24:00 left • 4 reaches blocked", "big", 3,
+                    repairKey = "ACCESSIBILITY"
+                )
             )
         )
     }
