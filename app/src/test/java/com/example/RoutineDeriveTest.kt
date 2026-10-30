@@ -207,7 +207,11 @@ class RoutineDeriveTest {
     fun excusedClosedWindow_judgesNothing_neverMissed() {
         val now = at(3, 8, 0) // Thu 08:00; latest closed = Wed window
         val excused = setOf(filingIso(at(2, 9, 0))) // Wed's filing date
-        val d = derive(listOf(routine()), now, excused = excused).derivations.single()
+        // Edited Monday, so the Wed window provably postdates the
+        // edit horizon — unexcused it would judge MISSED (issue #39
+        // F3); the null below is the J6b amnesty speaking, not the
+        // horizon's UNKNOWN.
+        val d = derive(listOf(routine(editedAt = at(0, 0, 0))), now, excused = excused).derivations.single()
         assertNull(d.judgement)
         assertEquals(WindowState.OUTSIDE, d.state)
     }
@@ -226,7 +230,9 @@ class RoutineDeriveTest {
         // Control: a different date's excuse does not leak.
         val now = at(3, 8, 0)
         val excused = setOf(filingIso(at(0, 9, 0))) // Monday only
-        val d = derive(listOf(routine()), now, excused = excused).derivations.single()
+        // Edited Monday (issue #39 F3 horizon), so MISSED is the
+        // judgement the excuse would have to suppress to leak.
+        val d = derive(listOf(routine(editedAt = at(0, 0, 0))), now, excused = excused).derivations.single()
         assertEquals(WindowJudgement.MISSED, d.judgement)
     }
 
