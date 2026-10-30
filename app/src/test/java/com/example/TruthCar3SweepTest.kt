@@ -35,6 +35,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.shadows.ShadowLooper
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.xmlpull.v1.XmlPullParser
@@ -408,6 +409,19 @@ class TruthCar3SweepRoboTest {
 
             val vm = freshViewModel()
             vm.applySmartLoadout(SmartLoadout.SLEEP)
+            // #166 cure: production rests the cap only inside the
+            // async persist coroutine (R1 #38 — the cap may move only
+            // on a confirmed persisted pick), so drive the main
+            // looper and poll until the cap lands before asserting.
+            val capDeadlineMs = System.currentTimeMillis() + 10_000L
+            while (vm.loadoutCapIndex.value != 2) {
+                ShadowLooper.idleMainLooper()
+                if (vm.loadoutCapIndex.value == 2) break
+                if (System.currentTimeMillis() > capDeadlineMs) {
+                    throw AssertionError("cap never rested on the applied loadout")
+                }
+                Thread.sleep(25L)
+            }
             assertEquals(2, vm.loadoutCapIndex.value)
 
             // Recreation: a NEW ViewModel (new process, new
