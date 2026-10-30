@@ -46,7 +46,60 @@ fun guardLineFor(snapshot: WatchSnapshot?, nowMono: Long): GuardLinePrint {
     val firstLack = prints.first { it.second != PermPrint.GRANTED }
     val name = when (firstLack.second) {
         PermPrint.STALE -> "${firstLack.first.boardName} STALE"
+        // UNSET is its own word (issue #9, Zahn Z-7): the usage
+        // door's "no record" answer is named, never dressed as a
+        // measured denial.
+        PermPrint.UNSET -> "${firstLack.first.boardName} UNSET"
         else -> firstLack.first.boardName
     }
     return GuardLinePrint("GUARD $warranted/4 — $name")
+}
+
+/**
+ * PARK's headline (issue #9, Zahn Z-2 / Ruhe R3a): the SAME law
+ * as the header line, in the drawer's dress — a count only off a
+ * fully measured counted set, `GUARD — NOT CHECKED` in every
+ * unmeasured state (null snapshot, EMPTY snapshot, partial set).
+ * Before this helper the headline read countedWarranted raw and
+ * printed a fabricated `GUARD 0/4` on cold open beside the
+ * header's honest NOT CHECKED.
+ */
+fun parkGuardHeadline(snapshot: WatchSnapshot?, nowMono: Long): String {
+    val counted = snapshot?.let { WatchStore.countedWarranted(it, nowMono) }
+    return if (counted != null) "GUARD $counted/4" else "GUARD — NOT CHECKED"
+}
+
+/**
+ * PARK's foot signature count segment (issue #9, Zahn Z-2):
+ * `{n}/4` off a fully measured counted set, `NOT CHECKED`
+ * otherwise — the foot may never sign a fabricated count either.
+ */
+fun parkGuardCountSegment(snapshot: WatchSnapshot?, nowMono: Long): String {
+    val counted = snapshot?.let { WatchStore.countedWarranted(it, nowMono) }
+    return if (counted != null) "$counted/4" else "NOT CHECKED"
+}
+
+/**
+ * The seal freeze's Guard line, judged (issue #9, Zahn Z-4): a
+ * freeze captured at a MEASURED print holds for the session's
+ * whole life, as the freeze law says. A freeze captured at the
+ * NOT CHECKED floor holds nothing — it is ignorance, not a seal
+ * fact — so it falls through to the live derivation until a
+ * measured capture replaces it (the ViewModel re-captures it on
+ * the first measured emission). Before this, a session restored
+ * after process death could hold a frozen NOT CHECKED header for
+ * its whole life on a fully measured machine.
+ */
+fun frozenGuardLineOrLive(
+    freeze: GuardLinePrint?,
+    sessionActive: Boolean,
+    snapshot: WatchSnapshot?,
+    nowMono: Long
+): GuardLinePrint {
+    if (sessionActive && freeze != null &&
+        freeze.text != "GUARD — NOT CHECKED"
+    ) {
+        return freeze
+    }
+    return guardLineFor(snapshot, nowMono)
 }

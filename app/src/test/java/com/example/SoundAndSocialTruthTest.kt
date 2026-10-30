@@ -16,6 +16,7 @@ import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
 import com.example.service.InterceptorState
 import com.example.service.PermPrint
+import com.example.service.PermState
 import com.example.service.SessionSealTransitions
 import com.example.service.SoundEffectsSetting
 import com.example.service.TactileSoundEngine
@@ -406,7 +407,7 @@ class SoundAndSocialTruthTest {
                     WatchStore.permPrintAt(snap, WatchItemId.USAGE_ACCESS, nowMono) !=
                     PermPrint.GRANTED
                 ) {
-                    WatchStore.runSweep { true }
+                    WatchStore.runSweep { PermState.GRANTED }
                 }
                 WatchStore.snapshots.value
                     .measurement(WatchItemId.SOCIAL_SITES)

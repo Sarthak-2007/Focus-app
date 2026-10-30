@@ -249,6 +249,11 @@ fun ParkDrawer(
     LaunchedEffect(visible) {
         while (visible) {
             nowMono = SystemClock.elapsedRealtime()
+            // Issue #9 (Zahn Z-6): a sweep whose set can no
+            // longer complete is abandoned on the record, so a
+            // dead query gets a DID NOT ANSWER face instead of
+            // an eternal CHECKING.
+            WatchStore.expirePendingSweepIfStale()
             delay(5_000L)
         }
     }
@@ -258,10 +263,11 @@ fun ParkDrawer(
             WatchStore.permPrintAt(snap, it, nowMono) == PermPrint.MISSING
         }
     }
-    // The Healing Staircase's print half (P-5, wave-2): how many
-    // doors lack, in board order — the FIX key names its place in
-    // the walk (FIX 1 OF 3). The walk itself is sequential by
-    // construction: on return the key re-names the next lack.
+    // The FIX queue's print half (P-5, wave-2; honest form per
+    // Zahn Z-5): how many doors lack, in board order — the FIX
+    // key names the first lack and how many more stand open.
+    // The queue is sequential by construction: on return the
+    // key re-names the next lack.
     val missingItems = snapshot?.let { snap ->
         WatchItemId.PERMISSIONS.filter {
             WatchStore.permPrintAt(snap, it, nowMono) == PermPrint.MISSING
@@ -281,8 +287,25 @@ fun ParkDrawer(
     // the key, in parity with LAST PROVED (the same completion
     // advances both). -1 = no check in flight.
     var checkPressGen by remember { mutableStateOf(-1) }
-    val checking = checkPressGen >= 0 &&
+    // Issue #9 (Zahn Z-6): the press's sweep FAILED when the
+    // store records its generation as abandoned — the set never
+    // landed inside its coexistence window, so CHECKING must end
+    // with a face, not spin until the drawer closes.
+    val checkFailed = checkPressGen >= 0 &&
+        (snapshot?.lastFailedSweepGen ?: 0) == checkPressGen
+    val checking = checkPressGen >= 0 && !checkFailed &&
         (snapshot?.lastCompletedSweepGen ?: 0) < checkPressGen
+    // Ruhe R3b (issue #9): the DISPLAY state also shows a sweep
+    // the host fired (PARK open) — a sweep is in flight while the
+    // store's dispatched generation is ahead of both its
+    // completed and its failed generations. The verdict effects
+    // below stay keyed to the MANUAL press exactly as before: an
+    // open-sweep landing plays no click and sets no verdict.
+    val dispatchedGen = WatchStore.currentSweepGen()
+    val sweepInFlight = dispatchedGen > 0 &&
+        (snapshot?.lastCompletedSweepGen ?: 0) < dispatchedGen &&
+        (snapshot?.lastFailedSweepGen ?: 0) < dispatchedGen
+    val checkingDisplay = checking || sweepInFlight
     // The last completed check's verdict, when it landed unwhole
     // (Designer's failed state, issue-9 spec): a persistent line
     // under the CHECK key naming the first unproved counted item.
@@ -292,8 +315,25 @@ fun ParkDrawer(
     // the next press, on close, and whenever the board reads
     // whole by any road (a FIX return included).
     var lastCheckLackName by remember { mutableStateOf<String?>(null) }
+    // Ruhe R2: the verdict's landing wall time — the line prints
+    // dated, as history, not as a present-tense standing charge.
+    var lastCheckLackWall by remember { mutableStateOf<Long?>(null) }
+    // Zahn Z-6: the DID NOT ANSWER face's door — the first
+    // counted door the failed sweep never stamped.
+    var lastCheckUnansweredName by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(checkFailed) {
+        if (checkFailed) {
+            val snap = snapshot
+            lastCheckUnansweredName = snap?.let {
+                WatchStore.firstUnansweredForGen(it, checkPressGen)?.boardName
+            } ?: WatchItemId.COUNTED.first().boardName
+            lastCheckLackName = null
+            lastCheckLackWall = null
+            checkPressGen = -1
+        }
+    }
     LaunchedEffect(checking) {
-        if (!checking && checkPressGen >= 0) {
+        if (!checking && checkPressGen >= 0 && !checkFailed) {
             // The set has landed. Two wholes live on this
             // surface, named (Critic C-11): CHECKING completed
             // on the PROVED SET (all six — LAST PROVED's own
@@ -314,8 +354,10 @@ fun ParkDrawer(
             if (snap != null && firstLack == null) {
                 soundEngine?.playFirmClick()
                 lastCheckLackName = null
+                lastCheckLackWall = null
             } else {
                 lastCheckLackName = firstLack?.boardName
+                lastCheckLackWall = System.currentTimeMillis()
             }
             checkPressGen = -1
         }
@@ -328,12 +370,16 @@ fun ParkDrawer(
             }
         ) {
             lastCheckLackName = null
+            lastCheckLackWall = null
+            lastCheckUnansweredName = null
         }
     }
     LaunchedEffect(visible) {
         if (!visible) {
             checkPressGen = -1
             lastCheckLackName = null
+            lastCheckLackWall = null
+            lastCheckUnansweredName = null
         }
     }
 
@@ -361,11 +407,11 @@ fun ParkDrawer(
         label = "park_fix_dip"
     )
     val checkDip by animateDpAsState(
-        targetValue = if (checking) 1.dp else 0.dp,
+        targetValue = if (checkingDisplay) 1.dp else 0.dp,
         animationSpec = tween(
-            durationMillis = if (checking) MonolithKin.PRESS_MS
+            durationMillis = if (checkingDisplay) MonolithKin.PRESS_MS
             else MonolithKin.DRAWER_CLOSE_MS,
-            easing = if (checking) MonolithKin.EasingSeat
+            easing = if (checkingDisplay) MonolithKin.EasingSeat
             else MonolithKin.EasingThrow
         ),
         label = "park_check_dip"
@@ -376,15 +422,17 @@ fun ParkDrawer(
     // when pressing CHECK is the answer — a row STALE or
     // UNMEASURED, or a sweep in flight. MISSING does not promote
     // it: a lack's answer is the FIX key above it.
-    val checkNeeded = if (snapshot == null) {
-        true
-    } else {
-        WatchItemId.PERMISSIONS.any { item ->
-            val p = WatchStore.permPrintAt(snapshot, item, nowMono)
-            p == PermPrint.STALE || p == PermPrint.UNMEASURED
-        }
+    // Ruhe R1: the dress reads the COUNTED four — the whole the
+    // key's own verdict judges. OVERLAY and BATTERY print their
+    // states on their own rows but never promote the verb: they
+    // are NOT COUNTED, and CHECK's verdict does not judge them.
+    val checkNeeded = WatchItemId.COUNTED.any { item ->
+        snapshot == null ||
+            WatchStore.permPrintAt(snapshot, item, nowMono).let {
+                it == PermPrint.STALE || it == PermPrint.UNMEASURED
+            }
     }
-    val checkInk = checking || checkNeeded
+    val checkInk = checkingDisplay || checkNeeded
 
     // The FIX return's PRINTED verdict (AUDIT-park P-5, wave-2):
     // Muede overruled the silent verdict for the drawer's real
@@ -594,9 +642,14 @@ fun ParkDrawer(
                 // here to the foot colophon (§1.3/§4.8): it is a
                 // six-permission complete-set instant and may not
                 // sit as the four's headline.
-                val countedNow = snapshot?.let { WatchStore.countedWarranted(it, nowMono) }
+                // Issue #9 (Zahn Z-2 / Ruhe R3a): the headline
+                // derives by the Guard line's own law — a count
+                // only off a fully measured counted set, NOT
+                // CHECKED in every unmeasured state. The raw
+                // countedWarranted read printed a fabricated
+                // GUARD 0/4 on cold open.
                 Text(
-                    text = if (countedNow != null) "GUARD $countedNow/4" else "GUARD",
+                    text = parkGuardHeadline(snapshot, nowMono),
                     style = DrawerHeaderTextStyle,
                     color = scheme.onBackground,
                     modifier = Modifier.testTag("park_guard_headline")
@@ -610,7 +663,12 @@ fun ParkDrawer(
                 val warrantPrint = WatchStore.printState(warrant, nowMono)
                 ParkBoardRow(
                     name = "WARRANT",
-                    word = warrantPrint?.name ?: "NOT CHECKED",
+                    // Issue #9 (Zahn Z-12): UNREAD, not NOT
+                    // CHECKED — the header's NOT CHECKED means
+                    // the counted four are unmeasured; this row's
+                    // null means no warrant read was supplied.
+                    // One phrase may not serve two ignorances.
+                    word = warrantPrint?.name ?: "UNREAD",
                     wordInk = when (warrantPrint) {
                         WarrantState.LIVE -> ParkWordInk.QUIET
                         WarrantState.UNPROVEN -> ParkWordInk.HALF
@@ -655,12 +713,17 @@ fun ParkDrawer(
                                 PermPrint.GRANTED -> "GRANTED"
                                 PermPrint.MISSING -> "MISSING"
                                 PermPrint.STALE -> "STALE"
+                                // Zahn Z-7: UNSET is its own
+                                // word — the usage door's "no
+                                // record", never a fresh MISSING.
+                                PermPrint.UNSET -> "UNSET"
                                 PermPrint.UNMEASURED -> null
                             },
                             wordInk = when (print) {
                                 PermPrint.GRANTED,
                                 PermPrint.UNMEASURED -> ParkWordInk.QUIET
-                                PermPrint.STALE -> ParkWordInk.HALF
+                                PermPrint.STALE,
+                                PermPrint.UNSET -> ParkWordInk.HALF
                                 PermPrint.MISSING -> ParkWordInk.FULL
                             }
                         )
@@ -850,11 +913,15 @@ fun ParkDrawer(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                // The staircase's label (P-5): with
-                                // several lacks, the key names its
-                                // place in the walk — FIX 1 OF 3.
+                                // The queue's label (P-5, honest
+                                // form per Zahn Z-5): the key always
+                                // names the FIRST lack, so a "1 OF n"
+                                // numerator could never climb — it
+                                // impersonated a walk's progress.
+                                // The key names its door and how
+                                // many more stand open behind it.
                                 text = if (missingItems.size > 1) {
-                                    "FIX 1 OF ${missingItems.size} — ${item.boardName}"
+                                    "FIX — ${item.boardName} · ${missingItems.size - 1} MORE OPEN"
                                 } else {
                                     "FIX — ${item.boardName}"
                                 },
@@ -919,29 +986,50 @@ fun ParkDrawer(
                                     Modifier.pointerInput(Unit) {
                                         detectTapGestures(
                                             onPress = {
-                                                // Dispatch first, then
-                                                // record the NEW sweep's
-                                                // generation — the press
-                                                // is answered only by
-                                                // the sweep it caused.
-                                                // A press while CHECKING
-                                                // re-dispatches and
-                                                // re-bases (Critic C-2):
-                                                // the verb itself is the
-                                                // escape from a query
-                                                // that never returns; no
-                                                // timer ever declares
-                                                // anything here.
-                                                onCheckClick()
-                                                checkPressGen =
-                                                    WatchStore.currentSweepGen()
-                                                lastCheckLackName = null
-                                                soundEngine?.playSeatKnock(
-                                                    durationMs = 10,
-                                                    amplitude01 = if (isNight) 0.06f else 0.1f,
-                                                    pitchHz = 300f
-                                                )
-                                                tryAwaitRelease()
+                                                // Zahn Z-11 + Ruhe R3b:
+                                                // the knock sounds on
+                                                // DOWN, and only from
+                                                // idle — a re-press
+                                                // while CHECKING shows
+                                                // is silent. The
+                                                // DISPATCH waits for a
+                                                // confirmed release
+                                                // (Hof T-1, the FIX
+                                                // key's own law): a
+                                                // scroll that merely
+                                                // starts on this key
+                                                // fires no sweep and
+                                                // clears no verdict.
+                                                if (!checkingDisplay) {
+                                                    soundEngine?.playSeatKnock(
+                                                        durationMs = 10,
+                                                        amplitude01 = if (isNight) 0.06f else 0.1f,
+                                                        pitchHz = 300f
+                                                    )
+                                                }
+                                                val released =
+                                                    tryAwaitRelease()
+                                                if (released) {
+                                                    // Dispatch first, then
+                                                    // record the NEW
+                                                    // sweep's generation —
+                                                    // the press is answered
+                                                    // only by the sweep it
+                                                    // caused. A press while
+                                                    // CHECKING re-dispatches
+                                                    // and re-bases (Critic
+                                                    // C-2): the verb itself
+                                                    // is the escape from a
+                                                    // query that never
+                                                    // returns; no timer ever
+                                                    // declares anything here.
+                                                    onCheckClick()
+                                                    checkPressGen =
+                                                        WatchStore.currentSweepGen()
+                                                    lastCheckLackName = null
+                                                    lastCheckLackWall = null
+                                                    lastCheckUnansweredName = null
+                                                }
                                             }
                                         )
                                     }
@@ -951,24 +1039,49 @@ fun ParkDrawer(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = if (checking) "CHECKING" else "CHECK",
+                            text = if (checkingDisplay) "CHECKING" else "CHECK",
                             style = PrimaryButtonTextStyle,
                             color = if (checkInk) onInkControlFill() else scheme.onBackground,
                             maxLines = 1
                         )
                     }
-                    // The failed check's verdict line: print, not a
-                    // control — full ink, the board's own lack dress,
-                    // ruled under like a board line. It persists
-                    // until the board reads whole or the drawer
-                    // closes; it never blames a door that answered.
-                    val lackName = lastCheckLackName
-                    if (lackName != null && !checking) {
+                    // Zahn Z-6: the DID NOT ANSWER face — a sweep
+                    // the store abandoned uncompleted. Board-row
+                    // grammar, full ink: this one IS a present
+                    // failure, and it names the door that stayed
+                    // silent, never a door that answered. Persists
+                    // until the next press, a whole board, or close.
+                    val unansweredName = lastCheckUnansweredName
+                    if (unansweredName != null && !checkingDisplay) {
                         Spacer(modifier = Modifier.height(16.dp))
                         ParkBoardRow(
-                            name = "NOT PROVED",
-                            word = lackName,
+                            name = "DID NOT ANSWER",
+                            word = unansweredName,
                             wordInk = ParkWordInk.FULL
+                        )
+                    }
+                    // Ruhe R2: the unwhole landing's verdict leaves
+                    // the board's grammar — it is the act's dated
+                    // receipt, printed in the footline's register
+                    // (Anonymous Pro 11sp, quiet ink): the named
+                    // door's own row is the single full-ink
+                    // statement of the lack. It persists until the
+                    // board reads whole or the drawer closes; it
+                    // never blames a door that answered.
+                    val lackName = lastCheckLackName
+                    val lackWall = lastCheckLackWall
+                    if (lackName != null && !checkingDisplay) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "NOT PROVED — $lackName" +
+                                (lackWall?.let {
+                                    " · " + SimpleDateFormat("HH:mm", Locale.US)
+                                        .format(Date(it))
+                                } ?: ""),
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("park_check_verdict")
                         )
                     }
                 }
@@ -1187,7 +1300,11 @@ fun ParkDrawer(
                 if (snapshot != null) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "GUARD ···· ${WatchStore.countedWarranted(snapshot, nowMono)}/4 · " +
+                        // Zahn Z-2: the foot signs by the same
+                        // gated law as the headline — NOT CHECKED,
+                        // never a fabricated count, in every
+                        // unmeasured state.
+                        text = "GUARD ···· ${parkGuardCountSegment(snapshot, nowMono)} · " +
                             SimpleDateFormat("HH:mm", Locale.US).format(Date()),
                         fontFamily = AnonymousProFamily,
                         fontSize = 11.sp,

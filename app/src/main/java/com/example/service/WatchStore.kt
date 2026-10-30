@@ -112,8 +112,12 @@ enum class WatchItemId(val boardName: String, val counted: Boolean) {
     }
 }
 
-/** Permission-family value. The two families never cross (spec §4.2). */
-enum class PermState { GRANTED, MISSING }
+/** Permission-family value. The two families never cross (spec §4.2).
+ *  UNSET is the usage door's third truth (issue #9, Zahn Z-7): the
+ *  OS answered "no grant record" (AppOps MODE_DEFAULT) — neither a
+ *  measured grant nor a measured denial, and never collapsed into
+ *  MISSING again. Only USAGE_ACCESS stamps it. */
+enum class PermState { GRANTED, MISSING, UNSET }
 
 /** Interceptor-family value. */
 enum class InterceptorState { RUNNING, PAUSED, OFF }
@@ -148,6 +152,13 @@ data class WatchSnapshot(
      *  re-stamps or an earlier sweep's late landings. 0 = no sweep
      *  has completed in this process. */
     val lastCompletedSweepGen: Int = 0,
+    /** The generation of the latest sweep ABANDONED uncompleted
+     *  (issue #9, Zahn Z-6): its set never landed inside the
+     *  board's 45s coexistence window, so the store says so —
+     *  PARK's CHECK key reads this to print DID NOT ANSWER
+     *  instead of sitting in CHECKING forever. 0 = no sweep has
+     *  been abandoned in this process. */
+    val lastFailedSweepGen: Int = 0,
     /** Emission generation (issue #48): bumped by [WatchStore.poke]
      *  so a poke is a REAL emission — StateFlow suppresses equal
      *  values, and a bare copy() of a data class is equal to the
@@ -164,7 +175,7 @@ data class WatchSnapshot(
 
 /** What a permission line prints at a given instant (spec §4.2):
  *  never-measured, the measured value, or its stale derivative. */
-enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE }
+enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE, UNSET }
 
 object WatchStore {
 
@@ -335,26 +346,52 @@ object WatchStore {
      * When all six carry this sweep's generation, LAST PROVED
      * advances to the set's completion instant.
      */
-    fun runSweep(query: (WatchItemId) -> Boolean) {
+    fun runSweep(query: (WatchItemId) -> PermState?) {
         val gen = ++sweepGen
         pendingSweepGen = gen
         pendingSweepStartWall = System.currentTimeMillis()
         for (item in WatchItemId.PERMISSIONS) {
             sweepScope.launch {
-                // A query that THROWS stamps nothing (Critic
-                // C-9): a crashed question — AppOps binder
-                // failure, an OEM SecurityException — is not a
-                // measured "no". The item keeps its old word and
-                // its old age (partial truth), and the set cannot
-                // complete on it.
-                val granted = try {
+                // A query that THROWS — or answers null, "cannot
+                // say" — stamps nothing (Critic C-9): a crashed
+                // question — AppOps binder failure, an OEM
+                // SecurityException — is not a measured "no". The
+                // item keeps its old word and its old age (partial
+                // truth), and the set cannot complete on it.
+                val state = try {
                     query(item)
                 } catch (e: Exception) {
                     return@launch
-                }
-                stampPermission(item, granted, gen)
+                } ?: return@launch
+                stampPermissionState(item, state, gen)
             }
         }
+    }
+
+    /** Abandon the in-flight sweep if its coexistence window has
+     *  closed (issue #9, Zahn Z-6): past [STALE_AFTER_MS] from
+     *  dispatch its set can never complete (the publish rule
+     *  already refuses it), so the failure is RECORDED —
+     *  [WatchSnapshot.lastFailedSweepGen] takes the abandoned
+     *  generation — instead of leaving every reader waiting on a
+     *  completion that is no longer possible. Called by publish()
+     *  on every emission and by PARK's open tick; idempotent.
+     *  Returns true when this call abandoned a sweep. */
+    fun expirePendingSweepIfStale(
+        nowWall: Long = System.currentTimeMillis()
+    ): Boolean {
+        val start = pendingSweepStartWall
+        if (start <= 0L || nowWall - start <= STALE_AFTER_MS) return false
+        val abandoned = pendingSweepGen
+        pendingSweepStartWall = 0L
+        publish { current ->
+            if (current.lastFailedSweepGen != abandoned) {
+                current.copy(lastFailedSweepGen = abandoned)
+            } else {
+                current
+            }
+        }
+        return true
     }
 
     /** Interceptor inputs, pushed by the ViewModel. A change is a
@@ -451,6 +488,10 @@ object WatchStore {
         val m = snapshot.items[item] ?: return PermPrint.UNMEASURED
         val perm = m.perm ?: return PermPrint.UNMEASURED
         return when {
+            // UNSET never stales and never reads as MISSING: it is
+            // the OS's own "no record" answer, printed as itself
+            // (issue #9, Zahn Z-7).
+            perm == PermState.UNSET -> PermPrint.UNSET
             perm == PermState.GRANTED && nowMono - m.measuredMono > STALE_AFTER_MS ->
                 PermPrint.STALE
             perm == PermState.GRANTED -> PermPrint.GRANTED
@@ -459,22 +500,49 @@ object WatchStore {
     }
 
     /** "Currently warranted GRANTED" for the Guard line's count:
-     *  GRANTED and not stale (spec §2.3). */
-    fun countedWarranted(snapshot: WatchSnapshot, nowMono: Long): Int =
-        WatchItemId.COUNTED.count { permPrintAt(snapshot, it, nowMono) == PermPrint.GRANTED }
+     *  GRANTED and not stale (spec §2.3). GATED on measurement
+     *  (issue #9, Zahn Z-2): if ANY counted door is UNMEASURED
+     *  the count does not exist and this returns null — a count
+     *  computed off a partial set is a fabrication (the cold
+     *  open's `GUARD 0/4` on an EMPTY snapshot was exactly that).
+     *  UNSET does not gate: it is a measured answer, printed as
+     *  its own word on its row and named by the Guard line; it
+     *  simply does not count as warranted. */
+    fun countedWarranted(snapshot: WatchSnapshot, nowMono: Long): Int? {
+        val prints = WatchItemId.COUNTED.map { permPrintAt(snapshot, it, nowMono) }
+        if (prints.any { it == PermPrint.UNMEASURED }) return null
+        return prints.count { it == PermPrint.GRANTED }
+    }
+
+    /** The first counted door generation [gen]'s sweep never
+     *  ANSWERED: its stamp carries another generation (or it was
+     *  never stamped at all). A door that answered MISSING has
+     *  answered — it is a lack, not a silence. PARK's DID NOT
+     *  ANSWER face names this door (issue #9, Zahn Z-6). */
+    fun firstUnansweredForGen(snapshot: WatchSnapshot, gen: Int): WatchItemId? =
+        WatchItemId.COUNTED.firstOrNull { item ->
+            snapshot.items[item]?.sweepGen != gen
+        }
 
     // ------------------------------------------------------------------
     // Internals
     // ------------------------------------------------------------------
 
-    private fun stampPermission(item: WatchItemId, granted: Boolean, gen: Int = 0) {
+    private fun stampPermission(item: WatchItemId, granted: Boolean, gen: Int = 0) =
+        stampPermissionState(
+            item,
+            if (granted) PermState.GRANTED else PermState.MISSING,
+            gen
+        )
+
+    private fun stampPermissionState(item: WatchItemId, state: PermState, gen: Int = 0) {
         val mono = SystemClock.elapsedRealtime()
         val wall = System.currentTimeMillis()
         publish { current ->
             current.withMeasurement(
                 WatchMeasurement(
                     item = item,
-                    perm = if (granted) PermState.GRANTED else PermState.MISSING,
+                    perm = state,
                     measuredMono = mono,
                     measuredWall = wall,
                     sweepGen = gen
@@ -510,22 +578,25 @@ object WatchStore {
             }
         }
         // LAST PROVED: when every permission item carries a
-        // measurement from the in-flight sweep's era (at or after
-        // its dispatch), the set is complete and the instant is the
-        // last landing's wall time. A partial set never advances it.
-        // The set must also COEXIST (Critic C-5): the era test
-        // alone let five landings and a sixth stamp hours later —
-        // from any other road — "complete" a set that never stood
-        // together, advancing LAST PROVED over five STALE rows.
-        // The window is the board's own freshness law: a set whose
-        // span exceeds STALE_AFTER_MS is not a set. Past the
-        // window the sweep is abandoned; its late stamps remain
+        // measurement stamped by the in-flight sweep ITSELF —
+        // sweepGen == the pending generation, tested on the stamp,
+        // not inferred from wall-clock era (issue #9, Zahn Z-1:
+        // the era test let gen-0 shield-loop re-stamps, presence
+        // alone every ~2s, and earlier sweeps' late landings
+        // "complete" a set they never served, and publish() then
+        // badged that set with the press's generation). A partial
+        // set never advances it. The set must also COEXIST
+        // (Critic C-5): the window is the board's own freshness
+        // law — a set whose span from dispatch exceeds
+        // STALE_AFTER_MS is not a set. Past the window the sweep
+        // is abandoned AND the abandonment is recorded
+        // (lastFailedSweepGen, Zahn Z-6); its late stamps remain
         // ordinary measurements and complete nothing.
         val sweepStart = pendingSweepStartWall
         if (sweepStart > 0L) {
             val perms = WatchItemId.PERMISSIONS.mapNotNull { next.items[it] }
             val completedAt = if (perms.size == WatchItemId.PERMISSIONS.size &&
-                perms.all { it.measuredWall >= sweepStart }
+                perms.all { it.sweepGen == pendingSweepGen }
             ) {
                 perms.maxOf { it.measuredWall }
             } else {
@@ -551,6 +622,9 @@ object WatchStore {
                 }
                 pendingSweepStartWall = 0L
             } else if (wall - sweepStart > STALE_AFTER_MS) {
+                if (next.lastFailedSweepGen != pendingSweepGen) {
+                    next = next.copy(lastFailedSweepGen = pendingSweepGen)
+                }
                 pendingSweepStartWall = 0L
             }
         }

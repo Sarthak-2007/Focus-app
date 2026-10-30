@@ -2,6 +2,7 @@ package com.example
 
 import com.example.service.InterceptorState
 import com.example.service.PermPrint
+import com.example.service.PermState
 import com.example.service.WatchItemId
 import com.example.service.WatchStore
 import android.content.Context
@@ -48,7 +49,9 @@ class WatchStoreRobolectricTest {
     @Test
     fun sweep_completesTheSetAndAdvancesLastProved() {
         assertNull(WatchStore.snapshots.value.lastProvedWallMillis)
-        WatchStore.runSweep { item -> item != WatchItemId.DEVICE_ADMIN }
+        WatchStore.runSweep { item ->
+            if (item != WatchItemId.DEVICE_ADMIN) PermState.GRANTED else PermState.MISSING
+        }
         awaitSnapshot { it.lastProvedWallMillis != null }
         val snap = WatchStore.snapshots.value
         assertNotNull(snap.lastProvedWallMillis)
@@ -70,7 +73,7 @@ class WatchStoreRobolectricTest {
         // by the sweep it dispatched — the snapshot records WHICH
         // generation completed, in parity with LAST PROVED.
         assertEquals(0, WatchStore.snapshots.value.lastCompletedSweepGen)
-        WatchStore.runSweep { true }
+        WatchStore.runSweep { PermState.GRANTED }
         val gen = WatchStore.currentSweepGen()
         awaitSnapshot { it.lastCompletedSweepGen == gen }
         assertEquals(gen, WatchStore.snapshots.value.lastCompletedSweepGen)
@@ -87,7 +90,7 @@ class WatchStoreRobolectricTest {
             if (item == WatchItemId.DEVICE_ADMIN) {
                 throw RuntimeException("binder died")
             }
-            true
+            PermState.GRANTED
         }
         // The other five land…
         awaitSnapshot { snap ->
@@ -103,6 +106,108 @@ class WatchStoreRobolectricTest {
         assertNull(snap.measurement(WatchItemId.DEVICE_ADMIN))
         assertNull(snap.lastProvedWallMillis)
         assertEquals(0, snap.lastCompletedSweepGen)
+    }
+
+    @Test
+    fun sweep_gen0StampsCannotCompleteAPendingSweep() {
+        // Issue #9 (Zahn Z-1): completion tests the stamp's
+        // sweepGen, not the wall-clock era. The sweep's DEVICE_ADMIN
+        // query crashes (stamps nothing); a gen-0 lifecycle stamp
+        // for that same door lands INSIDE the sweep's era — under
+        // the old era test that stamp completed the set and the
+        // store badged it with the sweep's generation. Now it must
+        // not: presence is not the sweep's answer.
+        WatchStore.runSweep { item ->
+            if (item == WatchItemId.DEVICE_ADMIN) {
+                throw RuntimeException("binder died")
+            }
+            PermState.GRANTED
+        }
+        val gen = WatchStore.currentSweepGen()
+        awaitSnapshot { snap ->
+            WatchItemId.PERMISSIONS
+                .filter { it != WatchItemId.DEVICE_ADMIN }
+                .all { snap.measurement(it)?.sweepGen == gen }
+        }
+        // The gen-0 rescue attempt: lifecycle + shield-loop roads.
+        WatchStore.onDeviceAdminChanged(true)
+        WatchStore.onShieldIteration(protecting = true)
+        Thread.sleep(250)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        val snap = WatchStore.snapshots.value
+        assertEquals(
+            0,
+            snap.measurement(WatchItemId.DEVICE_ADMIN)?.sweepGen
+        )
+        assertNull(snap.lastProvedWallMillis)
+        assertEquals(0, snap.lastCompletedSweepGen)
+    }
+
+    @Test
+    fun sweep_abandonedSweepRecordsItsFailedGeneration() {
+        // Issue #9 (Zahn Z-6): a sweep that can never complete is
+        // abandoned on the record once its coexistence window
+        // closes — lastFailedSweepGen names it, so PARK's CHECK
+        // key can print DID NOT ANSWER instead of CHECKING forever.
+        WatchStore.runSweep { item ->
+            if (item == WatchItemId.DEVICE_ADMIN) {
+                throw RuntimeException("binder died")
+            }
+            PermState.GRANTED
+        }
+        val gen = WatchStore.currentSweepGen()
+        awaitSnapshot { snap ->
+            WatchItemId.PERMISSIONS
+                .filter { it != WatchItemId.DEVICE_ADMIN }
+                .all { snap.measurement(it) != null }
+        }
+        // Not yet stale: no failure recorded.
+        assertEquals(0, WatchStore.snapshots.value.lastFailedSweepGen)
+        assertTrue(
+            WatchStore.expirePendingSweepIfStale(
+                System.currentTimeMillis() + WatchStore.STALE_AFTER_MS + 1_000L
+            )
+        )
+        val snap = WatchStore.snapshots.value
+        assertEquals(gen, snap.lastFailedSweepGen)
+        assertEquals(0, snap.lastCompletedSweepGen)
+        assertNull(snap.lastProvedWallMillis)
+        assertEquals(
+            WatchItemId.DEVICE_ADMIN,
+            WatchStore.firstUnansweredForGen(snap, gen)
+        )
+        // Idempotent: a second expiry changes nothing.
+        assertTrue(
+            !WatchStore.expirePendingSweepIfStale(
+                System.currentTimeMillis() + WatchStore.STALE_AFTER_MS + 2_000L
+            )
+        )
+    }
+
+    @Test
+    fun sweep_usageUnsetStampsUnsetAndPrintsUnset() {
+        // Issue #9 (Zahn Z-7): the usage door's UNSET is a measured
+        // third state — it stamps as UNSET and prints as UNSET,
+        // never as a fresh MISSING. The set still completes: UNSET
+        // is an answer, not a silence.
+        WatchStore.runSweep { item ->
+            if (item == WatchItemId.USAGE_ACCESS) PermState.UNSET
+            else PermState.GRANTED
+        }
+        awaitSnapshot { it.lastProvedWallMillis != null }
+        val snap = WatchStore.snapshots.value
+        val now = android.os.SystemClock.elapsedRealtime()
+        assertEquals(
+            PermPrint.UNSET,
+            WatchStore.permPrintAt(snap, WatchItemId.USAGE_ACCESS, now)
+        )
+        // UNSET never stales into another word.
+        assertEquals(
+            PermPrint.UNSET,
+            WatchStore.permPrintAt(
+                snap, WatchItemId.USAGE_ACCESS, now + WatchStore.STALE_AFTER_MS + 1_000L
+            )
+        )
     }
 
     @Test
@@ -132,7 +237,7 @@ class WatchStoreRobolectricTest {
         // sibling item's parent may still be in flight when the
         // first interceptor derives.
         WatchStore.onAccessibilityBound(true)
-        WatchStore.runSweep { true }
+        WatchStore.runSweep { PermState.GRANTED }
         awaitSnapshot { s -> s.lastProvedWallMillis != null }
         awaitSnapshot { s -> s.measurement(WatchItemId.SHORTS_REELS)?.interceptor == InterceptorState.RUNNING }
         snap = WatchStore.snapshots.value
@@ -186,7 +291,7 @@ class WatchStoreRobolectricTest {
             .edit().clear().commit()
         try {
             WatchStore.bind(context)
-            WatchStore.runSweep { true }
+            WatchStore.runSweep { PermState.GRANTED }
             awaitSnapshot { it.lastProvedWallMillis != null }
             val proved = WatchStore.snapshots.value.lastProvedWallMillis
 

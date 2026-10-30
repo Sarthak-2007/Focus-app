@@ -692,7 +692,7 @@ class MonolithViewModel(
      *  lands. Triggers: Deck entry, Deck resume, FIX return. */
     fun runWatchSweep() {
         com.example.service.WatchStore.runSweep { item ->
-            repository.watchGrantQuery(item)
+            repository.watchGrantState(item)
         }
     }
 
@@ -789,13 +789,17 @@ class MonolithViewModel(
         activeSession,
         guardClock
     ) { snap, freeze, session, _ ->
-        if (session?.isActive == true && freeze != null) {
-            freeze.guardLine
-        } else {
-            com.example.ui.components.guardLineFor(
-                snap, android.os.SystemClock.elapsedRealtime()
-            )
-        }
+        // Issue #9 (Zahn Z-4): a freeze captured at the NOT
+        // CHECKED floor falls through to the live derivation —
+        // ignorance is not a seal fact and may not be frozen for
+        // a restored session's whole life. A measured freeze
+        // holds untouched, as the freeze law says.
+        com.example.ui.components.frozenGuardLineOrLive(
+            freeze?.guardLine,
+            session?.isActive == true && freeze != null,
+            snap,
+            android.os.SystemClock.elapsedRealtime()
+        )
     }.stateIn(
         viewModelScope, SharingStarted.Eagerly,
         com.example.ui.components.GuardLinePrint("GUARD — NOT CHECKED")
@@ -927,8 +931,31 @@ class MonolithViewModel(
         // through the one derivation (Joss: two derivations of one
         // fact will disagree).
         viewModelScope.launch {
-            com.example.service.WatchStore.snapshots.collect {
+            com.example.service.WatchStore.snapshots.collect { snap ->
                 refreshDeckWarrant()
+                // Issue #9 (Zahn Z-4): the freeze's re-capture —
+                // while the frozen Guard line is still the NOT
+                // CHECKED floor and a session is active, the
+                // first emission whose live derivation is a
+                // MEASURED print replaces the floor in the freeze
+                // itself, after which the freeze law holds it.
+                // This is the path a session restored after
+                // process death takes: born unmeasured, frozen at
+                // the floor, re-captured the moment the store
+                // actually measures the counted set.
+                val freeze = _sealFreeze.value
+                if (freeze != null &&
+                    freeze.guardLine.text == "GUARD — NOT CHECKED" &&
+                    activeSession.value?.isActive == true &&
+                    activeSession.value?.id == freeze.sessionId
+                ) {
+                    val derived = com.example.ui.components.guardLineFor(
+                        snap, android.os.SystemClock.elapsedRealtime()
+                    )
+                    if (derived.text != "GUARD — NOT CHECKED") {
+                        _sealFreeze.value = freeze.copy(guardLine = derived)
+                    }
+                }
             }
         }
         // The cascade's phase relaxes when the sealed row goes.

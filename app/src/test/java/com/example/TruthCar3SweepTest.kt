@@ -378,8 +378,17 @@ class TruthCar3SweepRoboTest {
             }
         }
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("ROUTINES: SET BY HAND ON SHIELD", substring = true)
+        // Issue #9 (Zahn Z-3): wave-2's plate cut deleted the
+        // whole ROUTINES line with its struck clause, so the old
+        // positive assertion (the line exists) was false on this
+        // branch. The strike's current truth: the plate stands
+        // (its head prints), and neither the clause nor the line
+        // that carried it exists. Until this test ran in CI the
+        // strike was GREP-verified only — the record says so.
+        composeRule.onNodeWithText("MONOLITH ML-01", substring = true)
             .assertExists()
+        composeRule.onNodeWithText("ROUTINES: SET BY HAND ON SHIELD", substring = true)
+            .assertDoesNotExist()
         composeRule.onNodeWithText("FIRED AS SET", substring = true).assertDoesNotExist()
     }
 

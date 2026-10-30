@@ -713,6 +713,27 @@ class MonolithRepository(
         else -> false
     }
 
+    /**
+     * The sweep's three-valued form (issue #9, Zahn Z-7): the
+     * usage door's UNSET — AppOps has no grant record, the state
+     * [usageAccess] itself already refuses to call DENIED — is
+     * stamped as UNSET, never collapsed into a measured MISSING
+     * with a fresh age. Every other door is genuinely two-valued
+     * and maps through [watchGrantQuery].
+     */
+    fun watchGrantState(item: WatchItemId): com.example.service.PermState =
+        if (item == WatchItemId.USAGE_ACCESS) {
+            when (usageAccess()) {
+                UsageAccess.ALLOWED -> com.example.service.PermState.GRANTED
+                UsageAccess.DENIED -> com.example.service.PermState.MISSING
+                UsageAccess.UNSET -> com.example.service.PermState.UNSET
+            }
+        } else if (watchGrantQuery(item)) {
+            com.example.service.PermState.GRANTED
+        } else {
+            com.example.service.PermState.MISSING
+        }
+
     /** Battery: whether the OS is told to leave Monolith alone.
      *  The read the dissolved Guard screen never had — its BATTERY &
      *  ADMIN row answered with the admin bit for both. */
