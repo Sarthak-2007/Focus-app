@@ -2394,6 +2394,40 @@ class MonolithRepository(
      * 2. Count-Up Stopwatch Mode (counts upward past the 20m minimum lock floor)
      * 3. Multi-Block Study Cycles (1 to 4 blocks) with automatic 10-minute Safe Breaks in between
      */
+    /**
+     * Issue #283 (R5 supplement): the in-session extend verb the
+     * original ships (+15 min) and Monolith lacked entirely — a
+     * running session could only end or be broken, never lengthened.
+     * Extends the ACTIVE session's target by [addSeconds]. The
+     * target is HMAC-covered (see CryptoIntegrityManager
+     * .signSessionState's payload), so the row is re-signed in the
+     * same write; an unsigned extension would read as tampering on
+     * the next verified tick. Capped the way the original caps it:
+     * while an hour or more remains, no further extension is sold
+     * (its 'still 60 min' refusal). Stopwatch sessions have no
+     * target to extend and refuse.
+     */
+    suspend fun extendActiveSession(addSeconds: Int = 900): Boolean {
+        val session = dao.getActiveSessionSnapshot() ?: return false
+        if (!session.isActive || session.isStopwatchMode) return false
+        val (verifiedElapsed, _) = computeVerifiedSessionElapsed(session)
+        val effectiveTarget = session.targetDurationSeconds + session.penaltySecondsAdded
+        if (effectiveTarget - verifiedElapsed >= 3600) return false
+        val newTarget = session.targetDurationSeconds + addSeconds
+        val reSigned = session.copy(
+            targetDurationSeconds = newTarget,
+            hmacSignature = CryptoIntegrityManager.signSessionState(
+                session.startWallTimeMillis,
+                session.startElapsedRealtimeMillis,
+                session.bootCount,
+                newTarget,
+                session.isStopwatchMode
+            )
+        )
+        dao.updateSession(reSigned)
+        return true
+    }
+
     suspend fun updateSessionProgress(
         session: FocusSessionEntity,
         stampShieldBeat: Boolean = false

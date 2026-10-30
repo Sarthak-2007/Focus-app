@@ -527,7 +527,12 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         // the channel there are no values at all - the nearest shore
         // speaks.
         if (angle < 117f) return 5
-        return (10 + ((angle - 126f) / 9f).roundToInt() * 5).coerceIn(10, 180)
+        // Issue #283 (R5 supplement): one notch = one minute, as the
+        // original's wheel works. The scale was always 1.8 degrees
+        // per minute (see minutesToAngle); only this read-back
+        // quantised it to 5-minute landings, so 7, 22 or 47 minutes
+        // were unselectable. The read-back now honours the scale.
+        return (10 + ((angle - 126f) / 1.8f).roundToInt()).coerceIn(10, 180)
     }
 
     /** Relative inertia of the loaded wheel: the block count has mass.
