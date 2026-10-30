@@ -76,10 +76,11 @@ class EmergencyBreakLedgerTest {
         val weekA = anchorOf(2024, 1, 3)   // week of Mon 2024-01-01
         val weekB = anchorOf(2024, 1, 10)  // week of Mon 2024-01-08
         val weekC = anchorOf(2024, 1, 17)  // week of Mon 2024-01-15
-        assertTrue(weekA < weekB && weekB < weekC)
+        val weekD = anchorOf(2024, 1, 24)  // week of Mon 2024-01-22
+        assertTrue(weekA < weekB && weekB < weekC && weekC < weekD)
 
         // Empty ledger: every week reads full.
-        assertEquals(1, emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(weekA).size))
+        assertEquals(1, emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(weekA, weekB).size))
 
         // One spend in week B; one (later) spend in week A.
         dao.insertEmergencyBreakSpend(spend(weekB, spentAt = 2_000L, sessionId = 11))
@@ -87,26 +88,70 @@ class EmergencyBreakLedgerTest {
 
         // A spend against LAST anchor does not touch the current one:
         // evaluated against week C, history is invisible → remaining 1.
-        assertEquals(0, dao.getSpendsForWeek(weekC).size)
-        assertEquals(1, emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(weekC).size))
+        assertEquals(0, dao.getSpendsForWeek(weekC, weekD).size)
+        assertEquals(1, emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(weekC, weekD).size))
         // Its own week reads spent.
-        assertEquals(1, dao.getSpendsForWeek(weekB).size)
-        assertEquals(0, emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(weekB).size))
+        assertEquals(1, dao.getSpendsForWeek(weekB, weekC).size)
+        assertEquals(0, emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(weekB, weekC).size))
 
         // Corruption drill: a second row on the same anchor still
         // derives 0 — the formula floors, it never goes negative.
         dao.insertEmergencyBreakSpend(spend(weekB, spentAt = 4_000L, sessionId = 13))
-        assertEquals(2, dao.getSpendsForWeek(weekB).size)
-        assertEquals(0, emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(weekB).size))
+        assertEquals(2, dao.getSpendsForWeek(weekB, weekC).size)
+        assertEquals(0, emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(weekB, weekC).size))
 
         // The observe flow sees the same rows for the same anchor.
-        assertEquals(2, dao.observeSpendsForWeek(weekB).first().size)
-        assertEquals(0, dao.observeSpendsForWeek(weekC).first().size)
+        assertEquals(2, dao.observeSpendsForWeek(weekB, weekC).first().size)
+        assertEquals(0, dao.observeSpendsForWeek(weekC, weekD).first().size)
 
         // Snapshot: every spend, newest spend first.
         val all = dao.getAllSpendsSnapshot()
         assertEquals(3, all.size)
         assertEquals(listOf(4_000L, 3_000L, 2_000L), all.map { it.spentAtWallMillis })
         assertTrue(all.all { it.heldSeconds == 60 })
+    }
+
+    /**
+     * Issue #39 F1 — the two SQL arms, isolated. A spend minted under
+     * another timezone carries that zone's Monday as its stored
+     * anchor: within 26h of this week's anchor it counts by the
+     * ANCHOR arm even when its instant falls outside this local week;
+     * a spend whose stored anchor is a full week away still counts by
+     * the INSTANT arm when the moment it was spent lies inside this
+     * local week. A neighbouring week's spend — far on both arms —
+     * never counts.
+     */
+    @Test
+    fun foreignZoneSpendsCountByEitherArm_neighbouringWeekNever() = runBlocking {
+        val dao = db.monolithDao()
+        val weekB = anchorOf(2024, 1, 10)  // week of Mon 2024-01-08 (UTC)
+        val weekC = anchorOf(2024, 1, 17)  // week of Mon 2024-01-15 (UTC)
+        val hour = 3_600_000L
+
+        // Anchor arm only: stored anchor = this Monday seen from a
+        // zone 9.5h west (instant 9.5h later), spent instant 1h BEFORE
+        // this local week opens — outside the instant window.
+        dao.insertEmergencyBreakSpend(
+            spend(anchor = weekB + 9 * hour + hour / 2, spentAt = weekB - hour, sessionId = 21)
+        )
+        assertEquals(1, dao.getSpendsForWeek(weekB, weekC).size)
+
+        // Instant arm only: stored anchor = LAST week's Monday (7d
+        // away, far beyond the 26h tolerance), spent instant inside
+        // this local week.
+        val weekA = anchorOf(2024, 1, 3)
+        dao.insertEmergencyBreakSpend(
+            spend(anchor = weekA, spentAt = weekB + hour, sessionId = 22)
+        )
+        assertEquals(2, dao.getSpendsForWeek(weekB, weekC).size)
+        assertEquals(2, dao.observeSpendsForWeek(weekB, weekC).first().size)
+
+        // Fail closed: next week's spend (anchor AND instant a week
+        // ahead) is invisible to this week on both arms.
+        dao.insertEmergencyBreakSpend(
+            spend(anchor = weekC, spentAt = weekC + hour, sessionId = 23)
+        )
+        assertEquals(2, dao.getSpendsForWeek(weekB, weekC).size)
+        assertEquals(0, emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(weekB, weekC).size))
     }
 }

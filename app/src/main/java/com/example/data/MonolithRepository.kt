@@ -259,6 +259,24 @@ class MonolithRepository(
     val activeSessionFlow: Flow<FocusSessionEntity?> = dao.getActiveSessionFlow()
     val sessionHistoryFlow: Flow<List<FocusSessionEntity>> = dao.getSessionHistoryFlow()
     val interceptLogsFlow: Flow<List<InterceptLogEntity>> = dao.getInterceptLogsFlow()
+
+    /** Issue #254 F12 (Audit R5): today's reach count for one
+     *  package, counted from the intercept ledger itself via the
+     *  uncapped evidence query (getInterceptLogsBetween) — never
+     *  the 500-capped display flow above. The Airlock's attempt
+     *  mirror prints this number; a print that can disagree with
+     *  the ledger it names is a lie waiting for its frame. */
+    suspend fun interceptAttemptsToday(packageName: String, nowMillis: Long): Int {
+        val dayStart = java.util.Calendar.getInstance().apply {
+            timeInMillis = nowMillis
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        return dao.getInterceptLogsBetween(dayStart, nowMillis)
+            .count { it.packageName == packageName }
+    }
     val capturedNotificationsFlow: Flow<List<CapturedNotificationEntity>> = dao.getCapturedNotificationsFlow()
     val allTasksFlow: Flow<List<FocusTaskEntity>> = dao.getAllTasksFlow()
     val allSitesFlow: Flow<List<BlockedSiteEntity>> = dao.getAllSitesFlow()
@@ -507,8 +525,14 @@ class MonolithRepository(
             nowBootCount = boot
         )
         if (decision.reanchor) {
+            // Issue #82 tightening: persist the DECISION's honest
+            // now, not the raw wall clock. On a powered-off rollback
+            // the decision is floored at the old anchor; persisting
+            // the raw (rolled-back) wall instead would re-anchor to
+            // the travelled clock and the floor would last one read.
+            // In every other reanchor case honest == wall, unchanged.
             prefs.edit()
-                .putLong(CLOCK_ANCHOR_WALL_KEY, nowWall)
+                .putLong(CLOCK_ANCHOR_WALL_KEY, decision.honestNowMillis)
                 .putLong(CLOCK_ANCHOR_MONO_KEY, nowMono)
                 .putInt(CLOCK_ANCHOR_BOOT_KEY, boot)
                 .apply()
@@ -997,16 +1021,14 @@ class MonolithRepository(
                     dao.deleteTaskById(task.id)
                 }
             }
-            val allSessions = dao.getSessionHistorySnapshot()
-            val seenSessionKeys = mutableSetOf<String>()
-            for (sess in allSessions.sortedBy { it.id }) {
-                if (!sess.isActive) {
-                    val key = "${sess.intention}|${sess.targetDurationSeconds}|${sess.completedTasksSummary}"
-                    if (!seenSessionKeys.add(key)) {
-                        dao.deleteSessionById(sess.id)
-                    }
-                }
-            }
+            // Audit R6 #341 F04: the session dedup pass that used to
+            // live here is DELETED. Sessions are events, not catalogue
+            // rows: two sessions sharing intention + duration + task
+            // summary are two sessions (the normal shape of a daily
+            // practice), and keying deletion on user-visible content
+            // silently collapsed a history of daily sessions to one
+            // row on every cold start. No pass may delete a session
+            // for resembling another.
         }
         drainDayWordsLocked()
         }
@@ -2730,6 +2752,23 @@ class MonolithRepository(
                 dao.getAllSitesSnapshot().size,
                 dao.getGuardSettingsSnapshot()?.browserBlockerEnabled ?: true
             )
+            // Audit R6 #341 F30: the predecessor is CLOSED, not just
+            // flagged off. Before this, deactivateAllSessions() left
+            // the previous active row with outcome='' and
+            // endWallMillis=0 forever — no path could ever classify
+            // it, earn it a receipt, or count it in history. Stamp
+            // its terminal verdict (SUPERSEDED) and true end in the
+            // same transaction that births its successor.
+            val predecessor = dao.getActiveSessionSnapshot()
+            if (predecessor != null && predecessor.isActive) {
+                dao.updateSession(
+                    predecessor.copy(
+                        isActive = false,
+                        outcome = SessionOutcome.SUPERSEDED,
+                        endWallMillis = System.currentTimeMillis()
+                    )
+                )
+            }
             dao.deactivateAllSessions()
             val id = dao.insertSession(
                 session.copy(
@@ -4269,10 +4308,17 @@ class MonolithRepository(
     // asks; every surface's number is a rendering of this truth.
     // =========================================================================
 
-    /** Remaining breaks for the week containing [nowMillis]. */
-    suspend fun emergencyBreaksRemaining(nowMillis: Long = System.currentTimeMillis()): Int {
-        val anchor = MonolithWeek.weekAnchorMillis(nowMillis)
-        return emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(anchor).size)
+    /** Remaining breaks for the week containing [nowMillis].
+     *  Issue #82 tightening: the default is a [Long.MIN_VALUE]
+     *  sentinel resolving to the HONEST now — never the raw wall
+     *  clock — so a caller that forgets the argument cannot silently
+     *  reopen the date-travel token renewal (F3) on this surface.
+     *  Explicit instants (tests) are honoured exactly as before. */
+    suspend fun emergencyBreaksRemaining(nowMillis: Long = Long.MIN_VALUE): Int {
+        val effectiveNow = if (nowMillis == Long.MIN_VALUE) honestNowMillis() else nowMillis
+        val anchor = MonolithWeek.weekAnchorMillis(effectiveNow)
+        val nextAnchor = MonolithWeek.nextWeekAnchorMillis(effectiveNow)
+        return emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(anchor, nextAnchor).size)
     }
 
     /**
@@ -4282,16 +4328,21 @@ class MonolithRepository(
      * must never render last week's count. The one-minute re-check also
      * picks up timezone changes on the same tick.
      */
-    private fun weekAnchorTickFlow(): Flow<Long> = flow {
+    private fun weekAnchorTickFlow(): Flow<Pair<Long, Long>> = flow {
         var lastAnchor: Long? = null
         while (true) {
             // Issue #82 (clock-attacks F3): the displayed week is
             // the honest week — date travel must not refresh the
             // token on any surface either.
-            val anchor = MonolithWeek.weekAnchorMillis(honestNowMillis())
+            val now = honestNowMillis()
+            val anchor = MonolithWeek.weekAnchorMillis(now)
             if (anchor != lastAnchor) {
                 lastAnchor = anchor
-                emit(anchor)
+                // Issue #39 F1: the week's end travels with its
+                // anchor — both bounds derive from the SAME honest
+                // instant, so the spends query never sees a pair
+                // straddling a rollover.
+                emit(anchor to MonolithWeek.nextWeekAnchorMillis(now))
             }
             delay(60_000L)
         }
@@ -4301,8 +4352,8 @@ class MonolithRepository(
     @OptIn(ExperimentalCoroutinesApi::class)
     fun observeEmergencyBreaksRemaining(): Flow<Int> =
         weekAnchorTickFlow()
-            .flatMapLatest { anchor ->
-                dao.observeSpendsForWeek(anchor).map { spends ->
+            .flatMapLatest { (anchor, nextAnchor) ->
+                dao.observeSpendsForWeek(anchor, nextAnchor).map { spends ->
                     emergencyBreaksRemainingFromSpendCount(spends.size)
                 }
             }
@@ -4333,7 +4384,8 @@ class MonolithRepository(
             // not travel, so the anchor stays in the real week.
             val now = honestNowMillis()
             val anchor = MonolithWeek.weekAnchorMillis(now)
-            if (dao.getSpendsForWeek(anchor).size >= 1) {
+            val nextAnchor = MonolithWeek.nextWeekAnchorMillis(now)
+            if (dao.getSpendsForWeek(anchor, nextAnchor).size >= 1) {
                 return@withTransaction BreakResult.RefusedNoToken
             }
             dao.insertEmergencyBreakSpend(
@@ -4619,7 +4671,13 @@ class MonolithRepository(
                 set(Calendar.MILLISECOND, 0)
             }
             val startOfDay = cal.timeInMillis
-            val endOfDay = startOfDay + 86_400_000L
+            // Audit R6 #341 F66: the bucket end is the NEXT LOCAL
+            // MIDNIGHT, never startOfDay + 86_400_000 — on the 23h
+            // spring-forward day the fixed length double-counted the
+            // first hour of the next day, and on the 25h fall-back
+            // day it dropped 23:00-24:00 sessions from every bucket.
+            val endCal = (cal.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
+            val endOfDay = endCal.timeInMillis
             val daySessions = sessions.filter { it.startWallTimeMillis in startOfDay until endOfDay }
             val totalSecs = daySessions.sumOf { it.elapsedSeconds }
             val totalMins = totalSecs / 60

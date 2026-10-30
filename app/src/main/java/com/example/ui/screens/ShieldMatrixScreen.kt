@@ -1,4 +1,6 @@
 package com.example.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import android.graphics.Bitmap
 import android.os.SystemClock
@@ -54,6 +56,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -261,10 +267,16 @@ fun ShieldMatrixScreen(
             onSetAppTier(pkg, resting.from)
         } else {
             val current = app.resolvedTier
-            val target = if (current == AppBlockTier.LOCKED) {
-                AppBlockTier.PEEK_2M
-            } else {
-                AppBlockTier.LOCKED
+            // Audit R6 #341 F22: the tap path walks the FULL ring
+            // LOCKED -> PEEK -> OPEN -> LOCKED. Before this, OPEN was
+            // unreachable by tap and one tap on an OPEN app silently
+            // LOCKED it — the only non-drag control destroyed the
+            // ruling it touched. The mid-session weakening ratchet
+            // below still refuses a weakening flip while sealed.
+            val target = when (current) {
+                AppBlockTier.LOCKED -> AppBlockTier.PEEK_2M
+                AppBlockTier.PEEK_2M -> AppBlockTier.OPEN
+                AppBlockTier.OPEN -> AppBlockTier.LOCKED
             }
             onSetAppTier(pkg, target)
             // The choreography runs only when the commit will land:
@@ -1019,7 +1031,7 @@ fun ShieldMatrixScreen(
                     ) {
                         if (newSiteText.isEmpty()) {
                             Text(
-                                text = "Add a site — e.g. news.ycombinator.com",
+                                text = stringResource(R.string.shield_add_site_hint),
                                 fontFamily = AtkinsonHyperlegibleFamily,
                                 fontSize = 13.sp,
                                 color = scheme.onSurfaceVariant
@@ -1447,7 +1459,7 @@ private fun RoutineRow(
                     color = scheme.onBackground
                 )
                 Text(
-                    text = "→ " + fmtRoutineTime(draftEnd),
+                    text = stringResource(R.string.shield_routine_end, fmtRoutineTime(draftEnd)),
                     fontFamily = AnonymousProFamily,
                     fontSize = 11.sp,
                     color = scheme.onSurfaceVariant
@@ -1507,7 +1519,7 @@ private fun RoutineRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "START",
+                text = stringResource(R.string.label_start),
                 fontFamily = AnonymousProFamily,
                 fontSize = 11.sp,
                 color = scheme.onSurfaceVariant
@@ -1515,7 +1527,7 @@ private fun RoutineRow(
             BlockitActionChip(wordLabel = "−30", onClick = { draftAdjust(true, -30) })
             BlockitActionChip(wordLabel = "+30", onClick = { draftAdjust(true, 30) })
             Text(
-                text = "END",
+                text = stringResource(R.string.label_end),
                 fontFamily = AnonymousProFamily,
                 fontSize = 11.sp,
                 color = scheme.onSurfaceVariant
@@ -1529,11 +1541,21 @@ private fun RoutineRow(
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf("M", "T", "W", "T", "F", "S", "S").forEachIndexed { index, letter ->
+            // Audit R6 #341 F61: two-letter labels (TU != TH, SA != SU)
+            // with the full day name + selected state in semantics —
+            // before this, 'T' was two different days, selection was
+            // colour-only, and Voice Access could not name a chip.
+            listOf("MO", "TU", "WE", "TH", "FR", "SA", "SU").forEachIndexed { index, letter ->
+                val dayName = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")[index]
+                val daySelected = routine.daysMask and (1 shl index) != 0
                 BlockitActionChip(
                     wordLabel = letter,
-                    isPrimaryInk = routine.daysMask and (1 shl index) != 0,
-                    onClick = { onToggleDay(index) }
+                    isPrimaryInk = daySelected,
+                    onClick = { onToggleDay(index) },
+                    modifier = Modifier.semantics {
+                        contentDescription = dayName
+                        stateDescription = if (daySelected) "Selected" else "Not selected"
+                    }
                 )
             }
         }
@@ -1757,7 +1779,7 @@ private fun SlipHeaderRow(right: AnnotatedString?) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "YOUR RULES",
+                text = stringResource(R.string.shield_your_rules),
                 fontFamily = AtkinsonHyperlegibleFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 11.5.sp,
@@ -1824,7 +1846,7 @@ private fun SlipNoneLine() {
         contentAlignment = Alignment.CenterStart
     ) {
         Text(
-            text = "NONE",
+            text = stringResource(R.string.label_none),
             fontFamily = AnonymousProFamily,
             fontSize = 11.sp,
             letterSpacing = 1.sp,
@@ -1898,6 +1920,9 @@ private fun SlipLineRow(
             overflow = TextOverflow.Ellipsis
         )
         Text(
+            // Audit R6 #341 F62: drawn leader, not typed text — a
+            // screen reader stepping the rules hit a meaningless
+            // 90-dot string on every row before the ruling.
             text = " .".repeat(90),
             fontFamily = AnonymousProFamily,
             fontSize = 11.sp,
@@ -1908,6 +1933,7 @@ private fun SlipLineRow(
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 6.dp)
+                .clearAndSetSemantics { }
         )
         // The re-strike: the word lifts and lands whole, 260ms
         // Curve A — never a roll (M4's governor rides the tally;
