@@ -102,3 +102,88 @@ Merged origin/main 73aaeae (issue-2 landing) into agent/issue-49 — clean merge
 no conflicts. That landing also healed main's pre-existing test-compile breakage
 (the ParkDrawer call sites), so this branch's CI re-run is the first where the
 unit tests can actually execute.
+## FINISH pass — missing seats seated by the finish lead (LEAD-COVERED, signed)
+
+The full-roster relay (Feel specialists ×3 + Keeper of Record) died in the
+infrastructure restart that killed the first bundle lead. Per Wave-3 law a thin
+seat is covered by the lead and marked LEAD-COVERED — these four seats were run
+by the finish lead directly over the landed code @1987779 (branch tip 2d6f866),
+review-only, no code changed by this section.
+
+### Feel specialist 1 — cue texture / timing (LEAD-COVERED, finish lead)
+- Diff-verified: commit 1987779 touches NO seal constant, timing or render —
+  SEAL_THROW_TIMINGS/AMPLITUDES, PARTIAL_WEIGHTS, SEAL_SAMPLES and
+  renderSealBuffer are byte-identical; the knock/click/detent bodies are
+  unchanged. The seal still speaks with its single settled voice and the quiet
+  gate knocks are still contact sounds, exactly as Q6 binds.
+- The only audible deltas are gates, not voices: (a) an incidental cue whose
+  audio-focus request is DENIED is now dropped instead of barging in — silence
+  in a moment the phone has given to someone else (a call), never a thinner
+  cue; (b) the legacy AudioTrack is now built on the synth thread at the first
+  granted cue, so the very first knock of a process may land a few ms later
+  than the old pre-played track — off the UI thread, inside the existing queue,
+  imperceptible in the hand. No cue removed, no envelope reshaped.
+
+### Feel specialist 2 — stop behaviour, heard/felt right after stopAllAudio (LEAD-COVERED, finish lead)
+- After stopAllAudio: NOTHING further is heard or felt. Both tracks are
+  stopped+released (the release hard-cuts any in-flight cue tail rather than
+  letting its ≤160 ms write finish), the vibrator is cancelled mid-pattern,
+  audio focus is abandoned, both threads are interrupted out of their 500 ms
+  polls, and the engine leaves the live registry so a later settings push
+  cannot resurrect it.
+- Every public entry point is gated on `running` (waveform, one-shot haptic,
+  enqueue, prime, Throw — and tear/completion pulses route through those same
+  gated helpers), so a late tap, a late Throw or a stale caller produces
+  silence, not a zombie knock. Teardown is final and idempotent: MainActivity
+  and the ViewModel can both call it on the shared engine safely.
+
+### Feel specialist 3 — settings feel, mid-session toggle honesty (LEAD-COVERED, finish lead)
+- Toggling SOUND mid-session now reaches the synth thread on its very next
+  command: the gate is @Volatile, so the happens-before chain (fact store →
+  synchronized push → volatile read) is sound; before, a toggle could in
+  principle never be seen by the sound thread. A cue already mid-write is not
+  retro-muted — it finishes its ≤160 ms tail or is cut by the next command's
+  gate; no half-heard lies beyond one in-flight knock.
+- The confirmation detent is now honest: toggleSound prints the PERSISTED fact
+  and plays the ON detent only when the disk actually took the setting. On a
+  failed commit the screen keeps showing the true saved value instead of
+  cheerfully ticking for a setting that would silently revert at process death.
+- Haptics feel is unchanged in the hand (default ON, as shipped) — it simply
+  has a real persisted fact behind it now, so a future PARK haptics switch
+  needs zero engine work.
+
+### Keeper of Record — disposition ledger reconciliation (LEAD-COVERED, finish lead)
+- Issue body: 5/5 findings dispositioned [x] FIXED-IN-CODE @1987779 with
+  evidence notes — reconciled line-by-line against the landed diff by the
+  finish lead: F1 focus (verdict returned, listener on both paths, API 24–25
+  legacy path, abandon at teardown, seal fallback requests) HOLDS; F2
+  stopAllAudio totality (both tracks, focus, vibrator, threads, registry,
+  running-gates on every entry point) HOLDS; F3 lazy lanes/track (construction
+  starts nothing; track built only for a granted sounding command) HOLDS; F4
+  @Volatile + internal set + resyncSoundEnabledFromFact (grep: the ONLY writes
+  to soundEnabled/hapticsEnabled outside the fact pushes are none —
+  SessionSealTransition direct write is gone) HOLDS; F5 commit verdict
+  honoured + haptics persisted fact HOLDS. No finding struck, none blocked.
+- DECISION-NEEDED: NONE. No cure cheapens sound or feel (see Feel seat 1), so
+  the no-downgrade rule sends nothing to Sarthak. Impact flags: the IMPACT
+  section above stands as written — re-read and confirmed plain-word accurate
+  by the finish lead.
+- 20 seats: present, one line each, in the section above (internal lens
+  passes, bundle-signed). The 4 relay seats missing after the restart are the
+  ones in THIS appendix, LEAD-COVERED and signed by the finish lead.
+- CI / merge record: run 40974971942 (branch tip 2d6f866): assembleDebug
+  SUCCESS, unit tests EXECUTED — 263 tests completed, 37 failed. The 37-name
+  failed set is BYTE-IDENTICAL to main's own CI run 40973388591 on main
+  @73aaeae (258 tests, same 37 failures, incl. the 4 pre-existing
+  SoundAndSocialTruthTest failures SocialBoardWordFollowsTheToggle,
+  SoundSettingPersistsAcrossProcessDeath, SocialToggleRenderedAndWritesThrough,
+  SoundEngineBirthOrder) — ZERO failures are #49-owned, and all 5 new #49
+  tests pass (263 = 258 + 5, none in the failed set). Earlier branch runs
+  40973093859 (@1987779) and 40974172273 (@b681035) failed at test-COMPILE on
+  the since-healed pre-existing ParkDrawer breakage recorded above. Full
+  pre-existing failed set (37): BreakMigrationTest ×1, CascadeDeckRenderTest
+  ×5, ChromeWaveUnitTest ×1, DrawerRenderTest ×7, ScreenshotHarnessTest ×14,
+  ShortsSniperTruthTest ×1, SoundAndSocialTruthTest ×4 (named above),
+  TetradRenderTest ×1, TruthCar3SweepRoboTest ×2, TruthCar3SweepTest ×1.
+  Closure + merge + post-merge main CI: recorded in the closing comment on
+  issue #49 (finish pass, same sitting).
