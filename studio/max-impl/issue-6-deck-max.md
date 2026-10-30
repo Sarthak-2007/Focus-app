@@ -352,7 +352,11 @@ caught once (§6, Finish).
 
 Audit §2's list, verified against the audit's three greps.
 Branch `agent/issue-6` wave 1 already cut 20 wires from the
-signature (F1, DECLARED) — this table is written against the
+signature (F1, DECLARED), and the cell's closing verdict
+corrects the audit's census in one place: the 21st name
+(row 21) never existed in this repo — the table keeps all 21
+rows so the audit's list is accounted name by name, with the
+correction marked where it lands. This table is written against the
 audit's original 61-parameter contract so the record is complete,
 and §3.1 states what remains live on the branch today. Verdicts:
 **DIE** (parameter + host wiring + any VM passthrough deleted),
@@ -382,13 +386,14 @@ state model — the parameter dies, the fact survives computed).
 | 18 | `onOpenCurioVault` | **DIE** | A second door to a destination the rail already reaches. Duplicate doors die; the rail is the door (same law as QUEUE's count, F7). |
 | 19 | `onIntentionChanged` | **DIE** | With #6. |
 | 20 | `onProfileSelected` | **MOVE** | Shield host wiring, with #5/#9. |
-| 21 | `onSimulateIntercept` | **DIE, outright** | A simulation verb has no production host. If a harness needs it, it lives in the test/debug source set, injected into the harness's fake `DeckEvents` — never wired from MainActivity again. |
+| 21 | `onSimulateIntercept` | **ALREADY ABSENT — stays dead** | Cell-corrected (Rost, wave-1 + closing verdict, re-verified at HEAD): this wire **does not exist at this commit** — the audit's census of 21 is 20 verified dead wires + this ghost. No cut is needed or possible. Treatment: the name joins the §8 M1 grep-guard list, so a simulation verb can never be *introduced* at the Deck's host seam; if a harness ever needs one, it lives in the test/debug source set, injected into the harness's fake `DeckEvents`. |
 
-**The pattern the table proves:** of 21, **zero** return to the
-Deck in any form. 4 DIE outright, 2 BECOME derivations, 15 MOVE
-to a named owner — and every MOVE names a screen that already
-hosts the fact today, so no destination gains a new concept,
-only wires it already conceptually owns.
+**The pattern the table proves:** of the audit's 21, **zero**
+return to the Deck in any form. 3 DIE outright, 1 already
+absent (row 21, cell-corrected above), 2 BECOME derivations,
+15 MOVE to a named owner — and every MOVE names a screen that
+already hosts the fact today, so no destination gains a new
+concept, only wires it already conceptually owns.
 
 ### 3.1 What remains on the branch, and its fate under §1.5
 
