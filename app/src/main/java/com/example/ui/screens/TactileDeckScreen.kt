@@ -431,21 +431,14 @@ fun TactileDeckScreen(
 
     // =====================================================================
     // SLICE D — the strip's derivations (Uma/Rosa/Emil). TIME is a pure
-    // function of now + a span; it is re-derived at minute boundaries
-    // from a frame clock, never stored, never slid. The imprint's count
+    // function of now + a span; it is re-derived fresh at composition
+    // (#127 finding 3: the old minute-boundary frame clock is retired —
+    // it made the strip's ENDS drift up to a minute early against the
+    // Airlock's fresh read), never stored, never slid. The imprint's count
     // freezes at the seal (host-side, Emil's −1 law): the first
     // composition that sees a running session captures the then-live
     // count and the BLOCK verdict, keyed by the session's id.
     // =====================================================================
-    var nowFrame by remember { mutableStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            val now = System.currentTimeMillis()
-            nowFrame = now
-            kotlinx.coroutines.delay(60_000L - (now % 60_000L) + 50L)
-        }
-    }
-
     val liveWarrantState = deckWarrant?.state
     // The print tense law (Truth Car 3, UNA2-03/04): every warrant
     // print in this frame is judged against the warrant's READ
