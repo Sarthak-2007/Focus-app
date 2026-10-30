@@ -1569,6 +1569,10 @@ class MonolithRepository(
      * Enforces the Mandatory 20-Minute Cooldown per package using `SystemClock.elapsedRealtime()`:
      * If `lastPeekEndElapsedRealtime > 0`, a new 2m Peek cannot be started until
      * `SystemClock.elapsedRealtime() >= lastPeekEndElapsedRealtime + PEEK_COOLDOWN_MILLIS`.
+     * The cooldown is armed at the peek's END (stamped by
+     * [recordPeekEnded]); the `max` with the live lease end is the
+     * fail-safe for a lease that lapses unrecorded, so the window can
+     * never be shortened by killing the app mid-peek.
      */
     fun getPeekCooldownRemainingSeconds(app: BlockedAppEntity): Int {
         val nowMono = SystemClock.elapsedRealtime()
@@ -1599,17 +1603,27 @@ class MonolithRepository(
     }
 
     /**
-     * Grants a 2-minute peek lease (`activePeekUntilElapsedRealtime = nowMono + 120_000L`)
-     * and pre-schedules `lastPeekEndElapsedRealtime = nowMono + 120_000L` so the 20-minute
-     * cooldown is immediately armed in Room storage.
+     * Grants a 2-minute peek lease (`activePeekUntilElapsedRealtime = nowMono + 120_000L`).
+     * The 20-minute cooldown is NOT armed here (issue #118, finding 4):
+     * `lastPeekEndElapsedRealtime` keeps its previous value untouched
+     * and is stamped only by [recordPeekEnded], when the peek actually
+     * ends — so the cooldown runs from the peek's end, never from its
+     * start, and the recorded end is the real end, not a prediction
+     * written before the peek began. The anti-abuse limit is unchanged:
+     * [getPeekCooldownRemainingSeconds] also anchors on the live lease
+     * end, so a lease that lapses without a recorded end (process
+     * death mid-peek) still cannot be re-peeked inside the window.
      */
     suspend fun startPeekLease(packageName: String) {
         val nowMono = SystemClock.elapsedRealtime()
         val leaseEndMono = nowMono + PEEK_DURATION_MILLIS
+        val previousPeekEndMono = dao.getAllAppsSnapshot()
+            .firstOrNull { it.packageName == packageName }
+            ?.lastPeekEndElapsedRealtime ?: 0L
         dao.updatePeekLeaseAndCooldown(
             packageName = packageName,
             activeUntilMono = leaseEndMono,
-            peekEndMono = leaseEndMono
+            peekEndMono = previousPeekEndMono
         )
     }
 

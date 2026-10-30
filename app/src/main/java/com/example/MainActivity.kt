@@ -979,9 +979,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onDismiss = { viewModel.toggleAlwaysOnDeskClock(false) }
             )
 
-            // The digest renders the FROZEN snapshot whenever a
+            // The digest renders the sealed snapshot whenever a
             // freeze exists or a session is sealing the phone — the
-            // live list is passed only when unsealed and unfrozen.
+            // snapshot refreshes on open and on new arrivals (issue
+            // #118, finding 3) but renders in frozen MODE: read-only,
+            // nothing opens. The live list is passed only when
+            // unsealed and unfrozen.
             val digestFrozen = frozenDigest != null || sealed
             CapturedNotificationsDigestSheet(
                 visible = showNotificationDigestSheet,
