@@ -997,16 +997,14 @@ class MonolithRepository(
                     dao.deleteTaskById(task.id)
                 }
             }
-            val allSessions = dao.getSessionHistorySnapshot()
-            val seenSessionKeys = mutableSetOf<String>()
-            for (sess in allSessions.sortedBy { it.id }) {
-                if (!sess.isActive) {
-                    val key = "${sess.intention}|${sess.targetDurationSeconds}|${sess.completedTasksSummary}"
-                    if (!seenSessionKeys.add(key)) {
-                        dao.deleteSessionById(sess.id)
-                    }
-                }
-            }
+            // Audit R6 #341 F04: the session dedup pass that used to
+            // live here is DELETED. Sessions are events, not catalogue
+            // rows: two sessions sharing intention + duration + task
+            // summary are two sessions (the normal shape of a daily
+            // practice), and keying deletion on user-visible content
+            // silently collapsed a history of daily sessions to one
+            // row on every cold start. No pass may delete a session
+            // for resembling another.
         }
         drainDayWordsLocked()
         }
@@ -2730,6 +2728,23 @@ class MonolithRepository(
                 dao.getAllSitesSnapshot().size,
                 dao.getGuardSettingsSnapshot()?.browserBlockerEnabled ?: true
             )
+            // Audit R6 #341 F30: the predecessor is CLOSED, not just
+            // flagged off. Before this, deactivateAllSessions() left
+            // the previous active row with outcome='' and
+            // endWallMillis=0 forever — no path could ever classify
+            // it, earn it a receipt, or count it in history. Stamp
+            // its terminal verdict (SUPERSEDED) and true end in the
+            // same transaction that births its successor.
+            val predecessor = dao.getActiveSessionSnapshot()
+            if (predecessor != null && predecessor.isActive) {
+                dao.updateSession(
+                    predecessor.copy(
+                        isActive = false,
+                        outcome = SessionOutcome.SUPERSEDED,
+                        endWallMillis = System.currentTimeMillis()
+                    )
+                )
+            }
             dao.deactivateAllSessions()
             val id = dao.insertSession(
                 session.copy(
@@ -3080,6 +3095,34 @@ class MonolithRepository(
             emptyList()
         }
 
+        // Issue #105 (F1): the finished tasks are the row's OWN
+        // booked summary — completeTaskAndAdvance appends each
+        // finished task to completedTasksSummary, and until now
+        // assembly never read it, so the slip attested a session
+        // while naming none of the work finished inside it.
+        val completedTasks = row.completedTasksSummary
+            .split(" • ")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+
+        // Issue #105 (F2, assembly side): the deflection match
+        // must survive the session's intention ever having been
+        // re-titled. The write side is cured on main by #124's
+        // total freeze (landed via PR #453): completeTaskAndAdvance
+        // and promoteTaskToActive never rewrite a session's
+        // intention at all — a superset of the seal guard #106's
+        // F2 cure carries, and the two agree (no session write on
+        // task finish/promotion). Assembly additionally accepts
+        // logs stamped with the title of any task this session
+        // booked as finished: those attempts happened under
+        // that task's watch, inside this window — so deflections
+        // booked under a title a pre-freeze build re-titled away
+        // are not silently dropped from the slip either.
+        val knownIntentions = buildSet {
+            add(row.intention)
+            completedTasks.forEach { entry -> add(entry.substringBefore(" (").trim()) }
+        }.filter { it.isNotEmpty() }.toSet()
+
         val lastByPackage = mutableMapOf<String, Long>()
         val deflections = dao.getInterceptLogsBetween(row.startWallTimeMillis, windowEnd)
             .filter { log ->
@@ -3089,7 +3132,7 @@ class MonolithRepository(
                 // row the filter removes can never eat a real
                 // block's dedupe slot. Only proven blocks print:
                 // a peek (he was LET IN) is not a deflection.
-                log.sessionIntention == row.intention &&
+                log.sessionIntention in knownIntentions &&
                     log.packageName != "com.monolith.system" &&
                     log.packageName != EXPOSURE_LOG_PACKAGE &&
                     isBlockedInterceptOutcome(log.outcome) &&
@@ -3109,7 +3152,11 @@ class MonolithRepository(
                     it.appName,
                     it.packageName,
                     it.timestampMillis,
-                    isSite = it.appName in siteDomains
+                    isSite = it.appName in siteDomains,
+                    // Issue #105 (F3): the outcome rides — the
+                    // slip prints which kind of block each
+                    // admitted attempt was.
+                    outcome = it.outcome
                 )
             }
 
@@ -3144,7 +3191,11 @@ class MonolithRepository(
             },
             // W-41: the row's stored split, threaded through.
             heldShutAtSeal = row.heldShutAtSeal,
-            heldPeekAtSeal = row.heldPeekAtSeal
+            heldPeekAtSeal = row.heldPeekAtSeal,
+            // Issue #105 (F1/F4): the session's booked work and
+            // its lived Safe Breaks, from the row's own ledgers.
+            completedTasks = completedTasks,
+            safeBreakSeconds = row.breakTakenSeconds
         )
     }
 
@@ -3256,7 +3307,9 @@ class MonolithRepository(
             forgedArtifactName = pending.forgedArtifactName,
             heldShutAtSeal = pending.heldShutAtSeal,
             heldPeekAtSeal = pending.heldPeekAtSeal,
-            armZoneId = armZoneStore.zoneFor(pending.armWallMs)
+            armZoneId = armZoneStore.zoneFor(pending.armWallMs),
+            completedTasks = pending.completedTasks,
+            safeBreakSeconds = pending.safeBreakSeconds
         )
     }
 
@@ -3387,7 +3440,9 @@ class MonolithRepository(
             forgedArtifactName = pending.forgedArtifactName,
             heldShutAtSeal = pending.heldShutAtSeal,
             heldPeekAtSeal = pending.heldPeekAtSeal,
-            armZoneId = armZoneStore.zoneFor(pending.armWallMs)
+            armZoneId = armZoneStore.zoneFor(pending.armWallMs),
+            completedTasks = pending.completedTasks,
+            safeBreakSeconds = pending.safeBreakSeconds
         )
     }
 
@@ -4232,7 +4287,8 @@ class MonolithRepository(
     /** Remaining breaks for the week containing [nowMillis]. */
     suspend fun emergencyBreaksRemaining(nowMillis: Long = System.currentTimeMillis()): Int {
         val anchor = MonolithWeek.weekAnchorMillis(nowMillis)
-        return emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(anchor).size)
+        val nextAnchor = MonolithWeek.nextWeekAnchorMillis(nowMillis)
+        return emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(anchor, nextAnchor).size)
     }
 
     /**
@@ -4242,16 +4298,21 @@ class MonolithRepository(
      * must never render last week's count. The one-minute re-check also
      * picks up timezone changes on the same tick.
      */
-    private fun weekAnchorTickFlow(): Flow<Long> = flow {
+    private fun weekAnchorTickFlow(): Flow<Pair<Long, Long>> = flow {
         var lastAnchor: Long? = null
         while (true) {
             // Issue #82 (clock-attacks F3): the displayed week is
             // the honest week — date travel must not refresh the
             // token on any surface either.
-            val anchor = MonolithWeek.weekAnchorMillis(honestNowMillis())
+            val now = honestNowMillis()
+            val anchor = MonolithWeek.weekAnchorMillis(now)
             if (anchor != lastAnchor) {
                 lastAnchor = anchor
-                emit(anchor)
+                // Issue #39 F1: the week's end travels with its
+                // anchor — both bounds derive from the SAME honest
+                // instant, so the spends query never sees a pair
+                // straddling a rollover.
+                emit(anchor to MonolithWeek.nextWeekAnchorMillis(now))
             }
             delay(60_000L)
         }
@@ -4261,8 +4322,8 @@ class MonolithRepository(
     @OptIn(ExperimentalCoroutinesApi::class)
     fun observeEmergencyBreaksRemaining(): Flow<Int> =
         weekAnchorTickFlow()
-            .flatMapLatest { anchor ->
-                dao.observeSpendsForWeek(anchor).map { spends ->
+            .flatMapLatest { (anchor, nextAnchor) ->
+                dao.observeSpendsForWeek(anchor, nextAnchor).map { spends ->
                     emergencyBreaksRemainingFromSpendCount(spends.size)
                 }
             }
@@ -4293,7 +4354,8 @@ class MonolithRepository(
             // not travel, so the anchor stays in the real week.
             val now = honestNowMillis()
             val anchor = MonolithWeek.weekAnchorMillis(now)
-            if (dao.getSpendsForWeek(anchor).size >= 1) {
+            val nextAnchor = MonolithWeek.nextWeekAnchorMillis(now)
+            if (dao.getSpendsForWeek(anchor, nextAnchor).size >= 1) {
                 return@withTransaction BreakResult.RefusedNoToken
             }
             dao.insertEmergencyBreakSpend(
@@ -4579,7 +4641,13 @@ class MonolithRepository(
                 set(Calendar.MILLISECOND, 0)
             }
             val startOfDay = cal.timeInMillis
-            val endOfDay = startOfDay + 86_400_000L
+            // Audit R6 #341 F66: the bucket end is the NEXT LOCAL
+            // MIDNIGHT, never startOfDay + 86_400_000 — on the 23h
+            // spring-forward day the fixed length double-counted the
+            // first hour of the next day, and on the 25h fall-back
+            // day it dropped 23:00-24:00 sessions from every bucket.
+            val endCal = (cal.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
+            val endOfDay = endCal.timeInMillis
             val daySessions = sessions.filter { it.startWallTimeMillis in startOfDay until endOfDay }
             val totalSecs = daySessions.sumOf { it.elapsedSeconds }
             val totalMins = totalSecs / 60

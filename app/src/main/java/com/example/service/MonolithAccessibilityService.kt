@@ -12,6 +12,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.example.MLog
+import com.example.MainActivity
 import com.example.data.AppBlockTier
 import com.example.data.BlockedBrowserDomains
 import com.example.data.DEFAULT_SURFACE_RULES
@@ -478,7 +479,17 @@ internal val MARKET_PACKAGES = setOf(
  *  clear, or uninstall Monolith. */
 internal val SETTINGS_PACKAGES = setOf(
     "com.android.settings",
-    "com.miui.securitycenter"
+    "com.miui.securitycenter",
+    // Audit R6 #341 F03: the OEM security centres where Monolith's
+    // survival switches (autostart, battery, permission revocation)
+    // actually live on Xiaomi/ColorOS/FuntouchOS phones. Before
+    // this the guard never matched them, so no intercept, no BACK
+    // and no log fired there during a session.
+    "com.miui.permcenter",
+    "com.coloros.safecenter",
+    "com.oppo.safe",
+    "com.iqoo.secure",
+    "com.vivo.permissionmanager"
 )
 
 /**
@@ -1248,28 +1259,43 @@ class MonolithAccessibilityService : AccessibilityService() {
         // host-exact (Wave-3 #42).
         if ((guardSettings?.browserBlockerEnabled ?: true) && isSupportedBrowser(pkgName)) {
             val userDomains = dao.getAllSitesSnapshot().map { it.domain }
-            // Issue #339 (Second-pass F1) — DURCH-E composition
-            // on current main: the Web Gate's BLOCK_ALL verdict
-            // is enforced here, ahead of the blacklist door
-            // below. When the gate is armed, a URL whose host
-            // is not on the user's allowed list is intercepted
-            // as 'Web Blocked — Allowlist'. Listed domains stay
-            // with the door below, which owns the embedded-
-            // domain detection (#79) and the site-peek
-            // exemption (W3 #130) the gate must not bypass.
-            // Gate off: webGateVerdict never returns BLOCK_ALL
-            // and this pre-check is inert.
+            // Issue #339 (Second-pass F1) — recomposition on
+            // current main: the Web Gate's BLOCK_ALL verdict is
+            // enforced here, AHEAD of the blacklist door below.
+            // When the gate is armed, a URL whose host is not on
+            // the user's allowed list is intercepted as 'Web
+            // Blocked — Allowlist'. Listed domains stay with the
+            // door below, which owns the embedded-domain detection
+            // (#79) and the site-peek exemption (W3 #130) the gate
+            // must not bypass — and a domain under a live site-peek
+            // lease for this browser stays exempt here exactly as
+            // there (#130). Gate off: webGateVerdict never returns
+            // BLOCK_ALL and this pre-check is inert. The ejection
+            // (BACK, escalating) is owned by launchInterceptScreen
+            // for every door (#339 F2) — neither door fires its own.
             val webGate = com.example.data.WebGateStore(applicationContext)
             if (webGate.blockAll()) {
-                val gateBlockedText = snapshot.facts.browserUrlTexts.firstOrNull { urlText ->
-                    com.example.data.webGateVerdict(
+                val gateHit = snapshot.facts.browserUrlTexts.firstNotNullOfOrNull { urlText ->
+                    when (com.example.data.webGateVerdict(
                         urlText, true, webGate.allowedHosts(), userDomains
-                    ) == com.example.data.WebGateVerdict.BLOCK_ALL
+                    )) {
+                        com.example.data.WebGateVerdict.BLOCK_ALL ->
+                            extractUrlHost(urlText) ?: urlText
+                        else -> null
+                    }
                 }
-                if (gateBlockedText != null) {
+                val gatePeeked = gateHit != null && sitePeekExempts(
+                    peekedDomain = SitePeekStore.domain,
+                    peekedPackage = SitePeekStore.packageName,
+                    domain = gateHit,
+                    packageName = pkgName,
+                    leaseUntilMono = leaseRow?.activePeekUntilElapsedRealtime ?: 0L,
+                    nowMono = SystemClock.elapsedRealtime()
+                )
+                if (gateHit != null && !gatePeeked) {
                     launchInterceptScreen(
                         packageName = pkgName,
-                        appName = extractUrlHost(gateBlockedText) ?: gateBlockedText,
+                        appName = gateHit,
                         reasonBadge = "Web Blocked — Allowlist",
                         path = InterceptPath.SITE
                     )
@@ -1839,14 +1865,6 @@ class MonolithAccessibilityService : AccessibilityService() {
         reasonBadge: String,
         path: InterceptPath
     ) {
-        // Issue #339 (Second-pass F2): EJECT FIRST. The intercept
-        // activity is the explanation, not the enforcement — the
-        // enforcement is leaving the blocked app: BACK on a first
-        // offence, escalating to HOME on a repeat offence against
-        // the same package inside the tracker's window (Freedom's
-        // escalation, which Monolith's doors previously never did
-        // at all on the app-tier path).
-        ejectForShield(packageName)
         // ISSUE-67: the intercept intent is built by the seam —
         // this service no longer imports the UI root
         // (MainActivity); the seam mints the #68 nonce and the
@@ -1855,6 +1873,14 @@ class MonolithAccessibilityService : AccessibilityService() {
         // Issue #94 (F2): never a bare background launch — a
         // dropped launch stamps itself and falls back to a
         // tappable notification (InterceptLaunch).
+        // Issue #339 (Second-pass F2): EJECT FIRST. The intercept
+        // activity is the explanation, not the enforcement — the
+        // enforcement is leaving the blocked app: BACK on a first
+        // offence, escalating to HOME on a repeat offence against
+        // the same package inside the tracker's window (Freedom's
+        // escalation, which Monolith's doors previously never did
+        // at all on the app-tier path).
+        ejectForShield(packageName)
         InterceptLaunch.launch(
             applicationContext,
             InterceptIntents.interceptIntent(applicationContext, packageName, appName, reasonBadge, path),
@@ -1863,6 +1889,21 @@ class MonolithAccessibilityService : AccessibilityService() {
         // #335 F5: every intercept is a detector block — recorded
         // (last block + last successful block) in the health record.
         DetectorHealth.recordBlock(SystemClock.elapsedRealtime(), success = true)
+        val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            putExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE, packageName)
+            putExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME, appName)
+            putExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE, reasonBadge)
+            putExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH, path.name)
+            putExtra(
+                MonolithShieldService.EXTRA_INTERCEPT_NONCE,
+                InterceptNonce.mint(applicationContext)
+            )
+        }
+        // Issue #94 (F2): never a bare background launch — a dropped
+        // launch stamps itself and falls back to a tappable
+        // notification (InterceptLaunch).
+        InterceptLaunch.launch(applicationContext, interceptIntent, appName)
     }
 
     /** Issue #339 (Second-pass F2): the ejection itself, shared
