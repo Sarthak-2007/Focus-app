@@ -131,13 +131,11 @@ class MonolithShieldService : Service() {
                     BreakAlert.STARTED -> postBreakAlert(
                         title = "SAFE BREAK STARTED",
                         text = "Break clock ${breakClockText(updated.safeBreakSecondsRemaining)} — " +
-                            "PEEK apps are open. Locked apps, Shorts, Reels and blocked sites stay shut.",
-                        buzzMs = 180L
+                            "PEEK apps are open. Locked apps, Shorts, Reels and blocked sites stay shut."
                     )
                     BreakAlert.FINAL_MINUTE -> postBreakAlert(
                         title = "SAFE BREAK ENDING",
-                        text = "Under a minute left — finish up. Blocking resumes when the break clock hits 00:00.",
-                        buzzMs = 260L
+                        text = "Under a minute left — finish up. Blocking resumes when the break clock hits 00:00."
                     )
                     // ENDED is deliberately NOT posted from here:
                     // Audit R3b #146's summons (same loop, the
@@ -320,13 +318,21 @@ class MonolithShieldService : Service() {
 
     /**
      * One heads-up break announcement: its own channel + id (it
-     * never touches the persistent shield notification), a buzz the
-     * latch knock never gave, auto-cancel and a 90 s timeout so a
-     * stale alert never lingers into the next block pretending to
-     * be news. Information only — tapping it opens the app; it is
-     * never an exit from anything.
+     * never touches the persistent shield notification), auto-cancel
+     * and a 90 s timeout so a stale alert never lingers into the
+     * next block pretending to be news. Information only — tapping
+     * it opens the app; it is never an exit from anything.
+     *
+     * Issue #104 (STURM3-20 Feel verdict, one voice per moment):
+     * this post carries NO vibration of its own. The repository
+     * already spoke at this boundary in this same loop iteration —
+     * the mechanical latch at break start, the two-strike warning
+     * knock at the final minute — and every vibrate() cancels the
+     * previous one, so the old raw one-shot buzz (180/260 ms)
+     * erased the designed knock within milliseconds. The visual
+     * posts; the repository knock is the boundary's sole voice.
      */
-    private fun postBreakAlert(title: String, text: String, buzzMs: Long) {
+    private fun postBreakAlert(title: String, text: String) {
         try {
             val pendingIntent = PendingIntent.getActivity(
                 this,
@@ -352,26 +358,6 @@ class MonolithShieldService : Service() {
         } catch (_: Exception) {
             // Announcement is best-effort; protection never depends on it.
         }
-        try {
-            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager)?.defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
-            }
-            if (vibrator?.hasVibrator() == true) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator.vibrate(
-                        android.os.VibrationEffect.createOneShot(
-                            buzzMs, android.os.VibrationEffect.DEFAULT_AMPLITUDE
-                        )
-                    )
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator.vibrate(buzzMs)
-                }
-            }
-        } catch (_: Exception) {}
     }
 
     private fun buildNotification(title: String, subtitle: String): Notification {
