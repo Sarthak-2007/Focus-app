@@ -241,13 +241,17 @@ fun ParkDrawer(
         }
     }
 
+    // The FIX key's target: the first line that lacks — MISSING, or
+    // UNPROVED (issue #94: the BATTERY line on an OEM-autostart-gated
+    // skin, whose FIX trip is the autostart pane, not a dead end).
     val firstMissing = snapshot?.let { snap ->
         WatchItemId.PERMISSIONS.firstOrNull {
             // A stale denial is still a denial (#58 F1): the FIX
             // key keeps targeting it, it just no longer PRINTS as
-            // current on the board below.
+            // current on the board below. UNPROVED (#94) targets too.
             val print = WatchStore.permPrintAt(snap, it, nowMono)
-            print == PermPrint.MISSING || print == PermPrint.MISSING_STALE
+            print == PermPrint.MISSING || print == PermPrint.MISSING_STALE ||
+                print == PermPrint.UNPROVED
         }
     }
 
@@ -541,6 +545,7 @@ fun ParkDrawer(
                                 PermPrint.GRANTED -> "GRANTED"
                                 PermPrint.MISSING -> "MISSING"
                                 PermPrint.STALE -> "STALE"
+                                PermPrint.UNPROVED -> "UNPROVED"
                                 PermPrint.MISSING_STALE -> "STALE"
                                 PermPrint.UNMEASURED -> null
                             },
@@ -727,6 +732,43 @@ fun ParkDrawer(
                                 text = "FIX — ${item.boardName}",
                                 style = PrimaryButtonTextStyle,
                                 color = onInkControlFill()
+                            )
+                        }
+                        // The trip's one warning, printed before he
+                        // leaves (issue #94, F3 + F1): two of these
+                        // panes can be dead ends on a sideloaded
+                        // install, and the battery pane is only half
+                        // the trip on a gated skin — say so here, in
+                        // plain words, where the FIX is pressed.
+                        val fixNote = when (item) {
+                            WatchItemId.ACCESSIBILITY,
+                            WatchItemId.NOTIFICATION_LISTENER ->
+                                "IF THE SWITCH WON'T MOVE, THE INSTALL IS " +
+                                    "RESTRICTED: SETTINGS → APPS → MONOLITH → " +
+                                    "⋮ MENU → ALLOW RESTRICTED SETTINGS, " +
+                                    "THEN COME BACK AND FIX AGAIN."
+                            WatchItemId.BATTERY ->
+                                if (com.example.data.OemPolicy.gatesAutostart()) {
+                                    "THIS PHONE ALSO GATES RESTARTS BEHIND " +
+                                        "AUTOSTART: FIX OPENS THE AUTOSTART " +
+                                        "LIST — SWITCH MONOLITH ON THERE. " +
+                                        "THE APP CANNOT READ THAT SWITCH " +
+                                        "BACK, SO THIS LINE STAYS UNPROVED."
+                                } else {
+                                    null
+                                }
+                            else -> null
+                        }
+                        if (fixNote != null) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = fixNote,
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Normal,
+                                fontSize = 10.sp,
+                                lineHeight = 16.sp,
+                                letterSpacing = 1.2.sp,
+                                color = scheme.onSurfaceVariant
                             )
                         }
                     }
