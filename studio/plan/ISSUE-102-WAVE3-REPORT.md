@@ -124,3 +124,25 @@ locally (RAM law) — CI on the branch is the proof.
   running and for how long — no more unexplained 5-second wall.
 - The peek offer now states plainly that a peek does not spend
   your weekly emergency break and does not end your session.
+
+## ADDENDUM — main-merge composition (WELLE-3 cell, post-PR #351)
+
+Merging current origin/main (67e312f, incl. #99 via PR #235) produced 3
+conflicts, composed — not chosen:
+- MainActivity.kt: #99 had already landed the floatingPeekPill collect;
+  #102's render call composes on top. One collector, one render.
+- MonolithRepository.kt: BOTH foreground reads kept — #102's
+  queryCurrentForegroundPackage() (usage-events) now runs FIRST inside
+  #99's two-arg queryForegroundBlockedApp (expired-peek freshness
+  waiver retained as fallback).
+- AirlockAndDisarmOverlays.kt: withheld-reason gate composed as
+  `if (!peekReady)` — #99's unlock derivation, without the countdown
+  gate (finding 4: reason visible from frame one).
+- MonolithViewModel.kt: finding 3's hand-off is #99 F4's grant-time
+  launch (already on main); #102's duplicate post-lease launch was
+  removed in composition. F3 disposition: FIXED (by #99 on main +
+  verified present here), not duplicated.
+CI on the pre-merge branch (run 41012395725): assemble GREEN after
+edbcb43 (missing layout.offset import, run 40985759415's only error);
+309 tests, 37 failed — all 37 in the known pre-existing classes
+(Boden floor, #166), zero PeekLivedTest failures, no new failures.
