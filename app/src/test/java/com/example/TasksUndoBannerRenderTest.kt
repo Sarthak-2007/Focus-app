@@ -45,7 +45,7 @@ class TasksUndoBannerRenderTest {
         }
         val deleted = mutableStateOf<FocusTaskEntity?>(null)
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 FocusSequencerScreen(
                     activeTask = tasks.first(),
                     queuedTasks = tasks.drop(1),
