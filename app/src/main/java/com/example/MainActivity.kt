@@ -326,6 +326,11 @@ private fun openPark(
 @Composable
 fun MonolithRootApp(viewModel: MonolithViewModel) {
     val context = LocalContext.current
+    // Issue #339 (Second-pass F1): the Web Gate's persisted store
+    // and its render-cache states (the store is the truth).
+    val webGateStore = remember { com.example.data.WebGateStore(context) }
+    var webBlockAllState by remember { mutableStateOf(webGateStore.blockAll()) }
+    var allowedWebHostsState by remember { mutableStateOf(webGateStore.allowedHosts()) }
     val lifecycleOwner = LocalLifecycleOwner.current
     val scheme = MaterialTheme.colorScheme
 
@@ -363,6 +368,15 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val profileUndoAvailable by viewModel.profileUndoAvailable.collectAsStateWithLifecycle()
     val intentionText by viewModel.intentionText.collectAsStateWithLifecycle()
     val activeSession by viewModel.activeSession.collectAsStateWithLifecycle()
+
+    // Issue #70 F3: the Deck primer's bit flips the moment the
+    // first session is live — the primer is a first-run-only
+    // surface and never returns.
+    LaunchedEffect(activeSession) {
+        if (activeSession?.isActive == true && viewModel.deckPrimerPending()) {
+            viewModel.markDeckPrimerDone()
+        }
+    }
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
     val allApps by viewModel.apps.collectAsStateWithLifecycle()
     val filteredApps by viewModel.filteredApps.collectAsStateWithLifecycle()
@@ -892,6 +906,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     appsCellCount = appsCellCount,
                                     appsSplit = appsSplit,
                                     deckWarrant = deckWarrant,
+                                    deckPrimerPending = viewModel.deckPrimerPending(),
                                     sealFreeze = sealFreeze,
                                     armPhase = armPhase,
                                     armSentence = armSentence,
@@ -968,6 +983,51 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onUndoProfileApply = viewModel::undoLastProfileApply,
                                     onToggleShortsReelsSniper = viewModel::toggleShortsReelsSniper,
                                     onToggleBrowserUrlBlocker = viewModel::toggleBrowserUrlBlocker,
+                                    // #337 F1: shortcut binding state
+                                    // read live; the chip deep-links
+                                    // to the system's shortcut screen,
+                                    // falling back to Accessibility
+                                    // Settings where the ROM lacks it.
+                                    accessibilityShortcutSet =
+                                        com.example.service.AccessibilityShortcutSupport
+                                            .isMonolithShortcutTarget(context),
+                                    onOpenAccessibilityShortcutSettings = {
+                                        runCatching {
+                                            context.startActivity(
+                                                com.example.service.AccessibilityShortcutSupport
+                                                    .shortcutSettingsIntent()
+                                            )
+                                        }.getOrElse {
+                                            runCatching {
+                                                context.startActivity(
+                                                    com.example.service.AccessibilityShortcutSupport
+                                                        .accessibilitySettingsIntent()
+                                                )
+                                            }
+                                        }
+                                        Unit
+                                    },
+                                    // #339 F1: the Web Gate — state is
+                                    // held here against the persisted
+                                    // WebGateStore (the store is the
+                                    // truth; these states are its
+                                    // render cache).
+                                    webBlockAll = webBlockAllState,
+                                    onToggleWebBlockAll = {
+                                        val next = !webGateStore.blockAll()
+                                        webGateStore.setBlockAll(next)
+                                        webBlockAllState = next
+                                    },
+                                    allowedWebHosts = allowedWebHostsState,
+                                    onAddAllowedWebHost = { host ->
+                                        if (webGateStore.addAllowedHost(host)) {
+                                            allowedWebHostsState = webGateStore.allowedHosts()
+                                        }
+                                    },
+                                    onRemoveAllowedWebHost = { host ->
+                                        webGateStore.removeAllowedHost(host)
+                                        allowedWebHostsState = webGateStore.allowedHosts()
+                                    },
                                     routines = routines,
                                     showResetNote = showRoutineResetNote,
                                     onDismissResetNote = viewModel::dismissRoutineResetNote,

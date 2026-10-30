@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -107,7 +108,11 @@ fun FocusSequencerScreen(
 ) {
     val scheme = MaterialTheme.colorScheme
     val effectiveNight = isDarkTheme || isSessionActive
-    var newTaskTitle by remember { mutableStateOf("") }
+    // Issue #87 (process-death F5): the draft is rememberSaveable
+    // \u2014 a typed-but-unsubmitted task title now survives process
+    // death (and tab disposal) instead of evaporating with the
+    // composition. It is still cleared only on submit, as before.
+    var newTaskTitle by rememberSaveable { mutableStateOf("") }
 
     // Truth Car 2 (G-01): the tear's ghost. The booking now lands
     // AT THE TAP (see onTearLeaf); what remains on the pad for
