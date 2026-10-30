@@ -113,7 +113,23 @@ class MonolithShieldService : Service() {
                 // shieldLastBeatWallMillis into the row it already
                 // persists, so the finish machine can later prove
                 // whether the shield was present or gone.
-                val updated = repository.updateSessionProgress(activeSession, stampShieldBeat = true)
+                // Audit R6 #341 F31: a full disk must not kill the
+                // shield. Before this, an SQLiteFullException out of
+                // the tick's write escaped the loop and took the
+                // session's only protection (and its elapsed record)
+                // with it. On a full-disk tick we log, skip the
+                // persistence for this beat and keep shielding; the
+                // next tick retries the write.
+                val updated = try {
+                    repository.updateSessionProgress(activeSession, stampShieldBeat = true)
+                } catch (e: android.database.sqlite.SQLiteFullException) {
+                    android.util.Log.e("MonolithShield", "storage full: progress tick not persisted", e)
+                    null
+                }
+                if (updated == null) {
+                    delay(2000L)
+                    continue
+                }
                 if (!updated.isActive) {
                     // Session-edge tick BEFORE standing down: a routine
                     // session that just timer-completed gets finalised
@@ -271,6 +287,20 @@ class MonolithShieldService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
+        // Audit R6 #341 F57: the title carries the owner's live
+        // intention (= the active task's title). At the default
+        // VISIBILITY_PUBLIC that text printed on the lock screen for
+        // the whole session, readable by anyone holding the phone.
+        // Now PRIVATE, with a generic public version — the intention
+        // lives only behind the device unlock.
+        val publicVersion = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("Monolith \u2022 Session running")
+            .setContentText("Blocking is active.")
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(pendingIntent)
+            .build()
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
@@ -278,6 +308,8 @@ class MonolithShieldService : Service() {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicVersion)
             .build()
     }
 

@@ -57,6 +57,11 @@ android {
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
+    // Audit R6 #341 F02: java.time (DrawerDay, MonolithWeek, the
+    // schedule layer) is API 26+; without desugaring, minSdk 24
+    // devices died with NoClassDefFoundError at ViewModel
+    // construction. Desugaring backfills java.time on API 24-25.
+    isCoreLibraryDesugaringEnabled = true
   }
   buildFeatures {
     compose = true
@@ -124,5 +129,6 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
+  coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
   // "ksp"(libs.moshi.kotlin.codegen)
 }

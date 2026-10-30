@@ -21,6 +21,14 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- Audit R6 #341 F03: OEM security centres are addressable
+             surfaces (tamper guard + FIX routing targets). -->
+        <package android:name="com.miui.securitycenter" />
+        <package android:name="com.miui.permcenter" />
+        <package android:name="com.coloros.safecenter" />
+        <package android:name="com.oppo.safe" />
+        <package android:name="com.iqoo.secure" />
+        <package android:name="com.vivo.permissionmanager" />
     </queries>
 
     <!-- UNA-04 (Truth Car 3): PARK's plate prints "DATA: ON THIS PHONE
