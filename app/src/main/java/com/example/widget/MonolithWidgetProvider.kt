@@ -7,10 +7,10 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
-import com.example.MainActivity
+import com.example.AppContainer
 import com.example.R
-import com.example.data.MonolithDatabase
 import com.example.data.RoutineSchedule
+import com.example.service.InterceptIntents
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -57,9 +57,10 @@ class MonolithWidgetProvider : AppWidgetProvider() {
         val views = RemoteViews(context.packageName, R.layout.widget_monolith)
         views.setTextViewText(R.id.widget_title, "MONOLITH")
         views.setTextViewText(R.id.widget_status, statusLine)
-        val launch = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-        }
+        // Via the #67 InterceptIntents seam (class-name addressed,
+        // SINGLE_TOP) — the widget keeps no compile-time reference
+        // to the UI root either.
+        val launch = InterceptIntents.notificationIntent(context)
         views.setOnClickPendingIntent(
             R.id.widget_root,
             PendingIntent.getActivity(
@@ -73,7 +74,7 @@ class MonolithWidgetProvider : AppWidgetProvider() {
     /** The one truthful status line, read defensively from Room. */
     private suspend fun readStatusLine(context: Context): String {
         return try {
-            val dao = MonolithDatabase.getInstance(context).monolithDao()
+            val dao = AppContainer.dao(context)
             val now = System.currentTimeMillis()
             val session = dao.getActiveSessionSnapshot()?.takeIf { it.isActive }
             if (session != null) {
@@ -93,7 +94,14 @@ class MonolithWidgetProvider : AppWidgetProvider() {
                 val next = dao.getAllRoutinesSnapshot()
                     .filter { RoutineSchedule.isLive(it) }
                     .mapNotNull { routine ->
-                        RoutineSchedule.effectiveNextStartMillis(routine, now)
+                        // Pause-aware next start (the helper the
+                        // branch era read was folded away on main):
+                        // origin is max(now, pausedUntilMillis), so a
+                        // paused routine's next seal is computed from
+                        // the pause's end — the scheduler's own rule.
+                        RoutineSchedule.nextStartMillis(
+                            routine, maxOf(now, routine.pausedUntilMillis)
+                        )
                             ?.let { start -> routine to start }
                     }
                     .minByOrNull { it.second }
