@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.example.data.MonolithDatabase
+import com.example.data.UndoDeleteStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -98,6 +99,19 @@ class MonolithBootReceiver : BroadcastReceiver() {
                 MonolithDatabase.getInstance(appContext).monolithDao()
                     .stampLastBoot(System.currentTimeMillis())
             }
+        }
+
+        // Group 1b — issue #83: a boot-started process reaps a stale
+        // undo-delete copy. A process born through this door (incl.
+        // LOCKED_BOOT_COMPLETED and MY_PACKAGE_REPLACED) may be the
+        // only process that ever runs after the copy's 5-second
+        // window closed; without this the deleted task's full copy
+        // outlived its window indefinitely in cleartext prefs.
+        // Guarded as its own group: in direct boot the copy's
+        // credential-protected prefs may be unreadable pre-unlock,
+        // and a failed reap must never cost the tick its run.
+        runGuardedBootAction {
+            UndoDeleteStore.expireIfStale(appContext)
         }
 
         // Group 2 — shield FIRST, before the slow reconcile: if a

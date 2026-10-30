@@ -2,6 +2,7 @@ package com.example.service
 
 import android.util.Log
 import android.content.Context
+import android.content.SharedPreferences
 import android.os.SystemClock
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
@@ -124,6 +125,25 @@ class SessionSealTransitionImpl(
      *  writes back the union, so the pair of operations locks. */
     private val markerLock = Any()
 
+    /** The one accessor for the seal prefs file (issue #83).
+     *  The file lives in DEVICE-PROTECTED storage: the boot-path
+     *  recovery (F-K1) and the heartbeat read the marker and the
+     *  annulment tombstones from processes born before the first
+     *  unlock, where a credential-protected file reads as absent
+     *  — a sealed session looked unsealed and a tombstoned window
+     *  looked clean (the split-brain the Room DB already avoided
+     *  by living in device-protected storage). Every seal-prefs
+     *  read and write in this class goes through here. */
+    private fun prefs(): SharedPreferences =
+        // Issue #83 completion (STURM3-04): routed through the shared
+        // accessor so the legacy credential-protected seal file is
+        // migrated across on first access — this class's writer and
+        // MonolithRepository's readers now share the one migrated
+        // device-protected file, never two split files.
+        com.example.data.DeviceProtectedPrefs.get(
+            appContext, MonolithRepository.SEAL_PREFS_NAME
+        )
+
     /** The seal marker (F-K1): committed synchronously BEFORE
      *  the Throw sounds, so a process dying mid-seal leaves
      *  proof on disk that the seal landed — recovery then adopts
@@ -138,9 +158,7 @@ class SessionSealTransitionImpl(
     private fun writeSealMarker(sessionId: Int) {
         synchronized(sealed) { sealed += sessionId }
         synchronized(markerLock) {
-            val prefs = appContext.getSharedPreferences(
-                MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE
-            )
+            val prefs = prefs()
             fun attemptCommit(): Boolean = prefs.edit()
                 .putInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, sessionId)
                 .putLong(MonolithRepository.SEAL_MARKER_WALL_KEY, System.currentTimeMillis())
@@ -166,7 +184,7 @@ class SessionSealTransitionImpl(
     }
 
     private fun persistedSealedIds(): Set<String> =
-        appContext.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+        prefs()
             .getStringSet(MonolithRepository.SEAL_MARKER_SESSIONS_KEY, emptySet())
             .orEmpty()
 
@@ -182,13 +200,11 @@ class SessionSealTransitionImpl(
     private fun clearSealMarker(sessionId: Int) {
         synchronized(sealed) { sealed -= sessionId }
         synchronized(markerLock) {
-            val prefs = appContext.getSharedPreferences(
-                MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE
-            )
+            val stored = prefs()
             val ids = persistedSealedIds()
-            val namesThis = prefs.getInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, -1) == sessionId
+            val namesThis = stored.getInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, -1) == sessionId
             if (!namesThis && sessionId.toString() !in ids) return
-            val editor = prefs.edit()
+            val editor = stored.edit()
             val remaining = ids - sessionId.toString()
             if (sessionId.toString() in ids) {
                 editor.putStringSet(MonolithRepository.SEAL_MARKER_SESSIONS_KEY, remaining)
@@ -206,9 +222,8 @@ class SessionSealTransitionImpl(
     }
 
     private fun loadPersistedTombstones(): MutableSet<Pair<Int, Long>> {
-        val raw = appContext.getSharedPreferences(
-            MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE
-        ).getStringSet(TOMBSTONES_KEY, emptySet()).orEmpty()
+        val raw = prefs()
+            .getStringSet(TOMBSTONES_KEY, emptySet()).orEmpty()
         return raw.mapNotNull { entry ->
             val parts = entry.split(':')
             val id = parts.getOrNull(0)?.toIntOrNull()
@@ -228,7 +243,7 @@ class SessionSealTransitionImpl(
             tombstones.removeAll { (_, start) -> now - start > TOMBSTONE_KEEP_MS }
             tombstones.map { (id, start) -> "$id:$start" }.toSet()
         }
-        appContext.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+        prefs()
             .edit()
             .putStringSet(TOMBSTONES_KEY, live)
             .commit()

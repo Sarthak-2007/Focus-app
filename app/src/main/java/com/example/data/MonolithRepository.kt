@@ -328,7 +328,10 @@ class MonolithRepository(
     /** The seal marker's session id, or -1 when no seal has ever
      *  landed in this install (Slice E, F-K1 / ESR-02). */
     fun sealedSessionIdFromMarker(): Int =
-        context.getSharedPreferences(SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+        // Issue #83 (STURM3-04): the marker lives in device-protected
+        // storage (SessionSealTransition writes it there); reading the
+        // credential-protected file here would read a stale split copy.
+        DeviceProtectedPrefs.get(context, SEAL_PREFS_NAME)
             .getInt(SEAL_MARKER_SESSION_KEY, -1)
 
     /** Every session the seal marker testifies for (issue #48):
@@ -337,7 +340,8 @@ class MonolithRepository(
      *  the int — still testifies. */
     @WorkerThread
     fun sealedSessionIdsFromMarker(): Set<Int> {
-        val prefs = context.getSharedPreferences(SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+        // Issue #83 (STURM3-04): device-protected seal file, as above.
+        val prefs = DeviceProtectedPrefs.get(context, SEAL_PREFS_NAME)
         val fromSet = prefs.getStringSet(SEAL_MARKER_SESSIONS_KEY, emptySet())
             .orEmpty()
             .mapNotNull { it.toIntOrNull() }
@@ -3373,6 +3377,13 @@ class MonolithRepository(
         if (dao.getActiveSessionSnapshot()?.isActive == true) return false
         dao.clearAllCapturedNotifications()
         return true
+    }
+
+    /** Issue #83: erase the intercept behaviour log — the delete
+     *  path intercept_logs never had. Called by the digest clear
+     *  so a user erasure covers the log as well as the digests. */
+    suspend fun clearInterceptLogs() {
+        dao.deleteAllInterceptLogs()
     }
 
     // =========================================================================
