@@ -123,3 +123,121 @@ writes the quiet row — assertions strengthened, none weakened).
 ## CI
 Recorded in the delivery note to HERZ (gh run list on the branch).
 Issue NOT edited/closed here — HERZ closes after CI, per brief.
+
+## Fresh-eyes fixes (L2/L3/L7) + verifier repairs
+
+Second pass on this branch (fix commits on top of `2575cd6`; the
+branch also merged current main mid-pass, including issue #35's
+Shield rewrite and the STOSS-34 surge's test staging — conflicts
+were confined to the two test files both passes repaired and are
+resolved in the merge commits' messages). DB v12 untouched; no
+tier, limit, or arming behaviour weakened anywhere below.
+
+### L3 — two strikes now means two genuinely separate looks
+The wave-3 prune was defeated by its own callers: ViewModel init
+syncs, its guard refresh syncs again seconds later, PARK's open
+syncs too — identical PackageManager state, so ONE
+transiently-filtered cold-start query spent both strikes in a
+single launch. Cure (repository-level collapse guard):
+`MonolithRepository.ensureSeededAndSyncPackages` (collapse check
+~:275, reconcile gate ~:321, completion stamp ~:367) skips the
+reconcile entirely for a non-forced call inside the window after
+a completed sync — it touches no strikes, files no tombstones,
+prunes nothing; `forceCatalogSync` bypasses. The pure predicate
+is `AppCatalogReconcile.isCollapseRepeat` (:147) over
+`SYNC_COLLAPSE_WINDOW_MILLIS` (:139). **Window: 10 minutes.**
+Justification: the same-launch burst fires seconds apart (even a
+slow cold start is a minute, not ten), while genuinely separate
+looks — the next launch, a later guard refresh — sit far outside
+it; the window bounds any delayed prune/discovery to 10 min and
+sits under the platform's own 15-minute periodic-work floor.
+The stamp (`LAST_CATALOG_SYNC_KEY`, prefs, :211) is written only
+after a reconcile actually ran — an empty/failed query starts no
+window. Tests: `collapseWindow_repeatInsideWindowIsSameLook_outsideIsSecondLook`
+(pure predicate); `CatalogSyncWindowTest.twoSyncsInSameLaunch_transientPartialQuery_prunesNothing`
+(three same-launch calls, partial query, nothing pruned, no
+note, no tombstone) and `twoSyncsBeyondWindow_pruneTrulyGoneApp_tombstoneFiledAndRestores`
+(second genuine look prunes, tombstone `pkg|LOCKED|30` filed in
+prefs, return reborn LOCKED/30).
+
+### L2 — born category is whole-token, never substring
+`categorizePackage` matched substrings over `"$pkg $label"`:
+"play" made the Play Store (com.android.vending) and any
+"Display…" label a GAME (born LOCKED), "reel"/"message" fired
+inside longer words. Matching now lives in the pure
+`AppCatalogReconcile.categorize` (:246); the repository member
+(:680) delegates. Package and label are tokenized (delimiters +
+camel humps, raw chunk kept); a key must equal a whole token, or
+a deliberate multi-word key ("play games") must appear as a
+consecutive token sequence. Bare "play" is dropped; plurals the
+substring used to catch for free are stated (games, reels,
+messages, messaging, messenger, browsers). Survivor safety,
+verified before fixing: reconcile copies ONLY category + label
++ usage onto an existing row, so a corrected category can never
+re-price a survivor's tier or limit. Tests:
+`categorize_playStoreAndDisplayLabel_areNotGames`,
+`categorize_substringLookalikes_doNotClassify`,
+`categorize_genuineGames_stillGames`,
+`categorize_genuineVideoSocialMessagingBrowsers_unchanged`.
+
+### L7 — Shield empty-state tells the truth
+`ShieldMatrixScreen.kt` (:534ff): `filteredApps` is query AND
+category chip, but the line claimed "NO APP BY THAT NAME ON
+THIS PHONE" whenever it was empty. Now the phone claim is made
+only on a catalog-wide miss; a name living under another
+category prints "THAT NAME IS ON THIS PHONE — NOT IN THIS
+CATEGORY", a category-narrowed miss prints "NO APP BY THAT NAME
+IN THIS CATEGORY". Typography and testTag unchanged; the hunk
+survived the merge with #35's rewrite unmodified.
+
+### Repair 1 — the unmeasured-figure test can pass again
+`reconcile_unmeasuredPackageKeepsItsFigure` was
+self-contradictory: fixture category SOCIAL vs the shared stub's
+SHOPPING for "Keeper" meant the finding-4 refresh legitimately
+emitted an update, so `usageUpdates.isEmpty()` could never
+hold. Its stub now returns the row's stored category (label also
+matches), isolating the usage claim; assertion intent unchanged.
+
+### Repair 2 — AppListTruthTest encodes the two-strike law
+`sync_tableEqualsInstalledSet_ghostPruned_userTierSurvives_pruneRecorded`
+now asserts run 1 (ghost listed, strike recorded in prefs, no
+note) and run 2 (genuine second look: pruned, note filed,
+original end-state assertions intact), plus the surge's rebirth
+segment. `sync_secondRun_idempotent_noNewPruneRecord` re-aims
+idempotence at run 3 — runs 1–2 pin strike-then-prune, run 3
+asserts a settled table and no new record. No assertion was
+deleted; the intermediate law is pinned instead of assumed away.
+
+### Fix 4 — usage buckets sum, last-bucket no longer wins
+`queryRealTodayUsageMinutes` (:683) built its map with
+`associate{}` — the finding-5 bug class one map over: the last
+INTERVAL_DAILY bucket per package silently won, under-reporting
+multi-bucket apps (finding-3 territory). Buckets now sum via the
+pure `AppCatalogReconcile.aggregateUsageMinutes` (:281). Tests:
+`usageAggregation_twoBucketsForOnePackage_sum`,
+`usageAggregation_singleBucketUnchanged_zeroBucketYieldsZero`
+(a zero bucket still yields a present 0 — the measured witness).
+
+### Errata to the original report above (history kept, corrected here)
+(a) Finding 2's "a transient absence never removes the row at
+all" is false as worded: a SINGLE-sync absence never removes it;
+an absence spanning two syncs does. What survives a prune is
+tier+limit, via the tombstone — interceptCount, peek leases and
+usage restart on rebirth, the same loss profile a pre-change
+rebirth had.
+(b) Finding 1's "corroborated absence": the two strikes are the
+SAME query with the SAME filters — corroboration is temporal,
+not evidentiary. The L3 collapse window above is what makes
+them genuinely separate looks in time.
+(c) Test count: the wave-3 commit added **9 new tests + 2
+updated**, not "8 new/rewritten".
+(d) Line refs (wave-3 tree): the caller guard is
+`MonolithRepository.kt:268`; `rememberPrunedRules` is defined
+at `MonolithRepository.kt:562`.
+(e) Tombstone residual, disclosed: remembered-rule entries are
+deduplicated per package but NEVER EXPIRE if the app never
+returns. Deliberate — a cap or TTL could silently drop a user's
+ruling, which is the exact failure this issue exists to kill —
+but it is a known, chosen trade, not a hidden one.
+
+CI for this pass: recorded in the delivery note to HERZ.
