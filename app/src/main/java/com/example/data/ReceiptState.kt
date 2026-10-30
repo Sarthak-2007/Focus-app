@@ -150,7 +150,12 @@ data class PendingReceipt(
     val routineLabelWithin: String?,
     val bankedBreakSeconds: Int,
     val shieldWasOff: Boolean,
-    val deflections: List<ReceiptDeflection>
+    val deflections: List<ReceiptDeflection>,
+    // Audit R3b #145: the curio this finish forged, by name — the
+    // completion moment must not be silent about its own reward.
+    // Null when the span forged nothing (routine-born rows, valve
+    // breaks publish nothing at all); the sheet omits the line.
+    val forgedArtifactName: String? = null
 )
 
 /**
@@ -182,7 +187,9 @@ data class ReceiptState(
     val faulted: Boolean,
     val deflections: List<ReceiptDeflection>,
     val restored: Boolean,
-    val receiptPublishedMonoMs: Long
+    val receiptPublishedMonoMs: Long,
+    // Audit R3b #145: see PendingReceipt.forgedArtifactName.
+    val forgedArtifactName: String? = null
 ) {
     /** The printed №: zero-padded to a minimum of 3, never
      *  truncated (№ 048 … № 1048). */

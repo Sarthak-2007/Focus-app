@@ -1840,6 +1840,13 @@ class MonolithViewModel(
     private val _forgedArtifactIds = MutableStateFlow<Set<String>>(emptySet())
     val forgedArtifactIds: StateFlow<Set<String>> = _forgedArtifactIds.asStateFlow()
 
+    /** Audit R3b #145: the cabinet's provenance — forging sessions
+     *  per artifact id, re-read with the Drawer like the id set. */
+    private val _curioForgeRecords =
+        MutableStateFlow<Map<String, List<FocusSessionEntity>>>(emptyMap())
+    val curioForgeRecords: StateFlow<Map<String, List<FocusSessionEntity>>> =
+        _curioForgeRecords.asStateFlow()
+
     private val _drawerMonth = MutableStateFlow(
         com.example.data.DrawerDay.filingYearMonth(System.currentTimeMillis())
     )
@@ -1879,6 +1886,7 @@ class MonolithViewModel(
             _storedMonths.value = repository.storedMonths()
             _dayWords.value = repository.allDayWords()
             _forgedArtifactIds.value = repository.forgedArtifactIds()
+            _curioForgeRecords.value = repository.curioForgeRecords()
             selectDrawerMonth(_drawerMonth.value.first, _drawerMonth.value.second)
         }
     }

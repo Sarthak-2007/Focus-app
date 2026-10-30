@@ -74,6 +74,13 @@ interface MonolithDao {
     @Query("SELECT DISTINCT forgedArtifactId FROM focus_sessions WHERE forgedArtifactId IS NOT NULL")
     suspend fun getForgedArtifactIds(): List<String>
 
+    /** Audit R3b #145: the cabinet's provenance — every session
+     *  that forged, oldest first, so the Drawer can print count,
+     *  date, intention and outcome per artifact instead of a bare
+     *  FORGED badge (duplicates counted, never vanished). */
+    @Query("SELECT * FROM focus_sessions WHERE forgedArtifactId IS NOT NULL ORDER BY startWallTimeMillis ASC")
+    suspend fun getForgingSessions(): List<FocusSessionEntity>
+
     @Query("SELECT * FROM focus_sessions ORDER BY startWallTimeMillis DESC")
     suspend fun getSessionHistorySnapshot(): List<FocusSessionEntity>
 
