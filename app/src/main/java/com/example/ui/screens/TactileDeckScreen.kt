@@ -309,7 +309,18 @@ fun TactileDeckScreen(
         // re-derives from it.
         finishState.frozenDisplaySeconds
     } else if (isSessionRunning) {
-        if (activeSession.isStopwatchMode) activeSession.elapsedSeconds else activeSession.remainingSeconds
+        when {
+            activeSession.isStopwatchMode -> activeSession.elapsedSeconds
+            // Audit R3b #148: during a Safe Break the per-block
+            // remainder is 0 — that block HAS finished — so the
+            // hero read 00:00 for ten minutes, a break displayed
+            // as FINISH. In a break the hero counts the break
+            // itself down (the shield's own rendering of the same
+            // fact), under the BREAK eyebrow the strip already
+            // prints.
+            activeSession.isInSafeBreak -> activeSession.safeBreakSecondsRemaining
+            else -> activeSession.remainingSeconds
+        }
     } else {
         dialMinutes * 60
     }
@@ -334,6 +345,14 @@ fun TactileDeckScreen(
     } else if (isSessionRunning) {
         if (activeSession.isStopwatchMode) {
             (activeSession.elapsedSeconds.toFloat() / 1200f).coerceIn(0.05f, 1f)
+        } else if (activeSession.isInSafeBreak) {
+            // Audit R3b #148: in a break the bar prices the whole
+            // session span (the model's own span derivation — the
+            // break counts as session time), so it holds its
+            // ground and keeps moving instead of sitting at the
+            // finished block's empty remainder.
+            val spanTarget = activeSession.spanTargetSeconds.coerceAtLeast(1)
+            (activeSession.spanElapsedSeconds.toFloat() / spanTarget.toFloat()).coerceIn(0.03f, 1f)
         } else {
             val target = activeSession.effectiveTargetSeconds.coerceAtLeast(1)
             (activeSession.remainingSeconds.toFloat() / target.toFloat()).coerceIn(0.03f, 1f)
