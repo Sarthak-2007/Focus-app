@@ -2410,6 +2410,18 @@ class MonolithRepository(
         // ISSUE-67: domain derivation (FocusDomain), fed tier names.
         FocusDomain.countHeldApps(apps.map { it.resolvedTier.name })
 
+    /** W-41: the same held count, split by tier — SHUT (LOCKED)
+     *  first, PEEK (PEEK_2M) second. The receipt's HELD line
+     *  prints the two as separate counts: a shut app and a
+     *  peek-lease app are different promises and never flatten
+     *  into one figure on the slip. A tier string no code here
+     *  writes resolves fail-closed to LOCKED (see resolvedTier),
+     *  so it lands in the SHUT count and the split still sums to
+     *  [countHeldApps]. */
+    fun countHeldAppsSplit(apps: List<BlockedAppEntity>): Pair<Int, Int> =
+        apps.count { it.resolvedTier == AppBlockTier.LOCKED } to
+            apps.count { it.resolvedTier == AppBlockTier.PEEK_2M }
+
     suspend fun startSession(
         intention: String,
         profileName: String,
@@ -2482,13 +2494,25 @@ class MonolithRepository(
         // (this insert); no DAO update for them will ever exist.
         val database = db() // ISSUE-67: injected database, no re-fetch
         return database.withTransaction {
-            val heldApps = countHeldApps(dao.getAllAppsSnapshot())
+            val snapshotApps = dao.getAllAppsSnapshot()
+            val heldApps = countHeldApps(snapshotApps)
+            // W-41: the tier split rides the same snapshot and
+            // the same single writer — the split is a seal fact
+            // stored on the row, never a receipt-time re-count
+            // against tiers that may have changed since.
+            val (heldShut, heldPeek) = countHeldAppsSplit(snapshotApps)
             val heldSites = dao.getAllSitesSnapshot().size
             dao.deactivateAllSessions()
             val id = dao.insertSession(
-                session.copy(heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites)
+                session.copy(
+                    heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites,
+                    heldShutAtSeal = heldShut, heldPeekAtSeal = heldPeek
+                )
             ).toInt()
-            session.copy(id = id, heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites)
+            session.copy(
+                id = id, heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites,
+                heldShutAtSeal = heldShut, heldPeekAtSeal = heldPeek
+            )
         }
     }
 
@@ -2852,7 +2876,10 @@ class MonolithRepository(
             // slip — read off the row's own stamp, never re-drawn.
             forgedArtifactName = row.forgedArtifactId?.let { forgedId ->
                 CurioCatalog.artifacts.firstOrNull { it.id == forgedId }?.name
-            }
+            },
+            // W-41: the row's stored split, threaded through.
+            heldShutAtSeal = row.heldShutAtSeal,
+            heldPeekAtSeal = row.heldPeekAtSeal
         )
     }
 
@@ -2960,7 +2987,9 @@ class MonolithRepository(
             openExposureApps = pending.openExposureApps,
             restored = false,
             receiptPublishedMonoMs = 0L,
-            forgedArtifactName = pending.forgedArtifactName
+            forgedArtifactName = pending.forgedArtifactName,
+            heldShutAtSeal = pending.heldShutAtSeal,
+            heldPeekAtSeal = pending.heldPeekAtSeal
         )
     }
 
@@ -3073,7 +3102,9 @@ class MonolithRepository(
             openExposureApps = pending.openExposureApps,
             restored = true,
             receiptPublishedMonoMs = 0L,
-            forgedArtifactName = pending.forgedArtifactName
+            forgedArtifactName = pending.forgedArtifactName,
+            heldShutAtSeal = pending.heldShutAtSeal,
+            heldPeekAtSeal = pending.heldPeekAtSeal
         )
     }
 
@@ -3730,8 +3761,15 @@ class MonolithRepository(
         // three permanently disagreeing, and the session row is
         // re-read inside the transaction so the +1 never lands on a
         // stale whole-row copy.
+        // W-41/R-09 (BELEG): a granted peek is not a blocked
+        // reach. The intercept is still LOGGED (below, always —
+        // the row is the evidence the slip's outcome filter
+        // reads), but neither counter may call a let-through a
+        // stop: the shield's "N reaches blocked" counts only
+        // reaches that were not let through.
+        val countAsBlocked = countAsReach && outcome != InterceptOutcome.USED_PEEK
         databaseProvider().withTransaction {
-            if (countAsReach) {
+            if (countAsBlocked) {
                 dao.incrementInterceptCount(packageName)
             }
             dao.insertInterceptLog(
@@ -3743,7 +3781,7 @@ class MonolithRepository(
                     triggerReason = triggerReason
                 )
             )
-            if (countAsReach) {
+            if (countAsBlocked) {
                 val active = dao.getActiveSessionSnapshot()
                 if (active != null) {
                     dao.updateSession(active.copy(phantomReachesBlocked = active.phantomReachesBlocked + 1))

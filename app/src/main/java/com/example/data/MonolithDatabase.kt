@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         EmergencyBreakSpendEntity::class,
         DayNoteEntity::class
     ],
-    version = 13,
+    version = 14,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -217,6 +217,29 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
+         * Issue #10 (W-41): the seal's held count, split by tier.
+         * heldShutAtSeal / heldPeekAtSeal record how many of the
+         * apps held at a session's birth were SHUT and how many
+         * were on the 2-minute PEEK tier, so the receipt can print
+         * the two facts separately instead of one merged figure.
+         * (13→14, not 12→13: v13 was taken by the failure-cause
+         * columns above while this cure was in flight — the split
+         * chains after it, and both land.)
+         *
+         * There is NO backfill — a pre-v14 row's split was never
+         * recorded, and inventing one from today's tiers would
+         * fabricate history. Old rows keep -1 ("uncaptured"); the
+         * receipt prints their stored total and omits the split,
+         * the same omission law heldAppsAtSeal has always obeyed.
+         */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN heldShutAtSeal INTEGER NOT NULL DEFAULT -1")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN heldPeekAtSeal INTEGER NOT NULL DEFAULT -1")
+            }
+        }
+
+        /**
          * TOKEN-SPEC §6: the spend ledger arrives as an explicit
          * migration. There is NO backfill — today's in-memory spends
          * were never recorded, so v8 truthfully starts with an empty
@@ -295,7 +318,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance
