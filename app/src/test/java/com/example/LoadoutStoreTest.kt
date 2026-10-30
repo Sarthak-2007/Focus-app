@@ -95,10 +95,14 @@ class LoadoutStoreTest {
         )
         for ((index, loadout) in LoadoutStore.CAP_ORDER.withIndex()) {
             assertEquals(index, LoadoutStore.capIndexOf(loadout))
-            assertEquals(loadout, LoadoutStore.loadoutForCapIndex(index))
+            assertEquals(loadout, LoadoutStore.loadoutAtCapIndex(index))
         }
-        // The screen's historical `else` semantics survive verbatim:
-        // any out-of-range index seats the last seat, SLEEP.
-        assertEquals(SmartLoadout.SLEEP, LoadoutStore.loadoutForCapIndex(99))
+        // Merged contract (issue #58 F6, composed at the merge of
+        // main into this branch): an out-of-range index seats
+        // NOTHING — null, never a guessed SLEEP. The selector
+        // never generates one; a garbage index is faced, not
+        // silently reinterpreted.
+        assertEquals(null, LoadoutStore.loadoutAtCapIndex(99))
+        assertEquals(null, LoadoutStore.loadoutAtCapIndex(-1))
     }
 }

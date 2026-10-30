@@ -100,24 +100,27 @@ class LoadoutStore(context: Context) {
         private const val PREFS_NAME = "monolith_loadout"
         private const val KEY_LAST_HAND_LOADOUT = "last_hand_loadout"
 
-        /** The ONE seat order for the cap — ShieldCapSelector's
-         *  order. Every mapping between a loadout and its seat
-         *  (index-of, look-up, cycling) derives from this list and
-         *  nothing else. */
+        /** The cap's stops in order: the ONE source for the
+         *  index↔loadout mapping (issue #58 F6; Audit R1 #38's
+         *  cure converged on the same list — the two branches met
+         *  here and this is the merged form). Both directions
+         *  derive from this list — ShieldCapSelector renders its
+         *  stops from it and ShieldMatrixScreen resolves a tapped
+         *  index through [loadoutAtCapIndex] — so the mapping can
+         *  never drift between hand-written copies again, and an
+         *  out-of-range index resolves to null instead of silently
+         *  meaning SLEEP via an `else` branch. */
         val CAP_ORDER: List<SmartLoadout> = listOf(
-            SmartLoadout.STUDY,
-            SmartLoadout.WORK_SPRINT,
-            SmartLoadout.SLEEP
+            SmartLoadout.STUDY, SmartLoadout.WORK_SPRINT, SmartLoadout.SLEEP
         )
 
-        /** A loadout's seat on the cap — derived from [CAP_ORDER]. */
+        /** Cap positions, ShieldCapSelector's order: the ONE mapping
+         *  between a loadout and its seat on the cap. */
         fun capIndexOf(loadout: SmartLoadout): Int = CAP_ORDER.indexOf(loadout)
 
-        /** The loadout seated at [index]. Out-of-range indices —
-         *  which the selector never generates, but restored state
-         *  theoretically could — seat SLEEP, the last seat, exactly
-         *  as the screen's old hand-written `else` branch did. */
-        fun loadoutForCapIndex(index: Int): SmartLoadout =
-            CAP_ORDER.getOrElse(index) { SmartLoadout.SLEEP }
+        /** The loadout seated at cap [index], or null when the
+         *  index seats nothing — callers must face the null, never
+         *  guess a loadout for a garbage index. */
+        fun loadoutAtCapIndex(index: Int): SmartLoadout? = CAP_ORDER.getOrNull(index)
     }
 }
