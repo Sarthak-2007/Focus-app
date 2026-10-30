@@ -37,10 +37,16 @@ import org.robolectric.annotation.Config
  *
  * Runs against the singleton database file, exactly as the token
  * suite does, because completeEmergencyBreak takes its transaction
- * from the singleton. Isolation follows the issue-#66 pattern: the
- * week's spend ledger is reset deterministically at each test's
- * start and asserted empty, and each test deletes exactly what it
- * created on the way out.
+ * from the singleton. Isolation follows the issue-#66 pattern with
+ * the #91 correction: the week's ledger is reset deterministically
+ * at each test's start — keyed to the PRODUCTION clock
+ * (honestNowMillis, the instant completeEmergencyBreak itself
+ * anchors on), never to a raw wall-clock anchor captured in the
+ * test, because the suite's shared clock-honesty anchor can make
+ * the two name different weeks — and each test deletes exactly
+ * what it created on the way out. Preconditions are asserted by
+ * name so a hostile suite state fails HERE, at its own line, not
+ * downstream disguised as a cure failure.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -49,16 +55,23 @@ class ValveFloorRecheckTest {
     private val context: Context
         get() = ApplicationProvider.getApplicationContext()
 
+    /** The week the production code will anchor on RIGHT NOW. */
+    private fun productionAnchor(repo: MonolithRepository): Long =
+        MonolithWeek.weekAnchorMillis(repo.honestNowMillis())
+
     private suspend fun resetWeekLedger(db: MonolithDatabase, anchor: Long) {
         db.openHelper.writableDatabase.execSQL(
             "DELETE FROM emergency_break_spends WHERE weekAnchorMillis = $anchor"
         )
-        assertEquals(0, db.monolithDao().getSpendsForWeek(anchor).size)
+        assertEquals(
+            "precondition: production week ledger empty after reset",
+            0, db.monolithDao().getSpendsForWeek(anchor).size
+        )
     }
 
-    private fun cleanup(db: MonolithDatabase, anchor: Long, sessionId: Int) {
+    private fun cleanup(db: MonolithDatabase, sessionId: Int) {
         db.openHelper.writableDatabase.execSQL(
-            "DELETE FROM emergency_break_spends WHERE weekAnchorMillis = $anchor"
+            "DELETE FROM emergency_break_spends WHERE sessionId = $sessionId"
         )
         db.openHelper.writableDatabase.execSQL(
             "DELETE FROM focus_sessions WHERE id = $sessionId"
@@ -71,12 +84,12 @@ class ValveFloorRecheckTest {
     /**
      * A stopwatch session whose BANKED elapsed (the overlay's
      * snapshot figure) sits at 19:30 — below the floor — while its
-     * VERIFIED elapsed has already crossed it: [verifiedSeconds] is
+     * VERIFIED elapsed is [verifiedSeconds]: the verified figure is
      * carried in accumulatedBeforeRebootSeconds, the segment the
      * verified-elapsed computation credits before the monotonic
-     * anchor's own span, so lawElapsed = max(verified, banked)
-     * lands past the floor exactly as it does on the phone when the
-     * hold itself carries the session across.
+     * anchor's own span, so lawElapsed = max(verified, banked) is
+     * exactly [verifiedSeconds] (plus a sub-second tick), as it is
+     * on the phone when the hold itself carries the session across.
      */
     private suspend fun insertStopwatchSession(
         db: MonolithDatabase,
@@ -99,24 +112,55 @@ class ValveFloorRecheckTest {
         ).toInt()
     }
 
+    /** The seeded row must be the active session production will
+     *  judge, with the verified figure the test claims it carries. */
+    private suspend fun assertSeeded(
+        db: MonolithDatabase,
+        repo: MonolithRepository,
+        sessionId: Int,
+        verifiedSeconds: Int
+    ) {
+        val active = db.monolithDao().getActiveSessionSnapshot()
+        assertEquals(
+            "precondition: seeded session is the active one",
+            sessionId, active?.id
+        )
+        assertTrue("precondition: seeded session is stopwatch", active!!.isStopwatchMode)
+        val (verified, _) = repo.computeVerifiedSessionElapsed(active)
+        assertTrue(
+            "precondition: verified elapsed $verified should be within a tick of $verifiedSeconds",
+            verified >= verifiedSeconds && verified <= verifiedSeconds + 5
+        )
+    }
+
     @Test
     fun valveCompletionAfterFloorCrossing_endsCleanly_andSpendsNothing() = runBlocking {
         val db = MonolithDatabase.getInstance(context)
         val dao = db.monolithDao()
         val repo = MonolithRepository(context, dao)
-        val anchor = MonolithWeek.weekAnchorMillis(System.currentTimeMillis())
-        resetWeekLedger(db, anchor)
+        resetWeekLedger(db, productionAnchor(repo))
 
         // Banked 19:30 (below floor at overlay open), verified 21:00
         // (floor crossed by completion): the hold must NOT charge.
         val sessionId = insertStopwatchSession(db, verifiedSeconds = 21 * 60)
         try {
+            assertSeeded(db, repo, sessionId, verifiedSeconds = 21 * 60)
+
             val result = repo.completeEmergencyBreak()
 
-            assertEquals(BreakResult.CompletedCleanlyAtFloor, result)
-            // No spend row, token still whole.
-            assertEquals(0, dao.getSpendsForWeek(anchor).size)
-            assertEquals(1, repo.emergencyBreaksRemaining())
+            assertEquals(
+                "valve completion past the floor must end cleanly, not break",
+                BreakResult.CompletedCleanlyAtFloor, result
+            )
+            // No spend row anywhere names this session; token whole.
+            assertEquals(
+                "no spend may be written for a floor-met stop",
+                0, dao.getAllSpendsSnapshot().count { it.sessionId == sessionId }
+            )
+            assertEquals(
+                "the week's token must still be whole",
+                1, repo.emergencyBreaksRemaining()
+            )
             // Session ended CLEANLY through the stopwatch door:
             // completed, STOPWATCH_ENDED, booked at the law figure —
             // never VALVE_BROKE.
@@ -127,7 +171,7 @@ class ValveFloorRecheckTest {
             assertEquals(SessionOutcome.STOPWATCH_ENDED, ended.outcome)
             assertTrue(ended.elapsedSeconds >= MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS)
         } finally {
-            cleanup(db, anchor, sessionId)
+            cleanup(db, sessionId)
         }
     }
 
@@ -136,28 +180,34 @@ class ValveFloorRecheckTest {
         val db = MonolithDatabase.getInstance(context)
         val dao = db.monolithDao()
         val repo = MonolithRepository(context, dao)
-        val anchor = MonolithWeek.weekAnchorMillis(System.currentTimeMillis())
-        resetWeekLedger(db, anchor)
+        resetWeekLedger(db, productionAnchor(repo))
 
         // Banked 19:30 and verified ~0: lawElapsed is the banked
         // 19:30, still under the floor — the break is a real break
         // and the token law is untouched.
         val sessionId = insertStopwatchSession(db, verifiedSeconds = 0)
         try {
+            assertSeeded(db, repo, sessionId, verifiedSeconds = 0)
+
             val result = repo.completeEmergencyBreak()
 
-            assertEquals(BreakResult.Completed, result)
-            val spends = dao.getSpendsForWeek(anchor)
-            assertEquals(1, spends.size)
-            assertEquals(sessionId, spends.single().sessionId)
-            assertEquals(0, repo.emergencyBreaksRemaining())
+            assertEquals(
+                "valve completion below the floor must remain a paid break",
+                BreakResult.Completed, result
+            )
+            val mySpends = dao.getAllSpendsSnapshot().filter { it.sessionId == sessionId }
+            assertEquals("exactly one spend, naming this session", 1, mySpends.size)
+            assertEquals(
+                "the week's token must be spent",
+                0, repo.emergencyBreaksRemaining()
+            )
             assertNull(dao.getActiveSessionSnapshot())
             val broken = dao.getSessionHistorySnapshot().first { it.id == sessionId }
             assertFalse(broken.isActive)
             assertFalse(broken.completedSuccessfully)
             assertEquals(SessionOutcome.VALVE_BROKE, broken.outcome)
         } finally {
-            cleanup(db, anchor, sessionId)
+            cleanup(db, sessionId)
         }
     }
 }
