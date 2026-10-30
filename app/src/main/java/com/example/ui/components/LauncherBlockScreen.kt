@@ -356,6 +356,24 @@ private fun LauncherHome(
 
         Spacer(Modifier.height(14.dp))
 
+        if (session != null && session.isInSafeBreak) {
+            // Safe-break eyebrow (design-revamp salvage, D-04): the
+            // Deck's own eyebrow for this state, verbatim in form —
+            // the branch's first wording claimed the session clock
+            // was paused while the dial under it kept counting; the
+            // truth is the break minutes remaining.
+            androidx.compose.material3.Text(
+                text = "SAFE BREAK · ${(session.safeBreakSecondsRemaining + 59) / 60} MIN",
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                letterSpacing = 1.5.sp,
+                color = NightColorPrimaryContainer,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.testTag("launcher_safe_break_eyebrow")
+            )
+            Spacer(Modifier.height(8.dp))
+        }
         if (session != null && session.intention.isNotBlank()) {
             androidx.compose.material3.Text(
                 text = session.intention,

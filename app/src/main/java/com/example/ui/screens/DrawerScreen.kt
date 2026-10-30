@@ -287,7 +287,20 @@ fun DrawerScreen(
     LaunchedEffect(Unit) {
         while (true) {
             val next = DrawerDay.nextBoundaryMillis(System.currentTimeMillis())
-            delay((next - System.currentTimeMillis()).coerceAtLeast(0L) + 250L)
+            // Issue #152: the sleep is capped at a minute.
+            // nextBoundaryMillis is computed under the zone in
+            // force at composition; a timezone change mid-sleep
+            // (a landing) does not interrupt a boundary-length
+            // delay, so the heading — and the declaration row's
+            // isToday — stayed on the departure filing day until
+            // the old zone's 03:30-equivalent passed, while the
+            // write path already stamped in the new zone. Waking
+            // at least once a minute re-derives the filing day
+            // under the zone actually in force.
+            delay(
+                ((next - System.currentTimeMillis()).coerceAtLeast(0L) + 250L)
+                    .coerceAtMost(60_000L)
+            )
             nowMillis = System.currentTimeMillis()
         }
     }
@@ -901,8 +914,9 @@ fun DrawerScreen(
             )
         }
 
-        // Search — one field. While sealed it is composed but
-        // input-disabled: reading is free, typing is an edit.
+        // Search — one field. While
+        // sealed it is composed but input-disabled: reading is
+        // free, typing is an edit.
         item {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -1369,6 +1383,7 @@ fun DrawerScreen(
         }
     }
 }
+
 
 @Composable
 private fun DrawerNavRow(
