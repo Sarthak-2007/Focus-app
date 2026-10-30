@@ -444,40 +444,49 @@ fun TactileDeckScreen(
     var fbFrozenShut by rememberSaveable { mutableStateOf<Int?>(null) }
     var fbFrozenPeek by rememberSaveable { mutableStateOf<Int?>(null) }
     var fbFrozenState by rememberSaveable { mutableStateOf<String?>(null) }
-    if (isSessionRunning && activeSession != null) {
-        // The seal retires any live press latch: if the slide view
-        // detached mid-refusal (a routine armed during the refusal's
-        // 300ms), its onPressEnd never fires — the latch must not
-        // leak across the seal (Joss, review J-2).
-        // Issue #50 F2 cure (seal door): the latch retirement is
-        // no longer a composition write — derivations below read
-        // pressLatchLive, which is null from the sealing frame on
-        // (same-frame, per E-13), and the storage clear happens in
-        // the LaunchedEffect(isSessionRunning) below.
-        if (sealFreeze?.sessionId != activeSession.id &&
-            fbFrozenKey != activeSession.id && appsCellCount != null
-        ) {
-            fbFrozenKey = activeSession.id
-            fbFrozenCount = appsCellCount
-            fbFrozenShut = appsSplit?.shut
-            fbFrozenPeek = appsSplit?.peek
-            fbFrozenState = liveWarrantState?.name
+    // Issue #50 F2 cure (capture door, completed by STOSS-50):
+    // the fbFrozen capture / split fill-in / reset no longer write
+    // snapshot state during composition — they run in this effect,
+    // keyed on every input the capture reads. Semantics kept:
+    // capture-WHEN-KNOWN only (a null count never freezes), the
+    // VM's sealFreeze still outranks this fallback (its session
+    // never captures here), the split still fills in on its own
+    // later emission, and the reset still clears all five fields
+    // when no session is running. The one honest cost: the frozen
+    // values land one frame after the first running composition
+    // instead of inside it — that frame prints UNKNOWN, which is
+    // the truth until the capture exists. (The latch retirement
+    // at this same door was cured by derivation above:
+    // pressLatchLive reads null from the sealing frame on, and
+    // the LaunchedEffect(isSessionRunning) clears the storage.)
+    LaunchedEffect(
+        isSessionRunning, activeSession?.id, appsCellCount,
+        appsSplit, liveWarrantState, sealFreeze?.sessionId
+    ) {
+        val session = activeSession
+        if (isSessionRunning && session != null) {
+            if (sealFreeze?.sessionId != session.id &&
+                fbFrozenKey != session.id && appsCellCount != null
+            ) {
+                fbFrozenKey = session.id
+                fbFrozenCount = appsCellCount
+                fbFrozenShut = appsSplit?.shut
+                fbFrozenPeek = appsSplit?.peek
+                fbFrozenState = liveWarrantState?.name
+            }
+            if (fbFrozenKey == session.id &&
+                (fbFrozenShut == null || fbFrozenPeek == null) && appsSplit != null
+            ) {
+                fbFrozenShut = appsSplit.shut
+                fbFrozenPeek = appsSplit.peek
+            }
+        } else if (fbFrozenKey != null) {
+            fbFrozenKey = null
+            fbFrozenCount = null
+            fbFrozenShut = null
+            fbFrozenPeek = null
+            fbFrozenState = null
         }
-        // The split can land an emission after the count; fill it
-        // in on its own pass so the frozen tenant is not silent
-        // for the session's whole life over a one-frame lag.
-        if (fbFrozenKey == activeSession.id &&
-            (fbFrozenShut == null || fbFrozenPeek == null) && appsSplit != null
-        ) {
-            fbFrozenShut = appsSplit.shut
-            fbFrozenPeek = appsSplit.peek
-        }
-    } else if (fbFrozenKey != null) {
-        fbFrozenKey = null
-        fbFrozenCount = null
-        fbFrozenShut = null
-        fbFrozenPeek = null
-        fbFrozenState = null
     }
 
     // The sealFreeze branches must test the freeze's presence, not
