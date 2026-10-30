@@ -208,7 +208,7 @@ class ShieldSetupTruthRenderTest {
         applied: AtomicReference<SmartLoadout?> = AtomicReference(null)
     ) {
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 ShieldMatrixScreen(
                     allApps = apps,
                     filteredApps = filtered,
