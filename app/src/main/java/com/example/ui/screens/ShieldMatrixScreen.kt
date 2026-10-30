@@ -553,7 +553,12 @@ fun ShieldMatrixScreen(
         }
 
         // =====================================================================
-        // SECTION 3.5: YOUR RULES — THE STANDING ORDERS SLIP.
+        // SECTION 3.5: RULES IN FORCE — THE STANDING ORDERS SLIP.
+        // (Issue #97, recomposed under the Oct 31 ruling: the slip
+        // mixes factory presets and category births with the man's
+        // own changes, so it is headed RULES IN FORCE, never
+        // "YOUR RULES" — a guessed or factory rule must not print
+        // as his personal decision.)
         // The tally first (three numbers that sum to the phone — a
         // ledger that doesn't balance is a lie), then PEEK before
         // SHUT (the holes are the urgent read), one printed line per
