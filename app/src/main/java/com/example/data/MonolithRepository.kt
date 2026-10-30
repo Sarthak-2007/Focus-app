@@ -1100,7 +1100,6 @@ class MonolithRepository(
         return session
     }
 
-    suspend fun daoSnapshotRoutines(): List<RoutineEntity> = dao.getAllRoutinesSnapshot()
 
     suspend fun cycleAppBlockTier(app: BlockedAppEntity): AppBlockTier {
         val nextTier = when (app.resolvedTier) {

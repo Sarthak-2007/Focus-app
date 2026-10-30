@@ -699,14 +699,6 @@ object RoutineSchedule {
         return null
     }
 
-    /**
-     * Pause-aware next start (Sten §1.9): the scheduler and the
-     * ribbon read this one helper so they can never disagree. The
-     * origin is `max(now, pausedUntilMillis)` — a paused routine's
-     * next start is computed from the pause's end.
-     */
-    fun effectiveNextStartMillis(routine: RoutineEntity, nowMillis: Long): Long? =
-        nextStartMillis(routine, maxOf(nowMillis, routine.pausedUntilMillis))
 
     /**
      * LIVE (UNA-09, Truth Car 3): a routine the scheduler will ever
@@ -724,20 +716,6 @@ object RoutineSchedule {
     fun liveCount(routines: List<RoutineEntity>): Int =
         routines.count { isLive(it) }
 
-    fun isActiveNow(routine: RoutineEntity, nowMillis: Long): Boolean {
-        if (!isLive(routine)) return false
-        val durMs = durationMinutes(routine) * 60_000L
-        val day = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
-        day.add(java.util.Calendar.DAY_OF_YEAR, -1)
-        repeat(2) {
-            if (routine.daysMask and (1 shl bitFor(day)) != 0) {
-                val start = atMinutes(day, routine.startMinutes)
-                if (nowMillis in start until start + durMs) return true
-            }
-            day.add(java.util.Calendar.DAY_OF_YEAR, 1)
-        }
-        return false
-    }
 }
 
 /** Single-row guard settings the accessibility service must honour (Ren). */
