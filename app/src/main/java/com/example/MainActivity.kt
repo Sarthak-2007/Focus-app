@@ -939,7 +939,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     curioForgeRecords = curioForgeRecords,
                                     drawerLoading = drawerLoading,
                                     drawerError = drawerError,
-                                    forgeStats = forgeStats
+                                    forgeStats = forgeStats,
                                     receipts = receiptIndex,
                                     onReceiptClick = viewModel::presentReceipt
                                 )
