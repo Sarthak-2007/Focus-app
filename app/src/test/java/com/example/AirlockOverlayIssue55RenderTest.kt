@@ -10,6 +10,9 @@ import com.example.ui.AirlockInterceptState
 import com.example.ui.PeekWithheld
 import com.example.ui.components.AirlockInterceptOverlay
 import com.example.ui.theme.MyApplicationTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
@@ -46,8 +49,13 @@ import java.time.Duration
  * fix-forward that introduced 1L (7d57e9f9) asserted the expired
  * path was exercised; the census proves it was not. Cure is
  * test-side only: pin the shadow clock 60 s past boot in setUp
- * so a 1L stamp is genuinely ancient on the first frame. No
- * assertion changed, no production code touched.
+ * so a 1L stamp is genuinely ancient on the first frame. The
+ * re-intercept case carried a second, masked harness fault —
+ * two setContent calls in one test method, which the compose
+ * rule forbids — cured by driving the re-intercept through a
+ * state holder in a single setContent, exactly how production
+ * swaps the state under the standing overlay (see that case).
+ * No assertion changed, no production code touched.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -147,7 +155,21 @@ class AirlockOverlayIssue55RenderTest {
         // negative and trip the state's fresh-stamp fallback.
         // 1L only reads as ancient because setUp pins the shadow
         // clock 60 s past boot — #166, see class KDoc.)
-        setAirlock(
+        //
+        // #166 second stacked fault in this case: it used to call
+        // setAirlock (setContent) TWICE, but the compose rule
+        // forbids a second setContent per test method (recorded
+        // in-repo in DrawerRenderTest's KDoc; compose BOM moved
+        // 2024.09.00 -> 2025.08.00 after this case was written).
+        // At census the case died at its first peek assertion, so
+        // the unlawful second call was never reached and the fault
+        // stayed masked; the first #166 branch run reached it and
+        // died with IllegalStateException at the setContent call.
+        // The re-intercept is now driven the way production drives
+        // it — the standing overlay receives a NEW state instance
+        // (the ViewModel swaps airlockState while the overlay
+        // stands) — through one setContent and a state holder.
+        var standing by mutableStateOf(
             AirlockInterceptState(
                 isVisible = true,
                 interceptedPackageName = "com.example.blocked",
@@ -157,19 +179,28 @@ class AirlockOverlayIssue55RenderTest {
                 interceptedAtMonoMillis = 1L
             )
         )
+        composeRule.setContent {
+            MyApplicationTheme(darkTheme = true) {
+                AirlockInterceptOverlay(
+                    state = standing,
+                    onSelectReason = {},
+                    onTransmuteParticleTap = {},
+                    onReturnToFocus = {},
+                    onTake2MinutePeek = {}
+                )
+            }
+        }
         composeRule.onNodeWithTag("airlock_peek_button").assertIsDisplayed()
 
         // Same package re-intercepts while the overlay stands: new
         // instance, fresh stamp — the wall restarts in full.
-        setAirlock(
-            AirlockInterceptState(
-                isVisible = true,
-                interceptedPackageName = "com.example.blocked",
-                interceptedAppName = "Blocked",
-                canUse2MinutePeek = true,
-                interceptInstanceId = 4L,
-                interceptedAtMonoMillis = SystemClock.elapsedRealtime()
-            )
+        standing = AirlockInterceptState(
+            isVisible = true,
+            interceptedPackageName = "com.example.blocked",
+            interceptedAppName = "Blocked",
+            canUse2MinutePeek = true,
+            interceptInstanceId = 4L,
+            interceptedAtMonoMillis = SystemClock.elapsedRealtime()
         )
         // Audit R6 #341 F60: the peek offer is composed from the
         // first frame (disabled during the countdown) so the card
