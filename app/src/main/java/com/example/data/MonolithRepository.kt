@@ -583,6 +583,17 @@ class MonolithRepository(
         const val PRUNE_NOTE_COUNT_KEY = "prune_note_count"
         const val PRUNE_NOTE_RULES_KEY = "prune_note_rules_removed"
 
+        /** Ren ruling 00:34 IST Oct 31 (#7): the one-time LEGACY
+         *  OPEN reset (see LegacyOpenReset). DONE stamps that the
+         *  consideration has run on this install — set exactly
+         *  once, whether it reset rows or found nothing to reset,
+         *  so the pass never repeats. COUNT is the pending Sheet
+         *  announcement: how many rows the reset shut, held until
+         *  the Sheet has shown the strip and it is dismissed.
+         *  Prefs, not Room — same reasoning as the prune note. */
+        const val LEGACY_OPEN_RESET_DONE_KEY = "legacy_open_reset_v1_done"
+        const val LEGACY_OPEN_RESET_COUNT_KEY = "legacy_open_reset_pending_count"
+
         /** Issue #129 F1: the unreviewed-auto-OPEN record — the
          *  packages the category guess birthed OPEN with no preset
          *  and no ruling from the man. Prefs, not Room (same
@@ -737,6 +748,14 @@ class MonolithRepository(
     ) = withContext(Dispatchers.IO) {
         seedMutex.withLock {
         recordProvenanceIfResurrected()
+
+        // Ren ruling 00:34 IST Oct 31 (#7): whether this install
+        // ALREADY had a catalogue when this sync began — the fact
+        // the one-time legacy OPEN reset at the end of this pass
+        // keys on. Captured before any seeding/reconcile below can
+        // birth rows of its own: a fresh install has nothing
+        // legacy, and its newborn rows are never a "reset".
+        val catalogueExistedAtEntry = dao.getAllAppsSnapshot().isNotEmpty()
 
         // Audit R2 #96: seed only a store that has never carried
         // content. Once content exists (seeded or the user's own)
@@ -1200,6 +1219,17 @@ class MonolithRepository(
             // row on every cold start. No pass may delete a session
             // for resembling another.
         }
+        // Ren ruling 00:34 IST Oct 31 (#7): the one-time LEGACY
+        // OPEN reset runs at the end of the first seed-sync after
+        // the inversion lands, over the reconciled catalogue. A
+        // failure here must never break the sync itself — the
+        // done-flag stays unstamped and the pass retries on the
+        // next run.
+        try {
+            runLegacyOpenResetIfNeeded(catalogueExistedAtEntry)
+        } catch (e: Exception) {
+            swallow("runLegacyOpenResetIfNeeded", e)
+        }
         drainDayWordsLocked()
         }
     }
@@ -1287,6 +1317,66 @@ class MonolithRepository(
             .edit()
             .remove(PRUNE_NOTE_COUNT_KEY)
             .remove(PRUNE_NOTE_RULES_KEY)
+            .apply()
+    }
+
+    // ------------------------------------------------------------------
+    // THE LEGACY OPEN RESET (Ren ruling 00:34 IST Oct 31, #7):
+    // run once — read the announcement — clear it on dismissal.
+    // ------------------------------------------------------------------
+
+    /**
+     * The one-time reset itself. Runs inside the seed-sync (the
+     * caller's mutex), after the reconcile, so the snapshot it
+     * reads is the phone's whole settled catalogue.
+     *
+     * One-time is a persisted fact, not a hope: [LEGACY_OPEN_RESET_DONE_KEY]
+     * is stamped on every path out of the first consideration —
+     * rows reset, nothing to reset, or no legacy catalogue at all —
+     * and it is stamped LAST, after the writes, so a pass that dies
+     * mid-write has not claimed a consideration it never finished.
+     *
+     * A fresh install (no catalogue at entry) is stamped done
+     * WITHOUT resetting or announcing: nothing on that phone is
+     * legacy, the rows this sync birthed are the reconcile's
+     * business (born SHUT under the inversion), and announcing a
+     * "reset" of apps nobody ever held open would be a lie on the
+     * Sheet.
+     */
+    private suspend fun runLegacyOpenResetIfNeeded(catalogueExistedAtEntry: Boolean) {
+        val prefs = context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(LEGACY_OPEN_RESET_DONE_KEY, false)) return
+        if (!catalogueExistedAtEntry) {
+            prefs.edit().putBoolean(LEGACY_OPEN_RESET_DONE_KEY, true).apply()
+            return
+        }
+        val snapshot = dao.getAllAppsSnapshot()
+        val targets = LegacyOpenReset.packagesToReset(snapshot, context.packageName)
+        if (targets.isNotEmpty()) {
+            val targetSet = targets.toSet()
+            dao.insertApps(
+                snapshot.filter { it.packageName in targetSet }
+                    .map { it.copy(blockTier = AppBlockTier.LOCKED.name).normalized() }
+            )
+            // A reset row has a ruling now — the reset itself — so
+            // it leaves the unreviewed-OPEN record, exactly as a
+            // loadout landing does in applySmartLoadout.
+            clearUnreviewedOpen(targets)
+            prefs.edit().putInt(LEGACY_OPEN_RESET_COUNT_KEY, targets.size).apply()
+        }
+        prefs.edit().putBoolean(LEGACY_OPEN_RESET_DONE_KEY, true).apply()
+    }
+
+    /** The pending announcement's count, or 0 when the Sheet has
+     *  nothing to announce (no reset rows, or already dismissed). */
+    fun pendingLegacyOpenResetCount(): Int =
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .getInt(LEGACY_OPEN_RESET_COUNT_KEY, 0)
+
+    fun clearLegacyOpenResetNote() {
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove(LEGACY_OPEN_RESET_COUNT_KEY)
             .apply()
     }
 

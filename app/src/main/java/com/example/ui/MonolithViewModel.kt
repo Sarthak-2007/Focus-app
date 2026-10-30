@@ -1406,6 +1406,23 @@ class MonolithViewModel(
         repository.clearPruneNote()
     }
 
+    /** Ren ruling 00:34 IST Oct 31 (#7): the legacy OPEN reset's
+     *  Sheet announcement — the count of apps the one-time reset
+     *  shut, or null when there is nothing to announce. Same
+     *  one-time-strip grammar as the prune note: it prints once,
+     *  above the catalogue where any of them can be re-opened by
+     *  hand, and a tap dismisses it. The reset itself is the
+     *  repository's; this flow only carries its record. */
+    private val _legacyOpenResetCount = MutableStateFlow<Int?>(null)
+    val legacyOpenResetCount: StateFlow<Int?> = _legacyOpenResetCount.asStateFlow()
+
+    fun dismissLegacyOpenResetNote() {
+        if (_legacyOpenResetCount.value != null) {
+            _legacyOpenResetCount.value = null
+        }
+        repository.clearLegacyOpenResetNote()
+    }
+
     /** Issue #129 F1: the review prompt's content — the names of
      *  apps the category guess birthed OPEN that the man has not
      *  ruled on yet. There is NO dismiss: the list empties only
@@ -2164,6 +2181,8 @@ class MonolithViewModel(
             // Re-read now that the seed has completed.
             _freshStartNoteVisible.value = repository.freshStartNotePending()
             _pruneNote.value = repository.pendingPruneNote()
+            _legacyOpenResetCount.value =
+                repository.pendingLegacyOpenResetCount().takeIf { it > 0 }
             refreshUnreviewedOpen()
             // Routines rebuild: no per-routine alarm arming — one
             // forced reconcile derives the truth and rearms the chain.
@@ -4434,6 +4453,7 @@ class MonolithViewModel(
      */
     fun cycleAppBlockTier(app: BlockedAppEntity) {
         dismissPruneNote()
+        dismissLegacyOpenResetNote()
         val isLockedSession = activeSession.value?.isActive == true
         if (isLockedSession) {
             when (app.resolvedTier) {
@@ -4463,6 +4483,7 @@ class MonolithViewModel(
 
     fun setAppBlockTier(app: BlockedAppEntity, tier: AppBlockTier) {
         dismissPruneNote()
+        dismissLegacyOpenResetNote()
         val isLockedSession = activeSession.value?.isActive == true
         if (isLockedSession) {
             val currentRank = when (app.resolvedTier) {
