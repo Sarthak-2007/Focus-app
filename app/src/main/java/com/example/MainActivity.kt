@@ -1250,13 +1250,48 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     }
                 },
                 onPeekApp = { app ->
-                    launcherOpen = false
-                    viewModel.triggerAirlockIntercept(
-                        app.packageName,
-                        app.appName,
-                        app.resolvedTier.badge,
-                        InterceptPath.APP_TIER
-                    )
+                    // SAFE-BREAK PEEK (design-revamp salvage, b027368):
+                    // during a Safe Break the active session already
+                    // suspends the interceptors (WatchStore reads
+                    // isInSafeBreak), so PEEK apps are already free —
+                    // launch directly, no peek lease is started and
+                    // no cooldown is armed. Read at tap time from
+                    // the VM's activeSession flow.
+                    val tapSession = viewModel.activeSession.value
+                    // D-03 re-gate (2dac73e): same tap-time discipline
+                    // as the OPEN gate — re-read the live entity; an
+                    // app tightened to LOCKED mid-break must not
+                    // launch off the stale composed row.
+                    val livePeekApp = viewModel.apps.value.firstOrNull {
+                        it.packageName == app.packageName
+                    }
+                    if (tapSession != null && tapSession.isActive && tapSession.isInSafeBreak &&
+                        !viewModel.navigationLocked() && livePeekApp != null &&
+                        livePeekApp.resolvedTier != com.example.data.AppBlockTier.LOCKED
+                    ) {
+                        val started = runCatching {
+                            context.packageManager
+                                .getLaunchIntentForPackage(livePeekApp.packageName)
+                                ?.let { launch ->
+                                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    context.startActivity(launch)
+                                    true
+                                } ?: false
+                        }.getOrDefault(false)
+                        if (started) launcherOpen = false
+                    } else {
+                        // Outside a Safe Break (or refused by the
+                        // re-gate) the existing Airlock route stands
+                        // exactly as it was — the peek offer / lease
+                        // machinery decides from there.
+                        launcherOpen = false
+                        viewModel.triggerAirlockIntercept(
+                            app.packageName,
+                            app.appName,
+                            app.resolvedTier.badge,
+                            InterceptPath.APP_TIER
+                        )
+                    }
                 },
                 onRequestEmergencyBreak = {
                     launcherOpen = false
