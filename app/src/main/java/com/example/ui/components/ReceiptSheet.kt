@@ -128,7 +128,7 @@ fun ReceiptSheet(
                 }
                 if (receipt.heldAppsAtSeal >= 0 && receipt.heldSitesAtSeal >= 0) {
                     ReceiptMonoLine(
-                        text = "HELD ${receipt.heldAppsAtSeal} APPS · ${receipt.heldSitesAtSeal} SITES"
+                        text = "HELD ${receipt.heldAppsAtSeal} APPS · ${receipt.heldSitesAtSeal} SITES ON THIS PHONE"
                     )
                 }
                 if (receipt.bankedBreakSeconds > 0) {

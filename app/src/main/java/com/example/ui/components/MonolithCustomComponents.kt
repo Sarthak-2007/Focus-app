@@ -479,7 +479,13 @@ private fun splitTenantText(shut: Int, peek: Int, sealed: Boolean): String? {
     }
     val peekPart = if (peek > 0) "$peek PEEK" else null
     val parts = listOfNotNull(shutPart, peekPart)
-    return if (parts.isEmpty()) null else parts.joinToString(" · ")
+    if (parts.isEmpty()) return null
+    val split = parts.joinToString(" · ")
+    // R3b #160 (two-phones-tablet): the seal certifies THIS handset only.
+    // The sealed imprint says so at the moment of certification — the
+    // hold never reaches a second phone, a tablet or a laptop, and the
+    // words now carry that boundary instead of implying the person.
+    return if (sealed) "$split · THIS PHONE ONLY" else split
 }
 
 /** What the sentence slot's tap does (Suki): FIX goes to the pane
