@@ -1,4 +1,4 @@
-status=aborted rc_merge=1 utc=2026-10-30T09:41:21Z
+status=aborted rc_merge=1 utc=2026-10-30T09:41:54Z
 == unmerged files ==
 app/src/main/java/com/example/data/MonolithRepository.kt
 app/src/main/java/com/example/data/ReceiptState.kt
@@ -126,6 +126,45 @@ app/src/main/java/com/example/ui/screens/TactileDeckScreen.kt
 2773-        // is set once and never unwinds.
 2774-        val hmacValid = CryptoIntegrityManager.verifySessionState(session)
 2775-        val penaltyAdd = when {
+2776-            !hmacValid ->
+2777-                if (session.penaltySecondsAdded == 0) HMAC_TAMPER_PENALTY_SECONDS
+2778-                else session.penaltySecondsAdded
+2779-            tamper -> HMAC_TAMPER_PENALTY_SECONDS
+2780-            else -> 0
+2781-        }
+2782-        val effectiveTarget = session.targetDurationSeconds + penaltyAdd
+--
+2784:<<<<<<< HEAD
+2785-        // Re-anchor if device rebooted so subsequent ticks on the new boot stay monotonic.
+2786-        // BOTH anchors move to this frame — the seal's own law (sealSession:
+2787-        // "Both anchors move to the same frame so the mono/wall cross-check
+2788-        // stays consistent"), which this path used to break: it moved the
+2789-        // mono anchor and left the wall anchor at the session's start, so
+2790-        // every later tick compared wall-since-start against
+2791-        // mono-since-reboot, the drift read permanently > 90s, and an
+2792-        // honest reboot branded the user a tamperer and drew the 15-minute
+2793-        // penalty (Audit R3 #113, finding 4). The re-sign covers the NEW
+2794-        // anchor pair, exactly as the seal's re-sign does.
+2795-        val rebootDetected = (session.bootCount > 0 && currentBoot != session.bootCount) ||
+2796-            (session.lastTickElapsedRealtimeMillis > 0L && nowMono < session.lastTickElapsedRealtimeMillis)
+2797-        val newAccumulated = if (rebootDetected) verifiedElapsed else session.accumulatedBeforeRebootSeconds
+2798-        val newStartMono = if (rebootDetected) nowMono else session.startElapsedRealtimeMillis
+2799-        val newStartWall = if (rebootDetected) nowWall else session.startWallTimeMillis
+2800-        val newBootCount = if (rebootDetected) currentBoot else session.bootCount
+2801-=======
+2802-        // Re-anchor if device rebooted so subsequent ticks on the new boot stay monotonic
+2803-        val rebootDetected = (currentBoot != null && session.bootCount > 0 && currentBoot != session.bootCount) ||
+2804-            (session.lastTickElapsedRealtimeMillis > 0L && nowMono < session.lastTickElapsedRealtimeMillis)
+2805-        val newAccumulated = if (rebootDetected) verifiedElapsed else session.accumulatedBeforeRebootSeconds
+2806-        val newStartMono = if (rebootDetected) nowMono else session.startElapsedRealtimeMillis
+2807-        val newBootCount = if (rebootDetected) currentBoot ?: session.bootCount else session.bootCount
+2808->>>>>>> origin/main
+2809-        val newHmac = if (rebootDetected) {
+2810-            CryptoIntegrityManager.signSessionState(
+2811-                newStartWall,
+2812-                newStartMono,
+2813-                newBootCount,
+2814-                session.targetDurationSeconds,
 --- app/src/main/java/com/example/data/ReceiptState.kt
 243:<<<<<<< HEAD
 244-    // Audit R3 #113, finding 4: the tamper penalty the row carries,
