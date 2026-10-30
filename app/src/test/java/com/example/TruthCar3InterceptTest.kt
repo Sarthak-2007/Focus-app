@@ -175,7 +175,7 @@ class TruthCar3InterceptTest {
         val dead = warrant(WarrantState.OFF, readMono = 100_000L, bound = false)
         assertEquals(
             R.string.sentence_blocking_off,
-            refusalSentenceFor(dead, 110_000L)?.text
+            refusalSentenceFor(dead, 110_000L)?.textRes
         )
         assertNull(refusalSentenceFor(dead, 200_000L))
         assertNull(refusalSentenceFor(null, 200_000L))
