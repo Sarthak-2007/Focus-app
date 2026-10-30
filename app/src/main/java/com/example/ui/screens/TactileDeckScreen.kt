@@ -100,6 +100,9 @@ fun TactileDeckScreen(
     studyPreset: StudyModePreset,
     checklist: List<StudyChecklistItem>,
     activeTask: FocusTaskEntity?,
+    // R3b #163 F5: true when the NOW task already stood as
+    // yesterday's active task (the ViewModel's day-boundary note).
+    activeTaskFromYesterday: Boolean = false,
     queuedTasks: List<FocusTaskEntity>,
     completedTasksCount: Int,
     totalQueueMinutes: Int,
@@ -814,6 +817,20 @@ fun TactileDeckScreen(
                                 }
                             )
                     )
+                    // R3b #163 F5: a NOW task that already stood as
+                    // yesterday's active task says so on its face —
+                    // it never poses as a fresh start chosen today.
+                    if (activeTaskFromYesterday) {
+                        Text(
+                            text = "FROM YESTERDAY",
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 9.5.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("now_task_from_yesterday")
+                        )
+                    }
                     // DONE is a verb, so it wears an action's body
                     // (ESR-07): the same raised key-cap as the FLOW
                     // key — bare mono text beside the static QUEUE
@@ -1045,7 +1062,16 @@ fun TactileDeckScreen(
                     } else {
                         BlockitActionChip(
                             wordLabel = "EMERGENCY BREAK VALVE (60S HOLD)",
-                            monoBadge = "$weeklyEmergencyTokensRemaining/1 WEEK",
+                            // R3b #163 F4: a spent valve used to wear
+                            // the same badge as a live one ("0/1 WEEK"
+                            // read as a state, not a wait). The spent
+                            // badge now names the wait itself — the
+                            // week turns on Monday (MonolithWeek).
+                            monoBadge = if (weeklyEmergencyTokensRemaining > 0) {
+                                "$weeklyEmergencyTokensRemaining/1 WEEK"
+                            } else {
+                                "0/1 WEEK · BACK MONDAY"
+                            },
                             isPrimaryInk = true,
                             onClick = onRequestDisarm,
                             modifier = Modifier

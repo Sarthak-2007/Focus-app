@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import com.example.data.CurioCatalog
 import com.example.data.DayWordStore
 import com.example.data.DrawerDay
+import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
 import com.example.data.KineticArtifact
 import com.example.data.StoredMonth
@@ -74,7 +75,12 @@ private enum class DrawerView { LANDING, INDEX, MONTH, CABINET }
 private data class DrawerDayGroup(
     val date: LocalDate,
     val rows: List<FocusTaskEntity>,
-    val word: String?
+    val word: String?,
+    // R3b #163 F2: the day's finalised routine sessions, printed
+    // as plain record lines ("ROUTINE SLEEP — MISSED") under the
+    // heading. Display only — the Drawer keeps no score; it shows
+    // what the heartbeat booked, where the user can find it.
+    val sessionLines: List<String> = emptyList()
 )
 
 /** Group rows by filing date and merge declared words + (optionally)
@@ -86,7 +92,8 @@ private fun buildDayGroups(
     dayWords: Map<String, String>,
     scopeMonth: Pair<Int, Int>?,
     includeTodayGroup: Boolean,
-    today: LocalDate
+    today: LocalDate,
+    sessions: List<FocusSessionEntity> = emptyList()
 ): List<DrawerDayGroup> {
     val byDate = rows.groupBy { DrawerDay.filingDate(it.completedAtMillis) }.toMutableMap()
     val dates = byDate.keys.toMutableSet()
@@ -96,12 +103,42 @@ private fun buildDayGroups(
             dates.add(date)
         }
     }
+    // R3b #163 F2+F3: a day also exists in the Drawer when a
+    // session finalised on it — even if no task was completed.
+    // Before this, a failed day (a MISSED routine, zero stored
+    // tasks) left no group at all: the Drawer showed a clean gap
+    // where the day had been. Routine sessions with a booked
+    // outcome also contribute their record line for the day.
+    val sessionLinesByDate = mutableMapOf<LocalDate, MutableList<String>>()
+    for (session in sessions) {
+        if (session.isActive) continue
+        val stamp = if (session.routineId != null && session.windowStartMillis > 0L) {
+            session.windowStartMillis
+        } else {
+            session.startWallTimeMillis
+        }
+        if (stamp <= 0L) continue
+        val date = DrawerDay.filingDate(stamp)
+        if (scopeMonth != null && (date.year != scopeMonth.first || date.monthValue != scopeMonth.second)) {
+            continue
+        }
+        dates.add(date)
+        val outcome = session.routineOutcome
+        if (session.routineId != null && outcome != null) {
+            val name = session.profileName.removePrefix("Routine: ").trim()
+                .uppercase(Locale.US)
+            val label = if (name.isBlank()) "ROUTINE" else "ROUTINE $name"
+            sessionLinesByDate.getOrPut(date) { mutableListOf() }
+                .add("$label — $outcome")
+        }
+    }
     if (includeTodayGroup) dates.add(today)
     return dates.sortedDescending().map { date ->
         DrawerDayGroup(
             date = date,
             rows = byDate[date].orEmpty(),
-            word = dayWords[DrawerDay.dateIso(date)]
+            word = dayWords[DrawerDay.dateIso(date)],
+            sessionLines = sessionLinesByDate[date].orEmpty()
         )
     }
 }
@@ -147,6 +184,11 @@ fun DrawerScreen(
     onQueryChange: (String) -> Unit,
     onLoadEarlierSearch: () -> Unit,
     onDeclareTodayWord: (String?) -> Unit,
+    // R3b #163: yesterday's word stays declarable the morning
+    // after (F1), and finalised sessions give failed days a group
+    // and a record line (F2/F3).
+    onDeclareDayWord: (LocalDate, String?) -> Unit = { _, _ -> },
+    drawerSessions: List<FocusSessionEntity> = emptyList(),
     // The cabinet (chrome C10): the curios' new home. The Drawer is
     // storage; the cabinet is its furniture — the six artifacts as
     // ruled rows, their forged state read from real sessions, their
@@ -684,16 +726,35 @@ fun DrawerScreen(
                     scopeMonth = drawerMonth,
                     includeTodayGroup = !isSealed &&
                         drawerMonth == currentYearMonth,
-                    today = today
+                    today = today,
+                    sessions = drawerSessions
                 )
                 groups.forEach { group ->
                     item(key = "month-head-${group.date}") {
                         DayHeading(
                             group = group,
-                            isToday = group.date == today,
-                            isSealed = isSealed,
-                            onDeclareTodayWord = onDeclareTodayWord
+                            canDeclare = !isSealed && (group.date == today ||
+                                (group.date == today.minusDays(1) && group.word == null)),
+                            onDeclareWord = { word ->
+                                if (group.date == today) onDeclareTodayWord(word)
+                                else onDeclareDayWord(group.date, word)
+                            }
                         )
+                    }
+                    if (group.sessionLines.isNotEmpty()) {
+                        item(key = "month-sessions-${group.date}") {
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                group.sessionLines.forEach { line ->
+                                    Text(
+                                        text = line,
+                                        fontFamily = AnonymousProFamily,
+                                        fontSize = 11.sp,
+                                        color = scheme.onSurfaceVariant,
+                                        modifier = Modifier.testTag("drawer_session_line")
+                                    )
+                                }
+                            }
+                        }
                     }
                     items(group.rows, key = { "month-${it.id}" }) { task ->
                         StoredRow(task = task, onClick = { selectedTask = task })
@@ -728,9 +789,8 @@ fun DrawerScreen(
                                 rows = emptyList(),
                                 word = dayWords[DrawerDay.dateIso(today)]
                             ),
-                            isToday = true,
-                            isSealed = isSealed,
-                            onDeclareTodayWord = onDeclareTodayWord
+                            canDeclare = !isSealed,
+                            onDeclareWord = onDeclareTodayWord
                         )
                     }
                     item {
@@ -787,16 +847,35 @@ fun DrawerScreen(
                         dayWords = dayWords,
                         scopeMonth = currentYearMonth,
                         includeTodayGroup = !isSealed,
-                        today = today
+                        today = today,
+                        sessions = drawerSessions
                     )
                     groups.forEach { group ->
                         item(key = "land-head-${group.date}") {
                             DayHeading(
                                 group = group,
-                                isToday = group.date == today,
-                                isSealed = isSealed,
-                                onDeclareTodayWord = onDeclareTodayWord
+                                canDeclare = !isSealed && (group.date == today ||
+                                    (group.date == today.minusDays(1) && group.word == null)),
+                                onDeclareWord = { word ->
+                                    if (group.date == today) onDeclareTodayWord(word)
+                                    else onDeclareDayWord(group.date, word)
+                                }
                             )
+                        }
+                        if (group.sessionLines.isNotEmpty()) {
+                            item(key = "land-sessions-${group.date}") {
+                                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    group.sessionLines.forEach { line ->
+                                        Text(
+                                            text = line,
+                                            fontFamily = AnonymousProFamily,
+                                            fontSize = 11.sp,
+                                            color = scheme.onSurfaceVariant,
+                                            modifier = Modifier.testTag("drawer_session_line")
+                                        )
+                                    }
+                                }
+                            }
                         }
                         items(group.rows, key = { "land-${it.id}" }) { task ->
                             StoredRow(task = task, onClick = { selectedTask = task })
@@ -841,9 +920,11 @@ private fun DrawerNavRow(
 @Composable
 private fun DayHeading(
     group: DrawerDayGroup,
-    isToday: Boolean,
-    isSealed: Boolean,
-    onDeclareTodayWord: (String?) -> Unit
+    // R3b #163 F1: the picker is offered for today, and for
+    // yesterday while yesterday still carries no word — the call
+    // sites compute that; the heading just renders the offer.
+    canDeclare: Boolean,
+    onDeclareWord: (String?) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -860,7 +941,7 @@ private fun DayHeading(
             color = scheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 6.dp)
         )
-        if (isToday && !isSealed) {
+        if (canDeclare) {
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 DayWordStore.WORDS.forEach { word ->
                     val active = group.word == word
@@ -871,7 +952,7 @@ private fun DayHeading(
                         fontSize = 11.sp,
                         color = if (active) scheme.onBackground else scheme.onSurfaceVariant,
                         modifier = Modifier
-                            .clickable { onDeclareTodayWord(if (active) null else word) }
+                            .clickable { onDeclareWord(if (active) null else word) }
                             .testTag("declare_word_${word.lowercase()}")
                     )
                 }

@@ -786,6 +786,7 @@ class MonolithViewModel(
                     _intentionText.value = task.title
                     seedDialFromTask(task)
                 }
+                refreshActiveTaskCarryover(task)
             }
         }
         // The Watch Store's emissions are a bus, never a verdict:
@@ -1961,6 +1962,45 @@ class MonolithViewModel(
             _dayWords.value = repository.allDayWords()
             _storedMonths.value = repository.storedMonths()
         }
+    }
+
+    /**
+     * R3b #163 F1: the morning after, yesterday's word must still
+     * be declarable — the store always accepted any date; only the
+     * picker was gated to today. The Drawer offers this for
+     * yesterday's group while it carries no word.
+     */
+    fun declareDayWordFor(date: java.time.LocalDate, word: String?) {
+        val iso = com.example.data.DrawerDay.dateIso(date)
+        viewModelScope.launch {
+            repository.declareDayWord(iso, word)
+            _dayWords.value = repository.allDayWords()
+            _storedMonths.value = repository.storedMonths()
+        }
+    }
+
+    // R3b #163 F5: the NOW task's day boundary. FocusTaskEntity
+    // has no created-at and this fix does not migrate the schema;
+    // the first active task seen on a filing date is noted in
+    // prefs, so the Deck can tag a carried-over NOW task
+    // "FROM YESTERDAY" instead of letting it pose as today's.
+    private val activeTaskDayStore by lazy { com.example.data.ActiveTaskDayStore(appContext) }
+    private val _activeTaskFromYesterday = MutableStateFlow(false)
+    val activeTaskFromYesterday: StateFlow<Boolean> = _activeTaskFromYesterday
+
+    private fun refreshActiveTaskCarryover(task: FocusTaskEntity?) {
+        if (task == null) {
+            _activeTaskFromYesterday.value = false
+            return
+        }
+        val today = com.example.data.DrawerDay.filingDate(System.currentTimeMillis())
+        val todayIso = com.example.data.DrawerDay.dateIso(today)
+        if (activeTaskDayStore.taskIdOn(todayIso) == null) {
+            activeTaskDayStore.note(todayIso, task.id)
+        }
+        val yesterdayIso = com.example.data.DrawerDay.dateIso(today.minusDays(1))
+        _activeTaskFromYesterday.value =
+            activeTaskDayStore.taskIdOn(yesterdayIso) == task.id
     }
 
     fun splitActiveTaskAndReturn(microStepTitle: String) {
