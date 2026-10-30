@@ -111,7 +111,7 @@ class ReceiptSheetTruthTest {
 
     private fun show(state: ReceiptState, onDismiss: () -> Unit = {}) {
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()

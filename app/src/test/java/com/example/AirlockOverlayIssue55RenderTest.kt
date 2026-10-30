@@ -37,7 +37,7 @@ class AirlockOverlayIssue55RenderTest {
 
     private fun setAirlock(state: AirlockInterceptState) {
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = true, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = true) {
                 AirlockInterceptOverlay(
                     state = state,
                     onSelectReason = {},
@@ -74,7 +74,7 @@ class AirlockOverlayIssue55RenderTest {
         // RETURN (and the peek chip) can never be clipped unreachable
         // while Back is deliberately swallowed.
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = true, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = true) {
                 androidx.compose.foundation.layout.Box(
                     modifier = androidx.compose.ui.Modifier.height(300.dp)
                 ) {
