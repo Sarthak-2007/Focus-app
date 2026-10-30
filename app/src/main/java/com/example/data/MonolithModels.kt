@@ -433,6 +433,17 @@ data class FocusSessionEntity(
     // OMIT a -1 figure, never print it (Zettel Z2).
     val heldAppsAtSeal: Int = -1,
     val heldSitesAtSeal: Int = -1,
+    // W-41 (13→14): the HELD total split by tier — heldShutAtSeal
+    // counts LOCKED ("Shut") apps, heldPeekAtSeal counts PEEK_2M
+    // ("2m Peek") apps. Written by the same single writer, inside
+    // the same birth transaction, from the same snapshot as
+    // heldAppsAtSeal (their sum IS the total, by construction).
+    // The receipt prints the split; it never flattens the two
+    // tiers into one number. -1 = uncaptured (a pre-13→14 row):
+    // readers fall back to the stored total, never invent a split
+    // that was never recorded.
+    val heldShutAtSeal: Int = -1,
+    val heldPeekAtSeal: Int = -1,
     // Draht's release-fault record (9→10): the shield that would
     // not stop at a finish. releaseFaultShield names the faulted
     // link; releaseRetriesDone counts the retry cadence's spent
