@@ -748,14 +748,28 @@ fun ParkDrawer(
                                     "⋮ MENU → ALLOW RESTRICTED SETTINGS, " +
                                     "THEN COME BACK AND FIX AGAIN."
                             WatchItemId.BATTERY ->
+                                // Issue #296 (Audit R5, ScreenZen
+                                // second-pass F10): the battery step
+                                // teaches, it does not just link — a
+                                // named purpose and the OEM-killer
+                                // pointer (dontkillmyapp.com, the
+                                // public database of per-maker
+                                // background-killing behaviour), on
+                                // every skin, not only gated ones.
                                 if (com.example.data.OemPolicy.gatesAutostart()) {
                                     "THIS PHONE ALSO GATES RESTARTS BEHIND " +
                                         "AUTOSTART: FIX OPENS THE AUTOSTART " +
                                         "LIST — SWITCH MONOLITH ON THERE. " +
                                         "THE APP CANNOT READ THAT SWITCH " +
-                                        "BACK, SO THIS LINE STAYS UNPROVED."
+                                        "BACK, SO THIS LINE STAYS UNPROVED. " +
+                                        "DONTKILLMYAPP.COM LISTS THIS " +
+                                        "MAKER'S EXTRA STEPS."
                                 } else {
-                                    null
+                                    "REQUIRED SO THE PHONE DOES NOT " +
+                                        "SWITCH BLOCKING OFF IN THE " +
+                                        "BACKGROUND: SET MONOLITH TO " +
+                                        "UNRESTRICTED. DONTKILLMYAPP.COM " +
+                                        "LISTS EACH MAKER'S EXTRA STEPS."
                                 }
                             else -> null
                         }
