@@ -138,6 +138,27 @@ class ScreenshotHarnessTest {
 
     @After
     fun tearDown() {
+        closeDb()
+    }
+
+    // Issue #382, technique from Boden's test-floor round 4 (#166,
+    // SoundAndSocialTruthTest): closing the DB under in-flight
+    // ViewModel coroutines threw pool-closed IllegalStateExceptions
+    // (SQLiteConnectionPool / SQLiteClosable) that surfaced inside
+    // the NEXT test — in CI this killed hb4JammedRootApp and
+    // tcDrawerDetailsAndSubSteps while 13 sibling tests passed.
+    // Drain both schedulers first, then close.
+    private fun closeDb() {
+        repeat(40) {
+            ShadowLooper.idleMainLooper()
+            try {
+                composeRule.waitForIdle()
+            } catch (_: Throwable) {
+                // Infinite animations can keep the rule non-idle; the
+                // loop's sleeps still give writers their window.
+            }
+            Thread.sleep(25L)
+        }
         db.close()
     }
 
