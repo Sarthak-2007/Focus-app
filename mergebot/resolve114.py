@@ -22,12 +22,12 @@ import sys
 #     emit ours, reopen a KDoc, then theirs (theirs carries its
 #     own closing */ and function; asserted before composing).
 
-SEG = re.compile(r"<<<<<<< [^\n]*\n(.*?)\n=======\n(.*?)\n>>>>>>> [^\n]*\n", re.S)
+SEG = re.compile(r"<<<<<<< [^\n]*\n(.*?)=======\n(.*?)>>>>>>> [^\n]*\n", re.S)
 
 
 def rule_p1(our, their):
     if our.strip() == "" and "getLaunchIntentForPackage" in their:
-        return their + "\n"
+        return their
     return None
 
 
@@ -35,7 +35,7 @@ def rule_p2(our, their):
     if "peekCooldownScopeText" in our and "Issue #324" in their:
         if " */" not in their or "fun " not in their:
             return None
-        return our + "\n/**\n" + their + "\n"
+        return our + "\n/**\n" + their
     return None
 
 
