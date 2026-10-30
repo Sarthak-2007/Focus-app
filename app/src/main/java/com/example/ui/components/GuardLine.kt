@@ -15,8 +15,10 @@ import com.example.service.WatchStore
  *                currently warranted GRANTED (GRANTED and not
  *                stale); NAME is the FIRST non-whole item in board
  *                order, printed BARE when missing and with
- *                ` STALE` appended when stale. One lack is named;
- *                a second rides unnamed in the count.
+ *                ` STALE` appended when stale — a stale DENIAL
+ *                included (#58 F1: MISSING_STALE prints with the
+ *                suffix exactly as a stale grant does). One lack
+ *                is named; a second rides unnamed in the count.
  *  - UNMEASURED: the line prints NOTHING. There is no default and
  *                no assumption — the seeded all-false guard status
  *                that used to print a day-one 0/4 is exactly the
@@ -36,11 +38,19 @@ fun guardLineFor(snapshot: WatchSnapshot?, nowMono: Long): GuardLinePrint? {
     val prints = WatchItemId.COUNTED.map { it to WatchStore.permPrintAt(snapshot, it, nowMono) }
     if (prints.any { it.second == PermPrint.UNMEASURED }) return null
     val warranted = prints.count { it.second == PermPrint.GRANTED }
-    if (warranted == WatchItemId.COUNTED.size) return GuardLinePrint("GUARD 4/4")
+    // The denominator is COUNTED.size in the print exactly as in
+    // the whole-check (issue #58 F5): a fifth counted item must
+    // print 5/5, never a false 4/4 or 5/4.
+    val total = WatchItemId.COUNTED.size
+    if (warranted == total) return GuardLinePrint("GUARD $total/$total")
     val firstLack = prints.first { it.second != PermPrint.GRANTED }
     val name = when (firstLack.second) {
-        PermPrint.STALE -> "${firstLack.first.boardName} STALE"
+        // A stale lack names its age whatever its value was: a
+        // stale GRANTED (STALE) and a stale denial (MISSING_STALE,
+        // issue #58 F1) both print with the STALE suffix — neither
+        // is presented as current fact.
+        PermPrint.STALE, PermPrint.MISSING_STALE -> "${firstLack.first.boardName} STALE"
         else -> firstLack.first.boardName
     }
-    return GuardLinePrint("GUARD $warranted/4 — $name")
+    return GuardLinePrint("GUARD $warranted/$total — $name")
 }
