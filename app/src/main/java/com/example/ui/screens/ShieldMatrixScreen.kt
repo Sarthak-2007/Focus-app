@@ -135,6 +135,17 @@ fun ShieldMatrixScreen(
     onUndoProfileApply: () -> Unit = {},
     onToggleShortsReelsSniper: () -> Unit,
     onToggleBrowserUrlBlocker: () -> Unit,
+    // Issue #337 F1: the accessibility-shortcut binding state and
+    // its deep link. Defaults keep render harnesses unchanged.
+    accessibilityShortcutSet: Boolean = false,
+    onOpenAccessibilityShortcutSettings: () -> Unit = {},
+    // Issue #339 (Second-pass F1): the Web Gate — block-all mode
+    // and its allowed-host list. Defaults keep harnesses unchanged.
+    webBlockAll: Boolean = false,
+    onToggleWebBlockAll: () -> Unit = {},
+    allowedWebHosts: List<String> = emptyList(),
+    onAddAllowedWebHost: (String) -> Unit = {},
+    onRemoveAllowedWebHost: (String) -> Unit = {},
     routines: List<com.example.data.RoutineEntity> = emptyList(),
     showResetNote: Boolean = false,
     onDismissResetNote: () -> Unit = {},
@@ -328,6 +339,7 @@ fun ShieldMatrixScreen(
         // the same 84dp slot the knob's AndroidView held)
         // =====================================================================
         item {
+            val context = LocalContext.current
             // The counts left this header (Liv D3, adopted by Gust):
             // SHUT / PEEK / OPEN live on the standing-orders tally
             // below — one home per number, or numbers are decoration.
@@ -352,7 +364,22 @@ fun ShieldMatrixScreen(
                 LoadoutPreviewPanel(
                     loadout = loadout,
                     preview = remember(loadout, allApps) {
-                        LoadoutRules.preview(loadout, allApps)
+                        // Issue #121: the preview resolves the same
+                        // structural time-critical set the commit
+                        // path uses (SLEEP only) — issue #107's law:
+                        // the printed counts are computed by the
+                        // exact rule that will commit them.
+                        LoadoutRules.preview(
+                            loadout, allApps,
+                            if (loadout == com.example.data.SmartLoadout.SLEEP) {
+                                com.example.data.TimeCriticalApps
+                                    .resolveTimeCriticalPackages(
+                                        context, allApps.map { it.packageName }
+                                    )
+                            } else {
+                                emptySet()
+                            }
+                        )
                     },
                     onApply = {
                         // Reverse direction of the same ONE mapping
@@ -769,6 +796,41 @@ fun ShieldMatrixScreen(
                         testTag = "shield_sniper_toggle"
                     )
                 }
+                // #337 F1: the accessibility shortcut — the second,
+                // system-level activation path for the service. The
+                // chip names the binding's actual state and opens
+                // the exact system screen where it is made.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "ACCESSIBILITY SHORTCUT",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground
+                    )
+                    BlockitActionChip(
+                        wordLabel = if (accessibilityShortcutSet) "SET" else "BIND",
+                        isPrimaryInk = accessibilityShortcutSet,
+                        onClick = onOpenAccessibilityShortcutSettings,
+                        testTag = "shield_a11y_shortcut_chip"
+                    )
+                }
+                // #335 F5: the detector-health line — first/last
+                // node, stale and slow-scan states, printed from
+                // the DetectorHealth record the services write.
+                Text(
+                    text = com.example.ui.components.detectorLineFor(
+                        com.example.service.DetectorHealth.snapshot(),
+                        SystemClock.elapsedRealtime()
+                    ).text,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("shield_detector_health_line")
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -786,6 +848,99 @@ fun ShieldMatrixScreen(
                         onClick = onToggleBrowserUrlBlocker,
                         testTag = "shield_browser_blocker_toggle"
                     )
+                }
+                // #339 F1: the Web Gate row — block the whole web
+                // except the allowed hosts below.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "WEB GATE — BLOCK ALL BUT ALLOWED",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground
+                    )
+                    BlockitActionChip(
+                        wordLabel = if (webBlockAll) "ON" else "OFF",
+                        isPrimaryInk = webBlockAll,
+                        onClick = onToggleWebBlockAll,
+                        testTag = "shield_web_gate_toggle"
+                    )
+                }
+                if (webBlockAll) {
+                    var allowedHostText by remember { mutableStateOf("") }
+                    var allowedHostError by remember { mutableStateOf<String?>(null) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        BasicTextField(
+                            value = allowedHostText,
+                            onValueChange = { allowedHostText = it },
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 14.sp,
+                                color = scheme.onBackground
+                            ),
+                            cursorBrush = SolidColor(scheme.onBackground),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("shield_web_gate_host_input")
+                        )
+                        BlockitActionChip(
+                            wordLabel = "ALLOW",
+                            isPrimaryInk = true,
+                            onClick = {
+                                val normalised =
+                                    com.example.data.normaliseAllowedHost(allowedHostText)
+                                when {
+                                    allowedHostText.isBlank() -> Unit
+                                    normalised == null -> allowedHostError =
+                                        "NOT A HOST — CHECK THE ADDRESS AND TRY AGAIN"
+                                    allowedWebHosts.contains(normalised) -> allowedHostError =
+                                        "ALREADY ALLOWED"
+                                    else -> {
+                                        onAddAllowedWebHost(normalised)
+                                        allowedHostText = ""
+                                        allowedHostError = null
+                                    }
+                                }
+                            },
+                            testTag = "shield_web_gate_add"
+                        )
+                    }
+                    if (allowedHostError != null) {
+                        Text(
+                            text = allowedHostError!!,
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            color = scheme.onSurfaceVariant
+                        )
+                    }
+                    allowedWebHosts.forEach { host ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = host,
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 13.sp,
+                                color = scheme.onBackground
+                            )
+                            BlockitActionChip(
+                                wordLabel = "REMOVE",
+                                isPrimaryInk = false,
+                                onClick = { onRemoveAllowedWebHost(host) },
+                                testTag = "shield_web_gate_remove_$host"
+                            )
+                        }
+                    }
                 }
                 if (profiles.isNotEmpty()) {
                     Row(
