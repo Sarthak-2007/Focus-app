@@ -1,4 +1,6 @@
 package com.example.ui.components
+import androidx.compose.ui.res.stringResource
+import com.example.R
 import com.example.data.ClockText
 import androidx.compose.ui.platform.LocalContext
 
@@ -506,7 +508,7 @@ fun ParkDrawer(
                 // lives HERE and nowhere else; the slot is blank
                 // until the first complete set lands.
                 Text(
-                    text = "GUARD",
+                    text = stringResource(R.string.park_guard),
                     style = DrawerHeaderTextStyle,
                     color = scheme.onBackground
                 )
@@ -530,7 +532,7 @@ fun ParkDrawer(
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "LAST PROVED",
+                        text = stringResource(R.string.park_last_proved),
                         style = PillBadgeTextStyle,
                         color = scheme.onSurfaceVariant
                     )
@@ -728,6 +730,7 @@ fun ParkDrawer(
                                     if (interactive) {
                                         Modifier.pointerInput(item) {
                                             detectTapGestures(
+                                                onTap = { onFixClick(item) },
                                                 onPress = {
                                                     fixPressed = true
                                                     fixPressedItem = item
@@ -745,7 +748,17 @@ fun ParkDrawer(
                                                         amplitude01 = if (isNight) 0.06f else 0.1f,
                                                         pitchHz = 300f
                                                     )
-                                                    onFixClick(item)
+                                                    // Audit R6 #341 F24: the
+                                                    // Settings trip used to
+                                                    // commit HERE, on
+                                                    // finger-down — a tremor
+                                                    // landing ejected the
+                                                    // user before they could
+                                                    // slide off. The commit
+                                                    // now lives in onTap
+                                                    // below (release inside
+                                                    // bounds); onPress only
+                                                    // dips the key and knocks.
                                                     // Issue #56, fresh-eyes A:
                                                     // a press INTERRUPTED before
                                                     // release (gesture stolen by
@@ -787,7 +800,7 @@ fun ParkDrawer(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "FIX — ${item.boardName}",
+                                text = stringResource(R.string.park_fix_item, item.boardName),
                                 style = PrimaryButtonTextStyle,
                                 color = onInkControlFill()
                             )
@@ -898,8 +911,19 @@ fun ParkDrawer(
                                                         amplitude01 = if (isNight) 0.06f else 0.1f,
                                                         pitchHz = 300f
                                                     )
-                                                    onRecheck()
-                                                    tryAwaitRelease()
+                                                    // Issue #9, Zahn Z-11
+                                                    // (RE-CHECK form): the
+                                                    // dispatch commits on
+                                                    // RELEASE, like FIX —
+                                                    // a scroll that merely
+                                                    // starts on this key
+                                                    // fires no sweep. The
+                                                    // knock stays on DOWN:
+                                                    // it is furniture, not
+                                                    // a commit.
+                                                    val released =
+                                                        tryAwaitRelease()
+                                                    if (released) onRecheck()
                                                     recheckPressed = false
                                                 }
                                             )
@@ -932,7 +956,7 @@ fun ParkDrawer(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "SOUND EFFECTS",
+                        text = stringResource(R.string.park_sound_effects),
                         style = PillBadgeTextStyle,
                         color = scheme.onSurfaceVariant
                     )
@@ -1106,7 +1130,7 @@ fun ParkDrawer(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "THEME",
+                        text = stringResource(R.string.park_theme),
                         style = PillBadgeTextStyle,
                         color = scheme.onSurfaceVariant
                     )
