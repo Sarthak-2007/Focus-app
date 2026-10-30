@@ -49,6 +49,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Issue #107 (Audit R3, shield-setup-lived #5): the Shield search
@@ -207,7 +208,7 @@ internal class SupersedingReload<I, T>(
         job?.cancel()
         val gen = ++generation
         val launched = scope.launch {
-            kotlinx.coroutines.sync.withLock(gate) {
+            gate.withLock {
                 // Superseded while queued behind the load window:
                 // never even read — the newer signal owns the face.
                 if (gen != generation) return@withLock
