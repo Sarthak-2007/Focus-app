@@ -47,6 +47,40 @@ data class AppCatalogPlan(
     val toPrune: List<String>
 )
 
+/**
+ * Issue #107 (Audit R3, shield-setup-lived #3): the category guess,
+ * as a pure, testable function. It used to live as a private method
+ * on the repository — invisible and untestable — and its bare
+ * `contains("play")` token filed the Play Store itself (and any
+ * label containing "display") under GAMES. The game tokens are now
+ * specific (no bare "play"), and the guess is printed on every
+ * catalogue row and correctable there, so a wrong guess is a fact
+ * the user can see and fix, not a secret that prices his apps.
+ */
+fun categorizePackage(pkg: String, label: String): AppCategory {
+    val lower = "$pkg $label".lowercase()
+    return when {
+        lower.contains("tiktok") || lower.contains("musically") ||
+            lower.contains("youtube") || lower.contains("instagram") ||
+            lower.contains("reel") ->
+            AppCategory.SHORT_VIDEO
+        lower.contains("twitter") || lower.contains("reddit") ||
+            lower.contains("snapchat") || lower.contains("facebook") ->
+            AppCategory.SOCIAL
+        lower.contains("game") || lower.contains("clash") ||
+            lower.contains("roblox") || lower.contains("minecraft") ||
+            lower.contains("pubg") || lower.contains("candycrush") ->
+            AppCategory.GAMES
+        lower.contains("whatsapp") || lower.contains("discord") ||
+            lower.contains("telegram") || lower.contains("message") ->
+            AppCategory.MESSAGING
+        lower.contains("chrome") || lower.contains("browser") ||
+            lower.contains("firefox") || lower.contains("brave") ->
+            AppCategory.BROWSERS
+        else -> AppCategory.SHOPPING
+    }
+}
+
 object AppCatalogReconcile {
 
     val FACTORY_PRESETS: Map<String, AppRulePreset> = mapOf(

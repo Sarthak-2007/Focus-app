@@ -511,22 +511,9 @@ class MonolithRepository(
         editor.apply()
     }
 
-    private fun categorizePackage(pkg: String, label: String): AppCategory {
-        val lower = "$pkg $label".lowercase()
-        return when {
-            lower.contains("tiktok") || lower.contains("youtube") || lower.contains("instagram") || lower.contains("reel") ->
-                AppCategory.SHORT_VIDEO
-            lower.contains("twitter") || lower.contains("reddit") || lower.contains("snapchat") || lower.contains("facebook") ->
-                AppCategory.SOCIAL
-            lower.contains("game") || lower.contains("clash") || lower.contains("roblox") || lower.contains("play") ->
-                AppCategory.GAMES
-            lower.contains("whatsapp") || lower.contains("discord") || lower.contains("telegram") || lower.contains("message") ->
-                AppCategory.MESSAGING
-            lower.contains("chrome") || lower.contains("browser") || lower.contains("firefox") || lower.contains("brave") ->
-                AppCategory.BROWSERS
-            else -> AppCategory.SHOPPING
-        }
-    }
+    // categorizePackage moved to AppCatalogReconcile.kt (issue
+    // #107): a pure top-level function there, so the guess is
+    // testable and its tokens are auditable in one place.
 
     fun queryRealTodayUsageMinutes(): Map<String, Int> {
         if (!hasUsageStatsPermission()) return emptyMap()
@@ -1126,40 +1113,10 @@ class MonolithRepository(
     suspend fun applySmartLoadout(loadout: SmartLoadout) = withContext(Dispatchers.IO) {
         val allApps = dao.getAllAppsSnapshot()
         val updated = allApps.map { app ->
-            val lower = "${app.packageName} ${app.appName}".lowercase()
-            val tier = when (loadout) {
-                SmartLoadout.STUDY -> {
-                    when {
-                        lower.contains("youtube") || lower.contains("chrome") || app.category == AppCategory.MESSAGING.name ->
-                            AppBlockTier.PEEK_2M
-                        app.category == AppCategory.SHORT_VIDEO.name ||
-                            app.category == AppCategory.SOCIAL.name ||
-                            app.category == AppCategory.GAMES.name ->
-                            AppBlockTier.LOCKED
-                        else -> AppBlockTier.OPEN
-                    }
-                }
-                SmartLoadout.WORK_SPRINT -> {
-                    when {
-                        app.category == AppCategory.SHORT_VIDEO.name ||
-                            app.category == AppCategory.GAMES.name ->
-                            AppBlockTier.LOCKED
-                        app.category == AppCategory.SOCIAL.name ->
-                            AppBlockTier.PEEK_2M
-                        else -> AppBlockTier.OPEN
-                    }
-                }
-                SmartLoadout.SLEEP -> {
-                    if (lower.contains("dialer") || lower.contains("phone") ||
-                        lower.contains("clock") || lower.contains("alarm") ||
-                        lower.contains("maps")
-                    ) {
-                        AppBlockTier.OPEN
-                    } else {
-                        AppBlockTier.LOCKED
-                    }
-                }
-            }
+            // Issue #107: the tier rule is LoadoutRules.tierFor —
+            // the same pure function the Shield preview prints its
+            // counts from, so preview and commit can never diverge.
+            val tier = LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category)
             app.copy(
                 isBlocked = tier != AppBlockTier.OPEN,
                 blockTier = tier.name
@@ -1167,6 +1124,22 @@ class MonolithRepository(
         }
         dao.insertApps(updated)
     }
+
+    /**
+     * Issue #107 (shield-setup-lived #3): the user's correction of
+     * the category guess. The category is an existing column on the
+     * app row — correcting it is a plain row update, no schema
+     * change. The corrected category then drives birth tiers,
+     * filters and loadouts like any other fact.
+     */
+    suspend fun setAppCategory(packageName: String, category: AppCategory) =
+        withContext(Dispatchers.IO) {
+            val app = dao.getAllAppsSnapshot()
+                .firstOrNull { it.packageName == packageName } ?: return@withContext
+            if (app.category != category.name) {
+                dao.updateApp(app.copy(category = category.name))
+            }
+        }
 
     /**
      * Enforces the Mandatory 20-Minute Cooldown per package using `SystemClock.elapsedRealtime()`:

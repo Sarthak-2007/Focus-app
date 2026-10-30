@@ -45,6 +45,28 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+/**
+ * Issue #107 (Audit R3, shield-setup-lived #5): the Shield search
+ * match. It used to test the display name only, while the screen
+ * printed "NO APP BY THAT NAME ON THIS PHONE" for any zero result —
+ * a false claim of absence for an app installed under another name
+ * or findable by its package. The match now also covers the package
+ * name and the category (name and printed label), and the screen's
+ * no-match line no longer claims absence.
+ */
+fun appMatchesQuery(app: BlockedAppEntity, query: String): Boolean {
+    val q = query.trim()
+    if (q.isBlank()) return true
+    if (app.appName.contains(q, ignoreCase = true)) return true
+    if (app.packageName.contains(q, ignoreCase = true)) return true
+    val category = runCatching { AppCategory.valueOf(app.category) }.getOrNull()
+    if (category != null) {
+        if (category.name.contains(q, ignoreCase = true)) return true
+        if (category.label.contains(q, ignoreCase = true)) return true
+    }
+    return app.category.contains(q, ignoreCase = true)
+}
+
 enum class MonolithDestination(val route: String, val label: String) {
     DECK("deck", "Focus"),
     TASKS("tasks", "Tasks"),
@@ -430,10 +452,8 @@ class MonolithViewModel(
         _selectedCategoryFilter
     ) { allApps, query, category ->
         allApps.filter { app ->
-            val matchesQuery = query.isBlank() ||
-                app.appName.contains(query, ignoreCase = true)
             val matchesCategory = category == null || app.category == category.name
-            matchesQuery && matchesCategory
+            appMatchesQuery(app, query) && matchesCategory
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -2058,6 +2078,15 @@ class MonolithViewModel(
         soundEngine.playMechanicalLatch(true)
         viewModelScope.launch {
             repository.cycleAppBlockTier(app)
+        }
+    }
+
+    /** Issue #107 (shield-setup-lived #3): correct the printed
+     *  category guess on a catalogue row. A plain row update in the
+     *  repository — no schema change. */
+    fun setAppCategory(packageName: String, category: AppCategory) {
+        viewModelScope.launch {
+            repository.setAppCategory(packageName, category)
         }
     }
 
