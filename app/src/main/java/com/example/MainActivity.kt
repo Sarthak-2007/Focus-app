@@ -247,6 +247,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val drawerSearchHasEarlier by viewModel.drawerSearchHasEarlier.collectAsStateWithLifecycle()
     val dayWords by viewModel.dayWords.collectAsStateWithLifecycle()
     val forgedArtifactIds by viewModel.forgedArtifactIds.collectAsStateWithLifecycle()
+    val forgeStats by viewModel.forgeStats.collectAsStateWithLifecycle()
     val appsCellCount by viewModel.appsCellCount.collectAsStateWithLifecycle()
     val appsSplit by viewModel.appsSplit.collectAsStateWithLifecycle()
     val deckWarrant by viewModel.deckWarrant.collectAsStateWithLifecycle()
@@ -730,7 +731,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onLoadEarlierSearch = viewModel::loadEarlierDrawerSearch,
                                     onDeclareTodayWord = viewModel::declareTodayWord,
                                     artifacts = com.example.data.CurioCatalog.artifacts,
-                                    forgedArtifactIds = forgedArtifactIds
+                                    forgedArtifactIds = forgedArtifactIds,
+                                    forgeStats = forgeStats
                                 )
                             }
                         }

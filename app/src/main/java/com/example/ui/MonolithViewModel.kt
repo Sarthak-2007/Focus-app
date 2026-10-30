@@ -1973,6 +1973,13 @@ class MonolithViewModel(
     private val _forgedArtifactIds = MutableStateFlow<Set<String>>(emptySet())
     val forgedArtifactIds: StateFlow<Set<String>> = _forgedArtifactIds.asStateFlow()
 
+    /** The cabinet's forge record (Issue #110, finding 5): per
+     *  artifact, how many sessions forged it and when the most
+     *  recent forge happened — re-read with the Drawer, from the
+     *  same session rows as the forged-id set. */
+    private val _forgeStats = MutableStateFlow<Map<String, com.example.data.ForgeStat>>(emptyMap())
+    val forgeStats: StateFlow<Map<String, com.example.data.ForgeStat>> = _forgeStats.asStateFlow()
+
     private val _drawerMonth = MutableStateFlow(
         com.example.data.DrawerDay.filingYearMonth(System.currentTimeMillis())
     )
@@ -2012,6 +2019,7 @@ class MonolithViewModel(
             _storedMonths.value = repository.storedMonths()
             _dayWords.value = repository.allDayWords()
             _forgedArtifactIds.value = repository.forgedArtifactIds()
+            _forgeStats.value = repository.forgeStats()
             selectDrawerMonth(_drawerMonth.value.first, _drawerMonth.value.second)
         }
     }
