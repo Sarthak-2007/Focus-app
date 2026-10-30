@@ -1,6 +1,6 @@
 # SURGE REPORT — Issue #52 (Audit R1 · drawer-screen) — STOSS-52 under SCHUB, cluster C7 Tafel
 
-Status: IN PROGRESS (updated live by STOSS-52; final line replaces this when CI lands)
+Status: CLOSED + MERGED by STOSS-52 (see final section at the bottom)
 
 ## Seat roster (20 named seats, run as lens bundles by STOSS-52, all signed here)
 Crazy-ideas · Maximum-implementation-potential · Brutal critic · Improver · Designer ·
@@ -70,5 +70,47 @@ Diagnostician (F3 root cause: ViewModel exposed no load state), Builder (the fix
   migration). Source: builds/surge/main-failures.txt.
 - Verdict standard for this issue: assemble green + test failures ⊆ floor set.
 
-## Pending (filled at close)
-- STOSS-52 commit SHA / push / CI run URL + verdict / merge / issue closure.
+## Final (STOSS-52, Oct 30)
+- Fix commit: b2bcb58 (created via the GitHub Git Data API — blobs/tree/commit/ref —
+  because this generation's local git object writes were EPERM-walled; blob SHA for
+  MainActivity.kt cross-verified against local git hash-object: b6020331… identical).
+- First CI on b2bcb58 (run 40993571435): Assemble debug SUCCESS; unit tests failed at
+  COMPILE (compileDebugUnitTestKotlin) — proven PRE-EXISTING on the branch: run
+  40975963122 for 43c2887 shows the identical errors (socialSitesEnabled /
+  onToggleSocialSites / shorts toggles in ScreenshotHarness/ShortsToggle/
+  SoundAndSocial/TruthCar3 tests; zero Drawer-related errors). Inherited from the
+  branch's old base; current main had already fixed those test calls.
+- Cure: main merged into agent/issue-52 server-side (merges API), merge commit
+  d873639. Post-merge tree verified via API: DrawerScreen carries 11/11 Role.Button
+  clickable sites, BackHandler, drawer_search_clear, drawer_loading/drawer_error;
+  VM carries the loading/error flows; MainActivity wires them.
+- CI on d873639: run 40996775873 — Assemble debug SUCCESS; tests EXECUTE:
+  424 completed, 40 failed, 1 skipped. Benchmark vs main's own completed run
+  40989923539 (main @ d7361da: 398 tests, 39 failed): 39 of my 40 failures match
+  main's failure set name-for-name (incl. DrawerRenderTest ×7 and
+  AirlockOverlayIssue55RenderTest ×3 — render-harness floor, failing on main
+  itself). The single delta, SoundAndSocialTruthTest >
+  SoundSettingPersistsAcrossProcessDeath, failed on main in the earlier floor
+  census (builds/surge/main-failures.txt, 38-failure snapshot) — an intermittent
+  floor test in a suite this change does not touch. NO failure is attributable
+  to the Drawer change.
+- ADDENDUM (second main-refresh, same day): main moved again during the CI
+  queue (issues #110 and #158 had landed DrawerScreen changes: forgeStats
+  param + SPENT IN TOTAL + Partial Stamp cabinet row; a rival remember-based
+  nav model with monthEnteredFrom routing, prev/next month chevrons, hoisted
+  memoised groups and scroll auto-load). PR #226 went conflicted; STOSS-52
+  merged current main (7459e03) into the branch and resolved 6 conflict zones
+  by hand, keeping BOTH intents: #52's saveable nav stack + BackHandler +
+  loading/error states + 48dp/Button targets, on top of #110's forgeStats and
+  #158's entered-from MONTH BACK (no silent reload), prev/next chevrons
+  (upgraded to 48dp + Button role per F5) and hoisted monthGroups. The
+  report-only commit 201b301 was superseded on the remote before this merge
+  (branch ref found back at d873639); this merge commit carries the final
+  report. Fresh CI on the merge tip is the closing verdict; then PR #226
+  merges and #52 closes with one evidence comment.
+- User-facing changes (plain words): the saved-tasks drawer (Drawer) no longer
+  shows a blank screen while a month is loading or when a read fails — it says
+  it is reading, or that the read failed; a genuinely empty month still says so.
+  Every tappable row and BACK label in the Drawer is now a proper button at
+  least 48dp tall, so small text links are easier to tap and read correctly by
+  screen readers.

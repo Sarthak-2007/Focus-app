@@ -268,6 +268,20 @@ class DrawerPermanenceTest {
         assertEquals(0L, task.completedAtMillis)
     }
 
+    // #158 F2: a day word is searchable — by the word itself and
+    // by a prefix of it — including a word-only day with no
+    // stored task on it; a query naming no word finds none.
+    @Test
+    fun searchDayWords_findsWordOnlyDays_byWordAndPrefix() = runBlocking {
+        repo.declareDayWord("2026-08-14", "ILL")
+        repo.declareDayWord("2026-08-20", "REST")
+        assertEquals(mapOf("2026-08-14" to "ILL"), repo.searchDayWords("ILL"))
+        assertEquals(mapOf("2026-08-14" to "ILL"), repo.searchDayWords("il"))
+        assertEquals(mapOf("2026-08-20" to "REST"), repo.searchDayWords(" REST "))
+        assertTrue(repo.searchDayWords("physics").isEmpty())
+        assertTrue(repo.searchDayWords("").isEmpty())
+    }
+
     // A declared word with no tasks still puts its month in the
     // index — otherwise the word is filed nowhere (Selbst).
     @Test

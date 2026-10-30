@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.util.Log
 import android.content.Context
 import android.os.SystemClock
 import com.example.data.MonolithDatabase
@@ -137,8 +138,10 @@ class SessionSealTransitionImpl(
     private fun writeSealMarker(sessionId: Int) {
         synchronized(sealed) { sealed += sessionId }
         synchronized(markerLock) {
-            appContext.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
+            val prefs = appContext.getSharedPreferences(
+                MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE
+            )
+            fun attemptCommit(): Boolean = prefs.edit()
                 .putInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, sessionId)
                 .putLong(MonolithRepository.SEAL_MARKER_WALL_KEY, System.currentTimeMillis())
                 .putStringSet(
@@ -146,6 +149,19 @@ class SessionSealTransitionImpl(
                     persistedSealedIds() + sessionId.toString()
                 )
                 .commit()
+            // Truth (issue #76): commit()'s Boolean is the only
+            // evidence the proof reached disk. The original code
+            // discarded it, so a failed commit left this process
+            // (and the in-memory claim above) believing a seal that
+            // recovery — which reads disk — would never find. Now:
+            // commit, retry once, and if disk still refuses, strike
+            // the in-memory claim and throw rather than let a Throw
+            // sound over a seal that was never proven.
+            if (!attemptCommit() && !attemptCommit()) {
+                synchronized(sealed) { sealed -= sessionId }
+                Log.e("SessionSealTransition", "seal marker commit() failed twice for session $sessionId")
+                throw IllegalStateException("seal marker not on disk for session $sessionId")
+            }
         }
     }
 
