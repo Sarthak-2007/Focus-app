@@ -473,6 +473,20 @@ class MonolithViewModel(
     private val _loadoutCapIndex = MutableStateFlow(loadoutStore.capIndex())
     val loadoutCapIndex: StateFlow<Int> = _loadoutCapIndex.asStateFlow()
 
+    // Audit R1 #40: the receipt dismissal is persisted — the
+    // host's remember{} alone let process death resurrect a
+    // receipt he had already put away. MainActivity seeds its
+    // gate from here and writes every dismissal through.
+    private val receiptDismissalStore =
+        com.example.data.ReceiptDismissalStore(appContext)
+
+    fun dismissedReceiptSessionId(): Int =
+        receiptDismissalStore.dismissedSessionId()
+
+    fun persistReceiptDismissal(sessionId: Int) {
+        receiptDismissalStore.dismiss(sessionId)
+    }
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
@@ -876,9 +890,17 @@ class MonolithViewModel(
         // process was dead, the snapshot is discarded — the delete
         // was booked at its tap and an expired reversal is not
         // revived by a relaunch.
-        undoDeleteStore.load()?.let { (snapshot, deletedAt) ->
-            val remaining = com.example.data.UndoDeleteStore.WINDOW_MILLIS -
-                (System.currentTimeMillis() - deletedAt)
+        undoDeleteStore.load()?.let { (snapshot, deletedAtWall, deletedAtElapsed) ->
+            // Audit R1 #41: judged on the monotonic stamp when
+            // it survives (same boot) — a wall-clock rollback no
+            // longer resurrects an expired undo, nor a forward
+            // jump steals a live one.
+            val remaining = com.example.data.UndoDeleteStore.remainingMillis(
+                deletedAtWallMillis = deletedAtWall,
+                deletedAtElapsedMillis = deletedAtElapsed,
+                nowWallMillis = System.currentTimeMillis(),
+                nowElapsedMillis = android.os.SystemClock.elapsedRealtime()
+            )
             if (remaining > 0L) {
                 _deletedTaskForUndo.value = snapshot
                 undoDismissJob = viewModelScope.launch {
@@ -1323,6 +1345,18 @@ class MonolithViewModel(
                         when {
                             ageMs <= 1_800L -> onFinishE0(row, kind, witnessed = true)
                             ageMs <= 600_000L -> onFinishE0(row, kind, witnessed = false)
+                            // Audit R1 #40: a SLEEP stand-down is
+                            // DISCOVERED, never witnessed — the
+                            // phone slept through the window's end
+                            // and the finish exists only when the
+                            // app next looks. The 10-minute discard
+                            // made exactly that booking vanish,
+                            // forever. Stand-downs are exempt from
+                            // the discard; every other kind keeps
+                            // it (a stale manual finish discovered
+                            // days late still books nothing).
+                            kind == com.example.data.FinishKind.ROUTINE_SLEEP_STANDDOWN ->
+                                onFinishE0(row, kind, witnessed = false)
                             else -> handledFinishIds += row.id
                         }
                     } else {
@@ -1629,10 +1663,17 @@ class MonolithViewModel(
     }
 
     fun setDialMinutes(minutes: Int) {
+        // Issue #123 (finding 4): the wheel is the SINGLE voice for a
+        // dial change — it already fired its detent on
+        // DialPrecision's one pitch ladder before invoking this. This
+        // setter used to fire a SECOND playRotaryDetent at an
+        // unrelated pitch (440 + value x 2.8), so every detent
+        // sounded twice and the ladder contradicted itself. It now
+        // records the value in silence. Non-wheel callers (FLOW pill,
+        // precise-entry steppers) sound their own single effect at
+        // their own call sites, as they always have.
         val clamped = minutes.coerceIn(3, 180)
         if (clamped != _dialMinutes.value) {
-            val pitch = 440.0 + (clamped * 2.8)
-            soundEngine.playRotaryDetent(pitch)
             _dialMinutes.value = clamped
         }
     }
@@ -1681,7 +1722,9 @@ class MonolithViewModel(
     }
 
     fun cycleRoutineLoadout(routine: com.example.data.RoutineEntity) {
-        val order = listOf(SmartLoadout.STUDY, SmartLoadout.WORK_SPRINT, SmartLoadout.SLEEP)
+        // Audit R1 #38: the seat order lives in ONE place —
+        // LoadoutStore.CAP_ORDER — not re-hardcoded here.
+        val order = com.example.data.LoadoutStore.CAP_ORDER
         val current = runCatching { SmartLoadout.valueOf(routine.loadoutName) }.getOrDefault(SmartLoadout.STUDY)
         val next = order[(order.indexOf(current) + 1) % order.size]
         soundEngine.playFirmClick()
@@ -1955,15 +1998,25 @@ class MonolithViewModel(
                 // BEFORE the banner presents the delete as
                 // reversible — the promise and its backing are
                 // never out of order.
-                undoDeleteStore.save(deleted, System.currentTimeMillis())
-                _deletedTaskForUndo.value = deleted
+                // Audit R1 #41: the banner is presented only when
+                // the copy actually landed. A failed commit used
+                // to leave the banner promising a reversal whose
+                // restore copy did not exist.
+                val persisted = undoDeleteStore.save(
+                    deleted,
+                    System.currentTimeMillis(),
+                    android.os.SystemClock.elapsedRealtime()
+                )
+                if (persisted) {
+                    _deletedTaskForUndo.value = deleted
+                    undoDismissJob = viewModelScope.launch {
+                        delay(com.example.data.UndoDeleteStore.WINDOW_MILLIS)
+                        _deletedTaskForUndo.value = null
+                        undoDeleteStore.clear()
+                    }
+                }
                 if (nextActive != null) {
                     _intentionText.value = nextActive.title
-                }
-                undoDismissJob = viewModelScope.launch {
-                    delay(com.example.data.UndoDeleteStore.WINDOW_MILLIS)
-                    _deletedTaskForUndo.value = null
-                    undoDeleteStore.clear()
                 }
             }
         }
@@ -2402,15 +2455,28 @@ class MonolithViewModel(
     fun applySmartLoadout(loadout: SmartLoadout) {
         soundEngine.playHarmonicSeal(true)
         _selectedProfileName.value = loadout.title
-        // UNA-07: a hand pick is a fact — persist it and rest the cap
-        // on it, so the selector survives navigation and process death.
-        loadoutStore.put(loadout)
-        _loadoutCapIndex.value = com.example.data.LoadoutStore.capIndexOf(loadout)
         if (loadout == SmartLoadout.STUDY) {
             _shortsReelsSniperEnabled.value = true
             _browserUrlBlockerEnabled.value = true
         }
         viewModelScope.launch {
+            // UNA-07: a hand pick is a fact — persist it and rest the
+            // cap on it, so the selector survives navigation and
+            // process death. Audit R1 #38: the synchronous commit()
+            // used to run HERE, on the tap's (main) thread, and its
+            // result was discarded — the cap moved even when the
+            // pick never reached disk. The commit now runs on IO,
+            // and the cap rests on the pick only when the store
+            // confirms it; on failure the cap re-reads the stored
+            // fact, so it can never present an unpersisted pick.
+            val persisted = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                loadoutStore.put(loadout)
+            }
+            _loadoutCapIndex.value = if (persisted) {
+                com.example.data.LoadoutStore.capIndexOf(loadout)
+            } else {
+                loadoutStore.capIndex()
+            }
             repository.applySmartLoadout(loadout)
             if (loadout == SmartLoadout.STUDY) {
                 repository.setBrowserBlockerEnabled(true)
@@ -2622,10 +2688,32 @@ class MonolithViewModel(
         reasonBadge: String = "Locked",
         path: InterceptPath = InterceptPath.UNKNOWN
     ) {
-        soundEngine.playMechanicalLatch(true)
+        // Issue #68 F5, Tier 1 — revalidation: an airlock is a
+        // claim about a live session. With no active session there
+        // is nothing to intercept, whoever asks; every lawful
+        // caller fires only inside one (the shield loop, the
+        // accessibility doors, the sealed launcher's peek key), so
+        // the gate costs them nothing and a fabricated call dies
+        // here, before even the latch sound.
         val active = activeSession.value
+        if (active?.isActive != true) return
 
         val appEntity = apps.value.find { it.packageName == packageName }
+        // On the two per-app doors (the only lease-honouring ones)
+        // the claim is about a ruled row: the row must exist, must
+        // not be OPEN, and the badge prints from the row — never
+        // from the caller's word. The guard, sniper and site doors
+        // legitimately name unlisted packages (Settings, a
+        // browser) with door-defined badges; their provenance is
+        // the Tier-2 nonce at the intent boundary, and the session
+        // gate above binds them too.
+        val effectiveBadge = if (path.canHonourPeekLease) {
+            if (appEntity == null || appEntity.resolvedTier == AppBlockTier.OPEN) return
+            appEntity.resolvedTier.badge
+        } else {
+            reasonBadge
+        }
+        soundEngine.playMechanicalLatch(true)
         val cooldownLeft = if (appEntity != null) repository.getPeekCooldownRemainingSeconds(appEntity) else 0
         val pillActive = _floatingPeekPill.value.isActive
         // UNA2-01: the offer is computed per-path by the one pure
@@ -2642,7 +2730,7 @@ class MonolithViewModel(
             isVisible = true,
             interceptedPackageName = packageName,
             interceptedAppName = appName,
-            interceptReasonBadge = reasonBadge,
+            interceptReasonBadge = effectiveBadge,
             sessionIntention = active?.intention ?: _intentionText.value,
             selectedReason = DistractionTriggerReason.MUSCLE_MEMORY,
             interceptInstanceId = ++airlockInstanceSeq,

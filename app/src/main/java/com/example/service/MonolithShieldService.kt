@@ -236,6 +236,7 @@ class MonolithShieldService : Service() {
                         // This door's blocked set already excludes a leased PEEK app
                         // (the filter above), so a lease sold here is honoured (UNA2-01).
                         putExtra(EXTRA_INTERCEPT_PATH, InterceptPath.SHIELD_APP.name)
+                        putExtra(EXTRA_INTERCEPT_NONCE, InterceptNonce.mint(applicationContext))
                     }
                     startActivity(interceptIntent)
                 }
@@ -392,6 +393,11 @@ class MonolithShieldService : Service() {
          *  WHICH door — and only lease-honouring doors may sell a
          *  peek. Written by both intercept launchers. */
         const val EXTRA_INTERCEPT_PATH = "extra_intercept_path"
+        /** Issue #68 F5, Tier 2: the single-use provenance nonce
+         *  (see [InterceptNonce]). Written by both intercept
+         *  launchers; required by MainActivity before any
+         *  intercept extra is honoured. */
+        const val EXTRA_INTERCEPT_NONCE = "extra_intercept_nonce"
 
         fun startShield(context: Context) {
             try {
