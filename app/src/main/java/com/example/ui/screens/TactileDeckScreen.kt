@@ -875,7 +875,15 @@ fun TactileDeckScreen(
                         view.soundEngine = soundEngine
                         view.minutesValue = dialMinutes
                         view.studyBlocksCount = studyBlocksCount
-                        view.isLockedSession = shotActive
+                        // Issue #126 F2: the wheel is a session
+                        // parameter — while an attempt is proving,
+                        // its parameters are already captured by
+                        // onLatch, so a turn here would silently
+                        // not apply. Lock it for the wait's span
+                        // (the view consumes and drops, its sealed
+                        // grammar) instead of letting it spin free
+                        // and lie about being settable.
+                        view.isLockedSession = shotActive || provingThisSession
                         view.onMinutesChanged = { mins -> onDialMinutesChanged(mins) }
                         view.onSeatTargetChanged = { seat -> wheelSeatPreview = seat }
                         view.onCycleBlocksCount = {
@@ -902,7 +910,10 @@ fun TactileDeckScreen(
                             .clip(RoundedCornerShape(12.dp))
                             .background(if (isStopwatchMode) inkControlFill() else scheme.surfaceVariant)
                             .border(1.dp, if (isStopwatchMode) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(12.dp))
-                            .clickable {
+                            // Issue #126 F2: FLOW is the other
+                            // session parameter on this card — the
+                            // same proving lock as the wheel's.
+                            .clickable(enabled = !provingThisSession) {
                                 onSelectStudyPreset(StudyModePreset.STOPWATCH_FLOW)
                                 onDialMinutesChanged(5)
                             }
@@ -1392,16 +1403,16 @@ fun TactileDeckScreen(
             RefusalSentenceSlot(
                 // The slot's tenant by phase (step 4): a JAMMED
                 // attempt names its unanswering link; PROVING names
-                // itself with its live proved count (issue #98 —
-                // the silent black box is closed: real blocking
-                // already runs during proving, so the frame must
-                // say the machine is checking, never render the
+                // itself with its live proved count (issues #98 +
+                // #126 F2 — the silent black box is closed: real
+                // blocking already runs during proving, so the frame
+                // must say the machine is checking, never render the
                 // idle form as if nothing had happened); an
                 // annulment's past-tense sentence stands until the
                 // controller clears it; a running session is
                 // silent; otherwise the wire's standing sentence.
                 sentence = when {
-                    armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase)
+                    armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase, nowMono)
                     armPhase is ArmPhase.Proving -> provingSentenceFor(armPhase)
                     isSessionRunning -> null
                     armSentence != null -> armSentence

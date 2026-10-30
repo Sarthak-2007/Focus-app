@@ -411,6 +411,61 @@ class ArmProvingController(
         }
     }
 
+    /**
+     * Issue #126 F1 — RECOVERY GATE. A born-active row found at
+     * relaunch is re-proven by the seal transition's recover()
+     * (SessionSealTransition), but that machine is not this
+     * phase: without a gate the Deck reads ArmPhase.Idle for the
+     * whole recovery and renders the unproven row as fully
+     * RUNNING — a surface claiming the seal before its verdict,
+     * against this file's own header law. The ViewModel calls
+     * this before recover() for exactly the rows recover() will
+     * actually re-prove (marker absent, row young — recover's
+     * own forks, mirrored so a lawful marker/old-row adoption
+     * never flashes PROVING), and [resolveRecovery] with the
+     * verdict when it lands. While the gate stands the Deck's
+     * existing gate (provingThisSession) renders the row's idle
+     * form and navigation locks, exactly as for a live attempt.
+     */
+    fun beginRecovery(sessionId: Int) {
+        if (_phase.value != ArmPhase.Idle) return
+        _phase.value = ArmPhase.Proving(
+            attemptId = ++attemptSeq,
+            latchMono = clock(),
+            sessionId = sessionId,
+            links = ArmLink.entries.associateWith { LinkMark.Pending },
+            retryCount = 0
+        )
+    }
+
+    /** The recovery verdict lands. SEALED relaxes to Idle (the
+     *  row was re-proven and re-anchored by the transition, or
+     *  adopted on its marker — the Deck then runs it settled,
+     *  no shot replayed). ANNULLED means the transition deleted
+     *  the row itself: this only hands the view back and speaks
+     *  the past-tense sentence, mirroring [annul] without
+     *  touching the port. Any other/null verdict (recover threw,
+     *  or its proving slot was busy) is inconclusive: relax
+     *  silently rather than print a verdict nobody reached. */
+    fun resolveRecovery(sessionId: Int, verdict: com.example.service.SealVerdict?) {
+        val current = _phase.value
+        if (current !is ArmPhase.Proving || current.sessionId != sessionId) return
+        _phase.value = ArmPhase.Idle
+        if (verdict == com.example.service.SealVerdict.ANNULLED) {
+            _annulCount.value += 1
+            val sentence = RefusalSentence(
+                text = "${ArmLink.SESSION_ROW.displayName} — NO PROOF. NOTHING WAS SEALED. ANY BLOCKING FROM THE WAIT IS OFF.",
+                action = null
+            )
+            _armSentence.value = sentence
+            sentenceClearJob?.cancel()
+            sentenceClearJob = scope.launch {
+                delay(SENTENCE_HOLD_MS)
+                if (_armSentence.value === sentence) _armSentence.value = null
+            }
+        }
+    }
+
     /** The sealed session's row has gone (completion, valve,
      *  grace abort — the lawful post-t0 doors): the phase
      *  relaxes. The session's life was the row's business from
@@ -783,6 +838,15 @@ class ArmProvingController(
         _phase.value = ArmPhase.Idle
         _annulCount.value += 1
         val first = unanswering.minByOrNull { it.ordinal } ?: ArmLink.SESSION_ROW
+        // Issue #126 F5: the batch started the shield in the
+        // latch frame, so blocking may genuinely have intercepted
+        // the user during the wait — enforcement the old sentence
+        // ("NOTHING WAS SEALED") left him to discover alone,
+        // against a row that no longer exists. The sentence now
+        // closes that loop truthfully in every annul path: any
+        // blocking the wait ran is off (annul stops the shield
+        // above). Wording is conditional ("ANY") because in the
+        // SESSION_ROW-jammed path no row ever armed the gate.
         val sentence = RefusalSentence(
             text = if (annulFailed) {
                 "ANNUL FAILED — THE ROW MAY STILL STAND. NOTHING WAS PROVED."
@@ -792,6 +856,13 @@ class ArmProvingController(
                 // the order it happened — no studio code, and no
                 // "NOTHING WAS SEALED" standing against the
                 // screen's own ARM SESSION NOW.
+                // (Merge note, #126 F5: this wording superseded
+                // the branch's "ANY BLOCKING FROM THE WAIT IS OFF"
+                // form when #164 re-ruled the annul sentence on
+                // main; the F5 substance stands — annul stops the
+                // shield above, so any blocking the wait ran is
+                // off, and the recovery path's sentence in
+                // resolveRecovery still says so in words.)
                 "NOT SEALED — ${first.plainName} DIDN'T ANSWER."
             },
             action = null

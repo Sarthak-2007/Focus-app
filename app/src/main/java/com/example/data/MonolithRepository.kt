@@ -1869,6 +1869,16 @@ class MonolithRepository(
      * an outcome and a history row for a session that, in law,
      * never was. Pre-t0 only; the controller is the only caller
      * and it annuls solely from inside a live proving attempt.
+     *
+     * Issue #126 F5 rider: the deletion law stands, but it no
+     * longer gets to pretend the wait's enforcement didn't
+     * happen — the shield ran from the latch frame, and any
+     * intercept it logged lives in intercept_logs, a separate
+     * table this delete does not touch. The user-facing trace
+     * of the annulment is the controller's sentence, which now
+     * states that any blocking from the wait is off. A durable
+     * per-attempt receipt would break the no-history law above
+     * and is NOT built here — it is a decision for Sarthak.
      */
     suspend fun annulProvingSession(sessionId: Int) {
         dao.deleteSessionById(sessionId)

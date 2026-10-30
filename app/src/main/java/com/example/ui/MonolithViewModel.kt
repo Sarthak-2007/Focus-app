@@ -1257,18 +1257,33 @@ class MonolithViewModel(
             }
             val active = runCatching { repository.activeSessionSnapshot() }.getOrNull()
             if (active != null && armProving.phase.value == ArmPhase.Idle) {
-                // Truth (issue #76): this runCatching used to discard
+                // Issue #126 F1: gate the Deck on the recovery's
+                // verdict for exactly the rows recover() will
+                // re-prove (marker absent + young — recover's own
+                // forks in SessionSealTransition, mirrored here
+                // only to decide the gate; recover() remains the
+                // judge and re-derives both facts itself). A
+                // marker-sealed or older-build row adopts without
+                // ever entering PROVING, so a lawful relaunch of a
+                // running session renders settled, unchanged.
+                // Truth (issue #76): the runCatching used to discard
                 // its Result — if recovery itself threw, nothing was
-                // logged, surfaced, or remembered, and the faulted
-                // session stayed unrecovered while the UI implied
-                // otherwise. Failures now speak.
-                runCatching {
+                // logged, surfaced, or remembered. Failures now speak
+                // (the onFailure below), and the verdict still
+                // reaches the #126 gate.
+                val nowWall = System.currentTimeMillis()
+                val needsProof = repository.sealedSessionIdFromMarker() != active.id &&
+                    nowWall - active.startWallTimeMillis <
+                    com.example.service.SessionSealTransitionImpl.RECOVERY_YOUNG_WINDOW_MS
+                if (needsProof) armProving.beginRecovery(active.id)
+                val verdict = runCatching {
                     sealTransition.recover(
-                        active.id, active.startWallTimeMillis, System.currentTimeMillis()
+                        active.id, active.startWallTimeMillis, nowWall
                     )
                 }.onFailure {
                     Log.e("MonolithVM", "Slice-E recovery failed for session ${active.id}", it)
-                }
+                }.getOrNull()
+                if (needsProof) armProving.resolveRecovery(active.id, verdict)
             }
             // Draht: a faulted finish from a previous process
             // resumes its cadence from the row's own stamps.
