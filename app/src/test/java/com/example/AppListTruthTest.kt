@@ -30,11 +30,11 @@ import org.robolectric.annotation.Config
  * (Ordner lane — Sarthak's complaint, Oct 29 22:40 IST: the list
  * held apps he never installed):
  *
- * - the table converges to the faked installed set: a stored row
- *   for an absent app is pruned only on its SECOND consecutive
- *   absence (issue #34 — one launcher query's say-so never deletes
- *   a ruling), and a pruned ruling is remembered and restored if
- *   the app returns;
+ * - after two genuinely separate syncs (the two-strike law,
+ *   issue #34) the table equals the faked installed set exactly,
+ *   including the stored-rule-for-an-uninstalled-app case — and
+ *   a pruned ruling is remembered and restored if the app
+ *   returns (STOSS-34 surge wording, adopted in the merge);
  * - the man's own tier on a surviving app is never re-priced;
  * - an empty package query (the query failed) prunes NOTHING;
  * - the prune records itself for the one-time strip (Mikro M5);
@@ -92,8 +92,23 @@ class AppListTruthTest {
         interceptCount = 0
     )
 
+    /** The persisted strike set (issue #34 two-strike law). */
+    private fun strikes(): Set<String> =
+        context.getSharedPreferences(MonolithRepository.APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .getStringSet(MonolithRepository.ABSENT_ONCE_KEY, emptySet())
+            ?: emptySet()
+
+    /** Make the next sync a genuinely separate look (L3): clear
+     *  the last-sync stamp so the collapse window cannot fold it
+     *  into the previous look. */
+    private fun nextGenuineLook() {
+        context.getSharedPreferences(
+            MonolithRepository.APP_LIST_PREFS_NAME, Context.MODE_PRIVATE
+        ).edit().putLong(MonolithRepository.LAST_CATALOG_SYNC_KEY, 0L).commit()
+    }
+
     @Test
-    fun sync_ghostPrunedOnSecondAbsence_userTierSurvives_pruneRecorded_rebirthRestoresRule() = runBlocking {
+    fun sync_tableEqualsInstalledSet_ghostPruned_userTierSurvives_pruneRecorded() = runBlocking {
         val dao = db.monolithDao()
         // The rot, staged: a rule for an app that is not on the
         // phone, and his own SHUT on an app that is.
@@ -109,17 +124,22 @@ class AppListTruthTest {
         )
         assertNull(repository.pendingPruneNote())
 
-        // FIRST absence: the ghost is only noted, never deleted —
-        // one launcher query cannot destroy a ruling (issue #34).
+        // REPAIR 2 (verifier) — the two-strike law, stated in the
+        // test instead of the old single-sync law it used to
+        // encode. RUN 1: the ghost earns a strike and is STILL
+        // LISTED; nothing is pruned, nothing is noted.
         repository.ensureSeededAndSyncPackages()
         assertEquals(
             setOf("com.ghost.app", "com.keeper.app", "com.fresh.chat"),
             dao.getAllAppsSnapshot().map { it.packageName }.toSet()
         )
+        assertEquals(setOf("com.ghost.app"), strikes())
         assertNull(repository.pendingPruneNote())
 
-        // SECOND consecutive absence: corroborated — the ghost is
-        // pruned and the table equals the installed set.
+        // RUN 2, a genuinely separate look (L3 window cleared):
+        // second consecutive absence — the ghost is pruned and
+        // the prune records itself.
+        nextGenuineLook()
         repository.ensureSeededAndSyncPackages()
 
         val table = dao.getAllAppsSnapshot()
@@ -140,9 +160,12 @@ class AppListTruthTest {
         // with it (the ghost was SHUT).
         assertEquals(PruneNote(appsRemoved = 1, rulesRemoved = true), repository.pendingPruneNote())
 
-        // The ghost returns: it is reborn with its REMEMBERED
-        // ruling (SHUT), never a silent OPEN (issue #34).
+        // The ghost returns on a later genuine look: it is reborn
+        // with its REMEMBERED ruling (SHUT), never a silent OPEN
+        // (segment adopted from the STOSS-34 surge in the merge,
+        // made window-aware like the rest of this test).
         fakeInstalled("com.ghost.app" to "Ghost")
+        nextGenuineLook()
         repository.ensureSeededAndSyncPackages()
         assertEquals(
             AppBlockTier.LOCKED,
@@ -224,23 +247,48 @@ class AppListTruthTest {
     }
 
     @Test
-    fun sync_steadyState_idempotent_noNewPruneRecord() = runBlocking {
+    fun sync_secondRun_idempotent_noNewPruneRecord() = runBlocking {
+        // REPAIR 2 (verifier): this test's name states its truth
+        // intent — a settled catalog does not change or re-note
+        // on repeat syncs. Under the old single-sync law that
+        // settled state existed after run 1; under the two-strike
+        // law it exists after run 2 (run 1 only strikes the
+        // ghost, run 2 prunes it). The idempotence claim is
+        // therefore re-aimed at RUN 3, with runs 1–2 asserting
+        // the new law on the way — no assertion deleted, the
+        // intermediate law now pinned instead of assumed away.
         val dao = db.monolithDao()
         dao.insertApps(listOf(storedRow("com.ghost.app", "Ghost", AppBlockTier.LOCKED)))
         fakeInstalled("com.keeper.app" to "Keeper")
 
-        // Two syncs carry the ghost through note -> corroborated
-        // prune; the prune records itself exactly once.
+        // Run 1: ghost still listed, strike recorded, no prune.
         repository.ensureSeededAndSyncPackages()
-        repository.ensureSeededAndSyncPackages()
-        assertEquals(PruneNote(appsRemoved = 1, rulesRemoved = true), repository.pendingPruneNote())
-        repository.clearPruneNote()
-        val afterPrune = dao.getAllAppsSnapshot().map { it.packageName }.toSet()
+        assertEquals(
+            setOf("com.ghost.app", "com.keeper.app"),
+            dao.getAllAppsSnapshot().map { it.packageName }.toSet()
+        )
+        assertEquals(setOf("com.ghost.app"), strikes())
+        assertNull(repository.pendingPruneNote())
 
-        // From there the sync is a steady state: same table, and
-        // no new prune record is ever written.
+        // Run 2 (genuine second look): ghost pruned, note filed.
+        nextGenuineLook()
         repository.ensureSeededAndSyncPackages()
-        assertEquals(afterPrune, dao.getAllAppsSnapshot().map { it.packageName }.toSet())
+        assertEquals(
+            setOf("com.keeper.app"),
+            dao.getAllAppsSnapshot().map { it.packageName }.toSet()
+        )
+        assertEquals(
+            PruneNote(appsRemoved = 1, rulesRemoved = true),
+            repository.pendingPruneNote()
+        )
+
+        // Run 3 (another genuine look): the settled catalog is
+        // idempotent — same table, no new prune record.
+        repository.clearPruneNote()
+        val settled = dao.getAllAppsSnapshot().map { it.packageName }.toSet()
+        nextGenuineLook()
+        repository.ensureSeededAndSyncPackages()
+        assertEquals(settled, dao.getAllAppsSnapshot().map { it.packageName }.toSet())
         assertNull(repository.pendingPruneNote())
     }
 

@@ -12,9 +12,8 @@ import org.junit.Test
 
 /**
  * The catalog reconcile and the rules grouping, proven as pure
- * derivations (Ordner lane): the table converges to the installed
- * set — a row leaves only on a corroborated (second consecutive)
- * absence, issue #34 — and the slip's groups are the stored tiers.
+ * derivations (Ordner lane): the table ends a sync equal to the
+ * installed set, and the slip's groups are the stored tiers.
  */
 class AppCatalogReconcileTest {
 
@@ -211,6 +210,23 @@ class AppCatalogReconcileTest {
     }
 
     @Test
+    fun collapseWindow_repeatInsideWindowIsSameLook_outsideIsSecondLook() {
+        // Fresh-eyes L3: the strikes must be two genuinely
+        // separate looks. Inside the window a repeat collapses;
+        // at/after the window it is a real second look.
+        val window = AppCatalogReconcile.SYNC_COLLAPSE_WINDOW_MILLIS
+        val t0 = 1_000_000L
+        assertTrue(AppCatalogReconcile.isCollapseRepeat(t0, t0))
+        assertTrue(AppCatalogReconcile.isCollapseRepeat(t0, t0 + window - 1))
+        assertTrue(!AppCatalogReconcile.isCollapseRepeat(t0, t0 + window))
+        assertTrue(!AppCatalogReconcile.isCollapseRepeat(t0, t0 + window + 60_000L))
+        // No completed sync yet is never a repeat, and neither is
+        // a clock that moved backwards.
+        assertTrue(!AppCatalogReconcile.isCollapseRepeat(0L, t0))
+        assertTrue(!AppCatalogReconcile.isCollapseRepeat(t0, t0 - 1L))
+    }
+
+    @Test
     fun reconcile_rememberedRuleRestoresTierAndLimitOnReturn() {
         // "com.returned" categorizes as SHOPPING (would be born
         // OPEN/30 by default) — the remembered LOCKED/45 must win.
@@ -242,14 +258,21 @@ class AppCatalogReconcileTest {
     @Test
     fun reconcile_unmeasuredPackageKeepsItsFigure() {
         // Absent from the usage map = unmeasured (e.g. no usage
-        // permission), NOT a proven zero: the figure stands. A
-        // facts refresh may still be written (this row's stored
-        // category is stale), but it must carry the stored figure
-        // with it — never a zero invented from silence.
+        // permission), NOT a proven zero: the figure stands.
+        // REPAIR (verifier): this test isolates the USAGE claim,
+        // so its categorize stub returns the row's STORED category
+        // (SOCIAL, per the row() helper) — with the shared stub
+        // the label "Keeper" maps to SHOPPING and the finding-4
+        // category refresh would emit an update for a non-usage
+        // reason, making `usageUpdates.isEmpty()` unsatisfiable
+        // (the sibling refresh test asserts that very update for
+        // the identical setup). Label also matches, so the ONLY
+        // thing that could produce a write here is usage.
+        val storedCategory: (String, String) -> AppCategory = { _, _ -> AppCategory.SOCIAL }
         val existing = listOf(row("com.keeper", "Keeper", AppBlockTier.OPEN, usage = 9))
         val installed = listOf(InstalledPackage("com.keeper", "Keeper"))
-        val plan = AppCatalogReconcile.reconcile(existing, installed, emptyMap(), categorize)
-        assertTrue(plan.usageUpdates.all { it.todayUsageMinutes == 9 })
+        val plan = AppCatalogReconcile.reconcile(existing, installed, emptyMap(), storedCategory)
+        assertTrue(plan.usageUpdates.isEmpty())
     }
 
     @Test
@@ -291,6 +314,143 @@ class AppCatalogReconcileTest {
             )
             assertEquals("Alpha Label", plan.toInsert.single().appName)
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Fresh-eyes L2 — whole-token categorize (the production
+    // AppCatalogReconcile.categorize, NOT the stub lambda above).
+    // ------------------------------------------------------------------
+
+    @Test
+    fun categorize_playStoreAndDisplayLabel_areNotGames() {
+        assertEquals(
+            AppCategory.SHOPPING,
+            AppCatalogReconcile.categorize("com.android.vending", "Google Play Store")
+        )
+        assertEquals(
+            AppCategory.SHOPPING,
+            AppCatalogReconcile.categorize("com.android.vending", "Play Store")
+        )
+        assertEquals(
+            AppCategory.SHOPPING,
+            AppCatalogReconcile.categorize("com.example.display", "Display")
+        )
+        assertEquals(
+            AppCategory.SHOPPING,
+            AppCatalogReconcile.categorize("com.example.brightness", "Display Brightness")
+        )
+    }
+
+    @Test
+    fun categorize_substringLookalikes_doNotClassify() {
+        // "reel" inside Freelance is not a reel; "play" inside
+        // Screenplay / Playdate is not a game.
+        assertEquals(
+            AppCategory.SHOPPING,
+            AppCatalogReconcile.categorize("com.example.freelance", "Freelance")
+        )
+        assertEquals(
+            AppCategory.SHOPPING,
+            AppCatalogReconcile.categorize("com.example.screenplay", "Screenplay")
+        )
+        assertEquals(
+            AppCategory.SHOPPING,
+            AppCatalogReconcile.categorize("com.playdate.app", "Playdate")
+        )
+    }
+
+    @Test
+    fun categorize_genuineGames_stillGames() {
+        assertEquals(
+            AppCategory.GAMES,
+            AppCatalogReconcile.categorize("com.supercell.clashroyale", "Clash Royale")
+        )
+        assertEquals(
+            AppCategory.GAMES,
+            AppCatalogReconcile.categorize("com.roblox.client", "Roblox")
+        )
+        // The deliberate multi-word key: Play GAMES is a games
+        // hub; Play STORE (above) is not.
+        assertEquals(
+            AppCategory.GAMES,
+            AppCatalogReconcile.categorize("com.google.android.play.games", "Google Play Games")
+        )
+        assertEquals(
+            AppCategory.GAMES,
+            AppCatalogReconcile.categorize("com.example.puzzle", "Puzzle Game")
+        )
+    }
+
+    @Test
+    fun categorize_genuineVideoSocialMessagingBrowsers_unchanged() {
+        assertEquals(
+            AppCategory.SHORT_VIDEO,
+            AppCatalogReconcile.categorize("com.google.android.youtube", "YouTube")
+        )
+        assertEquals(
+            AppCategory.SHORT_VIDEO,
+            AppCatalogReconcile.categorize("com.zhiliaoapp.musically", "TikTok")
+        )
+        assertEquals(
+            AppCategory.SHORT_VIDEO,
+            AppCatalogReconcile.categorize("com.instagram.android", "Instagram")
+        )
+        assertEquals(
+            AppCategory.SOCIAL,
+            AppCatalogReconcile.categorize("com.reddit.frontpage", "Reddit")
+        )
+        assertEquals(
+            AppCategory.MESSAGING,
+            AppCatalogReconcile.categorize("com.whatsapp", "WhatsApp")
+        )
+        assertEquals(
+            AppCategory.MESSAGING,
+            AppCatalogReconcile.categorize("com.google.android.apps.messaging", "Messages")
+        )
+        assertEquals(
+            AppCategory.MESSAGING,
+            AppCatalogReconcile.categorize("org.telegram.messenger", "Telegram")
+        )
+        assertEquals(
+            AppCategory.BROWSERS,
+            AppCatalogReconcile.categorize("com.android.chrome", "Chrome")
+        )
+        assertEquals(
+            AppCategory.BROWSERS,
+            AppCatalogReconcile.categorize("org.mozilla.firefox", "Firefox")
+        )
+    }
+
+    // ------------------------------------------------------------------
+    // Fix 4 — usage buckets SUM per package (was associate{}:
+    // last bucket silently won, under-reporting multi-bucket apps).
+    // ------------------------------------------------------------------
+
+    @Test
+    fun usageAggregation_twoBucketsForOnePackage_sum() {
+        val summed = AppCatalogReconcile.aggregateUsageMinutes(
+            listOf("com.app" to 7, "com.app" to 5, "com.other" to 3)
+        )
+        assertEquals(mapOf("com.app" to 12, "com.other" to 3), summed)
+    }
+
+    @Test
+    fun usageAggregation_singleBucketUnchanged_zeroBucketYieldsZero() {
+        assertEquals(
+            mapOf("com.app" to 42),
+            AppCatalogReconcile.aggregateUsageMinutes(listOf("com.app" to 42))
+        )
+        // A measured zero stays IN the map: presence is what lets
+        // reconcile write a real 0 (finding 3) instead of keeping
+        // a stale figure.
+        assertEquals(
+            mapOf("com.app" to 0),
+            AppCatalogReconcile.aggregateUsageMinutes(listOf("com.app" to 0))
+        )
+        assertEquals(
+            emptyMap<String, Int>(),
+            AppCatalogReconcile.aggregateUsageMinutes(emptyList())
+        )
     }
 
     @Test

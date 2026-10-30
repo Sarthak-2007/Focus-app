@@ -202,6 +202,16 @@ class MonolithRepository(
          *  ahead of factory presets if the package returns. */
         const val ABSENT_ONCE_KEY = "catalog_absent_once"
         const val REMEMBERED_RULES_KEY = "catalog_remembered_rules"
+
+        /** When the last catalog sync COMPLETED (wall millis,
+         *  fresh-eyes L3): the anchor of the collapse window —
+         *  a non-forced sync inside
+         *  [AppCatalogReconcile.SYNC_COLLAPSE_WINDOW_MILLIS] of
+         *  this instant is the same look repeating itself and
+         *  returns without touching the strike set. Stamped only
+         *  after a reconcile actually ran (a failed/empty query
+         *  is not a successful sync and starts no window). */
+        const val LAST_CATALOG_SYNC_KEY = "catalog_last_sync_ms"
     }
 
     /** The seal marker's session id, or -1 when no seal has ever
@@ -224,7 +234,9 @@ class MonolithRepository(
         return if (legacy >= 0) fromSet + legacy else fromSet
     }
 
-    suspend fun ensureSeededAndSyncPackages() = withContext(Dispatchers.IO) {
+    suspend fun ensureSeededAndSyncPackages(
+        forceCatalogSync: Boolean = false
+    ) = withContext(Dispatchers.IO) {
         seedMutex.withLock {
         if (dao.getAllSitesSnapshot().isEmpty()) {
             dao.insertSites(BlockedBrowserDomains.defaultDomains.map { BlockedSiteEntity(it) })
@@ -248,6 +260,26 @@ class MonolithRepository(
             reseedRoutinesV1()
         }
         try {
+            // THE COLLAPSE GUARD (fresh-eyes L3): the two-strike
+            // prune is only as honest as the distance between the
+            // strikes. The ViewModel's init calls this sync and
+            // then its guard refresh calls it AGAIN seconds later
+            // (PARK's open does the same) — identical
+            // PackageManager state, so one transiently-filtered
+            // cold-start query used to satisfy both strikes in a
+            // single launch and prune. A non-forced call inside
+            // the window after a completed sync therefore skips
+            // the reconcile entirely: it touches no strikes, files
+            // no tombstones, prunes nothing. The rest of this
+            // seeding pass (sites, profiles, tasks, the day-word
+            // drain) is idempotent and still runs. A forced call,
+            // and any call after the window, is a genuinely
+            // separate look and reconciles normally.
+            val collapseRepeat = !forceCatalogSync &&
+                AppCatalogReconcile.isCollapseRepeat(
+                    lastSuccessfulSyncMillis = loadLastCatalogSyncMillis(),
+                    nowMillis = System.currentTimeMillis()
+                )
             val pm = context.packageManager
             val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
                 addCategory(Intent.CATEGORY_LAUNCHER)
@@ -289,7 +321,7 @@ class MonolithRepository(
             // <queries> declaration in the manifest makes every
             // launcher app visible), so an empty result skips the
             // reconcile entirely rather than pruning his rules away.
-            if (installed.isNotEmpty()) {
+            if (installed.isNotEmpty() && !collapseRepeat) {
                 val existingRows = dao.getAllAppsSnapshot()
                 val plan = AppCatalogReconcile.reconcile(
                     existing = existingRows,
@@ -331,6 +363,11 @@ class MonolithRepository(
                 // twice has been pruned above; one present again
                 // clears itself by not being absent.
                 saveAbsentOnce(plan.pendingPrune.toSet())
+                // The sync completed: this instant anchors the
+                // collapse window (L3). Only a reconcile that
+                // actually ran earns the stamp — an empty query
+                // above is a failed look and starts no window.
+                saveLastCatalogSyncMillis(System.currentTimeMillis())
             }
         } catch (_: Exception) {
             // Safe fallback if package querying is restricted
@@ -558,6 +595,15 @@ class MonolithRepository(
     // THE CATALOG MEMORY (issue #34): strike set + rule tombstones.
     // ------------------------------------------------------------------
 
+    private fun loadLastCatalogSyncMillis(): Long =
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .getLong(LAST_CATALOG_SYNC_KEY, 0L)
+
+    private fun saveLastCatalogSyncMillis(millis: Long) {
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putLong(LAST_CATALOG_SYNC_KEY, millis).apply()
+    }
+
     private fun loadAbsentOnce(): Set<String> =
         context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
             .getStringSet(ABSENT_ONCE_KEY, emptySet())
@@ -630,7 +676,13 @@ class MonolithRepository(
     // (AppCatalogReconcile.kt) so it is unit-testable; this stays
     // as the reconcile's categorize seam. (Issue #107's top-level
     // categorizePackage in the same file delegates to it too —
-    // one classifier, two seams, no drift.)
+    // one classifier, two seams, no drift.) Fresh-eyes L2's
+    // whole-token matching lives in that same classifier — the
+    // old substring matcher here called the Play Store a game.
+    // Survivor safety, verified for L2: reconcile copies ONLY
+    // this category (plus label and usage) onto an existing row;
+    // a survivor's tier and limit are never re-priced by a sync,
+    // so a corrected category can never move an existing ruling.
     private fun categorizePackage(pkg: String, label: String): AppCategory =
         AppCategorizer.categorize(pkg, label)
 
@@ -642,8 +694,17 @@ class MonolithRepository(
             val end = System.currentTimeMillis()
             val start = end - (12 * 60 * 60 * 1000L)
             val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end)
-            stats?.associate {
-                it.packageName to ((it.totalTimeInForeground / 60_000L).toInt().coerceAtLeast(0))
+            // Fix 4: buckets SUM per package (the pure
+            // AppCatalogReconcile.aggregateUsageMinutes) — the
+            // old associate{} kept only the last bucket and
+            // under-reported any multi-bucket app.
+            stats?.let { rows ->
+                AppCatalogReconcile.aggregateUsageMinutes(
+                    rows.map {
+                        it.packageName to
+                            ((it.totalTimeInForeground / 60_000L).toInt().coerceAtLeast(0))
+                    }
+                )
             } ?: emptyMap()
         } catch (_: Exception) {
             emptyMap()

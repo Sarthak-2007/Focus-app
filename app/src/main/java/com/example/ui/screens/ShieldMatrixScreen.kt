@@ -668,15 +668,34 @@ fun ShieldMatrixScreen(
 
         // The first sentence the installed-only cure lets the app say
         // honestly (Liv, adopted by Gust): a search with no match is
-        // answered in print, never with a void.
+        // answered in print, never with a void. Fresh-eyes L7: the
+        // filtered list is query AND category chip, so the old line
+        // could deny an installed app exists when the chip alone
+        // had filtered it out. The phone fact is now only claimed
+        // when the name matches NOTHING in the full catalog; a name
+        // that lives under another category says exactly that, and
+        // a category-narrowed miss names the category, not the
+        // phone.
         if (filteredApps.isEmpty() && searchQuery.isNotBlank()) {
             item {
+                val existsOutsideFilter = allApps.any {
+                    it.appName.contains(searchQuery, ignoreCase = true)
+                }
                 Text(
-                    // Issue #107 (#5): never claim an installed app
-                    // is absent — a zero result means the SEARCH
-                    // matched nothing, and the app may live under
-                    // another name or its package name.
-                    text = "NO MATCH FOR THAT SEARCH — TRY THE APP'S NAME OR ITS PACKAGE NAME",
+                    // Fresh-eyes L7's three honest cases, with
+                    // issue #107 (#5) holding the last one: never
+                    // claim an installed app is absent — a zero
+                    // result means the SEARCH matched nothing, and
+                    // the app may live under another name or its
+                    // package name. (Merged by STOSS-34: Herz's
+                    // category truth, #107's never-deny rule.)
+                    text = when {
+                        existsOutsideFilter ->
+                            "THAT NAME IS ON THIS PHONE — NOT IN THIS CATEGORY"
+                        selectedCategory != null ->
+                            "NO APP BY THAT NAME IN THIS CATEGORY"
+                        else -> "NO MATCH FOR THAT SEARCH — TRY THE APP'S NAME OR ITS PACKAGE NAME"
+                    },
                     fontFamily = AnonymousProFamily,
                     fontSize = 11.sp,
                     color = scheme.onSurfaceVariant,
