@@ -47,62 +47,47 @@ import org.robolectric.shadows.ShadowLooper
 @Config(sdk = [36])
 class ShortsToggleRenderTest {
 
+    // ===== D9-REVEAL-BEGIN (instrument block — print-only, remove in one cut) =====
+    // W2 FLOOR reveal step (D9 design, #166): a chained, print-only
+    // uncaught-exception recorder. It prints the full throwable chain
+    // (Throwable.printStackTrace semantics, suppressed included) to
+    // System.err between D9-REVEAL-BEGIN / D9-REVEAL-END markers so the
+    // CI job log carries the cause that UncaughtExceptionsBeforeTest
+    // suppresses, then DELEGATES to the previously installed handler —
+    // it never swallows, alters, or re-orders anything.
+    companion object {
+        @JvmStatic
+        @BeforeClass
+        fun installD9RevealUncaughtHandler() {
+            val previous = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+                try {
+                    System.err.println("D9-REVEAL-BEGIN class=ShortsToggleRenderTest")
+                    System.err.println(
+                        "D9-REVEAL thread=${thread.name} type=${throwable.javaClass.name} msg=${throwable.message}"
+                    )
+                    throwable.printStackTrace(System.err)
+                    System.err.println("D9-REVEAL-END")
+                    System.err.flush()
+                } finally {
+                    if (previous != null) {
+                        previous.uncaughtException(thread, throwable)
+                    }
+                }
+            }
+        }
+    }
+    // ===== D9-REVEAL-END (instrument block) =====
+
     @get:Rule
     val composeRule = createAndroidComposeRule<ComponentActivity>()
 
     private val context: Context
         get() = ApplicationProvider.getApplicationContext()
 
-    companion object {
-        // D9-REVEAL (#166, W2 FLOOR): chained, print-only
-        // uncaught-exception recorder. Installed once per class;
-        // prints the FULL stack of any background death to
-        // System.err -- every Suppressed: and Caused by: line via
-        // printStackTrace -- then DELEGATES to the previously
-        // installed handler. It never swallows and never replaces
-        // the verdict. The captured chain is the discriminator:
-        // frames naming MonolithViewModel / repository flows point
-        // at D7's closed-DB cross-class leak; frames confined to
-        // this class's own composition point intra-class.
-        @BeforeClass
-        @JvmStatic
-        fun installD9RevealHandler() {
-            val previous = Thread.getDefaultUncaughtExceptionHandler()
-            Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-                System.err.println("D9-REVEAL-BEGIN class=ShortsToggleRenderTest")
-                System.err.println(
-                    "D9-REVEAL thread=" + thread.name +
-                        " type=" + throwable.javaClass.name +
-                        " msg=" + throwable.message
-                )
-                throwable.printStackTrace()
-                System.err.println("D9-REVEAL-END")
-                previous?.uncaughtException(thread, throwable)
-            }
-        }
-    }
-
     private fun setPark(storedShorts: Boolean) {
-        // D9-REVEAL (#166): print-only wrap -- a synchronous death
-        // inside the harness setup names itself in the job log,
-        // then the SAME throwable continues (rethrow). No
-        // assertion, timing, or behaviour change.
+        // D9-REVEAL-BEGIN setPark guard (print-only, rethrows unchanged)
         try {
-            setParkBody(storedShorts)
-        } catch (t: Throwable) {
-            System.err.println("D9-REVEAL-BEGIN class=ShortsToggleRenderTest where=setPark")
-            System.err.println(
-                "D9-REVEAL thread=" + Thread.currentThread().name +
-                    " type=" + t.javaClass.name +
-                    " msg=" + t.message
-            )
-            t.printStackTrace()
-            System.err.println("D9-REVEAL-END")
-            throw t
-        }
-    }
-
-    private fun setParkBody(storedShorts: Boolean) {
         val soundEngine = TactileSoundEngine(context)
         composeRule.setContent {
             MyApplicationTheme(darkTheme = false) {
@@ -134,6 +119,17 @@ class ShortsToggleRenderTest {
             Thread.sleep(50)
         }
         composeRule.waitForIdle()
+        } catch (t: Throwable) {
+            System.err.println("D9-REVEAL-BEGIN class=ShortsToggleRenderTest where=setPark")
+            System.err.println(
+                "D9-REVEAL thread=${Thread.currentThread().name} type=${t.javaClass.name} msg=${t.message}"
+            )
+            t.printStackTrace(System.err)
+            System.err.println("D9-REVEAL-END")
+            System.err.flush()
+            throw t
+        }
+        // D9-REVEAL-END setPark guard
     }
 
     @Test
