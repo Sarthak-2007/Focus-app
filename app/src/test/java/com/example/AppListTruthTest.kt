@@ -32,7 +32,9 @@ import org.robolectric.annotation.Config
  *
  * - after two genuinely separate syncs (the two-strike law,
  *   issue #34) the table equals the faked installed set exactly,
- *   including the stored-rule-for-an-uninstalled-app case;
+ *   including the stored-rule-for-an-uninstalled-app case — and
+ *   a pruned ruling is remembered and restored if the app
+ *   returns (STOSS-34 surge wording, adopted in the merge);
  * - the man's own tier on a surviving app is never re-priced;
  * - an empty package query (the query failed) prunes NOTHING;
  * - the prune records itself for the one-time strip (Mikro M5);
@@ -157,6 +159,18 @@ class AppListTruthTest {
         // The prune recorded itself — one app, and a ruling went
         // with it (the ghost was SHUT).
         assertEquals(PruneNote(appsRemoved = 1, rulesRemoved = true), repository.pendingPruneNote())
+
+        // The ghost returns on a later genuine look: it is reborn
+        // with its REMEMBERED ruling (SHUT), never a silent OPEN
+        // (segment adopted from the STOSS-34 surge in the merge,
+        // made window-aware like the rest of this test).
+        fakeInstalled("com.ghost.app" to "Ghost")
+        nextGenuineLook()
+        repository.ensureSeededAndSyncPackages()
+        assertEquals(
+            AppBlockTier.LOCKED,
+            dao.getAllAppsSnapshot().first { it.packageName == "com.ghost.app" }.resolvedTier
+        )
     }
 
     @Test
