@@ -177,11 +177,20 @@ data class FloatingPeekPillState(
  * Why a peek was withheld on a door that could have honoured one
  * (Truth Car 3, UNA2-01; Ren's Held Door Truth Baseline: a withheld
  * peek prints its cooldown state AND its reason). Null when the
- * door never owed a peek — a locked app, a non-honouring door, an
- * unlisted package: those doors print no peek line at all, never a
- * refusal for an offer that was never on the table.
+ * door never owed a peek — a non-honouring door, an unlisted
+ * package: those doors print no peek line at all, never a refusal
+ * for an offer that was never on the table.
+ *
+ * Issue #154 amendment: TIER_LOCKED joins the enum — NOT as a
+ * refusal (no offer was made to refuse) but as the door's own
+ * state line. The baseline's silence for a locked app read to
+ * the person holding the phone as breakage: a legitimate need
+ * met a blank wall, no fact printed, and the only visible exit
+ * was the week's single emergency token. The line now names the
+ * tier the user himself set and where tiers are set — a fact,
+ * not a refusal.
  */
-enum class PeekWithheld { COOLDOWN, ALREADY_ACTIVE, PEEK_OFF }
+enum class PeekWithheld { COOLDOWN, ALREADY_ACTIVE, PEEK_OFF, TIER_LOCKED }
 
 /**
  * The one peek-offer computation (Truth Car 3, UNA2-01). The offer
@@ -282,11 +291,20 @@ internal fun peekWithheldFor(
 ): PeekWithheld? = when {
     canPeek -> null
     !path.canHonourPeekLease -> null
-    // Issue #120 + W3 #130: a finance row owes the withheld reason
-    // too (its tier may be LOCKED while the peek is still on the
-    // table), and on the SITE door the offer is not tier-gated
-    // (see peekOfferFor), so a withheld site peek is owed its
-    // reason regardless of the browser's app tier.
+    // Issue #154 composed with issue #120 (STURM-4 merge): a LOCKED
+    // tier on an honouring door names itself (TIER_LOCKED — a state
+    // line, not a refusal; see the enum) — except finance rows,
+    // which #120 carved out: a finance row owes the withheld reason
+    // below (its tier may be LOCKED while the peek is still on the
+    // table), so finance rows fall through instead of stopping here.
+    // W3 #130 (recomposed at the DURCH-D landing): the SITE door is
+    // exempt from BOTH tier branches — its offer is not tier-gated
+    // (see peekOfferFor), so a withheld site peek is owed its reason
+    // (PEEK_OFF / ALREADY_ACTIVE / COOLDOWN below) regardless of the
+    // browser's app tier, never TIER_LOCKED and never silence.
+    path != InterceptPath.SITE &&
+        appEntity?.resolvedTier == AppBlockTier.LOCKED &&
+        appEntity?.category != AppCategory.FINANCE.name -> PeekWithheld.TIER_LOCKED
     path != InterceptPath.SITE &&
         appEntity?.resolvedTier != AppBlockTier.PEEK_2M &&
         appEntity?.category != AppCategory.FINANCE.name -> null
@@ -1205,6 +1223,39 @@ class MonolithViewModel(
             // flow is a print of the store, never the store.
             _shortsReelsSniperEnabled.value = repository.isShortsReelsSniperEnabled()
             refreshSystemGuard()
+        }
+        // Issue #152: the Drawer's current month follows the
+        // traveller. _drawerMonth is born at ViewModel creation
+        // and was otherwise re-derived only when the VAULT opens,
+        // so an app left open across a landing kept printing the
+        // departure month as current indefinitely (a timezone
+        // change re-anchors every filing date). This slow ticker
+        // re-derives it — only while the user has not pinned a
+        // month by browsing; refreshDrawer() clears the pin.
+        viewModelScope.launch {
+            while (true) {
+                delay(60_000L)
+                if (!drawerMonthPinnedByUser) {
+                    val current = com.example.data.DrawerDay.filingYearMonth(
+                        System.currentTimeMillis()
+                    )
+                    if (current != _drawerMonth.value) {
+                        refreshDrawer()
+                        // Composed with #158: refreshDrawer now
+                        // defaults the month only before any
+                        // selection, so a traveller whose month was
+                        // selected by an earlier refresh would stay
+                        // stranded — the ticker moves the month
+                        // itself in that case, then clears its own
+                        // pin (this move is the default view, not
+                        // a user's browse).
+                        if (_drawerMonth.value != current) {
+                            selectDrawerMonth(current.first, current.second)
+                            drawerMonthPinnedByUser = false
+                        }
+                    }
+                }
+            }
         }
         viewModelScope.launch {
             activeTask.collect { task ->
@@ -2626,6 +2677,13 @@ class MonolithViewModel(
     val dayWords: StateFlow<Map<String, String>> = _dayWords.asStateFlow()
 
     private var drawerOffset = 0
+
+    /** Issue #152: true once the user pins a Drawer month by
+     *  browsing (selectDrawerMonth). While unpinned, the slow
+     *  ticker in init keeps _drawerMonth on the current filing
+     *  month — across timezone changes included; refreshDrawer()
+     *  clears the pin (the landing is the ruling's default view). */
+    private var drawerMonthPinnedByUser = false
     private var drawerSearchOffset = 0
     private var drawerSearchJob: Job? = null
 
@@ -2660,6 +2718,10 @@ class MonolithViewModel(
      *  of the prefs capture and the drained day_notes table, so a
      *  word survives its own drain. */
     fun refreshDrawer() {
+        // Composed (#152 × #158): the #152 traveller pin clears on
+        // refresh; the month defaults to the current filing month
+        // only until a month has been selected (#158 F3).
+        drawerMonthPinnedByUser = false
         if (!drawerMonthSelected) {
             _drawerMonth.value = com.example.data.DrawerDay.filingYearMonth(System.currentTimeMillis())
         }
@@ -2678,6 +2740,11 @@ class MonolithViewModel(
                 indexFailed = true
             }
             selectDrawerMonth(_drawerMonth.value.first, _drawerMonth.value.second)
+            // The refresh's own selection is the default view,
+            // not a user's pin — clear the pin selectDrawerMonth
+            // just set, so the issue-#152 ticker keeps following
+            // the current filing month after this refresh.
+            drawerMonthPinnedByUser = false
             if (indexFailed) {
                 // Issue #52 F3: a failed index read prints as an
                 // error on the Drawer, never as a silent empty room.
@@ -2690,6 +2757,9 @@ class MonolithViewModel(
     }
 
     fun selectDrawerMonth(year: Int, month: Int) {
+        // Composed (#152 × #158): a selection is both the #158
+        // selection and the #152 traveller pin.
+        drawerMonthPinnedByUser = true
         drawerMonthSelected = true
         _drawerMonth.value = year to month
         drawerOffset = 0
@@ -3399,7 +3469,11 @@ class MonolithViewModel(
         val canPeek = peekOfferFor(path, appEntity, cooldownLeft, pillActive)
         // The withheld reason is owed only where the door could
         // have honoured a peek and the tier is PEEK: elsewhere no
-        // peek line prints at all (Held Door Truth Baseline).
+        // peek line prints at all (Held Door Truth Baseline) —
+        // with the issue-#154 exception carried inside
+        // peekWithheldFor: a LOCKED tier on an honouring door
+        // prints its state line (TIER_LOCKED), because total
+        // silence there read as a broken door.
         val withheld = peekWithheldFor(canPeek, path, appEntity, cooldownLeft, pillActive)
 
         _airlockState.value = AirlockInterceptState(

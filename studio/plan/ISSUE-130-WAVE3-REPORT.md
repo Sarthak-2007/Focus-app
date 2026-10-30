@@ -406,3 +406,16 @@ All other #130 files auto-merged; verified post-merge: site doors carry no
 `!leaseLive` blanket (MonolithAccessibilityService), `InterceptPath.SITE`
 honours the peek lease, `SitePeekStore` present, `youtube.com` seeded
 (MonolithModels), `BrowserLoopholeTest` present.
+
+Second recomposition (DURCH-D landing, same run): merged main `f1c84162`
+(PR #312) on top. Conflicts: `AppCatalogReconcile.kt` (token union now also
+keeps main's #142 "news") and `MonolithViewModel.kt` `peekWithheldFor` —
+composed as: #154's TIER_LOCKED branch kept for app doors, #130's SITE-door
+exemption applied to BOTH tier branches (a withheld site peek is owed
+PEEK_OFF / ALREADY_ACTIVE / COOLDOWN, never TIER_LOCKED, never silence).
+CI on the previous recomposition (run 41056876867, head f10664ca) failed
+ONLY with main's own compile cluster: `MonolithViewModel.kt:1906
+Unresolved reference 'receiptForSession'` — verbatim on main at
+2531c847 (call at its :1939, defined nowhere in main's tree; main's own
+run 41052287740 failed the same three steps). Zero errors in any #130
+file. The cure exists on `agent/main-unblock-receipt` (628152d1).

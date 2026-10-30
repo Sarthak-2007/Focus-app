@@ -147,6 +147,19 @@
             android:name=".service.RoutineAlarmReceiver"
             android:exported="false" />
 
+        <!-- Issue #155 (F1): the home-screen glance widget. -->
+        <receiver
+            android:name=".widget.MonolithWidgetProvider"
+            android:exported="false"
+            android:label="Monolith">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/monolith_widget_info" />
+        </receiver>
+
         <!-- Issue #309 F7: package added/removed/replaced/changed —
              reconcile the app catalogue at install time instead of
              discovering installs on the next UI-driven sync. These
