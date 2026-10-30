@@ -708,7 +708,7 @@ fun TactileDeckScreen(
                         // far in he is. No more silent fait accompli.
                         isSessionRunning && activeSession.currentBlockIndex > 1 ->
                             "BLOCK ${activeSession.currentBlockIndex} · SINCE " +
-                                SimpleDateFormat("HH:mm", Locale.US).format(Date(activeSession.startWallTimeMillis))
+                                ClockText.timeOfDay(ClockText.is24Hour(LocalContext.current), activeSession.startWallTimeMillis)
                         // Issue #6 F4: SESSION RUNNING / TOTAL were
                         // wallpaper and die. A routine-born session
                         // prints its name; a hand-armed running
