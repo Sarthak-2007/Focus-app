@@ -1384,14 +1384,17 @@ internal object SlideGestureMath {
  *   (drawn rect inflated 8dp in x, full track height in y); a press
  *   ≥90ms released on a live wire runs the driven mesh (140ms bezier
  *   to 0.92, exit velocity exactly 0) + the shared seat spring; a
- *   second touch during the mesh aborts it on the same integrator;
- *   an aborted mesh has dispatched nothing, provably (enforcement
+ *   second touch during the mesh or the seat (any time before the
+ *   latch frame) aborts it on the same integrator;
+ *   an aborted mesh/seat has dispatched nothing, provably (enforcement
  *   dispatches only at the latch; the verdict is a read-only value).
  *   A press <90ms is a brush: 1dp sink, one dull knock, zero travel.
  * - Print (Aldo): the badge is DEAD (the hero owns the total). The cap
  *   words print on the track face in the shipped label's home, at
  *   plate: SLIDE OR TAP TO START at rest and frozen through every
- *   drag state; TAP AGAIN TO UNDO only inside the tap-mesh window.
+ *   drag state; TAP AGAIN TO UNDO through the whole pre-latch travel
+ *   (mesh + seat — issue #98; it printed only inside the 140ms mesh
+ *   before, a window no human could use).
  *   The strings are compile-time constants — no state input at all
  *   (Teo). The 1 − 1.3·frac label fade survives for hand-drags only.
  * - The view holds NO evidence logic: the host injects a warrant
@@ -1415,7 +1418,8 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
     var onPressEnd: (() -> Unit)? = null
 
     /** The Live Wire verdict, read synchronously. Null = no provider
-     *  wired (preview): the wire reads LIVE so the surface still works. */
+     *  wired (preview): the wire reads UNPROVEN (issue #6 F11b) —
+     *  an unwired surface must never default to claiming proof. */
     var warrantProvider: (() -> Warrant)? = null
 
     var isArmedState: Boolean = false
@@ -1684,7 +1688,11 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
     }
 
     private fun readWarrant(): WarrantState =
-        warrantProvider?.invoke()?.state ?: WarrantState.LIVE
+        // Issue #6 F11b (critic C11): an unwired slide is
+        // UNMEASURED, never LIVE — a default that claims proof
+        // inverts the truth law. Production wires the provider;
+        // previews now render honestly unproven.
+        warrantProvider?.invoke()?.state ?: WarrantState.UNPROVEN
 
     private fun insetPx(): Float = dp(8f)
     private fun capWPx(): Float = dp(84f)
@@ -1740,10 +1748,17 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         // 2. The cap words, on the track face at plate (Aldo/F16): a
         // compile-time constant per machine state — SLIDE OR TAP TO
         // START at rest and frozen through every drag state; TAP AGAIN
-        // TO UNDO only inside the tap-mesh window. The fade is
-        // occlusion handling and survives for hand-drags only (R5):
-        // during the mesh the words must read, unfaded.
-        val words = if (mode == Mode.MESH) WORDS_UNDO else WORDS_START
+        // TO UNDO through the whole pre-latch travel (MESH and SEAT).
+        // Issue #98: the undo words once printed only inside the
+        // 140ms mesh, after which SEAT swallowed the second tap —
+        // a printed escape hatch no human could use. The latch frame
+        // is the gesture's true point of no return (nothing is
+        // dispatched before it), so the undo now lives until the
+        // latch, and the words print for exactly that span — no
+        // longer, no shorter. The fade is occlusion handling and
+        // survives for hand-drags only (R5): during the mesh the
+        // words must read, unfaded.
+        val words = if (mode == Mode.MESH || mode == Mode.SEAT) WORDS_UNDO else WORDS_START
         val fade = if (mode == Mode.DRAG || (mode == Mode.SEAT && seatFromDrag)) {
             (1f - displayed * 1.3f).coerceIn(0f, 1f)
         } else {
@@ -1800,9 +1815,16 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         if (sealedGate) return true
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                // A second touch during the MESH is the buttonhole
-                // abort (F4, strict): any second touch, no bounds test.
-                if (mode == Mode.MESH) {
+                // A second touch during the MESH — or during the
+                // SEAT that follows it, at any point before the
+                // latch frame — is the buttonhole abort (F4, strict;
+                // extended by issue #98): any second touch, no
+                // bounds test. Before the latch nothing has been
+                // dispatched, so aborting the seat is the same act
+                // as aborting the mesh; after the latch the mode is
+                // SEATED and the tap falls into the swallow below,
+                // where the grace abort owns the escape.
+                if (mode == Mode.MESH || mode == Mode.SEAT) {
                     startAbortReturn()
                     return true
                 }
@@ -1814,7 +1836,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                 return true
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
-                if (mode == Mode.MESH) {
+                if (mode == Mode.MESH || mode == Mode.SEAT) {
                     startAbortReturn()
                 }
                 return true

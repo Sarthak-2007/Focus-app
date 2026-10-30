@@ -55,7 +55,7 @@ class ShortsToggleRenderTest {
     private fun setPark(storedShorts: Boolean) {
         val soundEngine = TactileSoundEngine(context)
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 ParkDrawer(
                     visible = true,
                     snapshot = null,
