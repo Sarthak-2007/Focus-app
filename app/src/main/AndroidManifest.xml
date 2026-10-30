@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Issue #280: exact-alarm grant, asked only when the user
+         first enables a routine (MainActivity) — never a first-run
+         gate. The chain alarm falls back to inexact without it. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Declared so MainActivity can fire Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS directly (issue #26) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -56,11 +60,19 @@
             android:directBootAware="true"
             android:enabled="true"
             android:exported="false"
+            android:stopWithTask="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Active app-blocking focus session timer and usage monitor" />
         </service>
+
+        <!-- Issue #308: polls the grant during a permission FIX trip
+             and returns the user to the app the moment it lands. -->
+        <service
+            android:name=".service.PermissionReturnService"
+            android:enabled="true"
+            android:exported="false" />
 
         <!-- Direct-Boot Aware Window, Shorts/Reels Sniper, Settings Blocker & URL Bar Interceptor -->
         <service
