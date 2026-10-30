@@ -45,6 +45,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
+import com.example.service.InterceptConsumptionStore
 import com.example.service.InterceptPath
 import com.example.service.MonolithShieldService
 import com.example.service.TactileSoundEngine
@@ -65,6 +66,24 @@ import com.example.ui.screens.ShieldMatrixScreen
 import com.example.ui.screens.TactileDeckScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.views.MonolithRailView
+
+/** Issue #78 (Audit R2, ipc-intents): the system Settings app's
+ *  package — the ONLY lawful home of every Settings pane this app
+ *  navigates to. */
+internal const val SYSTEM_SETTINGS_PACKAGE = "com.android.settings"
+
+/**
+ * A Settings intent PINNED to the system Settings app. An unpinned
+ * implicit Settings intent enters system-wide resolution: any
+ * installed app declaring a matching intent-filter can be picked
+ * and present a fake Settings pane in place of the real one. The
+ * FIX routes hand the user to permission panes for THIS app's own
+ * protection grants — that hand-off is never offered to a resolver.
+ */
+internal fun pinnedSettingsIntent(action: String, data: Uri? = null): Intent {
+    val intent = if (data != null) Intent(action, data) else Intent(action)
+    return intent.setPackage(SYSTEM_SETTINGS_PACKAGE)
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -128,22 +147,45 @@ class MainActivity : ComponentActivity() {
     private fun handleIncomingInterceptIntent(intent: Intent?, viewModel: MonolithViewModel) {
         if (intent == null) return
         val pkg = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
-        if (!pkg.isNullOrBlank()) {
-            val name = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
-                ?: "Short-Form Feed"
-            val badge = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
-                ?: "Locked"
-            // WHICH door fired (Truth Car 3, UNA2-01): the peek
-            // offer is computed per-path — an extra that is missing
-            // or names no known door parses to UNKNOWN, and UNKNOWN
-            // never offers a peek.
-            val path = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
-                ?.let { runCatching { InterceptPath.valueOf(it) }.getOrNull() }
-                ?: InterceptPath.UNKNOWN
-            viewModel.triggerAirlockIntercept(pkg, name, badge, path)
-            intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
-            intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
-        }
+        if (pkg.isNullOrBlank()) return
+        val name = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
+            ?: "Short-Form Feed"
+        val badge = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
+            ?: "Locked"
+        // WHICH door fired (Truth Car 3, UNA2-01): the peek
+        // offer is computed per-path — an extra that is missing
+        // or names no known door parses to UNKNOWN, and UNKNOWN
+        // never offers a peek.
+        val path = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
+            ?.let { runCatching { InterceptPath.valueOf(it) }.getOrNull() }
+            ?: InterceptPath.UNKNOWN
+        // Issue #78: consumption is PERSISTED, not just in-memory.
+        // The platform retains the launching intent and redelivers
+        // it intact after process death, so removeExtra on this
+        // copy alone let the same stale Airlock fire again. The
+        // firing's id is marked consumed (synchronous commit)
+        // BEFORE the Airlock can show; an already-consumed
+        // redelivery is dropped, and a delivery whose consumption
+        // cannot be persisted is dropped too (fail closed — the
+        // enforcement door fires a fresh intercept if the user is
+        // actually standing in the blocked app). Id-less deliveries
+        // are fingerprinted from their extras: the same stale copy
+        // redelivered is the same fingerprint.
+        val interceptId = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?: InterceptConsumptionStore.fingerprint(pkg, name, badge, path.name)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_ID)
+        if (InterceptConsumptionStore.isConsumed(this, interceptId)) return
+        if (!InterceptConsumptionStore.markConsumed(this, interceptId)) return
+        // The showing itself is revalidated in the VM against the
+        // live session and the package's live tier/lease — a
+        // first-delivered but long-delayed intent does not resurrect
+        // an Airlock its facts no longer support.
+        viewModel.triggerAirlockInterceptFromIntent(pkg, name, badge, path)
     }
 
     override fun onDestroy() {
@@ -372,9 +414,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         runCatching {
             when (item) {
                 com.example.service.WatchItemId.ACCESSIBILITY ->
-                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    context.startActivity(pinnedSettingsIntent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                 com.example.service.WatchItemId.USAGE_ACCESS ->
-                    context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                    context.startActivity(pinnedSettingsIntent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
                 com.example.service.WatchItemId.DEVICE_ADMIN -> {
                     val direct = Intent().setComponent(
                         android.content.ComponentName(
@@ -384,29 +426,29 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     )
                     runCatching { context.startActivity(direct) }
                         .getOrElse {
-                            context.startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
+                            context.startActivity(pinnedSettingsIntent(Settings.ACTION_SECURITY_SETTINGS))
                         }
                 }
                 com.example.service.WatchItemId.NOTIFICATION_LISTENER ->
                     context.startActivity(
-                        Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+                        pinnedSettingsIntent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
                     )
                 com.example.service.WatchItemId.OVERLAY ->
                     context.startActivity(
-                        Intent(
+                        pinnedSettingsIntent(
                             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                             Uri.parse("package:${context.packageName}")
                         )
                     )
                 com.example.service.WatchItemId.BATTERY -> {
-                    val direct = Intent(
+                    val direct = pinnedSettingsIntent(
                         Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                         Uri.parse("package:${context.packageName}")
                     )
                     runCatching { context.startActivity(direct) }
                         .getOrElse {
                             context.startActivity(
-                                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                                pinnedSettingsIntent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
                             )
                         }
                 }
@@ -555,10 +597,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     },
                                     warrantProvider = viewModel::armWarrantNow,
                                     onFixBlockingAccess = {
-                                        runCatching { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                                        runCatching { context.startActivity(pinnedSettingsIntent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
                                     },
                                     onFixUsageAccess = {
-                                        runCatching { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
+                                        runCatching { context.startActivity(pinnedSettingsIntent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
                                     },
                                     onRetryBlockingCheck = viewModel::refreshDeckWarrant,
                                     onHandBackTick = viewModel::playHandBackTick,

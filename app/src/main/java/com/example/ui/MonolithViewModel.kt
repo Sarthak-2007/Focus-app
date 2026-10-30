@@ -150,6 +150,44 @@ internal fun peekOfferFor(
         cooldownLeftSeconds == 0 &&
         !pillActive
 
+/**
+ * Issue #78 (Audit R2, ipc-intents): may an Airlock raised from an
+ * INTENT be shown at all? The intent is evidence that a door fired
+ * at some point in the past — possibly before a process death — so
+ * showing is re-derived from the LIVE facts, never from the
+ * intent's extras:
+ *  - no active session, no Airlock (every firing door is itself
+ *    session-gated; a session that has since ended voids the
+ *    firing with it);
+ *  - on the two app-tier doors the package must still carry a
+ *    non-OPEN tier, must not be free under the Safe Break's peek
+ *    pass, and must not already hold the live peek lease the
+ *    enforcement is honouring;
+ *  - the sniper / site / guard / unknown doors intercept packages
+ *    that legitimately have no row or an OPEN row (a browser, the
+ *    Settings app), so for them the live session IS the whole
+ *    revalidation — their peek offer is already always off
+ *    (see [peekOfferFor]).
+ * Pure, so the matrix is unit-tested door by door.
+ */
+internal fun airlockIntentRevalidated(
+    path: InterceptPath,
+    tier: AppBlockTier?,
+    sessionActive: Boolean,
+    inSafeBreak: Boolean,
+    peekLeaseLive: Boolean
+): Boolean {
+    if (!sessionActive) return false
+    return when (path) {
+        InterceptPath.APP_TIER, InterceptPath.SHIELD_APP ->
+            tier != null &&
+                tier != AppBlockTier.OPEN &&
+                !(inSafeBreak && tier == AppBlockTier.PEEK_2M) &&
+                !peekLeaseLive
+        else -> true
+    }
+}
+
 data class AirlockInterceptState(
     val isVisible: Boolean = false,
     val interceptedPackageName: String = "",
@@ -2312,16 +2350,70 @@ class MonolithViewModel(
         }
     }
 
+    /**
+     * Issue #78: the INTENT door into the Airlock. Unlike the
+     * in-app doors (the Launcher's peek list, warm and on-screen),
+     * an intent may be a stale redelivery, so the showing is
+     * revalidated against one-shot store reads — the live session
+     * row and the package's live tier/lease — before the Airlock
+     * state is touched. A firing that no longer holds is dropped
+     * silently: the enforcement doors will fire a fresh one if the
+     * user is actually standing in a blocked app.
+     */
+    fun triggerAirlockInterceptFromIntent(
+        packageName: String,
+        appName: String,
+        reasonBadge: String = "Locked",
+        path: InterceptPath = InterceptPath.UNKNOWN
+    ) {
+        viewModelScope.launch {
+            val session = runCatching { repository.activeSessionSnapshot() }.getOrNull()
+            val entity = runCatching { repository.appsSnapshot() }.getOrNull()
+                ?.find { it.packageName == packageName }
+            val leaseLive = entity != null &&
+                entity.resolvedTier == AppBlockTier.PEEK_2M &&
+                SystemClock.elapsedRealtime() < entity.activePeekUntilElapsedRealtime
+            if (!airlockIntentRevalidated(
+                    path = path,
+                    tier = entity?.resolvedTier,
+                    sessionActive = session?.isActive == true,
+                    inSafeBreak = session?.isInSafeBreak == true,
+                    peekLeaseLive = leaseLive
+                )
+            ) return@launch
+            triggerAirlockIntercept(packageName, appName, reasonBadge, path)
+        }
+    }
+
     fun triggerAirlockIntercept(
         packageName: String,
         appName: String,
         reasonBadge: String = "Locked",
         path: InterceptPath = InterceptPath.UNKNOWN
     ) {
-        soundEngine.playMechanicalLatch(true)
         val active = activeSession.value
-
         val appEntity = apps.value.find { it.packageName == packageName }
+        // Issue #78, warm-door half of the same law: when the live
+        // session flow has landed, the showing must still hold
+        // against it (a Launcher tap races a session edge the same
+        // way an intent does). Before the flow's first emission
+        // there is no fact to contradict the door, and the in-app
+        // doors are only reachable from a sealed surface anyway —
+        // the strict snapshot gate lives on the intent entry above.
+        if (active != null) {
+            val leaseLive = appEntity != null &&
+                appEntity.resolvedTier == AppBlockTier.PEEK_2M &&
+                SystemClock.elapsedRealtime() < appEntity.activePeekUntilElapsedRealtime
+            if (!airlockIntentRevalidated(
+                    path = path,
+                    tier = appEntity?.resolvedTier,
+                    sessionActive = active.isActive,
+                    inSafeBreak = active.isInSafeBreak,
+                    peekLeaseLive = leaseLive
+                )
+            ) return
+        }
+        soundEngine.playMechanicalLatch(true)
         val cooldownLeft = if (appEntity != null) repository.getPeekCooldownRemainingSeconds(appEntity) else 0
         val pillActive = _floatingPeekPill.value.isActive
         // UNA2-01: the offer is computed per-path by the one pure

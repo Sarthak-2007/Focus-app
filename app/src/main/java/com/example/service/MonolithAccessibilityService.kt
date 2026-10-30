@@ -425,6 +425,13 @@ class MonolithAccessibilityService : AccessibilityService() {
             putExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME, appName)
             putExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE, reasonBadge)
             putExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH, path.name)
+            // Issue #78: unique firing id — MainActivity persists
+            // its consumption before showing the Airlock, so a
+            // process-death redelivery of this intent is dropped.
+            putExtra(
+                MonolithShieldService.EXTRA_INTERCEPT_ID,
+                java.util.UUID.randomUUID().toString()
+            )
         }
         startActivity(interceptIntent)
     }
