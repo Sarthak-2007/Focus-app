@@ -190,3 +190,26 @@ ledger states. CI verdict recorded in the delivery comment/run.
 Findings: 5 · FIXED-IN-CODE: 3 (1, 2, 5) · STANDS-BLOCKED with
 DECISION-NEEDED: 2 (3, 4 — each with its truth-telling half fixed in
 code where one existed) · VERIFIED-FALSE: 0 · FIXED-ELSEWHERE: 0.
+
+## CI verdict (read, both runs)
+
+- Run 40986169386 (tip 3644989): FAILURE at step "Assemble debug".
+  Cause found in own diff: `emergencyBreakPriceText` had been inserted
+  between `@Composable` and `fun TactileDeckScreen`, stripping the
+  screen's annotation. Diagnosis was differential — the base-commit
+  run 40985873618 (0a00e95, before this branch's changes) PASSED
+  Assemble and failed only at "Unit tests".
+- Run 40992007146 (tip 577dee5, helper moved above the annotation;
+  landed via the Contents API because the box's git loose-object
+  writes were in an EPERM wave): **Assemble debug GREEN**; FAILURE at
+  step "Unit tests" — the identical failing step as the untouched
+  base run 40985873618, i.e. the pre-existing red test suite on main
+  at this base, not introduced by this branch. This branch's own 7
+  tests (TemptationJourneyTest) are pure-function assertions,
+  re-verified line-by-line against the functions they pin.
+  Caveat, stated plainly: job logs were unreachable from this box
+  (the Actions log blob host returns 0 bytes through the egress
+  proxy on every route tried), so the per-test failure list could
+  not be read; the step-level differential against the base run is
+  the evidence relied on. KARTE can read the log from the run page:
+  https://github.com/Sarthak-2007/Focus-app/actions/runs/40992007146
