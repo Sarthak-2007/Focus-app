@@ -826,6 +826,27 @@ object RoutineSchedule {
         return null
     }
 
+    /**
+     * The pause-aware next start (routines rebuild §3.6): the
+     * search origin is max(now, pausedUntilMillis), fed into
+     * [nextStartMillis] - whose strictly-after contract means the
+     * origin is passed as pausedUntilMillis - 1 when the pause is
+     * the binding origin, so a window starting exactly as the
+     * pause ends still counts. Windows the pause covers never
+     * fire, so they are never the next start. This one helper is
+     * what the scheduler and every "next seal" reader (Deck
+     * ribbon, widget) share, so they can never disagree.
+     */
+    fun effectiveNextStartMillis(routine: RoutineEntity, nowMillis: Long): Long? {
+        val r = routine.sanitized()
+        val origin = maxOf(nowMillis, r.pausedUntilMillis)
+        return if (origin > nowMillis) {
+            nextStartMillis(r, origin - 1L)
+        } else {
+            nextStartMillis(r, nowMillis)
+        }
+    }
+
     /** End of the window containing [nowMillis], or of the next window if none contains it. */
     fun nextEndMillis(routine: RoutineEntity, nowMillis: Long): Long? {
         val r = routine.sanitized()
