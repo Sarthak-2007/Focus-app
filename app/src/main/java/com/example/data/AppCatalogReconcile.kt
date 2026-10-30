@@ -134,6 +134,15 @@ data class AppCatalogPlan(
  */
 object AppCategorizer {
 
+    /** Deterministic homes (issue #133): a filing that is a fact
+     *  about the package, not a guess about its name — checked
+     *  before every token rule below. */
+    private val DETERMINISTIC_HOMES: Map<String, AppCategory> = mapOf(
+        // Anki — the spaced-repetition app (audit R3b, angle
+        // study-on-phone-itself, names this exact package).
+        "com.ichi2.anki" to AppCategory.EDUCATION
+    )
+
     private val MUSIC_TOKENS = setOf(
         "music", "podcast", "podcasts", "audio", "audiobook", "audiobooks",
         "radio", "spotify", "soundcloud", "deezer", "tidal", "gaana",
@@ -142,6 +151,7 @@ object AppCategorizer {
     )
 
     fun categorize(pkg: String, label: String): AppCategory {
+        DETERMINISTIC_HOMES[pkg]?.let { return it }
         val pkgTokens = tokenize(pkg)
         val labelTokens = tokenize(label)
         fun matches(vararg keys: String): Boolean = keys.any { key ->
@@ -161,6 +171,18 @@ object AppCategorizer {
         // bare "reel" no longer fires inside "Freelance". Plurals
         // are stated as their own keys; "play" survives only in
         // "play games", where it means what it says.
+        // Study signals (issue #133) sit before the entertainment
+        // branches, in the same whole-token discipline: a study
+        // app must never be filed as entertainment by name luck —
+        // Google Play Books ("play books") is a study app, while
+        // Play Store and Play Games keep their rulings below.
+        if (matches(
+                "anki", "flashcard", "flashcards", "classroom",
+                "play books", "textbook", "textbooks", "ebook", "ebooks",
+                "pdf reader", "lecture", "lectures", "dictionary",
+                "education", "study"
+            )
+        ) return AppCategory.EDUCATION
         return when {
             matches("tiktok", "musically", "youtube", "instagram", "reel", "reels") ->
                 AppCategory.SHORT_VIDEO

@@ -148,7 +148,6 @@ class CascadeDeckRenderTest {
             FileOutputStream(out).use { fos -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos) }
             bitmap.recycle()
         }
-        println("CASCADE-RENDER captured $name size=${out.length()}")
     }
 
     private fun proving(sessionId: Int?) = ArmPhase.Proving(
