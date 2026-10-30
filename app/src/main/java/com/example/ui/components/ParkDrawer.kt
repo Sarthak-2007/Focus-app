@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.service.InterceptorState
 import com.example.service.PermPrint
+import com.example.service.SoundAudibility
 import com.example.service.TactileSoundEngine
 import com.example.service.WatchItemId
 import com.example.service.WatchSnapshot
@@ -890,8 +891,21 @@ fun ParkDrawer(
                         delay(260L)
                         displayedSound = soundEnabled
                     }
+                    // Issue #112, finding 1: ON must not print bare
+                    // over a phone that cannot be heard. The
+                    // audibility fact is read at composition (the
+                    // drawer is a transient surface; its print is
+                    // as-of-open) — volume 0 or a silencing DND
+                    // marks the word SILENT, so the setting and
+                    // the experience can be told apart at a glance.
+                    val soundAudibility = soundEngine?.currentAudibility()
+                        ?: SoundAudibility.AUDIBLE
                     Text(
-                        text = if (displayedSound) "ON" else "OFF",
+                        text = when {
+                            !displayedSound -> "OFF"
+                            soundAudibility != SoundAudibility.AUDIBLE -> "ON · SILENT"
+                            else -> "ON"
+                        },
                         style = AppTitleTextStyle,
                         color = scheme.onBackground
                     )
