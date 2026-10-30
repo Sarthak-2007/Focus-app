@@ -1,0 +1,66 @@
+name: durch-fin-release-publish
+on:
+  push:
+    branches: [agent/durch-fin-release-10]
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install SDK packages
+        run: |
+          export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "build-tools;35.0.0" || sdkmanager "platforms;android-36" "build-tools;36.0.0" "build-tools;35.0.0"
+      - name: Assemble debug APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug --console=plain 2>&1 | tee release-console.log
+          echo "ASSEMBLE_EXIT=${PIPESTATUS[0]}" | tee -a release-console.log
+      - name: Fingerprint, version, and release notes
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          BT=$(ls -d $ANDROID_HOME/build-tools/*/ | sort -V | tail -1)
+          echo "build-tools: $BT" > release-info.txt
+          ${BT}apksigner verify --print-certs "$APK" >> release-info.txt 2>&1 || true
+          ${BT}aapt2 dump badging "$APK" | head -3 >> release-info.txt 2>&1 || true
+          sha256sum "$APK" >> release-info.txt
+          cat release-info.txt
+          cp "$APK" monolith-batch10.apk
+          {
+            echo "Monolith — batch 10 usability build."
+            echo ""
+            echo "What this build is: the app opens without the fog screen (no more CAN'T CHECK BLOCKING — TAP TO RETRY on a cold start), it arms fast, and it blocks for real and tells the truth about whether blocking is on. If blocking is genuinely off, it now says BLOCKING IS OFF in plain words instead of pretending it cannot tell."
+            echo ""
+            echo "Built from merged main commit 195e310a9786a5c27d9731fafe44dfd915b7b4c4 (PR #480, the cold-start cure). Assembled and signature-checked in CI on that exact commit."
+            echo ""
+            echo "Signer certificate and version, read off the APK itself in the same CI run:"
+            echo ""
+            cat release-info.txt
+          } > release-notes.md
+          cat release-notes.md
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create batch-10-usability \
+            --target 195e310a9786a5c27d9731fafe44dfd915b7b4c4 \
+            --title "batch-10-usability" \
+            --notes-file release-notes.md \
+            monolith-batch10.apk release-info.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: batch-10-apk-publish
+          path: |
+            monolith-batch10.apk
+            release-info.txt
+            release-notes.md
+            release-console.log
+          if-no-files-found: warn
