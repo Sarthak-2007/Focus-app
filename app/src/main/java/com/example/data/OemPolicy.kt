@@ -33,8 +33,12 @@ object OemPolicy {
 
     /** Pure mapping (unit-tested): manufacturer/brand strings, any case. */
     fun gateFor(manufacturer: String?, brand: String?): AutostartGate {
-        val m = (manufacturer ?: "").trim().lowercase()
-        val b = (brand ?: "").trim().lowercase()
+        // Locale.ROOT pins (issue #88's Turkish-fold lesson, applied here):
+        // a default-locale lowercase() folds 'I' to dotless 'ı' in tr-TR,
+        // so "VIVO"/"XIAOMI" would miss their needles and the gate — the
+        // exact false-GRANTED failure this file exists to prevent.
+        val m = (manufacturer ?: "").trim().lowercase(java.util.Locale.ROOT)
+        val b = (brand ?: "").trim().lowercase(java.util.Locale.ROOT)
         fun hits(vararg needles: String) = needles.any { it in m || it in b }
         return when {
             hits("xiaomi", "redmi", "poco") -> AutostartGate.XIAOMI
