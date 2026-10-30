@@ -606,6 +606,8 @@ class TactileSoundEngine(private val context: Context) {
     ) {
         if (!soundEnabled) return
         val samples = ((SAMPLE_RATE * durationMs) / 1000).coerceIn(96, 6000)
+        enqueuedTransientCount++
+        lastEnqueuedTransient = fundamentalHz to samples
         commandQueue.offer(
             SynthCommand(
                 fundamentalHz = fundamentalHz,
@@ -620,6 +622,29 @@ class TactileSoundEngine(private val context: Context) {
     /** Test seam (Siegel T2): the pending legacy command count —
      *  the Throw's queue-clear law is asserted against it. */
     internal fun pendingCommandCount(): Int = commandQueue.size
+
+    // Issue #112 (Audit R3, sound-haptics-lived): monotonic test
+    // seams for the SINGLE-VOICE law — how many transients were
+    // ever offered, and the last one's (fundamentalHz,
+    // durationSamples) signature, so a test can prove which voice
+    // a call site spent (the seal clunk is 360 Hz × 2116 samples;
+    // a latch is 760/520 Hz × 705) and that a sled flip spent
+    // exactly one.
+    @Volatile
+    private var enqueuedTransientCount: Long = 0L
+
+    @Volatile
+    private var lastEnqueuedTransient: Pair<Float, Int>? = null
+
+    internal fun enqueuedTransientCountForTest(): Long = enqueuedTransientCount
+
+    internal fun lastEnqueuedTransientForTest(): Pair<Float, Int>? = lastEnqueuedTransient
+
+    /** Issue #112, finding 1: can this phone, as it stands right
+     *  now, actually be heard? The engine's callers (PARK's print)
+     *  read the fact through here so the printed ON never again
+     *  rides over a provably silent phone unmarked. */
+    fun currentAudibility(): SoundAudibility = AudibilityProbe.read(context)
 
     // =========================================================================
     // 4 CALIBRATED HAPTIC + FLOAT-PCM CALL SITES (DEVELOPER-GUIDE.pdf §6 & §7)
@@ -703,7 +728,21 @@ class TactileSoundEngine(private val context: Context) {
     }
 
     /** Session seal clunk: full-force thunk, a settling shoulder,
-     *  then the lock seating. Disarming is the same shape, lighter. */
+     *  then the lock seating. Disarming is the same shape, lighter.
+     *
+     *  RESERVATION LAW (Issue #112, Audit R3 sound-haptics-lived,
+     *  finding 3): this voice belongs to the session boundary and
+     *  nowhere else. Its lawful spends are the DISARM family
+     *  (arming = false — the challenge, the confirmed disarm, the
+     *  emergency-break completion). The arming shape has NO lawful
+     *  spend: the seal itself speaks the Throw
+     *  ([playSealThrow], one voice, bit-identical), and a seal
+     *  sound before proof was already deleted as "intent wearing
+     *  proof's clothes". Housekeeping — undo, splits, cueing,
+     *  loadouts, profiles, the peek door — speaks the latch
+     *  ([playMechanicalLatch]); every spend of this clunk on
+     *  housekeeping taught the user that the lock-in sound means
+     *  nothing, which is why the reservation exists. */
     fun playHarmonicSeal(arming: Boolean) {
         if (arming) {
             triggerWaveform(
@@ -807,6 +846,22 @@ class TactileSoundEngine(private val context: Context) {
         }
         sealReady = false
         sealBarrierSeq = -1L
+    }
+
+    /** The peek warning tick (Issue #112, finding 5): HAPTIC
+     *  ONLY, by design. While a peek runs, the user is inside the
+     *  peeked app and Monolith is invisible — a SOUND from it is a
+     *  noise from nowhere, and the old every-15-seconds detent
+     *  spent the rotary voice on it seven times a peek. A felt
+     *  tick at 30 s and 15 s remaining is a warning the hand
+     *  understands without the phone speaking from invisibility.
+     *  Nothing is enqueued: this spends no voice at all. */
+    fun playPeekWarningTick() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 7, 5),
+            amplitudes = intArrayOf(0, 180, 70),
+            fallbackMs = HAPTIC_ROTARY_TICK_1MS
+        )
     }
 
     /** The counterfoil tear's own voice (F-N2): the tear is not a

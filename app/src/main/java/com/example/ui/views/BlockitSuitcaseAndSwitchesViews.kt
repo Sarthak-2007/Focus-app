@@ -167,8 +167,21 @@ class SledSwitchView(context: Context) : BlockitCanvasView(context) {
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_UP) {
-            // §6: 8ms Firm click on SledSwitch throw!
-            fireFeel(8L)
+            // SINGLE-VOICE LAW (Issue #112, Audit R3
+            // sound-haptics-lived, finding 2): the sled fires NO
+            // feel of its own. It used to fireFeel(8L) — a firm
+            // click — and THEN invoke the handler, whose own voice
+            // (detent / latch) sounded second: every flip spoke
+            // twice. Worse, the view fired BEFORE the fact flipped,
+            // so the SOUND sled's muting click sounded at full
+            // volume (gate still ON) while its unmuting click was
+            // swallowed by the still-OFF gate — the same gesture,
+            // a different sound in each direction. The toggle's
+            // ONE voice belongs to the handler, fired after the
+            // fact lands (MonolithViewModel's toggles), so the
+            // voice is governed by the state the flip CREATES —
+            // symmetric by construction. The sled is gesture and
+            // print; the writer of the fact speaks for it.
             onToggleRequested?.invoke()
             return true
         }

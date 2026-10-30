@@ -190,6 +190,34 @@ internal fun peekSecondsRemaining(leaseEndMono: Long, nowMono: Long): Int? {
     return ((remainingMs + 999L) / 1000L).toInt()
 }
 
+/**
+ * Issue #112 (Audit R3, sound-haptics-lived, finding 5): the
+ * peek's felt-warning seconds. The old ticker spent a SOUNDING
+ * rotary detent at every 15-second boundary (105/90/75/60/45/30/
+ * 15) while the user was inside the peeked app and Monolith was
+ * invisible — a buzz from nowhere, seven times a peek. The
+ * warning's job is only to keep the expiry from ambushing the
+ * user, and two felt ticks — 30 s and 15 s remaining — do that
+ * job; the tick itself is haptic-only
+ * (TactileSoundEngine.playPeekWarningTick), so the phone never
+ * speaks from an app the user isn't looking at.
+ */
+internal fun peekWarningTickDue(secondsRemaining: Int): Boolean =
+    secondsRemaining == 30 || secondsRemaining == 15
+
+/**
+ * Issue #112 (finding 4): the completion pulse's delay from the
+ * finish's E0. The pulse is OWED, not scheduled into a window:
+ * the old code fired it only if the clock still read < 900 ms
+ * after the E700 wait, so on a slow or loaded phone the session's
+ * most important sound was silently deleted. A late pulse now
+ * fires LATE (delay clamps to 0 = fire immediately) — never
+ * dropped, and still inside the E-clock's one sequential job, so
+ * it can never overtake the E880 knock pair that follows it.
+ */
+internal fun completionPulseDelayMs(e0ElapsedMs: Long): Long =
+    (700L - e0ElapsedMs).coerceAtLeast(0L)
+
 data class DisarmChallengeState(
     val isVisible: Boolean = false,
     val requiredHoldSeconds: Int = 60
@@ -993,8 +1021,13 @@ class MonolithViewModel(
                     if (nextSec == null) {
                         end2MinutePeekEarly()
                     } else {
-                        if (nextSec % 15 == 0 && nextSec != peek.secondsRemaining) {
-                            soundEngine.playRotaryDetent(760.0)
+                        // Issue #112, finding 5: the peek warning
+                        // is FELT, twice (30 s / 15 s remaining),
+                        // never heard — the old line spent a
+                        // sounding detent every 15 s from an
+                        // invisible app. See peekWarningTickDue.
+                        if (peekWarningTickDue(nextSec) && nextSec != peek.secondsRemaining) {
+                            soundEngine.playPeekWarningTick()
                         }
                         if (nextSec != peek.secondsRemaining) {
                             _floatingPeekPill.value = peek.copy(secondsRemaining = nextSec)
@@ -1242,16 +1275,20 @@ class MonolithViewModel(
             // job — a Deck that isn't composed doesn't mute the
             // room (Nocke §3). E0 settle knock; E700 pulse (the
             // completion voice's only lawful spend); E880 knock
-            // pair. Death-booked: the E700 slot stands EMPTY.
+            // pair. Issue #112, finding 4: the pulse slot is no
+            // longer death-booked — the old 900 ms window silently
+            // deleted the pulse on a slow phone. The pulse is
+            // owed: late fires late (completionPulseDelayMs
+            // clamps to 0), never dropped.
             val pulses = com.example.data.finishPulses(kind, row)
             launch {
                 soundEngine.playSeatKnock(24, 1.0f, 320f)
                 if (pulses) {
-                    val toPulse = 700L - (SystemClock.elapsedRealtime() - e0Mono)
+                    val toPulse = completionPulseDelayMs(
+                        SystemClock.elapsedRealtime() - e0Mono
+                    )
                     if (toPulse > 0L) delay(toPulse)
-                    if (SystemClock.elapsedRealtime() - e0Mono < 900L) {
-                        soundEngine.playCompletionPulse()
-                    }
+                    soundEngine.playCompletionPulse()
                 }
                 val toPair = 880L - (SystemClock.elapsedRealtime() - e0Mono)
                 if (toPair > 0L) delay(toPair)
@@ -1430,13 +1467,25 @@ class MonolithViewModel(
      *  alike, whichever door built them) — and the print follows
      *  the fact. It never writes an engine's var directly again:
      *  the per-engine copy is exactly how OFF once printed over a
-     *  sounding routine seal. The confirmation detent fires only
-     *  when turning ON, and by then the fact already says ON. */
+     *  sounding routine seal.
+     *
+     *  Issue #112, finding 2 (single-voice law): this handler is
+     *  the flip's ONLY voice, fired AFTER the fact lands — the
+     *  sled view fires none of its own any more. One latch,
+     *  direction-shaped by the engine (engaged snaps sharp,
+     *  released lands heavier), and governed by the state the
+     *  flip CREATES: turning ON, the latch sounds; turning OFF,
+     *  the latch is felt but its sound is gated out by the fact
+     *  just written — the throw the user feels is the last thing
+     *  the old setting does, and the silence that follows is the
+     *  new one telling the truth. The old shape — the view's firm
+     *  click under the OLD gate plus a detent only when turning
+     *  ON — spoke twice and asymmetrically. */
     fun toggleSound(): Boolean {
         val next = !SoundEffectsSetting.isEnabled(appContext)
         SoundEffectsSetting.setEnabled(appContext, next)
         _soundEnabled.value = next
-        if (next) soundEngine.playRotaryDetent(720.0)
+        soundEngine.playMechanicalLatch(next)
         return next
     }
 
@@ -1796,7 +1845,7 @@ class MonolithViewModel(
         undoDismissJob?.cancel()
         _deletedTaskForUndo.value = null
         undoDeleteStore.clear()
-        soundEngine.playHarmonicSeal(arming = true)
+        soundEngine.playMechanicalLatch(true) // Issue #112 F3: housekeeping speaks the latch, never the seal clunk (reservation law, TactileSoundEngine.playHarmonicSeal)
         viewModelScope.launch {
             val restored = repository.restoreDeletedTask(deleted)
             if (restored.resolvedStatus == TaskQueueStatus.ACTIVE) {
@@ -1965,7 +2014,7 @@ class MonolithViewModel(
 
     fun splitActiveTaskAndReturn(microStepTitle: String) {
         if (midSeal()) return
-        soundEngine.playHarmonicSeal(arming = true)
+        soundEngine.playMechanicalLatch(true) // Issue #112 F3: housekeeping speaks the latch, never the seal clunk (reservation law, TactileSoundEngine.playHarmonicSeal)
         val state = _airlockState.value
         _airlockState.value = state.copy(isVisible = false)
         viewModelScope.launch {
@@ -1999,7 +2048,7 @@ class MonolithViewModel(
 
     fun autoSplitTaskIntoMicroSteps(taskId: Int) {
         if (midSeal()) return
-        soundEngine.playHarmonicSeal(arming = true)
+        soundEngine.playMechanicalLatch(true) // Issue #112 F3: housekeeping speaks the latch, never the seal clunk (reservation law, TactileSoundEngine.playHarmonicSeal)
         viewModelScope.launch {
             repository.autoSplitTaskIntoMicroSteps(taskId)
         }
@@ -2017,7 +2066,7 @@ class MonolithViewModel(
     }
 
     fun cueTaskAndNavigateToFocus(taskId: Int) {
-        soundEngine.playHarmonicSeal(arming = true)
+        soundEngine.playMechanicalLatch(true) // Issue #112 F3: housekeeping speaks the latch, never the seal clunk (reservation law, TactileSoundEngine.playHarmonicSeal)
         viewModelScope.launch {
             val promoted = repository.promoteTaskToActive(taskId)
             if (promoted != null) {
@@ -2096,7 +2145,7 @@ class MonolithViewModel(
     }
 
     fun applySmartLoadout(loadout: SmartLoadout) {
-        soundEngine.playHarmonicSeal(true)
+        soundEngine.playMechanicalLatch(true) // Issue #112 F3: housekeeping speaks the latch, never the seal clunk (reservation law, TactileSoundEngine.playHarmonicSeal)
         _selectedProfileName.value = loadout.title
         // UNA-07: a hand pick is a fact — persist it and rest the cap
         // on it, so the selector survives navigation and process death.
@@ -2132,14 +2181,14 @@ class MonolithViewModel(
 
     fun addCustomApp(appName: String, packageName: String, category: AppCategory) {
         if (appName.isBlank()) return
-        soundEngine.playHarmonicSeal(true)
+        soundEngine.playMechanicalLatch(true) // Issue #112 F3: housekeeping speaks the latch, never the seal clunk (reservation law, TactileSoundEngine.playHarmonicSeal)
         viewModelScope.launch {
             repository.addCustomApp(appName, packageName, category)
         }
     }
 
     fun selectAndApplyProfile(profile: FocusProfileEntity) {
-        soundEngine.playHarmonicSeal(true)
+        soundEngine.playMechanicalLatch(true) // Issue #112 F3: housekeeping speaks the latch, never the seal clunk (reservation law, TactileSoundEngine.playHarmonicSeal)
         _selectedProfileName.value = profile.name
         _dialMinutes.value = profile.defaultMinutes
         viewModelScope.launch {
@@ -2173,7 +2222,7 @@ class MonolithViewModel(
         endHour: Int
     ) {
         if (name.isBlank()) return
-        soundEngine.playHarmonicSeal(true)
+        soundEngine.playMechanicalLatch(true) // Issue #112 F3: housekeeping speaks the latch, never the seal clunk (reservation law, TactileSoundEngine.playHarmonicSeal)
         viewModelScope.launch {
             repository.saveCustomProfile(name, minutes, categories, startHour, endHour)
         }
@@ -2418,7 +2467,7 @@ class MonolithViewModel(
     fun end2MinutePeekEarly() {
         val peek = _floatingPeekPill.value
         if (!peek.isActive) return
-        soundEngine.playHarmonicSeal(arming = true)
+        soundEngine.playMechanicalLatch(false) // Issue #112 F5: the peek door re-latches — a release, never a seal
         _floatingPeekPill.value = FloatingPeekPillState(isActive = false)
         viewModelScope.launch {
             repository.recordPeekEnded(peek.packageName)
@@ -2427,7 +2476,7 @@ class MonolithViewModel(
 
     fun transmuteImpulseAndReturn() {
         val state = _airlockState.value
-        soundEngine.playHarmonicSeal(arming = true)
+        soundEngine.playMechanicalLatch(true) // Issue #112 F3: housekeeping speaks the latch, never the seal clunk (reservation law, TactileSoundEngine.playHarmonicSeal)
         _airlockState.value = state.copy(isVisible = false)
         viewModelScope.launch {
             repository.recordIntercept(
