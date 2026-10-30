@@ -60,6 +60,14 @@ data class AppRules(
     val openCount: Int get() = open.size
     val corruptCount: Int get() = corrupt.size
 
+    /** Issue #129 F5: the OPEN count under its true name. An
+     *  OPEN app is an unguarded door — usable for a whole session
+     *  while the record counts only what was held. Surfaces that
+     *  print the tally as bookkeeping read [openCount]; surfaces
+     *  that speak to the man about risk read this, so the number
+     *  is framed as exposure, never as neutral completeness. */
+    val unguardedCount: Int get() = open.size
+
     /** Every de-duplicated input app, accounted for exactly once. */
     val accountedCount: Int get() = peekCount + shutCount + openCount + corruptCount
 
@@ -71,7 +79,7 @@ data class AppRules(
 /** The ledger's total order: name (case-insensitive), then the
  *  unique package name — no tie can inherit feed order. */
 private val ledgerOrder: Comparator<BlockedAppEntity> =
-    compareBy<BlockedAppEntity> { it.appName.lowercase() }.thenBy { it.packageName }
+    compareBy<BlockedAppEntity> { it.appName.lowercase(java.util.Locale.ROOT) }.thenBy { it.packageName }
 
 /** Strictness rank for de-duplication: higher wins. A corrupt
  *  (unparseable) tier ranks below every real ruling. */
