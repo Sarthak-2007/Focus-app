@@ -1928,7 +1928,24 @@ class MonolithRepository(
      *  door creates honours the setting exactly as the screen's
      *  engine does. */
     internal var breakBoundaryKnock: (engaged: Boolean) -> Unit = { engaged ->
-        breakSoundEngine.playMechanicalLatch(engaged)
+        // Audit R3b #146: the break EXIT is a summons, not a tick —
+        // the user is away from the phone by design at that moment,
+        // so the exit speaks with the full summons voice. The entry
+        // (engaged = false) keeps the plain latch: the user is
+        // present, mid-flow, when a block lets go into its break.
+        if (engaged) {
+            breakSoundEngine.playBreakEndSummons()
+        } else {
+            breakSoundEngine.playMechanicalLatch(false)
+        }
+    }
+
+    /** T-minus-60 warning seam (Audit R3b #146): fired once when the
+     *  Safe Break countdown crosses 60 seconds remaining, so the
+     *  walking user feels the deadline coming instead of meeting it
+     *  as a fait accompli. Default is the engine's warning knock. */
+    internal var breakWarningKnock: () -> Unit = {
+        breakSoundEngine.playBreakWarningKnock()
     }
 
     private val breakSoundEngine: TactileSoundEngine by lazy {
@@ -2097,6 +2114,13 @@ class MonolithRepository(
                 lastTickMonoMillis = session.lastTickElapsedRealtimeMillis,
                 nowMonoMillis = nowMono
             )
+            // Audit R3b #146: one warning knock as the countdown
+            // crosses 60 seconds remaining — the stored remainder
+            // above the line, the wall-derived remainder at/below
+            // it. Crossing-based, so it fires exactly once.
+            if (session.safeBreakSecondsRemaining > 60 && nextBreakRemaining in 1..60) {
+                breakWarningKnock()
+            }
             return if (nextBreakRemaining == 0) {
                 // Expiry: the break ran its full length in force,
                 // and the taken ledger books exactly that (ST-02's

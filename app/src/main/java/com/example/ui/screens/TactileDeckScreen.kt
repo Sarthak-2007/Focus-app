@@ -698,6 +698,15 @@ fun TactileDeckScreen(
                     text = when {
                         isSessionRunning && activeSession.isInSafeBreak ->
                             "BREAK · ${(activeSession.safeBreakSecondsRemaining + 59) / 60} MIN"
+                        // Audit R3b #146: a user returning late to a
+                        // later block is told when that block began —
+                        // startWallTimeMillis is re-anchored at the
+                        // break flip, so it IS the block's start; the
+                        // hero's elapsed readout beside it says how
+                        // far in he is. No more silent fait accompli.
+                        isSessionRunning && activeSession.currentBlockIndex > 1 ->
+                            "BLOCK ${activeSession.currentBlockIndex} · SINCE " +
+                                SimpleDateFormat("HH:mm", Locale.US).format(Date(activeSession.startWallTimeMillis))
                         // Issue #6 F4: SESSION RUNNING / TOTAL were
                         // wallpaper and die. A routine-born session
                         // prints its name; a hand-armed running
