@@ -71,7 +71,10 @@ class ReceiptNachdruckTest {
 
     private fun show(state: ReceiptState) {
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            // WELLE-6 landing fix: main's theme (issue #63) has
+            // deliberately NO dynamicColor parameter — the
+            // recovered file's call predates that removal.
+            MyApplicationTheme(darkTheme = false) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
