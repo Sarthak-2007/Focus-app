@@ -422,7 +422,7 @@ class ArmProvingController(
         if (verdict == com.example.service.SealVerdict.ANNULLED) {
             _annulCount.value += 1
             val sentence = RefusalSentence(
-                text = "${ArmLink.SESSION_ROW.displayName} — NO PROOF. NOTHING WAS SEALED.",
+                text = "${ArmLink.SESSION_ROW.displayName} — NO PROOF. NOTHING WAS SEALED. ANY BLOCKING FROM THE WAIT IS OFF.",
                 action = null
             )
             _armSentence.value = sentence
@@ -722,8 +722,17 @@ class ArmProvingController(
         _phase.value = ArmPhase.Idle
         _annulCount.value += 1
         val first = unanswering.minByOrNull { it.ordinal } ?: ArmLink.SESSION_ROW
+        // Issue #126 F5: the batch started the shield in the
+        // latch frame, so blocking may genuinely have intercepted
+        // the user during the wait — enforcement the old sentence
+        // ("NOTHING WAS SEALED") left him to discover alone,
+        // against a row that no longer exists. The sentence now
+        // closes that loop truthfully in every annul path: any
+        // blocking the wait ran is off (annul stops the shield
+        // above). Wording is conditional ("ANY") because in the
+        // SESSION_ROW-jammed path no row ever armed the gate.
         val sentence = RefusalSentence(
-            text = "${first.displayName} — NO PROOF. NOTHING WAS SEALED.",
+            text = "${first.displayName} — NO PROOF. NOTHING WAS SEALED. ANY BLOCKING FROM THE WAIT IS OFF.",
             action = null
         )
         _armSentence.value = sentence

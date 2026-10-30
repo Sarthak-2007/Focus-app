@@ -365,7 +365,7 @@ class ArmProvingControllerTest {
         assertEquals(1, controller.annulCount.value)
         assertTrue(port.sealCalls.isEmpty())
         val sentence = controller.armSentence.value
-        assertEquals("SHIELD — NO PROOF. NOTHING WAS SEALED.", sentence?.text)
+        assertEquals("SHIELD — NO PROOF. NOTHING WAS SEALED. ANY BLOCKING FROM THE WAIT IS OFF.", sentence?.text)
         assertNull(sentence?.action)
     }
 
@@ -489,7 +489,7 @@ class ArmProvingControllerTest {
         assertEquals(1, controller.annulCount.value)
         assertTrue(port.annulCalls.isEmpty())
         assertEquals(
-            "SESSION — NO PROOF. NOTHING WAS SEALED.",
+            "SESSION — NO PROOF. NOTHING WAS SEALED. ANY BLOCKING FROM THE WAIT IS OFF.",
             controller.armSentence.value?.text
         )
     }
