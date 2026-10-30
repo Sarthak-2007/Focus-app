@@ -362,7 +362,13 @@ class MonolithShieldService : Service() {
                     dao.getAllAppsSnapshot(), nowMono
                 )
                 val foregroundBlockedPkg = repository.queryForegroundBlockedApp(blockedPackages, expiredPeeks)
-                if (foregroundBlockedPkg != null && foregroundBlockedPkg != applicationContext.packageName) {
+                if (foregroundBlockedPkg != null && foregroundBlockedPkg != applicationContext.packageName &&
+                    // Audit R6 #340 F63: the cross-door episode
+                    // claim — if the accessibility door already
+                    // fired on this opening, this door stands down
+                    // (and vice versa). One opening, one intercept.
+                    InterceptClaim.tryClaim(foregroundBlockedPkg)
+                ) {
                     val blockedApp = dao.getAllAppsSnapshot().find { it.packageName == foregroundBlockedPkg }
                     val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)

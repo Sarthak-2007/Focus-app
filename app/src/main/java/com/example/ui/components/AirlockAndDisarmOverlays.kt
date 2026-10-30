@@ -261,6 +261,24 @@ internal fun airlockCountdownRemaining(
     return (wallSeconds - elapsedSeconds).coerceIn(0, wallSeconds)
 }
 
+/**
+ * Audit R6 #340 F17: the ESCALATING wall. The pre-cure wall was a
+ * fixed 5 seconds for the first reach and the hundredth alike.
+ * The price now doubles per prior reach at the same package
+ * TODAY (the DrawerDay filing day, counted from the persisted
+ * intercept log — so the price survives process death and can
+ * never reset mid-day): 5, 10, 20, 40, 80, then capped at 120.
+ * Locally rendered from the session's own record; no media, no
+ * network, nothing to degrade.
+ */
+internal fun escalatedAirlockWallSeconds(priorReachesToday: Int): Int {
+    var wall = 5
+    repeat(priorReachesToday.coerceIn(0, 10)) {
+        wall = (wall * 2).coerceAtMost(120)
+    }
+    return wall
+}
+
 /** Issue #55: whole seconds until [deadlineMillis], ceiling — a
  *  deadline-derived remainder that reaches 0 exactly at the deadline. */
 internal fun cooldownRemainingSeconds(deadlineMillis: Long, nowMillis: Long): Int {
@@ -639,18 +657,22 @@ fun AirlockInterceptOverlay(
         // keyed on the intercept INSTANCE (not package+visibility, which
         // a same-package re-intercept left unchanged) and are
         // deadline-derived, so a fresh intercept always restarts the
-        // full 5 seconds and drift can never stretch the wall.
+        // full wall and drift can never stretch it. The wall's LENGTH
+        // escalates per prior reach today (Audit R6 #340 F17):
+        // state.wallSeconds carries the ViewModel's ladder price.
         val wallStartMono = remember(state.interceptInstanceId) {
             state.interceptedAtMonoMillis.takeIf { it > 0L } ?: SystemClock.elapsedRealtime()
         }
         var countdownSecs by remember(state.interceptInstanceId) {
-            mutableIntStateOf(airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime()))
+            mutableIntStateOf(
+                airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), state.wallSeconds)
+            )
         }
         LaunchedEffect(state.interceptInstanceId, state.isVisible) {
-            countdownSecs = airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime())
+            countdownSecs = airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), state.wallSeconds)
             while (countdownSecs > 0) {
                 delay(200L)
-                countdownSecs = airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime())
+                countdownSecs = airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), state.wallSeconds)
             }
         }
 
@@ -745,7 +767,10 @@ fun AirlockInterceptOverlay(
                 // counts the pulse). It grants nothing and shortens
                 // nothing; it is the wall's one permitted fidget.
                 Text(
-                    text = if (countdownSecs > 0) String.format(Locale.US, "0%d", countdownSecs) else "00",
+                    // Audit R6 #340 F17: the escalated wall runs to
+                    // 120 — the numeral zero-pads to two, never
+                    // prefixes a fixed "0" onto a 3-digit count.
+                    text = if (countdownSecs > 0) String.format(Locale.US, "%02d", countdownSecs) else "00",
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 88.sp,

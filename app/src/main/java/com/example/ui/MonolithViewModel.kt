@@ -214,6 +214,11 @@ data class AirlockInterceptState(
      *  The overlay keys its 5s wall and cooldown on this, never on
      *  (package, visibility), which a re-intercept left unchanged. */
     val interceptInstanceId: Long = 0L,
+    /** Audit R6 #340 F17: this intercept's wall length in seconds
+     *  — escalated per prior reach at the same package today
+     *  (5/10/20/40/80/120), derived by the ViewModel from the
+     *  persisted intercept log. 5 = the first reach of the day. */
+    val wallSeconds: Int = 5,
     /** Issue #55: when this intercept fired, in the MONOTONIC
      *  `SystemClock.elapsedRealtime()` domain — the overlay's wall
      *  is deadline-derived from this instant, so a wall-clock jump
@@ -2751,6 +2756,18 @@ class MonolithViewModel(
         // peek line prints at all (Held Door Truth Baseline).
         val withheld = peekWithheldFor(canPeek, path, appEntity, cooldownLeft, pillActive)
 
+        // Audit R6 #340 F17: the escalated wall — prior reaches at
+        // this package TODAY (the DrawerDay filing day), counted
+        // from the persisted intercept log the VM already holds,
+        // so the price survives process death and never resets
+        // mid-day. This reach's own log lands after the wall is
+        // set, so the ladder prices reach k+1 from k prior rows.
+        val dayStart = com.example.data.DrawerDay.dayStartMillis(System.currentTimeMillis())
+        val priorReachesToday = interceptLogs.value.count {
+            it.packageName == packageName && it.timestampMillis >= dayStart
+        }
+        val wallSeconds = com.example.ui.components.escalatedAirlockWallSeconds(priorReachesToday)
+
         _airlockState.value = AirlockInterceptState(
             isVisible = true,
             interceptedPackageName = packageName,
@@ -2759,6 +2776,7 @@ class MonolithViewModel(
             sessionIntention = active?.intention ?: _intentionText.value,
             selectedReason = DistractionTriggerReason.MUSCLE_MEMORY,
             interceptInstanceId = ++airlockInstanceSeq,
+            wallSeconds = wallSeconds,
             // ANCHOR (Issue #55, DECISION-NEEDED recorded in the
             // wave-3 report): the wall is anchored to the INTERCEPT
             // instant (deadline truth); service→overlay latency

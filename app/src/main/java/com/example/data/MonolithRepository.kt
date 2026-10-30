@@ -843,6 +843,30 @@ class MonolithRepository(
         }
     }
 
+    /** Audit R6 #340 F42: the freshest foreground package, or
+     *  null when no app was used inside the freshness window —
+     *  a stale read must never pause accrual on a guess, so only
+     *  a read at most 90 s old is returned. Used by task accrual
+     *  to keep OPEN-tier foreground time out of a task's SPENT. */
+    @WorkerThread
+    fun queryForegroundPackage(): String? {
+        if (!hasUsageStatsPermission()) return null
+        return try {
+            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+                ?: return null
+            val end = System.currentTimeMillis()
+            val stats = usm.queryUsageStats(
+                UsageStatsManager.INTERVAL_DAILY, end - 15_000L, end
+            ) ?: return null
+            stats.filter { it.lastTimeUsed >= end - 90_000L }
+                .maxByOrNull { it.lastTimeUsed }
+                ?.packageName
+        } catch (e: Exception) {
+            swallow("queryForegroundPackage", e)
+            null
+        }
+    }
+
     /** Usage access as AppOps actually reports it: three-valued.
      *  The old Boolean collapsed UNSET (never asked, fresh device)
      *  into DENIED, which lied on first runs. */
@@ -1470,12 +1494,16 @@ class MonolithRepository(
         }
         val isBlockedFlag = nextTier != AppBlockTier.OPEN
         dao.setAppTier(app.packageName, isBlockedFlag, nextTier.name)
+        // Audit R6 #340 F63: a re-ruled tier voids the episode
+        // claim — the terms changed under the standing episode.
+        com.example.service.InterceptClaim.release(app.packageName)
         return nextTier
     }
 
     suspend fun setAppBlockTier(packageName: String, tier: AppBlockTier) {
         val isBlockedFlag = tier != AppBlockTier.OPEN
         dao.setAppTier(packageName, isBlockedFlag, tier.name)
+        com.example.service.InterceptClaim.release(packageName)
     }
 
     /**
@@ -1560,6 +1588,11 @@ class MonolithRepository(
             activeUntilMono = leaseEndMono,
             peekEndMono = leaseEndMono
         )
+        // Audit R6 #340 F63: a granted lease VOIDS the package's
+        // episode claim — the sanctioned opening that follows is
+        // not a duplicate offence, and a later block (lease spent)
+        // must be able to claim a fresh episode.
+        com.example.service.InterceptClaim.release(packageName)
     }
 
     /**
@@ -3083,13 +3116,28 @@ class MonolithRepository(
         val tasks = dao.getAllTasksSnapshot()
         val activeTask = tasks.firstOrNull { it.resolvedStatus == TaskQueueStatus.ACTIVE }
             ?: tasks.firstOrNull { it.resolvedStatus == TaskQueueStatus.QUEUED }
+        // Audit R6 #340 F42: SPENT used to accrue straight through
+        // the session's own non-work states — a live PEEK lease and
+        // time in an OPEN-tier app credited the task in full, so a
+        // task could silently absorb distraction time. The Safe
+        // Break exclusion proved the bucket concept; it now covers
+        // every non-work state the session itself creates: break,
+        // live peek lease (exact, lease-timestamped), and a fresh
+        // foreground read of an OPEN-tier app.
+        val appsSnapshot = dao.getAllAppsSnapshot()
+        val peekLive = appsSnapshot.any { it.activePeekUntilElapsedRealtime > nowMono }
+        val foregroundTier = queryForegroundPackage()?.let { pkg ->
+            appsSnapshot.firstOrNull { it.packageName == pkg }?.resolvedTier
+        }
+        val nonWork = session.isInSafeBreak || peekLive ||
+            foregroundTier == AppBlockTier.OPEN
         val credit = taskAccrual.observe(
             sessionId = session.id,
-            accruingTaskId = if (session.isInSafeBreak) null else activeTask?.id,
+            accruingTaskId = if (nonWork) null else activeTask?.id,
             nowMonoMillis = nowMono
         )
         persistAccrualAnchor()
-        if (activeTask != null && !session.isInSafeBreak &&
+        if (activeTask != null && !nonWork &&
             (credit > 0 || activeTask.resolvedStatus != TaskQueueStatus.ACTIVE)
         ) {
             dao.updateTask(

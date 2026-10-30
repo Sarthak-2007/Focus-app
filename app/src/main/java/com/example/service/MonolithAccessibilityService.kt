@@ -284,6 +284,10 @@ class MonolithAccessibilityService : AccessibilityService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     companion object {
+        /** Audit R6 #340 F10: how long a redirected domain's
+         *  re-entry escalates to the full Airlock. */
+        const val REDIRECT_RETURN_LEASE_MS = 60_000L
+
         // Live Wire registry (Ines): the service proves its own
         // liveness by EXISTING. In-memory only - proof is never
         // persisted; persisted proof is stale proof.
@@ -379,7 +383,13 @@ class MonolithAccessibilityService : AccessibilityService() {
     private data class EventFacts(
         val tamperSurface: Boolean = false,
         val sniperFeedVisible: Boolean = false,
-        val browserUrlTexts: List<String> = emptyList()
+        val browserUrlTexts: List<String> = emptyList(),
+        // Audit R6 #340 F62: the Shorts/Reels TAB TAP itself,
+        // captured synchronously from the click event's source
+        // node — the offence exists before the feed's first frame
+        // renders, so enforcement no longer waits for the rendered
+        // player the old path needed to see.
+        val sniperTabClicked: Boolean = false
     )
 
     private data class EventSnapshot(
@@ -477,7 +487,22 @@ class MonolithAccessibilityService : AccessibilityService() {
         }
 
         val pkgName = event?.packageName?.toString() ?: return
-        if (pkgName == applicationContext.packageName || pkgName.startsWith("com.android.systemui")) return
+        if (pkgName == applicationContext.packageName) {
+            // Audit R6 #340 F63: the Airlock (this app) holding the
+            // foreground ends every open episode — a later reach at
+            // the same package is a NEW episode and must be able to
+            // claim again.
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                InterceptClaim.releaseAll()
+            }
+            return
+        }
+        if (pkgName.startsWith("com.android.systemui")) return
+        // Audit R6 #340 F63: a window change to a new foreground
+        // package ends every other package's episode claim.
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            InterceptClaim.releaseExcept(pkgName)
+        }
 
         // Opportunistic routine reconcile (throttled to 30 s inside
         // the heartbeat): window events are proof the device is awake
@@ -506,7 +531,13 @@ class MonolithAccessibilityService : AccessibilityService() {
         // Synchronous fact capture: every node-derived verdict is
         // taken HERE, while rootInActiveWindow still describes
         // this event's window — never after an async hop.
-        val facts = captureEventFacts(pkgName)
+        // Audit R6 #340 F62: the tab-tap fact is captured from the
+        // CLICK event's own source node, on this thread, with zero
+        // DB reads — the click path must never inherit the worker's
+        // coroutine latency, or the feed renders first anyway.
+        val tabClicked = event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED &&
+            isSniperTabClick(event)
+        val facts = captureEventFacts(pkgName).copy(sniperTabClicked = tabClicked)
         val snapshot = EventSnapshot(pkgName, facts, armedSessionId)
         if (facts.tamperSurface) {
             // The tamper door does NOT ride the conflated channel
@@ -605,6 +636,11 @@ class MonolithAccessibilityService : AccessibilityService() {
     // owner locks on first observation and clears when the call
     // ends; it never follows the user into other apps mid-call.
     // ------------------------------------------------------------------
+
+    // Audit R6 #340 F10: per-domain redirect return leases —
+    // domain -> monotonic instant until which a re-entry escalates
+    // to the full Airlock instead of redirecting again.
+    private val redirectLeaseUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     @Volatile
     private var lastForegroundPackage: String? = null
@@ -732,13 +768,22 @@ class MonolithAccessibilityService : AccessibilityService() {
             SystemClock.elapsedRealtime() < leaseRow.activePeekUntilElapsedRealtime
 
         // 3. YouTube Shorts & Instagram Reels Sniper (Strictly active during both Work Blocks and Safe Breaks, during peek leases (#131) — and only while its persisted switch is ON: UNA-01)
-        if (shortsSniperArmed(guardSettings, pkgName) && snapshot.facts.sniperFeedVisible) {
+        // Audit R6 #340 F62: the tab TAP is itself an offence —
+        // the sniper fires on the click that opens the feed, not
+        // only on the rendered player that used to be its first
+        // possible sight. A click is a fresh offence (the user's
+        // own new act after any earlier intercept), so it re-arms
+        // the episode claim instead of being swallowed by it.
+        if (shortsSniperArmed(guardSettings, pkgName) &&
+            (snapshot.facts.sniperFeedVisible || snapshot.facts.sniperTabClicked)
+        ) {
             performGlobalAction(GLOBAL_ACTION_BACK)
             launchInterceptScreen(
                 packageName = pkgName,
                 appName = if (pkgName.contains("youtube")) "YouTube Shorts" else "Instagram Reels",
                 reasonBadge = if (pkgName.contains("youtube")) "Shorts Blocked" else "Reels Blocked",
-                path = InterceptPath.SNIPER
+                path = InterceptPath.SNIPER,
+                freshOffence = snapshot.facts.sniperTabClicked
             )
             return
         }
@@ -754,11 +799,53 @@ class MonolithAccessibilityService : AccessibilityService() {
         // synchronously with the event; the domain match itself is
         // host-exact (Wave-3 #42).
         if (!leaseLive && (guardSettings?.browserBlockerEnabled ?: true) && isSupportedBrowser(pkgName)) {
-            val userDomains = dao.getAllSitesSnapshot().map { it.domain }
+            val siteRows = dao.getAllSitesSnapshot()
+            val userDomains = siteRows.map { it.domain }
             val matchedDomain = snapshot.facts.browserUrlTexts.firstNotNullOfOrNull { urlText ->
                 matchBlockedDomain(urlText, userDomains)
             }
             if (matchedDomain != null) {
+                // Audit R6 #340 F10: a site with a chosen redirect
+                // destination no longer dead-ends at BACK + wall —
+                // the browser is SENT to the destination, the reach
+                // is logged as REDIRECTED (counted separately from
+                // returned reaches on the receipt), and a 60-second
+                // return lease arms: re-entering the same domain
+                // inside the lease escalates to the full Airlock
+                // instead of redirecting again, closing the
+                // Back-and-retype hole a bare redirect leaves open.
+                val matchedRow = siteRows.firstOrNull { it.domain == matchedDomain }
+                val target = matchedRow?.redirectTarget?.trim().orEmpty()
+                val nowMono = SystemClock.elapsedRealtime()
+                val leaseUntil = redirectLeaseUntil[matchedDomain] ?: 0L
+                if (target.isNotEmpty() && nowMono >= leaseUntil) {
+                    val sent = try {
+                        startActivity(
+                            Intent(Intent.ACTION_VIEW, android.net.Uri.parse(target)).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                setPackage(pkgName)
+                            }
+                        )
+                        true
+                    } catch (_: Exception) {
+                        false
+                    }
+                    if (sent) {
+                        redirectLeaseUntil[matchedDomain] = nowMono + REDIRECT_RETURN_LEASE_MS
+                        dao.insertInterceptLog(
+                            com.example.data.InterceptLogEntity(
+                                packageName = pkgName,
+                                appName = matchedDomain,
+                                sessionIntention = activeSession.intention,
+                                outcome = "REDIRECTED",
+                                triggerReason = "Site Redirect"
+                            )
+                        )
+                        return
+                    }
+                    // A destination that cannot be opened falls
+                    // back to the classic wall — never to the site.
+                }
                 performGlobalAction(GLOBAL_ACTION_BACK)
                 launchInterceptScreen(
                     packageName = pkgName,
@@ -792,6 +879,31 @@ class MonolithAccessibilityService : AccessibilityService() {
             reasonBadge = tier.badge,
             path = InterceptPath.APP_TIER
         )
+    }
+
+    /** Audit R6 #340 F62: is this click the tap that OPENS a
+     *  Shorts/Reels feed? Judged from the clicked node alone —
+     *  its resource ID naming the feed tab, or its label being the
+     *  feed tab's label (the same label law as the rendered-feed
+     *  detector). Only the two sniper packages are ever asked. */
+    private fun isSniperTabClick(event: AccessibilityEvent): Boolean {
+        val pkg = event.packageName?.toString() ?: return false
+        if (pkg != "com.google.android.youtube" && pkg != "com.instagram.android") return false
+        return try {
+            val node = event.source ?: return false
+            val viewId = node.viewIdResourceName?.lowercase() ?: ""
+            if (viewId.contains("shorts") || viewId.contains("reels") ||
+                viewId.contains("clips_tab") || viewId.contains("clips_entry")
+            ) {
+                return true
+            }
+            val text = node.text?.toString()?.trim()?.lowercase() ?: ""
+            val desc = node.contentDescription?.toString()?.trim()?.lowercase() ?: ""
+            isFeedTabLabel(text, desc)
+        } catch (e: Exception) {
+            noteDetectionFailure("sniperTabClick", e)
+            false
+        }
     }
 
     private fun isCallActiveForPackage(pkgName: String): Boolean {
@@ -1025,8 +1137,16 @@ class MonolithAccessibilityService : AccessibilityService() {
         packageName: String,
         appName: String,
         reasonBadge: String,
-        path: InterceptPath
+        path: InterceptPath,
+        freshOffence: Boolean = false
     ) {
+        // Audit R6 #340 F63: the cross-door episode claim — the
+        // first door to fire on this opening owns it; the other
+        // door (and this door's own event burst) stands down until
+        // the package leaves the foreground. A fresh offence (a
+        // deliberate new tab tap) re-arms its own claim first.
+        if (freshOffence) InterceptClaim.release(packageName)
+        if (!InterceptClaim.tryClaim(packageName)) return
         val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             putExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE, packageName)

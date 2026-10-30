@@ -62,6 +62,29 @@ class MonolithBootReceiver : BroadcastReceiver() {
                     }
                 }
             }
+            Intent.ACTION_USER_UNLOCKED,
+            "android.intent.action.REBOOT" -> {
+                // Audit R6 #340 F53: unlock-moment resurrection.
+                // Deliberately the CHEAP path only — read the
+                // active-session snapshot and re-raise the shield
+                // if one is live. No reconcile, no heartbeat: the
+                // unlock is not the place for slow work, and a
+                // session-less unlock costs one snapshot read.
+                val pendingResult = goAsync()
+                scope.launch {
+                    try {
+                        runGuardedBootAction {
+                            val dao = MonolithDatabase.getInstance(appContext).monolithDao()
+                            val active = dao.getActiveSessionSnapshot()
+                            if (active != null && active.isActive) {
+                                MonolithShieldService.startShield(appContext)
+                            }
+                        }
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
+            }
             Intent.ACTION_TIME_CHANGED,
             Intent.ACTION_TIMEZONE_CHANGED -> {
                 val pendingResult = goAsync()
