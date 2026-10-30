@@ -164,7 +164,27 @@ jobs:
           chmod +x gradlew
           ./gradlew --console=plain lintDebug
 
+      # The lint report is evidence, not decoration: the first proof
+      # run (40998544148) found 62 pre-existing app-code lint errors
+      # (first: NewApi java.time.ZoneId at minSdk 24,
+      # AirlockAndDisarmOverlays.kt:275) that belong to the owning
+      # code issues, not to this workflow. Uploaded so they can be
+      # dispositioned name-by-name instead of buried in a log.
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lint-results-debug
+          path: |
+            app/build/reports/lint-results-debug.txt
+            app/build/reports/lint-results-debug.html
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # !cancelled(): a lint failure must not hide the release
+      # verdict — the two proofs are independent and both print.
       - name: Assemble release (throwaway CI-only key, APK discarded)
+        if: ${{ !cancelled() }}
         id: release
         run: |
           keytool -genkeypair -v \
