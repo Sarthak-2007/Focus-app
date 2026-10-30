@@ -164,7 +164,13 @@ object AppCategorizer {
         "in.org.npci.upiapp" to AppCategory.FINANCE,
         "com.google.android.apps.authenticator2" to AppCategory.FINANCE,
         "com.microsoft.authenticator" to AppCategory.FINANCE,
-        "com.authy.authy" to AppCategory.FINANCE
+        "com.authy.authy" to AppCategory.FINANCE,
+        // Threads (issue #142): its package carries the token
+        // "instagram", which the token rules below file
+        // SHORT_VIDEO - the exact keyword-collision misfile the
+        // finding charges. The package is a fact: Threads is
+        // social, whatever its parent app is called.
+        "com.instagram.barcelona" to AppCategory.SOCIAL
     )
 
     private val MUSIC_TOKENS = setOf(
@@ -195,6 +201,13 @@ object AppCategorizer {
         // bare "reel" no longer fires inside "Freelance". Plurals
         // are stated as their own keys; "play" survives only in
         // "play games", where it means what it says.
+        // Issue #142 (finding-an-app-in-shield), the residue the
+        // #129/#130 widening ports did not carry: Signal/Viber file
+        // MESSAGING, and news apps file BROWSERS - the category is
+        // literally labelled "Web & News", yet a news app's tokens
+        // matched nothing and it dumped into SHOPPING ("Other
+        // Apps"). Threads files SOCIAL via its deterministic
+        // home above.
         // Study signals (issue #133) sit before the entertainment
         // branches, in the same whole-token discipline: a study
         // app must never be filed as entertainment by name luck —
@@ -236,7 +249,7 @@ object AppCategorizer {
             ) -> AppCategory.GAMES
             matches(
                 "whatsapp", "discord", "telegram", "message",
-                "messages", "messaging", "messenger"
+                "messages", "messaging", "messenger", "signal", "viber"
             ) -> AppCategory.MESSAGING
             // Issue #129/#130 (widening ported at the STURM-4 merge):
             // second browsers are browsers — Opera, DuckDuckGo,
@@ -246,7 +259,7 @@ object AppCategorizer {
             matches("chrome", "browser", "browsers", "firefox", "brave",
                 "opera", "duckduckgo", "sbrowser", "samsung internet",
                 "microsoft edge", "emmx", "kiwi", "ucbrowser",
-                "uc browser", "vivaldi", "yandex") ->
+                "uc browser", "vivaldi", "yandex", "news") ->
                 AppCategory.BROWSERS
             else -> AppCategory.SHOPPING
         }

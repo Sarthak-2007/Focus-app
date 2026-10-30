@@ -10,7 +10,12 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface MonolithDao {
     // Blocked Apps (3-Tier: LOCKED, PEEK_2M, OPEN)
-    @Query("SELECT * FROM blocked_apps ORDER BY isBlocked DESC, interceptCount DESC, appName ASC")
+    // Issue #142: the catalogue is a place to FIND an app, so it
+    // sorts A-Z by name (package as the stable tiebreak). The old
+    // enforcement-priority order (isBlocked, interceptCount) moved
+    // an app's row every time it was intercepted - a list that
+    // rearranges itself while the user is scanning it.
+    @Query("SELECT * FROM blocked_apps ORDER BY appName ASC, packageName ASC")
     fun getAllApps(): Flow<List<BlockedAppEntity>>
 
     @Query("SELECT * FROM blocked_apps")

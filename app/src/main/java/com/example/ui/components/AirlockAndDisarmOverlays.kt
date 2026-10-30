@@ -45,6 +45,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -1013,7 +1014,14 @@ fun AirlockInterceptOverlay(
                         text = "ACTIVE INTENTION: ${state.sessionIntention}",
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 12.5.sp,
-                        color = NightColorPrimary.copy(alpha = 0.8f)
+                        color = NightColorPrimary.copy(alpha = 0.8f),
+                        // Issue #124: bounded at the moment of
+                        // temptation — a legacy over-long stored
+                        // intention ellipsises at two lines instead
+                        // of flooding the wall. (New rows are capped
+                        // at the arm snapshot in startSession.)
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
@@ -1177,6 +1185,17 @@ fun AirlockInterceptOverlay(
                         )
                         PeekWithheld.PEEK_OFF -> Text(
                             text = "PEEK IS OFF",
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 12.5.sp,
+                            color = NightColorPrimary.copy(alpha = 0.8f)
+                        )
+                        // Issue #154: not a refusal — the door's
+                        // own state line for a LOCKED tier, naming
+                        // the tier and where tiers are set, so a
+                        // legitimate need meets a fact instead of
+                        // a blank wall.
+                        PeekWithheld.TIER_LOCKED -> Text(
+                            text = "LOCKED TIER — NO PEEK EXISTS HERE · PEEK APPS ARE SET IN THE SHIELD",
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontSize = 12.5.sp,
                             color = NightColorPrimary.copy(alpha = 0.8f)
