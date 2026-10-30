@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.util.Log
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
@@ -78,6 +79,21 @@ class MonolithAccessibilityService : AccessibilityService() {
         @Volatile
         var instance: MonolithAccessibilityService? = null
             internal set
+
+        /** Truth (issue #76): detection queries that THREW, counted
+         *  and logged instead of silently masquerading as "evidence
+         *  absent". The fail directions themselves are unchanged
+         *  (enforcement fails open, the call bypass fails closed) —
+         *  what changed is that the failure is no longer invisible:
+         *  a rising count on a healthy phone is itself the signal. */
+        @Volatile
+        var detectionFailures: Int = 0
+            internal set
+
+        internal fun noteDetectionFailure(where: String, e: Exception) {
+            detectionFailures++
+            Log.w("MonolithA11y", "detection query failed at $where (total $detectionFailures)", e)
+        }
 
         /** Monotonic stamp of the last event whose root window was
          *  successfully acquired. Pipeline proof (the service is
@@ -174,8 +190,9 @@ class MonolithAccessibilityService : AccessibilityService() {
                 lastRootMono = SystemClock.elapsedRealtime()
                 WatchStore.poke()
             }
-        } catch (_: Exception) {
-            // No stamp.
+        } catch (e: Exception) {
+            // No stamp — and (issue #76) the failure is counted, not silent.
+            noteDetectionFailure("rootStamp", e)
         }
 
         val pkgName = event?.packageName?.toString() ?: return
@@ -194,7 +211,7 @@ class MonolithAccessibilityService : AccessibilityService() {
             val activeSession = dao.getActiveSessionSnapshot() ?: return@launch
             if (!activeSession.isActive) return@launch
 
-            val rootNode = try { rootInActiveWindow } catch (_: Exception) { null }
+            val rootNode = try { rootInActiveWindow } catch (e: Exception) { noteDetectionFailure("rootInActiveWindow", e); null }
 
             // The persisted Guard row, read once per event and
             // honoured by both interceptors below (the browser
@@ -301,7 +318,11 @@ class MonolithAccessibilityService : AccessibilityService() {
             mode == AudioManager.MODE_RINGTONE ||
                 mode == AudioManager.MODE_IN_CALL ||
                 mode == AudioManager.MODE_IN_COMMUNICATION
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // Issue #76: a thrown AudioManager query is not "no call"
+            // — the bypass is still lost (fail-closed stands), but
+            // the loss is counted and logged, never silent.
+            noteDetectionFailure("isCallActive", e)
             false
         }
     }
@@ -340,7 +361,7 @@ class MonolithAccessibilityService : AccessibilityService() {
             "com.instagram.android:id/reel_viewer_fragment"
         )
         for (id in shortsViewIds) {
-            val nodes = try { rootNode.findAccessibilityNodeInfosByViewId(id) } catch (_: Exception) { null }
+            val nodes = try { rootNode.findAccessibilityNodeInfosByViewId(id) } catch (e: Exception) { noteDetectionFailure("findByViewId:shorts", e); null }
             if (!nodes.isNullOrEmpty()) return true
         }
         // Strategy B: Resilient selected bottom-navigation tab inspection (`node.isSelected`)
@@ -388,7 +409,7 @@ class MonolithAccessibilityService : AccessibilityService() {
             "com.sec.android.app.sbrowser:id/location_bar_edit_text"
         )
         for (viewId in urlBarViewIds) {
-            val nodes = try { rootNode.findAccessibilityNodeInfosByViewId(viewId) } catch (_: Exception) { null }
+            val nodes = try { rootNode.findAccessibilityNodeInfosByViewId(viewId) } catch (e: Exception) { noteDetectionFailure("findByViewId:urlBar", e); null }
             if (!nodes.isNullOrEmpty()) {
                 for (node in nodes) {
                     // Do NOT trigger while the address bar is focused and the user is actively typing

@@ -1,5 +1,6 @@
 package com.example.ui
 
+import android.util.Log
 import android.content.Context
 import android.os.SystemClock
 import android.view.Choreographer
@@ -362,7 +363,10 @@ class ArmProvingController(
 
     private suspend fun onSessionRowInserted(attemptId: Long, sessionId: Int) {
         if (attemptId in deadAttempts) {
+            // Truth (issue #76): this annul used to be discarded
+            // silently — a failure leaked the proving row forever.
             runCatching { port.annulProvingSession(sessionId) }
+                .onFailure { Log.e("ArmProving", "dead-attempt annul failed for session $sessionId", it) }
             return
         }
         val current = _phase.value
@@ -651,10 +655,25 @@ class ArmProvingController(
         // Slice E (Riegel §1.2): a primed seal that never fires
         // must not leave its barrier standing over the queue.
         transition.cancelSealPrime()
+        // Truth (issue #76): a FAILED snapshot read is not "no other
+        // session", and a FAILED annul is not an annulment. The old
+        // code flattened both through runCatching + getOrNull and
+        // discarded results, so a DB hiccup could stop a stranger's
+        // shield — and the refusal sentence below then published
+        // "NOTHING WAS SEALED" over a row that may still stand.
+        var annulFailed = false
         if (sessionId != null) {
-            val activeNow = runCatching { port.activeSnapshotId() }.getOrNull()
-            runCatching { port.annulProvingSession(sessionId) }
-            if (activeNow == null || activeNow == sessionId) {
+            val activeResult = runCatching { port.activeSnapshotId() }
+            val annulResult = runCatching { port.annulProvingSession(sessionId) }
+            if (annulResult.isFailure) {
+                annulFailed = true
+                Log.e("ArmProving", "annulProvingSession($sessionId) failed", annulResult.exceptionOrNull())
+            }
+            // The shield is ours to stop only when a read that
+            // SUCCEEDED says the active row is nobody's or ours.
+            // A failed read proves nothing and stops nothing.
+            val activeNow = activeResult.getOrNull()
+            if (activeResult.isSuccess && (activeNow == null || activeNow == sessionId)) {
                 port.stopShield()
             }
             // A different active row means another session (a
@@ -668,7 +687,11 @@ class ArmProvingController(
         _annulCount.value += 1
         val first = unanswering.minByOrNull { it.ordinal } ?: ArmLink.SESSION_ROW
         val sentence = RefusalSentence(
-            text = "${first.displayName} — NO PROOF. NOTHING WAS SEALED.",
+            text = if (annulFailed) {
+                "ANNUL FAILED — THE ROW MAY STILL STAND. NOTHING WAS PROVED."
+            } else {
+                "${first.displayName} — NO PROOF. NOTHING WAS SEALED."
+            },
             action = null
         )
         _armSentence.value = sentence

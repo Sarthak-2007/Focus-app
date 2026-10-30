@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.util.Log
 import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -256,8 +257,18 @@ object WatchStore {
         pendingSweepStartWall = System.currentTimeMillis()
         for (item in WatchItemId.PERMISSIONS) {
             sweepScope.launch {
-                val granted = runCatching { query(item) }.getOrDefault(false)
-                stampPermission(item, granted, gen)
+                // Truth (issue #76): a query that THREW is not a
+                // measurement. The old getOrDefault(false) stamped a
+                // fresh MISSING with now-timestamps, so a sweep whose
+                // every query failed still completed the set and
+                // advanced LAST PROVED — a fabricated proof. A thrown
+                // query now writes NO stamp: the item keeps its older
+                // measurement and ages to STALE honestly.
+                runCatching { query(item) }
+                    .onSuccess { granted -> stampPermission(item, granted, gen) }
+                    .onFailure {
+                        Log.w("WatchStore", "sweep query threw for $item; no stamp written", it)
+                    }
             }
         }
     }
