@@ -60,14 +60,16 @@ class RoutineDeriveTest {
         startWall: Long = windowStart,
         elapsed: Int = 0,
         active: Boolean = false,
-        outcome: String? = null
+        outcome: String? = null,
+        endWall: Long = 0L
     ) = FocusSessionEntity(
         id = id, intention = "s$id", profileName = "Routine: X",
         targetDurationSeconds = 3600, elapsedSeconds = elapsed,
         startWallTimeMillis = startWall, startElapsedRealtimeMillis = 0L,
         isActive = active, completedSuccessfully = false,
         routineId = routineId, windowStartMillis = windowStart,
-        windowEndMillis = windowEnd, routineOutcome = outcome
+        windowEndMillis = windowEnd, routineOutcome = outcome,
+        endWallMillis = endWall
     )
 
     private val settings = GuardSettingsEntity()
@@ -145,7 +147,9 @@ class RoutineDeriveTest {
     @Test
     fun saturday_monFriRoutine_simplyHasNoWindow() {
         val now = at(5, 10, 0) // Saturday
-        val d = derive(listOf(routine(mask = RoutineSchedule.MON_FRI)), now).derivations.single()
+        // Edited Monday, so Friday's window provably postdates the
+        // edit horizon (Issue #39 F3: a 0 stamp would judge UNKNOWN).
+        val d = derive(listOf(routine(mask = RoutineSchedule.MON_FRI, editedAt = at(0, 0, 0))), now).derivations.single()
         // No Saturday window exists and nothing is desired — Saturday
         // is simply not one of its days. The state is CLOSED_DUE
         // because FRIDAY's window (provably scheduled, never claimed)
@@ -258,6 +262,92 @@ class RoutineDeriveTest {
         assertNotNull(d.desiredSession)
         assertTrue(d.finaliseDue.isEmpty()) // J2: SLEEP is never finalised
         assertNull(d.judgement)
+    }
+
+    // --- Issue #39: false-record elimination ----------------------------
+
+    @Test
+    fun closedWindow_zeroEditStamp_isUnknown_neverInventedMiss() {
+        // F3: editedAt defaults to 0 = no edit recorded under the new
+        // engine (migration default). The Wed window cannot be proved
+        // scheduled, so no MISSED may be invented for it.
+        val now = at(3, 8, 0) // Thu 08:00; latest closed = Wed window
+        val d = derive(listOf(routine()), now).derivations.single()
+        assertEquals(WindowJudgement.UNKNOWN, d.judgement)
+        assertEquals(WindowState.OUTSIDE, d.state)
+    }
+
+    @Test
+    fun closedWindow_duplicateClaims_unstampedWins_regardlessOfOrder() {
+        // F4 (judge site): a stamped duplicate listed FIRST must not
+        // mask the unstamped claim — unstamped = pending, no judgement.
+        val now = at(3, 8, 0)
+        val stamped = session(20, 1, at(2, 9, 0), at(2, 19, 30), outcome = "PARTIAL")
+        val unstamped = session(21, 1, at(2, 9, 0), at(2, 19, 30))
+        val d = derive(listOf(routine()), now, null, listOf(stamped, unstamped)).derivations.single()
+        assertNull(d.judgement)
+    }
+
+    @Test
+    fun closedWindow_duplicateStampedClaims_lowestIdWins() {
+        // F4 fallback: both stamped — the earliest written (lowest
+        // id) is the judgement of record, not the first listed.
+        val now = at(3, 8, 0)
+        val later = session(31, 1, at(2, 9, 0), at(2, 19, 30), outcome = "ATTENDED")
+        val earlier = session(24, 1, at(2, 9, 0), at(2, 19, 30), outcome = "PARTIAL")
+        val d = derive(listOf(routine()), now, null, listOf(later, earlier)).derivations.single()
+        assertEquals(WindowJudgement.PARTIAL, d.judgement)
+    }
+
+    @Test
+    fun openWindow_duplicateClaims_unstampedWins_regardlessOfOrder() {
+        // F4 (open-window site): the stamped duplicate listed first
+        // would conclude the window (OUTSIDE); the unstamped claim
+        // is the live truth — work is owed (CLOSED_DUE).
+        val now = at(2, 12, 0)
+        val stamped = session(20, 1, at(2, 9, 0), at(2, 19, 30), outcome = "ATTENDED")
+        val unstamped = session(21, 1, at(2, 9, 0), at(2, 19, 30), elapsed = 600)
+        val d = derive(listOf(routine()), now, null, listOf(stamped, unstamped)).derivations.single()
+        assertEquals(WindowState.CLOSED_DUE, d.state)
+        assertNull(d.desiredSession)
+    }
+
+    @Test
+    fun overlaps_pausedSession_endWallStampCoversWhereElapsedEstimateMisses() {
+        // F5: paused session — 60 elapsed seconds but a wall span of
+        // 09:00–12:00. The elapsed estimate ends it at 09:01 and
+        // misses the 10:00–11:00 interval; the endWall stamp covers it.
+        val paused = session(
+            30, null, 0L, 0L, startWall = at(2, 9, 0), elapsed = 60, endWall = at(2, 12, 0)
+        )
+        assertTrue(RoutineDerive.overlapsAny(listOf(paused), at(2, 10, 0), at(2, 11, 0), exceptRoutineId = 1))
+    }
+
+    @Test
+    fun overlaps_legacyRowWithoutEndWallStamp_fallsBackToElapsedEstimate() {
+        // F5 legacy fallback: endWallMillis == 0 keeps the old
+        // start + elapsed span, in both directions.
+        val legacy = session(31, null, 0L, 0L, startWall = at(2, 9, 0), elapsed = 3600)
+        assertTrue(RoutineDerive.overlapsAny(listOf(legacy), at(2, 9, 30), at(2, 10, 30), exceptRoutineId = 1))
+        assertEquals(
+            false,
+            RoutineDerive.overlapsAny(listOf(legacy), at(2, 10, 30), at(2, 11, 0), exceptRoutineId = 1)
+        )
+    }
+
+    @Test
+    fun openWindow_heldByPausedSession_whoseElapsedEstimateHasEnded() {
+        // F5 end-to-end: a manual session that started 08:00, ran 60
+        // elapsed seconds across pauses, and wall-ended 10:30 still
+        // occupies the 09:00 window opening — the window is HELD,
+        // not idle, at 10:00.
+        val now = at(2, 10, 0)
+        val manual = session(
+            32, null, 0L, 0L, startWall = at(2, 8, 0), elapsed = 60, endWall = at(2, 10, 30)
+        )
+        val d = derive(listOf(routine()), now, null, listOf(manual)).derivations.single()
+        assertEquals(WindowState.OPEN_HELD, d.state)
+        assertNull(d.desiredSession)
     }
 
     @Test

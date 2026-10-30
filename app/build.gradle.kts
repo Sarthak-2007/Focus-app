@@ -7,6 +7,20 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+// Ren's ruling, issue #25 (DURCH-VC, Oct 30 2026): versionCode is
+// EPOCH-MINUTES — minutes since the Unix epoch, computed here in the
+// build at build time, NEVER hand-set. It can never go lower than any
+// previous build (a later build is always a later minute), which kills
+// the L16 class permanently across parallel lanes/trains: no merged
+// tree can resurrect a lower hand-set value. Supersedes the hand-set
+// vc2 (and batch-9's vc1) upward. Scale: Oct 2026 ≈ 29.9 million;
+// Int.MAX_VALUE (2,147,483,647) is not reached for ≈ 4,026 years
+// (≈ year 6053), and Play's 2,100,000,000 cap is millennia away too.
+// This defaultConfig is the ONE definition point: every build route
+// (local assemble, CI debug, CI release proof, screenshots) inherits
+// it — no flavor, variant, or workflow override exists.
+val epochMinutesVersionCode: Int = (System.currentTimeMillis() / 60_000L).toInt()
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -15,7 +29,7 @@ android {
     applicationId = "com.aistudio.monolith.kxtpzr"
     minSdk = 24
     targetSdk = 36
-    versionCode = 2
+    versionCode = epochMinutesVersionCode
     versionName = "1.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -57,6 +71,11 @@ android {
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
+    // Audit R6 #341 F02: java.time (DrawerDay, MonolithWeek, the
+    // schedule layer) is API 26+; without desugaring, minSdk 24
+    // devices died with NoClassDefFoundError at ViewModel
+    // construction. Desugaring backfills java.time on API 24-25.
+    isCoreLibraryDesugaringEnabled = true
   }
   buildFeatures {
     compose = true
@@ -82,6 +101,10 @@ dependencies {
   // implementation(libs.androidx.camera.lifecycle)
   // implementation(libs.androidx.camera.view)
   implementation(libs.androidx.compose.material3)
+  // Issue #336: the one icon system (MonolithIcons). Extended set:
+  // the current core artifact no longer carries Shield/Schedule/
+  // Visibility/VpnKey/Chevrons/DarkMode/FlashOn/Pause (CI-proven).
+  implementation(libs.androidx.compose.material.icons.extended)
   implementation(libs.androidx.compose.ui)
   implementation(libs.androidx.compose.ui.graphics)
   implementation(libs.androidx.core.ktx)
@@ -124,5 +147,6 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
+  coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
   // "ksp"(libs.moshi.kotlin.codegen)
 }

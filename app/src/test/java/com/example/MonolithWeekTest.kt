@@ -2,6 +2,7 @@ package com.example
 
 import com.example.data.MonolithWeek
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.DayOfWeek
@@ -58,6 +59,134 @@ class MonolithWeekTest {
         val anchorZdt = Instant.ofEpochMilli(anchorOf(wedAfterJump)).atZone(ny)
         assertEquals(DayOfWeek.MONDAY, anchorZdt.dayOfWeek)
         assertEquals(LocalTime.MIDNIGHT, anchorZdt.toLocalTime())
+    }
+
+    // -----------------------------------------------------------------
+    // Issue #39 F1 — spendCountsAgainstWeek, the timezone cure. A spend
+    // minted under one zone must still count after the phone's zone
+    // changes; a neighbouring week's spend must never count.
+    // -----------------------------------------------------------------
+
+    private fun counts(
+        spendAnchor: Long,
+        spentAt: Long,
+        currentAnchor: Long,
+        nextAnchor: Long
+    ): Boolean = MonolithWeek.spendCountsAgainstWeek(
+        spendAnchorMillis = spendAnchor,
+        spentAtWallMillis = spentAt,
+        currentAnchorMillis = currentAnchor,
+        nextWeekAnchorMillis = nextAnchor
+    )
+
+    @Test
+    fun foreignZoneAnchorCounts_anchorArm_westwardTravel() {
+        val ist = ZoneId.of("Asia/Kolkata")
+        val ny = ZoneId.of("America/New_York")
+        // Spent Mon 00:30 IST — minutes after the IST week opened,
+        // booked against the IST Monday. The phone then travels WEST:
+        // evaluated Wednesday in New York, the same Monday's NY anchor
+        // sits 9.5h later as an instant, so the spend instant falls
+        // BEFORE the NY week window — the instant arm cannot see it.
+        // Only the anchor arm (same Monday, ≤26h away) counts it.
+        val spentAt = ZonedDateTime.of(2026, 10, 26, 0, 30, 0, 0, ist).toInstant().toEpochMilli()
+        val spendAnchor = MonolithWeek.weekAnchorMillis(spentAt, ist)
+        val evalInstant = ZonedDateTime.of(2026, 10, 28, 12, 0, 0, 0, ny).toInstant().toEpochMilli()
+        val currentAnchor = MonolithWeek.weekAnchorMillis(evalInstant, ny)
+        val nextAnchor = MonolithWeek.nextWeekAnchorMillis(evalInstant, ny)
+        assertEquals(34_200_000L, currentAnchor - spendAnchor)
+        assertTrue(spentAt < currentAnchor) // instant arm blind here — by construction
+        assertTrue(counts(spendAnchor, spentAt, currentAnchor, nextAnchor))
+    }
+
+    @Test
+    fun foreignZoneSpendCounts_instantArm_eastwardTravel() {
+        val ist = ZoneId.of("Asia/Kolkata")
+        val ny = ZoneId.of("America/New_York")
+        // Spent Sun 23:00 New York — the last hour of the NY week.
+        // The phone travels EAST: in IST that instant is already
+        // Monday 09:30 of the NEXT IST week, whose anchor sits ~6.6
+        // days after the stored NY anchor — the anchor arm cannot see
+        // it. Only the instant arm (the spend moment lies inside the
+        // current IST week) counts it.
+        val spentAt = ZonedDateTime.of(2026, 11, 1, 23, 0, 0, 0, ny).toInstant().toEpochMilli()
+        val spendAnchor = MonolithWeek.weekAnchorMillis(spentAt, ny)
+        val currentAnchor = MonolithWeek.weekAnchorMillis(spentAt, ist)
+        val nextAnchor = MonolithWeek.nextWeekAnchorMillis(spentAt, ist)
+        assertTrue(currentAnchor - spendAnchor > MonolithWeek.WEEK_ANCHOR_ZONE_TOLERANCE_MILLIS)
+        assertTrue(spentAt >= currentAnchor && spentAt < nextAnchor)
+        assertTrue(counts(spendAnchor, spentAt, currentAnchor, nextAnchor))
+    }
+
+    @Test
+    fun lastWeeksForeignAnchorDoesNotCount() {
+        val ist = ZoneId.of("Asia/Kolkata")
+        val ny = ZoneId.of("America/New_York")
+        // Last week's NY spend, evaluated in this week's IST: the
+        // stored anchor is ~a week away on the anchor arm and the
+        // spend instant is outside this week's window — both arms
+        // fail closed, the token is intact.
+        val spentAt = ZonedDateTime.of(2026, 10, 21, 12, 0, 0, 0, ny).toInstant().toEpochMilli()
+        val spendAnchor = MonolithWeek.weekAnchorMillis(spentAt, ny)
+        val evalInstant = ZonedDateTime.of(2026, 10, 28, 12, 0, 0, 0, ist).toInstant().toEpochMilli()
+        val currentAnchor = MonolithWeek.weekAnchorMillis(evalInstant, ist)
+        val nextAnchor = MonolithWeek.nextWeekAnchorMillis(evalInstant, ist)
+        assertFalse(counts(spendAnchor, spentAt, currentAnchor, nextAnchor))
+        // Next week's spend is equally invisible (fail closed both ways).
+        val futureSpentAt = ZonedDateTime.of(2026, 11, 4, 12, 0, 0, 0, ist).toInstant().toEpochMilli()
+        val futureAnchor = MonolithWeek.weekAnchorMillis(futureSpentAt, ist)
+        assertFalse(counts(futureAnchor, futureSpentAt, currentAnchor, nextAnchor))
+    }
+
+    @Test
+    fun anchorToleranceBoundary_isExactly26Hours_inclusive() {
+        // The widest real zone pair (+14 / −12) moves the same Monday
+        // by exactly 26h: at the boundary the spend still counts;
+        // one millisecond beyond it, it does not.
+        val tol = MonolithWeek.WEEK_ANCHOR_ZONE_TOLERANCE_MILLIS
+        assertEquals(93_600_000L, tol)
+        val currentAnchor = expectedAnchor(2026, 10, 26, ZoneId.of("UTC"))
+        val nextAnchor = currentAnchor + 7 * 24 * 3_600_000L
+        val spentOutsideWindow = currentAnchor - 1L // instant arm blind in both probes
+        assertTrue(counts(currentAnchor + tol, spentOutsideWindow, currentAnchor, nextAnchor))
+        assertTrue(counts(currentAnchor - tol, spentOutsideWindow, currentAnchor, nextAnchor))
+        assertFalse(counts(currentAnchor + tol + 1, spentOutsideWindow, currentAnchor, nextAnchor))
+        assertFalse(counts(currentAnchor - tol - 1, spentOutsideWindow, currentAnchor, nextAnchor))
+    }
+
+    @Test
+    fun dstWeeks_anchorStaysMondayMidnight_priorWeekSpendNeverCounts() {
+        val ny = ZoneId.of("America/New_York")
+        // SPRING (jump Sun 2024-03-10 02:00): the week that opens
+        // Mon 03-11 still anchors to Monday 00:00 local, and a spend
+        // from the jump week (anchor Mon 03-04) never counts in it.
+        val springEval = ZonedDateTime.of(2024, 3, 13, 12, 0, 0, 0, ny).toInstant().toEpochMilli()
+        val springAnchor = MonolithWeek.weekAnchorMillis(springEval, ny)
+        assertEquals(expectedAnchor(2024, 3, 11, ny), springAnchor)
+        val springNext = MonolithWeek.nextWeekAnchorMillis(springEval, ny)
+        val jumpWeekSpentAt = ZonedDateTime.of(2024, 3, 6, 12, 0, 0, 0, ny).toInstant().toEpochMilli()
+        val jumpWeekAnchor = MonolithWeek.weekAnchorMillis(jumpWeekSpentAt, ny)
+        assertFalse(counts(jumpWeekAnchor, jumpWeekSpentAt, springAnchor, springNext))
+        // …while a spend inside the jump week itself still counts
+        // when evaluated later in that same week (Sun 23:59, post-jump).
+        val jumpWeekEval = ZonedDateTime.of(2024, 3, 10, 23, 59, 0, 0, ny).toInstant().toEpochMilli()
+        assertTrue(
+            counts(
+                jumpWeekAnchor, jumpWeekSpentAt,
+                MonolithWeek.weekAnchorMillis(jumpWeekEval, ny),
+                MonolithWeek.nextWeekAnchorMillis(jumpWeekEval, ny)
+            )
+        )
+        // FALL (fall-back Sun 2024-11-03 02:00): same law — the week
+        // opening Mon 11-04 anchors to Monday 00:00, and the prior
+        // week's spend (anchor Mon 10-28) never counts in it.
+        val fallEval = ZonedDateTime.of(2024, 11, 6, 12, 0, 0, 0, ny).toInstant().toEpochMilli()
+        val fallAnchor = MonolithWeek.weekAnchorMillis(fallEval, ny)
+        assertEquals(expectedAnchor(2024, 11, 4, ny), fallAnchor)
+        val fallNext = MonolithWeek.nextWeekAnchorMillis(fallEval, ny)
+        val priorSpentAt = ZonedDateTime.of(2024, 10, 30, 12, 0, 0, 0, ny).toInstant().toEpochMilli()
+        val priorAnchor = MonolithWeek.weekAnchorMillis(priorSpentAt, ny)
+        assertFalse(counts(priorAnchor, priorSpentAt, fallAnchor, fallNext))
     }
 
     @Test

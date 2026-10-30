@@ -64,6 +64,43 @@ class WatchStoreRobolectricTest {
         )
     }
 
+    /** Issue #9, Zahn Z-1: completion is a GENERATION test, not a
+     *  wall-clock era test. A sweep whose DEVICE_ADMIN query threw
+     *  stamps five of six; a gen-0 lifecycle stamp for DEVICE_ADMIN
+     *  then lands with a fresh wall time — inside the old era
+     *  test's window, so the era test would have "completed" the
+     *  set and advanced LAST PROVED on a stamp that never served
+     *  the sweep. The generation test must refuse: the set the
+     *  sweep dispatched is not the set that landed. */
+    @Test
+    fun sweep_gen0StampsCannotCompleteAPendingSweep() {
+        WatchStore.runSweep { item ->
+            if (item == WatchItemId.DEVICE_ADMIN) {
+                throw IllegalStateException("query died")
+            }
+            true
+        }
+        // Five of the sweep's own stamps land (generation > 0).
+        awaitSnapshot { s ->
+            WatchItemId.PERMISSIONS.count { id ->
+                (s.items[id]?.sweepGen ?: 0) > 0
+            } == 5
+        }
+        assertNull(WatchStore.snapshots.value.lastProvedWallMillis)
+        // The gen-0 lifecycle stamp: fresh wall, wrong generation.
+        WatchStore.onDeviceAdminChanged(true)
+        val snap = WatchStore.snapshots.value
+        assertEquals(
+            PermPrint.GRANTED,
+            WatchStore.permPrintAt(
+                snap, WatchItemId.DEVICE_ADMIN,
+                android.os.SystemClock.elapsedRealtime()
+            )
+        )
+        // Measured — but it completes nothing.
+        assertNull(snap.lastProvedWallMillis)
+    }
+
     @Test
     fun bindWriters_stampTheirItems() {
         WatchStore.onAccessibilityBound(true)

@@ -7,9 +7,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Issue #280: exact-alarm grant, asked only when the user
-         first enables a routine (MainActivity) — never a first-run
-         gate. The chain alarm falls back to inexact without it. -->
+    <!-- Issues #280 + #319 F2 + #309 F2: exact-alarm grant, asked
+         only when the user first enables a routine (MainActivity) —
+         never a first-run gate. Routine boundaries and the
+         release-retry cadence fire on the minute when the grant is
+         held; ExactAlarm probes the grant and falls back to the
+         inexact arm whenever it is absent (the heartbeat
+         reconciles). -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Declared so MainActivity can fire Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS directly (issue #26) -->
@@ -25,6 +29,43 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- Audit R6 #341 F03: OEM security centres are addressable
+             surfaces (tamper guard + FIX routing targets). -->
+        <package android:name="com.miui.securitycenter" />
+        <package android:name="com.miui.permcenter" />
+        <package android:name="com.coloros.safecenter" />
+        <package android:name="com.oppo.safe" />
+        <package android:name="com.iqoo.secure" />
+        <package android:name="com.vivo.permissionmanager" />
+        <!-- Issue #121: structural time-critical classification —
+             TimeCriticalApps resolves which packages answer the
+             platform alarm intents and which declare/handle the
+             calendar, so an alarm or calendar app is safeguarded by
+             what it DOES, not by the words in its name. -->
+        <intent>
+            <action android:name="android.intent.action.SET_ALARM" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SHOW_ALARMS" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SET_TIMER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SHOW_TIMERS" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.APP_CALENDAR" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="content" android:host="com.android.calendar" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.INSERT" />
+            <data android:scheme="content" android:host="com.android.calendar" />
+        </intent>
     </queries>
 
     <!-- UNA-04 (Truth Car 3): PARK's plate prints "DATA: ON THIS PHONE
@@ -39,12 +80,14 @@
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:localeConfig="@xml/locales_config"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.MyApplication">
 
         <activity
             android:name=".MainActivity"
+            android:excludeFromRecents="true"
             android:exported="true"
             android:launchMode="singleTop"
             android:label="@string/app_name"
@@ -56,6 +99,10 @@
         </activity>
 
         <!-- Direct-Boot Aware Foreground Service for active focus session & call-aware usage polling -->
+        <!-- Issue #328 (Audit R5, Zario): stopWithTask=false — a
+             Recents swipe of the Monolith task must not take the
+             shield down with it; the service answers the swipe in
+             onTaskRemoved by re-arming while a session is protected. -->
         <service
             android:name=".service.MonolithShieldService"
             android:directBootAware="true"
@@ -97,7 +144,7 @@
             android:directBootAware="true"
             android:enabled="true"
             android:exported="false"
-            android:label="Monolith Notification Catcher"
+            android:label="@string/notification_catcher_label"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
@@ -117,6 +164,20 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <!-- Issue #122: battery events (both on the implicit-broadcast exemption list) — the receiver refreshes the shield's battery warning even if the service's own dynamic receiver has not been re-registered yet. -->
+                <action android:name="android.intent.action.BATTERY_LOW" />
+                <action android:name="android.os.action.POWER_SAVE_MODE_CHANGED" />
+            </intent-filter>
+            <!-- Issue #81 F5: a component state change anywhere
+                 (including Monolith's own components via adb /
+                 pm disable) prompts a heartbeat reconcile, whose
+                 pass re-reads the critical components' enabled
+                 states and latches the live session's gap if one
+                 was disabled. The poll in the pass is the proof;
+                 this receiver only shortens the time to notice. -->
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_CHANGED" />
+                <data android:scheme="package" />
             </intent-filter>
         </receiver>
 
@@ -132,9 +193,49 @@
             android:name=".service.RoutineAlarmReceiver"
             android:exported="false" />
 
+        <!-- Issue #155 (F1): the home-screen glance widget. -->
+        <receiver
+            android:name=".widget.MonolithWidgetProvider"
+            android:exported="false"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/monolith_widget_info" />
+        </receiver>
+
+        <!-- Issue #309 F7: package added/removed/replaced/changed —
+             reconcile the app catalogue at install time instead of
+             discovering installs on the next UI-driven sync. These
+             are protected system broadcasts; exported=false still
+             receives them. -->
+        <receiver
+            android:name=".service.MonolithPackageReceiver"
+            android:directBootAware="true"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_ADDED" />
+                <action android:name="android.intent.action.PACKAGE_REMOVED" />
+                <action android:name="android.intent.action.PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.PACKAGE_CHANGED" />
+                <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
+
         <!-- Slice E (Draht): the release-retry cadence's hint. -->
         <receiver
             android:name=".service.ReleaseRetryReceiver"
+            android:exported="false" />
+
+        <!-- Issue #339 (Second-pass F3): the Safe Break's end is a
+             scheduled event — this receiver posts the deduped
+             'Break's over' notification from the exact alarm
+             BreakEndScheduler arms at break entry. -->
+        <receiver
+            android:name=".service.BreakEndReceiver"
             android:exported="false" />
 
         <!-- Device Admin (DeviceAdminReceiver): friction + a warning

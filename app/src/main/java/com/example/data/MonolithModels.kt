@@ -268,6 +268,13 @@ enum class AppCategory(val label: String, val code: String) {
     // a study app had no home at all and fell to SHOPPING or a
     // name-substring trap.
     EDUCATION("Education", "Study"),
+    // Issue #120 (otp-banking-mid-session): finance gets a real
+    // home. Banks, UPI apps and authenticators are time-critical
+    // infrastructure — an OTP or a UPI collect request dies in
+    // minutes — not shopping. Before this value existed they fell
+    // through to SHOPPING, and the Sleep profile bulk-locked every
+    // one of them without the user ever reviewing a single bank.
+    FINANCE("Finance & Payments", "Money"),
     SHOPPING("Other Apps", "Tools")
 }
 
@@ -387,6 +394,17 @@ data class FocusSessionEntity(
     // counted whole by the span — break time that never ran,
     // claimed on the desk clock and the receipt alike.
     val breakTakenSeconds: Int = 0,
+    // W3 #134 (phone-call-mid-session, DB 14→15): the seconds of THIS
+    // block the call bypass was active — AudioManager in a call
+    // mode (ringing / in-call / VoIP) while the progress machine
+    // ticked. Those seconds are excluded from the block's booked
+    // elapsed at every tick: call time is not focus time, and a
+    // session may not finish, flip into its Safe Break, or stamp
+    // ELAPSED_CLEAN on the strength of minutes spent talking.
+    // Booked per block: the break-exit write (advancePastBreak)
+    // resets it to 0 alongside the anchors it re-bases, so one
+    // block's call never taxes the next block's clock.
+    val callExcludedSeconds: Int = 0,
     val penaltySecondsAdded: Int = 0,
     val isActive: Boolean,
     val completedSuccessfully: Boolean,
@@ -426,6 +444,17 @@ data class FocusSessionEntity(
     // OMIT a -1 figure, never print it (Zettel Z2).
     val heldAppsAtSeal: Int = -1,
     val heldSitesAtSeal: Int = -1,
+    // W-41 (13→14): the HELD total split by tier — heldShutAtSeal
+    // counts LOCKED ("Shut") apps, heldPeekAtSeal counts PEEK_2M
+    // ("2m Peek") apps. Written by the same single writer, inside
+    // the same birth transaction, from the same snapshot as
+    // heldAppsAtSeal (their sum IS the total, by construction).
+    // The receipt prints the split; it never flattens the two
+    // tiers into one number. -1 = uncaptured (a pre-13→14 row):
+    // readers fall back to the stored total, never invent a split
+    // that was never recorded.
+    val heldShutAtSeal: Int = -1,
+    val heldPeekAtSeal: Int = -1,
     // Draht's release-fault record (9→10): the shield that would
     // not stop at a finish. releaseFaultShield names the faulted
     // link; releaseRetriesDone counts the retry cadence's spent
@@ -675,7 +704,12 @@ object BlockedBrowserDomains {
         "twitter.com",
         "facebook.com",
         "snapchat.com",
-        "youtube.com/shorts"
+        "youtube.com/shorts",
+        // W3 #130 (browser-as-loophole): the whole YouTube host, not
+        // only its /shorts path — the home/watch feed was the biggest
+        // unlisted feed. Enforced by the same site blocker; a needed
+        // video is reachable through the domain-scoped site peek.
+        "youtube.com"
     )
     // Issue #133 (finding 4): an "allowed study sites" example
     // list used to live here as dead decoration — no study-site
@@ -785,12 +819,24 @@ object RoutineSchedule {
         (calendar.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
 
     private fun atMinutes(day: java.util.Calendar, minutes: Int): Long {
-        val c = day.clone() as java.util.Calendar
-        c.set(java.util.Calendar.HOUR_OF_DAY, minutes / 60)
-        c.set(java.util.Calendar.MINUTE, minutes % 60)
-        c.set(java.util.Calendar.SECOND, 0)
-        c.set(java.util.Calendar.MILLISECOND, 0)
-        return c.timeInMillis
+        // Audit R6 #341 F29: java.time resolution, the same rules
+        // MonolithWeek and DrawerDay already live by — this was the
+        // one schedule surface still on lenient Calendar, which
+        // silently shifted gap starts and dropped the second
+        // occurrence of repeated-hour windows without a word.
+        // Stated policy: a start inside a spring-forward gap fires
+        // at the first valid instant after the gap (atZone's forward
+        // shift); a start inside a fall-back repeated hour fires at
+        // its FIRST occurrence (atZone's earlier-offset choice) and
+        // the window's elapsed duration runs from there.
+        val zone = java.time.ZoneId.of(day.timeZone.id)
+        val date = java.time.LocalDate.of(
+            day.get(java.util.Calendar.YEAR),
+            day.get(java.util.Calendar.MONTH) + 1,
+            day.get(java.util.Calendar.DAY_OF_MONTH)
+        )
+        return date.atTime(minutes / 60, minutes % 60).atZone(zone)
+            .toInstant().toEpochMilli()
     }
 
     /** Next window start strictly after [nowMillis]; null if no days selected. */
@@ -806,6 +852,32 @@ object RoutineSchedule {
             day.add(java.util.Calendar.DAY_OF_YEAR, 1)
         }
         return null
+    }
+
+    /**
+     * The pause-aware next start (routines rebuild §3.6): the
+     * search origin is max(now, pausedUntilMillis), fed into
+     * [nextStartMillis] - whose strictly-after contract means the
+     * origin is passed as pausedUntilMillis - 1 when the pause is
+     * the binding origin, so a window starting exactly as the
+     * pause ends still counts. Windows the pause covers never
+     * fire, so they are never the next start. This one helper is
+     * what the scheduler and every "next seal" reader (Deck
+     * ribbon, widget) share, so they can never disagree.
+     *
+     * (Composed at the e1996c16 merge on the #152 branch: main's
+     * §3.6 helper supersedes the pause-stepping version this
+     * branch's fix-forward 2 added when no definition existed —
+     * same contract, one shared implementation.)
+     */
+    fun effectiveNextStartMillis(routine: RoutineEntity, nowMillis: Long): Long? {
+        val r = routine.sanitized()
+        val origin = maxOf(nowMillis, r.pausedUntilMillis)
+        return if (origin > nowMillis) {
+            nextStartMillis(r, origin - 1L)
+        } else {
+            nextStartMillis(r, nowMillis)
+        }
     }
 
     /** End of the window containing [nowMillis], or of the next window if none contains it. */

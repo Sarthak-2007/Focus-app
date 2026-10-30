@@ -1,4 +1,6 @@
 package com.example.ui.components
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -300,7 +302,7 @@ fun MonolithPullDownHeader(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "MONOLITH",
+                text = stringResource(R.string.brand_word),
                 fontFamily = AnonymousProFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 10.sp,
@@ -319,10 +321,15 @@ fun MonolithPullDownHeader(
                     color = scheme.onBackground,
                     modifier = Modifier
                         .padding(end = 20.dp)
-                        .then(
-                            if (isSealed) Modifier
-                            else Modifier.sizeIn(minHeight = 48.dp).monolithClickable { onGuardLineTap() }
-                        )
+                        // Always tappable (design-revamp salvage, D-01):
+                        // the host's onGuardLineTap decides at tap time —
+                        // unsealed it opens PARK (openPark re-reads the
+                        // navigation lock at the tap, HB-2), sealed it
+                        // opens the launcher. Stripping the clickable
+                        // while sealed (the old form) made the sealed
+                        // door dead code: the handler could never fire.
+                        .sizeIn(minHeight = 48.dp)
+                        .monolithClickable { onGuardLineTap() }
                         .testTag("header_guard_line")
                 )
             }
@@ -591,7 +598,7 @@ fun RefusalSentenceSlot(
         val current = displayed
         if (current != null) {
             Text(
-                text = current.text,
+                text = stringResource(current.textRes, *current.args.toTypedArray()),
                 style = StripStateWordStyle,
                 color = tones.glyphInk.copy(alpha = alpha),
                 modifier = Modifier
