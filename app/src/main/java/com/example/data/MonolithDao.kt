@@ -224,8 +224,8 @@ interface MonolithDao {
     // retention is permanent. Every read is paged (LIMIT + OFFSET,
     // newest first, id tiebreak for a total order) — no read may
     // silently cap the record. Filing day/month follow the 03:30
-    // rule (DrawerDay): the months index subtracts the same 210
-    // minutes inside SQLite that DrawerDay subtracts in Kotlin.
+    // rule (DrawerDay) — computed in Kotlin only; the old SQLite
+    // twin disagreed with it on DST days and is dead (Audit R1 #37).
     // =========================================================================
 
     // The page size is the CALLER's (Truth Car 2, DRW-04): the
@@ -235,8 +235,18 @@ interface MonolithDao {
     @Query("SELECT * FROM focus_tasks WHERE status = 'COMPLETED' AND completedAtMillis >= :fromMillis AND completedAtMillis < :toMillis ORDER BY completedAtMillis DESC, id DESC LIMIT :limit OFFSET :offset")
     suspend fun getStoredPage(fromMillis: Long, toMillis: Long, limit: Int, offset: Int): List<FocusTaskEntity>
 
-    @Query("SELECT CAST(strftime('%Y', (completedAtMillis / 1000) - 12600, 'unixepoch', 'localtime') AS INTEGER) AS year, CAST(strftime('%m', (completedAtMillis / 1000) - 12600, 'unixepoch', 'localtime') AS INTEGER) AS month FROM focus_tasks WHERE status = 'COMPLETED' AND completedAtMillis > 0 GROUP BY year, month ORDER BY year DESC, month DESC")
-    suspend fun getStoredMonths(): List<StoredMonth>
+    // Audit R1 #37: the months index used to be computed in SQL by
+    // subtracting 12,600 ELAPSED seconds from the epoch and taking
+    // SQLite 'localtime' — a different function from DrawerDay's
+    // wall-clock filing rule on DST days (verified divergence at
+    // the 2026-11-01 America/New_York fall-back month boundary:
+    // the same completion filed under October in Kotlin and
+    // November in SQL). There is now ONE filing function: the DAO
+    // returns raw completion instants and the repository groups
+    // them through DrawerDay.filingYearMonth. No SQL date math
+    // remains to disagree with it.
+    @Query("SELECT completedAtMillis FROM focus_tasks WHERE status = 'COMPLETED' AND completedAtMillis > 0")
+    suspend fun getStoredCompletionInstants(): List<Long>
 
     @Query("SELECT * FROM focus_tasks WHERE status = 'COMPLETED' AND completedAtMillis > 0 AND (title LIKE '%' || :q || '%' OR categoryTag LIKE '%' || :q || '%' OR notesOrSubsteps LIKE '%' || :q || '%') ORDER BY completedAtMillis DESC, id DESC LIMIT :limit OFFSET :offset")
     suspend fun searchStoredTasks(q: String, limit: Int, offset: Int): List<FocusTaskEntity>
@@ -367,4 +377,12 @@ interface MonolithDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDayNotes(notes: List<DayNoteEntity>)
+
+    /** Audit R1 #37: clearing a declared word must reach the
+     *  drained table too — before this, no DELETE for day_notes
+     *  existed anywhere, so a word that had drained from prefs to
+     *  Room could never be undeclared (the clear removed only the
+     *  already-absent prefs key and the union read resurrected it). */
+    @Query("DELETE FROM day_notes WHERE dateIso = :dateIso")
+    suspend fun deleteDayNote(dateIso: String)
 }
