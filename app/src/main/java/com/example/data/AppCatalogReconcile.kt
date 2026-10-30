@@ -225,4 +225,93 @@ object AppCatalogReconcile {
         }
         return AppCatalogPlan(toInsert, usageUpdates, toPrune, pendingPrune)
     }
+
+    /** THE BORN CATEGORY (fresh-eyes L2). A newly-seen app's
+     *  category decides its born tier (GAMES / SHORT_VIDEO are
+     *  born LOCKED, MESSAGING born PEEK_2M), so a sloppy match is
+     *  a sloppy ruling. The old matcher ran raw substrings over
+     *  "$pkg $label": "play" made the Google Play Store a GAME,
+     *  "Display…" a game too, "reel" fired inside "Freelance",
+     *  "message" inside any longer word. Matching is now on
+     *  WHOLE TOKENS: package and label are split (dots, spaces,
+     *  punctuation, camel humps) and a key must equal a token —
+     *  or, for a deliberate multi-word key like "play games",
+     *  a consecutive token sequence. Plurals that substring
+     *  matching used to catch for free ("games", "reels",
+     *  "messages") are stated as their own keys. The bare key
+     *  "play" is GONE: as a lone word it names stores and media
+     *  players far more often than games; it survives only
+     *  inside "play games", where it means what it says.
+     *  Category order is the old order — first match wins. */
+    fun categorize(pkg: String, label: String): AppCategory {
+        val pkgTokens = tokenize(pkg)
+        val labelTokens = tokenize(label)
+        fun matches(vararg keys: String): Boolean = keys.any { key ->
+            val keyTokens = key.split(' ')
+            containsTokenSequence(pkgTokens, keyTokens) ||
+                containsTokenSequence(labelTokens, keyTokens)
+        }
+        return when {
+            matches("tiktok", "youtube", "instagram", "reel", "reels") ->
+                AppCategory.SHORT_VIDEO
+            matches("twitter", "reddit", "snapchat", "facebook") ->
+                AppCategory.SOCIAL
+            matches("game", "games", "clash", "roblox", "play games") ->
+                AppCategory.GAMES
+            matches(
+                "whatsapp", "discord", "telegram", "message",
+                "messages", "messaging", "messenger"
+            ) -> AppCategory.MESSAGING
+            matches("chrome", "browser", "browsers", "firefox", "brave") ->
+                AppCategory.BROWSERS
+            else -> AppCategory.SHOPPING
+        }
+    }
+
+    /** SUMMING usage aggregation (Fix 4 — the finding-5 bug
+     *  class, one map over). The repository's usage query built
+     *  its map with `associate{}`, which silently keeps the LAST
+     *  bucket per package; INTERVAL_DAILY over a trailing-12h
+     *  window can return several buckets for one package, so a
+     *  multi-bucket app's "today usage" under-reported — the
+     *  stored figure then failed to follow the real one
+     *  (finding 3's territory). Buckets for a package SUM. A
+     *  zero bucket still yields a present 0 entry: presence in
+     *  the map is the "measured" witness reconcile trusts. */
+    fun aggregateUsageMinutes(buckets: List<Pair<String, Int>>): Map<String, Int> =
+        buckets.groupingBy { it.first }.fold(0) { acc, (_, minutes) -> acc + minutes }
+
+    /** Whole tokens of a package name or label: split on
+     *  non-alphanumerics and camel humps, lowercased. The raw
+     *  chunk is kept alongside its camel parts, so "WhatsApp"
+     *  yields whatsapp (and whats, app) and "YouTube" yields
+     *  youtube (and you, tube) — the brand keys match the raw
+     *  chunk, the parts only add evidence, never remove it. */
+    private fun tokenize(text: String): List<String> {
+        val tokens = mutableListOf<String>()
+        for (chunk in text.split(Regex("[^A-Za-z0-9]+"))) {
+            if (chunk.isEmpty()) continue
+            tokens += chunk.lowercase()
+            val parts = chunk.split(
+                Regex(
+                    "(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])" +
+                        "|(?<=[A-Za-z])(?=[0-9])|(?<=[0-9])(?=[A-Za-z])"
+                )
+            )
+            if (parts.size > 1) {
+                parts.forEach { tokens += it.lowercase() }
+            }
+        }
+        return tokens
+    }
+
+    /** True when [key] appears as a consecutive run in [tokens]
+     *  — whole-token equality; a single-word key is a run of one. */
+    private fun containsTokenSequence(tokens: List<String>, key: List<String>): Boolean {
+        if (key.isEmpty() || key.size > tokens.size) return false
+        for (start in 0..(tokens.size - key.size)) {
+            if (tokens.subList(start, start + key.size) == key) return true
+        }
+        return false
+    }
 }

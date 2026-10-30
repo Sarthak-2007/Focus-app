@@ -648,22 +648,16 @@ class MonolithRepository(
         editor.apply()
     }
 
-    private fun categorizePackage(pkg: String, label: String): AppCategory {
-        val lower = "$pkg $label".lowercase()
-        return when {
-            lower.contains("tiktok") || lower.contains("youtube") || lower.contains("instagram") || lower.contains("reel") ->
-                AppCategory.SHORT_VIDEO
-            lower.contains("twitter") || lower.contains("reddit") || lower.contains("snapchat") || lower.contains("facebook") ->
-                AppCategory.SOCIAL
-            lower.contains("game") || lower.contains("clash") || lower.contains("roblox") || lower.contains("play") ->
-                AppCategory.GAMES
-            lower.contains("whatsapp") || lower.contains("discord") || lower.contains("telegram") || lower.contains("message") ->
-                AppCategory.MESSAGING
-            lower.contains("chrome") || lower.contains("browser") || lower.contains("firefox") || lower.contains("brave") ->
-                AppCategory.BROWSERS
-            else -> AppCategory.SHOPPING
-        }
-    }
+    /** The born category of a package (fresh-eyes L2): whole-token
+     *  matching lives in the pure [AppCatalogReconcile.categorize]
+     *  — the old substring matcher here called the Play Store a
+     *  game. Survivor safety, verified for this fix: reconcile
+     *  copies ONLY this category (plus label and usage) onto an
+     *  existing row; a survivor's tier and limit are never
+     *  re-priced by a sync, so a corrected category can never
+     *  move an existing ruling. */
+    private fun categorizePackage(pkg: String, label: String): AppCategory =
+        AppCatalogReconcile.categorize(pkg, label)
 
     fun queryRealTodayUsageMinutes(): Map<String, Int> {
         if (!hasUsageStatsPermission()) return emptyMap()
@@ -673,8 +667,17 @@ class MonolithRepository(
             val end = System.currentTimeMillis()
             val start = end - (12 * 60 * 60 * 1000L)
             val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end)
-            stats?.associate {
-                it.packageName to ((it.totalTimeInForeground / 60_000L).toInt().coerceAtLeast(0))
+            // Fix 4: buckets SUM per package (the pure
+            // AppCatalogReconcile.aggregateUsageMinutes) — the
+            // old associate{} kept only the last bucket and
+            // under-reported any multi-bucket app.
+            stats?.let { rows ->
+                AppCatalogReconcile.aggregateUsageMinutes(
+                    rows.map {
+                        it.packageName to
+                            ((it.totalTimeInForeground / 60_000L).toInt().coerceAtLeast(0))
+                    }
+                )
             } ?: emptyMap()
         } catch (_: Exception) {
             emptyMap()
