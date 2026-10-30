@@ -15,6 +15,12 @@
          inexact arm whenever it is absent (the heartbeat
          reconciles). -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Issue #143 F4: declared so the DND gate can read the
+         interruption filter and, ONLY where the user has granted
+         notification-policy access in system settings, engage /
+         restore Do-Not-Disturb around a seal. The declaration
+         alone grants nothing; DndGate checks the live grant. -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Declared so MainActivity can fire Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS directly (issue #26) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />

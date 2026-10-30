@@ -22,11 +22,14 @@ import androidx.core.content.ContextCompat
 import com.example.MLog
 import com.example.R
 import com.example.data.AppBlockTier
+import com.example.data.BreakDimState
 import com.example.data.MonolithDatabase
 import com.example.widget.MonolithWidgetProvider
 import com.example.data.batteryShieldWarning
 import com.example.data.readBatterySnapshot
 import java.util.UUID
+import com.example.data.MonolithRepository
+import com.example.data.NightDimMath
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -314,6 +317,11 @@ class MonolithShieldService : Service() {
             // summons — the loop remembers the last tick's break
             // state so the flip out of a break posts exactly once.
             var wasInSafeBreak = false
+            // Issue #143 F1/F6: the break-dim witness — the loop
+            // remembers the descent's depth so the flip out of a
+            // break can stamp the fade OUT the UI runs (breakDim).
+            var lastBreakElapsedSeconds = 0
+            var breakFadeStampMono = 0L
             while (isActive) {
                 iteration++
                 // Per-iteration guard (issue #43, finding 1): one
@@ -348,6 +356,9 @@ class MonolithShieldService : Service() {
                 }
                 val activeSession = repository.activeSessionSnapshot() // ISSUE-67(d): via repository, not direct DAO
                 if (activeSession == null || !activeSession.isActive) {
+                    // Issue #143: no session, no dim — retire the
+                    // phase before standing down.
+                    publishBreakDim(BreakDimState())
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     MonolithWidgetProvider.requestUpdate(applicationContext)
                     stopSelf()
@@ -430,6 +441,9 @@ class MonolithShieldService : Service() {
                         autoCancel = true,
                         timeoutAfterMs = COMPLETION_TIMEOUT_MS
                     )
+                    // Issue #143: the session ended — any break dim
+                    // retires with it (no fade into a dead session).
+                    publishBreakDim(BreakDimState())
                     stopForeground(STOP_FOREGROUND_DETACH)
                     MonolithWidgetProvider.requestUpdate(applicationContext)
                     stopSelf()
@@ -444,6 +458,38 @@ class MonolithShieldService : Service() {
                         "BREAK OVER",
                         "Block ${updated.currentBlockIndex} of ${updated.totalStudyBlocks} has started."
                     )
+                }
+                // Issue #143 F1/F6: publish the break's dim phase
+                // on the same tick that knows it — in-break elapsed
+                // for the descent INTO the break, and at the flip
+                // out, the end stamp + the depth the descent had
+                // reached, so the UI can run the fade OUT on its
+                // own clock. Once the fade window has passed the
+                // state retires to rest.
+                if (updated.isInSafeBreak) {
+                    lastBreakElapsedSeconds =
+                        (MonolithRepository.SAFE_BREAK_DURATION_SECONDS -
+                            updated.safeBreakSecondsRemaining).coerceAtLeast(0)
+                    publishBreakDim(
+                        BreakDimState(
+                            inBreak = true,
+                            breakElapsedSeconds = lastBreakElapsedSeconds
+                        )
+                    )
+                } else if (wasInSafeBreak) {
+                    breakFadeStampMono = SystemClock.elapsedRealtime()
+                    publishBreakDim(
+                        BreakDimState(
+                            inBreak = false,
+                            breakEndedMono = breakFadeStampMono,
+                            fadeFromAlpha = NightDimMath.dimAlphaIntoBreak(lastBreakElapsedSeconds)
+                        )
+                    )
+                } else if (breakFadeStampMono > 0L &&
+                    SystemClock.elapsedRealtime() - breakFadeStampMono >= NightDimMath.FADE_OUT_MILLIS
+                ) {
+                    breakFadeStampMono = 0L
+                    publishBreakDim(BreakDimState())
                 }
                 wasInSafeBreak = updated.isInSafeBreak
 
@@ -1043,6 +1089,8 @@ class MonolithShieldService : Service() {
         protectingSessionId = -1
         protectingMono = 0L
         WatchStore.onShieldIteration(protecting = false)
+        // Issue #143: a dying shield takes its dim phase with it.
+        publishBreakDim(BreakDimState())
         monitorJob?.cancel()
         serviceScope.cancel()
         super.onDestroy()
@@ -1054,6 +1102,18 @@ class MonolithShieldService : Service() {
         // busy-polling the raw field every 25ms.
         private val _instancePresent = MutableStateFlow(false)
         val instancePresent: StateFlow<Boolean> = _instancePresent.asStateFlow()
+
+        // Issue #143 F1/F6: the break-dim phase — the end-of-break
+        // signal the finding found missing. The shield loop is the
+        // only writer (publishBreakDim); the UI reads it for the
+        // dimming progression INTO the break and the fade OUT at
+        // break end. In-memory only, never persisted.
+        private val _breakDim = MutableStateFlow(BreakDimState())
+        val breakDim: StateFlow<BreakDimState> = _breakDim.asStateFlow()
+
+        internal fun publishBreakDim(state: BreakDimState) {
+            _breakDim.value = state
+        }
 
         // Live Wire registry (Ines): in-memory only, never persisted.
         @Volatile
