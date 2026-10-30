@@ -78,6 +78,11 @@ object CryptoIntegrityManager {
         return try {
             val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
             ks.containsAlias(HMAC_KEY_ALIAS)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     /** VERIFY path: lookup ONLY — returns the existing key or null, never creates one. */
     private fun getExistingHardwareHmacKeyOrNull(): SecretKey? {
         return try {

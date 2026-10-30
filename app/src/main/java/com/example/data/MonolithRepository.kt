@@ -273,6 +273,8 @@ class MonolithRepository(
                 .putLong(PROVENANCE_DETECTED_WALL_KEY, System.currentTimeMillis())
                 .apply()
         }
+    }
+
     /** Every session the seal marker testifies for (issue #48):
      *  the persisted id set, unioned with the legacy single-slot
      *  int, so a seal landed by an older build — which wrote only
