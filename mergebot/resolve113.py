@@ -81,7 +81,43 @@ def rule_r4(our, their):
     return None
 
 
-RULES = [rule_r1, rule_r2, rule_r3, rule_r4]
+def rule_r5(our, their):
+    # Re-anchor block (MonolithRepository): our carries #113 F4's
+    # both-anchors law (comment + newStartWall); their carries the
+    # nullable boot probe's guards (null-checked rebootDetected,
+    # `currentBoot ?: session.bootCount`). Resolved: our comment,
+    # their reboot/accumulated/mono lines, our newStartWall, their
+    # newBootCount.
+    if "val newStartWall" in our and "currentBoot ?: session.bootCount" in their:
+        ol, tl = lines(our), lines(their)
+
+        def idx(block, needle):
+            for i, l in enumerate(block):
+                if needle in l:
+                    return i
+            return -1
+
+        def grab(block, needle):
+            i = idx(block, needle)
+            return block[i] if i >= 0 else None
+
+        i_reboot = idx(ol, "val rebootDetected")
+        i_t_mono = idx(tl, "val newStartMono")
+        new_start_wall = grab(ol, "val newStartWall")
+        new_boot_count = grab(tl, "val newBootCount")
+        if i_reboot < 0 or i_t_mono < 0 or not new_start_wall or not new_boot_count:
+            return None
+        comment = ol[:i_reboot]
+        theirs_head = tl[: i_t_mono + 1]
+        # drop their leading comment line(s): everything before
+        # their `val rebootDetected`.
+        i_t_reboot = idx(tl, "val rebootDetected")
+        theirs_head = tl[i_t_reboot : i_t_mono + 1]
+        return "\n".join(comment + theirs_head + [new_start_wall, new_boot_count]) + "\n"
+    return None
+
+
+RULES = [rule_r1, rule_r2, rule_r3, rule_r4, rule_r5]
 
 files = subprocess.check_output(
     ["git", "diff", "--name-only", "--diff-filter=U"], text=True
