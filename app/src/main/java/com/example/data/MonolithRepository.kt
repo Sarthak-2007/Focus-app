@@ -3211,15 +3211,6 @@ class MonolithRepository(
         return rehydrateReceipt(sessionId, number)
     }
 
-    /** Issue #135 F2 — the facade the ViewModel's re-issue door
-     *  calls: a session that already claimed its № rebuilds
-     *  SETTLED from its row and never re-claims. Delegates to the
-     *  #157 rehydration below (finish-seal re-verification
-     *  included, #340 F5). Landed with the #340 merge because
-     *  main's call site arrived without its callee. */
-    suspend fun receiptForSession(sessionId: Int): ReceiptState? =
-        rehydrateReceipt(sessionId)
-
     /** Issue #157: re-derive ANY claimed session's slip by its
      *  session id — the Vault receipts index's tap. The № is the
      *  one stamped on the session's own row at claim (RC-04); a
