@@ -44,22 +44,22 @@ import kotlinx.coroutines.launch
  *  intercepted on the attempt, never shut in advance, so there
  *  is nothing per-app to confirm (Opal §1 — the per-app link and
  *  the rack's N=loadout died together). */
-enum class ArmLink(val displayName: String) {
+enum class ArmLink(val displayName: String, val plainName: String) {
     /** The session row exists and is the active row: the insert
      *  returned an id AND a snapshot read returns that id with
      *  isActive == true. */
-    SESSION_ROW("SESSION"),
+    SESSION_ROW("SESSION", "THE SESSION"),
 
     /** The shield is a live instance, its foreground start
      *  succeeded, AND its monitor loop completed a first
      *  iteration that read the latched row as active. */
-    SHIELD_PROTECTING("SHIELD"),
+    SHIELD_PROTECTING("SHIELD", "THE SHIELD"),
 
     /** The accessibility service is bound AND has observed this
      *  session as active — its own session gate, which early-
      *  returns when no active session exists, is open for this
      *  row. */
-    A11Y_SESSION_ARMED("ACCESS")
+    A11Y_SESSION_ARMED("ACCESS", "ACCESSIBILITY")
 }
 
 sealed interface LinkMark {
@@ -725,7 +725,7 @@ class ArmProvingController(
         _phase.value = ArmPhase.Idle
         _annulCount.value += 1
         val sentence = RefusalSentence(
-            text = "SESSION-ROW — NO PROOF. NOTHING WAS SEALED.",
+            text = "NOT SEALED — THE SESSION DIDN'T ANSWER.",
             action = null
         )
         _armSentence.value = sentence
@@ -787,7 +787,12 @@ class ArmProvingController(
             text = if (annulFailed) {
                 "ANNUL FAILED — THE ROW MAY STILL STAND. NOTHING WAS PROVED."
             } else {
-                "${first.displayName} — NO PROOF. NOTHING WAS SEALED."
+                // R3b #164 F5: the failed link is named in plain
+                // words and the sentence says what happened, in
+                // the order it happened — no studio code, and no
+                // "NOTHING WAS SEALED" standing against the
+                // screen's own ARM SESSION NOW.
+                "NOT SEALED — ${first.plainName} DIDN'T ANSWER."
             },
             action = null
         )

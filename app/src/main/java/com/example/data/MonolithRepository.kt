@@ -1504,25 +1504,32 @@ class MonolithRepository(
     suspend fun daoSnapshotRoutines(): List<RoutineEntity> = dao.getAllRoutinesSnapshot()
 
     suspend fun cycleAppBlockTier(app: BlockedAppEntity): AppBlockTier {
-        val nextTier = when (app.resolvedTier) {
+        val cycled = when (app.resolvedTier) {
             AppBlockTier.LOCKED -> AppBlockTier.PEEK_2M
             AppBlockTier.PEEK_2M -> AppBlockTier.OPEN
             AppBlockTier.OPEN -> AppBlockTier.LOCKED
         }
+        // Issue #119, finding 5: the dialler floor — cycling a dialler
+        // or telephony package can land on PEEK_2M, never on LOCKED,
+        // so placing a call is always reachable.
+        val nextTier = EssentialApps.floorTier(app.packageName, cycled)
         val isBlockedFlag = nextTier != AppBlockTier.OPEN
         dao.setAppTier(app.packageName, isBlockedFlag, nextTier.name)
         return nextTier
     }
 
     suspend fun setAppBlockTier(packageName: String, tier: AppBlockTier) {
-        val isBlockedFlag = tier != AppBlockTier.OPEN
-        dao.setAppTier(packageName, isBlockedFlag, tier.name)
+        // Issue #119, finding 5: the dialler floor — no caller may
+        // classify the default dialler / telephony stack LOCKED.
+        val effectiveTier = EssentialApps.floorTier(packageName, tier)
+        val isBlockedFlag = effectiveTier != AppBlockTier.OPEN
+        dao.setAppTier(packageName, isBlockedFlag, effectiveTier.name)
     }
 
     /**
      * 1-Tap Smart Loadouts:
      * - Study Loadout: Locks Social & Games, sets YouTube & Messaging to 2m Peek, leaves Utility/Docs Open.
-     * - Sleep Loadout: Locks everything except Phone, Clock, and Maps.
+     * - Sleep Loadout: Locks everything except Phone, Clock, Maps, Camera, and navigation (EssentialApps, by package).
      */
     suspend fun applySmartLoadout(loadout: SmartLoadout) = withContext(Dispatchers.IO) {
         val allApps = dao.getAllAppsSnapshot()
@@ -1533,6 +1540,9 @@ class MonolithRepository(
             // (its rules are the exact rules this function used to
             // inline). Issue #32 F4: set the tier ONLY; normalized()
             // derives isBlocked from it at the single derivation point.
+            // Issue #119 F4/F5 ride inside LoadoutRules.tierFor itself
+            // (SLEEP essentials by package + the dialler floor), so
+            // preview and commit carry them identically.
             val tier = LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category)
             app.copy(blockTier = tier.name).normalized()
         }
@@ -1652,7 +1662,7 @@ class MonolithRepository(
         val currentApps = dao.getAllAppsSnapshot()
         val updated = currentApps.map { app ->
             val shouldBlock = app.category in activeCategories
-            val tier = when {
+            val rawTier = when {
                 !shouldBlock -> AppBlockTier.OPEN
                 app.category == AppCategory.MESSAGING.name -> AppBlockTier.PEEK_2M
                 else -> AppBlockTier.LOCKED
@@ -1661,6 +1671,10 @@ class MonolithRepository(
             // by normalized() — note shouldBlock (category match) and
             // tier != OPEN can differ for MESSAGING (PEEK), and the
             // tier is what enforcement reads, so the tier wins.
+            // Issue #119, finding 5: the dialler floor binds bulk
+            // profile writes too — a profile can never lock the
+            // dialler, so the floor applies before the copy.
+            val tier = EssentialApps.floorTier(app.packageName, rawTier)
             app.copy(blockTier = tier.name).normalized()
         }
         dao.insertApps(updated)
@@ -2672,7 +2686,13 @@ class MonolithRepository(
         appName: String,
         sessionIntention: String,
         outcome: String,
-        triggerReason: String = "Habit"
+        triggerReason: String = "Habit",
+        // R3b #162 F4: an uninstall attempt is not a "phantom reach"
+        // for a distraction app. Callers on the UNINSTALL_GUARD path
+        // pass false: the intercept is still logged (with its
+        // truthful outcome), but neither the per-app reach count nor
+        // the session's phantom-reach count is inflated by it.
+        countAsReach: Boolean = true
     ) {
         // Issue #33 (audit R1): count + log + phantom-reach increment
         // are ONE transaction — a kill between them used to leave the
@@ -2680,7 +2700,9 @@ class MonolithRepository(
         // re-read inside the transaction so the +1 never lands on a
         // stale whole-row copy.
         databaseProvider().withTransaction {
-            dao.incrementInterceptCount(packageName)
+            if (countAsReach) {
+                dao.incrementInterceptCount(packageName)
+            }
             dao.insertInterceptLog(
                 InterceptLogEntity(
                     packageName = packageName,
@@ -2690,9 +2712,11 @@ class MonolithRepository(
                     triggerReason = triggerReason
                 )
             )
-            val active = dao.getActiveSessionSnapshot()
-            if (active != null) {
-                dao.updateSession(active.copy(phantomReachesBlocked = active.phantomReachesBlocked + 1))
+            if (countAsReach) {
+                val active = dao.getActiveSessionSnapshot()
+                if (active != null) {
+                    dao.updateSession(active.copy(phantomReachesBlocked = active.phantomReachesBlocked + 1))
+                }
             }
         }
     }

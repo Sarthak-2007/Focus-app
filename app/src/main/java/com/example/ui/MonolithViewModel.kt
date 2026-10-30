@@ -70,10 +70,10 @@ fun appMatchesQuery(app: BlockedAppEntity, query: String): Boolean {
 }
 
 enum class MonolithDestination(val route: String, val label: String) {
-    DECK("deck", "Focus"),
+    DECK("deck", "Deck"),
     TASKS("tasks", "Tasks"),
     SHIELD("shield", "Shield"),
-    VAULT("vault", "Receipts")
+    VAULT("vault", "Ledger")
     // GUARD is DISSOLVED (chrome wave): the destination, its screen,
     // and its -1 tab mapping are deleted. What Guard held lives in
     // PARK (the rail's end zone) and on Shield (the websites editor).
@@ -204,7 +204,7 @@ data class AirlockInterceptState(
     val isVisible: Boolean = false,
     val interceptedPackageName: String = "",
     val interceptedAppName: String = "",
-    val interceptReasonBadge: String = "Locked",
+    val interceptReasonBadge: String = "Shut",
     val sessionIntention: String = "",
     val selectedReason: DistractionTriggerReason = DistractionTriggerReason.MUSCLE_MEMORY,
     val transmutedParticles: Int = 0,
@@ -2099,6 +2099,16 @@ class MonolithViewModel(
     private val _drawerHasEarlier = MutableStateFlow(false)
     val drawerHasEarlier: StateFlow<Boolean> = _drawerHasEarlier.asStateFlow()
 
+    // Issue #52 F3 cure: a month read is a state, not a void.
+    // Loading runs from the select tap until the page lands or
+    // fails; a failure lands in drawerError instead of leaving a
+    // blank screen indistinguishable from an empty month.
+    private val _drawerLoading = MutableStateFlow(false)
+    val drawerLoading: StateFlow<Boolean> = _drawerLoading.asStateFlow()
+
+    private val _drawerError = MutableStateFlow<String?>(null)
+    val drawerError: StateFlow<String?> = _drawerError.asStateFlow()
+
     private val _drawerQuery = MutableStateFlow("")
     val drawerQuery: StateFlow<String> = _drawerQuery.asStateFlow()
 
@@ -2159,11 +2169,26 @@ class MonolithViewModel(
             _drawerMonth.value = com.example.data.DrawerDay.filingYearMonth(System.currentTimeMillis())
         }
         viewModelScope.launch {
-            _storedMonths.value = repository.storedMonths()
-            _dayWords.value = repository.allDayWords()
-            _forgedArtifactIds.value = repository.forgedArtifactIds()
-            _forgeStats.value = repository.forgeStats()
+            var indexFailed = false
+            try {
+                _storedMonths.value = repository.storedMonths()
+                _dayWords.value = repository.allDayWords()
+                _forgedArtifactIds.value = repository.forgedArtifactIds()
+                _forgeStats.value = repository.forgeStats()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                indexFailed = true
+            }
             selectDrawerMonth(_drawerMonth.value.first, _drawerMonth.value.second)
+            if (indexFailed) {
+                // Issue #52 F3: a failed index read prints as an
+                // error on the Drawer, never as a silent empty room.
+                // Set after selectDrawerMonth, whose start clears
+                // the previous error; the page read's own failure
+                // path writes the same line.
+                _drawerError.value = "THE DRAWER COULD NOT BE READ — TRY AGAIN"
+            }
         }
     }
 
@@ -2173,15 +2198,27 @@ class MonolithViewModel(
         drawerOffset = 0
         _drawerRows.value = emptyList()
         _drawerHasEarlier.value = false
+        _drawerLoading.value = true
+        _drawerError.value = null
         viewModelScope.launch {
-            val page = repository.storedPage(year, month, 0)
-            // Guard: the month may have changed again mid-read.
-            if (_drawerMonth.value == (year to month)) {
-                _drawerRows.value = page.rows
-                drawerOffset = page.rows.size
-                // DRW-04: the repository's probe row decides —
-                // never the returned page's size.
-                _drawerHasEarlier.value = page.hasEarlier
+            try {
+                val page = repository.storedPage(year, month, 0)
+                // Guard: the month may have changed again mid-read.
+                if (_drawerMonth.value == (year to month)) {
+                    _drawerRows.value = page.rows
+                    drawerOffset = page.rows.size
+                    // DRW-04: the repository's probe row decides —
+                    // never the returned page's size.
+                    _drawerHasEarlier.value = page.hasEarlier
+                    _drawerLoading.value = false
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (_drawerMonth.value == (year to month)) {
+                    _drawerError.value = "THE DRAWER COULD NOT BE READ — TRY AGAIN"
+                    _drawerLoading.value = false
+                }
             }
         }
     }
@@ -2191,11 +2228,19 @@ class MonolithViewModel(
         val (year, month) = _drawerMonth.value
         val offset = drawerOffset
         viewModelScope.launch {
-            val page = repository.storedPage(year, month, offset)
-            if (_drawerMonth.value == (year to month)) {
-                _drawerRows.value = _drawerRows.value + page.rows
-                drawerOffset += page.rows.size
-                _drawerHasEarlier.value = page.hasEarlier
+            try {
+                val page = repository.storedPage(year, month, offset)
+                if (_drawerMonth.value == (year to month)) {
+                    _drawerRows.value = _drawerRows.value + page.rows
+                    drawerOffset += page.rows.size
+                    _drawerHasEarlier.value = page.hasEarlier
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (_drawerMonth.value == (year to month)) {
+                    _drawerError.value = "THE DRAWER COULD NOT BE READ — TRY AGAIN"
+                }
             }
         }
     }
@@ -2427,7 +2472,7 @@ class MonolithViewModel(
                 AppBlockTier.LOCKED -> 2
             }
             if (targetRank < currentRank) {
-                triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT WEAKEN '${app.appName.uppercase()}' DURING ACTIVE VAULT")
+                triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT WEAKEN '${app.appName.uppercase()}' DURING AN ACTIVE SESSION")
                 return
             }
         }
@@ -2559,7 +2604,7 @@ class MonolithViewModel(
 
     fun toggleProfileSchedule(profile: FocusProfileEntity) {
         if (activeSession.value?.isActive == true && profile.isScheduleEnabled) {
-            triggerRatchetWarning("ONE-WAY RATCHET • ACTIVE SCHEDULE CANNOT BE DISABLED DURING VAULT LOCKDOWN")
+            triggerRatchetWarning("ONE-WAY RATCHET • ACTIVE SCHEDULE CANNOT BE DISABLED WHILE A SESSION IS SEALED")
             return
         }
         soundEngine.playMechanicalLatch(!profile.isScheduleEnabled)
@@ -2725,7 +2770,7 @@ class MonolithViewModel(
     fun triggerAirlockIntercept(
         packageName: String,
         appName: String,
-        reasonBadge: String = "Locked",
+        reasonBadge: String = "Shut",
         path: InterceptPath = InterceptPath.UNKNOWN
     ) {
         // Issue #68 F5, Tier 1 — revalidation: an airlock is a
@@ -2943,17 +2988,38 @@ class MonolithViewModel(
         }
     }
 
+    /**
+     * Issue #119, finding 2: the Airlock's own emergency-break entry.
+     * The airlock closes and the SAME disarm challenge the Deck chip
+     * opens takes its place — identical token cost, identical 60s
+     * continuous hold, identical session-ending effect, decided by
+     * the same repository path. No new exit machinery: placement
+     * only. (No "Stayed Focused" intercept is recorded — the user
+     * did not stay; the break's own ledger records what happened.)
+     */
+    fun requestDisarmFromAirlock() {
+        _airlockState.value = _airlockState.value.copy(isVisible = false)
+        requestDisarmChallenge()
+    }
+
     fun transmuteImpulseAndReturn() {
         val state = _airlockState.value
         soundEngine.playHarmonicSeal(arming = true)
         _airlockState.value = state.copy(isVisible = false)
         viewModelScope.launch {
+            // R3b #162 F4: a return from the Uninstall Guard door is
+            // not "Stayed Focused" and not a phantom reach — it is an
+            // uninstall attempt that turned back, and the log now
+            // says exactly that.
+            val uninstallAttempt = state.interceptPath ==
+                com.example.service.InterceptPath.UNINSTALL_GUARD
             repository.recordIntercept(
                 packageName = state.interceptedPackageName.ifBlank { "com.zhiliaoapp.musically" },
                 appName = state.interceptedAppName.ifBlank { "Blocked App" },
                 sessionIntention = state.sessionIntention.ifBlank { _intentionText.value },
-                outcome = "Stayed Focused",
-                triggerReason = state.selectedReason.shortTag
+                outcome = if (uninstallAttempt) "Uninstall Attempt — Returned" else "Stayed Focused",
+                triggerReason = state.selectedReason.shortTag,
+                countAsReach = !uninstallAttempt
             )
         }
     }

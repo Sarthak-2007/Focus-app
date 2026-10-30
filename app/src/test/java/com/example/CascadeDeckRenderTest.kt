@@ -214,14 +214,14 @@ class CascadeDeckRenderTest {
     @Test
     fun jammedNamesTheUnansweringLink() {
         setDeck(jammed(), dark = false)
-        composeRule.onNodeWithText("SHIELD DIDN'T ANSWER — STILL PROVING.").assertIsDisplayed()
+        composeRule.onNodeWithText("THE SHIELD DIDN'T ANSWER — STILL CHECKING.").assertIsDisplayed()
         capture("cascade_jammed_day.png")
     }
 
     @Test
     fun jammedNamesTheUnansweringLinkAtNight() {
         setDeck(jammed(), dark = true)
-        composeRule.onNodeWithText("SHIELD DIDN'T ANSWER — STILL PROVING.").assertIsDisplayed()
+        composeRule.onNodeWithText("THE SHIELD DIDN'T ANSWER — STILL CHECKING.").assertIsDisplayed()
         capture("cascade_jammed_night.png")
     }
 
