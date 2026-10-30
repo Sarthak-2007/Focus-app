@@ -39,8 +39,8 @@ import java.time.Duration
  *     countdown holds at its full remainder for the whole call,
  *     then drains and flips normally after hang-up — and the
  *     per-block call ledger resets at the break exit.
- *  4. The dialer identification the doors exempt: the stock
- *     dialer packages are telephony; chat apps are not.
+ *  (Finding 4's dialer exemption is deliberately absent —
+ *  struck under Sarthak's NEVER THROUGH verdict; see #134.)
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -192,13 +192,19 @@ class CallMidSessionRepositoryTest {
             // After hang-up the break drains from the held
             // remainder: 601 further seconds end it, the next
             // block starts, and the call ledger restarts at 0.
+            // Fixture correction for the composition onto current
+            // main (requirement assertions unchanged, same class
+            // as the uptime correction above): since issue #33 the
+            // progress machine computes from the row AS IT STANDS
+            // in the database — the caller's snapshot only names
+            // the session — so ageing a snapshot copy no longer
+            // moves time. Time travels on the clock instead: the
+            // monotonic clock advances 601s, the stored row's tick
+            // anchor stands 601s in the past, and the drain the
+            // assertions judge is the machine's real one.
             repository.callActiveProbe = { false }
-            val flipped = repository.updateSessionProgress(
-                held.copy(
-                    lastTickElapsedRealtimeMillis =
-                        held.lastTickElapsedRealtimeMillis - 601_000L
-                )
-            )
+            ShadowSystemClock.advanceBy(Duration.ofMillis(601_000L))
+            val flipped = repository.updateSessionProgress(held)
             assertFalse(flipped.isInSafeBreak)
             assertEquals(2, flipped.currentBlockIndex)
             assertEquals(0, flipped.safeBreakSecondsRemaining)
@@ -210,13 +216,4 @@ class CallMidSessionRepositoryTest {
         }
     }
 
-    @Test
-    fun dialerIdentification_stockDialersOnly() {
-        assertTrue(MonolithRepository.isDialerPackage(context, "com.google.android.dialer"))
-        assertTrue(MonolithRepository.isDialerPackage(context, "com.android.dialer"))
-        assertTrue(MonolithRepository.isDialerPackage(context, "com.samsung.android.dialer"))
-        assertFalse(MonolithRepository.isDialerPackage(context, "com.whatsapp"))
-        assertFalse(MonolithRepository.isDialerPackage(context, "org.telegram.messenger"))
-        assertFalse(MonolithRepository.isDialerPackage(context, "com.example"))
-    }
 }

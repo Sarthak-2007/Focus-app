@@ -9,6 +9,24 @@ re-parented as a single composition commit on `agent/issue-134` whose parent
 is current main. See the composition commit message / GESTALT report for the
 composed tip SHA and the CI run on the composed branch.
 
+**Composition target (final):** main `bebaa46` (61 commits past the first
+composition base `1ef3e2b`). The first composition was built on `1ef3e2b`;
+when main moved, every delta hunk of `1ef3e2b..bebaa46` touching the five
+shared files was re-applied by hand onto the composed files (see
+"Second-wave delta" below) — the final tree is bebaa46's tree plus this
+lane's files, nothing of main's 61 commits is reverted.
+
+**Remote-lane note:** while this composition was in flight, the remote
+branch was independently rebased onto `1ef3e2b` (86e6aca→82aae48→8605926,
+same three commits, new SHAs) and STURM-4 added 7281bc5, which removed the
+dialer-identification test from CallMidSessionRepositoryTest with the note
+"Finding 4's dialer exemption is deliberately absent — struck under
+Sarthak's NEVER THROUGH verdict; see #134." That test removal and note are
+preserved verbatim in this composition. The exemption CODE (which the
+rebased lane also retained) is composed as-is; the verdict conflict is
+flagged to GESTALT in the composition report — this lane did not silently
+drop code, and did not re-add the struck test.
+
 ## Per-finding dispositions (all 4 FIXED by the original lane)
 
 1. **Call time counted as focus time — FIXED.** `focus_sessions` gains a
@@ -30,19 +48,29 @@ composed tip SHA and the CI run on the composed branch.
    advanced; the drain resumes from exactly that remainder when the call
    ends. The ledger does not grow inside a break (break seconds are not
    focus seconds).
-4. **Phone app could be locked mid-session (could not dial out) — FIXED.**
-   The dialer package (`MonolithRepository.isDialerPackage`, via the
+4. **Phone app could be locked mid-session (could not dial out) — FIXED
+   by the original lane; PARTIALLY STRUCK on the live branch.** The
+   dialer package (`MonolithRepository.isDialerPackage`, via the
    system default-dialer role) is exempt at every door: the accessibility
    door's 3-tier branch, the shield service's usage-stats blocked set, and
    every Smart Loadout commit (dialer always lands OPEN). Telephony is a
    safety surface; placing a call starts in MODE_NORMAL, before any call
    bypass exists, so the exemption cannot ride on call state.
+   **Strike note:** STURM-4 (7281bc5, on this branch) removed this
+   finding's identification test under Sarthak's NEVER THROUGH verdict,
+   and main has since landed its own dialler floor (#119:
+   EssentialApps.floorTier — dialler never LOCKED, by package). The
+   composed tree preserves the strike (test absent, note verbatim) and
+   keeps the exemption code the rebased lane retained; whether the
+   exemption code itself should now be struck in favour of main's floor
+   alone is GESTALT's/Sarthak's call, flagged in the composition report.
 
 ## DB version outcome
 
-Main was read FIRST: at composition time main's `MonolithDatabase` was
-still **version 12**. Therefore `MIGRATION_12_13` landed **as-is, no
-renumber**: version 12 → 13, one schema change —
+Main was read FIRST, twice: at first composition main (1ef3e2b) was
+**version 12**, and at the final target (bebaa46) MonolithDatabase.kt was
+unchanged and still **version 12**. Therefore `MIGRATION_12_13` landed
+**as-is, no renumber**: version 12 → 13, one schema change —
 `ALTER TABLE focus_sessions ADD COLUMN callExcludedSeconds INTEGER NOT NULL DEFAULT 0` —
 appended to the `addMigrations` chain. The three migration-chain tests
 (SliceEMigrationChainTest, RoutinesMigrationChainTest, ShortsSniperTruthTest)
@@ -89,6 +117,43 @@ were composed to the new chain head v13, and CallMigrationTest (new) covers
   untouched, including the ec408a5 fixture fix). No assertion was changed
   during composition; the two CallMidSession tests are the canary for the
   progress machine.
+
+## Second-wave delta (1ef3e2b → bebaa46) on the shared files
+
+Main's 61 intervening commits touched five of this lane's files; every
+hunk was carried into the composed files, none dropped:
+
+- **MonolithRepository.kt** — #145 curio work (curioForgeRecords,
+  drawCurioId replacing the shuffle at both forge sites, FLOW-door forge
+  in disarmActiveSession, forgedArtifactName on all three receipt
+  assemblies), #119 dialler floor (EssentialApps.floorTier in
+  cycleAppBlockTier, setAppBlockTier, and the bulk profile write),
+  #162 F4 countAsReach on recordIntercept, #126 F5 annulment rider
+  (comment), #30 LIKE-escaping in searchStoredTasks, and the #119
+  comment riding above the loadout tier line. Crucially, main's delta
+  does NOT touch updateSessionProgress — the progress machine this lane
+  modifies is byte-identical between 1ef3e2b and bebaa46, so the call
+  exclusion / held finish / held break composition carries over
+  unchanged. Note the interaction at the loadout: tierFor itself now
+  ends with EssentialApps.floorTier (dialler never LOCKED), and #134's
+  OPEN wrap composes outside it at the same commit point.
+- **MonolithModels.kt** — tier label wording ("Shut", "2m Peek") and the
+  SLEEP subtitle naming Camera/navigation; #134's callExcludedSeconds
+  column is in a different region, untouched.
+- **MonolithShieldService.kt** — #164 F2 notification line, #94
+  InterceptLaunch at the shield door, #274 lock-screen redaction
+  (VISIBILITY_PRIVATE + public version). #134's dialer filter sits in
+  the blocked-set computation, untouched by all three.
+- **MonolithAccessibilityService.kt** — #162 F1/F3 tamper narrowing
+  (installer must name Monolith; Settings guard fires only on
+  destructive CONFIRM dialogs), #77 arming order (mono before id),
+  #94 InterceptLaunch. #134's branch-5 exemption in processEvent is in
+  none of those regions.
+- **LoadoutRules.kt / EssentialApps.kt / MonolithDao.kt /
+  ReceiptState.kt** — changed on main, not #134 files; the final tree
+  takes main's versions via the tree base, and the composed Repository
+  compiles against them (floorTier, sleepLoadoutTierFor,
+  getForgingSessions, forgedArtifactName).
 
 ## User-facing changes
 
