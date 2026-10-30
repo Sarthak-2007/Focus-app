@@ -3,20 +3,28 @@
 **Seat:** Wunder, crazy-ideas (second crazy seat on this issue), flat under Ren.
 **Issue:** #14 — Setup Sheet + onboarding (Empfang + Pforte), repo
 `Sarthak-2007/Focus-app`, branch `agent/issue-14`.
-**Ground read first:** the issue + all 5 comments (Pforte's seating, expansion,
-closing, Wave-2, Wave-2 addendum — no Rausch comment posted yet at my reading;
-if he lands later, this file already avoids his likely ground, see below),
+**Ground read first:** the issue + its comments (Pforte's seating, expansion,
+closing, Wave-2, Wave-2 addendum; Wirbel's crazy wave; and Rausch's two
+comments — first pass + sharpened update — read in full before this file
+was finalised, with collisions checked and renamed away, see below),
 `AUDIT-setup-sheet.md`, `ReceptionSheet.kt` whole, Funke's
 `INNOVATION-mechanisms.md`, Fibel's `DESIGN-composition.md`, Glatt's
-`FINISH-park-stub.md`, and Wirbel's crazy file
-(`studio/plan/WIRBEL-CRAZY-IDEAS-RECEPTION.md`).
+`FINISH-park-stub.md`, Wirbel's crazy file
+(`studio/plan/WIRBEL-CRAZY-IDEAS-RECEPTION.md`), and Rausch's angle as
+posted on the issue.
 
 **My angle — the two journeys nobody designed:**
 
 Wirbel took the sheet's *face* (first-session seal, live bounce, confession
 line, stub-as-Receipt-Zero, chit-as-header-ticket, per-door knocks — all his,
-none repeated here). The cell took the sheet's *truth* (S-1, the chit, the
-ledger, the handover). What is still designed by Android, not by us:
+none repeated here). Rausch took the *ceremony* (first open as house
+handover, prove-first, doors-as-rites, DONE as a tear he pulls — read in
+his two comments + `studio/crazy/issue-14-rausch.md`; built past, never
+repeated here — two collisions actively avoided: his THRESHOLD is the
+*arrival* at first open, so my return scene is named the DOORSTEP; and
+he killed auto-chaining Settings, a kill my Convoy E-4 honours — every
+leg is his own tap). The cell took the sheet's *truth* (S-1, the chit,
+the ledger, the handover). What is still designed by Android, not by us:
 
 1. **THE ESCORT** — a FIX tap today is: read one line → thrown alone into a
    foreign system list at 04:00 → find Monolith → survive a warning →
@@ -96,24 +104,24 @@ the latest departure overwrites, exactly like the chit itself.
 **Cost:** SMALL. This turns "come back" from an instruction he must
 remember into a door that travels with him.
 
-### E-3 · THE THRESHOLD — the homecoming is a scene, not a scroll position
+### E-3 · THE DOORSTEP — the homecoming is a scene, not a scroll position
 
 **Crazy:** Today a returning man lands back on a ~1,900 dp sheet and the
 sheet politely scrolls his card into view. Invert it: on a judged
-return, the sheet does not open at all at first — a **threshold** does.
+return, the sheet does not open at all at first — a **doorstep** does.
 One screen, almost empty: the visited door's name in the nameplate
 position, its verdict in ink, its chit line, and — if a next door
 stands — that door's FIX key, plus one key: `TO THE SHEET →`.
 The homecoming gets its own room, the size of the moment: he left for
 one door; one door meets him. The full sheet is one tap behind the
-threshold, never lost, never forced.
+doorstep, never lost, never forced.
 **Mechanism:** host state: when a chit resolves to a RETURNED_* state
-and the sheet is next shown, show `ReceptionThreshold` (one composable
+and the sheet is next shown, show `ReceptionDoorstep` (one composable
 reusing `chitLineFor`, the door word, and the existing FIX path for
 the next door) before the sheet column; `TO THE SHEET` (and DONE's
 spend law) dismiss it for that chit. SPENT chits never raise it.
-Unjudged/DARK returns print their own honest threshold lines
-(`RETURN NOT READ` — the threshold says it couldn't see, in the open,
+Unjudged/DARK returns print their own honest doorstep lines
+(`RETURN NOT READ` — the doorstep says it couldn't see, in the open,
 instead of burying it in a card).
 **Cost:** SMALL–MEDIUM (one composable + host gating; all facts already
 exist on the chit). Distinct from Wirbel's header ticket: his is a line
@@ -122,21 +130,21 @@ exist on the chit). Distinct from Wirbel's header ticket: his is a line
 ### E-4 · THE CONVOY — four errands become one expedition with legs
 
 **Crazy:** Nobody walks to the same foreign country four times if the
-road connects. On the threshold (E-3), a repaired door's
+road connects. On the doorstep (E-3), a repaired door's
 `NEXT — <DOOR>` stops being a suffix and becomes the next leg's FIX
-key: tap it and he departs again *from the threshold*, new chit, new
-escort line printed on the threshold itself before he leaves (full
-escort, warning whole — the threshold is a departure lounge, it owes
+key: tap it and he departs again *from the doorstep*, new chit, new
+escort line printed on the doorstep itself before he leaves (full
+escort, warning whole — the doorstep is a departure lounge, it owes
 him the whole briefing every leg). A man with four unset doors can
-walk all four in one continuous expedition — depart, return, threshold,
+walk all four in one continuous expedition — depart, return, doorstep,
 depart — and only meet the full sheet when he chooses `TO THE SHEET`.
 The sheet stops being a queue of errands and becomes a base camp.
-**Mechanism:** threshold's next-door key calls the existing
+**Mechanism:** doorstep's next-door key calls the existing
 `onDeparture(next, print)` + `onFixClick(next)` pair (the exact FIX
-commit path, chit first, intent second); the threshold renders
+commit path, chit first, intent second); the doorstep renders
 `receptionDoorPrepare(next)` while the chit stands DEPARTED-for-next
 (i.e., during the breath before the pane takes him — and if the intent
-fails to fire, the threshold is where he still stands, briefed).
+fails to fire, the doorstep is where he still stands, briefed).
 Legs are never chained automatically — each departure is his tap.
 **Cost:** FREE–SMALL on top of E-3 (no new state; the chit's
 `nextDoor` already computes the leg).
@@ -344,13 +352,13 @@ ON THE SHEET` — a truncation that names itself, never a silent cut.
 **E-2 THE TRAVELLING STRIP** (the escort finally accompanies him —
 SMALL, and it changes what a FIX *is*) · **P-1 DOOR BIOGRAPHIES**
 (the reprint becomes a life, for the price of one pure function) ·
-**E-4 THE CONVOY on E-3's THRESHOLD** (four errands become one
+**E-4 THE CONVOY on E-3's DOORSTEP** (four errands become one
 expedition; the homecoming becomes a scene). Then P-2, because once
 the sheet has a pulse, PARK is never a drawer again.
 
 What I want next, unassigned: the same journey treatment for the
 *Shield excursion* (OPEN THE LIST already has H-2's way-back line —
-it deserves a chit of its own), and a stranger-walk of the threshold
+it deserves a chit of its own), and a stranger-walk of the doorstep
 at 04:00 before anyone prices E-3 SMALL with a straight face.
 
 — Wunder (crazy-ideas, issue #14)
