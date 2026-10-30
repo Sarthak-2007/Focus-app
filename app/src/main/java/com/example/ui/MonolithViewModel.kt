@@ -426,7 +426,18 @@ class MonolithViewModel(
     private val _studyPreset = MutableStateFlow(StudyModePreset.POMODORO_25_5)
     val studyPreset: StateFlow<StudyModePreset> = _studyPreset.asStateFlow()
 
-    private val _intentionText = MutableStateFlow("Finish Chapter 4 Problem Set")
+    // Issue #124 (typing-intention): the intention draft is born
+    // BLANK and is filled only by the user's own typing through
+    // setIntentionText. It used to be born pre-filled with a
+    // factory default ("Finish Chapter 4 Problem Set") and
+    // silently overwritten by every task operation — words put in
+    // the user's mouth and later read back as their declaration.
+    // Sarthak's ruling (Oct 30, 08:55): the intention is his own
+    // editable words, or no name at all — never fixed buckets,
+    // never app-assigned. Task machinery still seeds the DIAL from
+    // the active task (seedDialFromTask); it never touches these
+    // words again.
+    private val _intentionText = MutableStateFlow("")
     val intentionText: StateFlow<String> = _intentionText.asStateFlow()
 
     private val _shortsReelsSniperEnabled = MutableStateFlow(true)
@@ -1242,7 +1253,10 @@ class MonolithViewModel(
         viewModelScope.launch {
             activeTask.collect { task ->
                 if (task != null) {
-                    _intentionText.value = task.title
+                    // Issue #124: the dial still seeds from the
+                    // active task; the intention draft does NOT —
+                    // it is the user's own words or blank, never a
+                    // live mirror of the queue.
                     seedDialFromTask(task)
                 }
                 refreshActiveTaskCarryover(task)
@@ -2077,7 +2091,12 @@ class MonolithViewModel(
     }
 
     fun setIntentionText(text: String) {
-        _intentionText.value = text
+        // Issue #124: the one authored writer. Length discipline
+        // only — capping per keystroke is safe, but trimming here
+        // would eat the space between words mid-typing; the trim
+        // happens once, at the arm snapshot in
+        // MonolithRepository.startSession.
+        _intentionText.value = text.take(MonolithRepository.MAX_INTENTION_CHARS)
     }
 
     fun toggleShortsReelsSniper() {
@@ -2392,7 +2411,6 @@ class MonolithViewModel(
                 promoteToActive = promoteToActive
             )
             if (created.resolvedStatus == TaskQueueStatus.ACTIVE) {
-                _intentionText.value = created.title
                 seedDialFromTask(created)
             }
         }
@@ -2417,7 +2435,6 @@ class MonolithViewModel(
                 newNotes = newNotes
             )
             if (updated != null && updated.resolvedStatus == TaskQueueStatus.ACTIVE) {
-                _intentionText.value = updated.title
                 seedDialFromTask(updated)
             }
         }
@@ -2431,7 +2448,6 @@ class MonolithViewModel(
         viewModelScope.launch {
             val nextActive = repository.completeTaskAndAdvance(taskId)
             if (nextActive != null) {
-                _intentionText.value = nextActive.title
                 seedDialFromTask(nextActive)
             }
         }
@@ -2448,7 +2464,6 @@ class MonolithViewModel(
         viewModelScope.launch {
             val nextActive = repository.reopenStoredTask(taskId)
             if (nextActive != null) {
-                _intentionText.value = nextActive.title
                 seedDialFromTask(nextActive)
             }
             refreshDrawer()
@@ -2470,7 +2485,6 @@ class MonolithViewModel(
         viewModelScope.launch {
             val promoted = repository.promoteTaskToActive(taskId)
             if (promoted != null) {
-                _intentionText.value = promoted.title
                 seedDialFromTask(promoted)
             }
         }
@@ -2486,10 +2500,7 @@ class MonolithViewModel(
     fun deferTask(taskId: Int) {
         soundEngine.playRotaryDetent(510.0)
         viewModelScope.launch {
-            val nextActive = repository.deferTask(taskId)
-            if (nextActive != null) {
-                _intentionText.value = nextActive.title
-            }
+            repository.deferTask(taskId)
         }
     }
 
@@ -2520,9 +2531,6 @@ class MonolithViewModel(
                         undoDeleteStore.clear()
                     }
                 }
-                if (nextActive != null) {
-                    _intentionText.value = nextActive.title
-                }
             }
         }
     }
@@ -2534,10 +2542,7 @@ class MonolithViewModel(
         undoDeleteStore.clear()
         soundEngine.playHarmonicSeal(arming = true)
         viewModelScope.launch {
-            val restored = repository.restoreDeletedTask(deleted)
-            if (restored.resolvedStatus == TaskQueueStatus.ACTIVE) {
-                _intentionText.value = restored.title
-            }
+            repository.restoreDeletedTask(deleted)
         }
     }
 
@@ -2940,7 +2945,6 @@ class MonolithViewModel(
         viewModelScope.launch {
             val promoted = repository.promoteTaskToActive(taskId)
             if (promoted != null) {
-                _intentionText.value = promoted.title
                 seedDialFromTask(promoted)
             }
             _currentDestination.value = MonolithDestination.DECK
@@ -3463,7 +3467,11 @@ class MonolithViewModel(
             interceptedPackageName = packageName,
             interceptedAppName = appName,
             interceptReasonBadge = effectiveBadge,
-            sessionIntention = active?.intention ?: _intentionText.value,
+            // Issue #124: the airlock quotes the SESSION's frozen
+            // intention or nothing. The old fallback printed the
+            // unarmed draft when no session row backed it — words
+            // never declared for any session, labelled ACTIVE.
+            sessionIntention = active?.intention ?: "",
             selectedReason = DistractionTriggerReason.MUSCLE_MEMORY,
             interceptInstanceId = ++airlockInstanceSeq,
             // ANCHOR (Issue #55, DECISION-NEEDED recorded in the
@@ -3572,7 +3580,10 @@ class MonolithViewModel(
             repository.recordIntercept(
                 packageName = pkg,
                 appName = name,
-                sessionIntention = state.sessionIntention.ifBlank { _intentionText.value },
+                // Issue #124: the frozen session intention as
+                // recorded at intercept time — never backfilled
+                // from the live draft.
+                sessionIntention = state.sessionIntention,
                 outcome = "Used 2m Peek",
                 triggerReason = state.selectedReason.shortTag
             )
@@ -3668,7 +3679,10 @@ class MonolithViewModel(
             repository.recordIntercept(
                 packageName = state.interceptedPackageName,
                 appName = state.interceptedAppName.ifBlank { "Blocked App" },
-                sessionIntention = state.sessionIntention.ifBlank { _intentionText.value },
+                // Issue #124: the frozen session intention as
+                // recorded at intercept time — never backfilled
+                // from the live draft.
+                sessionIntention = state.sessionIntention,
                 outcome = "Left Airlock Without Choosing",
                 triggerReason = state.selectedReason.shortTag
             )
@@ -3713,7 +3727,10 @@ class MonolithViewModel(
             repository.recordIntercept(
                 packageName = state.interceptedPackageName.ifBlank { "com.zhiliaoapp.musically" },
                 appName = state.interceptedAppName.ifBlank { "Blocked App" },
-                sessionIntention = state.sessionIntention.ifBlank { _intentionText.value },
+                // Issue #124: the frozen session intention as
+                // recorded at intercept time — never backfilled
+                // from the live draft.
+                sessionIntention = state.sessionIntention,
                 outcome = if (uninstallAttempt) "Uninstall Attempt — Returned" else "Stayed Focused",
                 triggerReason = state.selectedReason.shortTag,
                 countAsReach = !uninstallAttempt

@@ -228,6 +228,14 @@ class MonolithRepository(
     companion object {
         private const val TAG = "MonolithRepository"
         private val seedMutex = Mutex()
+        /** Issue #124 (typing-intention): the intention is a short,
+         *  sharp declaration the user authors — never a paragraph.
+         *  Every arm path funnels through [startSession], which
+         *  trims and caps the snapshot to this length; the draft
+         *  writer (MonolithViewModel.setIntentionText) caps at the
+         *  same bound so the box can never hold more than a session
+         *  can store. */
+        const val MAX_INTENTION_CHARS = 80
         const val PEEK_DURATION_SECONDS = 120 // 2-Minute Peek
         const val PEEK_DURATION_MILLIS = 120 * 1000L // 2-Minute Peek lease in ms
         const val PEEK_COOLDOWN_MILLIS = 20 * 60 * 1000L // 20-Minute Mandatory Cooldown
@@ -2468,7 +2476,16 @@ class MonolithRepository(
         )
 
         val session = FocusSessionEntity(
-            intention = intention.ifBlank { "Deep Uninterrupted Study" },
+            // Issue #124 (typing-intention): the intention is
+            // frozen HERE, at birth, exactly as declared — trimmed
+            // and capped, and a blank stays blank. The old ifBlank
+            // substitution forged a stock phrase ("Deep
+            // Uninterrupted Study") and read it back to the user
+            // as their own declaration; a user who declares
+            // nothing has declared nothing, and every surface
+            // downstream (receipt title, airlock line, shield
+            // notification) prints this row's words or nothing.
+            intention = intention.trim().take(MAX_INTENTION_CHARS),
             profileName = profileName,
             targetDurationSeconds = targetSecs,
             elapsedSeconds = 0,
@@ -4458,10 +4475,14 @@ class MonolithRepository(
         if (nextUp != null) {
             val promoted = nextUp.copy(status = TaskQueueStatus.ACTIVE.name, queueOrder = 0)
             dao.updateTask(promoted)
-            if (currentSession != null) {
-                currentSession = currentSession.copy(intention = promoted.title)
-                dao.updateSession(currentSession)
-            }
+            // Issue #124 (typing-intention) + ESR-02: the promotion
+            // is queue bookkeeping ONLY. The running session's
+            // intention was frozen at arm time and is never
+            // rewritten here — the old copy(intention =
+            // promoted.title) silently changed what the receipt and
+            // later airlock lines claimed the session was armed
+            // with, and it ran with NO seal check at all (ESR-02's
+            // exact charge against this function).
             return@withContext promoted
         }
         null
@@ -4560,19 +4581,14 @@ class MonolithRepository(
         )
         dao.updateTask(promoted)
 
-        val activeSession = dao.getActiveSessionSnapshot()
-        if (activeSession != null) {
-            // ESR-02 (Hale's S1, dying in Slice E): a SEALED
-            // session's intention is the receipt's title source —
-            // rewriting it under the seal would falsify the slip.
-            // The seal marker (F-K1) is the repository-level
-            // witness: while the active row is the sealed row, the
-            // intention write is refused. The promotion itself —
-            // the Tasks surface's own bookkeeping — proceeds.
-            if (sealedSessionIdFromMarker() != activeSession.id) {
-                dao.updateSession(activeSession.copy(intention = promoted.title))
-            }
-        }
+        // Issue #124 (typing-intention): NO session write happens
+        // here at all. ESR-02 refused the intention rewrite only
+        // for the SEALED row; the freeze is now total — a session's
+        // intention is what the user declared at arm time, for the
+        // session's whole life, sealed or not, because it is the
+        // receipt's title source and the airlock's quoted words.
+        // The promotion above is the Tasks surface's own
+        // bookkeeping and proceeds on its own.
         promoted
     }
 

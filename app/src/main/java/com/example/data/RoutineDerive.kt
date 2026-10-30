@@ -179,7 +179,14 @@ object RoutineDerive {
                     windowEndMillis = window.endMillis,
                     durationMinutes = window.remainderMinutes,
                     loadoutName = routine.loadoutName,
-                    intention = routine.name,
+                    // Issue #124: a routine arms the block, not
+                    // the words — the session's intention is what
+                    // the user declares, and an auto-armed session
+                    // was declared by nobody. The old value filed
+                    // the routine's NAME as the session intention,
+                    // where the receipt and airlock read it back as
+                    // the user's own declaration.
+                    intention = "",
                     profileName = "Routine: ${routine.name}"
                 )
             } else {
