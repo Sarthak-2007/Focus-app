@@ -246,7 +246,14 @@ data class AirlockInterceptState(
      *  Null when there is no timed end to state (stopwatch, or no
      *  session): the door never invents one. */
     val sessionEndsAtMillis: Long? = null,
-    val sessionIsStopwatch: Boolean = false
+    val sessionIsStopwatch: Boolean = false,
+    /** Issue #325 (Audit R5, Zario visual): the stake, carried onto
+     *  the door itself — the week's emergency-break balance read
+     *  from the repository's spend ledger at the intercept instant
+     *  (the same flow the Deck renders). -1 = not carried (previews,
+     *  tests): the stake line prints nothing rather than inventing
+     *  a balance. */
+    val emergencyBreaksRemaining: Int = -1
 )
 
 /**
@@ -2803,7 +2810,11 @@ class MonolithViewModel(
             sessionEndsAtMillis = active
                 ?.takeIf { !it.isStopwatchMode }
                 ?.let { System.currentTimeMillis() + it.spanRemainingSeconds * 1000L },
-            sessionIsStopwatch = active?.isStopwatchMode == true
+            sessionIsStopwatch = active?.isStopwatchMode == true,
+            // Issue #325: the stake rides onto the door — the
+            // ledger-derived balance at this instant, never a
+            // remembered or decremented-here copy.
+            emergencyBreaksRemaining = weeklyEmergencyTokensRemaining.value
         )
     }
 

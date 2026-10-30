@@ -318,6 +318,26 @@ internal fun peekPriceText(cooldownMillis: Long): String {
     return "TAKING THE PEEK STARTS A $minutes $unit COOLDOWN ON THIS APP"
 }
 
+/**
+ * Issue #325 (Audit R5, Zario visual): the stake line the door
+ * prints under the session's end — the week's emergency-break
+ * balance, on the surface where the decision happens (Zario draws
+ * its economy on every intercept; Monolith's balance lived only
+ * on the Deck). At zero the state is STATED, not hidden: a spent
+ * valve is a fact the user is owed at the wall, in words. A
+ * negative balance means the state was not carried (previews,
+ * tests) and the door prints nothing rather than inventing one.
+ */
+internal fun airlockStakeLine(emergencyBreaksRemaining: Int): String? = when {
+    emergencyBreaksRemaining < 0 -> null
+    emergencyBreaksRemaining == 0 ->
+        "EMERGENCY BREAK: NONE LEFT THIS WEEK — THE VALVE IS SPENT"
+    emergencyBreaksRemaining == 1 ->
+        "EMERGENCY BREAK: 1 LEFT THIS WEEK"
+    else ->
+        "EMERGENCY BREAK: $emergencyBreaksRemaining LEFT THIS WEEK"
+}
+
 /** The capture's own time, for a frozen row: HH:mm when the
  *  capture is from today, d MMM · HH:mm when it is not — yesterday's
  *  held rows legitimately sit in this morning's snapshot, and the
@@ -735,6 +755,19 @@ fun AirlockInterceptOverlay(
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 12.5.sp,
                         color = NightColorPrimary.copy(alpha = 0.8f)
+                    )
+                }
+
+                // Issue #325 (Audit R5, Zario): the stake stands on
+                // the door — the week's break balance at the moment
+                // of decision, including the spent state at zero.
+                airlockStakeLine(state.emergencyBreaksRemaining)?.let { line ->
+                    Text(
+                        text = line,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f),
+                        modifier = Modifier.testTag("airlock_stake_line")
                     )
                 }
 
