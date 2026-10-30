@@ -708,7 +708,12 @@ object BlockedBrowserDomains {
         "twitter.com",
         "facebook.com",
         "snapchat.com",
-        "youtube.com/shorts"
+        "youtube.com/shorts",
+        // W3 #130 (browser-as-loophole): the whole YouTube host, not
+        // only its /shorts path — the home/watch feed was the biggest
+        // unlisted feed. Enforced by the same site blocker; a needed
+        // video is reachable through the domain-scoped site peek.
+        "youtube.com"
     )
     // Issue #133 (finding 4): an "allowed study sites" example
     // list used to live here as dead decoration — no study-site
@@ -844,6 +849,27 @@ object RoutineSchedule {
             day.add(java.util.Calendar.DAY_OF_YEAR, 1)
         }
         return null
+    }
+
+    /**
+     * The pause-aware next start (routines rebuild §3.6): the
+     * search origin is max(now, pausedUntilMillis), fed into
+     * [nextStartMillis] - whose strictly-after contract means the
+     * origin is passed as pausedUntilMillis - 1 when the pause is
+     * the binding origin, so a window starting exactly as the
+     * pause ends still counts. Windows the pause covers never
+     * fire, so they are never the next start. This one helper is
+     * what the scheduler and every "next seal" reader (Deck
+     * ribbon, widget) share, so they can never disagree.
+     */
+    fun effectiveNextStartMillis(routine: RoutineEntity, nowMillis: Long): Long? {
+        val r = routine.sanitized()
+        val origin = maxOf(nowMillis, r.pausedUntilMillis)
+        return if (origin > nowMillis) {
+            nextStartMillis(r, origin - 1L)
+        } else {
+            nextStartMillis(r, nowMillis)
+        }
     }
 
     /** End of the window containing [nowMillis], or of the next window if none contains it. */

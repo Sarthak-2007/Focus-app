@@ -45,6 +45,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -582,6 +583,26 @@ internal fun peekPriceText(cooldownMillis: Long): String {
 }
 
 /**
+ * Issue #325 (Audit R5, Zario visual): the stake line the door
+ * prints under the session's end — the week's emergency-break
+ * balance, on the surface where the decision happens (Zario draws
+ * its economy on every intercept; Monolith's balance lived only
+ * on the Deck). At zero the state is STATED, not hidden: a spent
+ * valve is a fact the user is owed at the wall, in words. A
+ * negative balance means the state was not carried (previews,
+ * tests) and the door prints nothing rather than inventing one.
+ */
+internal fun airlockStakeLine(emergencyBreaksRemaining: Int): String? = when {
+    emergencyBreaksRemaining < 0 -> null
+    emergencyBreaksRemaining == 0 ->
+        "EMERGENCY BREAK: NONE LEFT THIS WEEK — THE VALVE IS SPENT"
+    emergencyBreaksRemaining == 1 ->
+        "EMERGENCY BREAK: 1 LEFT THIS WEEK"
+    else ->
+        "EMERGENCY BREAK: $emergencyBreaksRemaining LEFT THIS WEEK"
+}
+
+/**
  * The cooldown's SCOPE, printed beside its price (issue #114,
  * finding 3): the cooldown is per app — this app's timer says
  * nothing about any other peek app's. Until this line existed the
@@ -1015,6 +1036,19 @@ fun AirlockInterceptOverlay(
                     )
                 }
 
+                // Issue #325 (Audit R5, Zario): the stake stands on
+                // the door — the week's break balance at the moment
+                // of decision, including the spent state at zero.
+                airlockStakeLine(state.emergencyBreaksRemaining)?.let { line ->
+                    Text(
+                        text = line,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f),
+                        modifier = Modifier.testTag("airlock_stake_line")
+                    )
+                }
+
                 // Hero Architectural Countdown Numeral (Space Mono)
                 // Issue #55: the transmute pulse is WIRED, not dead —
                 // tapping the numeral during the wall fires it (the
@@ -1043,7 +1077,14 @@ fun AirlockInterceptOverlay(
                         text = "ACTIVE INTENTION: ${state.sessionIntention}",
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 12.5.sp,
-                        color = NightColorPrimary.copy(alpha = 0.8f)
+                        color = NightColorPrimary.copy(alpha = 0.8f),
+                        // Issue #124: bounded at the moment of
+                        // temptation — a legacy over-long stored
+                        // intention ellipsises at two lines instead
+                        // of flooding the wall. (New rows are capped
+                        // at the arm snapshot in startSession.)
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
@@ -1207,6 +1248,17 @@ fun AirlockInterceptOverlay(
                         )
                         PeekWithheld.PEEK_OFF -> Text(
                             text = "PEEK IS OFF",
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 12.5.sp,
+                            color = NightColorPrimary.copy(alpha = 0.8f)
+                        )
+                        // Issue #154: not a refusal — the door's
+                        // own state line for a LOCKED tier, naming
+                        // the tier and where tiers are set, so a
+                        // legitimate need meets a fact instead of
+                        // a blank wall.
+                        PeekWithheld.TIER_LOCKED -> Text(
+                            text = "LOCKED TIER — NO PEEK EXISTS HERE · PEEK APPS ARE SET IN THE SHIELD",
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontSize = 12.5.sp,
                             color = NightColorPrimary.copy(alpha = 0.8f)

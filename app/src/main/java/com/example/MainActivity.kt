@@ -212,8 +212,25 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIncomingInterceptIntent(intent: Intent?, viewModel: MonolithViewModel) {
         if (intent == null) return
+        // Issue #155 (F5, re-homed at the STURM-4 merge): a tap on
+        // the shield notification is about the shield — land on
+        // SHIELD, not the default Deck. Intercept extras take
+        // precedence: when a firing's package rides the same intent,
+        // the intercept path below owns the delivery and this extra
+        // is simply consumed.
+        val fromShieldNotification = intent.getBooleanExtra(
+            MonolithShieldService.EXTRA_FROM_SHIELD_NOTIFICATION, false
+        )
+        if (fromShieldNotification) {
+            intent.removeExtra(MonolithShieldService.EXTRA_FROM_SHIELD_NOTIFICATION)
+        }
         val pkg = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
-        if (pkg.isNullOrBlank()) return
+        if (pkg.isNullOrBlank()) {
+            if (fromShieldNotification) {
+                viewModel.navigateTo(MonolithDestination.SHIELD)
+            }
+            return
+        }
         // Issue #68 F5, Tier 2 — provenance before trust: this
         // activity is exported (LAUNCHER), so any installed app
         // can send these extras. Honour them only with the
