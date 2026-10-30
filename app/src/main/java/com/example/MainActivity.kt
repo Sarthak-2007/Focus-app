@@ -59,6 +59,8 @@ import com.example.ui.ArmPhase
 import com.example.ui.MonolithViewModel
 import com.example.ui.components.AirlockInterceptOverlay
 import com.example.ui.components.AlwaysOnDeskClockOverlay
+import com.example.ui.components.LauncherBlockScreen
+import com.example.ui.components.LauncherPage
 import com.example.ui.components.CapturedNotificationsDigestSheet
 import com.example.ui.components.DisarmChallengeOverlay
 import com.example.ui.components.GuardLinePrint
@@ -480,6 +482,13 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         if (sealed) shieldExcursion = false
     }
 
+    // THE LAUNCHER (Sarthak's ruling, Oct 30 04:29 IST): while the
+    // phone is sealed, the block surface is a launcher. It opens
+    // from the Guard line's tap (a dead tap while sealed until now —
+    // PARK refuses under seal) and from the Airlock's two doors.
+    var launcherOpen by remember { mutableStateOf(false) }
+    var launcherPage by remember { mutableStateOf(LauncherPage.HOME) }
+
     fun closePark(dismissReceipt: Boolean) {
         parkOpen = false
         if (dismissReceipt && showNotificationDigestSheet) {
@@ -650,7 +659,16 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     // rides it.
                     isSealed = doorLocked,
                     onGuardLineTap = {
-                        if (parkOpen) closePark(dismissReceipt = false) else openPark()
+                        when {
+                            parkOpen -> closePark(dismissReceipt = false)
+                            // While sealed, the Guard line opens the
+                            // launcher — the sealed phone's home.
+                            sealed -> {
+                                launcherPage = LauncherPage.HOME
+                                launcherOpen = true
+                            }
+                            else -> openPark()
+                        }
                     }
                 )
 
@@ -1061,12 +1079,60 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             // itself now and refuses in the open, with the FIX
             // routes on the sentence itself.
 
+            // THE LAUNCHER BLOCK SURFACE: hosted under the Airlock,
+            // so a fresh intercept's door always stands above it.
+            LauncherBlockScreen(
+                visible = launcherOpen && sealed,
+                session = activeSession,
+                apps = allApps,
+                initialPage = launcherPage,
+                onClose = { launcherOpen = false },
+                onLaunchApp = { app ->
+                    launcherOpen = false
+                    runCatching {
+                        context.packageManager
+                            .getLaunchIntentForPackage(app.packageName)
+                            ?.let { launch ->
+                                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                context.startActivity(launch)
+                            }
+                    }
+                },
+                onPeekApp = { app ->
+                    launcherOpen = false
+                    viewModel.triggerAirlockIntercept(
+                        app.packageName,
+                        app.appName,
+                        app.resolvedTier.badge,
+                        InterceptPath.APP_TIER
+                    )
+                },
+                onRequestEmergencyBreak = {
+                    launcherOpen = false
+                    viewModel.requestDisarmChallenge()
+                }
+            )
+
             AirlockInterceptOverlay(
                 state = airlockState,
                 onSelectReason = viewModel::selectDistractionReason,
                 onTransmuteParticleTap = viewModel::incrementAirlockParticlePulse,
                 onReturnToFocus = viewModel::transmuteImpulseAndReturn,
-                onTake2MinutePeek = viewModel::start2MinutePeek
+                onTake2MinutePeek = viewModel::start2MinutePeek,
+                allowedAppsCount = allApps.count {
+                    it.resolvedTier == com.example.data.AppBlockTier.OPEN
+                },
+                peekAppsCount = allApps.count {
+                    it.resolvedTier == com.example.data.AppBlockTier.PEEK_2M
+                },
+                onOpenAllowedApps = {
+                    launcherPage = LauncherPage.ALLOWED
+                    launcherOpen = true
+                },
+                onOpenPeekApps = {
+                    launcherPage = LauncherPage.PEEK
+                    launcherOpen = true
+                }
             )
 
             DisarmChallengeOverlay(

@@ -41,7 +41,7 @@ size, dress, or neighbours).
 ## HEADLINES
 
 **H-I1 · THE ROOM beat has no reason on this composition —
-REMOVE until #13 lands.** (§3, element 34)
+REMOVE until #13 lands.** (§4, element 34)
 It teaches a 20-second settle this tree does not contain.
 Its reason is entirely borrowed from another lane's future.
 An element whose justification is "a different build will
@@ -51,7 +51,7 @@ without flow-clock; restore it only in the act that composes
 the settle machinery, re-worded against the real clock.
 
 **H-I2 · The Guard derivation is printed twice on the sheet
-itself — REMOVE the Guard line at the doors' foot.** (§2,
+itself — REMOVE the Guard line at the doors' foot.** (§3,
 element 25)
 `guardLineFor` at the doors' foot and the `GUARD n/4` total
 above the tear are the same derivation, the same count, one

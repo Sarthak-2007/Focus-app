@@ -2,11 +2,13 @@ package com.example.service
 
 import android.content.Context
 import android.os.SystemClock
+import android.util.Log
 import com.example.data.GuardSettingsEntity
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
 import com.example.data.RoutineDerive
 import com.example.data.SmartLoadout
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -34,6 +36,16 @@ import java.util.concurrent.atomic.AtomicLong
  * path, and touches no UI or notification surface. A tick cannot
  * disturb a live manual session beyond finalising what derive()
  * declares due.
+ *
+ * Failure recovery (issue #47 F3): the chain alarm is ONE-SHOT —
+ * consumed when it fires — and reconcileOnce rearms it only at
+ * its step 5. A pass that throws mid-way therefore used to leave
+ * no chain armed, no liveness stamp, and a swallowed exception:
+ * the heartbeat died silently. Now a failed pass is logged, the
+ * pendingAgain flag still earns its loop, and the chain is
+ * re-armed at [recoveryRearmMillis] — the next real boundary, or
+ * a recovery tick ~60 s out, whichever comes first — so the
+ * funnel always has a next wake even when the database hiccups.
  */
 object RoutineHeartbeat {
 
@@ -42,6 +54,7 @@ object RoutineHeartbeat {
         RESUME, CRUD, SESSION_EDGE, SHIELD_LOOP, OPPORTUNISTIC
     }
 
+    private const val TAG = "RoutineHeartbeat"
     private const val OPPORTUNISTIC_THROTTLE_MILLIS = 30_000L
     private const val DERIVE_LOOKBACK_MILLIS = 48L * 60L * 60L * 1000L
 
@@ -63,10 +76,43 @@ object RoutineHeartbeat {
         try {
             do {
                 pendingAgain.set(false)
-                reconcileOnce(appContext)
+                try {
+                    reconcileOnce(appContext)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Issue #47 F3: one exception must not kill the
+                    // one-shot chain. Log it (never swallow), keep
+                    // the pendingAgain loop honest, and re-arm a
+                    // recovery wake BEFORE looping/unlocking.
+                    Log.e(TAG, "reconcile pass failed (source=$source); rearming recovery chain", e)
+                    recoverChainAfterFailure(appContext)
+                }
             } while (pendingAgain.get())
         } finally {
             gate.unlock()
+        }
+    }
+
+    /** F3 recovery: rearm the chain after a failed pass. The next
+     *  real boundary wins if it is sooner; otherwise a recovery
+     *  tick ~60 s out retries the funnel. Best-effort by design —
+     *  if even this read fails, the shield loop's 30 s cadence and
+     *  every opportunistic trigger remain as the outer net, and
+     *  the failure above is already in the log. */
+    private suspend fun recoverChainAfterFailure(appContext: Context) {
+        try {
+            val dao = MonolithDatabase.getInstance(appContext).monolithDao()
+            val now = System.currentTimeMillis()
+            val boundary = RoutineDerive.nextBoundaryMillis(dao.getAllRoutinesSnapshot(), now)
+            RoutineScheduler.rearmChain(appContext, recoveryRearmMillis(boundary, now))
+            // The failed pass never reached its step 5/6: force the
+            // next successful pass to re-derive the chain state
+            // instead of trusting the pre-failure boundary memory.
+            lastArmedBoundaryMillis = null
+        } catch (_: Exception) {
+            // Logged at the call site; nothing further can be armed
+            // from here without the database.
         }
     }
 
@@ -96,8 +142,17 @@ object RoutineHeartbeat {
         val routinesById = routines.associateBy { it.id }
         val active = dao.getActiveSessionSnapshot()
         val since = now - DERIVE_LOOKBACK_MILLIS
-        val sessions = (dao.getRoutineSessionsForDerive(since) + dao.getSessionsStartedSince(since))
-            .distinctBy { it.id }
+        // Issue #47 F5: cheap 'nothing due' probe — when no session
+        // is active and the COUNT over the exact union of the two
+        // derive() reads is zero, both reads PROVABLY return empty,
+        // so derive over an empty list (semantics identical) and
+        // skip materialising the 48 h session lists entirely.
+        val sessions = if (active == null && dao.countDeriveSessionInputs(since) == 0) {
+            emptyList()
+        } else {
+            (dao.getRoutineSessionsForDerive(since) + dao.getSessionsStartedSince(since))
+                .distinctBy { it.id }
+        }
         val sessionsById = sessions.associateBy { it.id }
         val settings = dao.getGuardSettingsSnapshot()
 
@@ -186,4 +241,22 @@ object RoutineHeartbeat {
         // 6. Liveness stamp — proof on disk that the funnel ran.
         dao.stampLastRoutineTick(now)
     }
+}
+
+/** How long after a failed pass the recovery tick fires when no
+ *  real boundary is sooner (issue #47 F3). */
+internal const val RECOVERY_RETRY_DELAY_MS = 60_000L
+
+/** Floor under a recovery rearm: an overdue boundary must not
+ *  re-fire instantly in a tight failure loop. */
+internal const val RECOVERY_MIN_DELAY_MS = 5_000L
+
+/** The recovery chain instant after a failed heartbeat pass
+ *  (issue #47 F3): the next real schedule boundary when it is the
+ *  sooner wake, otherwise a recovery tick [RECOVERY_RETRY_DELAY_MS]
+ *  out — and never in the past, so a persistent failure retries on
+ *  a human cadence instead of spinning. Pure. */
+internal fun recoveryRearmMillis(nextBoundaryMillis: Long?, nowMillis: Long): Long {
+    val target = minOf(nextBoundaryMillis ?: Long.MAX_VALUE, nowMillis + RECOVERY_RETRY_DELAY_MS)
+    return if (target <= nowMillis) nowMillis + RECOVERY_MIN_DELAY_MS else target
 }
