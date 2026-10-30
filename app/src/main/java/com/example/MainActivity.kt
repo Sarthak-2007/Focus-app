@@ -861,7 +861,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onOpenPeekApps = {
                     launcherPage = LauncherPage.PEEK
                     launcherOpen = true
-                }
+                },
+                onRequestEmergencyBreak = viewModel::requestDisarmFromAirlock
             )
 
             DisarmChallengeOverlay(

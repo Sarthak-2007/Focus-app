@@ -563,7 +563,14 @@ fun AirlockInterceptOverlay(
     allowedAppsCount: Int = 0,
     peekAppsCount: Int = 0,
     onOpenAllowedApps: () -> Unit = {},
-    onOpenPeekApps: () -> Unit = {}
+    onOpenPeekApps: () -> Unit = {},
+    // Issue #119, finding 2: the emergency exit stands where the
+    // emergency happens. This chip opens the SAME DisarmChallenge
+    // overlay the Deck chip opens — identical cost (the week's one
+    // token), identical mechanism (the continuous 60s hold),
+    // identical effect (the session ends). Placement only; the
+    // valve's price and power are untouched.
+    onRequestEmergencyBreak: () -> Unit = {}
 ) {
     AnimatedVisibility(
         visible = state.isVisible,
@@ -721,6 +728,19 @@ fun AirlockInterceptOverlay(
                         null -> Unit
                     }
                 }
+
+                // THE VALVE, AT THE DOOR (issue #119, finding 2):
+                // one tap from the intercept to the same emergency
+                // break the Deck offers — no multi-screen detour
+                // through the Deck while the emergency is happening
+                // here. Always rendered: an emergency does not wait
+                // for the 5-second wall.
+                BlockitActionChip(
+                    wordLabel = "EMERGENCY BREAK VALVE (60S HOLD)",
+                    onClick = onRequestEmergencyBreak,
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "airlock_emergency_break_button"
+                )
 
                 // THE LAUNCHER DOORS: two plates, two screens —
                 // allowed apps on one, peek apps on the other.
