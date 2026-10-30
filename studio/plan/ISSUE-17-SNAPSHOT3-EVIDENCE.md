@@ -64,8 +64,8 @@ set's SNAPSHOT.md), not an error term. No root staged zero.
   trunk ExampleInstrumentedTest.kt) — **PASS**, stamped into the
   set's SNAPSHOT.md at 05:14 IST. Scratch removed after the stamp.
 - Independent Verifier seat: dispatched 05:16 IST to re-hash and
-  re-restore from the set without the runner's code — verdict
-  appended below when it lands.
+  re-restore from the set without the runner's code — verdict in the
+  addendum below: **PROVEN**.
 - MemAvailable series (honest record): 1,272 MB at start, 1,006 MB
   after payload, 1,140 MB at end — below the cell's 2,560 MB gate.
   The run proceeded on Ren's finisher directive with the write-probe
@@ -96,5 +96,57 @@ This commit was made from a fresh clone of `agent/issue-17`
 ~05:10 IST) while plain file writes in the same directory passed —
 the write-flicker in miniature. The original cell tree is untouched
 and tree-identical to this branch's previous tip.
+
+## Addendum — independent verification + merge to main (05:2x–06:1x IST)
+
+**Independent Verifier (separate seat, own Python verifier, did not
+trust the runner's prints): VERDICT — PROVEN.**
+- Manifest self-hash re-computed: matches `4c3cf644…b823d` exactly.
+- Set verify, all 42,956 manifest entries: **42,956 ok / 0 fail**
+  (regular files by content sha256; 16 symlinks by target-string
+  sha256, incl. 3 dangling queue-sim ghost fixtures resolved
+  `src/studio/methods/queue-sim/*/compile-ghost.flag`).
+- Independent restore to its own scratch: **42,956 ok / 0 fail**,
+  restored manifest-bytes exactly 2,006,807,350 — **byte diff 0**;
+  restored file count exact (42,958 on disk incl. the two
+  bookkeeping files MANIFEST.sha256 + SNAPSHOT.md) — **count diff 0**.
+  Scratch deleted after.
+- Data-reads from the restored copy, first lines quoted by the seat:
+  SNAPSHOT-SPEC.md → "# SNAPSHOT SPEC — preservation snapshots of
+  the Monolith studio"; ExampleInstrumentedTest.kt → "package
+  com.gmc.monolith"; VERDICT.md → "# VERDICT — Monolith revamp,
+  Ren's closing report".
+- Cells payload inside the set: 36,534 files by the seat's find
+  (staged census said 36,535; a 1-file counting delta between the
+  two census methods — the binding proof is the 0-fail hash verify
+  of every manifest line, which covers either count).
+
+**The seat's one oversight charge (F1) is REFUTED on evidence, and
+the refutation is filed here rather than argued in chat:** the seat
+reported the records root staged only 4 of the 6 named root records,
+missing `VERDICT.md`, `REMOVAL-LOG.md`, `env21.sh`. Direct check of
+the sealed set after its report: `records/` holds all 10 files —
+BUILD-CHANGES.md, DEAD-CODE-AUDIT.md, REMOVAL-LOG.md, VERDICT.md,
+env.sh, env21.sh, the 0137 remnant, and the 3 briefs — and all 6
+named records appear in MANIFEST.sha256 with hashes (VERDICT.md
+`b9b5a8c8…`, REMOVAL-LOG.md `91280b0b…`, env21.sh `3fc3441f…`). The
+seat's own step-2 verify (42,956 ok / 0 fail) covers those very
+lines; F1's `ls` was taken against the wrong path. What survives of
+F1: the trunk spot-read picked an instrumented-test .kt (walk-order
+first hit) — a weak spot choice, honestly noted; the set's Kotlin
+sources verify by hash regardless.
+
+**Merge to main (Sarthak's 04:56 order):** this evidence + the v4
+runner + run log + the cell's plan/report/findings went to main as
+PR #173, **merged 2026-10-30 00:44:50Z, merge commit 892da87** —
+18 files, zero app code. Main CI read after the merge (run
+40981620320): build job failed at the **Unit tests** step, assemble
+green — the same failure family as main's pre-merge baseline (its
+three prior runs all failed in the build job; the test-compile
+landscape is the Phase-2 merge train's active work). This merge
+changed no app file and could not move that verdict; the branch-CI
+failure on `agent/issue-17` itself (Assemble debug) was proven
+inherited — the identical step failed on the branch before these
+commits existed (run 40967218907), on a base 29 commits behind main.
 
 — Lotse
