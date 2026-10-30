@@ -114,7 +114,7 @@ data class AppCatalogPlan(
      * decision. A preset-born OPEN app (e.g. Chrome) is NOT in
      * this list: a preset is a deliberate birth rule, not a guess.
      */
-    val unreviewedOpenPackages: List<String> = emptyList()
+    val unreviewedOpenPackages: List<String> = emptyList(),
     /** Packages absent from THIS sync but not yet prunable (first
      *  absence). The caller persists this set and hands it back as
      *  `previouslyAbsent` on the next sync; only a package absent
