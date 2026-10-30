@@ -183,4 +183,11 @@ Robolectric zero-green census re-pointed at the real token lists.
   suites, pre-existing, outside #63). My branch's only unique failure was my own
   ThemeWiringTest assertion bug (titleSmall family) — fixed in df59977.
   ExampleRobolectric zero-green census (re-pointed) PASSES.
-- Final verdict run: (recorded at closure, on the tip that merges)
+- Run 40983714858 (tip 788db5d): **Assemble debug = SUCCESS; 296 tests executed,
+  37 failed — all in the pre-existing baseline set** (count fell 39→38→37 across
+  my runs as flaky/baseline items passed; zero #63 failures, ThemeWiringTest and
+  the re-pointed zero-green census pass).
+- Post-report rebase onto origin/main 72d2440 (merges #179/#180 landed meanwhile):
+  one conflict, ParkDrawer scrim line — resolved as scheme.scrim over main's new
+  effectiveFraction. Final verdict run on the rebased tip is the run cited in the
+  closing evidence comment on issue #63.
