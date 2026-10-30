@@ -270,7 +270,12 @@ data class PendingReceipt(
     // completion moment must not be silent about its own reward.
     // Null when the span forged nothing (routine-born rows, valve
     // breaks publish nothing at all); the sheet omits the line.
-    val forgedArtifactName: String? = null
+    val forgedArtifactName: String? = null,
+    // W-41: the seal's held split, read off the row (see
+    // FocusSessionEntity.heldShutAtSeal). -1 on a pre-v14 row:
+    // the sheet falls back to the stored total.
+    val heldShutAtSeal: Int = -1,
+    val heldPeekAtSeal: Int = -1
 )
 
 /**
@@ -306,7 +311,10 @@ data class ReceiptState(
     /** Issue #129 F3: see [PendingReceipt.openExposureApps]. */
     val openExposureApps: List<String> = emptyList()
     // Audit R3b #145: see PendingReceipt.forgedArtifactName.
-    val forgedArtifactName: String? = null
+    val forgedArtifactName: String? = null,
+    // W-41: see PendingReceipt.heldShutAtSeal.
+    val heldShutAtSeal: Int = -1,
+    val heldPeekAtSeal: Int = -1
 ) {
     /** The printed №: zero-padded to a minimum of 3, never
      *  truncated (№ 048 … № 1048). */

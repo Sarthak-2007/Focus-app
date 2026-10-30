@@ -372,7 +372,7 @@ class MonolithShieldService : Service() {
                 } else {
                     updateNotification(
                         title = "Monolith • ${updated.intention}",
-                        subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped"
+                        subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} reaches blocked"
                     )
                 }
 
