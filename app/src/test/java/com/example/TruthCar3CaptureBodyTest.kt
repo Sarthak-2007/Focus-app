@@ -67,13 +67,13 @@ class TruthCar3CaptureBodyTest {
             .setContentTitle("Mum")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .build()
+        // SDK 36's only public constructor is the @Deprecated
+        // 10-argument form — (pkg, opPkg, id, tag, uid, initialPid,
+        // score, notification, user, postTime). The 9-argument form
+        // this call was written against no longer exists, hence the
+        // third 0 (uid, initialPid, score — none of them read by
+        // the listener under test).
         val sbn = StatusBarNotification(
-            // Issue #56 test-compile unblock (pre-existing breakage
-            // on main): SDK 36's StatusBarNotification constructor
-            // takes one more Int (the ranking/importance slot, p6)
-            // than the 9-argument form this test was written
-            // against; 0 keeps the fixture's meaning — an ordinary
-            // title-only notification from a sender.
             "com.example.chat", "com.example.chat", 7, null,
             0, 0, 0, notification, Process.myUserHandle(),
             System.currentTimeMillis()
