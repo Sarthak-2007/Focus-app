@@ -38,6 +38,7 @@ object SoundEffectsSetting {
     // bind-time re-read, which requires the literal address.
     internal const val PREFS_NAME = "monolith_sound_effects"
     internal const val KEY_ENABLED = "sound_effects_enabled"
+    internal const val KEY_HAPTICS_ENABLED = "haptics_enabled"
 
     /** The fact. Default ON — the shipped behaviour before the
      *  setting existed, and the value a fresh install prints. */
@@ -49,13 +50,42 @@ object SoundEffectsSetting {
     /** Write the fact and make every live engine agree with it in
      *  the same instant. Engines constructed later read the fact
      *  at birth (law 1); the seal transition additionally re-reads
-     *  it at bind time (SessionSealTransitions.get). */
-    fun setEnabled(context: Context, enabled: Boolean) {
-        context.applicationContext
+     *  it at bind time (SessionSealTransitions.get).
+     *
+     *  Issue #49: the commit result is HONOURED — a failed commit
+     *  pushes nothing, changes nothing, and returns false, so no
+     *  surface can print a setting the disk never took (previously
+     *  the Boolean was discarded and every engine flipped anyway,
+     *  silently reverting at process death). Returns true only
+     *  when the fact landed AND was pushed. */
+    fun setEnabled(context: Context, enabled: Boolean): Boolean {
+        val committed = context.applicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putBoolean(KEY_ENABLED, enabled)
             .commit()
+        if (!committed) return false
         TactileSoundEngine.pushSoundEnabledToLiveEngines(enabled)
+        return true
+    }
+
+    /** The haptics fact (issue #49). Default ON — the shipped
+     *  behaviour while `hapticsEnabled` was an unpersisted stub. */
+    fun isHapticsEnabled(context: Context): Boolean =
+        context.applicationContext
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_HAPTICS_ENABLED, true)
+
+    /** Write the haptics fact with the same commit law as sound:
+     *  a failed commit pushes nothing and returns false. */
+    fun setHapticsEnabled(context: Context, enabled: Boolean): Boolean {
+        val committed = context.applicationContext
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_HAPTICS_ENABLED, enabled)
+            .commit()
+        if (!committed) return false
+        TactileSoundEngine.pushHapticsEnabledToLiveEngines(enabled)
+        return true
     }
 }

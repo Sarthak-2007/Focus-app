@@ -35,6 +35,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.graphics.Color
@@ -49,11 +50,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.AppBlockTier
-import com.example.data.BlockedAppEntity
-import com.example.data.FocusProfileEntity
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
-import com.example.data.StudyChecklistItem
 import com.example.data.StudyModePreset
 import com.example.service.TactileSoundEngine
 import com.example.service.UsageAccess
@@ -71,7 +69,6 @@ import com.example.ui.components.endsAtText
 import com.example.ui.components.imprintTenantText
 import com.example.ui.components.jamSentenceFor
 import com.example.ui.components.refusalSentenceFor
-import com.example.ui.components.seamMarksFor
 import com.example.ui.components.inkControlFill
 import com.example.ui.components.onInkControlFill
 import com.example.ui.components.FullBleedSectionHeader
@@ -88,7 +85,8 @@ import java.util.Locale
 
 /**
  * TAB 0: FOCUS COMMAND CONSOLE (DEVELOPER-GUIDE.pdf §1–§11)
- * - Full-bleed stacked sections with 12dp universal spacing.
+ * - Full-bleed stacked sections. (Spacing is per-section;
+ *   the old '12dp universal spacing' promise was false — F21.)
  * - The Instrument: one raised panel holding the readout + RotaryWheelView (Ren).
  * - Pinned `SlideToStartView` commit bar below the scroll.
  * - When armed, transforms into the dark Armed Lockdown state with One-Way Ratchet enforcement.
@@ -98,37 +96,17 @@ fun TactileDeckScreen(
     activeSession: FocusSessionEntity?,
     dialMinutes: Int,
     studyBlocksCount: Int,
-    studyPreset: StudyModePreset,
-    checklist: List<StudyChecklistItem>,
     activeTask: FocusTaskEntity?,
     queuedTasks: List<FocusTaskEntity>,
-    completedTasksCount: Int,
-    totalQueueMinutes: Int,
-    selectedProfileName: String,
-    intentionText: String,
-    totalFocusedMinutes: Int,
-    totalInterceptions: Int,
-    profiles: List<FocusProfileEntity>,
-    apps: List<BlockedAppEntity>,
-    shortsReelsSniperEnabled: Boolean,
-    browserUrlBlockerEnabled: Boolean,
     capturedNotificationsCount: Int,
     soundEngine: TactileSoundEngine? = null,
     isDarkTheme: Boolean = false,
     onDialMinutesChanged: (Int) -> Unit,
     onSelectStudyPreset: (StudyModePreset) -> Unit,
     onSetStudyBlocksCount: (Int) -> Unit,
-    onToggleChecklistItem: (Int) -> Unit,
-    onAddChecklistItem: (String) -> Unit,
     onCompleteActiveTask: (Int) -> Unit,
-    onDeferActiveTask: (Int) -> Unit,
-    onExtendActiveTaskOvertime: () -> Unit,
-    onAddQuickTaskToQueue: (String, Int) -> Unit,
     onToggleTaskSubStep: (Int, Int) -> Unit,
     onOpenTaskSequencer: () -> Unit,
-    onOpenCurioVault: () -> Unit,
-    onIntentionChanged: (String) -> Unit,
-    onProfileSelected: (FocusProfileEntity) -> Unit,
     onArmSession: () -> Unit,
     onRequestDisarm: () -> Unit,
     onCancelWithinGraceWindow: () -> Unit,
@@ -325,22 +303,31 @@ fun TactileDeckScreen(
     // the naive product understated a 3 x 50 morning by 20 minutes.
     val totalSpanMinutes = dialMinutes * studyBlocksCount + (studyBlocksCount - 1) * 10
 
+    // Issue #6 F3 (audit §3, Vega T-1/T-2/T-3 — the floored,
+    // inverted, invented fraction dies): timed progress is
+    // ELAPSED / TARGET, filling, no floors — never remaining/target
+    // born full and draining, never a 3–5% that isn't true. FLOW
+    // (stopwatch) has NO bar and NO fraction: NO END means no bar,
+    // and the old /1200 denominator was invented by the mode that
+    // denies it. Idle: no session exists, so no progress exists.
     val progressFraction = if (finishState != null) {
         if (finishState.frozenIsStopwatch) {
-            (finishState.frozenElapsedSeconds.toFloat() / 1200f).coerceIn(0.05f, 1f)
+            0f
         } else {
             val target = finishState.frozenTargetSeconds.coerceAtLeast(1)
-            (finishState.frozenDisplaySeconds.toFloat() / target.toFloat()).coerceIn(0.03f, 1f)
+            val elapsed = (target - finishState.frozenDisplaySeconds).coerceAtLeast(0)
+            (elapsed.toFloat() / target.toFloat()).coerceIn(0f, 1f)
         }
     } else if (isSessionRunning) {
         if (activeSession.isStopwatchMode) {
-            (activeSession.elapsedSeconds.toFloat() / 1200f).coerceIn(0.05f, 1f)
+            0f
         } else {
             val target = activeSession.effectiveTargetSeconds.coerceAtLeast(1)
-            (activeSession.remainingSeconds.toFloat() / target.toFloat()).coerceIn(0.03f, 1f)
+            val elapsed = (target - activeSession.remainingSeconds).coerceAtLeast(0)
+            (elapsed.toFloat() / target.toFloat()).coerceIn(0f, 1f)
         }
     } else {
-        ((dialMinutes - 5).toFloat() / 175f).coerceIn(0.04f, 1f)
+        0f
     }
 
     // =====================================================================
@@ -456,9 +443,12 @@ fun TactileDeckScreen(
     // values land one frame after the first running composition
     // instead of inside it — that frame prints UNKNOWN, which is
     // the truth until the capture exists. (The latch retirement
-    // at this same door was cured by derivation above:
-    // pressLatchLive reads null from the sealing frame on, and
-    // the LaunchedEffect(isSessionRunning) clears the storage.)
+    // at this same door was cured by derivation: pressLatchLive
+    // reads null from the sealing frame on, per E-13, and the
+    // LaunchedEffect(isSessionRunning) above clears the storage —
+    // if the slide view detached mid-refusal its onPressEnd never
+    // fires, and the latch still cannot leak across the seal,
+    // Joss review J-2.)
     LaunchedEffect(
         isSessionRunning, activeSession?.id, appsCellCount,
         appsSplit, liveWarrantState, sealFreeze?.sessionId
@@ -522,7 +512,10 @@ fun TactileDeckScreen(
     // frame (latchArmKey, stamped in onPressStart); derivations
     // read pressLatchLive, which a changed key retires on the
     // very frame the new key composes (E-13's same-frame law,
-    // kept), and the next DOWN re-stamps the key.
+    // kept — derivation, unlike a LaunchedEffect, is not one-to-
+    // two compositions late), and the next DOWN re-stamps the key.
+    // This covers the latch-frame hand-back too, which increments
+    // the same key (Joss CHARGE 2's fix).
 
     // UNA2-04: the frozen verdict owns the running BLOCK cell
     // while the wire agrees the bind held — but the instant the
@@ -530,8 +523,23 @@ fun TactileDeckScreen(
     // or HELD beside a live OFF was the audit's impossible frame:
     // one tense, true at the instant it prints.
     val blockCell = if (isSessionRunning) {
-        if (liveWarrantState == WarrantState.OFF) blockCellFor(WarrantState.OFF)
-        else blockCellFor(frozenState)
+        when {
+            liveWarrantState == WarrantState.OFF -> blockCellFor(WarrantState.OFF)
+            // Issue #6 C5(b) (wave-2 Tech-exec): the degrade was
+            // asymmetric — running BLOCK followed the wire down to
+            // OFF but never to UNPROVEN, so a lost stamp or an
+            // UNSET re-read left the frozen ON standing forever.
+            // A live UNPROVEN wire, or a read gone stale for print
+            // (UNA2-03), degrades the running cell to UNKNOWN. The
+            // frozen verdict attests the seal act; it cannot outrank
+            // the wire's present tense. (Issue #4's SealBar encodes
+            // this same row as RUNNING_UNPROVEN — lamp dark, bolt
+            // thrown.)
+            liveWarrantState == WarrantState.UNPROVEN ||
+                warrantPrintState == WarrantState.UNPROVEN ->
+                blockCellFor(WarrantState.UNPROVEN)
+            else -> blockCellFor(frozenState)
+        }
     } else idleBlockCell
     // The latch as derivations may read it: retired by the
     // seal (session running) and by any arm reset newer than
@@ -558,7 +566,6 @@ fun TactileDeckScreen(
         pressLatchLive != null -> pressLatchLive.timeText to pressLatchLive.timeDensity
         else -> idleTimeCell
     }
-    val seamMarks = seamMarksFor(deckWarrant, nowMono)
     val imprintTenant = pressLatchLive?.tenant ?: imprintTenantText(
         isSealed = isSessionRunning,
         shut = if (isSessionRunning) frozenShut else appsSplit?.shut,
@@ -621,12 +628,13 @@ fun TactileDeckScreen(
                         // whole screen every frame. The blur rides the
                         // layer's renderEffect on API 31+; below that
                         // the composition-read Modifier.blur remains
-                        // as the documented fallback.
+                        // as the documented fallback. (Issue #6 F15
+                        // stands: no translationY — the page recedes,
+                        // it does not climb.)
                         Modifier.graphicsLayer {
                             val vt = shot.vertigoT
                             scaleX = 1f - 0.06f * vt
                             scaleY = 1f - 0.06f * vt
-                            translationY = -10.dp.toPx() * vt
                             if (android.os.Build.VERSION.SDK_INT >=
                                 android.os.Build.VERSION_CODES.S
                             ) {
@@ -674,14 +682,35 @@ fun TactileDeckScreen(
                     text = when {
                         isSessionRunning && activeSession.isInSafeBreak ->
                             "BREAK · ${(activeSession.safeBreakSecondsRemaining + 59) / 60} MIN"
-                        showRunningForm -> "SESSION RUNNING"
-                        else -> "TOTAL"
+                        // Issue #6 F4: SESSION RUNNING / TOTAL were
+                        // wallpaper and die. A routine-born session
+                        // prints its name; a hand-armed running
+                        // session needs no label over its countdown.
+                        showRunningForm ->
+                            if (activeSession?.routineId != null) {
+                                "${activeSession.intention.uppercase()} · ROUTINE"
+                            } else {
+                                ""
+                            }
+                        // Idle prints the recipe — the hero's
+                        // arithmetic, explained on the face that
+                        // charges it (audit §3).
+                        else -> if (studyBlocksCount > 1) {
+                            "$studyBlocksCount × $dialMinutes + BREAKS"
+                        } else {
+                            // One block has no break (breaks live
+                            // BETWEEN blocks — totalSpanMinutes
+                            // prices (count − 1) × 10): the recipe
+                            // must not promise one (finisher pass).
+                            "$studyBlocksCount × $dialMinutes"
+                        }
                     },
                     fontFamily = AnonymousProFamily,
                     fontSize = 10.sp,
                     letterSpacing = 2.sp,
-                    color = scheme.onSurfaceVariant,
-                    style = androidx.compose.ui.text.TextStyle(shadow = if (groundNight) androidx.compose.ui.graphics.Shadow(color = androidx.compose.ui.graphics.Color.Transparent, offset = androidx.compose.ui.geometry.Offset.Zero, blurRadius = 0f) else androidx.compose.ui.graphics.Shadow(color = androidx.compose.ui.graphics.Color(0x66FFFFFF), offset = androidx.compose.ui.geometry.Offset(0f, 1f), blurRadius = 0f)),
+                    color = scheme.onSurfaceVariant
+                    // Issue #6 F10 family: the eyebrow's fake day
+                    // emboss (white 1dp shadow) dies — print is flat.
                 )
                 // The eyebrow's count is EVICTED (D9/A8): the app
                 // count's only homes are the strip's APPS cell and
@@ -713,20 +742,19 @@ fun TactileDeckScreen(
             val heroTracking = if (!showRunningForm && isStopwatchMode) (-0.5).sp else (-2.0).sp
             val heroGlyph = if (effectiveNight) Color(0xFFEDE3D8) else scheme.onBackground
             val heroShadowGhost = if (effectiveNight) Color(0x80000000) else Color(0x99D8D1CB)
-            val heroCatchGhost = if (effectiveNight) Color(0x594A423C) else Color(0xB3FAF6F0)
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = heroAnnotated,
-                    style = DialClockTextStyle.copy(color = heroShadowGhost, letterSpacing = heroTracking),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.offset(y = (-1).dp)
-                )
-                Text(
-                    text = heroAnnotated,
-                    style = DialClockTextStyle.copy(color = heroCatchGhost, letterSpacing = heroTracking),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.offset(y = 1.dp)
-                )
+                // Issue #6 F10 — SINGLE-PRESS: the catch ghost dies;
+                // ONE shadow ghost survives, and ghosts are OFF on
+                // FLOW and on the ticking readout (a press does not
+                // strike a moving target).
+                if (!showRunningForm && !isStopwatchMode) {
+                    Text(
+                        text = heroAnnotated,
+                        style = DialClockTextStyle.copy(color = heroShadowGhost, letterSpacing = heroTracking),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.offset(y = (-1).dp).clearAndSetSemantics {}
+                    )
+                }
                 Text(
                     text = heroAnnotated,
                     style = DialClockTextStyle.copy(color = heroGlyph, letterSpacing = heroTracking),
@@ -775,9 +803,9 @@ fun TactileDeckScreen(
                     // hairline edge reads pressable; active state = ink fill.
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(12.dp))
                             .background(if (isStopwatchMode) inkControlFill() else scheme.surfaceVariant)
-                            .border(1.dp, if (isStopwatchMode) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(8.dp))
+                            .border(1.dp, if (isStopwatchMode) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(12.dp))
                             .clickable {
                                 onSelectStudyPreset(StudyModePreset.STOPWATCH_FLOW)
                                 onDialMinutesChanged(5)
@@ -823,17 +851,10 @@ fun TactileDeckScreen(
                             .background(inkControlFill())
                     )
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    Text(
-                        text = "${(progressFraction * 100).toInt()}%",
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        color = scheme.onSurfaceVariant
-                    )
-                }
+                // Issue #6 F3: the % text is KILLED (audit §3,
+                // unanimous) — the track itself is the reading;
+                // a printed percent was the floored fraction's
+                // second lie. FLOW renders the empty track only.
             }
         }
 
@@ -899,7 +920,7 @@ fun TactileDeckScreen(
 
     }
         // =====================================================================
-        // SECTION 5: THE PINNED STACK (Slice D) — outside the scroll:
+        // SECTION 4: THE PINNED STACK (Slice D) — outside the scroll:
         // the proof strip, the slide's 72dp register, the reserved
         // sentence slot, and the imprint. The strip keeps its 53dp
         // address in every state; the slide zone holds the grace /
@@ -919,8 +940,12 @@ fun TactileDeckScreen(
                 appsDensity = appsCell.second,
                 timeText = timeCell.first,
                 timeDensity = timeCell.second,
-                stampLeft = seamMarks?.first,
-                stampRight = seamMarks?.second
+                // Issue #6 F8 (Deck half): the seam stamps leave
+                // the Deck — BIND/PROOF posology is the studio
+                // talking to itself in public; their receiving
+                // home is PARK (other cell, at merge).
+                stampLeft = null,
+                stampRight = null
             )
             Spacer(Modifier.height(6.dp))
             Box(
@@ -929,7 +954,15 @@ fun TactileDeckScreen(
                     .height(72.dp),
                 contentAlignment = Alignment.Center
             ) {
-                if (!isSessionRunning || shotActive || heldFinish || receiptState != null) {
+                // Issue #125 (armed-wrong F3): during the grace
+                // window the ABORT chip owns this address even while
+                // the seal shot is still detaining the slide — the
+                // free exit must not be physically absent for the
+                // first ~1050ms of its own 10s. The Δy = 0 address
+                // discipline is unchanged: same Box, same chip.
+                val graceChipDue = isSessionRunning && !heldFinish && receiptState == null &&
+                    activeSession != null && activeSession.elapsedSeconds <= 10
+                if ((!isSessionRunning || shotActive || heldFinish || receiptState != null) && !graceChipDue) {
                     // The slide holds this address through the seal
                     // (as the seated ghost), through the finish's
                     // detention, and through its own return — the
@@ -999,7 +1032,7 @@ fun TactileDeckScreen(
                             onClick = onCancelWithinGraceWindow,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(58.dp),
+                                .height(72.dp), // Issue #6 F6: the chair fills its 72dp zone in every state
                             testTag = "grace_abort_button"
                         )
                     } else {
@@ -1010,7 +1043,7 @@ fun TactileDeckScreen(
                             onClick = onRequestDisarm,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(58.dp),
+                                .height(72.dp), // Issue #6 F6: the chair fills its 72dp zone in every state
                             testTag = "request_disarm_button"
                         )
                     }
@@ -1062,7 +1095,6 @@ fun TactileDeckScreen(
     }
 }
 
-
 /**
  * SECTION 2 as its own composition scope (issue #50 F3/F5):
  * the seal-shot's exitPhase ticks recompose this section only,
@@ -1080,11 +1112,10 @@ private fun DeckTaskSection(
     onToggleTaskSubStep: (Int, Int) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
-
-        // Issue #50 F5 cure: keyed on the task id — a new active
+    // Issue #50 F5 cure: keyed on the task id — a new active
     // task never inherits the previous task's expansion state.
     var stepsExpanded by remember(task.id) { mutableStateOf(false) }
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1124,9 +1155,9 @@ private fun DeckTaskSection(
                 // slide merge over this lane's older Deck.)
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(12.dp))
                         .background(scheme.surfaceVariant)
-                        .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                        .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
                         // Input death (Zug-II §4.6): the task
                         // verbs' HANDLERS are removed by state
                         // during the shot — not greyed, gone.
@@ -1192,8 +1223,8 @@ private fun DeckTaskSection(
                     }
                 }
             }
-        }
     }
+}
 
 /**
  * Slice E (Zug-II §5.3): the seal shot's ONE state object per

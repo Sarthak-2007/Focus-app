@@ -48,11 +48,14 @@ data class SystemGuardStatus(
     val isAccessibilityServiceEnabled: Boolean = false,
     val isNotificationListenerEnabled: Boolean = false,
     val isDeviceAdminEnabled: Boolean = false,
-    val isMonotonicClockIntact: Boolean = true,
-    val isHmacSignatureValid: Boolean = true,
+    // Issue #28: unmeasured is NOT intact. The old defaults (true /
+    // true / 1 / 12) let every surface print security facts that
+    // were never checked. Unknown now reads as unknown.
+    val isMonotonicClockIntact: Boolean = false,
+    val isHmacSignatureValid: Boolean = false,
     val clockDriftSeconds: Long = 0L,
-    val systemBootCount: Int = 1,
-    val installedLauncherAppsCount: Int = 12
+    val systemBootCount: Int = 0,
+    val installedLauncherAppsCount: Int = 0
 ) {
     val readinessCount: Int
         get() = listOf(
@@ -174,6 +177,13 @@ class MonolithRepository(
         const val SEAL_MARKER_SESSION_KEY = "sealed_session_id"
         const val SEAL_MARKER_WALL_KEY = "sealed_wall_ms"
 
+        /** Issue #48: EVERY sealed session's id, as a string set.
+         *  The single int above is one slot — sealing a second
+         *  session used to erase the first session's only on-disk
+         *  proof. The int stays as the latest-seal witness (ESR-02,
+         *  older readers); this set is the complete record. */
+        const val SEAL_MARKER_SESSIONS_KEY = "sealed_session_ids"
+
         /** The prune note's prefs home (Ordner lane, Mikro M5): a
          *  record of what the catalog reconcile removed, kept until
          *  Shield has shown it once. Prefs, not Room — announcing a
@@ -188,6 +198,20 @@ class MonolithRepository(
     fun sealedSessionIdFromMarker(): Int =
         context.getSharedPreferences(SEAL_PREFS_NAME, Context.MODE_PRIVATE)
             .getInt(SEAL_MARKER_SESSION_KEY, -1)
+
+    /** Every session the seal marker testifies for (issue #48):
+     *  the persisted id set, unioned with the legacy single-slot
+     *  int, so a seal landed by an older build — which wrote only
+     *  the int — still testifies. */
+    fun sealedSessionIdsFromMarker(): Set<Int> {
+        val prefs = context.getSharedPreferences(SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+        val fromSet = prefs.getStringSet(SEAL_MARKER_SESSIONS_KEY, emptySet())
+            .orEmpty()
+            .mapNotNull { it.toIntOrNull() }
+            .toSet()
+        val legacy = prefs.getInt(SEAL_MARKER_SESSION_KEY, -1)
+        return if (legacy >= 0) fromSet + legacy else fromSet
+    }
 
     suspend fun ensureSeededAndSyncPackages() = withContext(Dispatchers.IO) {
         seedMutex.withLock {
@@ -511,22 +535,13 @@ class MonolithRepository(
         editor.apply()
     }
 
-    private fun categorizePackage(pkg: String, label: String): AppCategory {
-        val lower = "$pkg $label".lowercase()
-        return when {
-            lower.contains("tiktok") || lower.contains("youtube") || lower.contains("instagram") || lower.contains("reel") ->
-                AppCategory.SHORT_VIDEO
-            lower.contains("twitter") || lower.contains("reddit") || lower.contains("snapchat") || lower.contains("facebook") ->
-                AppCategory.SOCIAL
-            lower.contains("game") || lower.contains("clash") || lower.contains("roblox") || lower.contains("play") ->
-                AppCategory.GAMES
-            lower.contains("whatsapp") || lower.contains("discord") || lower.contains("telegram") || lower.contains("message") ->
-                AppCategory.MESSAGING
-            lower.contains("chrome") || lower.contains("browser") || lower.contains("firefox") || lower.contains("brave") ->
-                AppCategory.BROWSERS
-            else -> AppCategory.SHOPPING
-        }
-    }
+    // Issue #132: classification lives in the pure AppCategorizer
+    // (AppCatalogReconcile.kt) so it is unit-testable; this stays
+    // as the reconcile's categorize seam. (Issue #107's top-level
+    // categorizePackage in the same file delegates to it too —
+    // one classifier, two seams, no drift.)
+    private fun categorizePackage(pkg: String, label: String): AppCategory =
+        AppCategorizer.categorize(pkg, label)
 
     fun queryRealTodayUsageMinutes(): Map<String, Int> {
         if (!hasUsageStatsPermission()) return emptyMap()
@@ -723,7 +738,11 @@ class MonolithRepository(
     }
 
     /**
-     * Tamper-Proof Monotonic Clock + Boot Count + Hardware Keystore HMAC Verification:
+     * Tamper-Proof Monotonic Clock + Boot Count + Keystore HMAC Verification
+     * (keys are requested from the AndroidKeyStore; hardware/TEE backing is
+     * not verified — no StrongBox request, no KeyInfo security-level check —
+     * and signing falls back to a built-in software key when the KeyStore is
+     * unavailable; audit R1 #36 finding 4, substance parked as decision #21):
      * 1. Cross-checks wall-clock elapsed time against hardware `SystemClock.elapsedRealtime()` and `BOOT_COUNT`.
      *    Advancing the phone's system clock forward by +2 hours is ignored because elapsed time is anchored to
      *    `SystemClock.elapsedRealtime()`.
@@ -759,8 +778,11 @@ class MonolithRepository(
 
     suspend fun getSystemGuardStatus(): SystemGuardStatus = withContext(Dispatchers.IO) {
         val active = dao.getActiveSessionSnapshot()
-        var clockIntact = true
-        var hmacIntact = true
+        // Issue #28: with no active session there is nothing to
+        // measure against — intact stays false (unproven), never
+        // a free pass printed as a fact.
+        var clockIntact = false
+        var hmacIntact = false
         var driftSeconds = 0L
 
         if (active != null) {
@@ -829,7 +851,9 @@ class MonolithRepository(
         dao.getGuardSettingsSnapshot()?.shortsReelsSniperEnabled ?: true
 
     suspend fun updateRoutine(routine: RoutineEntity) {
-        dao.updateRoutine(routine)
+        // Issue #32 F2: THE routine write funnel (ViewModel's
+        // persistRoutine routes here) — sanitize at the boundary.
+        dao.updateRoutine(routine.sanitized())
     }
 
     /** Guard settings as a flow (reset-note strip + tick stamps). */
@@ -1126,47 +1150,33 @@ class MonolithRepository(
     suspend fun applySmartLoadout(loadout: SmartLoadout) = withContext(Dispatchers.IO) {
         val allApps = dao.getAllAppsSnapshot()
         val updated = allApps.map { app ->
-            val lower = "${app.packageName} ${app.appName}".lowercase()
-            val tier = when (loadout) {
-                SmartLoadout.STUDY -> {
-                    when {
-                        lower.contains("youtube") || lower.contains("chrome") || app.category == AppCategory.MESSAGING.name ->
-                            AppBlockTier.PEEK_2M
-                        app.category == AppCategory.SHORT_VIDEO.name ||
-                            app.category == AppCategory.SOCIAL.name ||
-                            app.category == AppCategory.GAMES.name ->
-                            AppBlockTier.LOCKED
-                        else -> AppBlockTier.OPEN
-                    }
-                }
-                SmartLoadout.WORK_SPRINT -> {
-                    when {
-                        app.category == AppCategory.SHORT_VIDEO.name ||
-                            app.category == AppCategory.GAMES.name ->
-                            AppBlockTier.LOCKED
-                        app.category == AppCategory.SOCIAL.name ->
-                            AppBlockTier.PEEK_2M
-                        else -> AppBlockTier.OPEN
-                    }
-                }
-                SmartLoadout.SLEEP -> {
-                    if (lower.contains("dialer") || lower.contains("phone") ||
-                        lower.contains("clock") || lower.contains("alarm") ||
-                        lower.contains("maps")
-                    ) {
-                        AppBlockTier.OPEN
-                    } else {
-                        AppBlockTier.LOCKED
-                    }
-                }
-            }
-            app.copy(
-                isBlocked = tier != AppBlockTier.OPEN,
-                blockTier = tier.name
-            )
+            // Issue #107: the tier rule is LoadoutRules.tierFor —
+            // the same pure function the Shield preview prints its
+            // counts from, so preview and commit can never diverge
+            // (its rules are the exact rules this function used to
+            // inline). Issue #32 F4: set the tier ONLY; normalized()
+            // derives isBlocked from it at the single derivation point.
+            val tier = LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category)
+            app.copy(blockTier = tier.name).normalized()
         }
         dao.insertApps(updated)
     }
+
+    /**
+     * Issue #107 (shield-setup-lived #3): the user's correction of
+     * the category guess. The category is an existing column on the
+     * app row — correcting it is a plain row update, no schema
+     * change. The corrected category then drives birth tiers,
+     * filters and loadouts like any other fact.
+     */
+    suspend fun setAppCategory(packageName: String, category: AppCategory) =
+        withContext(Dispatchers.IO) {
+            val app = dao.getAllAppsSnapshot()
+                .firstOrNull { it.packageName == packageName } ?: return@withContext
+            if (app.category != category.name) {
+                dao.updateApp(app.copy(category = category.name))
+            }
+        }
 
     /**
      * Enforces the Mandatory 20-Minute Cooldown per package using `SystemClock.elapsedRealtime()`:
@@ -1179,6 +1189,21 @@ class MonolithRepository(
         if (anchorEndMono <= 0L) return 0
         val remainingMs = (anchorEndMono + PEEK_COOLDOWN_MILLIS - nowMono).coerceAtMost(PEEK_COOLDOWN_MILLIS)
         return if (remainingMs > 0L) (remainingMs / 1000L).toInt() else 0
+    }
+
+    /**
+     * Issue #55: the cooldown's absolute deadline in the SAME
+     * monotonic domain the lease machinery uses
+     * (`SystemClock.elapsedRealtime()`), or 0 when no cooldown is
+     * armed. The airlock overlay derives its remaining time from
+     * this instant with ceiling math — never from a locally
+     * reconstructed wall-clock deadline, which could unlock the
+     * peek before this repository would grant it.
+     */
+    fun getPeekCooldownDeadlineMono(app: BlockedAppEntity): Long {
+        val anchorEndMono = max(app.lastPeekEndElapsedRealtime, app.activePeekUntilElapsedRealtime)
+        if (anchorEndMono <= 0L) return 0L
+        return anchorEndMono + PEEK_COOLDOWN_MILLIS
     }
 
     suspend fun getPeekCooldownRemainingSeconds(packageName: String): Int {
@@ -1255,7 +1280,11 @@ class MonolithRepository(
                 app.category == AppCategory.MESSAGING.name -> AppBlockTier.PEEK_2M
                 else -> AppBlockTier.LOCKED
             }
-            app.copy(isBlocked = shouldBlock, blockTier = tier.name)
+            // Issue #32 F4: tier is the truth; isBlocked is derived
+            // by normalized() — note shouldBlock (category match) and
+            // tier != OPEN can differ for MESSAGING (PEEK), and the
+            // tier is what enforcement reads, so the tier wins.
+            app.copy(blockTier = tier.name).normalized()
         }
         dao.insertApps(updated)
     }
@@ -1302,7 +1331,7 @@ class MonolithRepository(
                 startMinute = 0,
                 endHour = endHour,
                 endMinute = 0
-            )
+            ).sanitized() // Issue #32 F2: write-boundary sanitize
         )
     }
 
@@ -1372,7 +1401,7 @@ class MonolithRepository(
             // E1: the window is open and his kit is on (Sten §1.6.1).
             // first/last evidence stamps stay 0 until E2/E4 land.
             evidenceMask = if (routineId != null) EVIDENCE_E1_START else 0
-        )
+        ).sanitized() // Issue #32 F2: write-boundary sanitize (startSession funnel)
         // Slice E (Fader's writer law): the held counts are captured
         // INSIDE the birth transaction, from the same snapshot that
         // deactivates the predecessor — the set the shield will
@@ -2443,7 +2472,9 @@ class MonolithRepository(
 
     suspend fun addTaskToQueue(
         title: String,
-        estimatedMinutes: Int = 25,
+        // Issue #32 F1: default 0 = no estimate given (was 25, which
+        // fabricated an estimate for every caller that omitted it).
+        estimatedMinutes: Int = 0,
         categoryTag: String = "Study",
         notesOrSubsteps: String = "",
         promoteToActive: Boolean = false

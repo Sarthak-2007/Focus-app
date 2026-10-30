@@ -12,11 +12,39 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
+/** Notification.CATEGORY_TRANSPORT's value (media playback). */
+internal const val MEDIA_TRANSPORT_CATEGORY = "transport"
+
+/** Notification.EXTRA_TEMPLATE value for a media-style notification. */
+internal const val MEDIA_STYLE_TEMPLATE = "android.app.Notification\$MediaStyle"
+
+/**
+ * Issue #132 (music-during-focus): a media PLAYBACK notification
+ * is not a held message — it is the player's transport controls
+ * (pause / skip), and its "text" is a song title, not a message.
+ * Identified only by markers the posting app itself supplies:
+ * the transport category, a media-session token in the extras,
+ * or the MediaStyle template. Pure, so the exemption is
+ * unit-testable without a Notification instance. A player's
+ * OTHER notifications (a new-episode promo with none of these
+ * markers) are not exempt and are still held as before.
+ */
+internal fun isMediaPlaybackNotification(
+    category: String?,
+    hasMediaSession: Boolean,
+    template: String?
+): Boolean =
+    category == MEDIA_TRANSPORT_CATEGORY || hasMediaSession || template == MEDIA_STYLE_TEMPLATE
+
 /**
  * Silent Notification Catcher & Persistent Digest:
  * - Intercepts and suppresses notifications from blocked apps during active sessions.
  * - Explicitly excludes incoming phone/VoIP call notifications (Notification.CATEGORY_CALL)
  *   so urgent calls are never suppressed.
+ * - Explicitly excludes media playback notifications (see
+ *   [isMediaPlaybackNotification]): a song is not a message, and
+ *   cancelling the notification would strip the player's
+ *   pause/skip controls from the shade and lock screen.
  * - Saves captured notifications to Room persistent disk storage so they survive background
  *   restarts and can be read, cleared, or tapped to open after studying.
  */
@@ -35,6 +63,7 @@ class MonolithNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         instance = this
+        WatchStore.bind(applicationContext)
         WatchStore.onNotificationListenerBound(true)
     }
 
@@ -58,6 +87,20 @@ class MonolithNotificationListener : NotificationListenerService() {
         // Never suppress incoming cellular or VoIP call notifications
         if (notification.category == Notification.CATEGORY_CALL ||
             notification.category == Notification.CATEGORY_ALARM
+        ) {
+            return
+        }
+
+        // Never suppress media playback (Issue #132): the
+        // notification IS the player's pause/skip controls, not a
+        // message to hold for the digest — at any tier.
+        if (isMediaPlaybackNotification(
+                category = notification.category,
+                hasMediaSession = notification.extras
+                    ?.containsKey(Notification.EXTRA_MEDIA_SESSION) == true,
+                template = notification.extras
+                    ?.getString(Notification.EXTRA_TEMPLATE)
+            )
         ) {
             return
         }
