@@ -66,6 +66,9 @@ import com.example.service.WatchStore
 import com.example.ui.MonolithDestination
 import com.example.ui.ArmPhase
 import com.example.ui.MonolithViewModel
+import com.example.ui.BreakDimScrim
+import com.example.ui.nightDesaturate
+import com.example.ui.rememberBreakDimAlpha
 import com.example.ui.components.AirlockInterceptOverlay
 import com.example.ui.components.BlockitActionChip
 import com.example.ui.components.AlwaysOnDeskClockOverlay
@@ -426,6 +429,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val receiptState by viewModel.receiptState.collectAsStateWithLifecycle()
     val lastReceiptSessionId by viewModel.lastReceiptSessionId.collectAsStateWithLifecycle()
     val isAlwaysOnDeskClockVisible by viewModel.isAlwaysOnDeskClockVisible.collectAsStateWithLifecycle()
+    // Issue #143 F4: the DND gate's line for the Deck.
+    val dndLine by viewModel.dndLine.collectAsStateWithLifecycle()
+    // Issue #143 F1/F5/F6: the shield loop's published break-dim
+    // phase — the descent into the break and the fade out of it.
+    val breakDimState by MonolithShieldService.breakDim.collectAsStateWithLifecycle()
+    val breakDimAlpha = rememberBreakDimAlpha(breakDimState)
     val burnInFigure8MinuteStep by viewModel.burnInFigure8MinuteStep.collectAsStateWithLifecycle()
     val showNotificationDigestSheet by viewModel.showNotificationDigestSheet.collectAsStateWithLifecycle()
     val capturedNotifications by viewModel.capturedNotifications.collectAsStateWithLifecycle()
@@ -799,6 +808,48 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         }
     }
 
+    // Issue #143 F6: the window's own brightness rides the same
+    // dim progression — the palette was never the only lever, and
+    // on an LCD the backlight is the light. While the dim is up,
+    // this window's brightness steps down with it; at rest (and on
+    // dispose) the override is released back to the system value
+    // the user set. Scoped to Monolith's window only — nothing
+    // here touches the device-wide brightness.
+    val rootView = androidx.compose.ui.platform.LocalView.current
+    androidx.compose.runtime.DisposableEffect(rootView) {
+        onDispose {
+            var ctx: android.content.Context? = rootView.context
+            var activity: android.app.Activity? = null
+            while (ctx is android.content.ContextWrapper) {
+                if (ctx is android.app.Activity) { activity = ctx; break }
+                ctx = ctx.baseContext
+            }
+            activity?.window?.let { window ->
+                val attrs = window.attributes
+                attrs.screenBrightness =
+                    android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                window.attributes = attrs
+            }
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(breakDimAlpha, rootView) {
+        var ctx: android.content.Context? = rootView.context
+        var activity: android.app.Activity? = null
+        while (ctx is android.content.ContextWrapper) {
+            if (ctx is android.app.Activity) { activity = ctx; break }
+            ctx = ctx.baseContext
+        }
+        activity?.window?.let { window ->
+            val attrs = window.attributes
+            attrs.screenBrightness = if (breakDimAlpha > 0.001f) {
+                com.example.data.NightDimMath.windowBrightnessForDim(breakDimAlpha)
+            } else {
+                android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+            window.attributes = attrs
+        }
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
@@ -808,6 +859,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                // Issue #143 F5: while the break dim is up, the
+                // whole room drains toward monochrome on the dim's
+                // own curve — night/sealed surfaces only in effect,
+                // because the dim itself only exists inside a
+                // sealed session's break and its fade.
+                .nightDesaturate(
+                    com.example.data.NightDimMath.saturationForDim(breakDimAlpha)
+                )
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // The header band (chrome C2): brand + Guard line.
@@ -902,6 +961,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onOpenNotificationDigest = { viewModel.toggleNotificationDigestSheet(true) },
                                     onEndSafeBreak = { viewModel.endSafeBreakEarly() },
                                     onExtendSession = viewModel::extendActiveSession,
+                                    dndLine = dndLine,
                                     weeklyEmergencyTokensRemaining = weeklyEmergencyTokensRemaining,
                                     appsCellCount = appsCellCount,
                                     appsSplit = appsSplit,
@@ -1317,7 +1377,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 activeTask = activeTask,
                 dialMinutes = dialMinutes,
                 burnInStep = burnInFigure8MinuteStep,
-                onDismiss = { viewModel.toggleAlwaysOnDeskClock(false) }
+                onDismiss = { viewModel.toggleAlwaysOnDeskClock(false) },
+                dimAlpha = breakDimAlpha
             )
 
             // The digest renders the sealed snapshot whenever a
@@ -1557,6 +1618,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onCompleteDisarm = { viewModel.completeEmergencyBreakFromValve() },
                 onHoldStarted = viewModel::recordValveHoldStarted
             )
+
+            // Issue #143 F1/F6: the break dim stands over the
+            // whole room — topmost, and strictly visual (no
+            // pointer handlers): the descent into the break and
+            // the fade out at its end. Everything beneath it —
+            // Deck, desk clock, the Yield sheet — stays tappable;
+            // only the light is taken away.
+            BreakDimScrim(alpha = breakDimAlpha)
 
         }
     }
