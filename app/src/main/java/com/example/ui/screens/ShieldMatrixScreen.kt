@@ -112,6 +112,9 @@ fun ShieldMatrixScreen(
     onSearchQueryChanged: (String) -> Unit,
     onSelectCategory: (AppCategory?) -> Unit,
     onSetAppTier: (String, AppBlockTier) -> Unit,
+    // Issue #140: the catalogue row's hold gesture steps the app's
+    // daily limit (the limit is printed on the row; the hold sets it).
+    onCycleDailyLimit: (BlockedAppEntity) -> Unit = {},
     onApplySmartLoadout: (SmartLoadout) -> Unit,
     // Issue #107 (#3): correct the category printed on a catalogue
     // row. Default no-op for render harnesses and previews.
@@ -717,6 +720,7 @@ fun ShieldMatrixScreen(
                 effectiveNight = effectiveNight,
                 soundEngine = soundEngine,
                 onSetAppTier = onSetAppTier,
+                onCycleDailyLimit = onCycleDailyLimit,
                 onSetAppCategory = onSetAppCategory
             )
         }
@@ -1484,6 +1488,7 @@ private fun CatalogueAppRow(
     effectiveNight: Boolean,
     soundEngine: TactileSoundEngine?,
     onSetAppTier: (String, AppBlockTier) -> Unit,
+    onCycleDailyLimit: (BlockedAppEntity) -> Unit = {},
     onSetAppCategory: (String, AppCategory) -> Unit = { _, _ -> }
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -1502,6 +1507,11 @@ private fun CatalogueAppRow(
                 view.soundEngine = soundEngine
                 view.appName = app.appName
                 view.currentTier = app.resolvedTier
+                // Issue #140: the daily limit, printed on the row,
+                // and the hold that steps it — see MonolithViewModel
+                // .cycleAppDailyLimit.
+                view.usageCaption = "USED ${app.todayUsageMinutes} OF ${app.dailyLimitMinutes} MIN TODAY"
+                view.onDailyLimitLongPress = { onCycleDailyLimit(app) }
                 view.onTierSelected = { newTier ->
                     onSetAppTier(app.packageName, newTier)
                 }
