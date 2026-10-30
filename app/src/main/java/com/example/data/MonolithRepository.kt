@@ -1982,6 +1982,9 @@ class MonolithRepository(
                         }
                     )
                 )
+                // #152 residue: witness the end zone at this
+                // ending write (see captureEndZone).
+                captureEndZone(session.endWallMillis, session.windowEndMillis)
             }
             return@withContext null
         }
@@ -2017,6 +2020,8 @@ class MonolithRepository(
                 }
             )
         )
+        // #152 residue: witness the end zone at this ending write.
+        captureEndZone(session.endWallMillis, nowMillis)
         outcome.name
     }
 
@@ -2039,6 +2044,8 @@ class MonolithRepository(
                     }
                 )
             )
+            // #152 residue: witness the end zone at this ending write.
+            captureEndZone(session.endWallMillis, session.windowEndMillis)
         }
     }
 
@@ -3126,7 +3133,8 @@ class MonolithRepository(
             forgedArtifactName = pending.forgedArtifactName,
             heldShutAtSeal = pending.heldShutAtSeal,
             heldPeekAtSeal = pending.heldPeekAtSeal,
-            armZoneId = armZoneStore.zoneFor(pending.armWallMs)
+            armZoneId = armZoneStore.zoneFor(pending.armWallMs),
+            endZoneId = armZoneStore.endZoneFor(pending.endedAtWallMs)
         )
     }
 
@@ -3269,7 +3277,8 @@ class MonolithRepository(
             forgedArtifactName = pending.forgedArtifactName,
             heldShutAtSeal = pending.heldShutAtSeal,
             heldPeekAtSeal = pending.heldPeekAtSeal,
-            armZoneId = armZoneStore.zoneFor(pending.armWallMs)
+            armZoneId = armZoneStore.zoneFor(pending.armWallMs),
+            endZoneId = armZoneStore.endZoneFor(pending.endedAtWallMs)
         )
     }
 
@@ -3700,6 +3709,9 @@ class MonolithRepository(
                     }
                 )
                 dao.updateSession(capped)
+                // #152 residue: witness the end zone at this
+                // ending write (keyed by the stamped end itself).
+                captureEndZone(session.endWallMillis, capped.endWallMillis)
                 return capped
             }
             val updated = session.copy(
@@ -3893,6 +3905,9 @@ class MonolithRepository(
             }
         )
         dao.updateSession(updated)
+        // #152 residue: witness the end zone at this ending write
+        // (a no-op unless this tick first-stamped the end).
+        captureEndZone(session.endWallMillis, updated.endWallMillis)
         // #129 F3: book the exposure names at the stamping write
         // (first stamp only — a re-tick of an ended row must not
         // book them twice). The rows ride the intercept log under
@@ -4125,6 +4140,13 @@ class MonolithRepository(
             // Issue #287 F5: the routine-break door stamps the
             // culprit too — same ending-write law as the manual door.
             val (causePackage, causeKind) = failureCauseFor(active, "EMERGENCY_VALVE")
+            // #152 residue: the stamped end is computed once so
+            // the end-zone witness keys on the exact same instant.
+            val endStamp = if (active.endWallMillis == 0L) {
+                System.currentTimeMillis()
+            } else {
+                active.endWallMillis
+            }
             dao.updateSession(
                 active.copy(
                     elapsedSeconds = active.elapsedSeconds,
@@ -4136,13 +4158,10 @@ class MonolithRepository(
                     failureCauseKind = causeKind,
                     // RC-01: an ending write (unpublishable, but
                     // the row's end is the row's end).
-                    endWallMillis = if (active.endWallMillis == 0L) {
-                        System.currentTimeMillis()
-                    } else {
-                        active.endWallMillis
-                    }
+                    endWallMillis = endStamp
                 )
             )
+            captureEndZone(active.endWallMillis, endStamp)
             return
         }
         val routine = dao.getRoutineById(active.routineId)
@@ -4332,6 +4351,9 @@ class MonolithRepository(
                 )
             }
         }
+        // #152 residue: witness the end zone at this ending write
+        // (keyed by the disarmed row's stamped end itself).
+        captureEndZone(active.endWallMillis, disarmed.endWallMillis)
     }
 
     /**
@@ -4911,7 +4933,9 @@ class MonolithRepository(
     private val dayWordStore by lazy { DayWordStore(context) }
 
     /** Issue #152: the arm-zone capture for receipts (see
-     *  ArmZoneStore). Written at the one birth funnel below. */
+     *  ArmZoneStore). Written at the one birth funnel below.
+     *  Issue #152 residue: the same store's end slot carries the
+     *  end-zone witness — see [captureEndZone]. */
     private val armZoneStore by lazy { ArmZoneStore(context) }
 
     fun dayWords(): Map<String, String> = dayWordStore.all()
@@ -4932,6 +4956,22 @@ class MonolithRepository(
      *  never be undeclared. The table row is deleted only when the
      *  prefs removal committed — if that failed, nothing about the
      *  clear is presented as done. */
+    /** Issue #152 residue: capture the zone a session is ending
+     *  in, at the ending write itself — first stamp only, in the
+     *  same act that first stamps the row's endWallMillis. Every
+     *  ending write that stamps an end instant calls this with
+     *  the row's pre-write end (0 = unstamped) and the stamped
+     *  end, so the witness can never name a zone for an end that
+     *  was stamped earlier, in another zone. The witness lives
+     *  in the SAME store as the arm witness (ArmZoneStore's end
+     *  slot, keyed by the end instant) — no new store, no schema
+     *  change. */
+    private fun captureEndZone(endBefore: Long, stampedEnd: Long) {
+        if (endBefore == 0L && stampedEnd > 0L) {
+            armZoneStore.putEnd(stampedEnd, java.time.ZoneId.systemDefault().id)
+        }
+    }
+
     suspend fun declareDayWord(dateIso: String, word: String?): Boolean {
         // Issue #152 (honest-travel-day F1): never rewrite a past
         // day across a landing. Filing dates are local, so after a
@@ -4945,14 +4985,23 @@ class MonolithRepository(
         // as declared). Same-zone changes stay free all day, and
         // words with no zone witness (declared before the witness
         // existed) are not refused on a guess.
-        if (word != null) {
-            val existing = allDayWords()[dateIso]
-            val witnessedZone = dayWordStore.declaredZone(dateIso)
-            if (existing != null && existing != word && witnessedZone != null &&
-                witnessedZone != java.time.ZoneId.systemDefault().id
-            ) {
-                return false
-            }
+        //
+        // Issue #152 residue (reopened): the refusal covers a
+        // CLEAR too. The original guard fired only when
+        // `word != null`, so a witnessed past day's word could
+        // still be DELETED across a landing — a rewrite of the
+        // past day by erasure, the same lie by the other door.
+        // Clearing a witnessed past day from a different zone is
+        // refused identically. A same-word re-declare is NOT a
+        // rewrite and stays lawful — and DayWordStore.put now
+        // keeps the original witness for it, so it cannot launder
+        // the date into the arrival zone either.
+        val existing = allDayWords()[dateIso]
+        val witnessedZone = dayWordStore.declaredZone(dateIso)
+        val crossZone = witnessedZone != null &&
+            witnessedZone != java.time.ZoneId.systemDefault().id
+        if (existing != null && crossZone && word != existing) {
+            return false
         }
         val committed = dayWordStore.put(dateIso, word)
         if (committed && word == null) {

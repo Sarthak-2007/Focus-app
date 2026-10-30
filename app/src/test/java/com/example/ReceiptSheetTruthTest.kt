@@ -95,7 +95,9 @@ class ReceiptSheetTruthTest {
         heldSitesAtSeal: Int = -1,
         heldShutAtSeal: Int = -1,
         heldPeekAtSeal: Int = -1,
-        deflections: List<ReceiptDeflection> = emptyList()
+        deflections: List<ReceiptDeflection> = emptyList(),
+        armZoneId: String? = null,
+        endZoneId: String? = null
     ) = ReceiptState(
         sessionId = 57,
         number = 57,
@@ -116,7 +118,9 @@ class ReceiptSheetTruthTest {
         restored = true,
         receiptPublishedMonoMs = 0L,
         heldShutAtSeal = heldShutAtSeal,
-        heldPeekAtSeal = heldPeekAtSeal
+        heldPeekAtSeal = heldPeekAtSeal,
+        armZoneId = armZoneId,
+        endZoneId = endZoneId
     )
 
     private fun show(state: ReceiptState, onDismiss: () -> Unit = {}) {
@@ -273,6 +277,40 @@ class ReceiptSheetTruthTest {
         composeRule
             .onNodeWithText("ARMED ${dayLabel(wall(9, 0))}", substring = true)
             .assertDoesNotExist()
+    }
+
+    @Test
+    fun ended_printsInItsWitnessedZone_whenReadInAThirdZone() {
+        // Issue #152 residue: armed in Kolkata, ended in London,
+        // the slip is re-issued in New York. ENDED must print the
+        // London wall time it was lived in, with London's offset —
+        // before the end-zone witness existed it silently
+        // re-rendered in the render zone (00:20, New York).
+        val original = java.util.TimeZone.getDefault()
+        try {
+            java.util.TimeZone.setDefault(
+                java.util.TimeZone.getTimeZone("America/New_York")
+            )
+            val arm = java.time.Instant.parse("2026-10-26T03:30:00Z").toEpochMilli()
+            val end = java.time.Instant.parse("2026-10-26T04:20:00Z").toEpochMilli()
+            show(
+                receipt(
+                    arm, end,
+                    armZoneId = "Asia/Kolkata", endZoneId = "Europe/London"
+                )
+            )
+            val armDay = dayLabel(arm, java.time.ZoneId.of("Asia/Kolkata"))
+            val endDay = dayLabel(end, java.time.ZoneId.of("Europe/London"))
+            composeRule.onNodeWithText("ARMED $armDay 09:00 (+05:30)", substring = true)
+                .assertIsDisplayed()
+            composeRule.onNodeWithText("ENDED $endDay 04:20 (+00:00)", substring = true)
+                .assertIsDisplayed()
+            // The render-zone re-render of the end must not exist.
+            composeRule.onNodeWithText("ENDED ${dayLabel(end)} 00:20", substring = true)
+                .assertDoesNotExist()
+        } finally {
+            java.util.TimeZone.setDefault(original)
+        }
     }
 
     @Test
