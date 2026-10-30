@@ -2,6 +2,8 @@ package com.example.data
 
 import android.app.AppOpsManager
 import android.app.admin.DevicePolicyManager
+import android.app.usage.UsageEvents
+import android.app.usage.UsageStats
 import android.app.usage.UsageStatsManager
 import android.content.ComponentName
 import android.content.Context
@@ -874,12 +876,84 @@ class MonolithRepository(
                 .filter { it.packageName in expiredPeekPackages && it.packageName in blockedPackages }
                 .maxByOrNull { it.lastTimeUsed }
             if (expiredHit != null) return expiredHit.packageName
-            val recent = stats
-                .filter { it.packageName in blockedPackages && it.lastTimeUsed >= (end - 8_000L) }
-                .maxByOrNull { it.lastTimeUsed }
-            recent?.packageName
+            // Issue #295 F2: the foreground is DERIVED from the real
+            // UsageEvents stream (ACTIVITY_RESUMED / PAUSED
+            // transitions replayed in time order) instead of guessed
+            // from lastTimeUsed recency. When the stream names a
+            // foreground — blocked or not — that answer stands and
+            // the recency guess is never consulted: a guess must not
+            // override a known foreground, or the shield intercepts
+            // an app the user has already left. The lastTimeUsed
+            // path remains only as the fallback for a stream that
+            // names no foreground (ForegroundEventDerivation carries
+            // the pure law).
+            val events = queryForegroundEvents(usm, end)
+            if (events != null) {
+                ForegroundEventDerivation.selectBlockedForeground(events, blockedPackages) {
+                    lastTimeUsedForeground(stats, blockedPackages, end)
+                }
+            } else {
+                lastTimeUsedForeground(stats, blockedPackages, end)
+            }
         } catch (e: Exception) {
             swallow("queryForegroundBlockedApp", e)
+            null
+        }
+    }
+
+    /** The pre-#295 foreground guess, kept as the fallback for a
+     *  stream that names no foreground: the blocked package with
+     *  the newest lastTimeUsed inside an 8-second freshness
+     *  window. Behaviour identical to the old inline path. */
+    private fun lastTimeUsedForeground(
+        stats: List<UsageStats>,
+        blockedPackages: Set<String>,
+        end: Long
+    ): String? {
+        val recent = stats
+            .filter { it.packageName in blockedPackages && it.lastTimeUsed >= (end - 8_000L) }
+            .maxByOrNull { it.lastTimeUsed }
+        return recent?.packageName
+    }
+
+    /**
+     * Issue #295 F2: the UsageEvents transition stream over the
+     * derivation window, mapped onto the pure
+     * [ForegroundEventSample] vocabulary. Returns null when the
+     * event query itself is unavailable (the caller then uses the
+     * lastTimeUsed fallback directly); an empty list means the
+     * stream was readable but held no transitions, which the
+     * derivation law also treats as "no derived foreground".
+     * MOVE_TO_FOREGROUND / MOVE_TO_BACKGROUND are the pre-API-29
+     * names of the same transitions and are mapped identically.
+     * No new permission: PACKAGE_USAGE_STATS is already held.
+     */
+    private fun queryForegroundEvents(
+        usm: UsageStatsManager,
+        end: Long
+    ): List<ForegroundEventSample>? {
+        return try {
+            val usageEvents = usm.queryEvents(
+                end - ForegroundEventDerivation.EVENT_WINDOW_MS, end
+            ) ?: return null
+            val event = UsageEvents.Event()
+            val samples = ArrayList<ForegroundEventSample>()
+            while (usageEvents.hasNextEvent()) {
+                usageEvents.getNextEvent(event)
+                val transition = when (event.eventType) {
+                    UsageEvents.Event.ACTIVITY_RESUMED,
+                    UsageEvents.Event.MOVE_TO_FOREGROUND -> ForegroundTransition.RESUMED
+                    UsageEvents.Event.ACTIVITY_PAUSED -> ForegroundTransition.PAUSED
+                    UsageEvents.Event.ACTIVITY_STOPPED,
+                    UsageEvents.Event.MOVE_TO_BACKGROUND -> ForegroundTransition.STOPPED
+                    else -> null
+                } ?: continue
+                val pkg = event.packageName ?: continue
+                samples.add(ForegroundEventSample(pkg, transition, event.timeStamp))
+            }
+            samples
+        } catch (e: Exception) {
+            swallow("queryForegroundEvents", e)
             null
         }
     }
