@@ -1033,6 +1033,10 @@ class MonolithAccessibilityService : AccessibilityService() {
             putExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME, appName)
             putExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE, reasonBadge)
             putExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH, path.name)
+            putExtra(
+                MonolithShieldService.EXTRA_INTERCEPT_NONCE,
+                InterceptNonce.mint(applicationContext)
+            )
         }
         startActivity(interceptIntent)
     }
