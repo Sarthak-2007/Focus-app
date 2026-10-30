@@ -41,9 +41,13 @@ object RoutineScheduler {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         val intent = chainPendingIntent(context, PendingIntent.FLAG_UPDATE_CURRENT) ?: return
         alarmManager.cancel(intent)
-        // Issue #319 F2: exact when the exact-alarm grant is held
-        // (ExactAlarm's one law), inexact otherwise — the chain
-        // stays a hint either way; the heartbeat reconciles.
+        // Issues #319 F2 + #280: exact when the exact-alarm grant
+        // is held (ExactAlarm's one law — it probes the grant and
+        // falls back to inexact; pre-API-31 exact needs no grant),
+        // inexact otherwise. An exact alarm sharpens the hint, it
+        // never becomes the truth: the chain stays a hint either
+        // way and the heartbeat reconcile remains the mechanism.
+        // (This call replaces #280's inline form of the same law.)
         ExactAlarm.setWakeup(alarmManager, boundaryMillis, intent)
     }
 

@@ -179,8 +179,13 @@ object ReleaseRetryScheduler {
             }
             RetryAction.STOP_TIMED -> {
                 MonolithShieldService.stopShield(appContext)
-                val done = faulted.releaseRetriesDone + 1
-                dao.stampReleaseRetries(faulted.id, done)
+                // Issue #30 finding 4: atomic increment in SQLite,
+                // then a fresh read for the cadence arithmetic —
+                // a caller-computed absolute write could lose a
+                // retry when two triggers raced on the same row.
+                dao.incrementReleaseRetries(faulted.id)
+                val done = dao.getSessionById(faulted.id)?.releaseRetriesDone
+                    ?: (faulted.releaseRetriesDone + 1)
                 // Spacing-preserving reschedule (issue #47 F4):
                 // never an instant in the past.
                 val next = nextRetryAtMillis(faulted.releaseFaultedAtWallMillis, done, now)
