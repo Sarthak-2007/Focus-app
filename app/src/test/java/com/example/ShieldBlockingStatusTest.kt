@@ -212,7 +212,15 @@ class ShieldBlockingStatusTest {
     @Test
     fun safeBreak_liveHeadlineLeadsWithWhatIsOpen() {
         val start = at(0, 10, 0)
-        val s = session(startWall = start, beatWall = start, safeBreak = true)
+        // Windowed, like every other ends-asserting case: the
+        // windowless span fallback reads maintained break
+        // bookkeeping this fixture does not carry, and this test's
+        // claim is the lead wording (N-5), not the span math
+        // (PRUEF-3's full-log read, run 41021933859).
+        val s = session(
+            startWall = start, beatWall = start, safeBreak = true,
+            windowStart = at(0, 10, 0), windowEnd = at(0, 11, 0)
+        )
         val st = proved(s, start)
         assertEquals(ShieldBlockingProof.LIVE, st.proof)
         // N-5: in a break the lead names what is OPEN; BLOCKING NOW

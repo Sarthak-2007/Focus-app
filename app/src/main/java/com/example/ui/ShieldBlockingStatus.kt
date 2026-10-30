@@ -129,7 +129,13 @@ internal fun shieldSessionLabel(session: FocusSessionEntity): String {
     val profile = session.profileName.trim()
     return when {
         session.routineId != null || profile.startsWith(ROUTINE_PROFILE_PREFIX) -> {
-            val name = profile.removePrefix(ROUTINE_PROFILE_PREFIX).trim()
+            // Strip the prefix BEFORE the trim: "Routine: " trimmed
+            // first becomes "Routine:", the "Routine: " prefix no
+            // longer matches, and a blank-named routine session
+            // printed "ROUTINE: SESSION" instead of falling back
+            // (PRUEF-3's full-log read, run 41021933859).
+            val name = session.profileName.removePrefix(ROUTINE_PROFILE_PREFIX)
+                .removePrefix("Routine:").trim()
             if (name.isNotEmpty()) "${name.uppercase(Locale.US)} SESSION" else "ROUTINE SESSION"
         }
         profile.isNotEmpty() -> profile.uppercase(Locale.US)
