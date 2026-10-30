@@ -1635,13 +1635,30 @@ class MonolithViewModel(
         }
     }
 
+    // Issue #151 F2 (friend-holds-the-phone): every routine verb
+    // funnels into persistRoutine, which re-stamps and reconciles
+    // on the tap — so mid-session, anyone holding the phone could
+    // silently rewrite every future routine (disable, retime,
+    // re-day, re-loadout) and it would persist. The routine list
+    // now carries the same one-way ratchet as the site list (F1)
+    // and the app tiers: during an active session routine edits
+    // refuse with the ratchet warning. Outside a session nothing
+    // changes — routines stay fully editable for the owner.
+    private fun refuseRoutineEditMidSession(): Boolean {
+        if (activeSession.value?.isActive != true) return false
+        triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • ROUTINES ARE FROZEN DURING ACTIVE VAULT")
+        return true
+    }
+
     fun toggleRoutine(routine: com.example.data.RoutineEntity) {
+        if (refuseRoutineEditMidSession()) return
         val updated = routine.copy(enabled = !routine.enabled)
         soundEngine.playMechanicalLatch(updated.enabled)
         persistRoutine(updated)
     }
 
     fun cycleRoutineLoadout(routine: com.example.data.RoutineEntity) {
+        if (refuseRoutineEditMidSession()) return
         val order = listOf(SmartLoadout.STUDY, SmartLoadout.WORK_SPRINT, SmartLoadout.SLEEP)
         val current = runCatching { SmartLoadout.valueOf(routine.loadoutName) }.getOrDefault(SmartLoadout.STUDY)
         val next = order[(order.indexOf(current) + 1) % order.size]
@@ -1650,6 +1667,7 @@ class MonolithViewModel(
     }
 
     fun adjustRoutineTime(routine: com.example.data.RoutineEntity, isStart: Boolean, deltaMinutes: Int) {
+        if (refuseRoutineEditMidSession()) return
         val start = if (isStart) {
             (routine.startMinutes + deltaMinutes + 1440) % 1440
         } else routine.startMinutes
@@ -1667,6 +1685,7 @@ class MonolithViewModel(
     }
 
     fun toggleRoutineDay(routine: com.example.data.RoutineEntity, dayIndex: Int) {
+        if (refuseRoutineEditMidSession()) return
         val mask = routine.daysMask xor (1 shl dayIndex)
         soundEngine.playRotaryDetent()
         persistRoutine(routine.copy(daysMask = mask))
