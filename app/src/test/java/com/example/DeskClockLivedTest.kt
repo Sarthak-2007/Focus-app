@@ -174,9 +174,17 @@ class DeskClockLivedTest {
         composeRule.waitForIdle()
         assertTrue("tap must not dismiss the desk clock", !dismissed)
 
-        // A deliberate long-press exits.
+        // A deliberate long-press exits. This Compose version
+        // (BOM 2024.09) has neither longPress nor longClick in its
+        // ui-test API, so the hold is injected by hand: down, hold
+        // past the long-press timeout in event time, up.
         composeRule.onNodeWithTag("always_on_desk_clock_overlay")
-            .performTouchInput { longClick(center) }
+            .performTouchInput {
+                down(center)
+                advanceEventTime(2_000L)
+                up()
+            }
+        repeat(6) { ShadowLooper.idleMainLooper(); Thread.sleep(50) }
         composeRule.waitForIdle()
         assertTrue("long-press must dismiss the desk clock", dismissed)
     }
