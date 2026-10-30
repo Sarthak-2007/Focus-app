@@ -197,8 +197,9 @@ object RoutineHeartbeat {
             val transition = SessionSealTransitions.get(appContext)
             // Slice E (F-S1(i)): an annulled proving tombstoned its
             // window — the machine refused that seal late, and the
-            // window stays refused for this process's life. The
-            // tombstone is checked BEFORE materialising, never after.
+            // window stays refused: the tombstone persists across
+            // process death (issue #48). It is checked BEFORE
+            // materialising, never after.
             if (transition.isTombstoned(desired.routineId, desired.windowStartMillis)) {
                 materialised = false
             } else {
