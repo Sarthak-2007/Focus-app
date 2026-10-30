@@ -152,7 +152,7 @@ class ColdStartWarrantTest {
                 ),
                 now
             )
-            assertEquals("past-grace read at T+$delta", "BLOCKING IS OFF — TAP TO FIX", s?.text)
+            assertEquals("past-grace read at T+$delta", R.string.sentence_blocking_off, s?.textRes)
             assertEquals(RefusalAction.FIX_ACCESSIBILITY, s?.action)
         }
     }
@@ -169,7 +169,7 @@ class ColdStartWarrantTest {
                 ),
                 now
             )
-            assertEquals("BLOCKING IS OFF — TAP TO FIX", s?.text)
+            assertEquals(R.string.sentence_blocking_off, s?.textRes)
             assertEquals(RefusalAction.FIX_ACCESSIBILITY, s?.action)
         }
         // A hand-built warrant carrying no read instant either
@@ -181,7 +181,7 @@ class ColdStartWarrantTest {
             ),
             500_000L
         )
-        assertEquals("BLOCKING IS OFF — TAP TO FIX", handBuilt?.text)
+        assertEquals(R.string.sentence_blocking_off, handBuilt?.textRes)
         assertEquals(RefusalAction.FIX_ACCESSIBILITY, handBuilt?.action)
     }
 
@@ -205,7 +205,7 @@ class ColdStartWarrantTest {
                 )
                 assertEquals(
                     "DENIED (residency=$residency, delta=$delta)",
-                    "USAGE ACCESS IS OFF — TAP TO FIX", s?.text
+                    R.string.sentence_usage_off, s?.textRes
                 )
                 assertEquals(RefusalAction.FIX_USAGE, s?.action)
             }
@@ -220,7 +220,7 @@ class ColdStartWarrantTest {
             ),
             t
         )
-        assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", stampedDenied?.text)
+        assertEquals(R.string.sentence_usage_off, stampedDenied?.textRes)
         assertEquals(RefusalAction.FIX_USAGE, stampedDenied?.action)
     }
 
@@ -244,7 +244,7 @@ class ColdStartWarrantTest {
                     )
                     assertEquals(
                         "UNSET (stamped=$stamped, residency=$residency, delta=$delta)",
-                        "USAGE ACCESS IS OFF — TAP TO FIX", s?.text
+                        R.string.sentence_usage_off, s?.textRes
                     )
                     assertEquals(RefusalAction.FIX_USAGE, s?.action)
                 }
@@ -295,7 +295,7 @@ class ColdStartWarrantTest {
                     )
                     assertEquals(
                         "unbound past-grace (state=$state, usage=$usage, delta=$delta)",
-                        "BLOCKING IS OFF — TAP TO FIX", s?.text
+                        R.string.sentence_blocking_off, s?.textRes
                     )
                     assertEquals(RefusalAction.FIX_ACCESSIBILITY, s?.action)
                 }
@@ -312,7 +312,7 @@ class ColdStartWarrantTest {
                     )
                     assertEquals(
                         "unbound no-residency (state=$state, usage=$usage, delta=$delta)",
-                        "BLOCKING IS OFF — TAP TO FIX", s?.text
+                        R.string.sentence_blocking_off, s?.textRes
                     )
                     assertEquals(RefusalAction.FIX_ACCESSIBILITY, s?.action)
                 }
@@ -328,8 +328,8 @@ class ColdStartWarrantTest {
         // by no row. (Whitelist assertion — the fog's own words are
         // deliberately not re-typed here; they survive nowhere.)
         val standing = setOf(
-            "BLOCKING IS OFF — TAP TO FIX",
-            "USAGE ACCESS IS OFF — TAP TO FIX"
+            R.string.sentence_blocking_off,
+            R.string.sentence_usage_off
         )
         var printed = 0
         for (state in WarrantState.values()) {
@@ -349,8 +349,8 @@ class ColdStartWarrantTest {
                                 ) ?: continue
                                 printed++
                                 assertTrue(
-                                    "unlisted sentence printed: ${s.text}",
-                                    s.text in standing
+                                    "unlisted sentence printed: ${s.textRes}",
+                                    s.textRes in standing
                                 )
                                 assertFalse(
                                     "RETRY_CHECK issued for state=$state bound=$bound " +

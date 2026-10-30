@@ -1,6 +1,6 @@
 package com.example.ui.components
+import com.example.R
 
-import android.os.SystemClock
 import com.example.data.ClockText
 import com.example.data.SystemGuardStatus
 import com.example.service.UsageAccess
@@ -186,7 +186,7 @@ private fun splitTenantText(shut: Int, peek: Int, sealed: Boolean): String? {
  *  fact to read, not a door to tap. */
 enum class RefusalAction { FIX_ACCESSIBILITY, FIX_USAGE, RETRY_CHECK }
 
-data class RefusalSentence(val text: String, val action: RefusalAction?)
+data class RefusalSentence(@androidx.annotation.StringRes val textRes: Int, val args: List<Any> = emptyList(), val action: RefusalAction?)
 
 /**
  * Suki's cause table, cured for the cold start (issue #7) — ONE
@@ -275,13 +275,13 @@ internal fun refusalSentenceFor(warrant: Warrant?, nowMono: Long): RefusalSenten
             if (ageMs != null && ageMs <= WatchStore.RESIDENCY_GRACE_MS) {
                 null
             } else {
-                RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
+                RefusalSentence(R.string.sentence_blocking_off, action = RefusalAction.FIX_ACCESSIBILITY)
             }
         }
         warrant.usage == UsageAccess.DENIED ->
-            RefusalSentence("USAGE ACCESS IS OFF — TAP TO FIX", RefusalAction.FIX_USAGE)
+            RefusalSentence(R.string.sentence_usage_off, action = RefusalAction.FIX_USAGE)
         warrant.usage == UsageAccess.UNSET ->
-            RefusalSentence("USAGE ACCESS IS OFF — TAP TO FIX", RefusalAction.FIX_USAGE)
+            RefusalSentence(R.string.sentence_usage_off, action = RefusalAction.FIX_USAGE)
         warrant.state == WarrantState.UNPROVEN && !warrant.a11yStampedThisResidency -> {
             // Usage is ALLOWED here — DENIED and UNSET claimed
             // their rows above. The residency's age decides:
@@ -294,11 +294,11 @@ internal fun refusalSentenceFor(warrant: Warrant?, nowMono: Long): RefusalSenten
             if (ageMs != null && ageMs <= WatchStore.RESIDENCY_GRACE_MS) {
                 null
             } else {
-                RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
+                RefusalSentence(R.string.sentence_blocking_off, action = RefusalAction.FIX_ACCESSIBILITY)
             }
         }
         warrant.state == WarrantState.OFF ->
-            RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
+            RefusalSentence(R.string.sentence_blocking_off, action = RefusalAction.FIX_ACCESSIBILITY)
         else -> null
     }
 }
@@ -338,7 +338,8 @@ internal fun jamSentenceFor(phase: ArmPhase, nowMono: Long?): RefusalSentence? {
     val first = (pending.ifEmpty { phase.jamSet }).minByOrNull { it.ordinal } ?: return null
     if (nowMono == null) {
         return RefusalSentence(
-            text = "${first.displayName} DIDN'T ANSWER — STILL PROVING.",
+            textRes = R.string.sentence_didnt_answer,
+            args = listOf(first.displayName),
             action = null
         )
     }
@@ -346,7 +347,8 @@ internal fun jamSentenceFor(phase: ArmPhase, nowMono: Long?): RefusalSentence? {
         .coerceAtLeast(0L)
     val secs = ((remainingMs + 999L) / 1000L).coerceAtLeast(1L)
     return RefusalSentence(
-        text = "${first.displayName} STILL HASN'T ANSWERED — RETRYING · ANNULS IN ${secs}S.",
+        textRes = R.string.sentence_still_hasnt_answered,
+        args = listOf(first.displayName, secs),
         action = null
     )
 }
@@ -369,7 +371,8 @@ internal fun jamSentenceFor(phase: ArmPhase, nowMono: Long?): RefusalSentence? {
 internal fun provingSentenceFor(phase: ArmPhase): RefusalSentence? {
     if (phase !is ArmPhase.Proving) return null
     return RefusalSentence(
-        text = "CHECKING THE SEAL — ${phase.provenCount()} OF 3 PROVED",
+        textRes = R.string.sentence_checking_seal,
+        args = listOf(phase.provenCount()),
         action = null
     )
 }
