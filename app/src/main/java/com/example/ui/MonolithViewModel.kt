@@ -2526,6 +2526,25 @@ class MonolithViewModel(
                 ?.let { System.currentTimeMillis() + it.spanRemainingSeconds * 1000L },
             sessionIsStopwatch = active?.isStopwatchMode == true
         )
+        // Issue #87 (process-death F4): the intercept itself is booked
+        // at trigger, with the verb handlers' own call \u2014 before this,
+        // recordIntercept ran only inside the verbs (start2MinutePeek,
+        // transmuteImpulseAndReturn, splitActiveTaskAndReturn), so an
+        // intercept whose process died while the airlock stood, or
+        // which the user simply walked away from, left no log row and
+        // no phantomReachesBlocked increment at all, even though
+        // enforcement fired. The outcome names the arrival, never a
+        // verb the user has not chosen yet; the reason is the state's
+        // own birth reason, exactly as the state above was minted.
+        viewModelScope.launch {
+            repository.recordIntercept(
+                packageName = packageName,
+                appName = appName,
+                sessionIntention = active?.intention ?: _intentionText.value,
+                outcome = "Intercepted",
+                triggerReason = DistractionTriggerReason.MUSCLE_MEMORY.shortTag
+            )
+        }
     }
 
     fun selectDistractionReason(reason: DistractionTriggerReason) {
