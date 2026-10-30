@@ -76,7 +76,9 @@ class MonolithShieldService : Service() {
      *  snapshot on Room's own executor. */
     private fun liveActiveSessionId(): Int? = runCatching {
         runBlocking {
-            MonolithDatabase.getInstance(applicationContext).monolithDao()
+            // ISSUE-67: via the single construction point
+            // (AppContainer resolves the same getInstance singleton).
+            com.example.AppContainer.dao(applicationContext)
                 .getActiveSessionSnapshot()?.takeIf { it.isActive }?.id
         }
     }.onFailure {

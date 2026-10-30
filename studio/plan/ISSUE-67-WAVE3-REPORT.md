@@ -382,3 +382,55 @@ internal refactor with no user-visible effect intended — the
 nonce, launch-fallback, latch sound, return-intent flags and
 receipt signature are main's current behaviours, preserved
 byte-for-byte through the seams.
+
+---
+
+## FOURTH-REBASE ADDENDUM (merge pass, base origin/main 94d81867)
+
+PR #242 reported merge conflicts against the moved main; the branch
+was rebased a fourth time (0d439ec → 94d81867; the herd landed
+#383/#250 and the #78/#150 compositions in between). Resolutions,
+same standing pattern — main's logic verbatim, only the routing
+re-applied:
+
+1. **#78 intercept firing id.** Both doors now add a unique
+   `EXTRA_INTERCEPT_ID` (MainActivity persists consumption; a
+   process-death redelivery is dropped). The seam mints it inside
+   `InterceptIntents.interceptIntent`, alongside the #68 nonce —
+   both doors, build time, as the inline code did.
+2. **#150 unattended voices.** The engine's latch gained
+   `unattended: Boolean = false`; main's boundary latch passes
+   `unattended = true` explicitly (ringer/DND binding). The port
+   carries the flag: `playBreakLatch(context, engaged, unattended)`
+   — the boundary call passes it through, the #148 block-warning
+   call keeps the default (main's `playMechanicalLatch(true)`).
+   Without this, the port would have silently unbound #150.
+3. **BootReceiver named guarded actions.** Main's
+   `runGuardedBootAction("shield-before-tick" / "shield-after-tick")`
+   labels kept; the DAO construction inside routes via AppContainer.
+4. **NotificationListener composed cleanly in replay:** #45's
+   post-time session query (`getSessionCoveringInstant`) with
+   AppContainer construction — no hand resolution needed.
+5. **Main fixed both composition breaks itself** (DrawerScreen
+   DayHeading via the #378 fix-forward; DeskClockLivedTest's dead
+   dynamicColor argument): this branch's two API commits were
+   absorbed/dropped in the rebase — the fixes stand on main already,
+   credited to their owners, not duplicated here.
+6. **One new getInstance site** (`ShieldService.liveActiveSessionId`,
+   landed on main in the window) routed via AppContainer.dao —
+   same singleton, synchronous-read semantics unchanged.
+
+**Branch CI on the pre-rebase tip (7bdf596, run 41031958549,
+FINISHED):** main sources compile debug + release; 636 tests
+executed, 55 failed — and main's own run at the time (41031410510,
+690 tests, 58 failed) contains all 55 of those names verbatim
+(strict subset; the 3 extra main failures are tests added after
+this branch's then-base). Lint job fails identically on main
+(93-error standing baseline, first: AirlockAndDisarmOverlays
+NewApi) — parity, not attribution. FocusDomainTest passes;
+DeskClockLivedTest passes.
+
+**User-visible flags:** all fourth-rebase changes are internal
+routing with no user-visible effect intended — the #78 firing id,
+#68 nonce, #150 unattended binding, and boot-action labels are
+main's current behaviours, preserved through the seams.
