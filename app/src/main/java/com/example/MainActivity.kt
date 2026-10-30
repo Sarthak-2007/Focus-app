@@ -449,6 +449,26 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         }
     }
 
+    // Issue #264 B-264-31: the Ledger (VAULT) is the archive —
+    // every receipt, day word and finished session lives there.
+    // While it stands, the window is FLAG_SECURE: no screenshot
+    // and no Recents thumbnail of his history. Every other
+    // destination clears the flag — the Deck and the block
+    // surfaces stay capturable as before. (Verified gap: the
+    // tree carried zero FLAG_SECURE anywhere.)
+    val activityWindow = (context as? android.app.Activity)?.window
+    LaunchedEffect(currentDestination) {
+        if (archiveSurfaceSecure(currentDestination)) {
+            activityWindow?.addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE
+            )
+        } else {
+            activityWindow?.clearFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE
+            )
+        }
+    }
+
     val darkTheme by viewModel.darkTheme.collectAsStateWithLifecycle()
     val themeEvaluation by viewModel.themeEvaluation.collectAsStateWithLifecycle()
     val guardLinePrint by viewModel.guardLinePrint.collectAsStateWithLifecycle()
@@ -2298,3 +2318,14 @@ private fun stopIndexOf(destination: MonolithDestination): Int = when (destinati
     MonolithDestination.TASKS -> 2
     MonolithDestination.VAULT -> 3
 }
+
+/**
+ * Issue #264 (B-264-31): which destinations carry the archive.
+ * The Ledger (VAULT) holds every receipt, day word and finished
+ * session — while it stands, the activity window is FLAG_SECURE
+ * (no screenshot, no Recents thumbnail of the user's history).
+ * Every other destination is a working surface, not the archive,
+ * and stays capturable. Pure, so the matrix is unit-tested.
+ */
+internal fun archiveSurfaceSecure(destination: MonolithDestination): Boolean =
+    destination == MonolithDestination.VAULT
