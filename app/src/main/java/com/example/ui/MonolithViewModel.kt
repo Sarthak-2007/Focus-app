@@ -1692,8 +1692,40 @@ class MonolithViewModel(
         viewModelScope.launch { repository.setBrowserBlockerEnabled(newValue) }
     }
 
+    // Audit R6 #340 F13: the routine-conflict notice — set when a
+    // save is HELD for collision, cleared by the user's own tap.
+    private val _routineConflictNotice = MutableStateFlow<String?>(null)
+    val routineConflictNotice: StateFlow<String?> = _routineConflictNotice.asStateFlow()
+
+    fun dismissRoutineConflictNotice() {
+        _routineConflictNotice.value = null
+    }
+
     private fun persistRoutine(routine: com.example.data.RoutineEntity) {
         viewModelScope.launch {
+            // Audit R6 #340 F13: conflict detection IN the save
+            // path. An enabled routine whose window collides with
+            // another enabled routine under a DIFFERENT loadout is
+            // NOT saved silently — the save is held and the exact
+            // collision is printed, so no routine is ever starved
+            // in silence by RoutineDerive. The user's own edit
+            // (window, days, or loadout) is the resolution; there
+            // is no hidden precedence rule to discover at fire time.
+            val conflicts = com.example.data.RoutineConflictDetector.conflictsFor(
+                routine, repository.daoSnapshotRoutines()
+            )
+            if (conflicts.isNotEmpty()) {
+                val c = conflicts.first()
+                _routineConflictNotice.value =
+                    "ROUTINE HELD — \"${routine.name}\" overlaps \"${c.otherName}\" " +
+                    "by ${c.overlapMinutesPerWeek} min/week under a different loadout " +
+                    "(${routine.loadoutName} vs ${c.otherLoadoutName}). " +
+                    "The colliding save was not written. Change the window, " +
+                    "the days, or the loadout."
+                soundEngine.playFirmClick()
+                return@launch
+            }
+            _routineConflictNotice.value = null
             // Every edit re-stamps the schedule, then reconciles
             // immediately (CRUD trigger). The reset note is NOT
             // dismissed here (R3b #161): obeying the note must not

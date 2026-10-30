@@ -292,6 +292,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val disarmChallenge by viewModel.disarmChallenge.collectAsStateWithLifecycle()
     val weeklyEmergencyTokensRemaining by viewModel.weeklyEmergencyTokensRemaining.collectAsStateWithLifecycle()
     val ratchetWarningMessage by viewModel.ratchetWarningMessage.collectAsStateWithLifecycle()
+    val routineConflictNotice by viewModel.routineConflictNotice.collectAsStateWithLifecycle()
     val tierChangeForUndo by viewModel.tierChangeForUndo.collectAsStateWithLifecycle()
 
     val sealed = activeSession?.isActive == true
@@ -731,6 +732,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     loadoutCapIndex = loadoutCapIndex,
                                     isSessionActive = sealed,
                                     ratchetWarningMessage = ratchetWarningMessage,
+                                    routineConflictNotice = routineConflictNotice,
+                                    onDismissRoutineConflictNotice = viewModel::dismissRoutineConflictNotice,
                                     tierChangeForUndo = tierChangeForUndo,
                                     onUndoTierChange = viewModel::undoLastTierChange,
                                     soundEngine = viewModel.soundEngine,

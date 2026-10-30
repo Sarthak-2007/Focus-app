@@ -157,6 +157,91 @@ class CryptoIntegrityManagerTest {
         )
     }
 
+    // ------------------------------------------------------------------
+    // Audit R6 #340 F5/F48: the FINISH seal. A signature over the
+    // finished receipt's own claims, chained over the previous
+    // receipt's seal. Fail-closed: blank, malformed, edited-field
+    // and broken-chain payloads never verify.
+    // ------------------------------------------------------------------
+
+    private fun signFinish(
+        outcomeWord: String = "ENDED",
+        sealedElapsedSeconds: Int = 1500,
+        prevFinishSignature: String = ""
+    ): String = CryptoIntegrityManager.signFinishState(
+        sessionId = 7,
+        receiptNumber = 48,
+        outcomeWord = outcomeWord,
+        armWallMs = 1_700_000_000_000L,
+        endedAtWallMs = 1_700_001_500_000L,
+        sealedElapsedSeconds = sealedElapsedSeconds,
+        heldAppsAtSeal = 12,
+        heldSitesAtSeal = 5,
+        deflectionCount = 3,
+        bankedBreakSeconds = 0,
+        shieldGapSeen = false,
+        breakTakenSeconds = 120,
+        prevFinishSignature = prevFinishSignature
+    )
+
+    private fun verifyFinish(
+        signature: String,
+        outcomeWord: String = "ENDED",
+        sealedElapsedSeconds: Int = 1500,
+        prevFinishSignature: String = ""
+    ): Boolean = CryptoIntegrityManager.verifyFinishState(
+        sessionId = 7,
+        receiptNumber = 48,
+        outcomeWord = outcomeWord,
+        armWallMs = 1_700_000_000_000L,
+        endedAtWallMs = 1_700_001_500_000L,
+        sealedElapsedSeconds = sealedElapsedSeconds,
+        heldAppsAtSeal = 12,
+        heldSitesAtSeal = 5,
+        deflectionCount = 3,
+        bankedBreakSeconds = 0,
+        shieldGapSeen = false,
+        breakTakenSeconds = 120,
+        prevFinishSignature = prevFinishSignature,
+        signature = signature
+    )
+
+    @Test
+    fun `finish seal roundtrips`() {
+        assertTrue(verifyFinish(signFinish()))
+    }
+
+    @Test
+    fun `finish seal fails on an edited claim`() {
+        val sig = signFinish()
+        assertFalse(
+            "An edited outcome word must break the finish seal",
+            verifyFinish(sig, outcomeWord = "ATTENDED")
+        )
+        assertFalse(
+            "An edited elapsed figure must break the finish seal",
+            verifyFinish(sig, sealedElapsedSeconds = 1501)
+        )
+    }
+
+    @Test
+    fun `finish seal is chained - a swapped previous link breaks it`() {
+        val first = signFinish(prevFinishSignature = "")
+        val second = signFinish(prevFinishSignature = first)
+        assertTrue(verifyFinish(second, prevFinishSignature = first))
+        assertFalse(
+            "Reordering the ledger (wrong previous link) must break the seal",
+            verifyFinish(second, prevFinishSignature = "AAAA")
+        )
+    }
+
+    @Test
+    fun `finish seal fails closed on blank and sentinel signatures`() {
+        assertFalse(verifyFinish(""))
+        assertFalse(verifyFinish("UNSEALED"))
+        assertFalse(verifyFinish("not-base64!!!"))
+    }
+
     @Test
     fun `blank signature keeps current accepted semantics pending decision 21`() {
         // Documents finding-1 behaviour as it stands today (blank =

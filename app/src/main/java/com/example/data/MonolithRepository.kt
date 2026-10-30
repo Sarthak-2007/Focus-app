@@ -2114,6 +2114,12 @@ class MonolithRepository(
             pending.sessionId, pending.outcomeWord,
             faulted = faulted, faultWallMillis = System.currentTimeMillis()
         )
+        // Audit R6 #340 F5/F48: the FINISH SEAL — minted here, the
+        // one place the claimed № and the finished row meet, over
+        // the slip's own claims and the previous receipt's seal
+        // (the chain link). A seal that cannot be minted faults
+        // THIS slip: fail closed, never a clean-looking re-mint.
+        val sealFaulted = sealFinishReceipt(row, number, pending)
         return ReceiptState(
             sessionId = pending.sessionId,
             number = number,
@@ -2129,11 +2135,52 @@ class MonolithRepository(
             routineLabelWithin = pending.routineLabelWithin,
             bankedBreakSeconds = pending.bankedBreakSeconds,
             shieldWasOff = pending.shieldWasOff,
-            faulted = faulted,
+            faulted = faulted || sealFaulted,
             deflections = pending.deflections,
             restored = false,
             receiptPublishedMonoMs = 0L
         )
+    }
+
+    /**
+     * Audit R6 #340 F5/F48: mint this receipt's finish seal and
+     * stamp it on the row. The payload is the slip's own claims
+     * (from [pending], the same derivation rehydration rebuilds)
+     * plus the row's gap/break facts, chained over the previous
+     * receipt's seal. Returns true when the seal could NOT be
+     * minted or stamped — the caller then publishes the slip
+     * FAULTED (fail closed), and the row is stamped with the
+     * UNSEALED sentinel so a later rehydration faults it too
+     * instead of presenting an unsealed slip as clean.
+     */
+    private suspend fun sealFinishReceipt(
+        row: FocusSessionEntity,
+        number: Int,
+        pending: PendingReceipt
+    ): Boolean {
+        return try {
+            val prev = dao.previousFinishSignature(number) ?: ""
+            val sig = CryptoIntegrityManager.signFinishState(
+                sessionId = pending.sessionId,
+                receiptNumber = number,
+                outcomeWord = pending.outcomeWord,
+                armWallMs = pending.armWallMs,
+                endedAtWallMs = pending.endedAtWallMs,
+                sealedElapsedSeconds = pending.sealedElapsedSeconds,
+                heldAppsAtSeal = pending.heldAppsAtSeal,
+                heldSitesAtSeal = pending.heldSitesAtSeal,
+                deflectionCount = pending.deflections.size,
+                bankedBreakSeconds = pending.bankedBreakSeconds,
+                shieldGapSeen = row.shieldGapSeen,
+                breakTakenSeconds = row.breakTakenSeconds,
+                prevFinishSignature = prev
+            )
+            dao.stampFinishSeal(pending.sessionId, sig, prev)
+            false
+        } catch (_: Exception) {
+            runCatching { dao.stampFinishSeal(pending.sessionId, "UNSEALED", "") }
+            true
+        }
     }
 
     /**
@@ -2178,6 +2225,29 @@ class MonolithRepository(
                     .coerceAtLeast(0L)
         }
         val pending = assemblePendingReceipt(sessionId, kind, endedAt) ?: return null
+        // Audit R6 #340 F5/F48: a sealed slip is re-verified on
+        // every rehydration. A seal that no longer matches the
+        // row's claims faults the slip — loudly, on the printed
+        // artefact — and is never re-minted here. Blank seals are
+        // pre-v13 legacy rows: they stand exactly as provable as
+        // the day they printed, no more and no less.
+        val sealBroken = row.finishSignature.isNotBlank() &&
+            !CryptoIntegrityManager.verifyFinishState(
+                sessionId = sessionId,
+                receiptNumber = number,
+                outcomeWord = pending.outcomeWord,
+                armWallMs = pending.armWallMs,
+                endedAtWallMs = pending.endedAtWallMs,
+                sealedElapsedSeconds = pending.sealedElapsedSeconds,
+                heldAppsAtSeal = pending.heldAppsAtSeal,
+                heldSitesAtSeal = pending.heldSitesAtSeal,
+                deflectionCount = pending.deflections.size,
+                bankedBreakSeconds = pending.bankedBreakSeconds,
+                shieldGapSeen = row.shieldGapSeen,
+                breakTakenSeconds = row.breakTakenSeconds,
+                prevFinishSignature = row.prevFinishSignature,
+                signature = row.finishSignature
+            )
         return ReceiptState(
             sessionId = sessionId,
             number = number,
@@ -2193,7 +2263,7 @@ class MonolithRepository(
             routineLabelWithin = pending.routineLabelWithin,
             bankedBreakSeconds = pending.bankedBreakSeconds,
             shieldWasOff = pending.shieldWasOff,
-            faulted = row.releaseFaultShield,
+            faulted = row.releaseFaultShield || sealBroken,
             deflections = pending.deflections,
             restored = true,
             receiptPublishedMonoMs = 0L
