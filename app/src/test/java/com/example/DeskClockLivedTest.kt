@@ -2,7 +2,6 @@ package com.example
 
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.longPress
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -177,7 +176,7 @@ class DeskClockLivedTest {
 
         // A deliberate long-press exits.
         composeRule.onNodeWithTag("always_on_desk_clock_overlay")
-            .performTouchInput { longPress(center) }
+            .performTouchInput { longClick(center) }
         composeRule.waitForIdle()
         assertTrue("long-press must dismiss the desk clock", dismissed)
     }
