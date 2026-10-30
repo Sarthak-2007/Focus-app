@@ -144,16 +144,18 @@ interface MonolithDao {
     suspend fun insertInterceptLog(log: InterceptLogEntity)
 
     // Captured Notifications (Silent Notification Catcher & Persistent Digest)
-    @Query("SELECT * FROM captured_notifications ORDER BY timestampMillis DESC LIMIT 100")
+    // NO LIMIT (issue #138): the live header prints this list's size
+    // as the held total, so a capped flow would report the cap as
+    // the count and hide the oldest held items. A held item past
+    // any cap is still held.
+    @Query("SELECT * FROM captured_notifications ORDER BY timestampMillis DESC")
     fun getCapturedNotificationsFlow(): Flow<List<CapturedNotificationEntity>>
 
     /**
      * One-shot snapshot for the FROZEN digest: the same rows the
      * flow would print, taken once, at the freeze. Deliberately NO
      * LIMIT — a held item past any cap is still held, and a frozen
-     * read that silently dropped it would lie by omission. (The
-     * live flow keeps its shipped cap; only the snapshot — the
-     * sealed truth surface — is unbounded.)
+     * read that silently dropped it would lie by omission.
      */
     @Query("SELECT * FROM captured_notifications ORDER BY timestampMillis DESC")
     suspend fun getCapturedNotificationsSnapshot(): List<CapturedNotificationEntity>

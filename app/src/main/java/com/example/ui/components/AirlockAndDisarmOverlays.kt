@@ -27,6 +27,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -302,6 +303,13 @@ fun CapturedNotificationsDigestSheet(
     onDeleteItem: (Int) -> Unit = {},
     onDismiss: () -> Unit
 ) {
+    // CLEAR ALL is the one irreversible mass action in this sheet:
+    // it arms on the first tap and fires only on the second
+    // (issue #138). The arm resets whenever the sheet hides.
+    var clearAllArmed by remember { mutableStateOf(false) }
+    LaunchedEffect(visible) {
+        if (!visible) clearAllArmed = false
+    }
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn(MonolithCurves.specC()),
@@ -366,8 +374,15 @@ fun CapturedNotificationsDigestSheet(
                             fontSize = 14.sp
                         )
                         BlockitActionChip(
-                            wordLabel = "CLEAR ALL",
-                            onClick = onClearAll
+                            wordLabel = if (clearAllArmed) "TAP AGAIN TO CLEAR" else "CLEAR ALL",
+                            onClick = {
+                                if (clearAllArmed) {
+                                    clearAllArmed = false
+                                    onClearAll()
+                                } else {
+                                    clearAllArmed = true
+                                }
+                            }
                         )
                     }
                 }
@@ -414,11 +429,11 @@ fun CapturedNotificationsDigestSheet(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = if (frozenMode) {
-                                            "${item.appName} • ${item.senderTitle} • ${captureTimeLabel(item.timestampMillis)}"
-                                        } else {
-                                            "${item.appName} • ${item.senderTitle}"
-                                        },
+                                        // Both modes print the capture
+                                        // time (issue #138): a live row
+                                        // without its time hides whether
+                                        // it is fresh or hours old.
+                                        text = "${item.appName} • ${item.senderTitle} • ${captureTimeLabel(item.timestampMillis)}",
                                         fontFamily = AtkinsonHyperlegibleFamily,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 12.sp,
