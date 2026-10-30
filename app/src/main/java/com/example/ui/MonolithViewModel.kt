@@ -1478,10 +1478,12 @@ class MonolithViewModel(
      *  when turning ON, and by then the fact already says ON. */
     fun toggleSound(): Boolean {
         val next = !SoundEffectsSetting.isEnabled(appContext)
-        SoundEffectsSetting.setEnabled(appContext, next)
-        _soundEnabled.value = next
-        if (next) soundEngine.playRotaryDetent(720.0)
-        return next
+        // Issue #49: the print follows the DISK, not the attempt —
+        // a failed commit leaves the flow on the persisted fact.
+        val committed = SoundEffectsSetting.setEnabled(appContext, next)
+        _soundEnabled.value = if (committed) next else SoundEffectsSetting.isEnabled(appContext)
+        if (_soundEnabled.value) soundEngine.playRotaryDetent(720.0)
+        return _soundEnabled.value
     }
 
     /** ST-02 (Truth Car 3): the Deck's END BREAK chip. Ends the
