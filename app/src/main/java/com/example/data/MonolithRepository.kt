@@ -1794,11 +1794,35 @@ class MonolithRepository(
     suspend fun latchShieldGapIfStale(nowWallMillis: Long): Boolean {
         val active = dao.getActiveSessionSnapshot() ?: return false
         if (active.shieldGapSeen || active.outcome.isNotEmpty()) return false
-        val beatRef = maxOf(active.shieldLastBeatWallMillis, active.startWallTimeMillis)
+        // Audit R2 #95: a row whose beat is 0 predates the beat
+        // column (pre-v10) — there is no beat evidence to judge
+        // from, and measuring from the session's start would
+        // convict it instantly for a gap that was never observed.
+        // Adopt it: stamp the beat now and judge from here.
+        if (active.shieldLastBeatWallMillis == 0L) {
+            dao.adoptShieldBeat(active.id, nowWallMillis)
+            return false
+        }
+        // Audit R2 #95: the law judges only intervals the app was
+        // installed for. Install downtime during an update is not
+        // a shield gap, so the reference never sits before the
+        // moment the current build landed on the phone.
+        val beatRef = maxOf(
+            active.shieldLastBeatWallMillis,
+            active.startWallTimeMillis,
+            appLastUpdateMillis()
+        )
         if (nowWallMillis - beatRef <= SHIELD_GAP_THRESHOLD_MILLIS) return false
         dao.latchShieldGap(active.id)
         return true
     }
+
+    /** Wall time the installed package last landed on this phone
+     *  (the install time on a first install), or 0 when unreadable.
+     *  The shield-gap law's update exemption (Audit R2 #95). */
+    private fun appLastUpdateMillis(): Long = runCatching {
+        context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
+    }.getOrDefault(0L)
 
     /** ST-03 (Truth Car 3): the break boundaries' voice, fired AT
      *  the flips in this machinery — the block→break entry below
@@ -2064,8 +2088,20 @@ class MonolithRepository(
             session.outcome
         } else {
             val nowWall = System.currentTimeMillis()
-            val beatRef = maxOf(session.shieldLastBeatWallMillis, session.startWallTimeMillis)
-            if (session.shieldGapSeen || nowWall - beatRef > SHIELD_GAP_THRESHOLD_MILLIS) {
+            // Audit R2 #95: the reference also never sits before
+            // the current build landed (update downtime is not a
+            // gap), and a beat of 0 is a pre-v10 row — no beat
+            // evidence exists, so the beat test alone cannot
+            // convict it; only the latch can, and the latch adopts
+            // beat-0 rows instead of judging them.
+            val beatRef = maxOf(
+                session.shieldLastBeatWallMillis,
+                session.startWallTimeMillis,
+                appLastUpdateMillis()
+            )
+            if (session.shieldGapSeen ||
+                (session.shieldLastBeatWallMillis > 0L && nowWall - beatRef > SHIELD_GAP_THRESHOLD_MILLIS)
+            ) {
                 SessionOutcome.ELAPSED_SHIELD_GAP
             } else {
                 SessionOutcome.ELAPSED_CLEAN
