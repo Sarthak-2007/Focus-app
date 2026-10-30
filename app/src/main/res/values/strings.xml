@@ -22,7 +22,6 @@
     <string name="ritual_emergency_valve">60S EMERGENCY BREAK VALVE (1/WK)</string>
     <string name="ritual_grace_cancel">10S ACCIDENTAL-START GRACE CANCEL</string>
     <string name="ritual_bag_tiles">SEALED APP BAG</string>
-    <string name="ritual_tower_monument">FOCUS ACCUMULATION TOWER</string>
     <string name="ritual_day_faders">7-DAY RHYTHM FADERS</string>
     <string name="ritual_session_receipt">CRYPTOGRAPHIC SESSION RECEIPT</string>
     <string name="ritual_airlock_wall">INTENTION AIRLOCK CHAMBER</string>

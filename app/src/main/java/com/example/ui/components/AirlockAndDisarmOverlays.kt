@@ -31,8 +31,10 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -985,6 +987,11 @@ fun DisarmChallengeOverlay(
     onCompleteDisarm: () -> Unit,
     onHoldStarted: () -> Unit = {}
 ) {
+    // Issue-60 (finding 1): banked valve progress is HOISTED here in
+    // rememberSaveable — it survives this overlay being dismissed and
+    // recomposed, rotation, and process death, and is handed back to
+    // each fresh valve view in its factory. Completion consumes it.
+    var hoistedBankedMs by rememberSaveable { mutableLongStateOf(0L) }
     // Issue #55 (HIGH): Back must never exit toward the blocked app.
     // On the disarm challenge, Back means exactly what the composed
     // KEEP FOCUSING chip means — dismiss the challenge, stay in
@@ -1042,11 +1049,19 @@ fun DisarmChallengeOverlay(
                             Emergency60sValveView(ctx).apply {
                                 isNightMode = true
                                 this.soundEngine = soundEngine
+                                requiredSeconds = state.requiredHoldSeconds
+                                restoreBankedProgress(hoistedBankedMs)
                             }
                         },
                         update = { view ->
                             view.requiredSeconds = state.requiredHoldSeconds
-                            view.onEmergencyBreakCompleted = onCompleteDisarm
+                            view.onBankedProgressChanged = { banked ->
+                                hoistedBankedMs = banked
+                            }
+                            view.onEmergencyBreakCompleted = {
+                                hoistedBankedMs = 0L
+                                onCompleteDisarm()
+                            }
                             view.onHoldStarted = onHoldStarted
                         },
                         modifier = Modifier
