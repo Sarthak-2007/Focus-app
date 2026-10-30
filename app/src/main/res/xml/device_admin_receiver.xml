@@ -2,7 +2,7 @@
 <!-- Issue #44: no device-admin policies are requested. The admin is
      kept only for the disable-request warning (friction + a warning
      when the user goes to deactivate it); it needs no policy power.
-     The unused <limit-password/> policy was removed — Monolith never
+     The unused password-limit policy was removed — Monolith never
      sets, limits, or reads a device password. -->
 <device-admin xmlns:android="http://schemas.android.com/apk/res/android">
 </device-admin>
