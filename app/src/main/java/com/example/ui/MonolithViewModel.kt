@@ -177,11 +177,20 @@ data class FloatingPeekPillState(
  * Why a peek was withheld on a door that could have honoured one
  * (Truth Car 3, UNA2-01; Ren's Held Door Truth Baseline: a withheld
  * peek prints its cooldown state AND its reason). Null when the
- * door never owed a peek — a locked app, a non-honouring door, an
- * unlisted package: those doors print no peek line at all, never a
- * refusal for an offer that was never on the table.
+ * door never owed a peek — a non-honouring door, an unlisted
+ * package: those doors print no peek line at all, never a refusal
+ * for an offer that was never on the table.
+ *
+ * Issue #154 amendment: TIER_LOCKED joins the enum — NOT as a
+ * refusal (no offer was made to refuse) but as the door's own
+ * state line. The baseline's silence for a locked app read to
+ * the person holding the phone as breakage: a legitimate need
+ * met a blank wall, no fact printed, and the only visible exit
+ * was the week's single emergency token. The line now names the
+ * tier the user himself set and where tiers are set — a fact,
+ * not a refusal.
  */
-enum class PeekWithheld { COOLDOWN, ALREADY_ACTIVE, PEEK_OFF }
+enum class PeekWithheld { COOLDOWN, ALREADY_ACTIVE, PEEK_OFF, TIER_LOCKED }
 
 /**
  * The one peek-offer computation (Truth Car 3, UNA2-01). The offer
@@ -271,8 +280,14 @@ internal fun peekWithheldFor(
 ): PeekWithheld? = when {
     canPeek -> null
     !path.canHonourPeekLease -> null
-    // Issue #120: a finance row owes the withheld reason too —
-    // its tier may be LOCKED while the peek is still on the table.
+    // Issue #154 composed with issue #120 (STURM-4 merge): a LOCKED
+    // tier on an honouring door names itself (TIER_LOCKED — a state
+    // line, not a refusal; see the enum) — except finance rows,
+    // which #120 carved out: a finance row owes the withheld reason
+    // below (its tier may be LOCKED while the peek is still on the
+    // table), so finance rows fall through instead of stopping here.
+    appEntity?.resolvedTier == AppBlockTier.LOCKED &&
+        appEntity?.category != AppCategory.FINANCE.name -> PeekWithheld.TIER_LOCKED
     appEntity?.resolvedTier != AppBlockTier.PEEK_2M &&
         appEntity?.category != AppCategory.FINANCE.name -> null
     // Hale W-30: a peek length of zero is its own reason — the peek
@@ -331,6 +346,13 @@ data class AirlockInterceptState(
      *  session): the door never invents one. */
     val sessionEndsAtMillis: Long? = null,
     val sessionIsStopwatch: Boolean = false,
+    /** Issue #325 (Audit R5, Zario visual): the stake, carried onto
+     *  the door itself — the week's emergency-break balance read
+     *  from the repository's spend ledger at the intercept instant
+     *  (the same flow the Deck renders). -1 = not carried (previews,
+     *  tests): the stake line prints nothing rather than inventing
+     *  a balance. */
+    val emergencyBreaksRemaining: Int = -1,
     /** Audit R3b #147: a stopwatch session has no set end, but it
      *  DOES have a floor moment — the wall instant its clean exit
      *  opens (start + the 20-minute floor, on the session's own
@@ -411,7 +433,18 @@ class MonolithViewModel(
     private val _studyPreset = MutableStateFlow(StudyModePreset.POMODORO_25_5)
     val studyPreset: StateFlow<StudyModePreset> = _studyPreset.asStateFlow()
 
-    private val _intentionText = MutableStateFlow("Finish Chapter 4 Problem Set")
+    // Issue #124 (typing-intention): the intention draft is born
+    // BLANK and is filled only by the user's own typing through
+    // setIntentionText. It used to be born pre-filled with a
+    // factory default ("Finish Chapter 4 Problem Set") and
+    // silently overwritten by every task operation — words put in
+    // the user's mouth and later read back as their declaration.
+    // Sarthak's ruling (Oct 30, 08:55): the intention is his own
+    // editable words, or no name at all — never fixed buckets,
+    // never app-assigned. Task machinery still seeds the DIAL from
+    // the active task (seedDialFromTask); it never touches these
+    // words again.
+    private val _intentionText = MutableStateFlow("")
     val intentionText: StateFlow<String> = _intentionText.asStateFlow()
 
     private val _shortsReelsSniperEnabled = MutableStateFlow(true)
@@ -1191,10 +1224,46 @@ class MonolithViewModel(
             _shortsReelsSniperEnabled.value = repository.isShortsReelsSniperEnabled()
             refreshSystemGuard()
         }
+        // Issue #152: the Drawer's current month follows the
+        // traveller. _drawerMonth is born at ViewModel creation
+        // and was otherwise re-derived only when the VAULT opens,
+        // so an app left open across a landing kept printing the
+        // departure month as current indefinitely (a timezone
+        // change re-anchors every filing date). This slow ticker
+        // re-derives it — only while the user has not pinned a
+        // month by browsing; refreshDrawer() clears the pin.
+        viewModelScope.launch {
+            while (true) {
+                delay(60_000L)
+                if (!drawerMonthPinnedByUser) {
+                    val current = com.example.data.DrawerDay.filingYearMonth(
+                        System.currentTimeMillis()
+                    )
+                    if (current != _drawerMonth.value) {
+                        refreshDrawer()
+                        // Composed with #158: refreshDrawer now
+                        // defaults the month only before any
+                        // selection, so a traveller whose month was
+                        // selected by an earlier refresh would stay
+                        // stranded — the ticker moves the month
+                        // itself in that case, then clears its own
+                        // pin (this move is the default view, not
+                        // a user's browse).
+                        if (_drawerMonth.value != current) {
+                            selectDrawerMonth(current.first, current.second)
+                            drawerMonthPinnedByUser = false
+                        }
+                    }
+                }
+            }
+        }
         viewModelScope.launch {
             activeTask.collect { task ->
                 if (task != null) {
-                    _intentionText.value = task.title
+                    // Issue #124: the dial still seeds from the
+                    // active task; the intention draft does NOT —
+                    // it is the user's own words or blank, never a
+                    // live mirror of the queue.
                     seedDialFromTask(task)
                 }
                 refreshActiveTaskCarryover(task)
@@ -2029,7 +2098,12 @@ class MonolithViewModel(
     }
 
     fun setIntentionText(text: String) {
-        _intentionText.value = text
+        // Issue #124: the one authored writer. Length discipline
+        // only — capping per keystroke is safe, but trimming here
+        // would eat the space between words mid-typing; the trim
+        // happens once, at the arm snapshot in
+        // MonolithRepository.startSession.
+        _intentionText.value = text.take(MonolithRepository.MAX_INTENTION_CHARS)
     }
 
     fun toggleShortsReelsSniper() {
@@ -2344,7 +2418,6 @@ class MonolithViewModel(
                 promoteToActive = promoteToActive
             )
             if (created.resolvedStatus == TaskQueueStatus.ACTIVE) {
-                _intentionText.value = created.title
                 seedDialFromTask(created)
             }
         }
@@ -2369,7 +2442,6 @@ class MonolithViewModel(
                 newNotes = newNotes
             )
             if (updated != null && updated.resolvedStatus == TaskQueueStatus.ACTIVE) {
-                _intentionText.value = updated.title
                 seedDialFromTask(updated)
             }
         }
@@ -2383,7 +2455,6 @@ class MonolithViewModel(
         viewModelScope.launch {
             val nextActive = repository.completeTaskAndAdvance(taskId)
             if (nextActive != null) {
-                _intentionText.value = nextActive.title
                 seedDialFromTask(nextActive)
             }
         }
@@ -2400,7 +2471,6 @@ class MonolithViewModel(
         viewModelScope.launch {
             val nextActive = repository.reopenStoredTask(taskId)
             if (nextActive != null) {
-                _intentionText.value = nextActive.title
                 seedDialFromTask(nextActive)
             }
             refreshDrawer()
@@ -2422,7 +2492,6 @@ class MonolithViewModel(
         viewModelScope.launch {
             val promoted = repository.promoteTaskToActive(taskId)
             if (promoted != null) {
-                _intentionText.value = promoted.title
                 seedDialFromTask(promoted)
             }
         }
@@ -2438,10 +2507,7 @@ class MonolithViewModel(
     fun deferTask(taskId: Int) {
         soundEngine.playRotaryDetent(510.0)
         viewModelScope.launch {
-            val nextActive = repository.deferTask(taskId)
-            if (nextActive != null) {
-                _intentionText.value = nextActive.title
-            }
+            repository.deferTask(taskId)
         }
     }
 
@@ -2472,9 +2538,6 @@ class MonolithViewModel(
                         undoDeleteStore.clear()
                     }
                 }
-                if (nextActive != null) {
-                    _intentionText.value = nextActive.title
-                }
             }
         }
     }
@@ -2486,10 +2549,7 @@ class MonolithViewModel(
         undoDeleteStore.clear()
         soundEngine.playHarmonicSeal(arming = true)
         viewModelScope.launch {
-            val restored = repository.restoreDeletedTask(deleted)
-            if (restored.resolvedStatus == TaskQueueStatus.ACTIVE) {
-                _intentionText.value = restored.title
-            }
+            repository.restoreDeletedTask(deleted)
         }
     }
 
@@ -2611,6 +2671,13 @@ class MonolithViewModel(
     val dayWords: StateFlow<Map<String, String>> = _dayWords.asStateFlow()
 
     private var drawerOffset = 0
+
+    /** Issue #152: true once the user pins a Drawer month by
+     *  browsing (selectDrawerMonth). While unpinned, the slow
+     *  ticker in init keeps _drawerMonth on the current filing
+     *  month — across timezone changes included; refreshDrawer()
+     *  clears the pin (the landing is the ruling's default view). */
+    private var drawerMonthPinnedByUser = false
     private var drawerSearchOffset = 0
     private var drawerSearchJob: Job? = null
 
@@ -2645,6 +2712,10 @@ class MonolithViewModel(
      *  of the prefs capture and the drained day_notes table, so a
      *  word survives its own drain. */
     fun refreshDrawer() {
+        // Composed (#152 × #158): the #152 traveller pin clears on
+        // refresh; the month defaults to the current filing month
+        // only until a month has been selected (#158 F3).
+        drawerMonthPinnedByUser = false
         if (!drawerMonthSelected) {
             _drawerMonth.value = com.example.data.DrawerDay.filingYearMonth(System.currentTimeMillis())
         }
@@ -2663,6 +2734,11 @@ class MonolithViewModel(
                 indexFailed = true
             }
             selectDrawerMonth(_drawerMonth.value.first, _drawerMonth.value.second)
+            // The refresh's own selection is the default view,
+            // not a user's pin — clear the pin selectDrawerMonth
+            // just set, so the issue-#152 ticker keeps following
+            // the current filing month after this refresh.
+            drawerMonthPinnedByUser = false
             if (indexFailed) {
                 // Issue #52 F3: a failed index read prints as an
                 // error on the Drawer, never as a silent empty room.
@@ -2675,6 +2751,9 @@ class MonolithViewModel(
     }
 
     fun selectDrawerMonth(year: Int, month: Int) {
+        // Composed (#152 × #158): a selection is both the #158
+        // selection and the #152 traveller pin.
+        drawerMonthPinnedByUser = true
         drawerMonthSelected = true
         _drawerMonth.value = year to month
         drawerOffset = 0
@@ -2873,7 +2952,6 @@ class MonolithViewModel(
         viewModelScope.launch {
             val promoted = repository.promoteTaskToActive(taskId)
             if (promoted != null) {
-                _intentionText.value = promoted.title
                 seedDialFromTask(promoted)
             }
             _currentDestination.value = MonolithDestination.DECK
@@ -3384,7 +3462,11 @@ class MonolithViewModel(
         val canPeek = peekOfferFor(path, appEntity, cooldownLeft, pillActive)
         // The withheld reason is owed only where the door could
         // have honoured a peek and the tier is PEEK: elsewhere no
-        // peek line prints at all (Held Door Truth Baseline).
+        // peek line prints at all (Held Door Truth Baseline) —
+        // with the issue-#154 exception carried inside
+        // peekWithheldFor: a LOCKED tier on an honouring door
+        // prints its state line (TIER_LOCKED), because total
+        // silence there read as a broken door.
         val withheld = peekWithheldFor(canPeek, path, appEntity, cooldownLeft, pillActive)
 
         _airlockState.value = AirlockInterceptState(
@@ -3392,7 +3474,11 @@ class MonolithViewModel(
             interceptedPackageName = packageName,
             interceptedAppName = appName,
             interceptReasonBadge = effectiveBadge,
-            sessionIntention = active?.intention ?: _intentionText.value,
+            // Issue #124: the airlock quotes the SESSION's frozen
+            // intention or nothing. The old fallback printed the
+            // unarmed draft when no session row backed it — words
+            // never declared for any session, labelled ACTIVE.
+            sessionIntention = active?.intention ?: "",
             selectedReason = DistractionTriggerReason.MUSCLE_MEMORY,
             interceptInstanceId = ++airlockInstanceSeq,
             // ANCHOR (Issue #55, DECISION-NEEDED recorded in the
@@ -3420,6 +3506,10 @@ class MonolithViewModel(
                 ?.takeIf { !it.isStopwatchMode }
                 ?.let { System.currentTimeMillis() + it.spanRemainingSeconds * 1000L },
             sessionIsStopwatch = active?.isStopwatchMode == true,
+            // Issue #325: the stake rides onto the door — the
+            // ledger-derived balance at this instant, never a
+            // remembered or decremented-here copy.
+            emergencyBreaksRemaining = weeklyEmergencyTokensRemaining.value,
             stopwatchFloorAtMillis = active
                 ?.takeIf { it.isStopwatchMode }
                 ?.let {
@@ -3501,7 +3591,10 @@ class MonolithViewModel(
             repository.recordIntercept(
                 packageName = pkg,
                 appName = name,
-                sessionIntention = state.sessionIntention.ifBlank { _intentionText.value },
+                // Issue #124: the frozen session intention as
+                // recorded at intercept time — never backfilled
+                // from the live draft.
+                sessionIntention = state.sessionIntention,
                 outcome = "Used 2m Peek",
                 triggerReason = state.selectedReason.shortTag
             )
@@ -3597,7 +3690,10 @@ class MonolithViewModel(
             repository.recordIntercept(
                 packageName = state.interceptedPackageName,
                 appName = state.interceptedAppName.ifBlank { "Blocked App" },
-                sessionIntention = state.sessionIntention.ifBlank { _intentionText.value },
+                // Issue #124: the frozen session intention as
+                // recorded at intercept time — never backfilled
+                // from the live draft.
+                sessionIntention = state.sessionIntention,
                 outcome = "Left Airlock Without Choosing",
                 triggerReason = state.selectedReason.shortTag
             )
@@ -3642,7 +3738,10 @@ class MonolithViewModel(
             repository.recordIntercept(
                 packageName = state.interceptedPackageName.ifBlank { "com.zhiliaoapp.musically" },
                 appName = state.interceptedAppName.ifBlank { "Blocked App" },
-                sessionIntention = state.sessionIntention.ifBlank { _intentionText.value },
+                // Issue #124: the frozen session intention as
+                // recorded at intercept time — never backfilled
+                // from the live draft.
+                sessionIntention = state.sessionIntention,
                 outcome = if (uninstallAttempt) "Uninstall Attempt — Returned" else "Stayed Focused",
                 triggerReason = state.selectedReason.shortTag,
                 countAsReach = !uninstallAttempt
