@@ -2,6 +2,7 @@ package com.example
 
 import android.content.Context
 import android.os.SystemClock
+import android.provider.Settings
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.CryptoIntegrityManager
@@ -23,16 +24,26 @@ import java.time.Duration
 
 /**
  * Audit R3 #113, findings 4 + 5 — the reboot's two lies, proven
- * against the repository's own machinery:
+ * against the repository's own machinery, in the form the surge
+ * merge composed them (STURM3-11 port):
  *
- *  - Finding 5: the first post-reboot tick used to credit the
- *    device's ENTIRE uptime as focus time. The banked elapsed is
- *    all a reboot may resume from.
- *  - Finding 4: the re-anchor moved the mono anchor and left the
- *    wall anchor at the session's start, so every later tick's
- *    drift read permanently > 90s, tamper stuck, and the
- *    15-minute penalty stretched the session. An honest reboot
- *    must draw NO penalty, on the re-anchor tick or any after.
+ *  - Finding 4 (this branch): the re-anchor moved the mono anchor
+ *    and left the wall anchor at the session's start, so every
+ *    later tick's drift read permanently > 90s, tamper stuck, and
+ *    the 15-minute penalty stretched the session. Both anchors
+ *    now move; an honest reboot draws NO penalty, on the
+ *    re-anchor tick or any after.
+ *  - Finding 5, as composed with main's later Issue #81 F3 law:
+ *    the first post-reboot tick credits the CURRENT boot's
+ *    witnessed uptime (the shield stands from BOOT_COMPLETED, so
+ *    that span is guarded time — #81's doctrine, which superseded
+ *    this branch's original never-credit-uptime form in the
+ *    merge), and an UNWITNESSED boot span — a boot-count delta
+ *    of 2+ against the row's anchor (Safe Mode, a force-stop
+ *    spanning a reboot: Monolith never ran, so the span is
+ *    unproven) — convicts as tamper and draws the penalty. What
+ *    finding 5 killed stands dead: unproven time never passes
+ *    as a free, invisible freeze.
  *
  * And the security side of the same coin, unmoved: a wall clock
  * jumped inside one boot segment, and a forged HMAC, still read
@@ -107,61 +118,113 @@ class RebootTruthRepositoryTest {
         return row.copy(id = id)
     }
 
+    private fun setMachineBootCount(count: Int): Int {
+        Settings.Global.putInt(context.contentResolver, Settings.Global.BOOT_COUNT, count)
+        val read = repo.querySystemBootCount()
+        assertEquals("the test must control the machine boot count", count, read)
+        return read
+    }
+
     /**
-     * The honest reboot, end to end: a session 3,490 seconds in
-     * when the phone dies; the phone comes back on a new boot.
-     * The first tick on the new boot resumes from the banked
-     * figure — not banked + uptime — and no tick after it may
-     * call the man a tamperer.
+     * The honest reboot, end to end, under the composed law: a
+     * session 3,490 seconds in when the phone dies; the phone
+     * comes back on the NEXT boot (delta 1 — witnessed: the
+     * shield stood from that boot's first second). The first
+     * tick resumes from banked + this boot's witnessed uptime,
+     * and no tick after it may call the man a tamperer — the
+     * both-anchors re-anchor (finding 4) keeps the drift test
+     * segment-local, so the formerly false-tamper next tick
+     * stays clean.
      */
     @Test
-    fun honestRebootBanksOnlyWitnessedTimeAndDrawsNoPenalty() = runBlocking {
-        val machineBoot = repo.querySystemBootCount()
+    fun honestRebootCreditsTheWitnessedBootAndDrawsNoPenalty() = runBlocking {
+        val machineBoot = setMachineBootCount(10)
         val monoNow = SystemClock.elapsedRealtime()
         val wallNow = System.currentTimeMillis()
+        val uptimeSec = (monoNow / 1_000L).toInt()
         val banked = 3_490
         val startWall = wallNow - 3_500_000L
         val startMono = monoNow - 3_500_000L
+        val anchoredBoot = machineBoot - 1
         val row = insert(
             sessionRow(
                 startWall = startWall,
                 startMono = startMono,
-                // A boot count the machine no longer reports: the
-                // phone rebooted while the session ran.
-                boot = machineBoot + 7,
+                boot = anchoredBoot,
                 elapsed = banked,
                 lastTickMono = monoNow - 10_000L,
-                hmac = sign(startWall, startMono, machineBoot + 7, 3_600)
+                hmac = sign(startWall, startMono, anchoredBoot, 3_600)
             )
         )
 
-        // Finding 5, at the pure seam: uptime at this tick is the
-        // whole virtual clock (~7,200s) — none of it may book.
+        // Finding 5/#81 at the pure seam: banked + the witnessed
+        // current boot's uptime; no tamper.
         val (verified, tamper) = repo.computeVerifiedSessionElapsed(row)
-        assertEquals(banked, verified)
+        assertEquals(banked + uptimeSec, verified)
         assertFalse(tamper)
 
-        // The re-anchor tick: banked figure stands, no penalty,
-        // BOTH anchors move to the new boot's frame, and the
-        // re-sign covers the new pair (verification passes).
+        // The re-anchor tick: the composed figure stands, no
+        // penalty, BOTH anchors move to the new boot's frame,
+        // and the re-sign covers the new pair.
         val afterReboot = repo.updateSessionProgress(row)
-        assertEquals(banked, afterReboot.elapsedSeconds)
+        assertEquals(banked + uptimeSec, afterReboot.elapsedSeconds)
         assertFalse(afterReboot.tamperDetected)
         assertEquals(0, afterReboot.penaltySecondsAdded)
         assertEquals(machineBoot, afterReboot.bootCount)
         assertTrue(afterReboot.startWallTimeMillis > startWall + 3_000_000L)
         assertTrue(CryptoIntegrityManager.verifySessionState(afterReboot))
 
-        // The NEXT tick was the false-tamper tick: wall-since-start
-        // vs mono-since-reboot disagreed by the session's whole
-        // pre-reboot life. With both anchors in one frame the
-        // drift is the tick's own 30 seconds, the count advances
-        // by exactly those 30, and the penalty never lands.
+        // Finding 4's formerly false-tamper tick: with both
+        // anchors in one frame the drift is the tick's own 30
+        // seconds, the count advances by exactly those 30, and
+        // the penalty never lands.
         ShadowSystemClock.advanceBy(Duration.ofSeconds(30))
         val nextTick = repo.updateSessionProgress(afterReboot)
-        assertEquals(banked + 30, nextTick.elapsedSeconds)
+        assertEquals(banked + uptimeSec + 30, nextTick.elapsedSeconds)
         assertFalse(nextTick.tamperDetected)
         assertEquals(0, nextTick.penaltySecondsAdded)
+    }
+
+    /**
+     * Finding 5's abuse case in its composed (#81 F3) form: the
+     * row's anchor is SEVEN boots behind the machine — the span
+     * crossed boots Monolith never witnessed (Safe Mode, a
+     * force-stop spanning reboots). The figure still books the
+     * witnessed current boot, but the span convicts: tamper at
+     * the seam, and the penalty on the tick. Unproven time is
+     * not a free, invisible freeze.
+     */
+    @Test
+    fun unwitnessedBootSpanStillConvicts() = runBlocking {
+        val machineBoot = setMachineBootCount(10)
+        val monoNow = SystemClock.elapsedRealtime()
+        val wallNow = System.currentTimeMillis()
+        val uptimeSec = (monoNow / 1_000L).toInt()
+        val banked = 3_490
+        val startWall = wallNow - 3_500_000L
+        val startMono = monoNow - 3_500_000L
+        val anchoredBoot = machineBoot - 7
+        val row = insert(
+            sessionRow(
+                startWall = startWall,
+                startMono = startMono,
+                boot = anchoredBoot,
+                elapsed = banked,
+                lastTickMono = monoNow - 10_000L,
+                hmac = sign(startWall, startMono, anchoredBoot, 3_600)
+            )
+        )
+
+        val (verified, tamper) = repo.computeVerifiedSessionElapsed(row)
+        assertEquals(banked + uptimeSec, verified)
+        assertTrue("an unwitnessed boot span must read as tamper", tamper)
+
+        val ticked = repo.updateSessionProgress(row)
+        assertTrue(ticked.tamperDetected)
+        assertEquals(
+            MonolithRepository.HMAC_TAMPER_PENALTY_SECONDS,
+            ticked.penaltySecondsAdded
+        )
     }
 
     /**
