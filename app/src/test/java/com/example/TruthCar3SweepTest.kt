@@ -431,7 +431,13 @@ class TruthCar3SweepRoboTest {
             // composition) reads the stored fact at birth.
             assertEquals(2, freshViewModel().loadoutCapIndex.value)
         } finally {
-            db.close()
+            // KONTO-2 round 8: DB deliberately NOT closed - this
+            // test births three ViewModels over it; their immortal
+            // DAO collectors re-query after a close and the escape
+            // poisons a later test in the sandbox
+            // (UncaughtExceptionsBeforeTest - the round-5 precedent
+            // in SoundAndSocialTruthTest). The sandbox owns this
+            // in-memory DB's lifetime.
         }
     }
 }

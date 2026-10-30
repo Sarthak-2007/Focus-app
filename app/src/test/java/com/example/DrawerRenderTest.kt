@@ -8,6 +8,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.lifecycle.ViewModelStore
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.CapturedNotificationEntity
@@ -58,6 +59,7 @@ class DrawerRenderTest {
     private lateinit var db: MonolithDatabase
     private lateinit var repository: MonolithRepository
     private lateinit var viewModel: MonolithViewModel
+    private val viewModelStore = ViewModelStore()
 
     // Render isolation (Pipeline Law 4): this lane renders ONLY
     // into its own shots-own dir, resolved from the lane's
@@ -97,10 +99,26 @@ class DrawerRenderTest {
         // introduction done, as a dismissed first open would.
         kotlinx.coroutines.runBlocking { repository.markParkIntroDone() }
         viewModel = MonolithViewModel(context, repository, TactileSoundEngine(context))
+        viewModelStore.put("main", viewModel)
     }
 
     @After
     fun tearDown() {
+        // KONTO-2 round 8 (diagnosed, run 41069616930): this class's
+        // directly-constructed VMs were never cleared, so their
+        // immortal viewModelScope collectors (the stateIn trio over
+        // getAllRoutinesFlow / getActiveSessionFlow / getAllApps)
+        // outlived db.close(); stale Main-looper continuations later
+        // executed queued queries against the closed pool and the
+        // escape surfaced as UncaughtExceptionsBeforeTest in
+        // TruthCar3SweepRoboTest.una07 - the round-4 poison in its
+        // cross-class form (same w450dp sandbox). Quiesce in the
+        // only safe order: clear the store (onCleared cancels
+        // viewModelScope), drain the paused looper so the
+        // cancellations actually execute, and only then close.
+        viewModelStore.clear()
+        ShadowLooper.idleMainLooper()
+        composeRule.waitForIdle()
         db.close()
     }
 
