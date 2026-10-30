@@ -1206,6 +1206,39 @@ class MonolithViewModel(
             _shortsReelsSniperEnabled.value = repository.isShortsReelsSniperEnabled()
             refreshSystemGuard()
         }
+        // Issue #152: the Drawer's current month follows the
+        // traveller. _drawerMonth is born at ViewModel creation
+        // and was otherwise re-derived only when the VAULT opens,
+        // so an app left open across a landing kept printing the
+        // departure month as current indefinitely (a timezone
+        // change re-anchors every filing date). This slow ticker
+        // re-derives it — only while the user has not pinned a
+        // month by browsing; refreshDrawer() clears the pin.
+        viewModelScope.launch {
+            while (true) {
+                delay(60_000L)
+                if (!drawerMonthPinnedByUser) {
+                    val current = com.example.data.DrawerDay.filingYearMonth(
+                        System.currentTimeMillis()
+                    )
+                    if (current != _drawerMonth.value) {
+                        refreshDrawer()
+                        // Composed with #158: refreshDrawer now
+                        // defaults the month only before any
+                        // selection, so a traveller whose month was
+                        // selected by an earlier refresh would stay
+                        // stranded — the ticker moves the month
+                        // itself in that case, then clears its own
+                        // pin (this move is the default view, not
+                        // a user's browse).
+                        if (_drawerMonth.value != current) {
+                            selectDrawerMonth(current.first, current.second)
+                            drawerMonthPinnedByUser = false
+                        }
+                    }
+                }
+            }
+        }
         viewModelScope.launch {
             activeTask.collect { task ->
                 if (task != null) {
@@ -2626,6 +2659,13 @@ class MonolithViewModel(
     val dayWords: StateFlow<Map<String, String>> = _dayWords.asStateFlow()
 
     private var drawerOffset = 0
+
+    /** Issue #152: true once the user pins a Drawer month by
+     *  browsing (selectDrawerMonth). While unpinned, the slow
+     *  ticker in init keeps _drawerMonth on the current filing
+     *  month — across timezone changes included; refreshDrawer()
+     *  clears the pin (the landing is the ruling's default view). */
+    private var drawerMonthPinnedByUser = false
     private var drawerSearchOffset = 0
     private var drawerSearchJob: Job? = null
 
@@ -2660,6 +2700,10 @@ class MonolithViewModel(
      *  of the prefs capture and the drained day_notes table, so a
      *  word survives its own drain. */
     fun refreshDrawer() {
+        // Composed (#152 × #158): the #152 traveller pin clears on
+        // refresh; the month defaults to the current filing month
+        // only until a month has been selected (#158 F3).
+        drawerMonthPinnedByUser = false
         if (!drawerMonthSelected) {
             _drawerMonth.value = com.example.data.DrawerDay.filingYearMonth(System.currentTimeMillis())
         }
@@ -2678,6 +2722,11 @@ class MonolithViewModel(
                 indexFailed = true
             }
             selectDrawerMonth(_drawerMonth.value.first, _drawerMonth.value.second)
+            // The refresh's own selection is the default view,
+            // not a user's pin — clear the pin selectDrawerMonth
+            // just set, so the issue-#152 ticker keeps following
+            // the current filing month after this refresh.
+            drawerMonthPinnedByUser = false
             if (indexFailed) {
                 // Issue #52 F3: a failed index read prints as an
                 // error on the Drawer, never as a silent empty room.
@@ -2690,6 +2739,9 @@ class MonolithViewModel(
     }
 
     fun selectDrawerMonth(year: Int, month: Int) {
+        // Composed (#152 × #158): a selection is both the #158
+        // selection and the #152 traveller pin.
+        drawerMonthPinnedByUser = true
         drawerMonthSelected = true
         _drawerMonth.value = year to month
         drawerOffset = 0

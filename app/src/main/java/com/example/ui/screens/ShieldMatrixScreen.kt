@@ -1204,6 +1204,15 @@ private fun LoadoutPreviewPanel(
 private fun fmtRoutineTime(minutes: Int): String =
     "%02d:%02d".format(minutes / 60, minutes % 60)
 
+/** Issue #152: the current local UTC offset ("+05:30"; UTC is
+ *  "+00:00"), printed beside routine times so the zone a printed
+ *  wall time lives in is never left implicit. */
+private fun localOffsetLabel(): String {
+    val offset = java.time.ZoneId.systemDefault().rules
+        .getOffset(java.time.Instant.now())
+    return if (offset == java.time.ZoneOffset.UTC) "+00:00" else offset.id
+}
+
 private fun routineDaysLabel(mask: Int): String = when (mask) {
     127 -> "DAILY"
     31 -> "MON–FRI"
@@ -1301,7 +1310,12 @@ private fun RoutineRow(
                     color = scheme.onBackground
                 )
                 Text(
-                    text = "${routineDaysLabel(routine.daysMask)} · ${routineLoadoutLabel(routine.loadoutName)}",
+                    // Issue #152: a routine's printed times are
+                    // LOCAL wall times in the zone in force — the
+                    // line now says so, with the current offset,
+                    // so after a landing no printed routine time
+                    // is ambiguous about which zone it means.
+                    text = "${routineDaysLabel(routine.daysMask)} · ${routineLoadoutLabel(routine.loadoutName)} · LOCAL ${localOffsetLabel()}",
                     fontFamily = AnonymousProFamily,
                     fontSize = 12.sp,
                     color = scheme.onSurfaceVariant
