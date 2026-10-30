@@ -202,11 +202,25 @@ fun receiptCliffExempt(kind: String): Boolean = isRoutineBornKind(kind)
  *  ∩ intention match ∩ BLOCKED outcome ∩ 30s-per-package
  *  dedupe, first kept).
  *  There is deliberately NO total/count field anywhere in this
- *  contract (Zettel): the slip lists; it never sums. */
+ *  contract (Zettel): the slip lists; it never sums.
+ *
+ *  [isSite] (Nachdruck R4, Finisher 3 §4): true when the reach
+ *  was a SITE — the row's appName is the matched domain, stamped
+ *  by the enforcer, not an app label. Derived at assembly by
+ *  exact match against the blocked-site list (no DB change), so
+ *  rehydrated slips — which re-run assembly — print identically
+ *  to fresh ones. The default keeps every existing constructor
+ *  (test fixtures, harness frames) valid. Named edge (Finisher
+ *  3 §4.1, accepted there): if a domain is removed from the site
+ *  list between the session and a later rehydration, that row's
+ *  match fails and it prints as an app entry; the cure (a
+ *  persisted kind stamp on the intercept row) is a DB change
+ *  and stays Zettel/Ren's call. */
 data class ReceiptDeflection(
     val appName: String,
     val packageName: String,
-    val atWallMillis: Long
+    val atWallMillis: Long,
+    val isSite: Boolean = false
 )
 
 /**
