@@ -70,10 +70,10 @@ fun appMatchesQuery(app: BlockedAppEntity, query: String): Boolean {
 }
 
 enum class MonolithDestination(val route: String, val label: String) {
-    DECK("deck", "Focus"),
+    DECK("deck", "Deck"),
     TASKS("tasks", "Tasks"),
     SHIELD("shield", "Shield"),
-    VAULT("vault", "Receipts")
+    VAULT("vault", "Ledger")
     // GUARD is DISSOLVED (chrome wave): the destination, its screen,
     // and its -1 tab mapping are deleted. What Guard held lives in
     // PARK (the rail's end zone) and on Shield (the websites editor).
@@ -208,7 +208,7 @@ data class AirlockInterceptState(
     val isVisible: Boolean = false,
     val interceptedPackageName: String = "",
     val interceptedAppName: String = "",
-    val interceptReasonBadge: String = "Locked",
+    val interceptReasonBadge: String = "Shut",
     val sessionIntention: String = "",
     val selectedReason: DistractionTriggerReason = DistractionTriggerReason.MUSCLE_MEMORY,
     val transmutedParticles: Int = 0,
@@ -2448,7 +2448,7 @@ class MonolithViewModel(
                 AppBlockTier.LOCKED -> 2
             }
             if (targetRank < currentRank) {
-                triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT WEAKEN '${app.appName.uppercase()}' DURING ACTIVE VAULT")
+                triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT WEAKEN '${app.appName.uppercase()}' DURING AN ACTIVE SESSION")
                 return
             }
         }
@@ -2580,7 +2580,7 @@ class MonolithViewModel(
 
     fun toggleProfileSchedule(profile: FocusProfileEntity) {
         if (activeSession.value?.isActive == true && profile.isScheduleEnabled) {
-            triggerRatchetWarning("ONE-WAY RATCHET • ACTIVE SCHEDULE CANNOT BE DISABLED DURING VAULT LOCKDOWN")
+            triggerRatchetWarning("ONE-WAY RATCHET • ACTIVE SCHEDULE CANNOT BE DISABLED WHILE A SESSION IS SEALED")
             return
         }
         soundEngine.playMechanicalLatch(!profile.isScheduleEnabled)
@@ -2746,7 +2746,7 @@ class MonolithViewModel(
     fun triggerAirlockIntercept(
         packageName: String,
         appName: String,
-        reasonBadge: String = "Locked",
+        reasonBadge: String = "Shut",
         path: InterceptPath = InterceptPath.UNKNOWN
     ) {
         // Issue #68 F5, Tier 1 — revalidation: an airlock is a

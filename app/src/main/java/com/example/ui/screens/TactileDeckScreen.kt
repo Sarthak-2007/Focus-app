@@ -733,7 +733,11 @@ fun TactileDeckScreen(
                     // left; the break is a fact, so it renders.
                     text = when {
                         isSessionRunning && activeSession.isInSafeBreak ->
-                            "BREAK · ${(activeSession.safeBreakSecondsRemaining + 59) / 60} MIN"
+                            // R3b #164 F3: the free automatic pause is
+                            // the SAFE BREAK — never the bare word
+                            // BREAK, which belongs to the once-a-week
+                            // emergency valve.
+                            "SAFE BREAK · ${(activeSession.safeBreakSecondsRemaining + 59) / 60} MIN"
                         // Audit R3b #146: a user returning late to a
                         // later block is told when that block began —
                         // startWallTimeMillis is re-anchored at the
