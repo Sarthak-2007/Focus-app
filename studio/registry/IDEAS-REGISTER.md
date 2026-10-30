@@ -132,3 +132,16 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | Launcher block screen: un-exitable launcher surface + separate allowed/peek screens | Sarthak's ruling 04:29 (not a seat idea — his order) | #22/#18 | BUILT-IN-PROGRESS (Umbau lane; first slice merged via PR #167) |
 
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
+
+## Ambient glances (INNOVATOR-1, Crazy-ideas/Wild/Innovator, WING-A — #155)
+
+Filed on #155 (comment 6535813528) and Discussion #609. All five consume PR #540's WidgetSealTruth (protecting witness + persisted beat <30 s) and land only after #540 merges; none prints SEALED from the session row alone.
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| P1 "Seal in the Shade": Quick Settings TileService glance — state computed at onStartListening, UNAVAILABLE = unproven, tap routes to SHIELD only (M, ~2 days) | INNOVATOR-1 | #155 | PANEL-QUEUED |
+| P2 "The Icon Changes Its Face": activity-alias launcher icon flips to a stamped SEALED plate on the protecting flip; boot default OPEN; watchdog re-asserts from the truth beat (M, ~2–3 days + OEM bench) | INNOVATOR-1 | #155 | PANEL-QUEUED (panel must rule the ≤1-watchdog-interval stale window first) |
+| P3 "Night Seal": DreamService glance that exists only while sealed and finishes immediately when OPEN/UNPROVEN — no seal, no surface (L, ~3–4 days) | INNOVATOR-1 | #155 | PANEL-QUEUED |
+| P4 Lock-screen widget twin: add lock-screen widgetCategory to the existing #312 widget, same truth line (S–M, ~1–2 days) | INNOVATOR-1 | #155 | PANEL-QUEUED (cheapest; natural first build after #540) |
+| P5 "The Held Glance": dynamic long-press shortcut whose label is the state, refreshed on flip events (S, ~1 day) | INNOVATOR-1 | #155 | PANEL-QUEUED (weakest freshness; ranked last) |
+| Streak/score complications, progress-ring live wallpaper, persistent AOD stats face, icon badge counts | INNOVATOR-1 | #155 | PARKED-WITH-REASON (killed by the seat before filing: fail blocker-identity law — 24/7 tracker/dashboard; badge counts also fail truth law, cached = stale) |
