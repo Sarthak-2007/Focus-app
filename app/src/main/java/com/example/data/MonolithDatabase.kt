@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         EmergencyBreakSpendEntity::class,
         DayNoteEntity::class
     ],
-    version = 13,
+    version = 14,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -217,6 +217,29 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
+         * Issue #10 (W-41): the seal's held count, split by tier.
+         * heldShutAtSeal / heldPeekAtSeal record how many of the
+         * apps held at a session's birth were SHUT and how many
+         * were on the 2-minute PEEK tier, so the receipt can print
+         * the two facts separately instead of one merged figure.
+         * (13→14, not 12→13: v13 was taken by the failure-cause
+         * columns above while this cure was in flight — the split
+         * chains after it, and both land.)
+         *
+         * There is NO backfill — a pre-v14 row's split was never
+         * recorded, and inventing one from today's tiers would
+         * fabricate history. Old rows keep -1 ("uncaptured"); the
+         * receipt prints their stored total and omits the split,
+         * the same omission law heldAppsAtSeal has always obeyed.
+         */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN heldShutAtSeal INTEGER NOT NULL DEFAULT -1")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN heldPeekAtSeal INTEGER NOT NULL DEFAULT -1")
+            }
+        }
+
+        /**
          * TOKEN-SPEC §6: the spend ledger arrives as an explicit
          * migration. There is NO backfill — today's in-memory spends
          * were never recorded, so v8 truthfully starts with an empty
@@ -248,6 +271,40 @@ abstract class MonolithDatabase : RoomDatabase() {
          * IllegalStateException in testing, never a silent wipe on his
          * phone.
          */
+        /**
+         * Issue #83 (storage-hygiene F4): space reclamation. Every
+         * erase in this app was a bare DELETE, so deleted rows' pages
+         * stayed in the file forever and monolith_tactile_db grew
+         * monotonically for the life of the install. This callback
+         * puts the file on INCREMENTAL auto-vacuum: the first open
+         * that finds the file not already incremental performs the
+         * one full VACUUM the mode change requires, and every open
+         * hands a bounded slice of free pages back to the device.
+         * Best-effort by construction — a pragma failure must never
+         * cost the app its database open.
+         */
+        private val RECLAIM_CALLBACK = object : RoomDatabase.Callback() {
+            override fun onOpen(db: SupportSQLiteDatabase) {
+                super.onOpen(db)
+                try {
+                    val cursor = db.query("PRAGMA auto_vacuum")
+                    val mode = try {
+                        if (cursor.moveToFirst()) cursor.getInt(0) else 0
+                    } finally {
+                        cursor.close()
+                    }
+                    // auto_vacuum: 0 = NONE, 1 = FULL, 2 = INCREMENTAL.
+                    if (mode != 2) {
+                        db.execSQL("PRAGMA auto_vacuum = INCREMENTAL")
+                        db.execSQL("VACUUM")
+                    }
+                    db.execSQL("PRAGMA incremental_vacuum(512)")
+                } catch (_: Exception) {
+                    // Contained: reclamation is hygiene, not function.
+                }
+            }
+        }
+
         fun getInstance(context: Context): MonolithDatabase {
             return INSTANCE ?: synchronized(this) {
                 val appCtx = context.applicationContext
@@ -261,7 +318,8 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+                    .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance
                 instance
