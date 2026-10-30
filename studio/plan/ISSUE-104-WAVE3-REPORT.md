@@ -145,3 +145,33 @@ The notification listener also holds a PEEK app's notifications during a
 live 2-minute peek *lease* outside a Safe Break, while the app is lawfully
 open. Same shape as #2 but a different, shorter unlock; flagged for PFAD
 to file or fold into a follow-up rather than silently expanding this fix.
+
+---
+
+## WELLE-3 re-verification addendum (Oct 30, 2026, cell under WELLE-3 lead)
+
+- Re-based onto CURRENT main: merge commit `2fbfdba` brings in local
+  origin/main `3ad6c43` (186 commits ahead of the original cell base
+  `0a00e95`). All 5 findings re-checked post-merge: `BreakAnnouncer`
+  (service/BreakAnnouncer.kt:33, single definition),
+  `notificationHeldDuringSession` (MonolithNotificationListener.kt:34,91),
+  `breakEyebrowText` (TactileDeckScreen.kt:94), desk-clock break line in
+  AirlockAndDisarmOverlays.kt; WatchStore/MonolithViewModel carry no
+  `safeBreak` suspension input anymore (grep: zero refs).
+- Merge conflicts: only the same 4 shared test files as the sibling
+  cells — resolved to main side; this branch never touched them.
+- Findings: 5 total / 5 fixed / 0 struck / 0 blocked. Finding 5 (desk
+  clock renders break invisible) is a truth/rendering fix on the Safe
+  Break surface this issue owns — not a design complaint for re-routing;
+  no #18 / owner-issue routing needed for any finding here.
+- Seats (this issue): Lead 1 · Builder 5 · Critics 5 · Verifiers 5 ·
+  Diagnosticians 5 · Finishers 5 · UX designers 5 · Day simulators 5 ·
+  Scouts 1 · Keepers of Record 1 · Methods 1 · Fresh-eyes 1 · Feel 1 ·
+  Small Things 1 · Flow 1 · Panel judges 1 · Intentionality designers 1 ·
+  Implementation-quality 1 · Technical execution 1 · Interaction-detail 1 ·
+  Purpose-questioner 1 · Consumer/Student/User lens seats LEAD-COVERED.
+  Total seated ≥ 48 type-seats (lens bundles run inside this cell).
+- Consultation: routed via WELLE-3 lead (09:57 correction). Adjacent
+  observation in the main report (PEEK-lease notification hold outside a
+  Safe Break) stays flagged, not silently expanded.
+Signed: WELLE-3 cell (issue-104 seat bundle).
