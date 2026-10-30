@@ -420,7 +420,14 @@ data class AirlockInterceptState(
      *  opens (start + the 20-minute floor, on the session's own
      *  banked elapsed). The door states it instead of the bare
      *  "NO SET END". Null for timed sessions and no session. */
-    val stopwatchFloorAtMillis: Long? = null
+    val stopwatchFloorAtMillis: Long? = null,
+    /** Issue #254 F12 (Audit R5): the attempt mirror — which reach
+     *  today this intercept is for this app, this reach included,
+     *  counted from the intercept ledger (the repository's
+     *  interceptAttemptsToday, over dao.getInterceptLogsBetween).
+     *  0 = not carried (previews, tests, or the count not yet read
+     *  back): the door prints nothing rather than inventing one. */
+    val todayAttempts: Int = 0
 )
 
 /**
@@ -1378,6 +1385,13 @@ class MonolithViewModel(
                     peekLeaseLiveForPackage = livePeekLease
                 )
             ) return@launch
+            // Issue #254 F12: the restored door carries the same
+            // attempt mirror a live door would — the day's ledger
+            // count for this package, which already includes the
+            // booked arrival this re-derive restores.
+            val attempts = runCatching {
+                repository.interceptAttemptsToday(newest.packageName, System.currentTimeMillis())
+            }.getOrDefault(0)
             _airlockState.value = mintAirlockState(
                 packageName = newest.packageName,
                 appName = (entity?.appName?.takeIf { it.isNotBlank() }
@@ -1385,7 +1399,8 @@ class MonolithViewModel(
                 reasonBadge = entity?.resolvedTier?.badge ?: "Locked",
                 path = InterceptPath.UNKNOWN,
                 active = session,
-                appEntity = entity
+                appEntity = entity,
+                todayAttempts = attempts
             )
         }
         _freshStartNoteVisible.value = repository.freshStartNotePending()
@@ -3657,9 +3672,10 @@ class MonolithViewModel(
             reasonBadge
         }
         soundEngine.playMechanicalLatch(true)
-        _airlockState.value = mintAirlockState(
+        val minted = mintAirlockState(
             packageName, appName, effectiveBadge, path, active, appEntity
         )
+        _airlockState.value = minted
         // Issue #87 (process-death F4): the intercept itself is booked
         // at trigger, with the verb handlers' own call — before this,
         // recordIntercept ran only inside the verbs (start2MinutePeek,
@@ -3678,6 +3694,23 @@ class MonolithViewModel(
                 outcome = "Intercepted",
                 triggerReason = DistractionTriggerReason.MUSCLE_MEMORY.shortTag
             )
+            // Issue #254 F12: the attempt mirror is read back only
+            // AFTER the arrival above is booked, so the count the
+            // door prints includes this reach and is exactly the
+            // ledger's own number. It lands on the minted state
+            // only if that same intercept still stands — a later
+            // intercept owns its own count.
+            val attempts = runCatching {
+                repository.interceptAttemptsToday(packageName, System.currentTimeMillis())
+            }.getOrNull()
+            if (attempts != null && attempts > 0) {
+                val current = _airlockState.value
+                if (current.interceptInstanceId == minted.interceptInstanceId &&
+                    current.todayAttempts != attempts
+                ) {
+                    _airlockState.value = current.copy(todayAttempts = attempts)
+                }
+            }
         }
     }
 
@@ -3700,7 +3733,12 @@ class MonolithViewModel(
         reasonBadge: String,
         path: InterceptPath,
         active: FocusSessionEntity?,
-        appEntity: BlockedAppEntity?
+        appEntity: BlockedAppEntity?,
+        // Issue #254 F12: the attempt mirror's count, read by the
+        // caller from the intercept ledger (a live trigger reads it
+        // back after booking the arrival; a re-derive reads the
+        // day's rows directly). The mint itself counts nothing.
+        todayAttempts: Int = 0
     ): AirlockInterceptState {
         val cooldownLeft = if (appEntity != null) repository.getPeekCooldownRemainingSeconds(appEntity) else 0
         val pillActive = _floatingPeekPill.value.isActive
@@ -3768,7 +3806,8 @@ class MonolithViewModel(
                     System.currentTimeMillis() +
                         (MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS - it.elapsedSeconds)
                             .coerceAtLeast(0) * 1000L
-                }
+                },
+            todayAttempts = todayAttempts
         )
     }
 
