@@ -693,7 +693,12 @@ object BlockedBrowserDomains {
         "twitter.com",
         "facebook.com",
         "snapchat.com",
-        "youtube.com/shorts"
+        "youtube.com/shorts",
+        // W3 #130 (browser-as-loophole): the whole YouTube host, not
+        // only its /shorts path — the home/watch feed was the biggest
+        // unlisted feed. Enforced by the same site blocker; a needed
+        // video is reachable through the domain-scoped site peek.
+        "youtube.com"
     )
     // Issue #133 (finding 4): an "allowed study sites" example
     // list used to live here as dead decoration — no study-site
@@ -827,31 +832,29 @@ object RoutineSchedule {
     }
 
     /**
-     * The next start at which this routine will actually SEAL:
-     * the first scheduled start strictly after [nowMillis] whose
-     * window the routine's pause does not fully cover. A window
-     * the pause runs through (pausedUntilMillis at or past its
-     * end — the #153 skip horizon) will never fire, so printing
-     * its start as the "next seal" would be a false claim; the
-     * search steps over it to the following window. With no
-     * pause in force this is exactly [nextStartMillis].
+     * The pause-aware next start (routines rebuild §3.6): the
+     * search origin is max(now, pausedUntilMillis), fed into
+     * [nextStartMillis] - whose strictly-after contract means the
+     * origin is passed as pausedUntilMillis - 1 when the pause is
+     * the binding origin, so a window starting exactly as the
+     * pause ends still counts. Windows the pause covers never
+     * fire, so they are never the next start. This one helper is
+     * what the scheduler and every "next seal" reader (Deck
+     * ribbon, widget) share, so they can never disagree.
      *
-     * Written for the home-screen widget's NEXT SEAL line
-     * (MonolithWidgetProvider) — the merge train landed that
-     * call without its callee, leaving main uncompilable
-     * (CI run 41061807113); restored here on the #152 branch so
-     * the branch — and main on merge — compiles again.
+     * (Composed at the e1996c16 merge on the #152 branch: main's
+     * §3.6 helper supersedes the pause-stepping version this
+     * branch's fix-forward 2 added when no definition existed —
+     * same contract, one shared implementation.)
      */
     fun effectiveNextStartMillis(routine: RoutineEntity, nowMillis: Long): Long? {
         val r = routine.sanitized()
-        var cursor = nowMillis
-        repeat(16) {
-            val start = nextStartMillis(r, cursor) ?: return null
-            val end = start + durationMinutes(r) * 60_000L
-            if (r.pausedUntilMillis < end) return start
-            cursor = start
+        val origin = maxOf(nowMillis, r.pausedUntilMillis)
+        return if (origin > nowMillis) {
+            nextStartMillis(r, origin - 1L)
+        } else {
+            nextStartMillis(r, nowMillis)
         }
-        return null
     }
 
     /** End of the window containing [nowMillis], or of the next window if none contains it. */

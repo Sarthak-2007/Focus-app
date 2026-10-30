@@ -100,6 +100,17 @@ data class PruneNote(
     val rulesRemoved: Boolean
 )
 
+/**
+ * W3 #130 (browser-as-loophole, finding 5): the held-sites count a
+ * receipt may claim — the stored list's size ONLY when the browser
+ * blocker is actually on. With the blocker switched off the
+ * session holds no sites at all, whatever the list holds; claiming
+ * the list size printed held sites that were never once checked.
+ * Pure, mirroring countHeldApps' one-derivation law.
+ */
+internal fun heldSitesCount(siteCount: Int, browserBlockerEnabled: Boolean): Int =
+    if (browserBlockerEnabled) siteCount else 0
+
 /** Issue #99 F1: how long after a peek lease's end its package still
  *  counts as "just expired" for eviction purposes. The shield polls
  *  every 2s, so this only needs to cover the first polls after
@@ -2534,7 +2545,14 @@ class MonolithRepository(
             // stored on the row, never a receipt-time re-count
             // against tiers that may have changed since.
             val (heldShut, heldPeek) = countHeldAppsSplit(snapshotApps)
-            val heldSites = dao.getAllSitesSnapshot().size
+            // W3 #130 (recomposed at the DURCH-D landing): sites are
+            // held only when the blocker that enforces them is on —
+            // the same toggle the service reads per event (default
+            // ON when no row exists).
+            val heldSites = heldSitesCount(
+                dao.getAllSitesSnapshot().size,
+                dao.getGuardSettingsSnapshot()?.browserBlockerEnabled ?: true
+            )
             dao.deactivateAllSessions()
             val id = dao.insertSession(
                 session.copy(
@@ -3108,6 +3126,18 @@ class MonolithRepository(
         if (row.receiptNumber <= 0) return null
         return rehydrateReceipt(sessionId, row.receiptNumber)
     }
+
+    /** Issue #135 F2 (re-issue): the Deck's LAST RECEIPT door -
+     *  the standing slip for ONE session, rebuilt settled from
+     *  its row. The ViewModel's publishReceipt facade calls this
+     *  first: a session that claimed its № re-derives its slip
+     *  here (the #157 rehydration - restored, its fault read from
+     *  the row's own fault shield) and never re-claims; a session
+     *  that claimed nothing returns null and the caller falls
+     *  through to discovery. Re-issue is a read: it claims
+     *  nothing and stamps nothing. */
+    suspend fun receiptForSession(sessionId: Int): ReceiptState? =
+        rehydrateReceipt(sessionId)
 
     /** The Vault's receipts index (issue #157): every claimed
      *  session, newest № first, carrying only what its row
@@ -4074,7 +4104,7 @@ class MonolithRepository(
      * meaningless). Returns the updated row, or null when no
      * session is active.
      */
-    suspend fun extendActiveSessionReturningSession(extraMinutes: Int): FocusSessionEntity? =
+    suspend fun extendActiveSession(extraMinutes: Int): FocusSessionEntity? =
         withContext(Dispatchers.IO) {
             val active = dao.getActiveSessionSnapshot() ?: return@withContext null
             if (extraMinutes <= 0 || active.isStopwatchMode) return@withContext active

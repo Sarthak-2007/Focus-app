@@ -819,6 +819,15 @@ class MonolithShieldService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // Issue #324 (Audit R5, Zario): the Recents-swipe resurrection
+    // override lives earlier in this file — main landed it via
+    // issue #43 as the ShieldRestartPolicy alarm re-dispatch while
+    // this lane was in flight, so this lane's own duplicate
+    // override was removed at merge reconciliation. What this lane
+    // adds on top is the manifest surface: stopWithTask=false and
+    // MainActivity excludeFromRecents, pinned by
+    // ShieldResurrectionTest.
+
     override fun onDestroy() {
         if (instance === this) {
             instance = null
