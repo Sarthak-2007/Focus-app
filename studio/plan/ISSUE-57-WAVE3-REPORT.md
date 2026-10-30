@@ -278,3 +278,118 @@ contract testable forever.
 - CI verdict: see the closing comment on issue #57 (this report
   is committed before the push; the run URL lives there, per
   the no-procrastination closure rule).
+
+---
+
+## CLOSER ADDENDUM (Wave-3 closer bundle under RAMPE, Oct 30)
+
+### CI verdict — final classification (supersedes the deferral above)
+
+Run 40974267409 on branch tip f316eca (completed): steps —
+Assemble debug **SUCCESS**; Unit tests the only failing step:
+269 tests executed, 37 failed. Classification: **zero
+#57-scope errors, proven against the baseline** — main
+@73aaeae (the exact commit merged into this branch) ran
+40973388591 with 258 tests / 37 failed, and the two failure
+sets are byte-identical (diff empty). The +11 delta is exactly
+ReceiptSheetTruthTest, all passing. The 37 are pre-existing
+other-scope failures: BreakMigrationTest ×1,
+CascadeDeckRenderTest ×5, ChromeWaveUnitTest ×1,
+DrawerRenderTest ×7, ScreenshotHarnessTest ×15 (all
+`FileNotFoundException` at ScreenshotHarnessTest.kt:150 — a
+harness-environment failure, not rendering assertions),
+ShortsSniperTruthTest ×1, SoundAndSocialTruthTest ×4,
+TetradRenderTest ×1, TruthCar3Sweep(Robo)Test ×3.
+
+### Print-character proof — external Receipt Print Finisher verdict (cited in full)
+
+**VIOLATIONS: NONE. Nothing DECISION-NEEDED on print
+character.** 16 fingerprint elements: 12 UNTOUCHED, 4
+TRUTH-MINIMUM. UNTOUCHED includes: the typeface system (Sora
+deliberately absent from the slip; Atkinson prose + Anonymous
+Pro telemetry only, no new imports), title block, № treatment
+(Anonymous Pro Bold 13sp; ReceiptState identical to main),
+ReceiptMonoLine helper byte-identical, ink discipline (no
+accent ink; Color/Theme/Type/Curves/ReceiptState all
+byte-identical to origin/main), slip body/tear metaphor,
+section rules (there are none — border-only edge, 8dp rhythm
+preserved; the branch did NOT import #10's divider rendering),
+spacing rhythm (12/20/8dp), the exact footer
+string/size/tracking/ink byte-identical, prose warnings,
+HELD/routine/deflection lines, clock print (same-day
+ARMED/ENDED byte-identical). TRUTH-MINIMUM: (a) longSpan
+exactness — whole-minute values byte-identical to base
+(60→`1 MIN`, 3600→`1H 00M` verified); the new SEC class
+appears only where the base lied (45→`45 SEC`, was `0 MIN`;
+61→`1 MIN 01 SEC`, was `2 MIN`); the 0-input edge is
+unreachable in print. (b) RAN total — same mono line, same
+8dp cadence, no divider, omission law obeyed (>0 only).
+(c) Cross-midnight dates — same mono line/face/size/ink;
+same-day slips byte-identical. (d) BREAK BANKED — template
+unchanged, figure source only. Scope proof: the branch
+touches exactly 3 files (ReceiptSheet.kt,
+ReceiptSheetTruthTest.kt, this report); every other
+print-adjacent source is byte-identical to origin/main. The
+closer's own independent fingerprint (style-token diff,
+base-vs-branch) agrees: empty diff outside the cured lines.
+**No downgrade landed.**
+
+### What changes for the user (plain words)
+
+- The receipt now prints how long the session actually ran —
+  a `RAN …` line under ENDED, in the same mono voice as every
+  other line. Before, that fact was never printed at all.
+- `BREAK BANKED` now prints the true banked time to the
+  second. Before, anything under a minute printed a false
+  `0 MIN`, and every other figure was silently rounded down.
+- `PLANNED` now prints the true planned length. Before, it
+  was rounded up to the next minute (a 61-second plan printed
+  `2 MIN`). Whole-minute plans — the normal case — print
+  exactly as they always did.
+- If a session crosses midnight, ARMED and ENDED now show
+  the day (`TUE 4 NOV`) as well as the time. Before, `ENDED
+  00:10` after `ARMED 23:50` read as if the session ended
+  before it started. Same-day receipts look exactly as before.
+- Tapping the dim area around the receipt dismisses it the
+  instant your finger touches down. Before, it waited until
+  you lifted your finger.
+- The receipt's fade-in now actually plays; the code no
+  longer claims a fade-out that could never happen.
+- Nothing about how the receipt looks has changed — fonts,
+  sizes, colours, spacing, the № line, the footer are all
+  byte-identical (print finisher's verdict, above).
+
+### COMPOSITION-HELD (labelled explicitly; do not force)
+
+- **COMPOSITION-HELD — BREAK BANKED divergence.** This
+  branch prints the exact span; issue #10's composition
+  (batch-10) kills the line entirely on semantic grounds (it
+  booked a price as banked time). Both cures cannot land.
+  The merge train picks the epitaph.
+- **COMPOSITION-HELD — dismissal dwell.** #10's composition
+  carries a 2-second dwell dismissal; this branch implements
+  the header's spec as written — dismissal on the next DOWN.
+  The train adopts one or the other; not forced here.
+- Merge state overall: batch-10 also carries a near-identical
+  RAN cure, a rival dated-ARMED implementation, a
+  still-ceiling longSpan, and the W-41/W-43 ReceiptState
+  composition (ReceiptHeldFigures). Recommended order: land
+  batch-10 first, then rebase this branch and keep only what
+  batch-10 lacks (exact longSpan, full MutableTransitionState
+  enter, and the BREAK BANKED ruling above).
+
+### DECISION-NEEDED (labelled explicitly; NOT implemented)
+
+- **DECISION-NEEDED — F4 timezone-retroactivity residual.**
+  The cured date/time printing resolves wall instants in the
+  device's *current* local timezone at print time. A sealed
+  receipt re-rendered after the device changes timezone
+  (travel) would print its ARMED/ENDED wall times shifted to
+  the new zone — the day label would be consistently wrong
+  with the times, never internally contradictory, but not the
+  session's own wall clock. The priced cure: persist one zone
+  field on ReceiptState/PendingReceipt at seal time and plumb
+  it through MonolithRepository to the formatters — outside
+  this issue's surgical scope. Awaiting Sarthak's ruling; the
+  DECISION-NEEDED option is to take the priced cure as a
+  follow-up issue.
