@@ -230,3 +230,13 @@ verifies clean at the exact mono figure.
 
 No schema change (DB stays v12), no migration, no new colours, no
 green, fonts untouched.
+
+## CI verdict
+
+Run 40988077450 (rescue-build, push of d05dff1):
+https://github.com/Sarthak-2007/Focus-app/actions/runs/40988077450
+— **SUCCESS** (watched to completion, exit-status 0). The workflow's
+single build job runs Assemble debug + `testDebugUnitTest`, so the
+green covers compilation and the whole unit suite, the 11 new
+tests included. READY-FOR-MERGE for KARTE's review; the issue is
+left open and unedited per the Wave-3B brief (KARTE reviews).
