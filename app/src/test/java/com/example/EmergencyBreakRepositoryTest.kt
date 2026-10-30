@@ -88,7 +88,14 @@ class EmergencyBreakRepositoryTest {
     fun spendIsAtomicDerivedAndRefusedAtZero() = runBlocking {
         val dao = MonolithDatabase.getInstance(context).monolithDao()
         val repo = MonolithRepository(context, dao)
-        val anchorNow = MonolithWeek.weekAnchorMillis(System.currentTimeMillis())
+        // Boundary-proof anchor (#91): production stamps the spend
+        // with the anchor of the COMPLETION instant, re-reading the
+        // clock inside completeEmergencyBreak(). An anchor captured
+        // once here goes stale if Monday 00:00 passes mid-test, so
+        // this var is re-derived from the spend row's own instant
+        // right after the real completion (see below) and every
+        // later assertion reads the week the spend actually booked.
+        var anchorNow = MonolithWeek.weekAnchorMillis(System.currentTimeMillis())
 
         // Fresh week: the full break is available.
         assertEquals(0, dao.getSpendsForWeek(anchorNow).size)
@@ -123,6 +130,12 @@ class EmergencyBreakRepositoryTest {
         // The real completion: spend + disarm commit together.
         val beforeSpend = System.currentTimeMillis()
         assertEquals(BreakResult.Completed, repo.completeEmergencyBreak())
+        // Re-anchor from the spend's own instant — the single
+        // instant production itself stamped — so the assertions
+        // below read the week of the spend even when the test
+        // straddled Monday 00:00 since anchorNow was captured.
+        val spendRow = dao.getAllSpendsSnapshot().single { it.sessionId == sessionId }
+        anchorNow = MonolithWeek.weekAnchorMillis(spendRow.spentAtWallMillis)
         val spends = dao.getSpendsForWeek(anchorNow)
         assertEquals(1, spends.size)
         val spend = spends.single()

@@ -69,28 +69,42 @@ object RoutineHeartbeat {
     /** The suspending entry — callers with a coroutine use this. */
     suspend fun tick(context: Context, source: Source, force: Boolean = false) {
         val appContext = context.applicationContext
-        if (!gate.tryLock()) {
-            pendingAgain.set(true)
-            return
-        }
-        try {
-            do {
-                pendingAgain.set(false)
-                try {
-                    reconcileOnce(appContext)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    // Issue #47 F3: one exception must not kill the
-                    // one-shot chain. Log it (never swallow), keep
-                    // the pendingAgain loop honest, and re-arm a
-                    // recovery wake BEFORE looping/unlocking.
-                    Log.e(TAG, "reconcile pass failed (source=$source); rearming recovery chain", e)
-                    recoverChainAfterFailure(appContext)
-                }
-            } while (pendingAgain.get())
-        } finally {
-            gate.unlock()
+        // Issue #77: the coalescer had a lost-wakeup window — a
+        // trigger landing AFTER the do-while read pendingAgain=false
+        // but BEFORE gate.unlock() failed tryLock, set the flag, and
+        // returned; the holder then unlocked without re-checking and
+        // nobody ever consumed the flag. That reconcile was silently
+        // dropped until some unrelated future trigger. The outer
+        // loop closes the window: after unlocking, the flag is read
+        // once more — a trigger that landed in the exit window is
+        // consumed by looping back and taking the gate again (or, if
+        // another holder took it first, that holder's own loop sees
+        // the flag and consumes it).
+        while (true) {
+            if (!gate.tryLock()) {
+                pendingAgain.set(true)
+                return
+            }
+            try {
+                do {
+                    pendingAgain.set(false)
+                    try {
+                        reconcileOnce(appContext)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        // Issue #47 F3: one exception must not kill the
+                        // one-shot chain. Log it (never swallow), keep
+                        // the pendingAgain loop honest, and re-arm a
+                        // recovery wake BEFORE looping/unlocking.
+                        Log.e(TAG, "reconcile pass failed (source=$source); rearming recovery chain", e)
+                        recoverChainAfterFailure(appContext)
+                    }
+                } while (pendingAgain.get())
+            } finally {
+                gate.unlock()
+            }
+            if (!pendingAgain.get()) return
         }
     }
 
@@ -137,7 +151,16 @@ object RoutineHeartbeat {
         val dao = database.monolithDao()
         val repository = MonolithRepository(appContext, dao)
 
-        val now = System.currentTimeMillis()
+        // Issue #82 (clock-attacks F2): the reconcile's "now" is
+        // the HONEST now (monotonic-anchored), never the raw wall
+        // clock. A forward jump used to materialise a session
+        // inside a future window — claiming it forever ("no second
+        // mint, ever") and even stamping it MISSED before the
+        // window honestly happened; a TIME_CHANGED broadcast made
+        // the attack one settings visit long. With the honest now,
+        // derive/finalise/materialise all reason about the time
+        // that has actually elapsed.
+        val now = repository.honestNowMillis()
         val routines = dao.getAllRoutinesSnapshot()
         val routinesById = routines.associateBy { it.id }
         val active = dao.getActiveSessionSnapshot()
@@ -178,7 +201,11 @@ object RoutineHeartbeat {
         // 2. SLEEP stand-downs: an active SLEEP session past its stored
         //    window end is stood down unstamped (J2) — a plain
         //    deactivation, never a judgement.
-        if (active != null && active.routineId != null && active.windowEndMillis in 1..now) {
+        // #153 F1: a disabled SLEEP routine also stands down at
+        // once, window end or not — OFF means off.
+        if (active != null && active.routineId != null &&
+            (active.windowEndMillis in 1..now || routinesById[active.routineId]?.enabled == false)
+        ) {
             if (routinesById[active.routineId]?.loadoutName == SmartLoadout.SLEEP.name) {
                 repository.deactivateRoutineSession(active)
                 activeFinalised = true
