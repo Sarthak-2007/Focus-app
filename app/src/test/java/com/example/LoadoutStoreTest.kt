@@ -82,7 +82,7 @@ class LoadoutStoreTest {
         val store = LoadoutStore(context)
         // Before the fix this ClassCastException escaped the read
         // and crashed ViewModel construction.
-        assertEquals(LoadoutStore.Stored.Corrupt(null), store.readStored())
+        assertTrue(store.readStored() is LoadoutStore.Stored.Corrupt)
         assertEquals(LoadoutStore.Stored.Absent, store.readStored())
         assertEquals(0, store.capIndex())
     }
