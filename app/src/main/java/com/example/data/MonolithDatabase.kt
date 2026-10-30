@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         EmergencyBreakSpendEntity::class,
         DayNoteEntity::class
     ],
-    version = 13,
+    version = 14,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -217,6 +217,30 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
+         * W3 #134 (13→14; renumbered at composition — main's own
+         * 12→13 slot was taken by issue #287's failure-cause
+         * columns while this lane was in flight): schema only,
+         * zero data writes, no backfill — the default IS the
+         * truthful pre-v14 value
+         * (0 = no call seconds were ever excluded; before this
+         * column the progress machine never looked, so no past
+         * row can claim any).
+         *
+         * focus_sessions +1: callExcludedSeconds — the per-block
+         * seconds the call bypass was active, excluded from the
+         * booked elapsed by updateSessionProgress so call time
+         * is never certified as focus time.
+         *
+         * NOT created, by name: testDateEpochDay — the test-date
+         * predicate stays STRUCK (Ren), as at v9–v12.
+         */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN callExcludedSeconds INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
          * TOKEN-SPEC §6: the spend ledger arrives as an explicit
          * migration. There is NO backfill — today's in-memory spends
          * were never recorded, so v8 truthfully starts with an empty
@@ -295,7 +319,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance
