@@ -599,7 +599,8 @@ class MonolithShieldService : Service() {
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,
-            InterceptIntents.notificationIntent(this) // ISSUE-67: via the seam, same SINGLE_TOP semantics,
+            // ISSUE-67: via the seam, same SINGLE_TOP semantics.
+            InterceptIntents.notificationIntent(this),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 

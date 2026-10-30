@@ -70,7 +70,7 @@ object InterceptIntents {
     ): Intent = mainActivityIntent(context).apply {
         putExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE, packageName)
         putExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME, appName)
-        putExtra(MonolithShieldService.EXTRA_INTERCEPTED_BADGE, badge)
+        putExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE, badge)
         putExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH, path.name)
         putExtra(
             MonolithShieldService.EXTRA_INTERCEPT_ID,
