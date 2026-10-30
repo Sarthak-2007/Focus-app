@@ -611,11 +611,28 @@ class MonolithRepository(
                     lastSuccessfulSyncMillis = loadLastCatalogSyncMillis(),
                     nowMillis = System.currentTimeMillis()
                 )
+            // Issue #69 F4 (startup half): the collapse check now
+            // gates the ENUMERATION itself, not only the reconcile
+            // after it. The ViewModel init pays this sync twice in
+            // seconds (ensureSeededAndSyncPackages, then again via
+            // refreshSystemGuard); on the old shape the repeat call
+            // still ran the full PackageManager + LauncherApps
+            // enumeration before the guard let it skip the
+            // reconcile. Inside the collapse window both
+            // enumerations are skipped, so the repeat costs no PM
+            // work at all; `installed` is empty, the reconcile
+            // below stays skipped exactly as before, and every
+            // other seeding step in this pass still runs. Data and
+            // behaviour identical — one enumeration, not two.
             val pm = context.packageManager
             val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
                 addCategory(Intent.CATEGORY_LAUNCHER)
             }
-            val resolvedList = pm.queryIntentActivities(mainIntent, 0)
+            val resolvedList = if (collapseRepeat) {
+                emptyList()
+            } else {
+                pm.queryIntentActivities(mainIntent, 0)
+            }
             // The main activity per package (its launch intent's
             // component), resolved once per package — the reconcile's
             // dedupe rule lets it win over shortcut activities.
@@ -653,7 +670,10 @@ class MonolithRepository(
             try {
                 val launcherApps =
                     context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as? LauncherApps
-                if (launcherApps != null) {
+                // Issue #69 F4: the per-profile enumeration is
+                // gated by the same collapse check — a repeat sync
+                // inside the window enumerates nothing, anywhere.
+                if (launcherApps != null && !collapseRepeat) {
                     for (profile in launcherApps.profiles) {
                         val activities = try {
                             launcherApps.getActivityList(null, profile)
