@@ -2,6 +2,7 @@ package com.example
 
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -30,6 +31,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -186,6 +188,133 @@ class MainActivity : ComponentActivity() {
     // onCleared(), the one true end of its life.
 }
 
+// ------------------------------------------------------------------
+// Issue #90 (complexity F3, hoist step): these four helpers used to
+// be nested funs inside MonolithRootApp — three of them named in
+// the audit finding itself. They are file-level now, with every
+// captured value passed explicitly; bodies are verbatim, so
+// behaviour is unchanged and each helper is testable in isolation.
+// ------------------------------------------------------------------
+
+private fun closePark(
+    parkOpenState: MutableState<Boolean>,
+    digestSheetVisible: Boolean,
+    viewModel: MonolithViewModel,
+    dismissReceipt: Boolean
+) {
+    parkOpenState.value = false
+    if (dismissReceipt && digestSheetVisible) {
+        viewModel.toggleNotificationDigestSheet(false)
+    }
+    // The intro bit is NOT spent here (issue-156, F3): a
+    // dismissal — above all a reflexive scrim tap before the
+    // sweep has printed a single word — spends nothing. The
+    // bit is spent on delivery, by the effect in the root, once
+    // the measured board is actually on screen.
+}
+
+private fun openPark(
+    parkOpenState: MutableState<Boolean>,
+    sealed: Boolean,
+    viewModel: MonolithViewModel
+) {
+    // HB-2: the tap-time read of the SAME doorLocked predicate —
+    // the synchronous backstop for a Guard tap landing inside
+    // the finish machine's detention window before the state
+    // collectors recompose. The predicate is evaluated HERE, at
+    // the tap: navigationLocked() reads the VM's flows directly,
+    // so the answer is true even while the composition's
+    // doorLocked still holds its pre-detention value. (The
+    // first form of this guard read the captured doorLocked
+    // val — a print, not a lock; hb4DetentionGuardTap caught
+    // it on the gate build's first full test run.)
+    if (!sealed && !viewModel.navigationLocked()) parkOpenState.value = true
+}
+
+// Issue #27 (finding 5): a FIX trip must never die silently.
+// Every Settings launch goes through here: the exact pane
+// first; if the OEM throws, the generic Settings home is the
+// fallback; if even that fails, the user is TOLD, in words,
+// instead of being stranded on a dead tap.
+private fun launchSettings(context: Context, intent: Intent, what: String) {
+    runCatching { context.startActivity(intent) }
+        .onFailure {
+            runCatching { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
+                .onFailure {
+                    android.widget.Toast.makeText(
+                        context,
+                        "COULDN'T OPEN SETTINGS FOR $what — OPEN ANDROID SETTINGS AND GRANT IT FROM APPS",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+        }
+}
+
+// The FIX key's panes: the exact Settings pane per grant; device
+// admin instead fires the official activation intent for this
+// app's own admin (issue #44), with Security Settings as fallback.
+private fun openFixPane(context: Context, item: com.example.service.WatchItemId) {
+    when (item) {
+        com.example.service.WatchItemId.ACCESSIBILITY ->
+            launchSettings(context, Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "ACCESSIBILITY")
+        com.example.service.WatchItemId.USAGE_ACCESS ->
+            launchSettings(context, Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS), "USAGE ACCESS")
+        com.example.service.WatchItemId.DEVICE_ADMIN -> {
+            // Issue #44: ask Android for THIS admin through the
+            // official activation intent — the old hardcoded
+            // com.android.settings component only opened a
+            // generic list (and broke wherever that class name
+            // differed) and never actually requested the admin.
+            // Security Settings is only the fallback for when
+            // the official intent itself cannot be fired.
+            val requestAdmin = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                putExtra(
+                    DevicePolicyManager.EXTRA_DEVICE_ADMIN,
+                    ComponentName(context, MonolithDeviceAdminReceiver::class.java)
+                )
+                putExtra(
+                    DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                    context.getString(R.string.device_admin_add_explanation)
+                )
+            }
+            runCatching { context.startActivity(requestAdmin) }
+                .getOrElse {
+                    launchSettings(context, Intent(Settings.ACTION_SECURITY_SETTINGS), "DEVICE ADMIN")
+                }
+        }
+        com.example.service.WatchItemId.NOTIFICATION_LISTENER ->
+            launchSettings(
+                context,
+                Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"),
+                "NOTIFICATION ACCESS"
+            )
+        com.example.service.WatchItemId.OVERLAY ->
+            launchSettings(
+                context,
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${context.packageName}")
+                ),
+                "DISPLAY OVER OTHER APPS"
+            )
+        com.example.service.WatchItemId.BATTERY -> {
+            val direct = Intent(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Uri.parse("package:${context.packageName}")
+            )
+            runCatching { context.startActivity(direct) }
+                .getOrElse {
+                    launchSettings(
+                        context,
+                        Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+                        "BATTERY"
+                    )
+                }
+        }
+        else -> launchSettings(context, Intent(Settings.ACTION_SETTINGS), item.name)
+    }
+}
+
 @Composable
 fun MonolithRootApp(viewModel: MonolithViewModel) {
     val context = LocalContext.current
@@ -314,7 +443,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // by itself, once the first measured snapshot lands and the
     // door is open. While sealed it cannot be invoked at all.
     // ------------------------------------------------------------------
-    var parkOpen by rememberSaveable { mutableStateOf(false) }
+    // Issue #90 (complexity F3): the PARK open flag's state holder
+    // is named so the hoisted file-level closePark/openPark below
+    // can take it as an explicit parameter; every existing read and
+    // write of parkOpen goes through this same holder, unchanged.
+    val parkOpenState = rememberSaveable { mutableStateOf(false) }
+    var parkOpen by parkOpenState
     var parkReturnTick by rememberSaveable { mutableStateOf(0) }
 
     // THE LAUNCHER (Sarthak's ruling, Oct 30 04:29 IST): while the
@@ -324,31 +458,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     var launcherOpen by remember { mutableStateOf(false) }
     var launcherPage by remember { mutableStateOf(LauncherPage.HOME) }
 
-    fun closePark(dismissReceipt: Boolean) {
-        parkOpen = false
-        if (dismissReceipt && showNotificationDigestSheet) {
-            viewModel.toggleNotificationDigestSheet(false)
-        }
-        // The intro bit is NOT spent here (issue-156, F3): a
-        // dismissal — above all a reflexive scrim tap before the
-        // sweep has printed a single word — spends nothing. The
-        // bit is spent on delivery, by the effect below, once the
-        // measured board is actually on screen.
-    }
-
-    fun openPark() {
-        // HB-2: the tap-time read of the SAME doorLocked predicate —
-        // the synchronous backstop for a Guard tap landing inside
-        // the finish machine's detention window before the state
-        // collectors recompose. The predicate is evaluated HERE, at
-        // the tap: navigationLocked() reads the VM's flows directly,
-        // so the answer is true even while this composition's
-        // doorLocked still holds its pre-detention value. (The
-        // first form of this guard read the captured doorLocked
-        // val — a print, not a lock; hb4DetentionGuardTap caught
-        // it on the gate build's first full test run.)
-        if (!sealed && !viewModel.navigationLocked()) parkOpen = true
-    }
+    // closePark / openPark are file-level functions since the
+    // issue-90 F3 hoist (they were nested inside this composable);
+    // call sites pass parkOpenState, the digest-sheet visibility
+    // and the seal explicitly.
 
     // F-B1: PARK's invocation dismisses the receipt sheet on the
     // same input, and so does any navigation away from the Deck.
@@ -438,7 +551,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     }
 
     if (parkOpen) {
-        BackHandler { closePark(dismissReceipt = false) }
+        BackHandler {
+            closePark(parkOpenState, showNotificationDigestSheet, viewModel, dismissReceipt = false)
+        }
     } else if (currentDestination != MonolithDestination.DECK) {
         BackHandler { viewModel.navigateTo(MonolithDestination.DECK) }
     }
@@ -475,86 +590,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         MonolithDestination.VAULT -> 3
     }
 
-    // Issue #27 (finding 5): a FIX trip must never die silently.
-    // Every Settings launch goes through here: the exact pane
-    // first; if the OEM throws, the generic Settings home is the
-    // fallback; if even that fails, the user is TOLD, in words,
-    // instead of being stranded on a dead tap.
-    fun launchSettings(intent: Intent, what: String) {
-        runCatching { context.startActivity(intent) }
-            .onFailure {
-                runCatching { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
-                    .onFailure {
-                        android.widget.Toast.makeText(
-                            context,
-                            "COULDN'T OPEN SETTINGS FOR $what — OPEN ANDROID SETTINGS AND GRANT IT FROM APPS",
-                            android.widget.Toast.LENGTH_LONG
-                        ).show()
-                    }
-            }
-    }
-
-    // The FIX key's panes: the exact Settings pane per grant; device
-    // admin instead fires the official activation intent for this
-    // app's own admin (issue #44), with Security Settings as fallback.
-    fun openFixPane(item: com.example.service.WatchItemId) {
-        when (item) {
-            com.example.service.WatchItemId.ACCESSIBILITY ->
-                launchSettings(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "ACCESSIBILITY")
-            com.example.service.WatchItemId.USAGE_ACCESS ->
-                launchSettings(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS), "USAGE ACCESS")
-            com.example.service.WatchItemId.DEVICE_ADMIN -> {
-                // Issue #44: ask Android for THIS admin through the
-                // official activation intent — the old hardcoded
-                // com.android.settings component only opened a
-                // generic list (and broke wherever that class name
-                // differed) and never actually requested the admin.
-                // Security Settings is only the fallback for when
-                // the official intent itself cannot be fired.
-                val requestAdmin = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
-                    putExtra(
-                        DevicePolicyManager.EXTRA_DEVICE_ADMIN,
-                        ComponentName(context, MonolithDeviceAdminReceiver::class.java)
-                    )
-                    putExtra(
-                        DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                        context.getString(R.string.device_admin_add_explanation)
-                    )
-                }
-                runCatching { context.startActivity(requestAdmin) }
-                    .getOrElse {
-                        launchSettings(Intent(Settings.ACTION_SECURITY_SETTINGS), "DEVICE ADMIN")
-                    }
-            }
-            com.example.service.WatchItemId.NOTIFICATION_LISTENER ->
-                launchSettings(
-                    Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"),
-                    "NOTIFICATION ACCESS"
-                )
-            com.example.service.WatchItemId.OVERLAY ->
-                launchSettings(
-                    Intent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:${context.packageName}")
-                    ),
-                    "DISPLAY OVER OTHER APPS"
-                )
-            com.example.service.WatchItemId.BATTERY -> {
-                val direct = Intent(
-                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                    Uri.parse("package:${context.packageName}")
-                )
-                runCatching { context.startActivity(direct) }
-                    .getOrElse {
-                        launchSettings(
-                            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
-                            "BATTERY"
-                        )
-                    }
-            }
-            else -> launchSettings(Intent(Settings.ACTION_SETTINGS), item.name)
-        }
-    }
+    // launchSettings / openFixPane are file-level functions since
+    // the issue-90 F3 hoist; call sites pass the context explicitly.
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -581,14 +618,17 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     isSealed = doorLocked,
                     onGuardLineTap = {
                         when {
-                            parkOpen -> closePark(dismissReceipt = false)
+                            parkOpen -> closePark(
+                                parkOpenState, showNotificationDigestSheet, viewModel,
+                                dismissReceipt = false
+                            )
                             // While sealed, the Guard line opens the
                             // launcher — the sealed phone's home.
                             sealed -> {
                                 launcherPage = LauncherPage.HOME
                                 launcherOpen = true
                             }
-                            else -> openPark()
+                            else -> openPark(parkOpenState, sealed, viewModel)
                         }
                     }
                 )
@@ -675,12 +715,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     warrantProvider = viewModel::armWarrantNow,
                                     onFixBlockingAccess = {
                                         launchSettings(
+                                            context,
                                             Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
                                             "ACCESSIBILITY"
                                         )
                                     },
                                     onFixUsageAccess = {
                                         launchSettings(
+                                            context,
                                             Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS),
                                             "USAGE ACCESS"
                                         )
@@ -806,8 +848,13 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         soundEngine = viewModel.soundEngine,
                         themeReadout = themeEvaluation.readout,
                         parkReturnTick = parkReturnTick,
-                        onDismiss = { closePark(dismissReceipt = false) },
-                        onFixClick = { item -> openFixPane(item) },
+                        onDismiss = {
+                            closePark(
+                                parkOpenState, showNotificationDigestSheet, viewModel,
+                                dismissReceipt = false
+                            )
+                        },
+                        onFixClick = { item -> openFixPane(context, item) },
                         onRecheck = { viewModel.runWatchSweep() },
                         onToggleSound = { viewModel.toggleSound() },
                         onToggleShortsReelsSniper = { viewModel.toggleShortsReelsSniper() },
@@ -888,7 +935,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                             view.selectedTabIndex = selectedTabIndex
                         }
                         view.onTabSelected = { idx ->
-                            if (parkOpen) closePark(dismissReceipt = true)
+                            if (parkOpen) closePark(
+                                parkOpenState, showNotificationDigestSheet, viewModel,
+                                dismissReceipt = true
+                            )
                             val dest = when (idx) {
                                 0 -> MonolithDestination.DECK
                                 1 -> MonolithDestination.SHIELD
@@ -899,9 +949,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         }
                         view.onParkInvoked = {
                             if (parkOpen) {
-                                closePark(dismissReceipt = false)
+                                closePark(
+                                    parkOpenState, showNotificationDigestSheet, viewModel,
+                                    dismissReceipt = false
+                                )
                             } else {
-                                openPark()
+                                openPark(parkOpenState, sealed, viewModel)
                             }
                         }
                     },

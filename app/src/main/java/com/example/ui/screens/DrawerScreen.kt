@@ -601,45 +601,15 @@ fun DrawerScreen(
             )
         }
 
-        // Search — one field. While sealed it is composed but
-        // input-disabled: reading is free, typing is an edit.
+        // Search — one field (DrawerSearchField below). While
+        // sealed it is composed but input-disabled: reading is
+        // free, typing is an edit.
         item {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(scheme.surfaceVariant)
-                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
-                    .padding(horizontal = 12.dp),
-                contentAlignment = Alignment.CenterStart
-            ) {
-                if (drawerQuery.isEmpty()) {
-                    Text(
-                        text = "TYPE TO FIND A TASK",
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 12.sp,
-                        letterSpacing = 1.sp,
-                        color = scheme.onSurfaceVariant
-                    )
-                }
-                BasicTextField(
-                    value = drawerQuery,
-                    onValueChange = onQueryChange,
-                    enabled = !isSealed,
-                    singleLine = true,
-                    textStyle = TextStyle(
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        color = scheme.onBackground
-                    ),
-                    cursorBrush = SolidColor(scheme.onSurfaceVariant),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("drawer_search_input")
-                )
-            }
+            DrawerSearchField(
+                query = drawerQuery,
+                enabled = !isSealed,
+                onQueryChange = onQueryChange
+            )
         }
 
         if (searching) {
@@ -881,6 +851,54 @@ fun DrawerScreen(
                 }
             }
         }
+    }
+}
+
+/** Issue #90 (complexity F2, section extraction): the Drawer's
+ *  search field, out of the 738-line DrawerScreen body. Verbatim;
+ *  the seal's input-disable is passed in as [enabled]. */
+@Composable
+private fun DrawerSearchField(
+    query: String,
+    enabled: Boolean,
+    onQueryChange: (String) -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(scheme.surfaceVariant)
+            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        if (query.isEmpty()) {
+            Text(
+                text = "TYPE TO FIND A TASK",
+                fontFamily = AnonymousProFamily,
+                fontSize = 12.sp,
+                letterSpacing = 1.sp,
+                color = scheme.onSurfaceVariant
+            )
+        }
+        BasicTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            enabled = enabled,
+            singleLine = true,
+            textStyle = TextStyle(
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+                color = scheme.onBackground
+            ),
+            cursorBrush = SolidColor(scheme.onSurfaceVariant),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("drawer_search_input")
+        )
     }
 }
 

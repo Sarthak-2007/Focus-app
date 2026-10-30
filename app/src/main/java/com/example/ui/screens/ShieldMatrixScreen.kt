@@ -252,64 +252,15 @@ fun ShieldMatrixScreen(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 100.dp)
     ) {
         // One-Way Ratchet warning banner if user tries to weaken rules during active session
-        item {
-            AnimatedVisibility(visible = !ratchetWarningMessage.isNullOrBlank()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(scheme.primaryContainer)
-                        .padding(12.dp)
-                ) {
-                    Text(
-                        text = ratchetWarningMessage ?: "",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        color = TokenColorOnPrimary
-                    )
-                }
-            }
-        }
+        item { RatchetWarningBanner(message = ratchetWarningMessage) }
 
-        // Issue #141: the sled commit's receipt + take-back. A tier
-        // change used to land silently and forever; while the undo
-        // window lasts, the banner names what changed and offers
-        // the reversal on the spot.
+        // Issue #141: the sled commit's receipt + take-back (the
+        // banner body lives in TierChangeUndoBanner below).
         item {
-            AnimatedVisibility(visible = tierChangeForUndo != null) {
-                val change = tierChangeForUndo
-                if (change != null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(scheme.primaryContainer)
-                            .padding(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "'${change.appName.uppercase()}' SET TO ${tierWord(change.toTier)}",
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = Color(0xFFFBF1EC)
-                            )
-                            Text(
-                                text = "UNDO",
-                                modifier = Modifier.clickable { onUndoTierChange() },
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = Color(0xFFFBF1EC)
-                            )
-                        }
-                    }
-                }
-            }
+            TierChangeUndoBanner(
+                change = tierChangeForUndo,
+                onUndo = onUndoTierChange
+            )
         }
 
         // =====================================================================
@@ -361,43 +312,14 @@ fun ShieldMatrixScreen(
         // SECTION 3: ROUTINES — real, persisted, self-arming (Ren)
         // =====================================================================
         item {
-            FullBleedSectionHeader(
-                titleWord = "ROUTINES",
-                rightWordPrefix = "",
-                // UNA-09: count what the scheduler counts — LIVE
-                // routines only (RoutineSchedule.liveCount: enabled
-                // AND at least one day). A daysMask == 0 routine the
-                // chain skips is never printed as ACTIVE.
-                rightMonoNumber = com.example.data.RoutineSchedule.liveCount(routines).toString(),
-                rightWordSuffix = " ACTIVE"
+            RoutinesSection(
+                routines = routines,
+                showResetNote = showResetNote,
+                onToggleRoutine = onToggleRoutine,
+                onCycleRoutineLoadout = onCycleRoutineLoadout,
+                onAdjustRoutineTime = onAdjustRoutineTime,
+                onToggleRoutineDay = onToggleRoutineDay
             )
-            if (showResetNote) {
-                // One-time reseed strip (Freya §3.3): his schedule was
-                // reset to his real day; any row edit dismisses it.
-                Text(
-                    text = "SCHEDULE RESET TO YOUR DAY — TAP ANY ROW TO CHANGE IT",
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 11.sp,
-                    color = scheme.primary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp)
-                        .testTag("routine_reset_note")
-                )
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                routines.forEach { routine ->
-                    RoutineRow(
-                        routine = routine,
-                        onToggle = { onToggleRoutine(routine) },
-                        onCycleLoadout = { onCycleRoutineLoadout(routine) },
-                        onAdjustStart = { delta -> onAdjustRoutineTime(routine, true, delta) },
-                        onAdjustEnd = { delta -> onAdjustRoutineTime(routine, false, delta) },
-                        onToggleDay = { day -> onToggleRoutineDay(routine, day) }
-                    )
-                }
-            }
         }
 
         // =====================================================================
@@ -778,6 +700,128 @@ internal val PEEK_TERMS_LINE: String =
  * applies until APPLY LOADOUT is tapped; KEEP MY RULES stages
  * nothing and changes nothing.
  */
+// ------------------------------------------------------------------
+// Issue #90 (complexity F4, section extractions): the banner pair
+// and the routines section used to live inline in ShieldMatrixScreen's
+// LazyColumn. They are standalone composables now, with every input
+// passed explicitly; bodies are verbatim, behaviour unchanged.
+// ------------------------------------------------------------------
+
+@Composable
+private fun RatchetWarningBanner(message: String?) {
+    val scheme = MaterialTheme.colorScheme
+    AnimatedVisibility(visible = !message.isNullOrBlank()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(scheme.primaryContainer)
+                .padding(12.dp)
+        ) {
+            Text(
+                text = message ?: "",
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                color = TokenColorOnPrimary
+            )
+        }
+    }
+}
+
+/** Issue #141: the sled commit's receipt + take-back. A tier
+ *  change used to land silently and forever; while the undo
+ *  window lasts, the banner names what changed and offers
+ *  the reversal on the spot. */
+@Composable
+private fun TierChangeUndoBanner(
+    change: TierChangeForUndo?,
+    onUndo: () -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    AnimatedVisibility(visible = change != null) {
+        if (change != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(scheme.primaryContainer)
+                    .padding(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "'${change.appName.uppercase()}' SET TO ${tierWord(change.toTier)}",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = Color(0xFFFBF1EC)
+                    )
+                    Text(
+                        text = "UNDO",
+                        modifier = Modifier.clickable { onUndo() },
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = Color(0xFFFBF1EC)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoutinesSection(
+    routines: List<com.example.data.RoutineEntity>,
+    showResetNote: Boolean,
+    onToggleRoutine: (com.example.data.RoutineEntity) -> Unit,
+    onCycleRoutineLoadout: (com.example.data.RoutineEntity) -> Unit,
+    onAdjustRoutineTime: (com.example.data.RoutineEntity, Boolean, Int) -> Unit,
+    onToggleRoutineDay: (com.example.data.RoutineEntity, Int) -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    FullBleedSectionHeader(
+        titleWord = "ROUTINES",
+        rightWordPrefix = "",
+        // UNA-09: count what the scheduler counts — LIVE
+        // routines only (RoutineSchedule.liveCount: enabled
+        // AND at least one day). A daysMask == 0 routine the
+        // chain skips is never printed as ACTIVE.
+        rightMonoNumber = com.example.data.RoutineSchedule.liveCount(routines).toString(),
+        rightWordSuffix = " ACTIVE"
+    )
+    if (showResetNote) {
+        // One-time reseed strip (Freya §3.3): his schedule was
+        // reset to his real day; any row edit dismisses it.
+        Text(
+            text = "SCHEDULE RESET TO YOUR DAY — TAP ANY ROW TO CHANGE IT",
+            fontFamily = AnonymousProFamily,
+            fontSize = 11.sp,
+            color = scheme.primary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp)
+                .testTag("routine_reset_note")
+        )
+    }
+    Spacer(modifier = Modifier.height(4.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        routines.forEach { routine ->
+            RoutineRow(
+                routine = routine,
+                onToggle = { onToggleRoutine(routine) },
+                onCycleLoadout = { onCycleRoutineLoadout(routine) },
+                onAdjustStart = { delta -> onAdjustRoutineTime(routine, true, delta) },
+                onAdjustEnd = { delta -> onAdjustRoutineTime(routine, false, delta) },
+                onToggleDay = { day -> onToggleRoutineDay(routine, day) }
+            )
+        }
+    }
+}
+
 @Composable
 private fun LoadoutPreviewPanel(
     loadout: SmartLoadout,
