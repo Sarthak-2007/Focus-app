@@ -1,5 +1,7 @@
 package com.example.data
 
+import java.util.Locale
+
 /**
  * Issue #107 (Audit R3, shield-setup-lived #1): the ONE tier rule a
  * SmartLoadout applies, as a pure function — shared by the commit
@@ -17,7 +19,7 @@ object LoadoutRules {
         appName: String,
         categoryName: String
     ): AppBlockTier {
-        val lower = "$packageName $appName".lowercase()
+        val lower = "$packageName $appName".lowercase(Locale.ROOT)
         val rawTier = when (loadout) {
             SmartLoadout.STUDY -> when {
                 // Issue #133 (study-on-phone-itself, finding 1): the

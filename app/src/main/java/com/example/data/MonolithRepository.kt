@@ -647,7 +647,7 @@ class MonolithRepository(
             val seenTaskTitles = mutableSetOf<String>()
             for (task in existingTasks.sortedBy { it.id }) {
                 if (task.resolvedStatus == TaskQueueStatus.COMPLETED) continue
-                val key = "${task.title.lowercase()}|${task.status}"
+                val key = "${task.title.lowercase(java.util.Locale.ROOT)}|${task.status}"
                 if (!seenTaskTitles.add(key)) {
                     dao.deleteTaskById(task.id)
                 }
@@ -1767,7 +1767,7 @@ class MonolithRepository(
 
     suspend fun addCustomApp(appName: String, packageName: String, category: AppCategory) {
         val cleanPkg = packageName.trim().ifEmpty {
-            "com.custom.${appName.lowercase().replace(" ", "")}"
+            "com.custom.${appName.lowercase(java.util.Locale.ROOT).replace(" ", "")}"
         }
         dao.insertApp(
             BlockedAppEntity(
@@ -2122,12 +2122,20 @@ class MonolithRepository(
         return Triple(settings.receiptSequence, settings.lastReceiptSessionId, settings.lastReceiptOutcome)
     }
 
-    /** HH:mm in the device's zone, for the WITHIN line. */
+    /** The WITHIN line's clock (#88): the device's own 12/24-hour
+     *  setting via [ClockText], never a pinned 24-hour format. */
     private fun hhmm(wallMillis: Long): String =
-        java.text.SimpleDateFormat("HH:mm", java.util.Locale.US).format(java.util.Date(wallMillis))
+        ClockText.timeOfDay(context, wallMillis)
 
-    private fun hhmm(minutesOfDay: Int): String =
-        String.format(java.util.Locale.US, "%02d:%02d", minutesOfDay / 60, minutesOfDay % 60)
+    private fun hhmm(minutesOfDay: Int): String {
+        val cal = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, (minutesOfDay / 60) % 24)
+            set(java.util.Calendar.MINUTE, minutesOfDay % 60)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        return ClockText.timeOfDay(context, cal.timeInMillis)
+    }
 
     /**
      * Reihe §3's assembly: the pending receipt's facts, from pure
@@ -3405,7 +3413,7 @@ class MonolithRepository(
                 else -> true
             }
         }
-        val dayFmt = SimpleDateFormat("EEE", Locale.US)
+        val dayFmt = SimpleDateFormat("EEE", Locale.getDefault())
         val isoFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
         val result = mutableListOf<DailyFocusStat>()
 
@@ -3427,7 +3435,7 @@ class MonolithRepository(
 
             result.add(
                 DailyFocusStat(
-                    dayLabel = dayFmt.format(Date(startOfDay)).uppercase(Locale.US),
+                    dayLabel = dayFmt.format(Date(startOfDay)).uppercase(Locale.getDefault()),
                     dateIso = isoFmt.format(Date(startOfDay)),
                     totalMinutes = totalMins,
                     blocks25mCount = blocks25,

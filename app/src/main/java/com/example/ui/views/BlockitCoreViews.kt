@@ -170,24 +170,47 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
     protected fun tokTextPrimary(): Int = if (isNightMode) NIGHT_TEXT_PRIMARY else LIGHT_TEXT_PRIMARY
     protected fun tokTextSecondary(): Int = if (isNightMode) NIGHT_TEXT_SECONDARY else LIGHT_TEXT_SECONDARY
 
+    /**
+     * #88: the bundled faces carry zero Devanagari and zero Arabic
+     * glyphs, and a bare Canvas [Typeface] draws .notdef boxes for
+     * them — Hindi/Arabic app names and task titles broke on every
+     * Canvas surface. On API 29+ the face is rebuilt through
+     * [Typeface.CustomFallbackBuilder], which keeps the bundled face
+     * for every glyph it has and falls back to the system font only
+     * for glyphs it lacks. Latin rendering is the same face, byte for
+     * byte. Below API 29 (or if the resource is a family XML the
+     * [android.graphics.fonts.Font.Builder] cannot take) the plain
+     * face is returned, exactly as before.
+     */
+    private fun fontWithFallback(resId: Int): Typeface? {
+        val base = runCatching { ResourcesCompat.getFont(context, resId) }.getOrNull() ?: return null
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return base
+        return runCatching {
+            val family = android.graphics.fonts.FontFamily.Builder(
+                android.graphics.fonts.Font.Builder(resources, resId).build()
+            ).build()
+            Typeface.CustomFallbackBuilder(family).build()
+        }.getOrDefault(base)
+    }
+
     // Pre-allocated Typefaces (§2: Words = Atkinson Hyperlegible, Numbers = Anonymous Pro)
     protected val wordTypefaceBold: Typeface by lazy {
         // The REAL Bold file (Round 0b fix) — Typeface.create(base, BOLD) on
         // the Regular file was synthesized smear across every Canvas view.
-        runCatching { ResourcesCompat.getFont(context, R.font.atkinson_hyperlegible_bold) }.getOrNull()
-            ?: runCatching { ResourcesCompat.getFont(context, R.font.atkinson_hyperlegible) }.getOrNull()
+        fontWithFallback(R.font.atkinson_hyperlegible_bold)
+            ?: fontWithFallback(R.font.atkinson_hyperlegible)
             ?: Typeface.SANS_SERIF
     }
     protected val wordTypefaceRegular: Typeface by lazy {
-        runCatching { ResourcesCompat.getFont(context, R.font.atkinson_hyperlegible) }.getOrNull() ?: Typeface.SANS_SERIF
+        fontWithFallback(R.font.atkinson_hyperlegible) ?: Typeface.SANS_SERIF
     }
     protected val monoTypefaceBold: Typeface by lazy {
-        runCatching { ResourcesCompat.getFont(context, R.font.anonymous_pro_bold) }.getOrNull()
-            ?: runCatching { ResourcesCompat.getFont(context, R.font.anonymous_pro) }.getOrNull()
+        fontWithFallback(R.font.anonymous_pro_bold)
+            ?: fontWithFallback(R.font.anonymous_pro)
             ?: Typeface.MONOSPACE
     }
     protected val monoTypefaceRegular: Typeface by lazy {
-        runCatching { ResourcesCompat.getFont(context, R.font.anonymous_pro) }.getOrNull() ?: Typeface.MONOSPACE
+        fontWithFallback(R.font.anonymous_pro) ?: Typeface.MONOSPACE
     }
 
     // Pre-allocated final Paints, RectFs, Paths (§4.1: zero allocation inside onDraw)

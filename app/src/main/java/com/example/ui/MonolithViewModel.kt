@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppBlockTier
+import com.example.data.ClockText
 import com.example.data.AppCategory
 import com.example.data.BreakResult
 import com.example.data.BlockedAppEntity
@@ -488,8 +489,7 @@ class MonolithViewModel(
         val session = activeSession.value ?: return ""
         if (session.isStopwatchMode) return ""
         val endsAt = System.currentTimeMillis() + session.spanRemainingSeconds * 1000L
-        return " (ENDS " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
-            .format(java.util.Date(endsAt)) + ")"
+        return " (ENDS " + ClockText.timeOfDay(appContext, endsAt) + ")"
     }
 
     val tasks: StateFlow<List<FocusTaskEntity>> = repository.allTasksFlow

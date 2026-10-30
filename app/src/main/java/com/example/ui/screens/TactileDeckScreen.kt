@@ -40,6 +40,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
+import com.example.data.ClockText
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -437,7 +439,7 @@ fun TactileDeckScreen(
         // its PASS tone is a claim the wire stands behind — beside
         // a warrant that is not freshly LIVE the end prints at
         // UNKNOWN density, never PASS beside BLOCK OFF.
-        else -> endsAtText(nowFrame + totalSpanMinutes * 60_000L) to
+        else -> endsAtText(ClockText.is24Hour(LocalContext.current), nowFrame + totalSpanMinutes * 60_000L) to
             if (warrantPrintState == WarrantState.LIVE) StripDensity.PASS
             else StripDensity.UNKNOWN
     }
@@ -625,7 +627,7 @@ fun TactileDeckScreen(
             if (activeSession.isStopwatchMode) {
                 "NO END" to StripDensity.PASS
             } else {
-                endsAtText(nowFrame + activeSession.spanRemainingSeconds * 1000L) to StripDensity.PASS
+                endsAtText(ClockText.is24Hour(LocalContext.current), nowFrame + activeSession.spanRemainingSeconds * 1000L) to StripDensity.PASS
             }
         }
         pressLatchLive != null -> pressLatchLive.timeText to pressLatchLive.timeDensity
@@ -769,7 +771,7 @@ fun TactileDeckScreen(
                         // far in he is. No more silent fait accompli.
                         isSessionRunning && activeSession.currentBlockIndex > 1 ->
                             "BLOCK ${activeSession.currentBlockIndex} · SINCE " +
-                                SimpleDateFormat("HH:mm", Locale.US).format(Date(activeSession.startWallTimeMillis))
+                                ClockText.timeOfDay(ClockText.is24Hour(LocalContext.current), activeSession.startWallTimeMillis)
                         // Issue #6 F4: SESSION RUNNING / TOTAL were
                         // wallpaper and die. A routine-born session
                         // prints its name; a hand-armed running

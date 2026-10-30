@@ -1,5 +1,7 @@
 package com.example.data
 
+import java.util.Locale
+
 /**
  * THE CATALOG RECONCILE (Ordner lane — Sarthak's complaint, Oct 29
  * 22:40 IST: "the list of apps is too long, it contains apps that I
@@ -197,7 +199,7 @@ object AppCategorizer {
         val tokens = mutableListOf<String>()
         for (chunk in text.split(Regex("[^A-Za-z0-9]+"))) {
             if (chunk.isEmpty()) continue
-            tokens += chunk.lowercase()
+            tokens += chunk.lowercase(Locale.ROOT)
             val parts = chunk.split(
                 Regex(
                     "(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])" +
@@ -205,7 +207,7 @@ object AppCategorizer {
                 )
             )
             if (parts.size > 1) {
-                parts.forEach { tokens += it.lowercase() }
+                parts.forEach { tokens += it.lowercase(Locale.ROOT) }
             }
         }
         return tokens
@@ -257,7 +259,7 @@ object AppCatalogReconcile {
         installed.groupBy { it.packageName }.mapValues { (_, entries) ->
             entries.firstOrNull { it.isMainActivity }
                 ?: entries.minWithOrNull(
-                    compareBy({ it.label.lowercase() }, { it.label })
+                    compareBy({ it.label.lowercase(Locale.ROOT) }, { it.label })
                 )!!
         }
 

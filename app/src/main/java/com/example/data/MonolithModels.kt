@@ -197,7 +197,7 @@ data class FocusTaskEntity(
         }
 
         fun defaultSubStepsForCategory(title: String, category: String): List<TaskSubStep> {
-            return when (category.lowercase()) {
+            return when (category.lowercase(java.util.Locale.ROOT)) {
                 "code" -> listOf(
                     TaskSubStep(0, "Trace base cases & data invariants", false),
                     TaskSubStep(1, "Implement core algorithm logic", false),
@@ -700,7 +700,7 @@ object BlockedBrowserDomains {
      * the same authority canonicalisation applied in front of it.
      */
     fun normalizeDomain(raw: String): String? {
-        var d = raw.trim().lowercase()
+        var d = raw.trim().lowercase(java.util.Locale.ROOT)
         if (d.isEmpty() || d.contains(' ')) return null
         d = d.removePrefix("https://").removePrefix("http://").removePrefix("//")
         d = d.substringBefore('?').substringBefore('#')

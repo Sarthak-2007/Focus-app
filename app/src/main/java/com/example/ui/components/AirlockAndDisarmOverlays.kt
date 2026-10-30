@@ -50,6 +50,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.CapturedNotificationEntity
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
 import com.example.data.DistractionTriggerReason
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
@@ -187,7 +189,7 @@ fun AlwaysOnDeskClockOverlay(
         // row ticks every second; idle, the burn-in step still
         // steps every minute — the HH:mm print can never ride
         // more than a minute stale.
-        val glanceLine = deskClockGlanceLine(System.currentTimeMillis(), activeSession)
+        val glanceLine = deskClockGlanceLine(ClockText.is24Hour(LocalContext.current), System.currentTimeMillis(), activeSession)
 
         // Issue #111 finding 2: a real figure-8 (lemniscate) wander
         // in dp — see deskClockBurnInOffsetDp. The old 5x5 raster
@@ -375,12 +377,17 @@ internal fun deskClockModeLabel(session: FocusSessionEntity?): String = when {
  * stopwatch honestly states it has no set end; no session, no end
  * is invented.
  */
-internal fun deskClockGlanceLine(nowMillis: Long, session: FocusSessionEntity?): String {
-    val dayTime = java.text.SimpleDateFormat("EEE d MMM • HH:mm", Locale.US)
-        .format(java.util.Date(nowMillis)).uppercase(Locale.US)
+internal fun deskClockGlanceLine(is24Hour: Boolean, nowMillis: Long, session: FocusSessionEntity?): String {
+    // #88: the day names follow the device locale and the time the
+    // system 12/24-hour setting (ClockText's pure core) — this line
+    // landed via #111 with a pinned Locale.US "HH:mm".
+    val dayTime = java.text.SimpleDateFormat("EEE d MMM", Locale.getDefault())
+        .format(java.util.Date(nowMillis)).uppercase(Locale.getDefault()) +
+        " • " + ClockText.timeOfDay(is24Hour, nowMillis)
     return when {
         session != null && session.isActive && !session.isStopwatchMode ->
             dayTime + " • " + endsAtText(
+                is24Hour,
                 session.startWallTimeMillis + session.spanTargetSeconds * 1000L
             )
         session != null && session.isActive -> "$dayTime • NO SET END"
@@ -479,11 +486,12 @@ internal fun peekUnlocked(
  * end; no session, no line. The door never invents an end.
  */
 internal fun airlockSessionLine(
+    is24Hour: Boolean,
     endsAtMillis: Long?,
     isStopwatch: Boolean,
     stopwatchFloorAtMillis: Long? = null
 ): String? = when {
-    endsAtMillis != null -> "SESSION " + endsAtText(endsAtMillis)
+    endsAtMillis != null -> "SESSION " + endsAtText(is24Hour, endsAtMillis)
     // Audit R3b #147: "NO SET END" was true and useless — a
     // stopwatch session's one scheduled fact is its floor moment,
     // when stopping becomes free. State it; once it has passed,
@@ -491,8 +499,7 @@ internal fun airlockSessionLine(
     isStopwatch && stopwatchFloorAtMillis != null &&
         stopwatchFloorAtMillis > System.currentTimeMillis() ->
         "SESSION RUNNING · CLEAN EXIT FROM " +
-            java.text.SimpleDateFormat("HH:mm", Locale.US)
-                .format(java.util.Date(stopwatchFloorAtMillis))
+            ClockText.timeOfDay(is24Hour, stopwatchFloorAtMillis)
     isStopwatch && stopwatchFloorAtMillis != null ->
         "SESSION RUNNING · CLEAN EXIT OPEN"
     isStopwatch -> "SESSION RUNNING · NO SET END"
@@ -524,12 +531,16 @@ internal fun peekPriceText(cooldownMillis: Long): String {
  *  capture is from today, d MMM · HH:mm when it is not — yesterday's
  *  held rows legitimately sit in this morning's snapshot, and the
  *  AS OF stamp dates the snapshot, not the rows. */
-private fun captureTimeLabel(timestampMillis: Long): String {
+private fun captureTimeLabel(is24Hour: Boolean, timestampMillis: Long): String {
     val zone = java.time.ZoneId.systemDefault()
     val captureDate = java.time.Instant.ofEpochMilli(timestampMillis).atZone(zone).toLocalDate()
-    val pattern = if (captureDate == java.time.LocalDate.now(zone)) "HH:mm" else "d MMM · HH:mm"
-    return java.text.SimpleDateFormat(pattern, java.util.Locale.US)
-        .format(java.util.Date(timestampMillis))
+    // #88: the time half follows the system 12/24-hour setting; the
+    // day half names the day in the device locale when it is not today.
+    return if (captureDate == java.time.LocalDate.now(zone)) {
+        ClockText.timeOfDay(is24Hour, timestampMillis)
+    } else {
+        ClockText.dayAndTime(is24Hour, timestampMillis)
+    }
 }
 
 /**
@@ -596,8 +607,7 @@ fun CapturedNotificationsDigestSheet(
                             Text(
                                 text = rememberMixedTypographyText(
                                     wordPrefix = "HELD · AS OF ",
-                                    monoNumber = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
-                                        .format(java.util.Date(frozenAtMillis)),
+                                    monoNumber = ClockText.timeOfDay(LocalContext.current, frozenAtMillis),
                                     wordColor = scheme.onBackground,
                                     monoColor = scheme.primaryContainer
                                 ),
@@ -685,7 +695,7 @@ fun CapturedNotificationsDigestSheet(
                                         // time (issue #138): a live row
                                         // without its time hides whether
                                         // it is fresh or hours old.
-                                        text = "${item.appName} • ${item.senderTitle} • ${captureTimeLabel(item.timestampMillis)}",
+                                        text = "${item.appName} • ${item.senderTitle} • ${captureTimeLabel(ClockText.is24Hour(LocalContext.current), item.timestampMillis)}",
                                         fontFamily = AtkinsonHyperlegibleFamily,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 12.sp,
@@ -869,6 +879,7 @@ fun AirlockInterceptOverlay(
                 // states the session's end — its own statement,
                 // from the session's own numbers.
                 airlockSessionLine(
+                    ClockText.is24Hour(LocalContext.current),
                     state.sessionEndsAtMillis,
                     state.sessionIsStopwatch,
                     state.stopwatchFloorAtMillis
