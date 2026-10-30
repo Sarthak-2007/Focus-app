@@ -21,3 +21,12 @@ debug.keystore
 *.jks
 my-upload-key.jks
 keystore.properties
+
+# Repo hygiene (audit round 2, issue #84): tool caches + run debris never re-enter
+.aistudio/
+.tempmediaStorage/
+/public/
+*.log
+*.tmp
+*.flag
+*.note
