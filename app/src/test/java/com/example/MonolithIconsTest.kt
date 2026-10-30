@@ -20,7 +20,7 @@ class MonolithIconsTest {
         for (icon in MonolithIcons.All) {
             assertEquals("viewport width for ${icon.name}", 24f, icon.viewportWidth)
             assertEquals("viewport height for ${icon.name}", 24f, icon.viewportHeight)
-            assertTrue("${icon.name} must carry path geometry", icon.root.children.isNotEmpty())
+            assertTrue("${icon.name} must carry path geometry", icon.root.iterator().hasNext())
         }
     }
 
