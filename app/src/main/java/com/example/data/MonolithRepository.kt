@@ -210,7 +210,6 @@ class MonolithRepository(
         const val CLOCK_ANCHOR_MONO_KEY = "anchor_elapsed_realtime_ms"
         const val CLOCK_ANCHOR_BOOT_KEY = "anchor_boot_count"
 
->>>>>>> origin/main
         /** Issue #48: EVERY sealed session's id, as a string set.
          *  The single int above is one slot — sealing a second
          *  session used to erase the first session's only on-disk
