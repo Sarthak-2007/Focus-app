@@ -179,10 +179,17 @@ class StripDerivationsTest {
 
     @Test
     fun causeTablePicksOneSentenceByCausalPriority() {
-        // A11y death outranks everything.
+        // A11y death outranks everything. Timed overload with a
+        // fresh readMono/nowMono pair (TECH-1 B-Blocker-1): the
+        // no-clock overload reads SystemClock, a throwing stub in
+        // plain JVM tests. This warrant carries no residency, so
+        // no cold-open grace silence is owed and OFF stands at once.
         assertEquals(
             "BLOCKING IS OFF — TAP TO FIX",
-            refusalSentenceFor(warrant(WarrantState.OFF, bound = false, stamped = false, usage = UsageAccess.DENIED))?.text
+            refusalSentenceFor(
+                warrant(WarrantState.OFF, bound = false, stamped = false, usage = UsageAccess.DENIED, readMono = 10_000L),
+                10_000L
+            )?.text
         )
         // Bound but unstamped, usage ALLOWED, and NO residency
         // carried (this helper's hand-built warrant): the cured
@@ -204,23 +211,23 @@ class StripDerivationsTest {
         assertEquals("BLOCKING IS OFF — TAP TO FIX", unstampedNoResidency?.text)
         assertEquals(RefusalAction.FIX_ACCESSIBILITY, unstampedNoResidency?.action)
         // Usage positively denied names its own pane.
-        val usageSentence = refusalSentenceFor(warrant(WarrantState.OFF, usage = UsageAccess.DENIED))
+        val usageSentence = refusalSentenceFor(warrant(WarrantState.OFF, usage = UsageAccess.DENIED, readMono = 10_000L), 10_000L)
         assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", usageSentence?.text)
         assertEquals(RefusalAction.FIX_USAGE, usageSentence?.action)
         // Usage never granted (issue #6 C3): the sentence names
         // the Usage pane — the door its tap has always opened.
-        val unsetSentence = refusalSentenceFor(warrant(WarrantState.UNPROVEN, usage = UsageAccess.UNSET))
+        val unsetSentence = refusalSentenceFor(warrant(WarrantState.UNPROVEN, usage = UsageAccess.UNSET, readMono = 10_000L), 10_000L)
         assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", unsetSentence?.text)
         assertEquals(RefusalAction.FIX_USAGE, unsetSentence?.action)
         // UNSET + unstamped + UNPROVEN (the C3 lie's other door): the
         // RETRY row must not claim this warrant — its tap opens the
         // Usage pane, so the Usage sentence is the only honest print.
-        val unsetUnstamped = refusalSentenceFor(warrant(WarrantState.UNPROVEN, stamped = false, usage = UsageAccess.UNSET))
+        val unsetUnstamped = refusalSentenceFor(warrant(WarrantState.UNPROVEN, stamped = false, usage = UsageAccess.UNSET, readMono = 10_000L), 10_000L)
         assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", unsetUnstamped?.text)
         assertEquals(RefusalAction.FIX_USAGE, unsetUnstamped?.action)
         // Healthy wire: the slot stands empty.
-        assertNull(refusalSentenceFor(warrant(WarrantState.LIVE)))
-        assertNull(refusalSentenceFor(null))
+        assertNull(refusalSentenceFor(warrant(WarrantState.LIVE, readMono = 10_000L), 10_000L))
+        assertNull(refusalSentenceFor(null, 10_000L))
     }
 
     @Test
