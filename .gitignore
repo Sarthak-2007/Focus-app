@@ -22,5 +22,11 @@ debug.keystore
 my-upload-key.jks
 keystore.properties
 
-# Raw run logs are machine-local evidence, never source (issue #75)
+# Repo hygiene (audit round 2, issue #84): tool caches + run debris never re-enter
+.aistudio/
+.tempmediaStorage/
+/public/
 *.log
+*.tmp
+*.flag
+*.note
