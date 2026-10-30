@@ -120,13 +120,17 @@ class StripDerivationsTest {
         state: WarrantState,
         bound: Boolean = true,
         stamped: Boolean = true,
-        usage: UsageAccess = UsageAccess.ALLOWED
+        usage: UsageAccess = UsageAccess.ALLOWED,
+        readMono: Long = 0L,
+        residencyStartMono: Long = 0L
     ) = Warrant(
         state = state,
         a11yBound = bound,
         a11yStampedThisResidency = stamped,
         shieldProtecting = false,
-        usage = usage
+        usage = usage,
+        readMono = readMono,
+        residencyStartMono = residencyStartMono
     )
 
     @Test
@@ -180,11 +184,25 @@ class StripDerivationsTest {
             "BLOCKING IS OFF — TAP TO FIX",
             refusalSentenceFor(warrant(WarrantState.OFF, bound = false, stamped = false, usage = UsageAccess.DENIED))?.text
         )
-        // Bound but unstamped: can't check.
-        assertEquals(
-            RefusalAction.RETRY_CHECK,
-            refusalSentenceFor(warrant(WarrantState.UNPROVEN, stamped = false))?.action
+        // Bound but unstamped, usage ALLOWED, and NO residency
+        // carried (this helper's hand-built warrant): the cured
+        // table (issue #7) prints BLOCKING IS OFF at once.
+        // WHY THE OLD EXPECTATION WAS THE BUG: this row used to
+        // expect RefusalAction.RETRY_CHECK — the fog sentence that
+        // printed "can't check, tap to retry" AT REST on a cold
+        // open, forever, on a guard whose only fault was that no
+        // a11y event had happened yet; the retry could never fix
+        // it, because nothing was broken that a tap repairs. The
+        // fog row is deleted, not reworded: an unstamped warrant
+        // carrying no residency is age-unknown, never fresh, so no
+        // grace silence is owed and bound-but-blind is off in fact.
+        // (A carried, in-grace residency IS silent — that half of
+        // the cured table is proven in ColdStartWarrantTest.)
+        val unstampedNoResidency = refusalSentenceFor(
+            warrant(WarrantState.UNPROVEN, stamped = false), 10_000L
         )
+        assertEquals("BLOCKING IS OFF — TAP TO FIX", unstampedNoResidency?.text)
+        assertEquals(RefusalAction.FIX_ACCESSIBILITY, unstampedNoResidency?.action)
         // Usage positively denied names its own pane.
         val usageSentence = refusalSentenceFor(warrant(WarrantState.OFF, usage = UsageAccess.DENIED))
         assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", usageSentence?.text)

@@ -93,14 +93,16 @@ class TruthCar3InterceptTest {
         readMono: Long,
         bound: Boolean = true,
         stamped: Boolean = true,
-        usage: UsageAccess = UsageAccess.ALLOWED
+        usage: UsageAccess = UsageAccess.ALLOWED,
+        residencyStartMono: Long = 0L
     ) = Warrant(
         state = state,
         a11yBound = bound,
         a11yStampedThisResidency = stamped,
         shieldProtecting = false,
         usage = usage,
-        readMono = readMono
+        readMono = readMono,
+        residencyStartMono = residencyStartMono
     )
 
     @Test
@@ -179,10 +181,36 @@ class TruthCar3InterceptTest {
         )
         assertNull(refusalSentenceFor(dead, 200_000L))
         assertNull(refusalSentenceFor(null, 200_000L))
+        // Cure alignment (issue #7): staleness outranks the cured
+        // grace table too. An unstamped warrant whose residency is
+        // past the grace window speaks BLOCKING IS OFF on a
+        // fresh read — the old fog row that used to claim this exact
+        // warrant ("can't check, tap to retry") was the cold-start
+        // bug: it printed at rest and its retry could never land —
+        // and the same warrant on a STALE read still speaks
+        // nothing, because a fix may only ride a current read.
+        val graceExpired = warrant(
+            WarrantState.UNPROVEN, readMono = 100_000L, stamped = false,
+            residencyStartMono = 100_000L
+        )
+        // Inside the grace (residency age 2s): silence.
+        assertNull(refusalSentenceFor(graceExpired, 102_000L))
+        // Past the grace (residency age 4_001 ms), read still fresh:
+        // the cured sentence, not the fog.
+        assertEquals(
+            "BLOCKING IS OFF — TAP TO FIX",
+            refusalSentenceFor(graceExpired, 104_001L)?.text
+        )
+        // The same warrant gone stale: silence again.
+        assertNull(refusalSentenceFor(graceExpired, 200_000L))
     }
 
     @Test
     fun deriveWarrantStampsTheReadInstantItWasGiven() {
+        // Pin the store to a known state first: no residency in
+        // force, so the residency stamp asserted below is 0 by
+        // construction, not by whatever ran before in this JVM.
+        WatchStore.resetForTest()
         val w = WatchStore.deriveWarrant(
             a11yBound = true, stamped = true,
             usage = UsageAccess.ALLOWED, shieldProtecting = false,
@@ -190,6 +218,14 @@ class TruthCar3InterceptTest {
         )
         assertEquals(424_242L, w.readMono)
         assertEquals(WarrantState.LIVE, w.state)
+        // Cold-start cure (issue #7): the same construction site
+        // stamps the residency the warrant was derived under, so
+        // the cured sentence table can age the residency from the
+        // warrant itself. No residency is in force here, so the
+        // warrant carries 0 — age-unknown, never a fresh residency.
+        // (A live residency's stamp is asserted in
+        // ColdStartWarrantTest's Robolectric half.)
+        assertEquals(0L, w.residencyStartMono)
     }
 
     // -----------------------------------------------------------------
