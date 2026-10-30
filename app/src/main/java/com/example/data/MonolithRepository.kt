@@ -532,22 +532,11 @@ class MonolithRepository(
         editor.apply()
     }
 
-    private fun categorizePackage(pkg: String, label: String): AppCategory {
-        val lower = "$pkg $label".lowercase()
-        return when {
-            lower.contains("tiktok") || lower.contains("youtube") || lower.contains("instagram") || lower.contains("reel") ->
-                AppCategory.SHORT_VIDEO
-            lower.contains("twitter") || lower.contains("reddit") || lower.contains("snapchat") || lower.contains("facebook") ->
-                AppCategory.SOCIAL
-            lower.contains("game") || lower.contains("clash") || lower.contains("roblox") || lower.contains("play") ->
-                AppCategory.GAMES
-            lower.contains("whatsapp") || lower.contains("discord") || lower.contains("telegram") || lower.contains("message") ->
-                AppCategory.MESSAGING
-            lower.contains("chrome") || lower.contains("browser") || lower.contains("firefox") || lower.contains("brave") ->
-                AppCategory.BROWSERS
-            else -> AppCategory.SHOPPING
-        }
-    }
+    // Issue #132: classification lives in the pure AppCategorizer
+    // (AppCatalogReconcile.kt) so it is unit-testable; this stays
+    // as the reconcile's categorize seam.
+    private fun categorizePackage(pkg: String, label: String): AppCategory =
+        AppCategorizer.categorize(pkg, label)
 
     fun queryRealTodayUsageMinutes(): Map<String, Int> {
         if (!hasUsageStatsPermission()) return emptyMap()

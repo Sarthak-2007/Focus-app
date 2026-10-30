@@ -47,6 +47,49 @@ data class AppCatalogPlan(
     val toPrune: List<String>
 )
 
+/**
+ * The one package classifier (Issue #132, music-during-focus).
+ * Pure and total: every package+label lands in exactly one
+ * [AppCategory]. Extracted from MonolithRepository so the
+ * classification is unit-testable and the repository delegates.
+ *
+ * MUSIC IS CHECKED FIRST, BY TOKEN, not substring: a media
+ * player's identity must beat the traps below it —
+ * "youtube.music" would otherwise file YouTube Music as
+ * SHORT_VIDEO and any "…Player" label as GAMES via "play".
+ * Token matching (split on non-alphanumerics) is what keeps
+ * the check honest: "musically" (TikTok's package) contains
+ * the substring "music" but is not the token "music".
+ */
+object AppCategorizer {
+
+    private val MUSIC_TOKENS = setOf(
+        "music", "podcast", "podcasts", "audio", "audiobook", "audiobooks",
+        "radio", "spotify", "soundcloud", "deezer", "tidal", "gaana",
+        "wynk", "shazam", "bandcamp", "audius", "audible", "tunein",
+        "castbox", "audiomack", "pocketcasts"
+    )
+
+    fun categorize(pkg: String, label: String): AppCategory {
+        val lower = "$pkg $label".lowercase()
+        val tokens = lower.split(Regex("[^a-z0-9]+")).filter { it.isNotEmpty() }
+        if (tokens.any { it in MUSIC_TOKENS }) return AppCategory.MUSIC
+        return when {
+            lower.contains("tiktok") || lower.contains("youtube") || lower.contains("instagram") || lower.contains("reel") ->
+                AppCategory.SHORT_VIDEO
+            lower.contains("twitter") || lower.contains("reddit") || lower.contains("snapchat") || lower.contains("facebook") ->
+                AppCategory.SOCIAL
+            lower.contains("game") || lower.contains("clash") || lower.contains("roblox") || lower.contains("play") ->
+                AppCategory.GAMES
+            lower.contains("whatsapp") || lower.contains("discord") || lower.contains("telegram") || lower.contains("message") ->
+                AppCategory.MESSAGING
+            lower.contains("chrome") || lower.contains("browser") || lower.contains("firefox") || lower.contains("brave") ->
+                AppCategory.BROWSERS
+            else -> AppCategory.SHOPPING
+        }
+    }
+}
+
 object AppCatalogReconcile {
 
     val FACTORY_PRESETS: Map<String, AppRulePreset> = mapOf(
@@ -87,7 +130,14 @@ object AppCatalogReconcile {
                 val preset = FACTORY_PRESETS[pkg]
                 val tier = preset?.tier ?: when (category) {
                     AppCategory.SHORT_VIDEO, AppCategory.GAMES -> AppBlockTier.LOCKED
-                    AppCategory.MESSAGING -> AppBlockTier.PEEK_2M
+                    // Issue #132: MUSIC is born PEEK_2M, like
+                    // MESSAGING — the existing peek lease (and the
+                    // Safe Break's PEEK pass) is the lawful way to
+                    // open the player mid-session and press play;
+                    // background playback was never blocked, so a
+                    // 2-minute start window is all a player needs.
+                    // Born LOCKED, a player got no peek at all.
+                    AppCategory.MESSAGING, AppCategory.MUSIC -> AppBlockTier.PEEK_2M
                     else -> AppBlockTier.OPEN
                 }
                 toInsert += BlockedAppEntity(
