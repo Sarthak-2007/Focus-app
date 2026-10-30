@@ -113,7 +113,21 @@ class MonolithShieldService : Service() {
                 // shieldLastBeatWallMillis into the row it already
                 // persists, so the finish machine can later prove
                 // whether the shield was present or gone.
-                val updated = repository.updateSessionProgress(activeSession, stampShieldBeat = true)
+                // Issue #81 finding 4: the beat certifies a WORKING
+                // door, not a breathing process. Without Usage
+                // Access the foreground query reads null forever —
+                // indistinguishable from "nothing blocked in
+                // foreground" — so a revoked grant used to keep the
+                // beat fresh while the door stood open, and the
+                // session finished ELAPSED_CLEAN. Now the beat is
+                // stamped only while the grant the door depends on
+                // is actually held; revoking it starves the beat,
+                // and the gap law (latch + finish classification)
+                // convicts the session as a shield gap instead.
+                val usageAccessHeld = repository.hasUsageStatsPermission()
+                val updated = repository.updateSessionProgress(
+                    activeSession, stampShieldBeat = usageAccessHeld
+                )
                 if (!updated.isActive) {
                     // Session-edge tick BEFORE standing down: a routine
                     // session that just timer-completed gets finalised
@@ -203,7 +217,11 @@ class MonolithShieldService : Service() {
                 // Watch Store (chrome C3): ONE publication per
                 // iteration — the engine heartbeat plus a re-read of
                 // the two BIND items' present state.
-                WatchStore.onShieldIteration(protecting)
+                // Issue #81 finding 4: USAGE ACCESS is re-measured
+                // on the same cadence — it used to be read only by
+                // the Deck-entry sweep, so a mid-session revocation
+                // was invisible to every surface while it mattered.
+                WatchStore.onShieldIteration(protecting, usageAccess = usageAccessHeld)
 
                 val nowMono = SystemClock.elapsedRealtime()
                 val blockedPackages = dao.getAllAppsSnapshot()

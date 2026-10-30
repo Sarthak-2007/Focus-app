@@ -55,7 +55,11 @@ data class SystemGuardStatus(
     val isHmacSignatureValid: Boolean = false,
     val clockDriftSeconds: Long = 0L,
     val systemBootCount: Int = 0,
-    val installedLauncherAppsCount: Int = 0
+    val installedLauncherAppsCount: Int = 0,
+    // Issue #81 finding 5: component-disable detection. Default
+    // false per the #28 law above — unmeasured is NOT enabled;
+    // getSystemGuardStatus is the measuring read.
+    val areCriticalComponentsEnabled: Boolean = false
 ) {
     val readinessCount: Int
         get() = listOf(
@@ -239,6 +243,29 @@ class MonolithRepository(
 
     suspend fun ensureSeededAndSyncPackages() = withContext(Dispatchers.IO) {
         seedMutex.withLock {
+        // Issue #81 finding 1: BEFORE any seeding, ask the
+        // off-sandbox witness. A surviving witness over a session
+        // table with zero rows means this "fresh install" is a
+        // resurrection after clear-data destroyed a live session —
+        // record that destruction in the ledger FIRST, so the seed
+        // below can never launder it into a silent factory state.
+        val witnessStore = ClearDataWitnessStore(context)
+        val witnessedSessionId = witnessStore.readSessionId()
+        if (ClearDataWitness.isResurrection(
+                witnessedSessionId, dao.getSessionHistorySnapshot().size
+            )
+        ) {
+            dao.insertInterceptLog(
+                InterceptLogEntity(
+                    packageName = "com.monolith.system",
+                    appName = "State Reset Detected",
+                    sessionIntention = "",
+                    outcome = "App data cleared — witnessed session " +
+                        "#$witnessedSessionId destroyed (clear-data witness)"
+                )
+            )
+            witnessStore.clear()
+        }
         if (dao.getAllSitesSnapshot().isEmpty()) {
             dao.insertSites(BlockedBrowserDomains.defaultDomains.map { BlockedSiteEntity(it) })
         }
@@ -852,7 +879,22 @@ class MonolithRepository(
             // Resume from accumulated elapsed seconds prior to reboot + seconds elapsed since current boot
             val priorElapsed = max(session.accumulatedBeforeRebootSeconds, session.elapsedSeconds)
             val sinceRebootSec = (nowMono / 1000L).toInt().coerceAtLeast(0)
-            Pair(priorElapsed + sinceRebootSec, !hmacValid)
+            val monoStyleSec = priorElapsed + sinceRebootSec
+            // Issue #81 finding 3: Safe Mode. In Safe Mode Monolith
+            // cannot run at all while the blocked system apps can —
+            // and the old verdict here flagged tamper on HMAC failure
+            // only, so Safe-Mode hours neither advanced the session
+            // nor registered. Wall time no monotonic clock accounts
+            // for, beyond a generous reboot tolerance, is now tamper
+            // evidence in this branch too (RebootDrift).
+            Pair(
+                monoStyleSec,
+                RebootDrift.isTamper(
+                    wallElapsedSec = wallElapsedSec,
+                    monotonicElapsedSec = monoStyleSec.toLong(),
+                    hmacValid = hmacValid
+                )
+            )
         }
     }
 
@@ -886,8 +928,39 @@ class MonolithRepository(
             isHmacSignatureValid = hmacIntact,
             clockDriftSeconds = driftSeconds,
             systemBootCount = querySystemBootCount(),
-            installedLauncherAppsCount = appsCount
+            installedLauncherAppsCount = appsCount,
+            areCriticalComponentsEnabled = disabledCriticalComponents().isEmpty()
         )
+    }
+
+    /**
+     * Issue #81 finding 5: the critical components whose disablement
+     * kills enforcement silently (`pm disable`, component toggles) —
+     * the shield service, the accessibility service, the notification
+     * listener, the boot receiver and the device-admin receiver.
+     * Returns the names of those currently DISABLED (empty = all
+     * enabled). Before this, no code anywhere read component
+     * enabled-state, so an adb/component-disable was invisible.
+     * A component whose state cannot be read is not evidence either
+     * way and is skipped, never guessed.
+     */
+    fun disabledCriticalComponents(): List<String> {
+        val pm = context.packageManager
+        val classes = listOf(
+            com.example.service.MonolithShieldService::class.java,
+            com.example.service.MonolithAccessibilityService::class.java,
+            com.example.service.MonolithNotificationListener::class.java,
+            com.example.service.MonolithBootReceiver::class.java,
+            com.example.service.MonolithDeviceAdminReceiver::class.java
+        )
+        val states = LinkedHashMap<String, Int>()
+        for (cls in classes) {
+            val state = runCatching {
+                pm.getComponentEnabledSetting(ComponentName(context, cls))
+            }.getOrNull() ?: continue
+            states[cls.simpleName] = state
+        }
+        return ComponentGuard.disabledCritical(states)
     }
 
     /**
@@ -1511,7 +1584,7 @@ class MonolithRepository(
         // itself. Exactly one writer exists for these columns
         // (this insert); no DAO update for them will ever exist.
         val database = MonolithDatabase.getInstance(context)
-        return database.withTransaction {
+        val created = database.withTransaction {
             val heldApps = countHeldApps(dao.getAllAppsSnapshot())
             val heldSites = dao.getAllSitesSnapshot().size
             dao.deactivateAllSessions()
@@ -1520,6 +1593,13 @@ class MonolithRepository(
             ).toInt()
             session.copy(id = id, heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites)
         }
+        // Issue #81 finding 1: every session birth leaves the
+        // off-sandbox witness (ClearDataWitnessStore) — if the
+        // app's data is cleared while this session lives, the
+        // witness survives and the next fresh seed records the
+        // destruction instead of resurrecting in silence.
+        ClearDataWitnessStore(context).write(created.id, created.startWallTimeMillis)
+        return created
     }
 
     /** The active session row as a one-shot read (the cascade's
@@ -1918,6 +1998,27 @@ class MonolithRepository(
         )
     }
 
+    /**
+     * Issue #81 finding 2: the relaunch door. Force-stop kills the
+     * shield's foreground service and every alarm, and Android bars
+     * broadcasts until the user launches the app by hand — that
+     * launch is the platform's only recovery door. Before this, the
+     * launch path (MainActivity / ViewModel init) never re-raised
+     * the shield for a restored active session: the timer advanced
+     * in the UI while nothing enforced it, indefinitely. Called from
+     * the ViewModel's init after seeding; returns true when it had
+     * to start the shield. A shield instance that exists (even one
+     * still proving) is left alone — starting is idempotent at the
+     * service, but a duplicate start would reset its witnesses.
+     */
+    suspend fun ensureShieldForActiveSession(): Boolean {
+        val active = dao.getActiveSessionSnapshot() ?: return false
+        if (!active.isActive) return false
+        if (com.example.service.MonolithShieldService.instance != null) return false
+        MonolithShieldService.startShield(context)
+        return true
+    }
+
     /** The gap latch's repository door (Nocke §2.2): set the
      *  latch when the active row's beat is stale past the law.
      *  Called from the VM ticker and the relaunch path; the
@@ -2289,6 +2390,11 @@ class MonolithRepository(
             }
         )
         dao.updateSession(updated)
+        // Issue #81 finding 1: a timer-completed session retires its
+        // clear-data witness in the same breath as its ending write.
+        if (allBlocksCompleted) {
+            ClearDataWitnessStore(context).clear()
+        }
         return updated
     }
 
@@ -2545,6 +2651,11 @@ class MonolithRepository(
                 }
             )
         )
+        // Issue #81 finding 1: the session ended in the open, by a
+        // lawful door — its clear-data witness has served and is
+        // retired, so a later data-clear is not misread as this
+        // session's destruction.
+        ClearDataWitnessStore(context).clear()
         if (!completed && !isGraceCancel) {
             dao.insertInterceptLog(
                 InterceptLogEntity(

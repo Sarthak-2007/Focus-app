@@ -290,7 +290,7 @@ object WatchStore {
      * re-read of the two BIND items' present state, stamped as
      * measurements of this instant.
      */
-    fun onShieldIteration(protecting: Boolean) {
+    fun onShieldIteration(protecting: Boolean, usageAccess: Boolean? = null) {
         val mono = SystemClock.elapsedRealtime()
         val wall = System.currentTimeMillis()
         val a11y = MonolithAccessibilityService.instance != null
@@ -301,6 +301,19 @@ object WatchStore {
                 engineHeartbeatWall = wall,
                 engineProtecting = protecting
             )
+            // Issue #81 finding 4: when the caller measured Usage
+            // Access this iteration, publish it on the same tick —
+            // a mid-session revocation shows on the board within
+            // one shield loop instead of at the next Deck sweep.
+            if (usageAccess != null) {
+                next = next.withMeasurement(
+                    WatchMeasurement(
+                        WatchItemId.USAGE_ACCESS,
+                        perm = if (usageAccess) PermState.GRANTED else PermState.MISSING,
+                        measuredMono = mono, measuredWall = wall
+                    )
+                )
+            }
             next = next.withMeasurement(
                 WatchMeasurement(
                     WatchItemId.ACCESSIBILITY,

@@ -900,6 +900,12 @@ class MonolithViewModel(
             com.example.service.RoutineHeartbeat.tick(
                 appContext, com.example.service.RoutineHeartbeat.Source.RESUME, force = true
             )
+            // Issue #81 finding 2: a manual relaunch after
+            // force-stop/kill is the only recovery door Android
+            // leaves — walk through it WITH the shield. If a
+            // session is active on disk and no shield instance
+            // exists, this process's birth must re-raise it.
+            repository.ensureShieldForActiveSession()
             _browserUrlBlockerEnabled.value = repository.isBrowserBlockerEnabled()
             // Truth Car 3 (UNA-01): the sniper switch is seeded
             // from its persisted row, like the browser pair — the
