@@ -125,6 +125,59 @@ internal fun expiredPeekPackages(
     .toSet()
 
 /**
+ * Issue #90 (complexity F5, classifier extraction): the ending
+ * write's outcome classification in updateSessionProgress, as a
+ * pure function of the row's own facts (extracted from the
+ * composed #82/#95 logic, unit-tested in
+ * SessionOutcomeClassifierTest). The gap test runs on the
+ * monotonic-implied now — the session start advanced by the
+ * VERIFIED (monotonic) elapsed — never on the raw wall clock, so
+ * clock travel can neither forge ELAPSED_SHIELD_GAP nor launder
+ * one into ELAPSED_CLEAN; the reference also never sits before
+ * the current build landed (update downtime is not a gap), and a
+ * beat of 0 is a pre-v10 row — no beat evidence exists, so the
+ * beat test alone cannot convict it; only the latch can. The
+ * usage term (#81 F4): a finish may certify ELAPSED_CLEAN only
+ * if the shield can still SEE at the ending write, so a missing
+ * usage-stats permission books the gap. The exposure term
+ * (#129 F3): an unguarded distraction door used 30s+ inside the
+ * session's own window books ELAPSED_OPEN_EXPOSURE — below the
+ * gap, above clean — from the caller's usage-evidence read. A
+ * session that has not completed keeps its standing outcome; a
+ * routine row keeps its standing outcome too — its judgement is
+ * routineOutcome, booked by the finalise funnel.
+ */
+internal fun classifyElapsedOutcome(
+    session: FocusSessionEntity,
+    allBlocksCompleted: Boolean,
+    isRoutineSession: Boolean,
+    verifiedElapsedSeconds: Long,
+    appLastUpdateMillis: Long,
+    usageStatsPermissionHeld: Boolean,
+    openExposureSeen: Boolean
+): String {
+    if (!allBlocksCompleted) return session.outcome
+    if (isRoutineSession) return session.outcome
+    val impliedNowWall = session.startWallTimeMillis + verifiedElapsedSeconds * 1000L
+    val beatRef = maxOf(
+        session.shieldLastBeatWallMillis,
+        session.startWallTimeMillis,
+        appLastUpdateMillis
+    )
+    return if (session.shieldGapSeen ||
+        (session.shieldLastBeatWallMillis > 0L &&
+            impliedNowWall - beatRef > MonolithRepository.SHIELD_GAP_THRESHOLD_MILLIS) ||
+        !usageStatsPermissionHeld
+    ) {
+        SessionOutcome.ELAPSED_SHIELD_GAP
+    } else if (openExposureSeen) {
+        SessionOutcome.ELAPSED_OPEN_EXPOSURE
+    } else {
+        SessionOutcome.ELAPSED_CLEAN
+    }
+}
+
+/**
  * The repository. THREADING CONTRACT (issue #33, audit R1): every
  * `suspend` function in this class does its Room / SharedPreferences /
  * Settings / signing work on [Dispatchers.IO] or inside a Room
@@ -3590,46 +3643,15 @@ class MonolithRepository(
             emptyList()
         }
 
-        val outcomeStamp = if (!allBlocksCompleted) {
-            session.outcome
-        } else if (isRoutineSession) {
-            session.outcome
-        } else {
-
-            // Composed at the #82/#95 merge: the finish stamp's gap
-            // test runs on the monotonic-implied now (#82 F1) — the
-            // session start advanced by the VERIFIED (monotonic)
-            // elapsed — never on the raw wall clock, so clock travel
-            // can neither forge ELAPSED_SHIELD_GAP nor launder one
-            // into ELAPSED_CLEAN; the reference also never sits
-            // before the current build landed (#95: update downtime
-            // is not a gap), and a beat of 0 is a pre-v10 row — no
-            // beat evidence exists, so the beat test alone cannot
-            // convict it; only the latch can.
-            val impliedNowWall = session.startWallTimeMillis + verifiedElapsed * 1000L
-            // Issue #81 F4: a finish may certify ELAPSED_CLEAN only
-            // if the shield can still SEE at the ending write — the
-            // usage term in the verdict below covers a session that
-            // completes on the very tick blindness begins; the
-            // latchShieldGapNow stamps cover the revoked span.
-
-            val beatRef = maxOf(
-                session.shieldLastBeatWallMillis,
-                session.startWallTimeMillis,
-                appLastUpdateMillis()
-            )
-            if (session.shieldGapSeen ||
-                (session.shieldLastBeatWallMillis > 0L && impliedNowWall - beatRef > SHIELD_GAP_THRESHOLD_MILLIS) ||
-                !hasUsageStatsPermission()
-
-            ) {
-                SessionOutcome.ELAPSED_SHIELD_GAP
-            } else if (exposedAtEnd.isNotEmpty()) {
-                SessionOutcome.ELAPSED_OPEN_EXPOSURE
-            } else {
-                SessionOutcome.ELAPSED_CLEAN
-            }
-        }
+        val outcomeStamp = classifyElapsedOutcome(
+            session = session,
+            allBlocksCompleted = allBlocksCompleted,
+            isRoutineSession = isRoutineSession,
+            verifiedElapsedSeconds = verifiedElapsed,
+            appLastUpdateMillis = appLastUpdateMillis(),
+            usageStatsPermissionHeld = hasUsageStatsPermission(),
+            openExposureSeen = exposedAtEnd.isNotEmpty()
+        )
 
         val updated = session.copy(
             elapsedSeconds = verifiedElapsed.coerceAtMost(effectiveTarget),

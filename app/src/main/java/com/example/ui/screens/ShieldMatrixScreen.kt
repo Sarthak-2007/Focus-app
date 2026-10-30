@@ -267,34 +267,6 @@ fun ShieldMatrixScreen(
         }
     }
 
-    /** The slip's lines for one section: committed lines in place,
-     *  plus any line resting here after a flip — and a line resting
-     *  elsewhere is suppressed here, so an app is present in exactly
-     *  one section at any instant. */
-    fun slipLines(tier: AppBlockTier): List<SlipLine> {
-        val committed = when (tier) {
-            AppBlockTier.PEEK_2M -> rules.peek
-            AppBlockTier.LOCKED -> rules.shut
-            AppBlockTier.OPEN -> rules.open
-        }
-        val lines = mutableListOf<SlipLine>()
-        for (app in committed) {
-            val resting = restingFlips[app.packageName]
-            if (resting != null && resting.from != tier) continue
-            lines += SlipLine(app = app, word = app.resolvedTier, resting = null)
-        }
-        for ((pkg, resting) in restingFlips) {
-            if (resting.from != tier) continue
-            val app = allApps.firstOrNull { it.packageName == pkg } ?: continue
-            if (app.resolvedTier == tier) continue
-            lines += SlipLine(app = app, word = resting.to, resting = resting)
-        }
-        // AppRules' total order (issue #35): name, then package —
-        // a name tie can never inherit feed/intercept order here.
-        return lines.sortedWith(
-            compareBy<SlipLine> { it.app.appName.lowercase(java.util.Locale.ROOT) }.thenBy { it.app.packageName }
-        )
-    }
 
     LazyColumn(
         state = listState,
@@ -309,67 +281,15 @@ fun ShieldMatrixScreen(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 100.dp)
     ) {
         // One-Way Ratchet warning banner if user tries to weaken rules during active session
-        item {
-            AnimatedVisibility(visible = !ratchetWarningMessage.isNullOrBlank()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(scheme.primaryContainer)
-                        .padding(12.dp)
-                ) {
-                    Text(
-                        text = ratchetWarningMessage ?: "",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        color = TokenColorOnPrimary
-                    )
-                }
-                // #153 F4: a day that needs a different block can
-                // get one — routines are addable, not just seeded.
-                BlockitActionChip(wordLabel = "+ ADD ROUTINE", isPrimaryInk = true, onClick = onAddRoutine)
-            }
-        }
+        item { RatchetWarningBanner(message = ratchetWarningMessage, onAddRoutine = onAddRoutine) }
 
-        // Issue #141: the sled commit's receipt + take-back. A tier
-        // change used to land silently and forever; while the undo
-        // window lasts, the banner names what changed and offers
-        // the reversal on the spot.
+        // Issue #141: the sled commit's receipt + take-back (the
+        // banner body lives in TierChangeUndoBanner below).
         item {
-            AnimatedVisibility(visible = tierChangeForUndo != null) {
-                val change = tierChangeForUndo
-                if (change != null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(scheme.primaryContainer)
-                            .padding(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "'${change.appName.uppercase()}' SET TO ${tierWord(change.toTier)}",
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = Color(0xFFFBF1EC)
-                            )
-                            Text(
-                                text = "UNDO",
-                                modifier = Modifier.clickable { onUndoTierChange() },
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = Color(0xFFFBF1EC)
-                            )
-                        }
-                    }
-                }
-            }
+            TierChangeUndoBanner(
+                change = tierChangeForUndo,
+                onUndo = onUndoTierChange
+            )
         }
 
         // Issue #139 F4: the undo strip — a profile application
@@ -445,85 +365,24 @@ fun ShieldMatrixScreen(
         // SECTION 3: ROUTINES — real, persisted, self-arming (Ren)
         // =====================================================================
         item {
-            FullBleedSectionHeader(
-                titleWord = "ROUTINES",
-                rightWordPrefix = "",
-                // UNA-09: count what the scheduler counts — LIVE
-                // routines only (RoutineSchedule.liveCount: enabled
-                // AND at least one day). A daysMask == 0 routine the
-                // chain skips is never printed as ACTIVE.
-                rightMonoNumber = com.example.data.RoutineSchedule.liveCount(routines).toString(),
-                rightWordSuffix = " ACTIVE"
+            RoutinesSection(
+                routines = routines,
+                showResetNote = showResetNote,
+                showFreshStartNote = showFreshStartNote,
+                showUpdateNote = showUpdateNote,
+                onDismissResetNote = onDismissResetNote,
+                onDismissFreshStartNote = onDismissFreshStartNote,
+                onDismissUpdateNote = onDismissUpdateNote,
+                onToggleRoutine = onToggleRoutine,
+                onCycleRoutineLoadout = onCycleRoutineLoadout,
+                onAdjustRoutineTime = onAdjustRoutineTime,
+                onToggleRoutineDay = onToggleRoutineDay,
+                onSkipRoutineToday = onSkipRoutineToday,
+                onResumeRoutine = onResumeRoutine,
+                onDeleteRoutine = onDeleteRoutine,
+                onRenameRoutine = onRenameRoutine,
+                onSetRoutineTime = onSetRoutineTime
             )
-            if (showFreshStartNote) {
-                // R3b #161 (update-day): a fresh seed means this
-                // phone holds no Monolith past — said once, plainly,
-                // at first open, in the open instead of buried in
-                // the Drawer's PARK plate. Tap dismisses.
-                Text(
-                    text = "FRESH START ON THIS PHONE — NO PAST CAME WITH IT. IF YOU HAD MONOLITH BEFORE, ITS RECORD STAYED ON THAT PHONE: MONOLITH KEEPS EVERYTHING ON THE PHONE IT WAS MADE ON. TAP TO CLOSE.",
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 11.sp,
-                    color = scheme.primary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp)
-                        .clickable { onDismissFreshStartNote() }
-                        .testTag("fresh_start_note")
-                )
-            }
-            if (showUpdateNote) {
-                // R3b #161: an update used to land in silence (the
-                // boot receiver swallowed MY_PACKAGE_REPLACED). Now
-                // the first open after an update says so, once.
-                Text(
-                    text = "MONOLITH UPDATED — THIS PHONE'S TASKS, HISTORY AND SHIELD CAME THROUGH THE UPDATE WITH IT. TAP TO CLOSE.",
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 11.sp,
-                    color = scheme.primary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp)
-                        .clickable { onDismissUpdateNote() }
-                        .testTag("update_note")
-                )
-            }
-            if (showResetNote) {
-                // One-time reseed strip (Freya §3.3; R3b #161): his
-                // schedule was reset to his real day. The note now
-                // says what was NOT touched, and only his tap on
-                // the note itself dismisses it — obeying it (an
-                // edit) no longer erases the record.
-                Text(
-                    text = "AN UPDATE RESET YOUR ROUTINE TIMES TO YOUR DAY — YOUR TASKS, HISTORY AND SHIELD WERE NOT TOUCHED. TAP A ROW TO CHANGE A TIME. TAP THIS NOTE TO CLOSE IT.",
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 11.sp,
-                    color = scheme.primary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp)
-                        .clickable { onDismissResetNote() }
-                        .testTag("routine_reset_note")
-                )
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                routines.forEach { routine ->
-                    RoutineRow(
-                        routine = routine,
-                        onToggle = { onToggleRoutine(routine) },
-                        onCycleLoadout = { onCycleRoutineLoadout(routine) },
-                        onAdjustStart = { delta -> onAdjustRoutineTime(routine, true, delta) },
-                        onAdjustEnd = { delta -> onAdjustRoutineTime(routine, false, delta) },
-                        onToggleDay = { day -> onToggleRoutineDay(routine, day) },
-                        onSkipToday = { onSkipRoutineToday(routine) },
-                        onResume = { onResumeRoutine(routine) },
-                        onDelete = { onDeleteRoutine(routine) },
-                        onRename = { name -> onRenameRoutine(routine, name) },
-                        onSetTime = { start, end -> onSetRoutineTime(routine, start, end) }
-                    )
-                }
-            }
         }
 
         // =====================================================================
@@ -584,7 +443,7 @@ fun ShieldMatrixScreen(
                     )
                 }
             }
-            val peekLines = slipLines(AppBlockTier.PEEK_2M)
+            val peekLines = slipLines(AppBlockTier.PEEK_2M, rules, restingFlips, allApps)
             item { SlipSectionHeader(word = "PEEK") }
             if (peekLines.isEmpty()) {
                 item { SlipNoneLine() }
@@ -605,7 +464,7 @@ fun ShieldMatrixScreen(
                     )
                 }
             }
-            val shutLines = slipLines(AppBlockTier.LOCKED)
+            val shutLines = slipLines(AppBlockTier.LOCKED, rules, restingFlips, allApps)
             item { SlipSectionHeader(word = "SHUT") }
             if (shutLines.isEmpty()) {
                 item { SlipNoneLine() }
@@ -632,7 +491,7 @@ fun ShieldMatrixScreen(
             // only by the absence nobody audits. The open rulings are
             // printed like the others; a line tap shuts the app
             // (the book amends in both directions).
-            val openLines = slipLines(AppBlockTier.OPEN)
+            val openLines = slipLines(AppBlockTier.OPEN, rules, restingFlips, allApps)
             item { SlipSectionHeader(word = "OPEN") }
             if (openLines.isEmpty()) {
                 item { SlipNoneLine() }
@@ -1057,6 +916,194 @@ internal val PEEK_TERMS_LINE: String =
  * applies until APPLY LOADOUT is tapped; KEEP MY RULES stages
  * nothing and changes nothing.
  */
+// ------------------------------------------------------------------
+// Issue #90 (complexity F4, section extractions): the banner pair
+// and the routines section used to live inline in ShieldMatrixScreen's
+// LazyColumn. They are standalone composables now, with every input
+// passed explicitly; bodies are verbatim, behaviour unchanged.
+// ------------------------------------------------------------------
+
+@Composable
+private fun RatchetWarningBanner(
+    message: String?,
+    onAddRoutine: (() -> Unit)? = null
+) {
+    val scheme = MaterialTheme.colorScheme
+    AnimatedVisibility(visible = !message.isNullOrBlank()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(scheme.primaryContainer)
+                .padding(12.dp)
+        ) {
+            Text(
+                text = message ?: "",
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                color = TokenColorOnPrimary
+            )
+        }
+        if (onAddRoutine != null) {
+            // #153 F4: a day that needs a different block can
+            // get one — routines are addable, not just seeded.
+            BlockitActionChip(wordLabel = "+ ADD ROUTINE", isPrimaryInk = true, onClick = onAddRoutine)
+        }
+    }
+}
+
+/** Issue #141: the sled commit's receipt + take-back. A tier
+ *  change used to land silently and forever; while the undo
+ *  window lasts, the banner names what changed and offers
+ *  the reversal on the spot. */
+@Composable
+private fun TierChangeUndoBanner(
+    change: TierChangeForUndo?,
+    onUndo: () -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    AnimatedVisibility(visible = change != null) {
+        if (change != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(scheme.primaryContainer)
+                    .padding(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "'${change.appName.uppercase()}' SET TO ${tierWord(change.toTier)}",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = Color(0xFFFBF1EC)
+                    )
+                    Text(
+                        text = "UNDO",
+                        modifier = Modifier.clickable { onUndo() },
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = Color(0xFFFBF1EC)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Issue #90 (complexity F4, section extraction): the ROUTINES
+ *  section — header, the one-time notes (fresh start / update /
+ *  reseed) and the routine rows — as one private composable.
+ *  Re-extracted at the #90 merge onto current main: the notes
+ *  (R3b #161) and the wider RoutineRow API are main's, verbatim. */
+@Composable
+private fun RoutinesSection(
+    routines: List<com.example.data.RoutineEntity>,
+    showResetNote: Boolean,
+    showFreshStartNote: Boolean,
+    showUpdateNote: Boolean,
+    onDismissResetNote: () -> Unit,
+    onDismissFreshStartNote: () -> Unit,
+    onDismissUpdateNote: () -> Unit,
+    onToggleRoutine: (com.example.data.RoutineEntity) -> Unit,
+    onCycleRoutineLoadout: (com.example.data.RoutineEntity) -> Unit,
+    onAdjustRoutineTime: (com.example.data.RoutineEntity, Boolean, Int) -> Unit,
+    onToggleRoutineDay: (com.example.data.RoutineEntity, Int) -> Unit,
+    onSkipRoutineToday: (com.example.data.RoutineEntity) -> Unit,
+    onResumeRoutine: (com.example.data.RoutineEntity) -> Unit,
+    onDeleteRoutine: (com.example.data.RoutineEntity) -> Unit,
+    onRenameRoutine: (com.example.data.RoutineEntity, String) -> Unit,
+    onSetRoutineTime: (com.example.data.RoutineEntity, Int, Int) -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    FullBleedSectionHeader(
+        titleWord = "ROUTINES",
+        rightWordPrefix = "",
+        // UNA-09: count what the scheduler counts — LIVE
+        // routines only (RoutineSchedule.liveCount: enabled
+        // AND at least one day). A daysMask == 0 routine the
+        // chain skips is never printed as ACTIVE.
+        rightMonoNumber = com.example.data.RoutineSchedule.liveCount(routines).toString(),
+        rightWordSuffix = " ACTIVE"
+    )
+    if (showFreshStartNote) {
+        // R3b #161 (update-day): a fresh seed means this
+        // phone holds no Monolith past — said once, plainly,
+        // at first open, in the open instead of buried in
+        // the Drawer's PARK plate. Tap dismisses.
+        Text(
+            text = "FRESH START ON THIS PHONE — NO PAST CAME WITH IT. IF YOU HAD MONOLITH BEFORE, ITS RECORD STAYED ON THAT PHONE: MONOLITH KEEPS EVERYTHING ON THE PHONE IT WAS MADE ON. TAP TO CLOSE.",
+            fontFamily = AnonymousProFamily,
+            fontSize = 11.sp,
+            color = scheme.primary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp)
+                .clickable { onDismissFreshStartNote() }
+                .testTag("fresh_start_note")
+        )
+    }
+    if (showUpdateNote) {
+        // R3b #161: an update used to land in silence (the
+        // boot receiver swallowed MY_PACKAGE_REPLACED). Now
+        // the first open after an update says so, once.
+        Text(
+            text = "MONOLITH UPDATED — THIS PHONE'S TASKS, HISTORY AND SHIELD CAME THROUGH THE UPDATE WITH IT. TAP TO CLOSE.",
+            fontFamily = AnonymousProFamily,
+            fontSize = 11.sp,
+            color = scheme.primary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp)
+                .clickable { onDismissUpdateNote() }
+                .testTag("update_note")
+        )
+    }
+    if (showResetNote) {
+        // One-time reseed strip (Freya §3.3; R3b #161): his
+        // schedule was reset to his real day. The note now
+        // says what was NOT touched, and only his tap on
+        // the note itself dismisses it — obeying it (an
+        // edit) no longer erases the record.
+        Text(
+            text = "AN UPDATE RESET YOUR ROUTINE TIMES TO YOUR DAY — YOUR TASKS, HISTORY AND SHIELD WERE NOT TOUCHED. TAP A ROW TO CHANGE A TIME. TAP THIS NOTE TO CLOSE IT.",
+            fontFamily = AnonymousProFamily,
+            fontSize = 11.sp,
+            color = scheme.primary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp)
+                .clickable { onDismissResetNote() }
+                .testTag("routine_reset_note")
+        )
+    }
+    Spacer(modifier = Modifier.height(4.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        routines.forEach { routine ->
+            RoutineRow(
+                routine = routine,
+                onToggle = { onToggleRoutine(routine) },
+                onCycleLoadout = { onCycleRoutineLoadout(routine) },
+                onAdjustStart = { delta -> onAdjustRoutineTime(routine, true, delta) },
+                onAdjustEnd = { delta -> onAdjustRoutineTime(routine, false, delta) },
+                onToggleDay = { day -> onToggleRoutineDay(routine, day) },
+                onSkipToday = { onSkipRoutineToday(routine) },
+                onResume = { onResumeRoutine(routine) },
+                onDelete = { onDeleteRoutine(routine) },
+                onRename = { name -> onRenameRoutine(routine, name) },
+                onSetTime = { start, end -> onSetRoutineTime(routine, start, end) }
+            )
+        }
+    }
+       
+}
+
 @Composable
 private fun LoadoutPreviewPanel(
     loadout: SmartLoadout,
@@ -1405,6 +1452,45 @@ private data class RestingFlip(
 
 /** One printed line of the book: the app, the ruling word it wears
  *  right now, and its rest state when it is mid-flip. */
+/** Issue #90: hoisted out of ShieldMatrixScreen's body — it was a
+ *  nested local helper defined mid-composable; as a top-level
+ *  function its three captures (rules, restingFlips, allApps) are
+ *  explicit parameters and the derivation is testable in isolation.
+ *
+ *  The slip's lines for one section: committed lines in place,
+ *  plus any line resting here after a flip — and a line resting
+ *  elsewhere is suppressed here, so an app is present in exactly
+ *  one section at any instant. */
+private fun slipLines(
+    tier: AppBlockTier,
+    rules: com.example.data.AppRules,
+    restingFlips: Map<String, RestingFlip>,
+    allApps: List<BlockedAppEntity>
+): List<SlipLine> {
+    val committed = when (tier) {
+        AppBlockTier.PEEK_2M -> rules.peek
+        AppBlockTier.LOCKED -> rules.shut
+        AppBlockTier.OPEN -> rules.open
+    }
+    val lines = mutableListOf<SlipLine>()
+    for (app in committed) {
+        val resting = restingFlips[app.packageName]
+        if (resting != null && resting.from != tier) continue
+        lines += SlipLine(app = app, word = app.resolvedTier, resting = null)
+    }
+    for ((pkg, resting) in restingFlips) {
+        if (resting.from != tier) continue
+        val app = allApps.firstOrNull { it.packageName == pkg } ?: continue
+        if (app.resolvedTier == tier) continue
+        lines += SlipLine(app = app, word = resting.to, resting = resting)
+    }
+    // AppRules' total order (issue #35): name, then package —
+    // a name tie can never inherit feed/intercept order here.
+    return lines.sortedWith(
+        compareBy<SlipLine> { it.app.appName.lowercase() }.thenBy { it.app.packageName }
+    )
+}
+
 private data class SlipLine(
     val app: BlockedAppEntity,
     val word: AppBlockTier,
