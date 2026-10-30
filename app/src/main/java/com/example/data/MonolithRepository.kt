@@ -181,6 +181,17 @@ class MonolithRepository(
         const val APP_LIST_PREFS_NAME = "monolith_app_list"
         const val PRUNE_NOTE_COUNT_KEY = "prune_note_count"
         const val PRUNE_NOTE_RULES_KEY = "prune_note_rules_removed"
+
+        /** Issue #129 F1: the unreviewed-auto-OPEN record — the
+         *  packages the category guess birthed OPEN with no preset
+         *  and no ruling from the man. Prefs, not Room (same
+         *  reasoning as the prune note: a catalogue bookkeeping
+         *  record needs no column in the table). Entries leave the
+         *  set ONLY when a ruling lands on that package
+         *  ([setAppBlockTier] / [cycleAppBlockTier]) or the row is
+         *  pruned — never by dismissal, or the prompt would be
+         *  silence with extra steps. */
+        const val UNREVIEWED_OPEN_KEY = "unreviewed_open_packages"
     }
 
     /** The seal marker's session id, or -1 when no seal has ever
@@ -250,6 +261,9 @@ class MonolithRepository(
                 if (plan.toInsert.isNotEmpty()) {
                     dao.insertApps(plan.toInsert)
                 }
+                if (plan.unreviewedOpenPackages.isNotEmpty()) {
+                    recordUnreviewedOpen(plan.unreviewedOpenPackages)
+                }
                 plan.usageUpdates.forEach { dao.updateApp(it) }
                 if (plan.toPrune.isNotEmpty()) {
                     // M5 (Mikro): the prune announces itself once, so
@@ -266,6 +280,9 @@ class MonolithRepository(
                             it.resolvedTier != AppBlockTier.OPEN
                         }
                     )
+                    // A pruned app can no longer be reviewed; its
+                    // unreviewed entry leaves with its row (#129 F1).
+                    clearUnreviewedOpen(plan.toPrune)
                     dao.deleteAppsByPackage(plan.toPrune)
                 }
             }
@@ -489,6 +506,46 @@ class MonolithRepository(
             .remove(PRUNE_NOTE_COUNT_KEY)
             .remove(PRUNE_NOTE_RULES_KEY)
             .apply()
+    }
+
+    // ------------------------------------------------------------------
+    // THE UNREVIEWED-OPEN RECORD (issue #129 F1): record — read — clear
+    // on ruling. An app the keyword guess birthed OPEN is not the man's
+    // decision; this record keeps that fact alive until he rules on it.
+    // ------------------------------------------------------------------
+
+    private fun recordUnreviewedOpen(packages: List<String>) {
+        if (packages.isEmpty()) return
+        val prefs = context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+        val current = prefs.getStringSet(UNREVIEWED_OPEN_KEY, emptySet()).orEmpty()
+        prefs.edit().putStringSet(UNREVIEWED_OPEN_KEY, current + packages).apply()
+    }
+
+    /** The recorded unreviewed-auto-OPEN packages, as stored. */
+    fun unreviewedOpenPackages(): Set<String> =
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .getStringSet(UNREVIEWED_OPEN_KEY, emptySet()).orEmpty().toSet()
+
+    /** The unreviewed apps that still stand in the catalogue, in
+     *  name order — the review prompt's content. Rows pruned since
+     *  the record was written are not returned (and are dropped
+     *  from the record by the prune path above). */
+    suspend fun unreviewedOpenApps(): List<BlockedAppEntity> {
+        val recorded = unreviewedOpenPackages()
+        if (recorded.isEmpty()) return emptyList()
+        return dao.getAllAppsSnapshot()
+            .filter { it.packageName in recorded && it.resolvedTier == AppBlockTier.OPEN }
+            .sortedWith(compareBy<BlockedAppEntity> { it.appName.lowercase() }.thenBy { it.packageName })
+    }
+
+    fun clearUnreviewedOpen(packages: Collection<String>) {
+        if (packages.isEmpty()) return
+        val prefs = context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+        val current = prefs.getStringSet(UNREVIEWED_OPEN_KEY, emptySet()).orEmpty()
+        val next = current - packages.toSet()
+        if (next.size != current.size) {
+            prefs.edit().putStringSet(UNREVIEWED_OPEN_KEY, next).apply()
+        }
     }
 
     fun markParkIntroDone() {
@@ -1110,12 +1167,17 @@ class MonolithRepository(
         }
         val isBlockedFlag = nextTier != AppBlockTier.OPEN
         dao.setAppTier(app.packageName, isBlockedFlag, nextTier.name)
+        // A ruling landed (#129 F1): the guess no longer stands
+        // unreviewed for this package, whatever tier he chose —
+        // choosing OPEN himself IS a review.
+        clearUnreviewedOpen(listOf(app.packageName))
         return nextTier
     }
 
     suspend fun setAppBlockTier(packageName: String, tier: AppBlockTier) {
         val isBlockedFlag = tier != AppBlockTier.OPEN
         dao.setAppTier(packageName, isBlockedFlag, tier.name)
+        clearUnreviewedOpen(listOf(packageName))
     }
 
     /**

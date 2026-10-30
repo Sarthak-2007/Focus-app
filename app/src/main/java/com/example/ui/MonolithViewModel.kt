@@ -421,6 +421,22 @@ class MonolithViewModel(
         repository.clearPruneNote()
     }
 
+    /** Issue #129 F1: the review prompt's content — the names of
+     *  apps the category guess birthed OPEN that the man has not
+     *  ruled on yet. There is NO dismiss: the list empties only
+     *  when a ruling lands on each app (the repository clears the
+     *  record at the tier commit), so the prompt cannot be tapped
+     *  away into the same silence the audit found. Refreshed after
+     *  the seed-sync and after every tier commit in this VM. */
+    private val _unreviewedOpenNames = MutableStateFlow<List<String>>(emptyList())
+    val unreviewedOpenNames: StateFlow<List<String>> = _unreviewedOpenNames.asStateFlow()
+
+    fun refreshUnreviewedOpen() {
+        viewModelScope.launch {
+            _unreviewedOpenNames.value = repository.unreviewedOpenApps().map { it.appName }
+        }
+    }
+
     val apps: StateFlow<List<BlockedAppEntity>> = repository.allAppsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -767,6 +783,7 @@ class MonolithViewModel(
         viewModelScope.launch {
             repository.ensureSeededAndSyncPackages()
             _pruneNote.value = repository.pendingPruneNote()
+            refreshUnreviewedOpen()
             // Routines rebuild: no per-routine alarm arming — one
             // forced reconcile derives the truth and rearms the chain.
             com.example.service.RoutineHeartbeat.tick(
@@ -2058,6 +2075,7 @@ class MonolithViewModel(
         soundEngine.playMechanicalLatch(true)
         viewModelScope.launch {
             repository.cycleAppBlockTier(app)
+            refreshUnreviewedOpen()
         }
     }
 
@@ -2088,6 +2106,7 @@ class MonolithViewModel(
         soundEngine.playRotaryDetent(freq)
         viewModelScope.launch {
             repository.setAppBlockTier(app.packageName, tier)
+            refreshUnreviewedOpen()
         }
     }
 

@@ -44,7 +44,18 @@ data class AppRulePreset(
 data class AppCatalogPlan(
     val toInsert: List<BlockedAppEntity>,
     val usageUpdates: List<BlockedAppEntity>,
-    val toPrune: List<String>
+    val toPrune: List<String>,
+    /**
+     * Issue #129 (unlisted-distraction F1): the packages this sync
+     * is about to birth OPEN purely from the category guess — no
+     * factory preset, and the guessed category's default is OPEN.
+     * Nobody ruled on these apps; the guess did. The repository
+     * records them as UNREVIEWED so a surface can ask the man to
+     * rule on them, instead of the guess silently standing as his
+     * decision. A preset-born OPEN app (e.g. Chrome) is NOT in
+     * this list: a preset is a deliberate birth rule, not a guess.
+     */
+    val unreviewedOpenPackages: List<String> = emptyList()
 )
 
 object AppCatalogReconcile {
@@ -80,6 +91,7 @@ object AppCatalogReconcile {
 
         val toInsert = mutableListOf<BlockedAppEntity>()
         val usageUpdates = mutableListOf<BlockedAppEntity>()
+        val unreviewedOpen = mutableListOf<String>()
         for ((pkg, info) in installedByPackage) {
             val current = existingByPackage[pkg]
             if (current == null) {
@@ -89,6 +101,12 @@ object AppCatalogReconcile {
                     AppCategory.SHORT_VIDEO, AppCategory.GAMES -> AppBlockTier.LOCKED
                     AppCategory.MESSAGING -> AppBlockTier.PEEK_2M
                     else -> AppBlockTier.OPEN
+                }
+                // #129 F1: a guess-born OPEN app is named as such at
+                // birth, in the plan itself, so no caller can insert
+                // it and forget the guess happened.
+                if (preset == null && tier == AppBlockTier.OPEN) {
+                    unreviewedOpen += pkg
                 }
                 toInsert += BlockedAppEntity(
                     packageName = pkg,
@@ -110,6 +128,19 @@ object AppCatalogReconcile {
                 }
             }
         }
-        return AppCatalogPlan(toInsert, usageUpdates, toPrune)
+        return AppCatalogPlan(toInsert, usageUpdates, toPrune, unreviewedOpen)
     }
+
+    /**
+     * Issue #129 F1: was this row born OPEN by the category guess
+     * alone (no preset, category default OPEN)? Pure re-derivation
+     * for readers that hold only the row: a row discovered with a
+     * preset, or born LOCKED/PEEK, answers false. (A row the man
+     * later set OPEN himself also answers by its birth shape here —
+     * the durable review record lives in the repository's prefs
+     * set, written at birth; this helper is the plan-time truth.)
+     */
+    fun isGuessBornOpen(category: AppCategory, hasPreset: Boolean): Boolean =
+        !hasPreset && category != AppCategory.SHORT_VIDEO &&
+            category != AppCategory.GAMES && category != AppCategory.MESSAGING
 }

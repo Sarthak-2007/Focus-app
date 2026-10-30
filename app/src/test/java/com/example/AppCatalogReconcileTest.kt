@@ -73,6 +73,26 @@ class AppCatalogReconcileTest {
     }
 
     @Test
+    fun reconcile_guessBornOpenAppsAreNamedUnreviewed_presetBornAreNot() {
+        // #129 F1: an app with no preset whose guessed category
+        // defaults to OPEN is born by guess alone — the plan must
+        // name it unreviewed. A preset-born OPEN app (Chrome) and
+        // category-born LOCKED/PEEK apps are NOT unreviewed.
+        val installed = listOf(
+            InstalledPackage("com.mystery", "Mystery"),
+            InstalledPackage("com.android.chrome", "Chrome"),
+            InstalledPackage("com.fresh.chat", "Fresh Chat"),
+            InstalledPackage("com.new.game", "New Game")
+        )
+        val plan = AppCatalogReconcile.reconcile(emptyList(), installed, emptyMap(), categorize)
+        assertEquals(listOf("com.mystery"), plan.unreviewedOpenPackages)
+        // The birth tiers themselves are unchanged by the naming.
+        val inserted = plan.toInsert.associateBy { it.packageName }
+        assertEquals(AppBlockTier.OPEN, inserted.getValue("com.mystery").resolvedTier)
+        assertEquals(AppBlockTier.OPEN, inserted.getValue("com.android.chrome").resolvedTier)
+    }
+
+    @Test
     fun reconcile_discoveryHasNoCap() {
         val installed = (1..25).map { InstalledPackage("com.app.$it", "App $it") }
         val plan = AppCatalogReconcile.reconcile(emptyList(), installed, emptyMap(), categorize)
