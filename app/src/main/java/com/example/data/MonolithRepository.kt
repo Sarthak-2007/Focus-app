@@ -259,6 +259,9 @@ class MonolithRepository(
          *  Shield has shown it once. Prefs, not Room — announcing a
          *  table change needs no column in the table. */
         const val APP_LIST_PREFS_NAME = "monolith_app_list"
+        const val PROFILE_UNDO_KEY = "profile_undo_snapshot_v1"
+        const val PROFILE_UNDO_DIAL_KEY = "profile_undo_dial_minutes_v1"
+        const val PROFILE_UNDO_NAME_KEY = "profile_undo_name_v1"
         const val PRUNE_NOTE_COUNT_KEY = "prune_note_count"
         const val PRUNE_NOTE_RULES_KEY = "prune_note_rules_removed"
 
@@ -506,11 +509,11 @@ class MonolithRepository(
                 FocusProfileEntity(
                     name = "Study Loadout",
                     codeName = "Study Mode",
-                    description = "Locks Social & Games, sets YouTube & Messaging to 2m Peek, arms Shorts Sniper.",
+                    description = "Locks Social, Games & short video (YouTube included), sets Messaging to 2m Peek, arms Shorts Sniper.",
                     defaultMinutes = 50,
                     blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES",
                     scheduleLabel = "09:00 – 13:00 • Weekdays",
-                    isScheduleEnabled = true,
+                    isScheduleEnabled = false,
                     startHour = 9,
                     startMinute = 0,
                     endHour = 13,
@@ -523,7 +526,7 @@ class MonolithRepository(
                     defaultMinutes = 90,
                     blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,MESSAGING,BROWSERS",
                     scheduleLabel = "14:00 – 18:00 • Exam Prep",
-                    isScheduleEnabled = true,
+                    isScheduleEnabled = false,
                     startHour = 14,
                     startMinute = 0,
                     endHour = 18,
@@ -534,9 +537,9 @@ class MonolithRepository(
                     codeName = "Sleep Guard",
                     description = "Locks every app except Phone, Clock, and Maps so you sleep on time.",
                     defaultMinutes = 60,
-                    blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS",
+                    blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS,MESSAGING",
                     scheduleLabel = "22:30 – 07:00 • Nightly",
-                    isScheduleEnabled = true,
+                    isScheduleEnabled = false,
                     startHour = 22,
                     startMinute = 30,
                     endHour = 7,
@@ -557,6 +560,37 @@ class MonolithRepository(
                 )
             )
             dao.insertProfiles(defaultProfiles)
+        }
+
+        // Issue #139 truth patches for rows seeded by older builds:
+        // the Sleep seed forgot MESSAGING (WhatsApp stayed open under
+        // a profile that promises to lock everything but Phone,
+        // Clock and Maps), the Study seed promised YouTube a 2m
+        // Peek the category system cannot give it, and every seed
+        // claimed an enabled schedule no engine has ever read.
+        // Patches bite only on rows still carrying the exact old
+        // seed values — a hand-edited profile is never rewritten.
+        val seededNames = setOf("Study Loadout", "Exam Lockdown", "Sleep Loadout", "Quick Homework")
+        existingProfiles.forEach { profile ->
+            var patched = profile
+            if (profile.name == "Sleep Loadout" &&
+                profile.blockedCategoriesCsv == "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS"
+            ) {
+                patched = patched.copy(
+                    blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS,MESSAGING"
+                )
+            }
+            if (profile.name == "Study Loadout" &&
+                profile.description == "Locks Social & Games, sets YouTube & Messaging to 2m Peek, arms Shorts Sniper."
+            ) {
+                patched = patched.copy(
+                    description = "Locks Social, Games & short video (YouTube included), sets Messaging to 2m Peek, arms Shorts Sniper."
+                )
+            }
+            if (profile.name in seededNames && profile.isScheduleEnabled) {
+                patched = patched.copy(isScheduleEnabled = false)
+            }
+            if (patched != profile) dao.updateProfile(patched)
         }
 
         // Fabricated demo history STRUCK in this lane too (Lie
@@ -1773,6 +1807,73 @@ class MonolithRepository(
         )
     }
 
+    // Issue #139 F4: the pre-apply snapshot. Applying a profile
+    // bulk-rewrites every app's tier; before it does, the current
+    // hand-set tiers are persisted here so one undo restores them.
+    private fun profileUndoPrefs() =
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+
+    fun hasProfileUndoSnapshot(): Boolean =
+        profileUndoPrefs().contains(PROFILE_UNDO_KEY)
+
+    /** Issue #139 F4, process-death completion: the pre-tap dial
+     *  minutes and profile name, persisted in the same prefs entry
+     *  as the tiers snapshot, so an undo after process death
+     *  restores all three — not just the tiers. Written by the
+     *  view model at tap time; removed when the snapshot is
+     *  consumed by [restoreProfileUndoSnapshot]. */
+    fun saveProfileUndoContext(dialMinutes: Int, profileName: String) {
+        profileUndoPrefs().edit()
+            .putInt(PROFILE_UNDO_DIAL_KEY, dialMinutes)
+            .putString(PROFILE_UNDO_NAME_KEY, profileName)
+            .apply()
+    }
+
+    fun profileUndoDialMinutes(): Int? =
+        profileUndoPrefs().takeIf { it.contains(PROFILE_UNDO_DIAL_KEY) }
+            ?.getInt(PROFILE_UNDO_DIAL_KEY, 0)
+
+    fun profileUndoName(): String? =
+        profileUndoPrefs().getString(PROFILE_UNDO_NAME_KEY, null)
+
+    suspend fun restoreProfileUndoSnapshot(): Boolean {
+        val raw = profileUndoPrefs().getString(PROFILE_UNDO_KEY, null) ?: return false
+        val saved = raw.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .mapNotNull { line ->
+                val parts = line.split("|")
+                if (parts.size == 3) parts[0] to (parts[1] to (parts[2] == "1")) else null
+            }
+            .toMap()
+        if (saved.isEmpty()) return false
+        val restored = dao.getAllAppsSnapshot().map { app ->
+            val (tier, blocked) = saved[app.packageName] ?: return@map app
+            app.copy(blockTier = tier, isBlocked = blocked)
+        }
+        dao.insertApps(restored)
+        profileUndoPrefs().edit()
+            .remove(PROFILE_UNDO_KEY)
+            .remove(PROFILE_UNDO_DIAL_KEY)
+            .remove(PROFILE_UNDO_NAME_KEY)
+            .apply()
+        return true
+    }
+
+    /** The apps no profile may ever lock: the clock and maps are
+     *  how he wakes and gets home. Sleep's own description names
+     *  Phone, Clock, and Maps as its exceptions (issue #139 F2) —
+     *  the category system cannot express the exception, so it
+     *  lives here as an invariant. Membership is by EssentialApps'
+     *  exact package sets (issue #119) — never substring luck.
+     *  The dialer is NOT listed here on purpose: the dialler floor
+     *  (EssentialApps.floorTier, applied to every row inside
+     *  applyProfile) already guarantees no profile can lock the
+     *  phone either. */
+    private fun isProfileExempt(packageName: String): Boolean =
+        EssentialApps.isClockPackage(packageName) ||
+            EssentialApps.isNavigationPackage(packageName)
+
     suspend fun applyProfile(profile: FocusProfileEntity) = withContext(Dispatchers.IO) {
         val activeCategories = profile.blockedCategoriesCsv
             .split(",")
@@ -1781,9 +1882,21 @@ class MonolithRepository(
             .toSet()
 
         val currentApps = dao.getAllAppsSnapshot()
+        // Snapshot BEFORE the overwrite (issue #139 F4).
+        profileUndoPrefs().edit()
+            .putString(
+                PROFILE_UNDO_KEY,
+                currentApps.joinToString("\n") { app ->
+                    "${app.packageName}|${app.blockTier}|${if (app.isBlocked) "1" else "0"}"
+                }
+            )
+            .apply()
         val updated = currentApps.map { app ->
             val shouldBlock = app.category in activeCategories
             val rawTier = when {
+                // Issue #139 F2: clock + navigation are exempt — a
+                // profile can never lock how he wakes or gets home.
+                isProfileExempt(app.packageName) -> AppBlockTier.OPEN
                 !shouldBlock -> AppBlockTier.OPEN
                 app.category == AppCategory.MESSAGING.name -> AppBlockTier.PEEK_2M
                 else -> AppBlockTier.LOCKED
@@ -1808,13 +1921,20 @@ class MonolithRepository(
     suspend fun updateProfileTimeWindow(profile: FocusProfileEntity, startHour: Int, endHour: Int) {
         val safeStart = startHour.coerceIn(0, 23)
         val safeEnd = endHour.coerceIn(1, 24)
-        val scheduleStr = String.format(Locale.US, "%02d:00 – %02d:00 • Active Window", safeStart, safeEnd)
+        // Issue #139 F5: an hours-only edit must never destroy the
+        // minutes the profile already carries — Sleep's 22:30 start
+        // was silently rewritten to 22:00, and its "Nightly" label
+        // replaced. Minutes and the label's own suffix survive; the
+        // printed window shows the real minutes.
+        val suffix = profile.scheduleLabel.substringAfter(" • ", "Active Window")
+        val scheduleStr = String.format(
+            Locale.US, "%02d:%02d – %02d:%02d • %s",
+            safeStart, profile.startMinute, safeEnd, profile.endMinute, suffix
+        )
         dao.updateProfile(
             profile.copy(
                 startHour = safeStart,
-                startMinute = 0,
                 endHour = safeEnd,
-                endMinute = 0,
                 scheduleLabel = scheduleStr
             )
         )
@@ -1838,7 +1958,10 @@ class MonolithRepository(
                 defaultMinutes = minutes,
                 blockedCategoriesCsv = csv,
                 scheduleLabel = scheduleStr,
-                isScheduleEnabled = true,
+                // Issue #139 F1: no engine reads a profile schedule,
+                // so a new profile must not be born claiming one is
+                // enabled. The window is stored as a note only.
+                isScheduleEnabled = false,
                 startHour = startHour,
                 startMinute = 0,
                 endHour = endHour,
