@@ -914,7 +914,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onReturnToFocus = viewModel::transmuteImpulseAndReturn,
                 onTake2MinutePeek = viewModel::start2MinutePeek,
                 allowedAppsCount = allApps.count {
-                    it.resolvedTier == com.example.data.AppBlockTier.OPEN
+                    it.resolvedTier == com.example.data.AppBlockTier.OPEN &&
+                        it.category != com.example.data.AppCategory.BROWSERS.name &&
+                        it.packageName != "com.android.vending"
                 },
                 peekAppsCount = allApps.count {
                     it.resolvedTier == com.example.data.AppBlockTier.PEEK_2M
