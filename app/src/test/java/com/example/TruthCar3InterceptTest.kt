@@ -221,16 +221,18 @@ class TruthCar3InterceptTest {
     @Test
     fun peekPriceAndBadgePrintFromTheSetting() {
         // SIL-2 (Pruefer's form): set the peek to 5 — the badge
-        // says 5; the price names the 20-minute cooldown the arm
-        // will impose. No surface hardcodes either number.
+        // says 5; the price names the 20-minute cooldown that runs
+        // from the peek's END (issue #118, finding 4: the cooldown
+        // is armed when the peek ends, not when it starts). No
+        // surface hardcodes either number.
         assertEquals("5m", peekBadgeText(5 * 60))
         assertEquals("2m", peekBadgeText(120))
         assertEquals(
-            "TAKING THE PEEK STARTS A 20 MINUTES COOLDOWN ON THIS APP",
+            "WHEN THE PEEK ENDS, A 20 MINUTES COOLDOWN RUNS ON THIS APP",
             peekPriceText(20 * 60_000L)
         )
         assertEquals(
-            "TAKING THE PEEK STARTS A 1 MINUTE COOLDOWN ON THIS APP",
+            "WHEN THE PEEK ENDS, A 1 MINUTE COOLDOWN RUNS ON THIS APP",
             peekPriceText(60_000L)
         )
     }
@@ -240,9 +242,9 @@ class TruthCar3InterceptTest {
         // SIL-1 (Hale W-28): timed → the span end; stopwatch → no
         // set end; neither → no line, never an invented end.
         val end = 1_700_000_000_000L
-        assertEquals("SESSION " + endsAtText(end), airlockSessionLine(end, false))
-        assertEquals("SESSION RUNNING · NO SET END", airlockSessionLine(null, true))
-        assertNull(airlockSessionLine(null, false))
+        assertEquals("SESSION " + endsAtText(true, end), airlockSessionLine(true, end, false))
+        assertEquals("SESSION RUNNING · NO SET END", airlockSessionLine(true, null, true))
+        assertNull(airlockSessionLine(true, null, false))
     }
 
     @Test

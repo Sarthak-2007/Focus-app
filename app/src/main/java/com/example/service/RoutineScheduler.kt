@@ -4,6 +4,7 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import com.example.data.RoutineDerive
 import com.example.data.RoutineEntity
 
@@ -49,6 +50,11 @@ object RoutineScheduler {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         val intent = chainPendingIntent(context, PendingIntent.FLAG_UPDATE_CURRENT) ?: return
         alarmManager.cancel(intent)
+        // Issue #280 (R5 supplement): when the user has granted
+        // exact alarms, the chain boundary fires exactly; the
+        // inexact form stays as the fallback, and the heartbeat
+        // reconcile remains the mechanism either way — an exact
+        // alarm sharpens the hint, it never becomes the truth.
         val canExact = if (android.os.Build.VERSION.SDK_INT >= 31) {
             alarmManager.canScheduleExactAlarms()
         } else {
