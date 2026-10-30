@@ -343,6 +343,7 @@ class MonolithViewModel(
     val burnInFigure8MinuteStep: StateFlow<Int> = _burnInFigure8MinuteStep.asStateFlow()
 
     private val _floatingPeekPill = MutableStateFlow(FloatingPeekPillState())
+    val floatingPeekPill: StateFlow<FloatingPeekPillState> = _floatingPeekPill.asStateFlow()
 
     private val _frozenDigest = MutableStateFlow<FrozenDigest?>(null)
     val frozenDigest: StateFlow<FrozenDigest?> = _frozenDigest.asStateFlow()
@@ -591,6 +592,9 @@ class MonolithViewModel(
      *  board and the header's Guard line derive from it. */
     val watchSnapshots: StateFlow<com.example.service.WatchSnapshot> =
         com.example.service.WatchStore.snapshots
+
+    /** Otis's heartbeat, exposed for the strip and the chrome line. */
+    val wireSnapshots: StateFlow<com.example.service.WatchSnapshot> = com.example.service.WatchStore.snapshots
 
     val capturedNotifications: StateFlow<List<CapturedNotificationEntity>> = repository.capturedNotificationsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
