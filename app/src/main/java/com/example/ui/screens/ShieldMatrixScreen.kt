@@ -59,6 +59,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.AppBlockTier
 import com.example.data.AppCategory
 import com.example.data.BlockedAppEntity
+import com.example.data.BlockedBrowserDomains
 import com.example.data.FocusProfileEntity
 import com.example.data.SmartLoadout
 import com.example.data.groupedByRule
@@ -645,6 +646,7 @@ fun ShieldMatrixScreen(
                 // longer destroyed when this LazyColumn item is
                 // disposed on scroll.
                 var newSiteText by rememberSaveable { mutableStateOf("") }
+                var siteError by rememberSaveable { mutableStateOf<String?>(null) }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -688,11 +690,41 @@ fun ShieldMatrixScreen(
                         wordLabel = "ADD",
                         isPrimaryInk = true,
                         onClick = {
-                            if (newSiteText.isNotBlank()) {
-                                onAddSite(newSiteText)
-                                newSiteText = ""
+                            // Issue #51 F2 cure (ported from agent/issue-7's
+                            // R-3 truth fix): a rejected ADD PRINTS WHY and
+                            // KEEPS the text. The old form cleared the field
+                            // unconditionally — MonolithRepository.addBlockedSite
+                            // rejects an unnormalisable domain (returns false)
+                            // and the ViewModel swallows that Boolean, so
+                            // garbage vanished as if saved. The screen judges
+                            // with the repository's own normaliser, so the
+                            // verdict it prints is the verdict the store gives.
+                            val normalised = BlockedBrowserDomains.normalizeDomain(newSiteText)
+                            when {
+                                newSiteText.isBlank() -> Unit
+                                normalised == null -> siteError =
+                                    "NOT A SITE — CHECK THE ADDRESS AND TRY AGAIN"
+                                blockedSites.contains(normalised) -> siteError =
+                                    "ALREADY ON THE LIST"
+                                else -> {
+                                    onAddSite(newSiteText)
+                                    newSiteText = ""
+                                    siteError = null
+                                }
                             }
                         }
+                    )
+                }
+                val err = siteError
+                if (err != null) {
+                    Text(
+                        text = err,
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("shield_site_error")
                     )
                 }
             }
