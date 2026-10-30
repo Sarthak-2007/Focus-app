@@ -21,3 +21,6 @@ debug.keystore
 *.jks
 my-upload-key.jks
 keystore.properties
+
+# AI Studio temp-media scratch cache (audit R2 #89 — never source, never committed)
+.aistudio/**/.tempmediaStorage/
