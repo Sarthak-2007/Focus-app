@@ -1658,6 +1658,9 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
 
     private var latchKnockFired: Boolean = false
 
+    // Issue #126 F3: the seated cap's refusal-knock throttle.
+    private var lastSeatedKnockMs: Long = 0L
+
     // The commutator floor (Vega, review V-1): the displayed value
     // at which this SEAT run began — the catch crossing for a drag,
     // 0.92 for the mesh. Inside the seat, displayed may never fall
@@ -1993,6 +1996,24 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                 // where the grace abort owns the escape.
                 if (mode == Mode.MESH || mode == Mode.SEAT) {
                     startAbortReturn()
+                    return true
+                }
+                // Issue #126 F3: a DOWN on the SEATED cap is a
+                // re-slide against an attempt already in flight
+                // (the proving wait — the sealed ghost carries
+                // sealedGate and never reaches here). It still
+                // dispatches nothing, but it is no longer swallowed
+                // in silence: one dull knock in the brush's
+                // vocabulary (the sound engine's own gate decides
+                // audibility) says the attempt exists and this
+                // touch changed nothing. Throttled, so hammering
+                // the cap cannot machine-gun the knock.
+                if (mode == Mode.SEATED) {
+                    val nowMs = System.currentTimeMillis()
+                    if (nowMs - lastSeatedKnockMs >= 250L) {
+                        lastSeatedKnockMs = nowMs
+                        fireWeightedKnock(10, 0.55f, 220f)
+                    }
                     return true
                 }
                 // A DOWN inside a running machine or a live drag is not

@@ -18,12 +18,12 @@ enum class AppBlockTier(
 ) {
     LOCKED(
         label = "Shut",
-        badge = "Blocked",
+        badge = "Shut",
         description = "Blocked while a focus session or protection schedule is active",
-        displayLabel = "Blocked"
+        displayLabel = "Shut"
     ),
     PEEK_2M(
-        label = "2m Knock",
+        label = "2m Peek",
         badge = "2m Peek",
         description = "Allows a mindful 2-minute check-in for urgent messages + 20m cooldown",
         displayLabel = "2m Peek"
@@ -43,7 +43,7 @@ enum class SmartLoadout(
 ) {
     STUDY(
         title = "Deep Study",
-        subtitle = "Blocks Social & Games, sets YouTube & Messaging to 2m Peek, enables Shorts & Web shields.",
+        subtitle = "Blocks Social & Games, keeps YouTube, browsers & study apps open for lectures, sets Messaging to 2m Peek, enables Shorts & Web shields.",
         badge = "Recommended"
     ),
     WORK_SPRINT(
@@ -261,6 +261,13 @@ enum class AppCategory(val label: String, val code: String) {
     // was filed by substring luck (YouTube Music as SHORT_VIDEO,
     // "…Player" labels as GAMES, Spotify as SHOPPING by accident).
     MUSIC("Music & Audio", "Music"),
+    // EDUCATION (issue #133, study-on-phone-itself): the
+    // deterministic home for study apps — filed by AppCategorizer
+    // (deterministic package homes + study signals), correctable
+    // by the user (setAppCategory, issue #107). Before this value
+    // a study app had no home at all and fell to SHOPPING or a
+    // name-substring trap.
+    EDUCATION("Education", "Study"),
     SHOPPING("Other Apps", "Tools")
 }
 
@@ -656,13 +663,13 @@ object BlockedBrowserDomains {
         "snapchat.com",
         "youtube.com/shorts"
     )
-    val allowedStudyExamples = listOf(
-        "scholar.google.com",
-        "arxiv.org",
-        "wikipedia.org",
-        "canvas.instructure.com",
-        "leetcode.com"
-    )
+    // Issue #133 (finding 4): an "allowed study sites" example
+    // list used to live here as dead decoration — no study-site
+    // allowlist exists anywhere in enforcement (the browser
+    // blocker is blocklist-only and reads the user's own blocked
+    // list), and nothing in production consumed the examples.
+    // Removed rather than left lying on the surface; a real
+    // study-site allowlist is a feature decision, not a constant.
 
     /**
      * Normalises free-typed input ("https://www.YouTube.com/shorts?x=1")
