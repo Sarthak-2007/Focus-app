@@ -30,8 +30,17 @@ import org.robolectric.annotation.Config
  *
  * Runs against the singleton database file, exactly as the token
  * suite does, because completeEmergencyBreak takes its transaction
- * from the singleton. This class completes exactly ONE successful
- * break; what it creates, it deletes again on the way out.
+ * from the singleton (MonolithRepository.completeEmergencyBreak
+ * re-fetches MonolithDatabase.getInstance internally) — swapping in
+ * an in-memory database here would test a seam production never uses.
+ *
+ * Issue #66 (audit R1 tests-2) order-dependence fix: isolation is a
+ * DETERMINISTIC RESET, not leftover-reading. Every test resets the
+ * week's spend ledger (and, where asserted, the Partial Stamp log)
+ * to a known-empty state at its start and asserts that state, so no
+ * assertion ever branches on what a previous test or class left
+ * behind. Each test completes its own successful break and deletes
+ * exactly what it created on the way out.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -39,6 +48,15 @@ class TokenBreakRoutineSeamTest {
 
     private val context: Context
         get() = ApplicationProvider.getApplicationContext()
+
+    /** Deterministic reset (issue #66): the week's spend ledger starts
+     *  EMPTY for every test, proven by assertion — never read-and-branch. */
+    private suspend fun resetWeekLedger(db: MonolithDatabase, anchor: Long) {
+        db.openHelper.writableDatabase.execSQL(
+            "DELETE FROM emergency_break_spends WHERE weekAnchorMillis = $anchor"
+        )
+        assertEquals(0, db.monolithDao().getSpendsForWeek(anchor).size)
+    }
 
     @Test
     fun routineSession_breakSpendsToken_andFinalisesThroughTheFunnel() = runBlocking {
@@ -49,10 +67,7 @@ class TokenBreakRoutineSeamTest {
         // The singleton file is shared across test classes in a run,
         // and the token suite leaves its own spend behind: this class
         // takes the week ledger clean, and leaves it clean.
-        db.openHelper.writableDatabase.execSQL(
-            "DELETE FROM emergency_break_spends WHERE weekAnchorMillis = $anchor"
-        )
-        assertEquals(0, dao.getSpendsForWeek(anchor).size)
+        resetWeekLedger(db, anchor)
         // Same hygiene for the Partial Stamp count below: the
         // generic disarm path — exercised by the token suite on
         // this same shared file — writes 'com.monolith.system'
@@ -136,14 +151,15 @@ class TokenBreakRoutineSeamTest {
         // A3 legacy row: routineId null, recognised only by the prefix.
         // The break must book its tick-accrued elapsed ONLY (the
         // interim body) — the spend still commits atomically with it.
-        // NOTE: this test is Refused-safe — if the class's one spend
-        // already happened, the assertion set degrades to the refusal
-        // contract instead of double-spending.
+        // Issue #66: this test used to READ the leftover spend count
+        // and degrade to a refusal assertion when another test had
+        // spent first. It now resets the ledger first (see header),
+        // so the Completed contract is asserted unconditionally.
         val db = MonolithDatabase.getInstance(context)
         val dao = db.monolithDao()
         val repository = MonolithRepository(context, dao)
         val anchor = MonolithWeek.weekAnchorMillis(System.currentTimeMillis())
-        val spendsBefore = dao.getSpendsForWeek(anchor).size
+        resetWeekLedger(db, anchor)
 
         val now = System.currentTimeMillis()
         val sessionId = dao.insertSession(
@@ -160,20 +176,18 @@ class TokenBreakRoutineSeamTest {
         ).toInt()
 
         val result = repository.completeEmergencyBreak()
-        if (spendsBefore == 0) {
-            assertEquals(BreakResult.Completed, result)
-            val sealed = dao.getSessionHistorySnapshot().single { it.id == sessionId }
-            assertFalse(sealed.isActive)
-            assertEquals(700, sealed.elapsedSeconds) // tick-accrued only
-            assertEquals(null, sealed.routineOutcome) // legacy rows are never stamped (A3)
-            db.openHelper.writableDatabase.execSQL(
-                "DELETE FROM emergency_break_spends WHERE sessionId = $sessionId"
-            )
-        } else {
-            assertEquals(BreakResult.RefusedNoToken, result)
-            val sealed = dao.getSessionHistorySnapshot().single { it.id == sessionId }
-            assertEquals(true, sealed.isActive) // refusal leaves it sealed shut
-        }
+        assertEquals(BreakResult.Completed, result)
+        val spends = dao.getSpendsForWeek(anchor)
+        assertEquals(1, spends.size)
+        assertEquals(sessionId, spends.single().sessionId)
+        val sealed = dao.getSessionHistorySnapshot().single { it.id == sessionId }
+        assertFalse(sealed.isActive)
+        assertEquals(700, sealed.elapsedSeconds) // tick-accrued only
+        assertEquals(null, sealed.routineOutcome) // legacy rows are never stamped (A3)
+        db.openHelper.writableDatabase.execSQL(
+            "DELETE FROM emergency_break_spends WHERE sessionId = $sessionId"
+        )
         db.openHelper.writableDatabase.execSQL("DELETE FROM focus_sessions WHERE id = $sessionId")
+        assertEquals(0, dao.getSpendsForWeek(anchor).size)
     }
 }
