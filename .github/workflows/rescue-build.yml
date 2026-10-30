@@ -73,6 +73,22 @@ jobs:
         id: tests
         run: ./gradlew --console=plain testDebugUnitTest
 
+      # HERD-D3B (issue #30 bisect): upload the JUnit XML + HTML
+      # report even when the test step fails — without this, a
+      # failing class shows only "initializationError" in the log
+      # and the exact exception is unrecoverable from CI.
+      - name: Upload unit-test results
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: |
+            app/build/test-results/**
+            app/build/reports/tests/**
+          if-no-files-found: ignore
+          retention-days: 7
+
       # Wave-2 (Feel/Finisher pass): the run page must tell the truth
       # in plain words without anyone opening a log. This APK is
       # uploaded BEFORE the test step, so while tests are red the

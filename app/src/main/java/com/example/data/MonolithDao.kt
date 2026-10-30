@@ -26,22 +26,22 @@ interface MonolithDao {
     suspend fun updateApp(app: BlockedAppEntity)
 
     @Query("UPDATE blocked_apps SET isBlocked = :isBlocked, blockTier = :blockTier WHERE packageName = :packageName")
-    suspend fun setAppTier(packageName: String, isBlocked: Boolean, blockTier: String): Int
+    suspend fun setAppTier(packageName: String, isBlocked: Boolean, blockTier: String)
 
     @Query("UPDATE blocked_apps SET activePeekUntilElapsedRealtime = :activeUntilMono, lastPeekEndElapsedRealtime = :peekEndMono WHERE packageName = :packageName")
-    suspend fun updatePeekLeaseAndCooldown(packageName: String, activeUntilMono: Long, peekEndMono: Long): Int
+    suspend fun updatePeekLeaseAndCooldown(packageName: String, activeUntilMono: Long, peekEndMono: Long)
 
     /** The prune (Ordner lane): rows for packages the phone no longer
      *  has leave the table at sync — the catalog is the phone's truth,
      *  not an archive of everything it once held. */
     @Query("DELETE FROM blocked_apps WHERE packageName IN (:packageNames)")
-    suspend fun deleteAppsByPackage(packageNames: List<String>): Int
+    suspend fun deleteAppsByPackage(packageNames: List<String>)
 
     @Query("UPDATE blocked_apps SET interceptCount = interceptCount + 1 WHERE packageName = :packageName")
-    suspend fun incrementInterceptCount(packageName: String): Int
+    suspend fun incrementInterceptCount(packageName: String)
 
     @Query("UPDATE blocked_apps SET dailyLimitMinutes = :limitMinutes WHERE packageName = :packageName")
-    suspend fun updateDailyLimit(packageName: String, limitMinutes: Int): Int
+    suspend fun updateDailyLimit(packageName: String, limitMinutes: Int)
 
     // Focus Profiles & Schedules
     @Query("SELECT * FROM focus_profiles ORDER BY id ASC")
@@ -84,7 +84,7 @@ interface MonolithDao {
     suspend fun updateSession(session: FocusSessionEntity)
 
     @Query("DELETE FROM focus_sessions WHERE id = :id")
-    suspend fun deleteSessionById(id: Int): Int
+    suspend fun deleteSessionById(id: Int)
 
     // Slice E (9→10): the finish machine's reads. The E0 edge
     // re-reads the ended row by id (its history emission is a list;
@@ -99,7 +99,7 @@ interface MonolithDao {
     // a latch write can never clobber a tick's row copy landing in
     // the same instant.
     @Query("UPDATE focus_sessions SET shieldGapSeen = 1 WHERE id = :id")
-    suspend fun latchShieldGap(id: Int): Int
+    suspend fun latchShieldGap(id: Int)
 
     // The release-fault record (Draht): written once per fault by
     // the finish machine; the retry cadence increments its own
@@ -107,7 +107,7 @@ interface MonolithDao {
     @Query(
         "UPDATE focus_sessions SET releaseFaultShield = 1, releaseFaultedAtWallMillis = :wallMillis WHERE id = :id"
     )
-    suspend fun stampReleaseFault(id: Int, wallMillis: Long): Int
+    suspend fun stampReleaseFault(id: Int, wallMillis: Long)
 
     // Issue #30 finding 4: the retry counter moves by ATOMIC
     // INCREMENT, never by an absolute write of a caller-computed
@@ -128,7 +128,7 @@ interface MonolithDao {
     suspend fun getSpendsForSession(sessionId: Int): List<EmergencyBreakSpendEntity>
 
     @Query("UPDATE focus_sessions SET isActive = 0 WHERE isActive = 1")
-    suspend fun deactivateAllSessions(): Int
+    suspend fun deactivateAllSessions()
 
     // Emergency Break Spends (TOKEN-SPEC §2 — append-only ledger; the
     // weekly token is DERIVED from these rows, never stored as a count)
@@ -183,10 +183,10 @@ interface MonolithDao {
     suspend fun insertCapturedNotification(notification: CapturedNotificationEntity)
 
     @Query("DELETE FROM captured_notifications WHERE id = :id")
-    suspend fun deleteCapturedNotification(id: Int): Int
+    suspend fun deleteCapturedNotification(id: Int)
 
     @Query("DELETE FROM captured_notifications")
-    suspend fun clearAllCapturedNotifications(): Int
+    suspend fun clearAllCapturedNotifications()
 
     // Timeboxed Task Queue (Solar Queue)
     @Query("SELECT * FROM focus_tasks ORDER BY CASE status WHEN 'ACTIVE' THEN 0 WHEN 'QUEUED' THEN 1 WHEN 'DEFERRED' THEN 2 ELSE 3 END, queueOrder ASC, id ASC")
@@ -208,7 +208,7 @@ interface MonolithDao {
     suspend fun updateTask(task: FocusTaskEntity)
 
     @Query("DELETE FROM focus_tasks WHERE id = :id")
-    suspend fun deleteTaskById(id: Int): Int
+    suspend fun deleteTaskById(id: Int)
 
     // =========================================================================
     // THE DRAWER — stored tasks are COMPLETED rows of focus_tasks.
@@ -243,7 +243,7 @@ interface MonolithDao {
     // one column, for the same §7.5 reason as the claim's own
     // settings write: nothing else on the row may move.
     @Query("UPDATE focus_sessions SET receiptNumber = :number WHERE id = :sessionId")
-    suspend fun stampReceiptNumber(sessionId: Int, number: Int): Int
+    suspend fun stampReceiptNumber(sessionId: Int, number: Int)
 
     // Blocked Websites (user-editable; enforced by the accessibility service)
     @Query("SELECT * FROM blocked_sites ORDER BY domain ASC")
@@ -259,7 +259,7 @@ interface MonolithDao {
     suspend fun insertSite(site: BlockedSiteEntity)
 
     @Query("DELETE FROM blocked_sites WHERE domain = :domain")
-    suspend fun deleteSite(domain: String): Int
+    suspend fun deleteSite(domain: String)
 
     // Guard Settings (single row, id = 1)
     @Query("SELECT * FROM guard_settings WHERE id = 1 LIMIT 1")
@@ -277,18 +277,18 @@ interface MonolithDao {
     // receipt claim columns, and the claim's write is targeted
     // for the same reason in reverse.
     @Query("UPDATE guard_settings SET browserBlockerEnabled = :enabled WHERE id = 1")
-    suspend fun updateBrowserBlockerEnabled(enabled: Boolean): Int
+    suspend fun updateBrowserBlockerEnabled(enabled: Boolean)
 
     // Truth Car 3 (UNA-01): the sniper switch's targeted UPDATE —
     // same §7.5 discipline as the browser pair above.
     @Query("UPDATE guard_settings SET shortsReelsSniperEnabled = :enabled WHERE id = 1")
-    suspend fun updateShortsReelsSniperEnabled(enabled: Boolean): Int
+    suspend fun updateShortsReelsSniperEnabled(enabled: Boolean)
 
     @Query("UPDATE guard_settings SET routineReseedV1Done = 1 WHERE id = 1")
-    suspend fun markRoutineReseedV1Done(): Int
+    suspend fun markRoutineReseedV1Done()
 
     @Query("UPDATE guard_settings SET routineReseedNoteDismissed = 1 WHERE id = 1")
-    suspend fun markRoutineReseedNoteDismissed(): Int
+    suspend fun markRoutineReseedNoteDismissed()
 
     @Query(
         "UPDATE guard_settings SET lastCompositeSessionId = :sessionId, " +
@@ -300,16 +300,16 @@ interface MonolithDao {
         outcome: String,
         sequence: Int,
         receiptSessionId: Int
-    ): Int
+    )
 
     // Targeted stamp writes (routines rebuild): single-column UPDATEs
     // so a stamp can never clobber another settings field written in
     // the same instant (cf. arbitration A6's copy-fix).
     @Query("UPDATE guard_settings SET lastBootAtMillis = :millis WHERE id = 1")
-    suspend fun stampLastBoot(millis: Long): Int
+    suspend fun stampLastBoot(millis: Long)
 
     @Query("UPDATE guard_settings SET lastRoutineTickMillis = :millis WHERE id = 1")
-    suspend fun stampLastRoutineTick(millis: Long): Int
+    suspend fun stampLastRoutineTick(millis: Long)
 
     // Routines (persisted schedule; fired by RoutineAlarmReceiver)
     @Query("SELECT * FROM routines ORDER BY startMinutes ASC")
