@@ -3512,7 +3512,15 @@ class MonolithRepository(
     }
 
     suspend fun searchStoredTasks(query: String, offset: Int): StoredPage {
-        val fetched = dao.searchStoredTasks(query.trim(), DRAWER_PAGE_SIZE + 1, offset)
+        // Issue #30 finding 5: escape the LIKE wildcards in the
+        // user's words — the DAO's ESCAPE '\' clause makes \%, \_
+        // and \\ match literally, so searching "50%" finds "50%"
+        // instead of everything containing "50".
+        val escaped = query.trim()
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        val fetched = dao.searchStoredTasks(escaped, DRAWER_PAGE_SIZE + 1, offset)
         return StoredPage(
             rows = fetched.take(DRAWER_PAGE_SIZE),
             hasEarlier = fetched.size > DRAWER_PAGE_SIZE
