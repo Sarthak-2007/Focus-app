@@ -20,13 +20,14 @@ class GuardLinePrintTest {
 
     private fun snapshot(
         prints: Map<WatchItemId, PermState>,
-        mono: Long = 10_000L
+        mono: Long = 10_000L,
+        monoFor: (WatchItemId) -> Long = { mono }
     ): WatchSnapshot {
         val items = prints.mapValues { (item, perm) ->
             WatchMeasurement(
                 item = item,
                 perm = perm,
-                measuredMono = mono,
+                measuredMono = monoFor(item),
                 measuredWall = 1_700_000_000_000L
             )
         }
@@ -69,9 +70,19 @@ class GuardLinePrintTest {
 
     @Test
     fun staleDoor_printsCountAndStaleName() {
-        // Measured at mono 10_000; read at 10_000 + 46_000 — past
-        // the 45s stale threshold, so the grant no longer counts.
-        val snap = snapshot(wholeSet())
+        // ACCESSIBILITY measured at mono 10_000, the other three
+        // re-measured at 50_000; read at 56_000 — only the
+        // accessibility grant is past the 45s stale threshold, so
+        // it alone no longer counts. (Finisher fix: the original
+        // fixture measured all four at 10_000, which stales the
+        // whole set and prints 0/4 — the scenario never matched
+        // its own expectation until the fixture staggered.)
+        val snap = snapshot(
+            wholeSet(),
+            monoFor = { item ->
+                if (item == WatchItemId.ACCESSIBILITY) 10_000L else 50_000L
+            }
+        )
         assertEquals(
             "GUARD 3/4 — ACCESSIBILITY STALE",
             guardLineFor(snap, 56_000L).text
