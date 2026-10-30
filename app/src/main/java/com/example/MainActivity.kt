@@ -1249,10 +1249,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     it.resolvedTier == com.example.data.AppBlockTier.PEEK_2M
                 },
                 onOpenAllowedApps = {
+                    viewModel.leaveAirlockViaLauncherDoors()
                     launcherPage = LauncherPage.ALLOWED
                     launcherOpen = true
                 },
                 onOpenPeekApps = {
+                    viewModel.leaveAirlockViaLauncherDoors()
                     launcherPage = LauncherPage.PEEK
                     launcherOpen = true
                 },
