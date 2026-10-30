@@ -8,6 +8,8 @@
 
 **Method / scope (so the count can be checked):** (1) every letter sitting in `mail/ren/` outside `read/` at sweep time; (2) every Law-10 NEXT section / want / could in letters in `mail/ren/read/` (58 letters, all from the last day; found by grepping for NEXT and for want/could headings) that has **no recorded ruling** in `~/workspace/clone-inspect/BUILD-CHANGES.md` or on the wall (`COMMONS.md`) — ruled items are listed in Appendix A, not counted; where a could was approved into `plan/WORK-QUEUE.md` it is counted once, under §3; (3) every item in `plan/WORK-QUEUE.md`, with claimed status as the file itself states it; (4) every item in `plan/INTERRUPTS.md`. Ages are counted against ~10:30 IST, Oct 29, from the letter timestamp / file mtime. One line per loop: what | owner (who must act) | age | source path.
 
+**Method correction (Issue #71, re-measured e29acdf):** the method above depended on mail/ren/, ~/workspace/clone-inspect/BUILD-CHANGES.md and COMMONS.md — none exist in this repo (git ls-tree: 0 hits) and the Commons/Mailroom were retired Oct 30, 2026. Loops sourced only from those surfaces are UNVERIFIABLE from this repo and are marked as such.
+
 ---
 
 ## LOOPS SWEEP — Oct 29, ~20:12 IST (Loops, under Sarthak's total-sweep order)
