@@ -121,11 +121,20 @@ data class FloatingPeekPillState(
  * Why a peek was withheld on a door that could have honoured one
  * (Truth Car 3, UNA2-01; Ren's Held Door Truth Baseline: a withheld
  * peek prints its cooldown state AND its reason). Null when the
- * door never owed a peek — a locked app, a non-honouring door, an
- * unlisted package: those doors print no peek line at all, never a
- * refusal for an offer that was never on the table.
+ * door never owed a peek — a non-honouring door, an unlisted
+ * package: those doors print no peek line at all, never a refusal
+ * for an offer that was never on the table.
+ *
+ * Issue #154 amendment: TIER_LOCKED joins the enum — NOT as a
+ * refusal (no offer was made to refuse) but as the door's own
+ * state line. The baseline's silence for a locked app read to
+ * the person holding the phone as breakage: a legitimate need
+ * met a blank wall, no fact printed, and the only visible exit
+ * was the week's single emergency token. The line now names the
+ * tier the user himself set and where tiers are set — a fact,
+ * not a refusal.
  */
-enum class PeekWithheld { COOLDOWN, ALREADY_ACTIVE, PEEK_OFF }
+enum class PeekWithheld { COOLDOWN, ALREADY_ACTIVE, PEEK_OFF, TIER_LOCKED }
 
 /**
  * The one peek-offer computation (Truth Car 3, UNA2-01). The offer
@@ -2331,10 +2340,14 @@ class MonolithViewModel(
         val canPeek = peekOfferFor(path, appEntity, cooldownLeft, pillActive)
         // The withheld reason is owed only where the door could
         // have honoured a peek and the tier is PEEK: elsewhere no
-        // peek line prints at all (Held Door Truth Baseline).
+        // peek line prints at all (Held Door Truth Baseline) —
+        // with the issue-#154 exception: a LOCKED tier on an
+        // honouring door prints its state line (TIER_LOCKED),
+        // because total silence there read as a broken door.
         val withheld = when {
             canPeek -> null
             !path.canHonourPeekLease -> null
+            appEntity?.resolvedTier == AppBlockTier.LOCKED -> PeekWithheld.TIER_LOCKED
             appEntity?.resolvedTier != AppBlockTier.PEEK_2M -> null
             // Hale W-30: a peek length of zero is its own reason —
             // the peek is OFF, not cooling down. (Trunk's constant

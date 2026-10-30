@@ -214,29 +214,41 @@ class MonolithAccessibilityService : AccessibilityService() {
                 return@launch
             }
 
-            // UNA2-01, the lease agreement: a live peek lease on
-            // THIS package silences the sniper and the site blocker
-            // too — a lease is honoured by every door or it is
-            // honoured by none. The per-app door (branch 5) and the
-            // shield service's set filter already read the lease;
-            // these two doors fired blind, so a peek bought on the
-            // per-app door could be re-intercepted mid-lease by the
-            // sniper — the lease protecting nothing again.
+            // UNA2-01 as amended by issue #154, the lease
+            // agreement: a live peek lease opens THIS package's
+            // per-app door (branch 5) and the shield's set filter —
+            // but it does NOT disarm the traps inside the app. The
+            // original agreement silenced the sniper and the site
+            // blocker for the whole lease, which bundled the
+            // errand with the exact feed/site exposure the session
+            // exists to prevent: peek Instagram for a teacher's DM
+            // and Reels scrolled unguarded for two minutes. The
+            // traps now stay armed during a lease; what a lease
+            // changes is the PENALTY. A trap sprung mid-lease
+            // steps the user back (GLOBAL_ACTION_BACK, already
+            // performed below) and nothing more — no intercept
+            // screen, no door slam, no lease burned — so a peek
+            // that lands on a feed by accident is refused the
+            // feed, not the errand (UNA2-01's original fear), and
+            // a deliberate stray meets the same wall as outside
+            // the lease, minus the expulsion.
             val leaseRow = dao.getAllAppsSnapshot().find { it.packageName == pkgName }
             val leaseLive = leaseRow != null &&
                 leaseRow.resolvedTier == AppBlockTier.PEEK_2M &&
                 SystemClock.elapsedRealtime() < leaseRow.activePeekUntilElapsedRealtime
 
             // 3. YouTube Shorts & Instagram Reels Sniper (Strictly active during both Work Blocks and Safe Breaks — and only while its persisted switch is ON: UNA-01)
-            if (!leaseLive && shortsSniperArmed(guardSettings, pkgName)) {
+            if (shortsSniperArmed(guardSettings, pkgName)) {
                 if (detectShortsOrReelsFeed(rootNode)) {
                     performGlobalAction(GLOBAL_ACTION_BACK)
-                    launchInterceptScreen(
-                        packageName = pkgName,
-                        appName = if (pkgName.contains("youtube")) "YouTube Shorts" else "Instagram Reels",
-                        reasonBadge = if (pkgName.contains("youtube")) "Shorts Blocked" else "Reels Blocked",
-                        path = InterceptPath.SNIPER
-                    )
+                    if (!leaseLive) {
+                        launchInterceptScreen(
+                            packageName = pkgName,
+                            appName = if (pkgName.contains("youtube")) "YouTube Shorts" else "Instagram Reels",
+                            reasonBadge = if (pkgName.contains("youtube")) "Shorts Blocked" else "Reels Blocked",
+                            path = InterceptPath.SNIPER
+                        )
+                    }
                     return@launch
                 }
             }
@@ -251,7 +263,7 @@ class MonolithAccessibilityService : AccessibilityService() {
             // enforcement time.) The settings row is the hoisted read
             // above (Falk's A-4 placement, composed at merge): one
             // read per event, honoured by both interceptors.
-            if (!leaseLive && (guardSettings?.browserBlockerEnabled ?: true) && isSupportedBrowser(pkgName) && rootNode != null) {
+            if ((guardSettings?.browserBlockerEnabled ?: true) && isSupportedBrowser(pkgName) && rootNode != null) {
                 val userDomains = dao.getAllSitesSnapshot().map { it.domain }
                 val matchedDomain = detectBlockedBrowserUrl(
                     rootNode,
@@ -259,12 +271,19 @@ class MonolithAccessibilityService : AccessibilityService() {
                 )
                 if (matchedDomain != null) {
                     performGlobalAction(GLOBAL_ACTION_BACK)
-                    launchInterceptScreen(
-                        packageName = pkgName,
-                        appName = matchedDomain,
-                        reasonBadge = "Site Blocked",
-                        path = InterceptPath.SITE
-                    )
+                    // Issue #154's lease agreement (branch 3's
+                    // comment): mid-lease the blocked site is
+                    // still refused — the step back above — but
+                    // the intercept screen is not launched, so
+                    // the peek survives its own guard.
+                    if (!leaseLive) {
+                        launchInterceptScreen(
+                            packageName = pkgName,
+                            appName = matchedDomain,
+                            reasonBadge = "Site Blocked",
+                            path = InterceptPath.SITE
+                        )
+                    }
                     return@launch
                 }
             }
