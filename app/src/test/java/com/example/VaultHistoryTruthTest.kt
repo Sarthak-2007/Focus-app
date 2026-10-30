@@ -295,7 +295,7 @@ class VaultHistoryTruthTest {
                     onLoadEarlier = {},
                     onQueryChange = {},
                     onLoadEarlierSearch = {},
-                    onDeclareTodayWord = {}
+                    onDeclareDayWord = { _, _ -> }
                 )
             }
         }
@@ -331,7 +331,7 @@ class VaultHistoryTruthTest {
                     onLoadEarlier = {},
                     onQueryChange = {},
                     onLoadEarlierSearch = {},
-                    onDeclareTodayWord = {},
+                    onDeclareDayWord = { _, _ -> },
                     forgedArtifactIds = setOf("artifact_gyro", PARTIAL_STAMP_ID),
                     forgeStats = mapOf(
                         "artifact_gyro" to ForgeStat(count = 3, lastForgedAtMillis = gyroLast),
