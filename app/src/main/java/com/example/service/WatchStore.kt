@@ -147,7 +147,7 @@ data class WatchSnapshot(
      *  sweep it dispatched, never by the shield loop's gen-0
      *  re-stamps or an earlier sweep's late landings. 0 = no sweep
      *  has completed in this process. */
-    val lastCompletedSweepGen: Int = 0
+    val lastCompletedSweepGen: Int = 0,
     /** Emission generation (issue #48): bumped by [WatchStore.poke]
      *  so a poke is a REAL emission — StateFlow suppresses equal
      *  values, and a bare copy() of a data class is equal to the
