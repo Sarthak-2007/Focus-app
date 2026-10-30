@@ -70,7 +70,7 @@ class ArmProductionWiringTest {
             .allowMainThreadQueries()
             .build()
         repository = MonolithRepository(context, db.monolithDao())
-        context.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+        com.example.data.DeviceProtectedPrefs.get(context, MonolithRepository.SEAL_PREFS_NAME)
             .edit().clear().commit()
         resetWitnessStatics()
         SessionSealTransitions.resetForTest()
