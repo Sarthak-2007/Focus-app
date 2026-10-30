@@ -442,10 +442,18 @@ class MonolithViewModel(
     // is an evaluation — see themeEvaluation below (declared after
     // activeSession, which it reads).
 
-    private val _dialMinutes = MutableStateFlow(50)
+    // Issue #261 (DURCH-E): the initial dial/blocks MUST agree with the
+    // default preset below — they previously initialised to 50 while
+    // _studyPreset said POMODORO_25_5, so a first start silently
+    // committed to 100 min of work (110 min span) under a "25m Sprint"
+    // label. Single source of truth: the preset itself, exactly as
+    // selectStudyPreset applies it.
+    private val _dialMinutes =
+        MutableStateFlow(StudyModePreset.POMODORO_25_5.workMinutes)
     val dialMinutes: StateFlow<Int> = _dialMinutes.asStateFlow()
 
-    private val _studyBlocksCount = MutableStateFlow(2)
+    private val _studyBlocksCount =
+        MutableStateFlow(StudyModePreset.POMODORO_25_5.defaultBlocks)
     val studyBlocksCount: StateFlow<Int> = _studyBlocksCount.asStateFlow()
 
     private val _studyPreset = MutableStateFlow(StudyModePreset.POMODORO_25_5)
