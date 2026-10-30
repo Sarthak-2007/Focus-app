@@ -74,10 +74,15 @@ class Issue155CompletionExpiryTest {
             "completion card must dismiss on tap",
             n.flags and Notification.FLAG_AUTO_CANCEL != 0
         )
+        // Read-back accessor: Notification has no `timeoutAfterMillis`
+        // property — Builder.setTimeoutAfter(long) is read back via
+        // Notification.getTimeoutAfter() (API 26+), i.e. Kotlin
+        // `timeoutAfter`. If the production setTimeoutAfter call is
+        // removed, this returns 0 and the pin fails.
         assertEquals(
             "completion card must self-expire at the F3 timeout",
             MonolithShieldService.COMPLETION_TIMEOUT_MS,
-            n.timeoutAfterMillis
+            n.timeoutAfter
         )
     }
 
@@ -90,7 +95,7 @@ class Issue155CompletionExpiryTest {
         val n = buildNotification(ongoing = true, autoCancel = false, timeoutAfterMs = 0L)
         assertTrue(n.flags and Notification.FLAG_ONGOING_EVENT != 0)
         assertTrue(n.flags and Notification.FLAG_AUTO_CANCEL == 0)
-        assertEquals(0L, n.timeoutAfterMillis)
+        assertEquals(0L, n.timeoutAfter)
     }
 
     private fun shieldSource(): String = listOf(
