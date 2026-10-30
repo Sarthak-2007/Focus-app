@@ -436,8 +436,13 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // phone is sealed, the block surface is a launcher. It opens
     // from the Guard line's tap (a dead tap while sealed until now —
     // PARK refuses under seal) and from the Airlock's two doors.
-    var launcherOpen by remember { mutableStateOf(false) }
-    var launcherPage by remember { mutableStateOf(LauncherPage.HOME) }
+    // D-07 (design-revamp salvage, 2dac73e): launcher state is
+    // rememberSaveable, like the neighbouring host state above
+    // (issue #27 pattern) — plain remember lost the open launcher
+    // and its page to any Activity recreation / process death,
+    // above all while the user was inside a launched allowed app.
+    var launcherOpen by rememberSaveable { mutableStateOf(false) }
+    var launcherPage by rememberSaveable { mutableStateOf(LauncherPage.HOME) }
 
     fun closePark(dismissReceipt: Boolean) {
         parkOpen = false
