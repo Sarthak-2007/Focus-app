@@ -105,6 +105,6 @@ class DayWordStore(context: Context) {
         val EXCUSE_WORDS: Set<String> = setOf("ILL", "REST", "FAMILY")
 
         /** True when [word] is an excuse word. */
-        fun isExcuse(word: String?): Boolean = word in EXCUSE_WORDS
+        fun isExcuse(word: String?): Boolean = word != null && word in EXCUSE_WORDS
     }
 }
