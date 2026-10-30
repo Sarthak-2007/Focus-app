@@ -58,6 +58,85 @@ data class AppCatalogPlan(
     val unreviewedOpenPackages: List<String> = emptyList()
 )
 
+/**
+ * The one package classifier (Issue #132, music-during-focus;
+ * merged with Issue #107's shield-setup-lived #3 cures).
+ * Pure and total: every package+label lands in exactly one
+ * [AppCategory]. Extracted from MonolithRepository so the
+ * classification is unit-testable and the repository delegates.
+ *
+ * MUSIC IS CHECKED FIRST, BY TOKEN, not substring: a media
+ * player's identity must beat the traps below it —
+ * "youtube.music" would otherwise file YouTube Music as
+ * SHORT_VIDEO and any "…Player" label as GAMES via "play".
+ * Token matching (split on non-alphanumerics) is what keeps
+ * the check honest: "musically" (TikTok's package) contains
+ * the substring "music" but is not the token "music".
+ *
+ * Issue #107: the GAMES branch no longer carries the bare
+ * substring "play" — it filed the Play Store itself (and any
+ * label containing "display") under GAMES. Game tokens are
+ * specific now, "musically" files SHORT_VIDEO, and the guess
+ * is printed on every catalogue row and correctable there, so
+ * a wrong guess is a fact the user can see and fix, not a
+ * secret that prices his apps.
+ */
+object AppCategorizer {
+
+    private val MUSIC_TOKENS = setOf(
+        "music", "podcast", "podcasts", "audio", "audiobook", "audiobooks",
+        "radio", "spotify", "soundcloud", "deezer", "tidal", "gaana",
+        "wynk", "shazam", "bandcamp", "audius", "audible", "tunein",
+        "castbox", "audiomack", "pocketcasts"
+    )
+
+    fun categorize(pkg: String, label: String): AppCategory {
+        val lower = "$pkg $label".lowercase()
+        val tokens = lower.split(Regex("[^a-z0-9]+")).filter { it.isNotEmpty() }
+        if (tokens.any { it in MUSIC_TOKENS }) return AppCategory.MUSIC
+        return when {
+            lower.contains("tiktok") || lower.contains("musically") || lower.contains("youtube") || lower.contains("instagram") || lower.contains("reel") ||
+                lower.contains("takatak") || lower.contains("moj") ->
+                AppCategory.SHORT_VIDEO
+            lower.contains("twitter") || lower.contains("reddit") || lower.contains("snapchat") || lower.contains("facebook") ||
+                lower.contains("threads") || lower.contains("mastodon") || lower.contains("bluesky") || lower.contains("bsky") ->
+                AppCategory.SOCIAL
+            // Issue #129 (ported from the earlier lane's widening
+            // at the STURM-4 merge): the big games whose names
+            // carried none of the old magic words. The bare "play"
+            // substring is deliberately NOT here — #107 removed
+            // it (it filed the Play Store itself under GAMES).
+            lower.contains("game") || lower.contains("clash") || lower.contains("roblox") || lower.contains("minecraft") || lower.contains("pubg") || lower.contains("candycrush") ||
+                lower.contains("bgmi") || lower.contains("freefire") || lower.contains("free fire") ||
+                lower.contains("fortnite") || lower.contains("genshin") || lower.contains("candy crush") ||
+                lower.contains("subway surfers") || lower.contains("call of duty") || lower.contains("valorant") ||
+                lower.contains("pokemon go") ->
+                AppCategory.GAMES
+            lower.contains("whatsapp") || lower.contains("discord") || lower.contains("telegram") || lower.contains("message") ->
+                AppCategory.MESSAGING
+            // Issue #129/#130 (ported widening): second browsers
+            // are browsers — Opera, DuckDuckGo, Samsung Internet,
+            // Edge, Kiwi and UC were filed SHOPPING before this,
+            // outside the site blocker's category world entirely.
+            lower.contains("chrome") || lower.contains("browser") || lower.contains("firefox") || lower.contains("brave") ||
+                lower.contains("opera") || lower.contains("duckduckgo") || lower.contains("sbrowser") ||
+                lower.contains("samsung internet") || lower.contains("microsoft edge") || lower.contains("emmx") ||
+                lower.contains("kiwi") || lower.contains("ucbrowser") || lower.contains("uc browser") ||
+                lower.contains("vivaldi") || lower.contains("yandex") ->
+                AppCategory.BROWSERS
+            else -> AppCategory.SHOPPING
+        }
+    }
+}
+
+/**
+ * Issue #107 test seam: the classifier under its audit name.
+ * Delegates to the ONE classifier ([AppCategorizer]) — there is
+ * no second implementation to drift from it.
+ */
+fun categorizePackage(pkg: String, label: String): AppCategory =
+    AppCategorizer.categorize(pkg, label)
+
 object AppCatalogReconcile {
 
     val FACTORY_PRESETS: Map<String, AppRulePreset> = mapOf(
@@ -99,12 +178,34 @@ object AppCatalogReconcile {
                 val preset = FACTORY_PRESETS[pkg]
                 val tier = preset?.tier ?: when (category) {
                     AppCategory.SHORT_VIDEO, AppCategory.GAMES -> AppBlockTier.LOCKED
-                    AppCategory.MESSAGING -> AppBlockTier.PEEK_2M
-                    else -> AppBlockTier.OPEN
+                    // Issue #132: MUSIC is born PEEK_2M, like
+                    // MESSAGING — the existing peek lease (and the
+                    // Safe Break's PEEK pass) is the lawful way to
+                    // open the player mid-session and press play;
+                    // background playback was never blocked, so a
+                    // 2-minute start window is all a player needs.
+                    // Born LOCKED, a player got no peek at all.
+                    AppCategory.MESSAGING, AppCategory.MUSIC -> AppBlockTier.PEEK_2M
+                    // Issue #129 (unlisted-distraction, CRITICAL),
+                    // settled at the STURM-4 fix-forward: the safe
+                    // default for a BLOCKER is fail-closed. Every
+                    // other category — SOCIAL, BROWSERS, and
+                    // SHOPPING, where every UNRECOGNISED app lands —
+                    // was born OPEN on a keyword guess; a blocker
+                    // that defaults unknown apps to open fails its
+                    // one job. Unlisted is now born LOCKED: shut
+                    // until HE lists it otherwise in the catalogue.
+                    // Existing rows are never re-priced by a sync,
+                    // so his own OPEN rulings stand untouched.
+                    else -> AppBlockTier.LOCKED
                 }
                 // #129 F1: a guess-born OPEN app is named as such at
                 // birth, in the plan itself, so no caller can insert
-                // it and forget the guess happened.
+                // it and forget the guess happened. Under the
+                // fail-closed birth above, no app is guess-born
+                // OPEN any more, so this list stays empty — the
+                // naming machinery remains for any future birth
+                // rule that ever opens by guess again.
                 if (preset == null && tier == AppBlockTier.OPEN) {
                     unreviewedOpen += pkg
                 }

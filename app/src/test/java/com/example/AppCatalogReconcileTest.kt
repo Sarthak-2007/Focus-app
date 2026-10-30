@@ -2,6 +2,7 @@ package com.example
 
 import com.example.data.AppBlockTier
 import com.example.data.AppCatalogReconcile
+import com.example.data.AppCategorizer
 import com.example.data.AppCategory
 import com.example.data.BlockedAppEntity
 import com.example.data.InstalledPackage
@@ -74,10 +75,13 @@ class AppCatalogReconcileTest {
 
     @Test
     fun reconcile_guessBornOpenAppsAreNamedUnreviewed_presetBornAreNot() {
-        // #129 F1: an app with no preset whose guessed category
-        // defaults to OPEN is born by guess alone — the plan must
-        // name it unreviewed. A preset-born OPEN app (Chrome) and
-        // category-born LOCKED/PEEK apps are NOT unreviewed.
+        // #129 F1, as closed by the STURM-4 fix-forward: the
+        // earlier lane named guess-born OPEN apps "unreviewed";
+        // the settled policy goes further — the guess no longer
+        // births OPEN at all (fail-closed: unlisted = shut), so
+        // the unreviewed-open list is empty by construction and
+        // the mystery app is born LOCKED. A preset-born OPEN app
+        // (Chrome) keeps its deliberate preset birth.
         val installed = listOf(
             InstalledPackage("com.mystery", "Mystery"),
             InstalledPackage("com.android.chrome", "Chrome"),
@@ -85,11 +89,66 @@ class AppCatalogReconcileTest {
             InstalledPackage("com.new.game", "New Game")
         )
         val plan = AppCatalogReconcile.reconcile(emptyList(), installed, emptyMap(), categorize)
-        assertEquals(listOf("com.mystery"), plan.unreviewedOpenPackages)
-        // The birth tiers themselves are unchanged by the naming.
+        assertEquals(emptyList<String>(), plan.unreviewedOpenPackages)
         val inserted = plan.toInsert.associateBy { it.packageName }
-        assertEquals(AppBlockTier.OPEN, inserted.getValue("com.mystery").resolvedTier)
+        assertEquals(AppBlockTier.LOCKED, inserted.getValue("com.mystery").resolvedTier)
         assertEquals(AppBlockTier.OPEN, inserted.getValue("com.android.chrome").resolvedTier)
+    }
+
+    @Test
+    fun reconcile_categoryDefaults_shortVideoLocked_fallbackOpen_noPreset() {
+        // Audit R1 tests-1 #2: the only SHORT_VIDEO app in the
+        // suite used to be YouTube — whose FACTORY PRESET masked
+        // the category default, so the LOCKED and OPEN
+        // category-default branches were never asserted. These
+        // packages have NO preset (checked against
+        // FACTORY_PRESETS), so the category default is the only
+        // rule that can price them.
+        val installed = listOf(
+            InstalledPackage("com.fresh.video", "Fresh Video"),
+            InstalledPackage("com.fresh.game", "Fresh Game"),
+            InstalledPackage("com.fresh.shop", "Fresh Shop")
+        )
+        val plan = AppCatalogReconcile.reconcile(emptyList(), installed, emptyMap(), categorize)
+        val inserted = plan.toInsert.associateBy { it.packageName }
+        assertEquals(3, inserted.size)
+        // SHORT_VIDEO -> LOCKED (the branch YouTube's preset hid).
+        val video = inserted.getValue("com.fresh.video")
+        assertEquals(AppCategory.SHORT_VIDEO.name, video.category)
+        assertEquals(AppBlockTier.LOCKED, video.resolvedTier)
+        assertTrue(video.isBlocked)
+        assertEquals(30, video.dailyLimitMinutes)
+        // GAMES -> LOCKED (the same branch, its other category).
+        assertEquals(AppBlockTier.LOCKED, inserted.getValue("com.fresh.game").resolvedTier)
+        // SHOPPING hits the else branch -> LOCKED (Issue #129:
+        // fail-closed birth; this asserted OPEN before the cure —
+        // the born-open hole itself, encoded as a test).
+        val shop = inserted.getValue("com.fresh.shop")
+        assertEquals(AppCategory.SHOPPING.name, shop.category)
+        assertEquals(AppBlockTier.LOCKED, shop.resolvedTier)
+        assertTrue(shop.isBlocked)
+    }
+
+    @Test
+    fun reconcile_unlistedIsBornLocked_129() {
+        // Issue #129 F1 with the REAL classifier: SOCIAL and
+        // BROWSERS — both born OPEN under the old policy — are
+        // born LOCKED, as is every unrecognised app (SHOPPING).
+        val installed = listOf(
+            InstalledPackage("com.fresh.social", "Fresh Twitter Club"),
+            InstalledPackage("com.fresh.browser", "Fresh Browser"),
+            InstalledPackage("com.unknown.thing", "Mystery App")
+        )
+        val plan = AppCatalogReconcile.reconcile(
+            emptyList(), installed, emptyMap(), AppCategorizer::categorize
+        )
+        val inserted = plan.toInsert.associateBy { it.packageName }
+        assertEquals(AppCategory.SOCIAL.name, inserted.getValue("com.fresh.social").category)
+        assertEquals(AppBlockTier.LOCKED, inserted.getValue("com.fresh.social").resolvedTier)
+        assertEquals(AppCategory.BROWSERS.name, inserted.getValue("com.fresh.browser").category)
+        assertEquals(AppBlockTier.LOCKED, inserted.getValue("com.fresh.browser").resolvedTier)
+        assertEquals(AppCategory.SHOPPING.name, inserted.getValue("com.unknown.thing").category)
+        assertEquals(AppBlockTier.LOCKED, inserted.getValue("com.unknown.thing").resolvedTier)
     }
 
     @Test
@@ -145,15 +204,29 @@ class AppCatalogReconcileTest {
         val rules = apps.groupedByRule()
         assertEquals(listOf("Beta", "Zeta"), rules.peek.map { it.appName })
         assertEquals(listOf("Alpha", "Gamma"), rules.shut.map { it.appName })
-        assertEquals(2, rules.peekCount)
-        assertEquals(2, rules.shutCount)
+        // Audit R1 tests-1 #5: peekCount/shutCount assertions were
+        // deleted here — NOT as a downgrade, but because they
+        // asserted nothing: AppRules' counts are `get() = list.size`
+        // of the very lists asserted above, so they could only ever
+        // agree with themselves. They are REPLACED by assertions on
+        // actual content the counts never touched: the packages and
+        // tiers inside each group, and the OPEN app's exclusion.
+        assertEquals(listOf("com.beta", "com.zeta"), rules.peek.map { it.packageName })
+        assertEquals(listOf("com.alpha", "com.gamma"), rules.shut.map { it.packageName })
+        assertTrue(rules.peek.all { it.resolvedTier == AppBlockTier.PEEK_2M })
+        assertTrue(rules.shut.all { it.resolvedTier == AppBlockTier.LOCKED })
+        assertTrue(rules.peek.none { it.packageName == "com.open" })
+        assertTrue(rules.shut.none { it.packageName == "com.open" })
     }
 
     @Test
     fun grouping_noDecisionsIsEmpty() {
         val rules = listOf(row("com.open", "Open One", AppBlockTier.OPEN)).groupedByRule()
         assertTrue(rules.isEmpty)
-        assertEquals(0, rules.peekCount)
-        assertEquals(0, rules.shutCount)
+        // Count assertions removed for the same reason as above
+        // (derived getters, tautological); the content claim of
+        // this case is that BOTH groups are actually empty.
+        assertTrue(rules.peek.isEmpty())
+        assertTrue(rules.shut.isEmpty())
     }
 }
