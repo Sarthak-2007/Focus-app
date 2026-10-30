@@ -166,10 +166,27 @@ class MonolithShieldService : Service() {
                     }
                 }
 
-                updateNotification(
-                    title = "Monolith • ${updated.intention}",
-                    subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped"
-                )
+                // Audit R3b #149: the grace window exists off the
+                // Deck too. During the window the shield's own
+                // notification counts it down — its tap already
+                // opens the app to the Deck chip — and for a
+                // routine-born row it names the booking instead of
+                // promising free.
+                if (updated.elapsedSeconds <= 10 && !updated.isInSafeBreak) {
+                    updateNotification(
+                        title = "Monolith • ${updated.intention}",
+                        subtitle = if (updated.routineId != null) {
+                            "GRACE ${10 - updated.elapsedSeconds}S — ABORT BOOKED BY ROUTINE · TAP TO OPEN"
+                        } else {
+                            "GRACE ${10 - updated.elapsedSeconds}S — CANCEL FREE · TAP TO OPEN"
+                        }
+                    )
+                } else {
+                    updateNotification(
+                        title = "Monolith • ${updated.intention}",
+                        subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped"
+                    )
+                }
 
                 // Live Wire: the shield is PROTECTING only once a
                 // full monitor iteration has run under a live

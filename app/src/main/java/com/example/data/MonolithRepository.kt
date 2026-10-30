@@ -251,6 +251,12 @@ class MonolithRepository(
         // reseed transform once (Sten §2).
         if (dao.getAllRoutinesSnapshot().isEmpty()) {
             dao.insertRoutines(routineTargets())
+            // R3b #161 (update-day): an empty routines table means
+            // this install has never seeded — a first install, a
+            // wiped phone and a new phone are indistinguishable from
+            // inside, so the seed owes the user one honest sentence
+            // at first open instead of a silent factory state.
+            InstallNoteStore(context).markFreshStart()
             val fresh = dao.getGuardSettingsSnapshot()
             if (fresh != null && !fresh.routineReseedV1Done) {
                 dao.insertGuardSettings(
@@ -1013,7 +1019,29 @@ class MonolithRepository(
         dao.markRoutineReseedV1Done()
     }
 
-    /** Any routine edit dismisses the reset note (Freya §3.3). */
+    // -- Install-day disclosures (R3b #161) ----------------------
+
+    fun freshStartNotePending(): Boolean = InstallNoteStore(context).freshStartPending()
+
+    fun dismissFreshStartNote() = InstallNoteStore(context).dismissFreshStart()
+
+    /** Registers this open against the version this phone last
+     *  opened; true when an update landed since. */
+    fun registerInstallOpen(): Boolean {
+        val version = runCatching {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
+        }.getOrDefault(0L)
+        return InstallNoteStore(context).registerOpen(version)
+    }
+
+    fun updateNotePending(): Boolean = InstallNoteStore(context).updatePending()
+
+    fun dismissUpdateNote() = InstallNoteStore(context).dismissUpdate()
+
+    /** The reset note is dismissed ONLY by the user's own tap on
+     *  it — never by obeying it (R3b #161: an edit used to erase
+     *  the only record that a reset happened). */
     suspend fun dismissRoutineResetNote() {
         val settings = dao.getGuardSettingsSnapshot() ?: return
         if (!settings.routineReseedNoteDismissed) {
@@ -1905,11 +1933,35 @@ class MonolithRepository(
     suspend fun latchShieldGapIfStale(nowWallMillis: Long): Boolean {
         val active = dao.getActiveSessionSnapshot() ?: return false
         if (active.shieldGapSeen || active.outcome.isNotEmpty()) return false
-        val beatRef = maxOf(active.shieldLastBeatWallMillis, active.startWallTimeMillis)
+        // Audit R2 #95: a row whose beat is 0 predates the beat
+        // column (pre-v10) — there is no beat evidence to judge
+        // from, and measuring from the session's start would
+        // convict it instantly for a gap that was never observed.
+        // Adopt it: stamp the beat now and judge from here.
+        if (active.shieldLastBeatWallMillis == 0L) {
+            dao.adoptShieldBeat(active.id, nowWallMillis)
+            return false
+        }
+        // Audit R2 #95: the law judges only intervals the app was
+        // installed for. Install downtime during an update is not
+        // a shield gap, so the reference never sits before the
+        // moment the current build landed on the phone.
+        val beatRef = maxOf(
+            active.shieldLastBeatWallMillis,
+            active.startWallTimeMillis,
+            appLastUpdateMillis()
+        )
         if (nowWallMillis - beatRef <= SHIELD_GAP_THRESHOLD_MILLIS) return false
         dao.latchShieldGap(active.id)
         return true
     }
+
+    /** Wall time the installed package last landed on this phone
+     *  (the install time on a first install), or 0 when unreadable.
+     *  The shield-gap law's update exemption (Audit R2 #95). */
+    private fun appLastUpdateMillis(): Long = runCatching {
+        context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
+    }.getOrDefault(0L)
 
     /** ST-03 (Truth Car 3): the break boundaries' voice, fired AT
      *  the flips in this machinery — the block→break entry below
@@ -2199,8 +2251,20 @@ class MonolithRepository(
             session.outcome
         } else {
             val nowWall = System.currentTimeMillis()
-            val beatRef = maxOf(session.shieldLastBeatWallMillis, session.startWallTimeMillis)
-            if (session.shieldGapSeen || nowWall - beatRef > SHIELD_GAP_THRESHOLD_MILLIS) {
+            // Audit R2 #95: the reference also never sits before
+            // the current build landed (update downtime is not a
+            // gap), and a beat of 0 is a pre-v10 row — no beat
+            // evidence exists, so the beat test alone cannot
+            // convict it; only the latch can, and the latch adopts
+            // beat-0 rows instead of judging them.
+            val beatRef = maxOf(
+                session.shieldLastBeatWallMillis,
+                session.startWallTimeMillis,
+                appLastUpdateMillis()
+            )
+            if (session.shieldGapSeen ||
+                (session.shieldLastBeatWallMillis > 0L && nowWall - beatRef > SHIELD_GAP_THRESHOLD_MILLIS)
+            ) {
                 SessionOutcome.ELAPSED_SHIELD_GAP
             } else {
                 SessionOutcome.ELAPSED_CLEAN
@@ -2443,8 +2507,16 @@ class MonolithRepository(
             }
         }
         val (verifiedElapsed, tamper) = computeVerifiedSessionElapsed(active)
-        val isGraceCancel = outcomeReason.contains("Grace Cancel", ignoreCase = true)
-        val bankedElapsed = if (isGraceCancel) 0 else max(verifiedElapsed, active.elapsedSeconds)
+        // Audit R3b #149: the 10-second law, enforced where the
+        // booking happens — not only by one chip's visibility. The
+        // grace classification requires the anchor-derived elapsed
+        // (the same max the bank uses) to be inside the window; a
+        // "Grace Cancel" reason arriving late books as an early
+        // end instead of laundering itself through the string.
+        val lawElapsed = max(verifiedElapsed, active.elapsedSeconds)
+        val isGraceCancel = outcomeReason.contains("Grace Cancel", ignoreCase = true) &&
+            lawElapsed <= 10
+        val bankedElapsed = if (isGraceCancel) 0 else lawElapsed
         val partialStampId = if (!completed && !isGraceCancel && bankedElapsed >= 60) {
             // Issue #110, finding 5: the id is the named constant
             // whose catalog entry (PARTIAL_STAMP_ARTIFACT) the
@@ -3001,6 +3073,28 @@ class MonolithRepository(
             hasEarlier = fetched.size > DRAWER_PAGE_SIZE
         )
     }
+
+    /** Word-aware Drawer search (#158 F2): the day words a query
+     *  names. A query names a word when its trimmed, upper-cased
+     *  form equals a word in the closed list (DayWordStore.WORDS /
+     *  [DAY_WORDS]) or is a prefix of one ("IL" names ILL). Pure —
+     *  the matching rule lives in one place, shared by the
+     *  suspend read below and any caller already holding the
+     *  words map. */
+    fun dayWordsMatching(query: String, allWords: Map<String, String>): Map<String, String> {
+        val q = query.trim().uppercase(Locale.US)
+        if (q.isEmpty()) return emptyMap()
+        val matched = DAY_WORDS.filter { word -> word == q || word.startsWith(q) }
+        if (matched.isEmpty()) return emptyMap()
+        return allWords.filterValues { it in matched }
+    }
+
+    /** Every declared date carrying a word [query] names, from
+     *  [allDayWords] — prefs ∪ day_notes, so a word-only day (no
+     *  stored task on it) is found too. Empty when the query names
+     *  no day word. */
+    suspend fun searchDayWords(query: String): Map<String, String> =
+        dayWordsMatching(query, allDayWords())
 
     // Declared day words (REST / ILL / FAMILY) live in TWO stores
     // by design of the two builds that carry them: DayWordStore

@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.util.Log
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
@@ -290,6 +291,21 @@ class MonolithAccessibilityService : AccessibilityService() {
         var instance: MonolithAccessibilityService? = null
             internal set
 
+        /** Truth (issue #76): detection queries that THREW, counted
+         *  and logged instead of silently masquerading as "evidence
+         *  absent". The fail directions themselves are unchanged
+         *  (enforcement fails open, the call bypass fails closed) —
+         *  what changed is that the failure is no longer invisible:
+         *  a rising count on a healthy phone is itself the signal. */
+        @Volatile
+        var detectionFailures: Int = 0
+            internal set
+
+        internal fun noteDetectionFailure(where: String, e: Exception) {
+            detectionFailures++
+            Log.w("MonolithA11y", "detection query failed at $where (total $detectionFailures)", e)
+        }
+
         /** Monotonic stamp of the last event whose root window was
          *  successfully acquired. Pipeline proof (the service is
          *  bound and processing this foreground), not session proof. */
@@ -455,8 +471,9 @@ class MonolithAccessibilityService : AccessibilityService() {
                 lastRootMono = SystemClock.elapsedRealtime()
                 WatchStore.poke()
             }
-        } catch (_: Exception) {
-            // No stamp.
+        } catch (e: Exception) {
+            // No stamp — and (issue #76) the failure is counted, not silent.
+            noteDetectionFailure("rootStamp", e)
         }
 
         val pkgName = event?.packageName?.toString() ?: return
@@ -569,7 +586,7 @@ class MonolithAccessibilityService : AccessibilityService() {
             pkgName == "com.instagram.android" ||
             isSupportedBrowser(pkgName)
         if (!needsRoot) return EventFacts()
-        val rootNode = try { rootInActiveWindow } catch (_: Exception) { null }
+        val rootNode = try { rootInActiveWindow } catch (e: Exception) { noteDetectionFailure("rootInActiveWindow", e); null }
             ?: return EventFacts()
         return EventFacts(
             tamperSurface = isPackageInstallerOrTamperSettings(pkgName, rootNode),
@@ -712,7 +729,11 @@ class MonolithAccessibilityService : AccessibilityService() {
                 null
             }
             shouldBypassForCall(am.mode, pkgName, callOwnerPackage, defaultDialer)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // Issue #76: a thrown AudioManager query is not "no call"
+            // — the bypass is still lost (fail-closed stands), but
+            // the loss is counted and logged, never silent.
+            noteDetectionFailure("isCallActive", e)
             false
         }
     }
@@ -785,7 +806,7 @@ class MonolithAccessibilityService : AccessibilityService() {
     /** One synthetic snapshot of the window already on screen, for
      *  the collector's catch-up scan when the session gate opens. */
     private fun enqueueCurrentWindowSnapshot() {
-        val rootNode = try { rootInActiveWindow } catch (_: Exception) { null } ?: return
+        val rootNode = try { rootInActiveWindow } catch (e: Exception) { noteDetectionFailure("rootInActiveWindow", e); null } ?: return
         val pkgName = rootNode.packageName?.toString() ?: return
         if (pkgName == applicationContext.packageName ||
             pkgName.startsWith("com.android.systemui")
@@ -816,7 +837,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         // excluded entirely (see SHORTS_PLAYER_VIEW_IDS), and a
         // player surface instantiated off-screen no longer fires.
         for (id in SHORTS_PLAYER_VIEW_IDS) {
-            val nodes = try { rootNode.findAccessibilityNodeInfosByViewId(id) } catch (_: Exception) { null }
+            val nodes = try { rootNode.findAccessibilityNodeInfosByViewId(id) } catch (e: Exception) { noteDetectionFailure("findByViewId", e); null }
             if (nodes?.any { it.isVisibleToUser } == true) return true
         }
         // Strategy B (#131, tightened): a selected Shorts/Reels
