@@ -1049,7 +1049,7 @@ class TactileSoundEngine(private val context: Context) {
      * time — degraded, never silent, never queued. With sound
      * off: haptic only (S0 — muting loses timbre, never the event).
      */
-    fun playSealThrow() {
+    fun playSealThrow(unattended: Boolean = false) {
         if (!running) return // issue #49: a stopped engine cannot be resurrected by the Throw
         triggerWaveform(
             timingsMs = SEAL_THROW_TIMINGS,
@@ -1059,12 +1059,13 @@ class TactileSoundEngine(private val context: Context) {
         // Issue #150: the ringer's word binds the Throw's audio
         // too — a phone on SILENT or VIBRATE seals in touch alone
         // (the waveform above already fired; the event is never
-        // lost, only unspoken). Provenance (routine vs hand) is
-        // deliberately NOT distinguished here: the Throw occurs
-        // exactly once in production code, at the converged seal,
-        // and plumbing provenance through it is the routines
-        // rethink's call, not this fix's.
-        if (!audioPermitted(unattended = false)) {
+        // lost, only unspoken). Provenance is now plumbed
+        // (recovery closure): the transition's proving doors
+        // (routine heartbeat, relaunch recovery) pass
+        // unattended = true, so Do Not Disturb binds those Throws;
+        // the Deck's own arm cascade passes false — that Throw is
+        // the user's own act, gated by the ringer alone.
+        if (!audioPermitted(unattended = unattended)) {
             sealReady = false
             sealBarrierSeq = -1L
             return
