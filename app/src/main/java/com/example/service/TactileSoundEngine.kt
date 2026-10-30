@@ -789,24 +789,58 @@ class TactileSoundEngine(private val context: Context) {
         } catch (_: Exception) {}
     }
 
+    /** Do Not Disturb, read live: any interruption filter other
+     *  than ALL means the user (or the phone's bedtime mode) has
+     *  asked the room to be quiet. Read failures read as no-DND —
+     *  a broken query must never mute the app by accident. */
+    private fun isDoNotDisturbActive(): Boolean = try {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE)
+            as? android.app.NotificationManager
+        nm != null &&
+            nm.currentInterruptionFilter !=
+                android.app.NotificationManager.INTERRUPTION_FILTER_ALL
+    } catch (_: Exception) {
+        false
+    }
+
+    /** The one night/DND gain gate (Audit R3b #116, finding 5):
+     *  every transient this engine plays passes through here, so
+     *  clicks, knocks, detents and the seal all obey the same law
+     *  (NightSignal.gainScale): DND silences the ordinary sounds
+     *  and softens the seal; clock night lowers both. The seal
+     *  voice is softened, never deleted. */
+    private fun nightGainScale(sealVoice: Boolean): Float =
+        NightSignal.gainScale(
+            night = NightSignal.isNightAt(System.currentTimeMillis()),
+            doNotDisturb = isDoNotDisturbActive(),
+            sealVoice = sealVoice
+        )
+
     private fun enqueueTransient(
         fundamentalHz: Float,
         durationMs: Int,
         gain: Float,
         chordRatio: Float = 1.0f,
+        sealVoice: Boolean = false,
+        fullGainAlways: Boolean = false,
         unattended: Boolean = false
     ) {
         if (!running) return // issue #49: no queuing onto a dead engine
         // Issue #150: audioPermitted carries the soundEnabled fact
         // plus the ringer's word (and DND's, for unattended voices).
         if (!audioPermitted(unattended)) return
+        // Sarthak's ruling (Oct 30, #14): the tear pulse is FULL at
+        // all hours — night/DND softening never touches it. Its
+        // call site passes fullGainAlways and bypasses the gate.
+        val scale = if (fullGainAlways) 1f else nightGainScale(sealVoice)
+        if (scale <= 0f) return
         ensureThreadsStarted()
         val samples = ((SAMPLE_RATE * durationMs) / 1000).coerceIn(96, 6000)
         commandQueue.offer(
             SynthCommand(
                 fundamentalHz = fundamentalHz,
                 durationSamples = samples,
-                gain = gain,
+                gain = gain * scale,
                 chordRatio = chordRatio,
                 seq = seqCounter.incrementAndGet()
             )
@@ -1005,7 +1039,10 @@ class TactileSoundEngine(private val context: Context) {
             fundamentalHz = if (arming) 360f else 480f,
             durationMs = 48,
             gain = 0.62f,
-            chordRatio = 1.5f
+            chordRatio = 1.5f,
+            // The seal voice: night/DND soften it (0.65 / 0.35),
+            // they never silence it.
+            sealVoice = true
         )
     }
 
@@ -1078,6 +1115,15 @@ class TactileSoundEngine(private val context: Context) {
         } catch (_: Exception) {}
         val track = ensureSealTrack()
         if (track != null) {
+            // Night/DND softening for THE THROW (#116 finding 5):
+            // the rendered buffer stays bit-identical (B-5's law —
+            // one voice, no clock in the render); only the track's
+            // playback volume obeys the night gain law, so a 2 AM
+            // seal speaks at 0.65 (0.35 under DND) instead of full
+            // daytime gain. The voice is never deleted.
+            try {
+                track.setVolume(nightGainScale(sealVoice = true))
+            } catch (_: Exception) {}
             // Issue #49: the un-primed fallback previously played
             // with NO focus request at all. The Throw is the seal
             // act itself (Q6: one voice, settled), so focus is
@@ -1132,7 +1178,10 @@ class TactileSoundEngine(private val context: Context) {
             fundamentalHz = 240f,
             durationMs = 40,
             gain = 0.68f,
-            chordRatio = 1.21f
+            chordRatio = 1.21f,
+            // FULL at all hours (Sarthak's Oct 30 ruling, #14):
+            // the tear never takes the night/DND gain gate.
+            fullGainAlways = true
         )
     }
 
