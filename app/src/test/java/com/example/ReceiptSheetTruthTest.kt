@@ -9,10 +9,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.down
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
 import com.example.data.FinishKind
+import com.example.data.ReceiptDeflection
 import com.example.data.ReceiptState
 import com.example.ui.components.ReceiptSheet
 import com.example.ui.components.dayLabel
@@ -87,7 +89,12 @@ class ReceiptSheetTruthTest {
         endedAtWallMs: Long,
         plannedSeconds: Int? = 3000,
         sealedElapsedSeconds: Int = 3000,
-        bankedBreakSeconds: Int = 0
+        bankedBreakSeconds: Int = 0,
+        heldAppsAtSeal: Int = -1,
+        heldSitesAtSeal: Int = -1,
+        heldShutAtSeal: Int = -1,
+        heldPeekAtSeal: Int = -1,
+        deflections: List<ReceiptDeflection> = emptyList()
     ) = ReceiptState(
         sessionId = 57,
         number = 57,
@@ -98,15 +105,17 @@ class ReceiptSheetTruthTest {
         endedAtWallMs = endedAtWallMs,
         plannedSeconds = plannedSeconds,
         sealedElapsedSeconds = sealedElapsedSeconds,
-        heldAppsAtSeal = -1,
-        heldSitesAtSeal = -1,
+        heldAppsAtSeal = heldAppsAtSeal,
+        heldSitesAtSeal = heldSitesAtSeal,
         routineLabelWithin = null,
         bankedBreakSeconds = bankedBreakSeconds,
         shieldWasOff = false,
         faulted = false,
-        deflections = emptyList(),
+        deflections = deflections,
         restored = true,
-        receiptPublishedMonoMs = 0L
+        receiptPublishedMonoMs = 0L,
+        heldShutAtSeal = heldShutAtSeal,
+        heldPeekAtSeal = heldPeekAtSeal
     )
 
     private fun show(state: ReceiptState, onDismiss: () -> Unit = {}) {
@@ -152,6 +161,77 @@ class ReceiptSheetTruthTest {
         composeRule.onNodeWithText("PLANNED 1 MIN 01 SEC", substring = true)
             .assertIsDisplayed()
         composeRule.onNodeWithText("PLANNED 2 MIN", substring = true)
+            .assertDoesNotExist()
+    }
+
+    // ---- issue #10: footer, HELD split, deflection marks ------
+
+    @Test
+    fun footer_plainWords_noAcronym() {
+        show(receipt(wall(9, 0), wall(10, 0)))
+        composeRule.onNodeWithText(
+            "THIS APP KEEPS ITS OWN LOG · STUDY TIME IS IN THE STUDY TIMER",
+            substring = true
+        ).assertIsDisplayed()
+        // W-43: the acronym appears NOWHERE on the rendered slip.
+        composeRule.onAllNodesWithText("YPT", substring = true)
+            .assertCountEquals(0)
+    }
+
+    @Test
+    fun heldLine_splitByTier_whenSplitRecorded() {
+        show(
+            receipt(
+                wall(9, 0), wall(10, 0),
+                heldAppsAtSeal = 9, heldSitesAtSeal = 12,
+                heldShutAtSeal = 6, heldPeekAtSeal = 3
+            )
+        )
+        composeRule.onNodeWithText(
+            "HELD 6 SHUT · 3 PEEK (2 MIN) · 12 WEBSITES",
+            substring = true
+        ).assertIsDisplayed()
+        // The merged figure never prints alongside the split.
+        composeRule.onNodeWithText("HELD 9 APPS", substring = true)
+            .assertDoesNotExist()
+    }
+
+    @Test
+    fun heldLine_preSplitRow_printsStoredTotal_neverInventsSplit() {
+        show(
+            receipt(
+                wall(9, 0), wall(10, 0),
+                heldAppsAtSeal = 9, heldSitesAtSeal = 12
+            )
+        )
+        composeRule.onNodeWithText(
+            "HELD 9 APPS · 12 SITES ON THIS PHONE",
+            substring = true
+        ).assertIsDisplayed()
+        composeRule.onNodeWithText("SHUT", substring = true)
+            .assertDoesNotExist()
+    }
+
+    @Test
+    fun deflections_printNamesOnly_noPeekMarkerAnywhere() {
+        // R-04, as the law now stands (A4): assembly admits ONLY
+        // proven blocks into this list — a granted peek never
+        // reaches the slip at all, so nothing here may carry a
+        // peek marker or read a let-through as a turn-away.
+        show(
+            receipt(
+                wall(9, 0), wall(10, 0),
+                deflections = listOf(
+                    ReceiptDeflection("KnockApp", "com.knock", wall(9, 30)),
+                    ReceiptDeflection("ShutApp", "com.shut", wall(9, 45))
+                )
+            )
+        )
+        composeRule.onNodeWithText("· KnockApp", substring = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("· ShutApp", substring = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("PEEKED", substring = true)
             .assertDoesNotExist()
     }
 

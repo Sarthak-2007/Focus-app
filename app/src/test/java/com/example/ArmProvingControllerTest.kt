@@ -73,7 +73,7 @@ class ArmProvingControllerTest {
             .build()
         repository = MonolithRepository(context, db.monolithDao())
         engine = TactileSoundEngine(context)
-        context.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+        com.example.data.DeviceProtectedPrefs.get(context, MonolithRepository.SEAL_PREFS_NAME)
             .edit().clear().commit()
     }
 
