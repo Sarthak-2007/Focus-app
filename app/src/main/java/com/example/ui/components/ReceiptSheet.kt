@@ -82,7 +82,15 @@ import java.util.Locale
 @Composable
 fun ReceiptSheet(
     receipt: ReceiptState,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    // Issue #135 F3: the one door out of the gate that leads
+    // somewhere — dismisses the slip and returns to the Deck ready
+    // to arm the next session. Null = no door (previews/tests).
+    onNextSession: (() -> Unit)? = null,
+    // Issue #135 F4: completes the session's still-active task via
+    // the host's existing completion path, then dismisses. Null =
+    // the session's task is not still active, so no door prints.
+    onDoneWithTask: (() -> Unit)? = null
 ) {
     // #57: the enter fade actually runs — the state starts
     // false and targets true, where a hardcoded `visible = true`
@@ -311,8 +319,58 @@ fun ReceiptSheet(
                     letterSpacing = 0.25.sp,
                     color = scheme.onSurfaceVariant
                 )
+                // Issue #135 F3/F4 doors: the slip was a zero-action
+                // gate — the only way out was a scrim tap that led
+                // nowhere in particular, and the task the session was
+                // for never advanced. Two plain doors, nothing else:
+                // the ceremony (detention, sled) is untouched.
+                if (onDoneWithTask != null || onNextSession != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (onDoneWithTask != null) {
+                            ReceiptDoor(
+                                text = "DONE WITH THIS TASK",
+                                modifier = Modifier.weight(1f),
+                                onClick = onDoneWithTask
+                            )
+                        }
+                        if (onNextSession != null) {
+                            ReceiptDoor(
+                                text = "NEXT SESSION",
+                                modifier = Modifier.weight(1f),
+                                onClick = onNextSession
+                            )
+                        }
+                    }
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun ReceiptDoor(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            fontFamily = AtkinsonHyperlegibleFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp,
+            letterSpacing = 1.sp,
+            color = scheme.onBackground
+        )
     }
 }
 

@@ -669,6 +669,13 @@ class MonolithViewModel(
     val sessionHistory: StateFlow<List<FocusSessionEntity>> = repository.sessionHistoryFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /** Issue #135 F2: the most recent session that claimed a receipt
+     *  № (history is start-DESC) — the Deck's LAST RECEIPT door
+     *  stands on this, even after arming cleared the standing slip. */
+    val lastReceiptSessionId: StateFlow<Int?> = sessionHistory.map { rows ->
+        rows.firstOrNull { it.receiptNumber > 0 }?.id
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
     val interceptLogs: StateFlow<List<InterceptLogEntity>> = repository.interceptLogsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -1132,6 +1139,31 @@ class MonolithViewModel(
                     seedDialFromTask(task)
                 }
                 refreshActiveTaskCarryover(task)
+            }
+        }
+        // Issue #135 F1: the arm setup (dial, loadout/profile, block
+        // count, intention) lived only in this VM's memory — a
+        // process death during the break silently re-armed session 2
+        // with factory parameters. When NO session is active, restore
+        // the setup from the most recent finished session's persisted
+        // row (it stores profileName, targetDurationSeconds,
+        // totalStudyBlocks, intention). Routine rows are skipped:
+        // their profile/duration are the window's, not his hand's.
+        // A FLOW (stopwatch) row's stored target is its floor, not
+        // the dial, so the dial is left alone for those.
+        viewModelScope.launch {
+            if (repository.activeSessionSnapshot() == null) {
+                repository.lastFinishedSessionSnapshot()?.let { last ->
+                    if (last.routineId == null) {
+                        if (!last.isStopwatchMode) {
+                            _dialMinutes.value =
+                                (last.targetDurationSeconds / 60).coerceIn(5, 180)
+                        }
+                        _studyBlocksCount.value = last.totalStudyBlocks.coerceIn(1, 8)
+                        _selectedProfileName.value = last.profileName
+                        _intentionText.value = last.intention
+                    }
+                }
             }
         }
         // The Watch Store's emissions are a bus, never a verdict:
@@ -1772,8 +1804,18 @@ class MonolithViewModel(
      */
     fun publishReceipt(sessionId: Int) {
         if (_receiptState.value?.sessionId == sessionId) return
-        if (sessionId in handledFinishIds) return
         viewModelScope.launch {
+            // Issue #135 F2 re-issue: a session that already claimed
+            // its № rebuilds SETTLED from its row (repository
+            // receiptForSession) — it never re-claims and never
+            // re-enters the finish controller's handled set. This is
+            // the door the Deck's LAST RECEIPT opens after the next
+            // arm cleared the standing slip from memory.
+            repository.receiptForSession(sessionId)?.let { reissued ->
+                _receiptState.value = reissued
+                return@launch
+            }
+            if (sessionId in handledFinishIds) return@launch
             val row = repository.sessionById(sessionId) ?: return@launch
             val kind = com.example.data.finishKindOf(
                 row, isSleepLoadout(row.routineId), System.currentTimeMillis()
