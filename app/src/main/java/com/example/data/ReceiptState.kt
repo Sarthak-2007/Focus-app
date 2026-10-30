@@ -124,6 +124,53 @@ fun finishPulses(kind: String, row: FocusSessionEntity): Boolean = when (kind) {
     else -> false
 }
 
+/**
+ * The intercept log's outcome vocabulary, enumerated from EVERY
+ * writer in the tree (receipt audit item 11 / issue #10 A4,
+ * ported by WELLE-6 from e39ae62 — the one e39ae62 code cure
+ * current main had not absorbed by another route). The column
+ * is free text at the writers; these are all the values that
+ * exist:
+ *
+ * - [BLOCKED] — the harness/test spelling of a plain block
+ *   ("Blocked" / "BLOCKED" in the test suites; matched
+ *   case-insensitively).
+ * - [STAYED_FOCUSED] — MonolithViewModel.transmuteImpulseAndReturn:
+ *   the airlock turned him away and he returned to the work.
+ * - [SPLIT_INTO_MICRO_STEP] — MonolithViewModel
+ *   .splitActiveTaskAndReturn: intercepted, never let in; he
+ *   split the task instead.
+ * - [USED_PEEK] — MonolithViewModel's peek grant: he was LET IN
+ *   on a 2-minute lease. NOT a block, and the one value this
+ *   enumeration exists to keep off the slip.
+ *
+ * (The repository's disarm path also writes intercept rows with
+ * the disarm reason as outcome, but always under the system
+ * package — assembly's system-row exclusion already keeps them
+ * off the slip. A newer writer, "Left Airlock Without
+ * Choosing", is deliberately NOT in the allowlist: no choice
+ * was recorded, so the slip cannot back it as a block — it
+ * stays off until a ruling classifies it.)
+ */
+object InterceptOutcome {
+    const val BLOCKED = "Blocked"
+    const val STAYED_FOCUSED = "Stayed Focused"
+    const val SPLIT_INTO_MICRO_STEP = "Split Into 10m Micro-Step"
+    const val USED_PEEK = "Used 2m Peek"
+
+    /** The outcomes that were truly turned away. Anything else —
+     *  a peek grant, or a value no writer above produces — is
+     *  NOT a deflection: the slip prints only what it can back,
+     *  so the filter is an allowlist, never a denylist. */
+    val BLOCKED_OUTCOMES: Set<String> = setOf(BLOCKED, STAYED_FOCUSED, SPLIT_INTO_MICRO_STEP)
+}
+
+/** True iff this intercept row's outcome was a block (see
+ *  [InterceptOutcome]). Case-insensitive: the writers' spelling
+ *  and the test suites' spelling differ in case only. */
+fun isBlockedInterceptOutcome(outcome: String): Boolean =
+    InterceptOutcome.BLOCKED_OUTCOMES.any { it.equals(outcome.trim(), ignoreCase = true) }
+
 /** One deflection on the slip: a blocked attempt the machine
  *  turned away during the session, reduced at assembly (window
  *  ∩ intention match ∩ 30s-per-package dedupe, first kept).
