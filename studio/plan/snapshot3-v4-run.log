@@ -1,0 +1,42 @@
+[04:55:59 IST] SNAPSHOT #3 v4 — Lotse (finisher squad), Ren's commission
+[04:55:59 IST] MemAvailable at start: 1272 MB
+[04:55:59 IST] PROBE target PASS /home/hatch/workspace/clone-inspect/builds/snapshots
+[04:55:59 IST] PROBE staging PASS /home/hatch/workspace/preservation/.staging-snapshot-3-v4-045559
+[04:55:59 IST] PROBE scratch PASS /home/hatch/workspace/preservation/restore-test
+[04:56:01 IST] ROOT studio live=434 staged=434
+[04:56:02 IST] ROOT trunk live=172 staged=172
+[04:56:02 IST] LANES ['dawn', 'flow-clock', 'look-blueprint', 'look-dawn', 'look-noir', 'look-signal', 'look-temple', 'merge-batch9', 'nofire', 'obsidian', 'onboarding', 'pill', 'routine-edit', 'truth-3-breaks', 'truth-3-intercept', 'truth-3-proofbase', 'truth-3-shorts', 'truth-3-sound', 'truth-3-sweep', 'truth-3-times', 'warrant']
+[04:56:26 IST] ROOT lanes live=5770 staged=5770
+[04:56:38 IST]   ... 2000 files (root cells)
+[04:56:47 IST]   ... 4000 files (root cells)
+[04:56:57 IST]   ... 6000 files (root cells)
+[04:57:04 IST]   ... 8000 files (root cells)
+[04:57:11 IST]   ... 10000 files (root cells)
+[04:57:19 IST]   ... 12000 files (root cells)
+[04:57:27 IST]   ... 14000 files (root cells)
+[04:57:36 IST]   ... 16000 files (root cells)
+[04:57:44 IST]   ... 18000 files (root cells)
+[04:57:54 IST]   ... 20000 files (root cells)
+[04:58:02 IST]   ... 22000 files (root cells)
+[04:58:09 IST]   ... 24000 files (root cells)
+[04:58:18 IST]   ... 26000 files (root cells)
+[04:58:27 IST]   ... 28000 files (root cells)
+[04:58:35 IST]   ... 30000 files (root cells)
+[04:58:43 IST]   ... 32000 files (root cells)
+[04:58:54 IST]   ... 34000 files (root cells)
+[04:59:02 IST]   ... 36000 files (root cells)
+[04:59:04 IST] ROOT cells live=36548 staged=36535
+[04:59:04 IST] ROOT design-refs live=33 staged=33
+[04:59:04 IST] ROOT records staged=10 (incl. attempt-0137 remnant)
+[04:59:05 IST] ROOT apks staged=2
+[04:59:05 IST] COUNTS {'studio': 434, 'trunk': 172, 'lanes': 5770, 'cells': 36535, 'design-refs': 33, 'records': 10, 'apks': 2}
+[04:59:05 IST] MemAvailable after payload copy: 1006 MB
+[05:01:34 IST] FILES 42956 BYTES 2006807350 MANIFEST_SHA256 4c3cf644882704feffd7b2002693a00d096193f12e80888eb3a492931a0b823d
+[05:03:57 IST] STAGE-VERIFY ok=42956 fail=0
+[05:06:45 IST] INSTALLED /home/hatch/workspace/clone-inspect/builds/snapshots/snapshot-3
+[05:08:53 IST] TARGET-VERIFY ok=42956 fail=0 manifest_matches=True
+[05:14:09 IST] RESTORE ok=42956 fail=0 files=42956 bytes=2006807350 count_diff=0 byte_diff=0
+[05:14:09 IST] SPOT-OPEN studio-md:True records-md:True trunk-kt:ExampleInstrumentedTest.kt:True
+[05:14:09 IST] RESTORE-TEST PASS
+[05:14:34 IST] MemAvailable at end: 1140 MB
+[05:14:34 IST] SUMMARY set=snapshot-3 files=42956 bytes=2006807350 manifest_sha256=4c3cf644882704feffd7b2002693a00d096193f12e80888eb3a492931a0b823d restore=PASS elapsed_s=1115.1

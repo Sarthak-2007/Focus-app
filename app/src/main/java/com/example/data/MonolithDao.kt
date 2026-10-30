@@ -112,6 +112,33 @@ interface MonolithDao {
     @Query("UPDATE focus_sessions SET releaseRetriesDone = :done WHERE id = :id")
     suspend fun stampReleaseRetries(id: Int, done: Int)
 
+    // Issue #47 (heartbeat-retry F1/F5): the retry scheduler's own
+    // read — the newest still-faulted row ONLY, targeted + LIMIT 1,
+    // never a full-history scan. The heal write: clearing the fault
+    // flag ends the cadence for that row; faultedAt/retriesDone stay
+    // on the row as its history (the receipt's truth is untouched).
+    @Query(
+        "SELECT * FROM focus_sessions WHERE releaseFaultShield = 1 " +
+            "AND releaseFaultedAtWallMillis > 0 ORDER BY startWallTimeMillis DESC LIMIT 1"
+    )
+    suspend fun getFaultedReleaseSession(): FocusSessionEntity?
+
+    @Query("UPDATE focus_sessions SET releaseFaultShield = 0 WHERE id = :id")
+    suspend fun clearReleaseFault(id: Int)
+
+    // Issue #47 (heartbeat-retry F5): the heartbeat's cheap
+    // 'nothing due' probe — COUNT over exactly the union of the two
+    // derive() session reads below. Zero (with no active session)
+    // PROVES both reads would return empty, so the pass may derive
+    // over an empty list instead of materialising both.
+    @Query(
+        "SELECT COUNT(*) FROM focus_sessions WHERE " +
+            "(routineId IS NOT NULL AND (windowEndMillis >= :sinceMillis " +
+            "OR (isActive = 0 AND routineOutcome IS NULL))) " +
+            "OR startWallTimeMillis >= :sinceMillis"
+    )
+    suspend fun countDeriveSessionInputs(sinceMillis: Long): Int
+
     // The receipt's deflection read (Zettel): intercept instants in
     // the session's own wall window, oldest first — the reduction
     // (30s-per-package dedupe, break-window exclusion) is assembly
@@ -144,16 +171,18 @@ interface MonolithDao {
     suspend fun insertInterceptLog(log: InterceptLogEntity)
 
     // Captured Notifications (Silent Notification Catcher & Persistent Digest)
-    @Query("SELECT * FROM captured_notifications ORDER BY timestampMillis DESC LIMIT 100")
+    // NO LIMIT (issue #138): the live header prints this list's size
+    // as the held total, so a capped flow would report the cap as
+    // the count and hide the oldest held items. A held item past
+    // any cap is still held.
+    @Query("SELECT * FROM captured_notifications ORDER BY timestampMillis DESC")
     fun getCapturedNotificationsFlow(): Flow<List<CapturedNotificationEntity>>
 
     /**
      * One-shot snapshot for the FROZEN digest: the same rows the
      * flow would print, taken once, at the freeze. Deliberately NO
      * LIMIT — a held item past any cap is still held, and a frozen
-     * read that silently dropped it would lie by omission. (The
-     * live flow keeps its shipped cap; only the snapshot — the
-     * sealed truth surface — is unbounded.)
+     * read that silently dropped it would lie by omission.
      */
     @Query("SELECT * FROM captured_notifications ORDER BY timestampMillis DESC")
     suspend fun getCapturedNotificationsSnapshot(): List<CapturedNotificationEntity>
