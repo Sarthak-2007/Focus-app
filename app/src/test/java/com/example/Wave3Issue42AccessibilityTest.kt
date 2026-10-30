@@ -350,4 +350,95 @@ class Wave3Issue42AccessibilityTest {
     fun isTamperActionViewId_empty_isNotTamperAction() {
         assertFalse(isTamperActionViewId(""))
     }
+
+    @Test
+    fun isTamperActionViewId_disableButton_isTamperAction() {
+        assertTrue(
+            isTamperActionViewId("com.android.settings:id/disable_button")
+        )
+    }
+
+    @Test
+    fun isTamperActionViewId_clearStorageButton_isTamperAction() {
+        assertTrue(
+            isTamperActionViewId("com.android.settings:id/clear_storage_button")
+        )
+    }
+
+    @Test
+    fun isTamperActionViewId_buttonUninstallVariant_isTamperAction() {
+        assertTrue(
+            isTamperActionViewId("com.android.settings:id/button_uninstall")
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // 1. GLOBAL-KILL-SWITCH, part C — the OWNER and DEFAULT-DIALER
+    // legs (Verifier round): a VoIP call's surface is the app's own
+    // package, which no name rule can enumerate. The owner leg is
+    // what keeps the shipped promise — a blocked WhatsApp in a call
+    // is exempt on its own screen — without reopening the hole:
+    // the same WhatsApp, NOT owning the call, stays blocked.
+    // ---------------------------------------------------------------
+
+    @Test
+    fun shouldBypassForCall_voipAppOwningTheCall_bypasses() {
+        assertTrue(
+            shouldBypassForCall(
+                AudioManager.MODE_IN_COMMUNICATION,
+                "com.whatsapp",
+                callOwnerPackage = "com.whatsapp"
+            )
+        )
+    }
+
+    @Test
+    fun shouldBypassForCall_voipAppNotOwningTheCall_staysBlocked() {
+        assertFalse(
+            shouldBypassForCall(
+                AudioManager.MODE_IN_COMMUNICATION,
+                "com.whatsapp",
+                callOwnerPackage = "org.telegram.messenger"
+            )
+        )
+    }
+
+    @Test
+    fun shouldBypassForCall_ringingVoipApp_bypasses() {
+        assertTrue(
+            shouldBypassForCall(
+                AudioManager.MODE_RINGTONE,
+                "org.telegram.messenger",
+                callOwnerPackage = "org.telegram.messenger"
+            )
+        )
+    }
+
+    @Test
+    fun shouldBypassForCall_defaultDialer_bypasses() {
+        // Replacement dialers (Truecaller et al.) are covered by
+        // the Telecom role, not by any name rule.
+        assertTrue(
+            shouldBypassForCall(
+                AudioManager.MODE_IN_CALL,
+                "com.truecaller",
+                defaultDialerPackage = "com.truecaller"
+            )
+        )
+    }
+
+    @Test
+    fun shouldBypassForCall_unrelatedDialerNamedApp_staysBlocked() {
+        // A blocked third-party dialer that neither owns the call
+        // nor holds the dialer role gets no exemption from its
+        // name alone when a real owner exists.
+        assertFalse(
+            shouldBypassForCall(
+                AudioManager.MODE_IN_CALL,
+                "com.truecaller",
+                callOwnerPackage = "com.google.android.dialer",
+                defaultDialerPackage = "com.google.android.dialer"
+            )
+        )
+    }
 }

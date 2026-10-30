@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
 import android.os.SystemClock
+import android.telecom.TelecomManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.example.MainActivity
@@ -111,17 +112,29 @@ internal fun extractUrlHost(urlText: String): String? {
 }
 
 /**
- * Call-surface packages (Wave-3 #42): the ONLY packages a live call
- * may exempt. Before the cure, `isCallActive()` was a global
- * kill-switch — AudioManager in a call mode suspended EVERY block
- * for EVERY app, so an incoming call opened a hole the size of the
- * whole session: switch to any blocked app mid-ring and nothing
- * fired. The bypass now belongs to the call's own surface: the
- * system dialer / in-call UI packages, plus any package whose name
- * marks it as a dialer or in-call UI (OEM and VoIP dialers name
- * themselves so). A call app that is itself blocked (e.g. WhatsApp
- * in a call) is still exempt on its OWN surface — that is the
- * shipped promise — but its call no longer unblocks anything else.
+ * Call exemption (Wave-3 #42, Verifier-hardened): the ONLY packages
+ * a live call may exempt. Before the first cure, `isCallActive()`
+ * was a global kill-switch — AudioManager in a call mode suspended
+ * EVERY block for EVERY app, so an incoming call opened a hole the
+ * size of the whole session. The first cure's name-matching was
+ * then broken by the C5 Verifier: a VoIP call's surface is the
+ * app's OWN package (WhatsApp, Telegram, Signal name themselves
+ * nothing like a dialer), so name rules alone would have blocked
+ * the very calls the feature promises to protect.
+ *
+ * The exemption therefore has three independent legs, and a live
+ * call exempts a package only if one of them names it:
+ *  1. SURFACE — the system dialer / in-call UI packages (set +
+ *     dialer/incallui name rules): the cellular call UI.
+ *  2. OWNER — the package that was in the foreground when this
+ *     call became active, tracked from window-state events. For a
+ *     VoIP call that is the VoIP app itself, whatever its name.
+ *  3. DEFAULT DIALER — the package holding Telecom's default
+ *     dialer role (covers replacement dialers like Truecaller
+ *     that no name rule can enumerate).
+ * A blocked app that is none of the three stays blocked mid-call;
+ * a call app that IS blocked is exempt on its own surface only —
+ * the shipped promise — and its call unblocks nothing else.
  */
 internal val CALL_SURFACE_PACKAGES = setOf(
     "com.google.android.dialer",
@@ -140,12 +153,23 @@ internal fun isCallSurfacePackage(packageName: String): Boolean =
         packageName.endsWith(".incallui") ||
         packageName.contains(".incallui.")
 
-/** Pure decision: does a live call exempt THIS event's package? */
-internal fun shouldBypassForCall(audioMode: Int, packageName: String): Boolean {
+/** Pure decision: does a live call exempt THIS event's package?
+ *  [callOwnerPackage] is the foreground package captured when the
+ *  current call became active (null when unknown); [defaultDialerPackage]
+ *  is Telecom's current default dialer (null when unread). */
+internal fun shouldBypassForCall(
+    audioMode: Int,
+    packageName: String,
+    callOwnerPackage: String? = null,
+    defaultDialerPackage: String? = null
+): Boolean {
     val callMode = audioMode == AudioManager.MODE_RINGTONE ||
         audioMode == AudioManager.MODE_IN_CALL ||
         audioMode == AudioManager.MODE_IN_COMMUNICATION
-    return callMode && isCallSurfacePackage(packageName)
+    if (!callMode) return false
+    return isCallSurfacePackage(packageName) ||
+        packageName == callOwnerPackage ||
+        packageName == defaultDialerPackage
 }
 
 /** Installer surfaces that can force-stop / uninstall Monolith
@@ -292,7 +316,13 @@ class MonolithAccessibilityService : AccessibilityService() {
 
     private data class EventSnapshot(
         val packageName: String,
-        val facts: EventFacts
+        val facts: EventFacts,
+        /** The session this event was captured under (the armed
+         *  witness at capture time). The worker drops a snapshot
+         *  whose session is no longer the active one — an event
+         *  from a dead session must never fire inside its
+         *  successor (Verifier, Wave-3 #42). */
+        val sessionId: Int = -1
     )
 
     private val eventChannel = Channel<EventSnapshot>(Channel.CONFLATED)
@@ -324,8 +354,19 @@ class MonolithAccessibilityService : AccessibilityService() {
             dao.getActiveSessionFlow().collect { session ->
                 if (session != null && session.isActive) {
                     if (armedSessionId != session.id) {
+                        val wasDisarmed = armedSessionId == -1
                         armedSessionId = session.id
                         armedMono = SystemClock.elapsedRealtime()
+                        if (wasDisarmed) {
+                            // Catch-up scan (Verifier, Wave-3
+                            // #42): events dropped while the gate
+                            // was shut are gone, and a static
+                            // window (Settings, a paused feed)
+                            // may never re-fire — so the instant
+                            // the gate opens, judge the window
+                            // that is already on screen.
+                            enqueueCurrentWindowSnapshot()
+                        }
                     }
                 } else if (armedSessionId != -1) {
                     armedSessionId = -1
@@ -385,18 +426,82 @@ class MonolithAccessibilityService : AccessibilityService() {
         // only that a root EXISTS, never its content.)
         if (armedSessionId == -1) return
 
-        // 1. Active Phone & VoIP Call Bypass — PER PACKAGE (Wave-3
-        // #42): a live call exempts the call's own surface only.
-        // WhatsApp/Telegram/cellular calls are never blocked on
-        // their own screen; the call no longer suspends blocking
-        // for every other app on the phone.
+        // Call tracking + bypass — PER CALL (Wave-3 #42): refresh
+        // the foreground tracker and the call owner from this
+        // event first, then ask the pure decision. A live call
+        // exempts its own surface only; it no longer suspends
+        // blocking for every other app on the phone.
+        refreshCallTracking(pkgName, event.eventType)
         if (isCallActiveForPackage(pkgName)) return
 
         // Synchronous fact capture: every node-derived verdict is
         // taken HERE, while rootInActiveWindow still describes
         // this event's window — never after an async hop.
         val facts = captureEventFacts(pkgName)
-        eventChannel.trySend(EventSnapshot(pkgName, facts))
+        val snapshot = EventSnapshot(pkgName, facts, armedSessionId)
+        if (facts.tamperSurface) {
+            // The tamper door does NOT ride the conflated channel
+            // (Verifier, Wave-3 #42): conflation is per-channel,
+            // not per-window, so a later harmless event could
+            // silently evict a tamper snapshot for a STATIC
+            // Settings/installer page that will never re-fire.
+            // Tamper events are rare by nature; they take the
+            // direct path and are processed in arrival order.
+            scope.launch {
+                try {
+                    processEvent(snapshot)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // Same law as the worker: one bad event must
+                    // not kill enforcement.
+                }
+            }
+        } else {
+            eventChannel.trySend(snapshot)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Call tracking (Wave-3 #42): the foreground package is tracked
+    // from window-state events (package name only — no content), so
+    // the moment a call becomes active the service can name its
+    // OWNER: the app that was in front when the call began. The
+    // owner locks on first observation and clears when the call
+    // ends; it never follows the user into other apps mid-call.
+    // ------------------------------------------------------------------
+
+    @Volatile
+    private var lastForegroundPackage: String? = null
+
+    @Volatile
+    private var callOwnerPackage: String? = null
+
+    private fun refreshCallTracking(pkgName: String, eventType: Int) {
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            lastForegroundPackage = pkgName
+        }
+        val mode = try {
+            (getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.mode
+        } catch (_: Exception) {
+            null
+        } ?: return
+        val callMode = mode == AudioManager.MODE_RINGTONE ||
+            mode == AudioManager.MODE_IN_CALL ||
+            mode == AudioManager.MODE_IN_COMMUNICATION
+        if (callMode) {
+            if (callOwnerPackage == null) {
+                callOwnerPackage = if (
+                    eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                ) {
+                    pkgName
+                } else {
+                    lastForegroundPackage
+                }
+            }
+        } else if (callOwnerPackage != null) {
+            callOwnerPackage = null
+        }
     }
 
     /** Reads the root window ONCE for the packages whose doors
@@ -434,6 +539,14 @@ class MonolithAccessibilityService : AccessibilityService() {
         val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
         val activeSession = dao.getActiveSessionSnapshot() ?: return
         if (!activeSession.isActive) return
+        // Session binding: a snapshot captured under a dead session
+        // never fires inside its successor.
+        if (snapshot.sessionId != -1 && snapshot.sessionId != activeSession.id) return
+        // Call re-check at processing time: a call that began after
+        // this event was captured (owner not yet locked at capture)
+        // still exempts its own surface — the intercept must never
+        // win the race against the ring.
+        if (isCallActiveForPackage(pkgName)) return
 
         // The persisted Guard row, read once per event and
         // honoured by both interceptors below (the browser
@@ -533,7 +646,13 @@ class MonolithAccessibilityService : AccessibilityService() {
     private fun isCallActiveForPackage(pkgName: String): Boolean {
         return try {
             val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return false
-            shouldBypassForCall(am.mode, pkgName)
+            val defaultDialer = try {
+                (getSystemService(Context.TELECOM_SERVICE) as? TelecomManager)
+                    ?.defaultDialerPackage
+            } catch (_: Exception) {
+                null
+            }
+            shouldBypassForCall(am.mode, pkgName, callOwnerPackage, defaultDialer)
         } catch (_: Exception) {
             false
         }
@@ -544,10 +663,14 @@ class MonolithAccessibilityService : AccessibilityService() {
         if (rootNode == null) return false
 
         if (pkgName in MARKET_PACKAGES) {
-            // A market window is only a tamper surface when it is
-            // showing Monolith's own page (where its uninstall
-            // action lives); ordinary market browsing is untouched.
-            return collectWindowTextLowercase(rootNode).contains("monolith")
+            // A market window is a tamper surface only when BOTH
+            // hold (Verifier, Wave-3 #42 — the bare substring rule
+            // fired on a store SEARCH for "monolith"): the window
+            // is about Monolith itself AND an uninstall affordance
+            // is actually present on it. Search results and list
+            // cards carry no uninstall action; the app page does.
+            if (!collectWindowTextLowercase(rootNode).contains("monolith")) return false
+            return hasTamperActionButton(rootNode) || hasUninstallAffordance(rootNode)
         }
 
         if (pkgName in SETTINGS_PACKAGES) {
@@ -577,6 +700,52 @@ class MonolithAccessibilityService : AccessibilityService() {
             if (hasTamperActionButton(node.getChild(i), depth + 1)) return true
         }
         return false
+    }
+
+    /** Market-side uninstall evidence: a node whose resource ID
+     *  names an uninstall action, or a button whose label does.
+     *  The label leg is English-only by necessity (market UIs do
+     *  not expose stable IDs for it) — it is a second leg behind
+     *  the Monolith anchor, never the only door. */
+    private fun hasUninstallAffordance(node: AccessibilityNodeInfo?, depth: Int = 0): Boolean {
+        if (node == null || depth > 14) return false
+        val viewId = node.viewIdResourceName?.lowercase() ?: ""
+        if (viewId.contains("uninstall")) return true
+        val className = node.className?.toString() ?: ""
+        if (className.endsWith("Button")) {
+            val label = (node.text?.toString() ?: node.contentDescription?.toString() ?: "")
+                .trim().lowercase()
+            if (label == "uninstall") return true
+        }
+        for (i in 0 until node.childCount) {
+            if (hasUninstallAffordance(node.getChild(i), depth + 1)) return true
+        }
+        return false
+    }
+
+    /** One synthetic snapshot of the window already on screen, for
+     *  the collector's catch-up scan when the session gate opens. */
+    private fun enqueueCurrentWindowSnapshot() {
+        val rootNode = try { rootInActiveWindow } catch (_: Exception) { null } ?: return
+        val pkgName = rootNode.packageName?.toString() ?: return
+        if (pkgName == applicationContext.packageName ||
+            pkgName.startsWith("com.android.systemui")
+        ) {
+            return
+        }
+        val snapshot = EventSnapshot(pkgName, captureEventFacts(pkgName), armedSessionId)
+        if (snapshot.facts.tamperSurface) {
+            scope.launch {
+                try {
+                    processEvent(snapshot)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
+            }
+        } else {
+            eventChannel.trySend(snapshot)
+        }
     }
 
     private fun detectShortsOrReelsFeed(rootNode: AccessibilityNodeInfo?): Boolean {
@@ -664,7 +833,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         depth: Int,
         out: MutableList<String>
     ) {
-        if (node == null || depth > 16 || out.size >= 4) return
+        if (node == null || depth > 32 || out.size >= 6) return
         val viewId = node.viewIdResourceName?.lowercase() ?: ""
         if (!node.isFocused && (
                 viewId.endsWith(":id/url_bar") ||
