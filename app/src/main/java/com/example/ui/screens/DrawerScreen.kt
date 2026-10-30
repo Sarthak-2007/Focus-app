@@ -98,6 +98,40 @@ import java.util.Locale
 
 private enum class DrawerView { LANDING, INDEX, MONTH, CABINET, RECEIPTS }
 
+/** Audit R3b #145, reopened defect A: the cabinet's standing forge
+ *  rule, as ONE named print so a test can pin the exact sentence.
+ *  The sentence is scoped to what the forge gates actually do
+ *  (MonolithRepository): MANUAL — a routine-born span forges
+ *  nothing (the finalise gate is `allBlocksCompleted &&
+ *  !isRoutineSession`, and the disarm door fences routine rows
+ *  too); IN FULL — a timed span hand-ended before all its blocks
+ *  complete forges nothing (at most a Partial Stamp), and a FLOW
+ *  span forges only at its completed hand finish. The earlier
+ *  print ("A SPAN YOU FINISH YOURSELF FORGES ONE") claimed both
+ *  exceptions away. */
+internal val CABINET_FORGE_RULE: String =
+    "A MANUAL SPAN YOU FINISH IN FULL FORGES ONE — THE FORGE CHOOSES WHICH."
+
+/** Audit R3b #145, reopened defect B: the provenance shield-gap
+ *  mark for one forge record, derived from the shield-gap FACT —
+ *  never from outcome precedence alone. A timed forge's gap is
+ *  stamped as its outcome (ELAPSED_SHIELD_GAP), but a FLOW forge's
+ *  outcome is always STOPWATCH_ENDED (the disarm when-chain's
+ *  completed-stopwatch branch wins regardless of shield state, and
+ *  that stamp must stay: finishKindOf requires it for a FLOW
+ *  finish). The gap fact a FLOW row still carries is its
+ *  shieldGapSeen latch — set when any observer saw the shield's
+ *  beat stale past the law or its sight revoked, and never
+ *  cleared. Either witness earns the mark; neither, no mark. */
+internal fun curioForgeGapMark(record: FocusSessionEntity): String =
+    if (record.outcome == SessionOutcome.ELAPSED_SHIELD_GAP ||
+        record.shieldGapSeen
+    ) {
+        " · SHIELD GAP"
+    } else {
+        ""
+    }
+
 private data class DrawerDayGroup(
     val date: LocalDate,
     val rows: List<FocusTaskEntity>,
@@ -674,19 +708,19 @@ fun DrawerScreen(
                 }
                 // DRW-01: the true rule, printed once as the
                 // cabinet's standing line — exactly what the
-                // forge does (Repository: a finished span forges
-                // one artifact, chosen at random; routine arms
-                // never forge). No per-artifact prices, no
-                // thresholds nothing enforces.
+                // forge does (Repository: a manual span finished
+                // in full forges one artifact, the forge chooses
+                // which; routine-born spans forge nothing). No
+                // per-artifact prices, no thresholds nothing
+                // enforces.
                 item {
                     Text(
-                        // Audit R3b #145: the rule, scoped to what
-                        // the code now actually does on every hand
-                        // finish (timed and FLOW alike). Routine-born
-                        // spans forge nothing — the fence stands
-                        // while the routines rethink owns them — and
-                        // the print no longer claims otherwise.
-                        text = "A SPAN YOU FINISH YOURSELF FORGES ONE — THE FORGE CHOOSES WHICH.",
+                        // Audit R3b #145, reopened defect A: the
+                        // sentence lives in CABINET_FORGE_RULE so
+                        // its exact wording is test-pinned; its
+                        // MANUAL / IN FULL scoping is the truth the
+                        // earlier unscoped print denied.
+                        text = CABINET_FORGE_RULE,
                         fontFamily = AnonymousProFamily,
                         fontSize = 10.5.sp,
                         letterSpacing = 1.sp,
@@ -799,13 +833,13 @@ fun DrawerScreen(
                             val forgeDay = java.text.SimpleDateFormat(
                                 "d MMM yyyy", Locale.US
                             ).format(java.util.Date(record.startWallTimeMillis))
-                            val gapMark = if (
-                                record.outcome == SessionOutcome.ELAPSED_SHIELD_GAP
-                            ) {
-                                " · SHIELD GAP"
-                            } else {
-                                ""
-                            }
+                            // Reopened defect B: the mark derives
+                            // from the shield-gap fact via
+                            // curioForgeGapMark — a FLOW forge's
+                            // outcome is STOPWATCH_ENDED even when
+                            // its shieldGapSeen latch is set, so an
+                            // outcome-only test marked nothing.
+                            val gapMark = curioForgeGapMark(record)
                             Text(
                                 text = "$forgeDay · ${record.intention}$gapMark",
                                 fontFamily = AnonymousProFamily,
