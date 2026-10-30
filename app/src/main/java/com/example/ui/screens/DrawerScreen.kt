@@ -911,11 +911,19 @@ fun DrawerScreen(
                     item(key = "search-head-${group.date}") {
                         // #158 F2: the real DayHeading, so a found
                         // day keeps its declared word in search too.
+                        // (R3b #163 fix-forward: this site kept the
+                        // pre-F1 parameter names through the #378
+                        // merge and broke main's compile — it now
+                        // takes the same canDeclare form as every
+                        // other DayHeading site.)
                         DayHeading(
                             group = group,
-                            isToday = group.date == today,
-                            isSealed = isSealed,
-                            onDeclareTodayWord = onDeclareTodayWord
+                            canDeclare = !isSealed && (group.date == today ||
+                                (group.date == today.minusDays(1) && group.word == null)),
+                            onDeclareWord = { word ->
+                                if (group.date == today) onDeclareTodayWord(word)
+                                else onDeclareDayWord(group.date, word)
+                            }
                         )
                     }
                     items(group.rows, key = { "search-${it.id}" }) { task ->
