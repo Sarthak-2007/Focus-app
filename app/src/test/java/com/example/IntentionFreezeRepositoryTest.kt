@@ -44,6 +44,17 @@ class IntentionFreezeRepositoryTest {
         )
     }
 
+    /** The queue is shared too: a sibling test's leftover ACTIVE
+     *  task would be the one a completion promotes, and the
+     *  promotion assertions below are about THIS test's tasks.
+     *  Wipe the queue so each promotion test owns its queue end
+     *  to end (added after run 41043039352: the completion test
+     *  failed on exactly this interference — a ComparisonFailure
+     *  on the promoted task, while the freeze itself held). */
+    private fun clearTaskQueue(db: MonolithDatabase) {
+        db.openHelper.writableDatabase.execSQL("DELETE FROM focus_tasks")
+    }
+
     @Test
     fun blankIntention_isStoredBlank_noStockPhrase() = runBlocking {
         val db = MonolithDatabase.getInstance(context)
@@ -98,6 +109,7 @@ class IntentionFreezeRepositoryTest {
         val dao = db.monolithDao()
         val repository = MonolithRepository(context, dao)
         clearForeignActiveSessions(db)
+        clearTaskQueue(db)
 
         val first = repository.addTaskToQueue(
             title = "First Task Title",
@@ -106,7 +118,7 @@ class IntentionFreezeRepositoryTest {
             notesOrSubsteps = "",
             promoteToActive = true
         )
-        repository.addTaskToQueue(
+        val second = repository.addTaskToQueue(
             title = "Second Task Title",
             estimatedMinutes = 25,
             categoryTag = "Study",
@@ -124,7 +136,8 @@ class IntentionFreezeRepositoryTest {
 
         val next = repository.completeTaskAndAdvance(first.id)
         assertNotNull(next)
-        assertEquals("Second Task Title", next!!.title)
+        assertEquals(second.id, next!!.id)
+        assertEquals("Second Task Title", next.title)
 
         val session = dao.getActiveSessionSnapshot()
         assertNotNull(session)
@@ -137,6 +150,7 @@ class IntentionFreezeRepositoryTest {
         val dao = db.monolithDao()
         val repository = MonolithRepository(context, dao)
         clearForeignActiveSessions(db)
+        clearTaskQueue(db)
 
         repository.addTaskToQueue(
             title = "Active Task Title",
