@@ -255,12 +255,36 @@ class MonolithShieldService : Service() {
                     break
                 }
 
+                // Issue #81 F4: the shield's sight IS Usage Access.
+                // Revoked mid-session, queryForegroundBlockedApp
+                // returns null forever — indistinguishable from an
+                // empty foreground — while this loop kept beating on
+                // schedule and the finish certified ELAPSED_CLEAN.
+                // The blindness is now measured every iteration (see
+                // the latch just after the progress write below),
+                // and the protecting flip further down only happens
+                // for an iteration that could actually see.
+                val usageGranted = repository.hasUsageStatsPermission()
+
                 // Slice E (Nocke §2.2): the shield's own loop is
                 // the beat's only lawful writer — its tick stamps
                 // shieldLastBeatWallMillis into the row it already
                 // persists, so the finish machine can later prove
                 // whether the shield was present or gone.
                 val updated = repository.updateSessionProgress(activeSession, stampShieldBeat = true)
+                if (!usageGranted) {
+                    // Latched AFTER the progress write on purpose:
+                    // updateSession is a full-row @Update, so a latch
+                    // set before it would be overwritten by this
+                    // iteration's own snapshot (taken while the row
+                    // was unlatched). From here the latch persists:
+                    // every later iteration re-reads the row fresh,
+                    // and the finish classifies ELAPSED_SHIELD_GAP.
+                    // (A session completing on THIS tick is covered
+                    // by the fresh usage read inside
+                    // updateSessionProgress's outcome classification.)
+                    repository.latchShieldGapNow()
+                }
                 if (!updated.isActive) {
                     // Session-edge tick BEFORE standing down: a routine
                     // session that just timer-completed gets finalised
@@ -344,7 +368,7 @@ class MonolithShieldService : Service() {
                 // witness (Opal L2) is stamped at the same flip:
                 // the session this iteration read, and the mono it
                 // flipped - CONFIRMED stamp for SHIELD-PROTECTING.
-                if (!protecting) {
+                if (!protecting && usageGranted) {
                     protecting = true
                     protectingSessionId = updated.id
                     protectingMono = SystemClock.elapsedRealtime()
@@ -358,8 +382,9 @@ class MonolithShieldService : Service() {
                 }
                 // Watch Store (chrome C3): ONE publication per
                 // iteration — the engine heartbeat plus a re-read of
-                // the two BIND items' present state.
-                WatchStore.onShieldIteration(protecting)
+                // the two BIND items' present state (and, #81 F4,
+                // this iteration's USAGE ACCESS measurement).
+                WatchStore.onShieldIteration(protecting, usageGranted)
 
                 val nowMono = SystemClock.elapsedRealtime()
                 val blockedPackages = dao.getAllAppsSnapshot()

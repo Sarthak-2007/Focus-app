@@ -7,6 +7,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.LauncherApps
+import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.os.Build
 import android.os.Process
@@ -15,7 +16,9 @@ import android.provider.Settings
 import android.util.Log
 import android.os.PowerManager
 import com.example.service.MonolithAccessibilityService
+import com.example.service.MonolithBootReceiver
 import com.example.service.MonolithDeviceAdminReceiver
+import com.example.service.MonolithNotificationListener
 import com.example.service.MonolithShieldService
 import com.example.service.RoutineScheduler
 import com.example.service.TactileSoundEngine
@@ -58,7 +61,12 @@ data class SystemGuardStatus(
     val isHmacSignatureValid: Boolean = false,
     val clockDriftSeconds: Long = 0L,
     val systemBootCount: Int = 0,
-    val installedLauncherAppsCount: Int = 0
+    val installedLauncherAppsCount: Int = 0,
+    /** Issue #81 F1: this install was resurrected after a data
+     *  wipe (virgin DB + pre-existing keystore key). The guard
+     *  status must carry it: a wiped install is UNPROVEN, and no
+     *  surface may read its all-green rows as a clean history. */
+    val installProvenanceUnproven: Boolean = false
 ) {
     val readinessCount: Int
         get() = listOf(
@@ -272,6 +280,17 @@ class MonolithRepository(
         const val PRUNE_NOTE_COUNT_KEY = "prune_note_count"
         const val PRUNE_NOTE_RULES_KEY = "prune_note_rules_removed"
 
+
+        /** Issue #81 F1: the resurrection witness's prefs home.
+         *  Written once, at seed time, when a virgin database meets
+         *  a pre-existing AndroidKeyStore HMAC key — the residue
+         *  `pm clear` cannot wipe (see TamperWitness). The prefs
+         *  file itself dies with the NEXT clear, which is fine:
+         *  that clear resurrects the same way and re-stamps it. */
+        const val PROVENANCE_PREFS_NAME = "monolith_provenance"
+        const val PROVENANCE_UNPROVEN_KEY = "resurrected_unproven"
+        const val PROVENANCE_DETECTED_WALL_KEY = "resurrected_detected_wall_ms"
+
         /** The catalog memory (Wave 3, issue #34): the two-strike
          *  strike set and the pruned-rule tombstones, in the same
          *  prefs file — the schema stays frozen at v12, and a
@@ -323,6 +342,7 @@ class MonolithRepository(
                 .apply()
         }
         return decision.honestNowMillis
+
     }
 
     /** The seal marker's session id, or -1 when no seal has ever
@@ -333,6 +353,40 @@ class MonolithRepository(
         // credential-protected file here would read a stale split copy.
         DeviceProtectedPrefs.get(context, SEAL_PREFS_NAME)
             .getInt(SEAL_MARKER_SESSION_KEY, -1)
+
+    /** Issue #81 F1: true when this install has reported itself
+     *  resurrected-after-wipe (see [ensureSeededAndSyncPackages]).
+     *  Sticky for the life of the (new) data: nothing that happens
+     *  afterwards can retroactively prove the wiped past clean. */
+    fun provenanceUnproven(): Boolean =
+        context.getSharedPreferences(PROVENANCE_PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(PROVENANCE_UNPROVEN_KEY, false)
+
+    /** The resurrection check, run inside the seed lock BEFORE any
+     *  seeding write, so "virgin" is measured on the database as
+     *  found. Must also run before anything can sign session state
+     *  (signing generates the keystore key on first use — after
+     *  that, the residue exists by our own hand and proves
+     *  nothing). Seeding is the first repository act of every
+     *  launch path that can later sign, so this is the one place
+     *  the measurement is honest. */
+    private suspend fun recordProvenanceIfResurrected() {
+        val dbVirgin = dao.getAllSitesSnapshot().isEmpty() &&
+            dao.getGuardSettingsSnapshot() == null &&
+            dao.getAllRoutinesSnapshot().isEmpty() &&
+            dao.getSessionHistorySnapshot().isEmpty()
+        val provenance = TamperWitness.classifyProvenance(
+            dbVirgin = dbVirgin,
+            keystoreKeyPreExisted = CryptoIntegrityManager.hmacKeyExists()
+        )
+        if (provenance == TamperWitness.InstallProvenance.RESURRECTED_UNPROVEN) {
+            context.getSharedPreferences(PROVENANCE_PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(PROVENANCE_UNPROVEN_KEY, true)
+                .putLong(PROVENANCE_DETECTED_WALL_KEY, System.currentTimeMillis())
+                .apply()
+        }
+    }
 
     /** Every session the seal marker testifies for (issue #48):
      *  the persisted id set, unioned with the legacy single-slot
@@ -354,6 +408,8 @@ class MonolithRepository(
         forceCatalogSync: Boolean = false
     ) = withContext(Dispatchers.IO) {
         seedMutex.withLock {
+        recordProvenanceIfResurrected()
+
         // Audit R2 #96: seed only a store that has never carried
         // content. Once content exists (seeded or the user's own)
         // the seeded-ever flag is set, and a later empty store is
@@ -365,6 +421,7 @@ class MonolithRepository(
                 dao.insertSites(BlockedBrowserDomains.defaultDomains.map { BlockedSiteEntity(it) })
             }
             seedPrefs.edit().putBoolean(SEED_SITES_KEY, true).apply()
+
         }
         if (dao.getGuardSettingsSnapshot() == null) {
             dao.insertGuardSettings(GuardSettingsEntity())
@@ -1257,6 +1314,35 @@ class MonolithRepository(
         }
     }
 
+
+    /**
+     * Issue #81 F5: Monolith's own critical components, by simple
+     * name, whose PackageManager enabled-state is DISABLED —
+     * the `adb shell pm disable` / component-surgery route, which
+     * shows no Settings window for the accessibility text guard to
+     * see and (before this check existed) was reported by no
+     * surface at all. Read fresh on every call; callers are the
+     * heartbeat reconcile (which latches the session's gap when a
+     * component is down mid-session) and any future surface. A
+     * component whose state cannot be read counts as enabled —
+     * an unreadable state is no evidence of surgery.
+     */
+    fun disabledCriticalComponents(): List<String> {
+        val pm = context.packageManager
+        val critical = listOf(
+            "MonolithShieldService" to ComponentName(context, MonolithShieldService::class.java),
+            "MonolithAccessibilityService" to ComponentName(context, MonolithAccessibilityService::class.java),
+            "MonolithNotificationListener" to ComponentName(context, MonolithNotificationListener::class.java),
+            "MonolithBootReceiver" to ComponentName(context, MonolithBootReceiver::class.java)
+        )
+        return critical.mapNotNull { (name, component) ->
+            val state = runCatching { pm.getComponentEnabledSetting(component) }
+                .getOrDefault(PackageManager.COMPONENT_ENABLED_STATE_DEFAULT)
+            if (TamperWitness.componentDisabled(state)) name else null
+        }
+    }
+
+
     /** The system boot count, or null when the Settings read fails
      *  or the value does not exist (issue #33, audit R1). Every
      *  internal decision path uses THIS read: the old code fell back
@@ -1265,6 +1351,7 @@ class MonolithRepository(
      *  reboot verdict. Unknown now stays unknown. */
     @WorkerThread
     fun querySystemBootCountOrNull(): Int? {
+
         return try {
             Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT)
         } catch (e: Exception) {
@@ -1311,10 +1398,22 @@ class MonolithRepository(
             Pair((session.accumulatedBeforeRebootSeconds + monoElapsedSec.toInt()), tamper)
         } else {
             // Device rebooted during an active lock (LOCKED_BOOT_COMPLETED):
-            // Resume from accumulated elapsed seconds prior to reboot + seconds elapsed since current boot
+            // Resume from accumulated elapsed seconds prior to reboot + seconds elapsed since current boot.
+            // Issue #81 F3: the tamper term is no longer !hmacValid
+            // alone. An unwitnessed intermediate boot (Safe Mode —
+            // Monolith cannot run there, so it never re-anchors —
+            // or a force-stop spanning a reboot) leaves a BOOT_COUNT
+            // delta of 2+ against the row's anchor; that span is
+            // unproven and convicts like any other tamper (the
+            // caller's penalty ratchet applies). The elapsed figure
+            // still credits only witnessed time — unproven hours
+            // are neither credited toward completion nor silently
+            // forgiven: they cost the tamper penalty instead of
+            // passing as a free, invisible freeze.
             val priorElapsed = max(session.accumulatedBeforeRebootSeconds, session.elapsedSeconds)
             val sinceRebootSec = (nowMono / 1000L).toInt().coerceAtLeast(0)
-            Pair(priorElapsed + sinceRebootSec, !hmacValid)
+            val unwitnessed = TamperWitness.unwitnessedBoot(session.bootCount, currentBoot)
+            Pair(priorElapsed + sinceRebootSec, !hmacValid || unwitnessed)
         }
     }
 
@@ -1348,7 +1447,9 @@ class MonolithRepository(
             isHmacSignatureValid = hmacIntact,
             clockDriftSeconds = driftSeconds,
             systemBootCount = querySystemBootCountOrNull() ?: 0,
-            installedLauncherAppsCount = appsCount
+            installedLauncherAppsCount = appsCount,
+            installProvenanceUnproven = provenanceUnproven()
+
         )
     }
 
@@ -2807,6 +2908,21 @@ class MonolithRepository(
         return true
     }
 
+    /** Issue #81 F4: latch the gap NOW, without the staleness law.
+     *  For blindness observed directly, not inferred from a stale
+     *  beat: the shield process is alive and beating, but its
+     *  foreground sight (Usage Access) has been revoked mid-session,
+     *  so the door is dead while the beat stays fresh and
+     *  [latchShieldGapIfStale] can never fire. Same latch, same
+     *  guards — an already-latched or already-classified row is
+     *  left alone. The finish then classifies ELAPSED_SHIELD_GAP,
+     *  never ELAPSED_CLEAN. */
+    suspend fun latchShieldGapNow(): Boolean {
+        val active = dao.getActiveSessionSnapshot() ?: return false
+        if (active.shieldGapSeen || active.outcome.isNotEmpty()) return false
+        dao.latchShieldGap(active.id)
+        return true
+    }
     /** Wall time the installed package last landed on this phone
      *  (the install time on a first install), or 0 when unreadable.
      *  The shield-gap law's update exemption (Audit R2 #95). */
@@ -3245,6 +3361,7 @@ class MonolithRepository(
         } else if (isRoutineSession) {
             session.outcome
         } else {
+
             // Composed at the #82/#95 merge: the finish stamp's gap
             // test runs on the monotonic-implied now (#82 F1) — the
             // session start advanced by the VERIFIED (monotonic)
@@ -3256,13 +3373,21 @@ class MonolithRepository(
             // beat evidence exists, so the beat test alone cannot
             // convict it; only the latch can.
             val impliedNowWall = session.startWallTimeMillis + verifiedElapsed * 1000L
+            // Issue #81 F4: a finish may certify ELAPSED_CLEAN only
+            // if the shield can still SEE at the ending write — the
+            // usage term in the verdict below covers a session that
+            // completes on the very tick blindness begins; the
+            // latchShieldGapNow stamps cover the revoked span.
+
             val beatRef = maxOf(
                 session.shieldLastBeatWallMillis,
                 session.startWallTimeMillis,
                 appLastUpdateMillis()
             )
             if (session.shieldGapSeen ||
-                (session.shieldLastBeatWallMillis > 0L && impliedNowWall - beatRef > SHIELD_GAP_THRESHOLD_MILLIS)
+                (session.shieldLastBeatWallMillis > 0L && impliedNowWall - beatRef > SHIELD_GAP_THRESHOLD_MILLIS) ||
+                !hasUsageStatsPermission()
+
             ) {
                 SessionOutcome.ELAPSED_SHIELD_GAP
             } else {
