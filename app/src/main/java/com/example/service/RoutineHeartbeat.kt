@@ -114,7 +114,7 @@ object RoutineHeartbeat {
      *  the failure above is already in the log. */
     private suspend fun recoverChainAfterFailure(appContext: Context) {
         try {
-            val dao = MonolithDatabase.getInstance(appContext).monolithDao()
+            val dao = com.example.AppContainer.dao(appContext) // ISSUE-67: single construction point
             val now = System.currentTimeMillis()
             val boundary = RoutineDerive.nextBoundaryMillis(dao.getAllRoutinesSnapshot(), now)
             RoutineScheduler.rearmChain(appContext, recoveryRearmMillis(boundary, now))
