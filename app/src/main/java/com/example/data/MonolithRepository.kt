@@ -93,6 +93,17 @@ data class PruneNote(
     val rulesRemoved: Boolean
 )
 
+/**
+ * W3 #130 (browser-as-loophole, finding 5): the held-sites count a
+ * receipt may claim — the stored list's size ONLY when the browser
+ * blocker is actually on. With the blocker switched off the
+ * session holds no sites at all, whatever the list holds; claiming
+ * the list size printed held sites that were never once checked.
+ * Pure, mirroring countHeldApps' one-derivation law.
+ */
+internal fun heldSitesCount(siteCount: Int, browserBlockerEnabled: Boolean): Int =
+    if (browserBlockerEnabled) siteCount else 0
+
 /** Issue #99 F1: how long after a peek lease's end its package still
  *  counts as "just expired" for eviction purposes. The shield polls
  *  every 2s, so this only needs to cover the first polls after
@@ -2026,7 +2037,13 @@ class MonolithRepository(
         // (this insert); no DAO update for them will ever exist.
         return databaseProvider().withTransaction {
             val heldApps = countHeldApps(dao.getAllAppsSnapshot())
-            val heldSites = dao.getAllSitesSnapshot().size
+            // W3 #130: sites are held only when the blocker that
+            // enforces them is on — the same toggle the service
+            // reads per event (default ON when no row exists).
+            val heldSites = heldSitesCount(
+                dao.getAllSitesSnapshot().size,
+                dao.getGuardSettingsSnapshot()?.browserBlockerEnabled ?: true
+            )
             dao.deactivateAllSessions()
             val id = dao.insertSession(
                 session.copy(heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites)

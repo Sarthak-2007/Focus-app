@@ -220,7 +220,21 @@ object AppCategorizer {
                 "whatsapp", "discord", "telegram", "message",
                 "messages", "messaging", "messenger"
             ) -> AppCategory.MESSAGING
-            matches("chrome", "browser", "browsers", "firefox", "brave") ->
+            // W3 #130 (re-expressed in this classifier's token
+            // discipline on the current-main composition): Edge
+            // (emmx), Opera, DuckDuckGo, Kiwi, Via ("mark via" —
+            // the mark.via.gp package tokenised) and Yandex join
+            // the recognised browsers — an unrecognised browser
+            // fell through to SHOPPING, invisible as a web door in
+            // the Shield list. (#130's original cure edited the
+            // repository's inline copy of this `when`; that copy is
+            // gone — the repository delegates here, so here is
+            // where the recognition lives.)
+            matches(
+                "chrome", "browser", "browsers", "firefox", "brave",
+                "opera", "duckduckgo", "kiwibrowser", "mark via",
+                "yandex", "emmx"
+            ) ->
                 AppCategory.BROWSERS
             else -> AppCategory.SHOPPING
         }

@@ -64,14 +64,18 @@ import java.util.Locale
  */
 /** Which door fired an intercept (Truth Car 3, UNA2-01). The airlock's
  *  peek offer must be computed from the PATH as well as the tier:
- *  only the two app-tier paths ever consult the peek lease — the
+ *  only the app-tier paths ever consult the peek lease — the
  *  accessibility tier path reads the row's lease before it lets an
  *  app through, and the shield monitor's blocked set excludes a
  *  leased PEEK app — so only on those doors can a lease actually be
- *  honoured. The guard, sniper and site doors intercept
- *  unconditionally; an offer made there protects nothing. UNKNOWN is
- *  the conservative default for any intent that arrives without a
- *  path: unproven honour means no offer. */
+ *  honoured. The guard and sniper doors intercept unconditionally;
+ *  an offer made there protects nothing. UNKNOWN is the conservative
+ *  default for any intent that arrives without a path: unproven
+ *  honour means no offer.
+ *  W3 #130: SITE joins the honouring doors, domain-scoped — a lease
+ *  started on the site door is read by the site blocker, but it
+ *  exempts only the one domain it was granted for (SitePeekStore),
+ *  never the whole browser. */
 enum class InterceptPath {
     APP_TIER,
     SHIELD_APP,
@@ -83,7 +87,7 @@ enum class InterceptPath {
     /** A lease started from this door will actually be read by the
      *  enforcing code that fired it. */
     val canHonourPeekLease: Boolean
-        get() = this == APP_TIER || this == SHIELD_APP
+        get() = this == APP_TIER || this == SHIELD_APP || this == SITE
 }
 
 /**
@@ -280,6 +284,38 @@ private fun ruleMatches(rule: SiteRule, candidate: UrlCandidate): Boolean {
  * rule's host, so wildcard entries ("*.youtube.com") match and
  * report the bare domain, exactly as #42's matcher did.
  */
+
+/**
+ * W3 #130 (browser-as-loophole, finding 3): the browsers the site
+ * blocker polices. #130's thirteen are joined by the two #42's
+ * capture list already policed (Vivaldi, Opera Beta) — the composed
+ * set is the UNION, so neither lane's browser loses its policing.
+ * A browser outside this set was an unpoliced corridor: catalogued
+ * SHOPPING, born OPEN, and never site-checked. URL capture for the
+ * added browsers rides the generic address-bar leg in
+ * collectUrlBarTexts, so no per-browser view ID has to be guessed
+ * for them.
+ */
+internal val SUPPORTED_BROWSER_PACKAGES: Set<String> = setOf(
+    "com.android.chrome",
+    "com.brave.browser",
+    "org.mozilla.firefox",
+    "com.microsoft.emmx",
+    "com.sec.android.app.sbrowser",
+    "com.opera.browser",
+    "com.opera.mini.native",
+    "com.opera.gx",
+    "com.duckduckgo.mobile.android",
+    "com.kiwibrowser.browser",
+    "mark.via.gp",
+    "com.yandex.browser",
+    "com.UCMobile.intl",
+    "com.vivaldi.browser",
+    "com.opera.browser.beta"
+)
+
+internal fun isSupportedBrowserPackage(pkgName: String): Boolean =
+    pkgName in SUPPORTED_BROWSER_PACKAGES
 
 /** The host of a URL-bar text, or null when the text carries no
  *  plausible host. Tolerates a missing scheme (users see bare
@@ -971,25 +1007,37 @@ class MonolithAccessibilityService : AccessibilityService() {
         }
 
         // UNA2-01, the lease agreement — AMENDED by #131 for
-        // the sniper only (ported into this pipeline at the
-        // #42 merge): a live peek lease on THIS package still
-        // silences the site blocker below (a browser peek must
-        // not be re-intercepted by the door it was bought
-        // through), but it no longer silences the sniper. The
-        // old blanket rule turned the one sanctioned YouTube
-        // entry — its factory tier is PEEK_2M — into a 2-minute
-        // Shorts pass, and made the PARK sniper toggle a lived
-        // no-op in the default configuration. A lease is an
-        // app-access door: it buys a time-boxed, counted glance
-        // at the app (branch 5 still honours it exactly as
-        // before); it was never a feed licence. Inside a peeked
-        // YouTube/Instagram the user may use the app — and the
-        // moment a Short/Reel actually plays, the sniper fires.
+        // the sniper (ported into this pipeline at the #42
+        // merge), and by #130 for the site door (composed here):
+        // a live peek lease on THIS package silences NEITHER
+        // interceptor below. #131 (sniper half): the old blanket
+        // rule turned the one sanctioned YouTube entry — its
+        // factory tier is PEEK_2M — into a 2-minute Shorts pass,
+        // and made the PARK sniper toggle a lived no-op in the
+        // default configuration. #130 (site half): a browser
+        // package hosts the whole web, so one knock on Chrome
+        // used to unlock every blocked site at once — site rules
+        // stay live through any app peek, and the site door's
+        // ONLY exemption is a domain-scoped site peek (branch 4).
+        // A lease is an app-access door: it buys a time-boxed,
+        // counted glance at the app (branch 5 still honours it
+        // exactly as before); it was never a feed licence, and
+        // never a web pass. Inside a peeked YouTube/Instagram the
+        // user may use the app — and the moment a Short/Reel
+        // actually plays, the sniper fires.
         val appsSnapshot = dao.getAllAppsSnapshot()
         val leaseRow = appsSnapshot.find { it.packageName == pkgName }
         val leaseLive = leaseRow != null &&
             leaseRow.resolvedTier == AppBlockTier.PEEK_2M &&
             SystemClock.elapsedRealtime() < leaseRow.activePeekUntilElapsedRealtime
+        // No blanket leaseLive gate remains on the sniper or on
+        // either site door: #131 took it off the sniper, #130 took
+        // it off the site doors (branch 4, and branch 4b's
+        // loaded-URL leg — composed onto current main, where #80's
+        // step 4b arrived after #130's base carrying the blanket).
+        // leaseLive is still read by branch 4b's host-surface door
+        // (an app-naming door) and branch 5; branch 4's scoped
+        // exemption reads the row's lease end directly.
 
         // 3. YouTube Shorts & Instagram Reels Sniper (Strictly active during both Work Blocks and Safe Breaks, during peek leases (#131) — and only while its persisted switch is ON: UNA-01)
         if (shortsSniperArmed(guardSettings, pkgName) && snapshot.facts.sniperFeedVisible) {
@@ -1013,7 +1061,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         // enforcement time.) The URL texts were captured
         // synchronously with the event; the domain match itself is
         // host-exact (Wave-3 #42).
-        if (!leaseLive && (guardSettings?.browserBlockerEnabled ?: true) && isSupportedBrowser(pkgName)) {
+        if ((guardSettings?.browserBlockerEnabled ?: true) && isSupportedBrowser(pkgName)) {
             val userDomains = dao.getAllSitesSnapshot().map { it.domain }
             val matchedDomain = snapshot.facts.browserUrlTexts.firstNotNullOfOrNull { urlText ->
                 matchBlockedDomain(urlText, userDomains)
@@ -1024,7 +1072,20 @@ class MonolithAccessibilityService : AccessibilityService() {
                 // exposes the embed's address as page text.
                 matchEmbeddedBlockedDomain(it, userDomains)
             }
-            if (matchedDomain != null) {
+            // W3 #130: the domain-scoped site peek is the ONLY
+            // exemption — this exact domain, in this browser,
+            // while its lease (the browser row's lease end) is
+            // live. Every other blocked domain still intercepts,
+            // including during a browser app peek.
+            val sitePeeked = matchedDomain != null && sitePeekExempts(
+                peekedDomain = SitePeekStore.domain,
+                peekedPackage = SitePeekStore.packageName,
+                domain = matchedDomain,
+                packageName = pkgName,
+                leaseUntilMono = leaseRow?.activePeekUntilElapsedRealtime ?: 0L,
+                nowMono = SystemClock.elapsedRealtime()
+            )
+            if (matchedDomain != null && !sitePeeked) {
                 performGlobalAction(GLOBAL_ACTION_BACK)
                 launchInterceptScreen(
                     packageName = pkgName,
@@ -1047,14 +1108,35 @@ class MonolithAccessibilityService : AccessibilityService() {
         // the persisted Guard toggle are honoured exactly as in
         // step 4. The #92 sweep feeds other windows' snapshots
         // through this same step under their own package.
-        if (!leaseLive && (guardSettings?.browserBlockerEnabled ?: true) &&
+        // W3 #130 composition (GESTALT ruling on the #130 landing):
+        // #80's step arrived on main after #130's base, carrying
+        // the blanket !leaseLive on this door too. Per #80's own
+        // "honoured exactly as in step 4" — and step 4's composed
+        // law is #130's — the loaded-URL leg below has NO blanket
+        // either: its only exemption is the domain-scoped site
+        // peek (sitePeekExempts, keyed to this host package, the
+        // package a SITE peek on this door is granted under).
+        // The host-surface door further down is an app-naming
+        // door, not a site door: it keeps honouring the lease.
+        if ((guardSettings?.browserBlockerEnabled ?: true) &&
             !isSupportedBrowser(pkgName) && snapshot.facts.windowTexts.isNotEmpty()
         ) {
             val userDomains = dao.getAllSitesSnapshot().map { it.domain }
             val loadedHit = snapshot.facts.windowTexts.firstNotNullOfOrNull { text ->
                 matchBlockedDomainInLoadedUrl(text, userDomains)
             }
-            if (loadedHit != null) {
+            // W3 #130: the domain-scoped site peek is the ONLY
+            // exemption on this leg too — this exact domain, in
+            // this host package, while its lease is live.
+            val loadedSitePeeked = loadedHit != null && sitePeekExempts(
+                peekedDomain = SitePeekStore.domain,
+                peekedPackage = SitePeekStore.packageName,
+                domain = loadedHit,
+                packageName = pkgName,
+                leaseUntilMono = leaseRow?.activePeekUntilElapsedRealtime ?: 0L,
+                nowMono = SystemClock.elapsedRealtime()
+            )
+            if (loadedHit != null && !loadedSitePeeked) {
                 performGlobalAction(GLOBAL_ACTION_BACK)
                 launchInterceptScreen(
                     packageName = pkgName,
@@ -1073,7 +1155,7 @@ class MonolithAccessibilityService : AccessibilityService() {
             // itself in a loop would be a cure worse than the
             // finding. UNKNOWN path: this door cannot honour a
             // peek lease for the named app, so it offers none.
-            if (surfaceHostKindFor(pkgName) != SurfaceHostKind.OTHER) {
+            if (!leaseLive && surfaceHostKindFor(pkgName) != SurfaceHostKind.OTHER) {
                 val blockedNames = appsSnapshot
                     .filter { it.resolvedTier != AppBlockTier.OPEN }
                     .map { it.appName }
@@ -1350,19 +1432,8 @@ class MonolithAccessibilityService : AccessibilityService() {
         return false
     }
 
-    private fun isSupportedBrowser(pkgName: String): Boolean {
-        return pkgName in setOf(
-            "com.android.chrome",
-            "com.brave.browser",
-            "org.mozilla.firefox",
-            "com.microsoft.emmx",
-            "com.sec.android.app.sbrowser",
-            "com.duckduckgo.mobile.android",
-            "com.vivaldi.browser",
-            "com.opera.browser",
-            "com.opera.browser.beta"
-        )
-    }
+    private fun isSupportedBrowser(pkgName: String): Boolean =
+        isSupportedBrowserPackage(pkgName)
 
     /**
      * Captures the browser URL bar's text across Chrome, Brave,
@@ -1375,6 +1446,15 @@ class MonolithAccessibilityService : AccessibilityService() {
      * while the user is actively typing. Runs synchronously on the
      * event thread; the domain match happens later, in the worker,
      * against these captured texts.
+     * W3 #130: browsers whose bar matches no known ID suffix (Kiwi,
+     * Via, Yandex, UC, Opera Mini/GX, …) fall back to a generic
+     * address-bar leg — an unfocused EditText whose WHOLE text is a
+     * URL (no spaces, a plausible host, and either a scheme or the
+     * host at its head). A search query or page field that merely
+     * mentions a domain mid-text never qualifies. This is #130's
+     * findBlockedDomainInAddressBar, re-shaped for this pipeline:
+     * it captures the text here; the host-exact match still happens
+     * in the worker, against the stored list.
      */
     private fun extractBrowserUrlTexts(rootNode: AccessibilityNodeInfo): List<String> {
         val texts = mutableListOf<String>()
@@ -1415,6 +1495,25 @@ class MonolithAccessibilityService : AccessibilityService() {
                 )
         ) {
             node.text?.toString()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { out.add(it) }
+        }
+        // Generic address-bar leg (W3 #130, see the doc above):
+        // an unfocused EditText whose whole text is a URL.
+        if (!node.isFocused && out.size < 6) {
+            val className = node.className?.toString() ?: ""
+            if (className.contains("EditText")) {
+                val urlText = node.text?.toString()?.trim()?.lowercase()
+                if (!urlText.isNullOrEmpty() && !urlText.contains(' ')) {
+                    val host = extractUrlHost(urlText)
+                    if (host != null && (
+                            urlText.contains("://") ||
+                                urlText.startsWith(host) ||
+                                urlText.startsWith("www.$host")
+                            ) && urlText !in out
+                    ) {
+                        out.add(urlText)
+                    }
+                }
+            }
         }
         for (i in 0 until node.childCount) {
             collectUrlBarTexts(node.getChild(i), depth + 1, out)
