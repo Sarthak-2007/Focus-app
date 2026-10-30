@@ -69,13 +69,16 @@ import com.example.service.WarrantState
 import com.example.ui.ArmPhase
 import com.example.ui.components.BlockitActionChip
 import com.example.ui.components.ImprintSlot
-import com.example.ui.components.ProofStripBand
 import com.example.ui.components.RefusalAction
 import com.example.ui.components.RefusalSentenceSlot
 import com.example.ui.components.StripDensity
 import com.example.ui.components.RefusalSentence
 import com.example.ui.components.endsAtText
 import com.example.ui.components.imprintTenantText
+import com.example.ui.components.SealBar
+import com.example.ui.components.BoltInputs
+import com.example.ui.components.boltStateFor
+import com.example.ui.components.endsAtNumeralsFor
 import com.example.ui.components.jamSentenceFor
 import com.example.ui.components.provingSentenceFor
 import com.example.ui.components.refusalSentenceFor
@@ -461,12 +464,12 @@ fun TactileDeckScreen(
     }
     val nowMono = nowMonoTick
     val warrantPrintState = com.example.service.WatchStore.printState(deckWarrant, nowMono)
-    fun blockCellFor(state: WarrantState?): Pair<String, StripDensity> = when (state) {
-        WarrantState.LIVE -> "ON" to StripDensity.PASS
-        WarrantState.OFF -> "OFF" to StripDensity.FAULT
-        else -> "UNKNOWN" to StripDensity.UNKNOWN
-    }
-    val idleBlockCell = blockCellFor(warrantPrintState)
+    // Issue #4 closer pass (KRALL K-1), ported to main by DURCH-A4:
+    // blockCellFor and its string word are DELETED from this host.
+    // The strip's word was the second derivation the Bolt's
+    // one-derivation law forbids; the bar now folds the one warrant
+    // read directly (see the BoltInputs block below). No BLOCK word
+    // is derived anywhere on this face any more.
     val idleTimeCell: Pair<String, StripDensity> = when {
         isStopwatchMode && !isSessionRunning -> "NO END" to StripDensity.PASS
         dialMinutes !in 5..180 || studyBlocksCount !in 1..8 -> "INVALID" to StripDensity.FAULT
@@ -610,30 +613,17 @@ fun TactileDeckScreen(
     // This covers the latch-frame hand-back too, which increments
     // the same key (Joss CHARGE 2's fix).
 
-    // UNA2-04: the frozen verdict owns the running BLOCK cell
-    // while the wire agrees the bind held — but the instant the
-    // LIVE wire reads OFF, the cell follows the wire. A frozen ON
-    // or HELD beside a live OFF was the audit's impossible frame:
-    // one tense, true at the instant it prints.
-    val blockCell = if (isSessionRunning) {
-        when {
-            liveWarrantState == WarrantState.OFF -> blockCellFor(WarrantState.OFF)
-            // Issue #6 C5(b) (wave-2 Tech-exec): the degrade was
-            // asymmetric — running BLOCK followed the wire down to
-            // OFF but never to UNPROVEN, so a lost stamp or an
-            // UNSET re-read left the frozen ON standing forever.
-            // A live UNPROVEN wire, or a read gone stale for print
-            // (UNA2-03), degrades the running cell to UNKNOWN. The
-            // frozen verdict attests the seal act; it cannot outrank
-            // the wire's present tense. (Issue #4's SealBar encodes
-            // this same row as RUNNING_UNPROVEN — lamp dark, bolt
-            // thrown.)
-            liveWarrantState == WarrantState.UNPROVEN ||
-                warrantPrintState == WarrantState.UNPROVEN ->
-                blockCellFor(WarrantState.UNPROVEN)
-            else -> blockCellFor(frozenState)
-        }
-    } else idleBlockCell
+    // UNA2-04 + issue #6 C5(b) — SUPERSEDED on this face by the
+    // Bolt fold (issue #4 closer pass, KRALL K-1/K-2): the laws
+    // those derivations carried now live as precedence rows of
+    // boltStateFor — live OFF outranks the freeze instantly
+    // (OFF_WHILE_RUNNING); a live UNPROVEN wire or a print-stale
+    // read degrades the running face the same frame (STALE when
+    // the raw read is LIVE and stale, RUNNING_UNPROVEN otherwise).
+    // COORDINATION (#6 lane): the fold REPLACES the C5(b) host
+    // block rather than merging with it textually — the two must
+    // never coexist, and this block's deletion is that landing
+    // (merge-order note honoured: #4's fold lands as its own PR).
     // The latch as derivations may read it: retired by the
     // seal (session running) and by any arm reset newer than
     // its DOWN frame — derived, never written in composition.
@@ -668,6 +658,56 @@ fun TactileDeckScreen(
         pressLatchLive != null -> pressLatchLive.timeText to pressLatchLive.timeDensity
         else -> idleTimeCell
     }
+    // Issue #4 — THE FOLD (closer pass, ported by DURCH-A4).
+    // Exactly one derivation reaches the seal bar: this block folds
+    // the host's ONE warrant read (deckWarrant — raw state, print
+    // state, and staleness all derive from the same object, here,
+    // once) plus the seal freeze and the session facts into
+    // BoltInputs, and boltStateFor returns the face. The two stale
+    // laws are NOT merged: the fold reads the warrant's 45 s
+    // monotonic print law (printState / warrantStaleForPrint); the
+    // shield's 10 s wall beat law is not an input to this face
+    // (B-C1's shield-beat form remains owed VM plumbing, named in
+    // the closer disposition). B-C2's finish input was already at
+    // this host (finishState / heldFinish) and is now actually
+    // passed. APPS keeps its one remaining home in the imprint
+    // directly below (HOLLIS H-5: flagged for Ren's ruling — the
+    // fold does not read appsCell).
+    val boltFace = boltStateFor(
+        BoltInputs(
+            sessionRunning = isSessionRunning,
+            detentionHeld = heldFinish,
+            hasRead = deckWarrant != null,
+            liveRaw = liveWarrantState,
+            readStale = deckWarrant?.let {
+                it.state == WarrantState.LIVE &&
+                    com.example.service.WatchStore.warrantStaleForPrint(it, nowMono)
+            } ?: false,
+            printState = warrantPrintState,
+            frozenState = frozenState,
+            isStopwatch = isStopwatchMode,
+            remainingSeconds = if (isSessionRunning && activeSession != null &&
+                !activeSession.isStopwatchMode
+            ) {
+                activeSession.spanRemainingSeconds
+            } else {
+                null
+            },
+            spanSeconds = if (isSessionRunning && activeSession != null &&
+                !activeSession.isStopwatchMode
+            ) {
+                activeSession.spanTargetSeconds
+            } else {
+                null
+            }
+        )
+    )
+    val sealNumerals = endsAtNumeralsFor(timeCell.first)
+    // HOLLIS H-1: the idle planned end, restored as a labelled
+    // datum — the fold's PLANNED_END window prints it dimmed
+    // under a PLANNED END bezel label; it is never presented in
+    // the grammar of a live end.
+    val plannedNumerals = endsAtNumeralsFor(idleTimeCell.first)
     val imprintTenant = pressLatchLive?.tenant ?: imprintTenantText(
         isSealed = isSessionRunning,
         shut = if (isSessionRunning) frozenShut else appsSplit?.shut,
@@ -1347,31 +1387,29 @@ fun TactileDeckScreen(
     }
         // =====================================================================
         // SECTION 4: THE PINNED STACK (Slice D) — outside the scroll:
-        // the proof strip, the slide's 72dp register, the reserved
-        // sentence slot, and the imprint. The strip keeps its 53dp
-        // address in every state; the slide zone holds the grace /
-        // valve chips at the same address while sealed (Δy = 0
-        // across tenancies), so the zone under the wheel never
-        // changes height by a pixel across the seal.
+        // the seal bar (issue #4 — THE BOLT's 60dp housing, grown
+        // from the retired proof strip's 53dp address per FEILE's
+        // grid, the SALZ rent the fold's evidence channel pays),
+        // the slide's 72dp register, the reserved sentence slot,
+        // and the imprint. The slide zone holds the grace / valve
+        // chips at the same address while sealed (Δy = 0 across
+        // tenancies), so the zone under the wheel never changes
+        // height by a pixel across the seal.
         // =====================================================================
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
-            ProofStripBand(
-                blockWord = blockCell.first,
-                blockDensity = blockCell.second,
-                appsWord = appsCell.first,
-                appsDensity = appsCell.second,
-                timeText = timeCell.first,
-                timeDensity = timeCell.second,
-                // Issue #6 F8 (Deck half): the seam stamps leave
-                // the Deck — BIND/PROOF posology is the studio
-                // talking to itself in public; their receiving
-                // home is PARK (other cell, at merge).
-                stampLeft = null,
-                stampRight = null
+            // Issue #4 — THE BOLT replaces the proof strip here:
+            // state by form (bolt pose + jewel), the end in one
+            // glass window; BIND/PROOF telemetry renders nowhere
+            // on this face (issue #6 F8's seam-stamp exile is
+            // subsumed — the stamps have no slot on the bar).
+            SealBar(
+                face = boltFace,
+                endsAtNumerals = sealNumerals,
+                plannedEndsAtNumerals = plannedNumerals
             )
             Spacer(Modifier.height(6.dp))
             Box(
