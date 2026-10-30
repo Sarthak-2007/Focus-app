@@ -62,6 +62,40 @@ class DrawerDayTest {
         assertEquals(2026 to 10, DrawerDay.filingYearMonth(instant, zone))
     }
 
+    // Audit R1 #37 (HIGH): the months index used to be computed by
+    // a SQL twin subtracting 12,600 ELAPSED seconds — a different
+    // function from this wall-clock rule on DST days, including at
+    // real month boundaries. The twin is dead (the DAO now returns
+    // raw instants and this object files them); these are the
+    // audit's own verified divergence cases, pinned so the filing
+    // rule can never quietly fork again.
+    @Test
+    fun dstFallBack_monthBoundary_filesUnderOctober() {
+        val newYork = ZoneId.of("America/New_York")
+        // 2026-11-01 02:30 EST (the repeated hour, UTC-5): before
+        // the day's 03:30 start, so it belongs to Oct 31's day —
+        // and October's month. The dead SQL twin said November.
+        val instant = java.time.OffsetDateTime.of(2026, 11, 1, 2, 30, 0, 0, java.time.ZoneOffset.ofHours(-5))
+            .toInstant().toEpochMilli()
+        assertEquals(LocalDate.of(2026, 10, 31), DrawerDay.filingDate(instant, newYork))
+        assertEquals(2026 to 10, DrawerDay.filingYearMonth(instant, newYork))
+        // And October's month bounds contain it — index and page agree.
+        val (from, to) = DrawerDay.monthBoundsMillis(2026, 10, newYork)
+        assertTrue(instant >= from && instant < to)
+    }
+
+    @Test
+    fun dstSpringForward_filesUnderSameDay() {
+        val newYork = ZoneId.of("America/New_York")
+        // 2026-03-08 04:00 EDT (UTC-4, just after the 02:00 gap):
+        // past 03:30, so it files under Mar 8 itself. The dead SQL
+        // twin filed it a day later.
+        val instant = java.time.OffsetDateTime.of(2026, 3, 8, 4, 0, 0, 0, java.time.ZoneOffset.ofHours(-4))
+            .toInstant().toEpochMilli()
+        assertEquals(LocalDate.of(2026, 3, 8), DrawerDay.filingDate(instant, newYork))
+        assertEquals(2026 to 3, DrawerDay.filingYearMonth(instant, newYork))
+    }
+
     @Test
     fun monthBounds_containExactlyTheFilingMonth() {
         val (from, to) = DrawerDay.monthBoundsMillis(2026, 10, zone)

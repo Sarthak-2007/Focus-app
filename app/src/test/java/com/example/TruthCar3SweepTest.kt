@@ -200,6 +200,19 @@ class TruthCar3SweepRoboTest {
     private val context: Context
         get() = ApplicationProvider.getApplicationContext()
 
+    companion object {
+        /** Every backup domain in BOTH storage trees. The
+         *  credential-encrypted five alone never covered the app's
+         *  Room database, which is built in device-protected storage
+         *  (Audit R2 #93): the platform maps device_* domains to that
+         *  separate tree. "Exclude everything" must iterate all ten. */
+        val ALL_BACKUP_DOMAINS = listOf(
+            "root", "file", "database", "sharedpref", "external",
+            "device_root", "device_file", "device_database",
+            "device_sharedpref", "device_external"
+        )
+    }
+
     // ---------------------------------------------------------------
     // UNA-04 — "DATA: ON THIS PHONE ONLY" is now true. Before the
     // cure the manifest set allowBackup="true" and both rules files
@@ -220,7 +233,7 @@ class TruthCar3SweepRoboTest {
         val sections = parseExcludeSections(context.resources.getXml(R.xml.data_extraction_rules))
         for (section in listOf("cloud-backup", "device-transfer")) {
             val excluded = sections[section] ?: error("no <$section> section in data_extraction_rules")
-            for (domain in listOf("root", "file", "database", "sharedpref", "external")) {
+            for (domain in ALL_BACKUP_DOMAINS) {
                 assertEquals(
                     "$section must exclude domain $domain at path .",
                     ".", excluded[domain]
@@ -234,7 +247,7 @@ class TruthCar3SweepRoboTest {
         val sections = parseExcludeSections(context.resources.getXml(R.xml.backup_rules))
         val excluded = sections["full-backup-content"]
             ?: error("no <full-backup-content> section in backup_rules")
-        for (domain in listOf("root", "file", "database", "sharedpref", "external")) {
+        for (domain in ALL_BACKUP_DOMAINS) {
             assertEquals(".", excluded[domain])
         }
     }
