@@ -901,8 +901,9 @@ fun DrawerScreen(
             )
         }
 
-        // Search — one field. While sealed it is composed but
-        // input-disabled: reading is free, typing is an edit.
+        // Search — one field. While
+        // sealed it is composed but input-disabled: reading is
+        // free, typing is an edit.
         item {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -1369,6 +1370,7 @@ fun DrawerScreen(
         }
     }
 }
+
 
 @Composable
 private fun DrawerNavRow(

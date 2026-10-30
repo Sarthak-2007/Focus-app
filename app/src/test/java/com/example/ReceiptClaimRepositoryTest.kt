@@ -2,6 +2,8 @@ package com.example
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.example.data.AppBlockTier
+import com.example.data.BlockedAppEntity
 import com.example.data.FinishKind
 import com.example.data.FocusSessionEntity
 import com.example.data.MonolithDatabase
@@ -65,7 +67,11 @@ class ReceiptClaimRepositoryTest {
         isStopwatchMode = stopwatch,
         outcome = outcome,
         heldAppsAtSeal = 3,
-        heldSitesAtSeal = 2
+        heldSitesAtSeal = 2,
+        // Issue #10 (W-41): the tier split of the 3 held apps —
+        // 2 SHUT + 1 PEEK — must thread assembly → publish intact.
+        heldShutAtSeal = 2,
+        heldPeekAtSeal = 1
     )
 
     /**
@@ -107,6 +113,9 @@ class ReceiptClaimRepositoryTest {
         )
         assertEquals(3, receipt.heldAppsAtSeal)
         assertEquals(2, receipt.heldSitesAtSeal)
+        // Issue #10 (W-41): the split survived the publish.
+        assertEquals(2, receipt.heldShutAtSeal)
+        assertEquals(1, receipt.heldPeekAtSeal)
         assertFalse(receipt.faulted)
 
         // A second publish of the same finish — even freshly
@@ -142,6 +151,38 @@ class ReceiptClaimRepositoryTest {
      * RC-01: the row's persisted end stamp wins over any endedAt
      * derived at assembly time.
      */
+    /**
+     * Issue #10 (W-41): the split derivation itself — SHUT and
+     * PEEK counted separately, OPEN excluded, a corrupt tier
+     * string failing CLOSED to SHUT (the #32 resolution law),
+     * and the split always summing to the total on the same list.
+     */
+    @Test
+    fun heldSplit_countsTiersSeparately_andSumsToTotal() {
+        fun app(pkg: String, tier: String, blocked: Boolean = true) = BlockedAppEntity(
+            packageName = pkg,
+            appName = pkg,
+            category = "Social",
+            isBlocked = blocked,
+            blockTier = tier
+        )
+        val repo = repository()
+        val apps = listOf(
+            app("a", AppBlockTier.LOCKED.name),
+            app("b", AppBlockTier.LOCKED.name),
+            app("c", AppBlockTier.PEEK_2M.name),
+            app("d", AppBlockTier.PEEK_2M.name),
+            app("e", AppBlockTier.PEEK_2M.name),
+            app("f", AppBlockTier.OPEN.name, blocked = false),
+            app("g", "GARBAGE", blocked = true)
+        )
+        val (shut, peek) = repo.countHeldAppsSplit(apps)
+        assertEquals(3, shut)
+        assertEquals(3, peek)
+        assertEquals(repo.countHeldApps(apps), shut + peek)
+        assertEquals(6, repo.countHeldApps(apps))
+    }
+
     @Test
     fun truthCar2_rowStampAndAssembly() = runBlocking {
         val repo = repository()

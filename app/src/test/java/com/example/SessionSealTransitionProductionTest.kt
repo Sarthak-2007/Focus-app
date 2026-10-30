@@ -68,7 +68,7 @@ class SessionSealTransitionProductionTest {
         engine = TactileSoundEngine(context)
         transition = SessionSealTransitionImpl(context, engine, repository, clock = { 0L })
         // No seal marker may leak into a case.
-        context.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+        com.example.data.DeviceProtectedPrefs.get(context, MonolithRepository.SEAL_PREFS_NAME)
             .edit().clear().commit()
     }
 

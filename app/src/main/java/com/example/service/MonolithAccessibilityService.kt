@@ -11,11 +11,11 @@ import android.telecom.TelecomManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
-import com.example.MainActivity
+import com.example.MLog
 import com.example.data.AppBlockTier
 import com.example.data.BlockedBrowserDomains
 import com.example.data.GuardSettingsEntity
-import com.example.data.MonolithDatabase
+import com.example.data.MonolithRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -127,6 +127,50 @@ internal fun matchBlockedDomain(urlText: String, domains: List<String>): String?
         if (candidates.any { ruleMatches(rule, it) }) return rule.host
     }
     return null
+}
+
+/** System surfaces that are never a distraction door, however
+ *  they arrive: the OS itself, the system UI (shade, recents),
+ *  and the permission controller (a grant dialog is not an app
+ *  the user opened for fun). */
+internal val UNLISTED_HARD_EXEMPT: Set<String> = setOf(
+    "android",
+    "com.android.systemui",
+    "com.google.android.permissioncontroller",
+    "com.android.permissioncontroller"
+)
+
+/**
+ * Issue #129 (unlisted-distraction, CRITICAL): the fail-closed
+ * door for a package with NO catalogue row. Before this law, a
+ * missing row meant no law at all — both enforcement doors only
+ * ever enforced rows that exist, so an app installed after the
+ * last catalogue sync was invisible for the whole session.
+ *
+ * A launchable app with no row is SHUT by default: unlisted =
+ * shut unless he listed it otherwise, and listing happens by the
+ * sync birthing its row (born LOCKED, AppCatalogReconcile) or by
+ * his hand. What is NOT shut: Monolith itself, the hard system
+ * surfaces above, the home launcher(s), the default dialer, the
+ * current input method, and any package with no launch intent —
+ * a non-launchable package is a service surface, not an app the
+ * user opened, and trapping it would punish plumbing, not
+ * distraction. Pure, so the door's matrix is unit-tested.
+ */
+internal fun unlistedAppMustBeShut(
+    pkgName: String,
+    ownPackage: String,
+    hasLaunchIntent: Boolean,
+    homePackages: Set<String>,
+    dialerPackage: String?,
+    imePackage: String?
+): Boolean {
+    if (!hasLaunchIntent) return false
+    if (pkgName == ownPackage) return false
+    if (pkgName in UNLISTED_HARD_EXEMPT) return false
+    if (pkgName in homePackages) return false
+    if (pkgName == dialerPackage || pkgName == imePackage) return false
+    return true
 }
 
 /**
@@ -488,6 +532,51 @@ class MonolithAccessibilityService : AccessibilityService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    // Issue #129: packages already reported as unlisted in this
+    // process — the catalogue re-sync fires once per sighted
+    // package, not once per window event.
+    private val unlistedSyncRequested = mutableSetOf<String>()
+
+    @Volatile
+    private var homePackagesCache: Set<String>? = null
+
+    /** The phone's home launcher packages (resolved once, then
+     *  cached): the launcher is the floor the block stands on,
+     *  never a door to shut. */
+    private fun homePackages(): Set<String> {
+        homePackagesCache?.let { return it }
+        val resolved = try {
+            val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+            packageManager.queryIntentActivities(homeIntent, 0)
+                .mapNotNull { it.activityInfo?.packageName }
+                .toSet()
+        } catch (e: Exception) {
+            noteDetectionFailure("homePackages", e)
+            emptySet()
+        }
+        homePackagesCache = resolved
+        return resolved
+    }
+
+    /** Issue #129: an unlisted sighting asks the catalogue to
+     *  re-sync (once per package per process), so the app is born
+     *  into a row — LOCKED — and every later event, plus the
+     *  shield's UsageStats door, enforces the row itself. The
+     *  fail-closed intercept below does not wait for the sync:
+     *  the door is shut from the first sighting. */
+    private fun requestCatalogueSyncForUnlisted(pkgName: String, dao: com.example.data.MonolithDao) {
+        synchronized(unlistedSyncRequested) {
+            if (!unlistedSyncRequested.add(pkgName)) return
+        }
+        scope.launch {
+            try {
+                MonolithRepository(applicationContext, dao).ensureSeededAndSyncPackages()
+            } catch (e: Exception) {
+                noteDetectionFailure("unlistedCatalogueSync", e)
+            }
+        }
+    }
+
     companion object {
         // Live Wire registry (Ines): the service proves its own
         // liveness by EXISTING. In-memory only - proof is never
@@ -636,9 +725,11 @@ class MonolithAccessibilityService : AccessibilityService() {
                     processEvent(snapshot)
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     // One bad event must not kill the pipeline: the
                     // next snapshot still deserves its verdict.
+                    // Issue #75 F1 wiring: the drop now speaks.
+                    MLog.w("a11y event worker dropped an event", e)
                 }
             }
         }
@@ -651,7 +742,7 @@ class MonolithAccessibilityService : AccessibilityService() {
      *  rebinds; the scope is per-instance, so a rebind creates a
      *  new service instance and a new scope with it). */
     private fun startSessionArmedCollector() {
-        val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
+        val dao = com.example.AppContainer.dao(applicationContext) /* ISSUE-67: single construction point */
         scope.launch {
             dao.getActiveSessionFlow().collect { session ->
                 if (session != null && session.isActive) {
@@ -780,9 +871,11 @@ class MonolithAccessibilityService : AccessibilityService() {
                     processEvent(snapshot)
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     // Same law as the worker: one bad event must
-                    // not kill enforcement.
+                    // not kill enforcement. Issue #75 F1 wiring:
+                    // the drop now speaks.
+                    MLog.w("a11y tamper event dropped", e)
                 }
             }
         } else {
@@ -825,9 +918,11 @@ class MonolithAccessibilityService : AccessibilityService() {
                         processEvent(winSnapshot)
                     } catch (e: CancellationException) {
                         throw e
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
                         // Same law as the worker: one bad event
-                        // must not kill enforcement.
+                        // must not kill enforcement. Issue #75 F1
+                        // wiring: the drop now speaks.
+                        MLog.w("a11y collector tamper event dropped", e)
                     }
                 }
             } else {
@@ -849,9 +944,12 @@ class MonolithAccessibilityService : AccessibilityService() {
         return try {
             windows?.mapNotNull { window ->
                 if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) null
-                else try { window.root } catch (_: Exception) { null }
+                else try { window.root } catch (e: Exception) { MLog.d("a11y window.root probe failed: ${e.message}"); null }
             } ?: emptyList()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // Issue #75 F1 wiring: a failed window sweep read as
+            // "no windows" — the absence now speaks.
+            MLog.w("a11y interactiveWindowRoots failed; reading as no windows", e)
             emptyList()
         }
     }
@@ -976,7 +1074,7 @@ class MonolithAccessibilityService : AccessibilityService() {
      *  (the pre-cure fan-out read it twice per event per coroutine). */
     private suspend fun processEvent(snapshot: EventSnapshot) {
         val pkgName = snapshot.packageName
-        val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
+        val dao = com.example.AppContainer.dao(applicationContext) /* ISSUE-67: single construction point */
         val activeSession = dao.getActiveSessionSnapshot() ?: return
         if (!activeSession.isActive) return
         // Session binding: a snapshot captured under a dead session
@@ -1181,7 +1279,58 @@ class MonolithAccessibilityService : AccessibilityService() {
         }
 
         // 5. 3-Tier Per-App & Safe Break Blocking
-        val appRule = appsSnapshot.find { it.packageName == pkgName } ?: return
+        val appRule = appsSnapshot.find { it.packageName == pkgName }
+        if (appRule == null) {
+            // Issue #129 (unlisted-distraction, CRITICAL): no row
+            // used to mean no law — an app installed after the
+            // last sync was invisible to this door for the whole
+            // session. Now the door fails closed: a launchable
+            // unlisted app is shut on sight (system surfaces, the
+            // launcher, the dialer and the keyboard are exempt —
+            // see unlistedAppMustBeShut), and the sighting asks
+            // the catalogue to birth its row so the shield door
+            // and the seal's held count can see it too.
+            requestCatalogueSyncForUnlisted(pkgName, dao)
+            val pm = applicationContext.packageManager
+            val hasLaunchIntent = try {
+                pm.getLaunchIntentForPackage(pkgName) != null
+            } catch (e: Exception) {
+                noteDetectionFailure("unlistedLaunchIntent", e)
+                false
+            }
+            val dialerPkg = try {
+                (getSystemService(Context.TELECOM_SERVICE) as? TelecomManager)?.defaultDialerPackage
+            } catch (e: Exception) {
+                noteDetectionFailure("unlistedDialer", e)
+                null
+            }
+            val imePkg = try {
+                android.provider.Settings.Secure.getString(
+                    contentResolver, android.provider.Settings.Secure.DEFAULT_INPUT_METHOD
+                )?.substringBefore('/')
+            } catch (e: Exception) {
+                noteDetectionFailure("unlistedIme", e)
+                null
+            }
+            if (unlistedAppMustBeShut(
+                    pkgName, applicationContext.packageName, hasLaunchIntent,
+                    homePackages(), dialerPkg, imePkg
+                )
+            ) {
+                val label = try {
+                    pm.getApplicationLabel(pm.getApplicationInfo(pkgName, 0)).toString()
+                } catch (e: Exception) {
+                    pkgName
+                }
+                launchInterceptScreen(
+                    packageName = pkgName,
+                    appName = label,
+                    reasonBadge = AppBlockTier.LOCKED.badge,
+                    path = InterceptPath.APP_TIER
+                )
+            }
+            return
+        }
         val tier = appRule.resolvedTier
         // Issue #140: the daily limit binds every tier. An OPEN
         // app whose today's usage reached its limit is
@@ -1223,7 +1372,8 @@ class MonolithAccessibilityService : AccessibilityService() {
             val defaultDialer = try {
                 (getSystemService(Context.TELECOM_SERVICE) as? TelecomManager)
                     ?.defaultDialerPackage
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                MLog.d("a11y defaultDialerPackage probe failed: ${e.message}")
                 null
             }
             shouldBypassForCall(am.mode, pkgName, callOwnerPackage, defaultDialer)
@@ -1369,7 +1519,10 @@ class MonolithAccessibilityService : AccessibilityService() {
                     processEvent(snapshot)
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    // Issue #75 F1 wiring: this drop was not even
+                    // commented — it speaks now.
+                    MLog.w("a11y event dropped (uncommented catch)", e)
                 }
             }
         } else {
@@ -1396,7 +1549,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         // 'Shorts' channel tab or search chip sits far above the
         // nav bar and is mere browsing; it must not fire.
         val rootRect = Rect()
-        try { rootNode.getBoundsInScreen(rootRect) } catch (_: Exception) { /* no bounds: B cannot prove its case */ }
+        try { rootNode.getBoundsInScreen(rootRect) } catch (e: Exception) { MLog.d("a11y getBoundsInScreen failed: ${e.message}") /* no bounds: B cannot prove its case */ }
         return isSelectedBottomTabShortsOrReels(rootNode, rootRect.height())
     }
 
@@ -1406,7 +1559,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         val text = node.text?.toString()?.trim()?.lowercase(Locale.ROOT) ?: ""
         if (node.isSelected && isFeedTabLabel(text, desc)) {
             val rect = Rect()
-            val hasBounds = try { node.getBoundsInScreen(rect); true } catch (_: Exception) { false }
+            val hasBounds = try { node.getBoundsInScreen(rect); true } catch (e: Exception) { MLog.d("a11y getBoundsInScreen probe failed: ${e.message}"); false }
             if (hasBounds && isBottomNavBounds(rect.bottom, rootHeightPx)) return true
         }
         // Structural fallback (Wave-3 #42): a SELECTED node whose
@@ -1423,7 +1576,7 @@ class MonolithAccessibilityService : AccessibilityService() {
             )
         ) {
             val rect = Rect()
-            val hasBounds = try { node.getBoundsInScreen(rect); true } catch (_: Exception) { false }
+            val hasBounds = try { node.getBoundsInScreen(rect); true } catch (e: Exception) { MLog.d("a11y getBoundsInScreen probe failed: ${e.message}"); false }
             if (hasBounds && isBottomNavBounds(rect.bottom, rootHeightPx)) return true
         }
         for (i in 0 until node.childCount) {
@@ -1537,30 +1690,19 @@ class MonolithAccessibilityService : AccessibilityService() {
         reasonBadge: String,
         path: InterceptPath
     ) {
-        val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            putExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE, packageName)
-            putExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME, appName)
-            putExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE, reasonBadge)
-            putExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH, path.name)
-            // Issue #78: unique firing id — MainActivity persists
-            // its consumption before showing the Airlock, so a
-            // process-death redelivery of this intent is dropped.
-            putExtra(
-                MonolithShieldService.EXTRA_INTERCEPT_ID,
-                java.util.UUID.randomUUID().toString()
-            )
-            // Issue #68 F5, Tier 2: single-use provenance nonce —
-            // MainActivity honours no intercept extra without one.
-            putExtra(
-                MonolithShieldService.EXTRA_INTERCEPT_NONCE,
-                InterceptNonce.mint(applicationContext)
-            )
-        }
-        // Issue #94 (F2): never a bare background launch — a dropped
-        // launch stamps itself and falls back to a tappable
-        // notification (InterceptLaunch).
-        InterceptLaunch.launch(applicationContext, interceptIntent, appName)
+        // ISSUE-67: the intercept intent is built by the seam —
+        // this service no longer imports the UI root
+        // (MainActivity); the seam mints the #68 nonce and the
+        // #78 firing id into the extras, exactly as the direct
+        // intent did.
+        // Issue #94 (F2): never a bare background launch — a
+        // dropped launch stamps itself and falls back to a
+        // tappable notification (InterceptLaunch).
+        InterceptLaunch.launch(
+            applicationContext,
+            InterceptIntents.interceptIntent(applicationContext, packageName, appName, reasonBadge, path),
+            appName
+        )
     }
 
     override fun onInterrupt() {}

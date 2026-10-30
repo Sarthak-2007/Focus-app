@@ -387,3 +387,22 @@ Verdict for this tip: reported in the #130 handoff to GESTALT
 (test compilation must pass; BrowserLoopholeTest +
 TruthCar3InterceptTest + ShortsReelsLivedTest green; failures
 within the shared floor).
+
+---
+
+## DURCH-D landing recomposition (2026-10-30, closure lead under DURCH-D)
+
+Recomposed PR #445 onto main `2531c847` (merge PR #489, heiler-drift) — the
+#283/#287 `extendActiveSession` clash that blocked the earlier landing is
+cured on main (distinct verbs: `extendActiveSessionBySeconds` /
+`extendActiveSessionReturningSession`). Merge conflicts: exactly 2, both
+resolved as unions —
+- `AppCatalogReconcile.kt`: BROWSERS token set = main's tokens ∪ #130's
+  (`kiwibrowser`, `mark via`).
+- `MonolithRepository.kt`: main's Issue-67 `db()` + W-41 held split kept;
+  `heldSites` computed via #130's `heldSitesCount(...)` (0 when the browser
+  blocker is off).
+All other #130 files auto-merged; verified post-merge: site doors carry no
+`!leaseLive` blanket (MonolithAccessibilityService), `InterceptPath.SITE`
+honours the peek lease, `SitePeekStore` present, `youtube.com` seeded
+(MonolithModels), `BrowserLoopholeTest` present.
