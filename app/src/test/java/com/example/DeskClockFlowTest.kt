@@ -6,15 +6,26 @@ import com.example.data.finishKindOf
 import com.example.data.finishPulses
 import com.example.ui.DeskClockSettleMachine
 import com.example.ui.DeskClockVerdict
+import com.example.ui.NightReturnPhase
+import com.example.ui.NightReturnState
 import com.example.ui.chargerDisconnectStamp
 import com.example.ui.deskClockSurrenderDeadlineMono
 import com.example.ui.deskClockTremorVerdict
+import com.example.ui.nightReturnEntryIsSnap
+import com.example.ui.nightReturnExpireIfStale
+import com.example.ui.nightReturnOnBloom
+import com.example.ui.nightReturnOnHandDismissal
+import com.example.ui.nightReturnOnStandDown
+import com.example.ui.nightReturnOnUnveil
+import com.example.ui.nightReturnScrimAlpha
 import com.example.ui.components.deskClockBannerText
 import com.example.ui.components.deskClockBlockLine
 import com.example.ui.components.deskClockBreakLine
 import com.example.ui.components.deskClockEndsLine
+import com.example.ui.components.deskClockHeroLabel
 import com.example.ui.components.deskClockHeroText
 import com.example.ui.components.deskClockNowLine
+import com.example.ui.components.deskClockRemainingSeconds
 import com.example.ui.components.deskClockPrintAlphas
 import com.example.ui.components.deskClockSubLine
 import com.example.ui.components.tearFraction
@@ -472,6 +483,60 @@ class DeskClockFlowTest {
     }
 
     @Test
+    fun heroLabel_isInseparableInEveryState() {
+        // Politur P-1: LEFT (timed) / ELAPSED (stopwatch) /
+        // THE TIME NOW (idle, incl. an inactive row).
+        assertEquals("THE TIME NOW", deskClockHeroLabel(null))
+        assertEquals("THE TIME NOW", deskClockHeroLabel(session(isActive = false)))
+        assertEquals("LEFT", deskClockHeroLabel(session(elapsedSeconds = 0)))
+        assertEquals(
+            "ELAPSED",
+            deskClockHeroLabel(session(isStopwatchMode = true, elapsedSeconds = 5))
+        )
+    }
+
+    @Test
+    fun heroBoundary_oneFrameChangeAtTheHour() {
+        // §7 debt 1, hero share: 3601 / 3600 / 3599 s remaining
+        // cross H:MM -> MM:SS with no intermediate glyph and no
+        // total-minutes figure at any point.
+        val now = wallAt(21, 0)
+        assertEquals(
+            "1:00",
+            deskClockHeroText(session(targetDurationSeconds = 3601, elapsedSeconds = 0), now)
+        )
+        assertEquals(
+            "1:00",
+            deskClockHeroText(session(targetDurationSeconds = 3600, elapsedSeconds = 0), now)
+        )
+        assertEquals(
+            "59:59",
+            deskClockHeroText(session(targetDurationSeconds = 3600, elapsedSeconds = 1), now)
+        )
+    }
+
+    @Test
+    fun subLineLastMinute_keysToTheWindowForRoutineRows() {
+        // Politur P-2: the routine row of DAE-1's test — span
+        // arithmetic says 30 s remain, the window says 75 s.
+        // The hero reads 01:15, so NOW must NOT drop yet; and
+        // inside the window's true last minute it MUST drop,
+        // even though the span already reads 0.
+        val now = wallAt(3, 28, 45)
+        val s = session(
+            targetDurationSeconds = 3600, elapsedSeconds = 3570,
+            routineId = 3, windowEndMillis = now + 75_000L
+        )
+        assertEquals(75, deskClockRemainingSeconds(s, now))
+        assertEquals("NOW 03:28 · ENDS 03:30", deskClockSubLine(s, now))
+        // 30 s later the window has 45 s left — the promotion
+        // fires on the window's minute, not the span's.
+        val inLastMinute = now + 30_000L
+        assertEquals(45, deskClockRemainingSeconds(s, inLastMinute))
+        assertEquals("ENDS 03:30", deskClockSubLine(s, inLastMinute))
+    }
+
+    @Test
     fun nowLineWearsItsLabel() {
         assertEquals("NOW 21:47", deskClockNowLine(wallAt(21, 47)))
     }
@@ -616,6 +681,10 @@ class DeskClockFlowTest {
         val session: FocusSessionEntity?,
         val now: Long,
         val hero: String,
+        // Wave-3 (Politur P-4): the label column — P-1's defect
+        // lived in the table's blind spot (no label field), so
+        // the table asserts the label in every state now.
+        val label: String,
         val subLine: String?,
         val blockLine: String?,
         val banner: String?
@@ -624,16 +693,18 @@ class DeskClockFlowTest {
     @Test
     fun faceTable_stateByFigureByExpectedString() {
         val t2147 = wallAt(21, 47)
+        val routineLastMinuteNow = wallAt(3, 29, 15)
         val cases = listOf(
             FaceCase(
                 state = "IDLE",
                 session = null, now = wallAt(3, 30),
-                hero = "03:30", subLine = null, blockLine = null, banner = null
+                hero = "03:30", label = "THE TIME NOW",
+                subLine = null, blockLine = null, banner = null
             ),
             FaceCase(
                 state = "RUNNING TIMED",
                 session = session(elapsedSeconds = 0), now = t2147,
-                hero = "1:00", subLine = "NOW 21:47 · ENDS 22:47",
+                hero = "1:00", label = "LEFT", subLine = "NOW 21:47 · ENDS 22:47",
                 blockLine = null, banner = "STUDY"
             ),
             FaceCase(
@@ -643,7 +714,7 @@ class DeskClockFlowTest {
                     totalStudyBlocks = 3, currentBlockIndex = 1
                 ),
                 now = wallAt(21, 0),
-                hero = "1:25", subLine = "NOW 21:00 · ENDS 22:25",
+                hero = "1:25", label = "LEFT", subLine = "NOW 21:00 · ENDS 22:25",
                 blockLine = "BLOCK 1 OF 3 · UNTIL 21:15", banner = "STUDY"
             ),
             FaceCase(
@@ -654,25 +725,43 @@ class DeskClockFlowTest {
                     isInSafeBreak = true, safeBreakSecondsRemaining = 300
                 ),
                 now = wallAt(21, 25),
-                hero = "1:05", subLine = "NOW 21:25 · ENDS 22:30",
+                hero = "1:05", label = "LEFT", subLine = "NOW 21:25 · ENDS 22:30",
                 blockLine = null, banner = "BREAK — PEEK APPS OPEN · UNTIL 21:30"
             ),
             FaceCase(
                 state = "LAST MINUTE",
                 session = session(elapsedSeconds = 3570), now = wallAt(21, 47, 30),
-                hero = "00:30", subLine = "ENDS 21:48",
+                hero = "00:30", label = "LEFT", subLine = "ENDS 21:48",
                 blockLine = null, banner = "STUDY"
+            ),
+            FaceCase(
+                // Wave-3 (Politur P-4): the routine LAST MINUTE
+                // row the table could not see — span arithmetic
+                // says 30 s remain, the window says 45 s; hero,
+                // promotion and dawn all key to the window.
+                state = "ROUTINE LAST MINUTE (window-keyed)",
+                session = session(
+                    targetDurationSeconds = 3600, elapsedSeconds = 3570,
+                    routineId = 3, windowEndMillis = routineLastMinuteNow + 45_000L,
+                    profileName = "Routine: SLEEP"
+                ),
+                now = routineLastMinuteNow,
+                hero = "00:45", label = "LEFT", subLine = "ENDS 03:30",
+                blockLine = null, banner = "SLEEP"
             ),
             FaceCase(
                 state = "STOPWATCH",
                 session = session(isStopwatchMode = true, elapsedSeconds = 7549),
                 now = t2147,
-                hero = "2:05", subLine = "NOW 21:47",
+                hero = "2:05", label = "ELAPSED", subLine = "NOW 21:47",
                 blockLine = null, banner = "STUDY"
             )
         )
         for (case in cases) {
             assertEquals("${case.state} hero", case.hero, deskClockHeroText(case.session, case.now))
+            assertEquals(
+                "${case.state} label", case.label, deskClockHeroLabel(case.session)
+            )
             assertEquals(
                 "${case.state} sub-line", case.subLine,
                 case.session?.takeIf { it.isActive }?.let { deskClockSubLine(it, case.now) }
@@ -689,5 +778,172 @@ class DeskClockFlowTest {
                 }
             )
         }
+    }
+
+    // ---------------------------------------------------------------
+    // V1 residual (wave-3, Samt F-2 / Funke P-3 reduced latch)
+    // ---------------------------------------------------------------
+
+    @Test
+    fun heldLatchesAcrossUnknownBeats_untilPositiveRest() {
+        // Wave-3: HELD clears only on a positive REST verdict.
+        // UNKNOWN beats while held — the sampler's off-window
+        // re-registration reads UNKNOWN until its poles charge —
+        // must neither release the latch nor restart the 20 s
+        // backstop: ignorance is not evidence the hand left.
+        val machine = DeskClockSettleMachine()
+        val sealedStartWall = birthWall + 5_000L
+        val m0 = 100_000L
+        assertFalse(
+            tick(
+                machine, 7, sealedStartWall, nowMono = m0, lastInteractionMono = m0,
+                sensorVerdict = DeskClockVerdict.HELD
+            )
+        )
+        // Past the backstop, still latched: no raise.
+        assertFalse(
+            tick(
+                machine, 7, sealedStartWall, nowMono = m0 + 30_000L,
+                lastInteractionMono = m0, sensorVerdict = DeskClockVerdict.UNKNOWN
+            )
+        )
+        assertFalse(
+            tick(
+                machine, 7, sealedStartWall, nowMono = m0 + 3_600_000L,
+                lastInteractionMono = m0, sensorVerdict = DeskClockVerdict.UNKNOWN
+            )
+        )
+        // A positive REST releases the latch and re-arms; the
+        // raise still owes the sustained-REST dwell (2 beats).
+        assertFalse(
+            tick(
+                machine, 7, sealedStartWall, nowMono = m0 + 3_601_000L,
+                lastInteractionMono = m0, sensorVerdict = DeskClockVerdict.REST
+            )
+        )
+        assertTrue(
+            tick(
+                machine, 7, sealedStartWall, nowMono = m0 + 3_602_000L,
+                lastInteractionMono = m0, sensorVerdict = DeskClockVerdict.REST
+            )
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // E-1 as one scrim (wave-3): the night-return phase machine
+    // (Ruhe §7(b): the grammar had ZERO test coverage pre-wave-3)
+    // ---------------------------------------------------------------
+
+    @Test
+    fun nightReturn_scrimWeights() {
+        assertEquals(0.80f, nightReturnScrimAlpha(NightReturnPhase.VEILED), 0.001f)
+        assertEquals(0.45f, nightReturnScrimAlpha(NightReturnPhase.LANDING), 0.001f)
+        assertEquals(0f, nightReturnScrimAlpha(NightReturnPhase.OPEN), 0.001f)
+    }
+
+    @Test
+    fun nightReturn_veilGate_witnessedOrFreshCold_neverStale() {
+        // Hauch H-3: witnessed veils; a cold discovery veils
+        // only within 30 min of the window's end; at 2 h cold
+        // the Deck wears no veil (the receipt still files).
+        val end = wallAt(3, 30)
+        val open = NightReturnState()
+        assertEquals(
+            NightReturnPhase.VEILED,
+            nightReturnOnStandDown(open, witnessed = true, end, end).phase
+        )
+        assertEquals(
+            NightReturnPhase.VEILED,
+            nightReturnOnStandDown(open, witnessed = false, end, end + 20L * 60_000L).phase
+        )
+        assertEquals(
+            NightReturnPhase.VEILED,
+            nightReturnOnStandDown(open, witnessed = false, end, end + 30L * 60_000L).phase
+        )
+        assertEquals(
+            NightReturnPhase.OPEN,
+            nightReturnOnStandDown(open, witnessed = false, end, end + 2L * 3_600_000L).phase
+        )
+    }
+
+    @Test
+    fun nightReturn_unveilThenBloom_andContactIsNotAVerb() {
+        // The two-touch grammar: touch 1 unveils (VEILED →
+        // LANDING), the first true verb blooms (LANDING →
+        // OPEN, episode closed). Bloom calls off-phase are
+        // no-ops — a verb under the veil cannot skip the
+        // Landing, and there is no contact path in this machine
+        // at all (noteUserInteraction holds no transition).
+        val veiled = nightReturnOnStandDown(
+            NightReturnState(), witnessed = true, wallAt(3, 30), wallAt(3, 30)
+        )
+        assertEquals(NightReturnPhase.VEILED, nightReturnOnBloom(veiled).phase)
+        val landed = nightReturnOnUnveil(veiled)
+        assertEquals(NightReturnPhase.LANDING, landed.phase)
+        assertTrue(landed.episodeOpen)
+        val bloomed = nightReturnOnBloom(landed)
+        assertEquals(NightReturnPhase.OPEN, bloomed.phase)
+        assertFalse(bloomed.episodeOpen)
+        // The unveil is idempotent off-phase.
+        assertEquals(NightReturnPhase.OPEN, nightReturnOnUnveil(bloomed).phase)
+    }
+
+    @Test
+    fun nightReturn_handDismissalLandsOnlyAtNight() {
+        // Ruhe R-1 / Daemmer DAE-5: a night hand dismissal of
+        // the standing room enters at LANDING; a day dismissal
+        // (A-N3) changes nothing.
+        val open = NightReturnState()
+        val landed = nightReturnOnHandDismissal(open, isNight = true, nowWallMillis = wallAt(2, 0))
+        assertEquals(NightReturnPhase.LANDING, landed.phase)
+        assertTrue(landed.episodeOpen)
+        assertEquals(
+            NightReturnPhase.OPEN,
+            nightReturnOnHandDismissal(open, isNight = false, nowWallMillis = wallAt(14, 0)).phase
+        )
+    }
+
+    @Test
+    fun nightReturn_expiry_staleAndDaylightOnly() {
+        // Ruhe R-5: armed > 30 min with no night condition
+        // standing clears; inside the grace, or while a night
+        // condition stands, the return survives.
+        val armedAt = wallAt(3, 35)
+        val landed = NightReturnState(NightReturnPhase.LANDING, armedAt, episodeOpen = true)
+        assertEquals(
+            NightReturnPhase.OPEN,
+            nightReturnExpireIfStale(landed, isNight = false, nowWallMillis = armedAt + 31L * 60_000L).phase
+        )
+        assertEquals(
+            NightReturnPhase.LANDING,
+            nightReturnExpireIfStale(landed, isNight = false, nowWallMillis = armedAt + 10L * 60_000L).phase
+        )
+        assertEquals(
+            NightReturnPhase.LANDING,
+            nightReturnExpireIfStale(landed, isNight = true, nowWallMillis = armedAt + 3L * 3_600_000L).phase
+        )
+    }
+
+    @Test
+    fun nightReturn_entrySnaps_onlyWhereRuled() {
+        // Ruhe §1.3: the veil's entry snaps (covered), a hand
+        // dismissal's Landing entry snaps (under the Throw),
+        // an expiry clear snaps; the unveil and the bloom are
+        // the two animated legs.
+        assertTrue(
+            nightReturnEntryIsSnap(NightReturnPhase.OPEN, NightReturnPhase.VEILED, expired = false)
+        )
+        assertTrue(
+            nightReturnEntryIsSnap(NightReturnPhase.OPEN, NightReturnPhase.LANDING, expired = false)
+        )
+        assertFalse(
+            nightReturnEntryIsSnap(NightReturnPhase.VEILED, NightReturnPhase.LANDING, expired = false)
+        )
+        assertFalse(
+            nightReturnEntryIsSnap(NightReturnPhase.LANDING, NightReturnPhase.OPEN, expired = false)
+        )
+        assertTrue(
+            nightReturnEntryIsSnap(NightReturnPhase.LANDING, NightReturnPhase.OPEN, expired = true)
+        )
     }
 }

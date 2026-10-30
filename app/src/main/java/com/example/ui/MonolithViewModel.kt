@@ -497,14 +497,159 @@ class MonolithViewModel(
     @Volatile
     private var deskClockYieldedSessionId: Int = DeskClockSettleMachine.NO_SESSION
 
-    // E-1 (ratified): the night return. A machine return after
-    // a routine finish wears the VEIL (black scrim 0.80 over the
-    // Deck until first touch); the first touch unveils onto the
-    // LANDING (the Deck at the room's light law, 0.55 over true
-    // black); the first true verb blooms it to full light over
-    // 520 Curve C. lockNow is NOT in this merge (Ren's lean).
-    private val _nightVeil = MutableStateFlow(false)
-    val nightVeil: StateFlow<Boolean> = _nightVeil.asStateFlow()
+    // E-1 (ratified; wave-3 cure — Daemmer DAE-5/6/7, Hauch
+    // H-1…H-7, Ruhe R-1…R-5, three seats convergent): the night
+    // return is ONE scrim over the Deck in three phases —
+    // VEILED 0.80 / LANDING 0.45 / OPEN 0 — one 520 Curve C
+    // animation in the host, driven by this phase state (the
+    // pure machine lives in DeskClockSettle.kt:
+    // NightReturnState + nightReturnOn*). The wave-1 form (a
+    // boolean veil box + a separate Landing animator) flashed
+    // full Deck light at the unveil, existed only behind the
+    // veil, and bloomed on ANY interaction; all three defects
+    // die with the two-object form. lockNow is NOT in this
+    // merge (Ren's lean, E-1 as amended).
+    private var nightReturn: NightReturnState = NightReturnState()
+    private val _nightReturnPhase = MutableStateFlow(NightReturnPhase.OPEN)
+    val nightReturnPhase: StateFlow<NightReturnPhase> = _nightReturnPhase.asStateFlow()
+    /** Whether the CURRENT phase was entered by snap (covered
+     *  veil entry, hand-dismissal Landing entry, expiry clear)
+     *  rather than by the 520 Curve C animation — written
+     *  BEFORE the phase at every transition (see
+     *  [applyNightReturn]); the host reads it in the phase's
+     *  effect. */
+    private val _nightReturnSnapEntry = MutableStateFlow(true)
+    val nightReturnSnapEntry: StateFlow<Boolean> = _nightReturnSnapEntry.asStateFlow()
+
+    /** Applies a phase-machine transition: snap flag first,
+     *  then the state, then the phase flow. */
+    private fun applyNightReturn(next: NightReturnState, expired: Boolean = false) {
+        _nightReturnSnapEntry.value =
+            nightReturnEntryIsSnap(nightReturn.phase, next.phase, expired)
+        nightReturn = next
+        _nightReturnPhase.value = next.phase
+    }
+
+    /** E-1 (Ruhe R-3): the bloom belongs to the VERB, never to
+     *  the touch. Called at the head of the verb handlers
+     *  (navigateTo, arm, disarm request, dismissReceipt, task /
+     *  checklist commits, preset / profile / loadout / blocks
+     *  selection, endSafeBreakEarly, and inside the
+     *  changed-guards of setDialMinutes / setIntentionText).
+     *  A no-op unless the Landing stands. */
+    fun bloomNightLanding() {
+        applyNightReturn(nightReturnOnBloom(nightReturn))
+    }
+
+    /** Ruhe R-5: on resume, an armed return that is stale
+     *  (> 30 min) with no night condition standing clears
+     *  instantly — housekeeping, not a gesture. The night
+     *  discriminator is the house's own themeEvaluation. */
+    fun expireNightReturnIfStale() {
+        if (nightReturn.phase == NightReturnPhase.OPEN) return
+        val next = nightReturnExpireIfStale(
+            nightReturn, themeEvaluation.value.isNight, System.currentTimeMillis()
+        )
+        if (next.phase != nightReturn.phase) applyNightReturn(next, expired = true)
+    }
+
+    // Wave-3 (Kante K-1 / Samt S-3): the yielded state, exposed
+    // — the yield beat used to write only a private var, so no
+    // composition could see the yield and the flag cleared into
+    // the lit Deck. The host now composes a true-black surface
+    // over the Deck while this stands.
+    private val _deskClockYielded = MutableStateFlow(false)
+    val deskClockYielded: StateFlow<Boolean> = _deskClockYielded.asStateFlow()
+
+    // Wave-3 (Daemmer DAE-8 / Glanz G-2+G-3): the finish seam's
+    // facts. The ground releases on the receipt-ISSUANCE event
+    // (this flow flips at publish, witnessed or filed), with a
+    // 2,200 ms failsafe in the overlay; a branch-U finish hides
+    // with a SNAP exit after its publish; a yield hides with NO
+    // exit animation at all (Glanz G-1: the yield is its own
+    // exit — no dismissal throw, no resurrection).
+    private val _deskClockGroundRelease = MutableStateFlow(false)
+    val deskClockGroundRelease: StateFlow<Boolean> = _deskClockGroundRelease.asStateFlow()
+    private val _deskClockExitIsYield = MutableStateFlow(false)
+    val deskClockExitIsYield: StateFlow<Boolean> = _deskClockExitIsYield.asStateFlow()
+    private val _deskClockExitSnap = MutableStateFlow(false)
+    val deskClockExitSnap: StateFlow<Boolean> = _deskClockExitSnap.asStateFlow()
+
+    // Wave-3 (Schimmer FE-2): the raise generation. Every raise
+    // write increments it and stamps whether the raise starts
+    // at full lawful alpha (SEEDED); the overlay keys its
+    // animatables' remember on it, so a SEEDED raise's FIRST
+    // composition already carries 1f — frame one by
+    // construction, not by an effect's snap.
+    private val _deskClockRaiseGeneration = MutableStateFlow(0)
+    val deskClockRaiseGeneration: StateFlow<Int> = _deskClockRaiseGeneration.asStateFlow()
+    private val _deskClockEntryStartsAtFull = MutableStateFlow(false)
+    val deskClockEntryStartsAtFull: StateFlow<Boolean> = _deskClockEntryStartsAtFull.asStateFlow()
+
+    /** One raise write, whole: generation, seeded-alpha fact,
+     *  seam flags reset, visibility. Every raise site (ticker,
+     *  hand chip, wake re-raise) goes through here so no site
+     *  can forget a reset (Glanz G-8's wake-site omission). */
+    private fun stampDeskClockRaise(cause: com.example.ui.components.DeskClockEntryCause) {
+        _deskClockRaiseGeneration.value += 1
+        _deskClockEntryStartsAtFull.value =
+            cause == com.example.ui.components.DeskClockEntryCause.SEEDED
+        _deskClockEntryCause.value = cause
+        _deskClockExitIsFinish.value = false
+        _deskClockExitIsYield.value = false
+        _deskClockExitSnap.value = false
+        _deskClockGroundRelease.value = false
+        _deskClockDecisionMade.value = true
+        _isAlwaysOnDeskClockVisible.value = true
+    }
+
+    // Wave-3 (Schimmer FE-2, piece 2): the pre-decision black
+    // gate's decision bit. The gate flow itself is declared
+    // beside activeSession (it combines that flow, so it must
+    // initialise after it): while this process has had no
+    // settle decision AND a live session predates its birth
+    // (the cold open), the host composes black over the Deck —
+    // the cold open starts on black, and SEEDED's cut is
+    // black → face, never Deck → face.
+    private val _deskClockDecisionMade = MutableStateFlow(false)
+
+    // Wave-3 (Kante K-3 / Samt S-1): the surrender's scheduled
+    // clear. The ticker discovers the fade window; this job
+    // keeps the appointment at the deadline exactly.
+    private var deskClockYieldJob: Job? = null
+    private var deskClockYieldScheduledFor: Long = 0L
+
+    private fun cancelScheduledYield() {
+        deskClockYieldJob?.cancel()
+        deskClockYieldJob = null
+        deskClockYieldScheduledFor = 0L
+    }
+
+    /** The yield beat itself (A-10(v) + Kante K-2 + Glanz G-1):
+     *  the session is marked yielded, the yielded flow stands
+     *  (the host's black surface), keep-awake clears, and the
+     *  clock hides AS A YIELD — the surrender-fade flag is
+     *  NEVER reset here, so the faded print cannot snap back
+     *  to 1f, and no dismissal throw runs. */
+    private fun performDeskClockYield(sessionId: Int) {
+        deskClockYieldJob = null
+        deskClockYieldScheduledFor = 0L
+        if (!_isAlwaysOnDeskClockVisible.value) return
+        val session = activeSession.value
+        if (session == null || !session.isActive || session.id != sessionId) return
+        if (chargerPlugged()) {
+            // A plug-in before the deadline cancels the yield.
+            _deskClockSurrenderFade.value = false
+            return
+        }
+        deskClockYieldedSessionId = sessionId
+        _deskClockYielded.value = true
+        _deskClockExitIsYield.value = true
+        _isAlwaysOnDeskClockVisible.value = false
+        _deskClockKeepAwake.value = false
+        // K-2: _deskClockSurrenderFade is deliberately NOT
+        // cleared — the yield exit holds black.
+    }
 
     // Wave-2 fix (Samt D-1/D-2): the descent's scope. A-2's
     // descent is the NIGHT's deepening — it belongs to the
@@ -516,8 +661,9 @@ class MonolithViewModel(
     // the stopwatch's — always 0) on it.
     private val _deskClockDescentApplies = MutableStateFlow(false)
     val deskClockDescentApplies: StateFlow<Boolean> = _deskClockDescentApplies.asStateFlow()
-    private val _deckLandingDim = MutableStateFlow(false)
-    val deckLandingDim: StateFlow<Boolean> = _deckLandingDim.asStateFlow()
+    // (Wave-3: _deckLandingDim is DELETED — the Landing is a
+    // phase of the one night-return scrim now, see
+    // _nightReturnPhase above.)
 
     /** The Activity's interaction stamp (FLOW §2.1). Also the
      *  wake path: an interaction while the face stands yielded
@@ -528,36 +674,38 @@ class MonolithViewModel(
      *  sensor-built, never time-only. (Wave-2 honesty fix, Seat
      *  VM-Review: the old text claimed the wake re-raise itself
      *  was sensor-built; the code raises it immediately, and
-     *  now says so.) And E-1: the first interaction while the
-     *  Landing is dim blooms the Deck to full light — the hook
-     *  cannot distinguish a true verb from any other touch. */
+     *  now says so.)
+     *  Wave-3 (Ruhe R-3 / Daemmer DAE-7 / Hauch H-6): this hook
+     *  no longer clears the Landing — contact is not a verb.
+     *  The bloom lives in the verb handlers
+     *  ([bloomNightLanding]) alone. */
     fun noteUserInteraction() {
         val nowMono = SystemClock.elapsedRealtime()
         deskClockLastInteractionMono = nowMono
-        if (_deckLandingDim.value) _deckLandingDim.value = false
         val yielded = deskClockYieldedSessionId
         if (yielded != DeskClockSettleMachine.NO_SESSION) {
             val session = activeSession.value
             if (session != null && session.isActive && session.id == yielded) {
                 deskClockYieldedSessionId = DeskClockSettleMachine.NO_SESSION
+                _deskClockYielded.value = false
                 deskClockSettle.noteWakeReRaise(session.id)
-                _deskClockEntryCause.value =
-                    com.example.ui.components.DeskClockEntryCause.SEEDED
                 _deskClockSurrenderFade.value = false
-                _isAlwaysOnDeskClockVisible.value = true
+                stampDeskClockRaise(
+                    com.example.ui.components.DeskClockEntryCause.SEEDED
+                )
                 deskClockSettleStampMono = nowMono
             } else {
                 deskClockYieldedSessionId = DeskClockSettleMachine.NO_SESSION
+                _deskClockYielded.value = false
             }
         }
     }
 
-    /** E-1: first touch on the veil unveils onto the Landing. */
+    /** E-1: first touch on the veil (pointer DOWN, Hauch H-4)
+     *  unveils onto the Landing — VEILED → LANDING, animated
+     *  0.80 → 0.45 over 520 Curve C in the host. */
     fun unveilNightReturn() {
-        if (_nightVeil.value) {
-            _nightVeil.value = false
-            _deckLandingDim.value = true
-        }
+        applyNightReturn(nightReturnOnUnveil(nightReturn))
     }
 
     /** The battery's plug state, read from the sticky intent —
@@ -853,6 +1001,19 @@ class MonolithViewModel(
 
     val activeSession: StateFlow<FocusSessionEntity?> = repository.activeSessionFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /** Wave-3 (Schimmer FE-2, piece 2): the pre-decision black
+     *  gate — true while a live session predates this process's
+     *  birth, the clock is not yet visible, and no settle
+     *  decision has been made. Declared here because it
+     *  combines [activeSession]. */
+    val deskClockColdGate: StateFlow<Boolean> = combine(
+        activeSession, _isAlwaysOnDeskClockVisible, _deskClockDecisionMade
+    ) { session, visible, decided ->
+        session != null && session.isActive &&
+            session.startWallTimeMillis < deskClockProcessBirthWallMillis &&
+            !visible && !decided
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     val sessionHistory: StateFlow<List<FocusSessionEntity>> = repository.sessionHistoryFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -1476,15 +1637,20 @@ class MonolithViewModel(
                         sensorVerdict = tremorVerdict
                     )
                 ) {
-                    _deskClockEntryCause.value = when {
-                        deskClockSettle.lastRaiseWasColdOpen ->
-                            com.example.ui.components.DeskClockEntryCause.SEEDED
-                        clockNowMono - deskClockLastInteractionMono < 10_000L ->
-                            com.example.ui.components.DeskClockEntryCause.WATCHED
-                        else -> com.example.ui.components.DeskClockEntryCause.UNWATCHED
-                    }
-                    _deskClockExitIsFinish.value = false
-                    _isAlwaysOnDeskClockVisible.value = true
+                    // Wave-3 (Schimmer FE-2 + Glanz G-8): the
+                    // raise is ONE stamped write — generation,
+                    // cause, seeded-alpha fact, seam resets —
+                    // through stampDeskClockRaise, so the
+                    // overlay's frame one is structural.
+                    stampDeskClockRaise(
+                        when {
+                            deskClockSettle.lastRaiseWasColdOpen ->
+                                com.example.ui.components.DeskClockEntryCause.SEEDED
+                            clockNowMono - deskClockLastInteractionMono < 10_000L ->
+                                com.example.ui.components.DeskClockEntryCause.WATCHED
+                            else -> com.example.ui.components.DeskClockEntryCause.UNWATCHED
+                        }
+                    )
                     deskClockSettleStampMono = clockNowMono
                 }
 
@@ -1536,28 +1702,53 @@ class MonolithViewModel(
                         // timeout horizon; the surrender deadline
                         // is the earlier, designed one — the fade
                         // is keyed to it (deadline − 520 ms).
-                        // Wave-2 fix (Seat VM-Review): this ticker
-                        // beats once a second, so a 520 ms window
-                        // was a coin-flip — most yields would jump
-                        // from no-fade straight to cleared and the
-                        // farewell would never render. The flag
-                        // therefore leads by one ticker grain
-                        // (1 s): the overlay's 520 Curve C fade
-                        // runs inside that final second and
-                        // completes just before the flag clears.
-                        _deskClockSurrenderFade.value =
-                            clockNowMono >= deadline - 1_000L &&
-                                clockNowMono < deadline
-                        if (clockNowMono >= deadline) {
-                            deskClockYieldedSessionId = clockSession.id
-                            _isAlwaysOnDeskClockVisible.value = false
-                            _deskClockKeepAwake.value = false
-                            _deskClockSurrenderFade.value = false
+                        // Wave-3 (Kante K-3 / Samt S-1, the
+                        // scheduled form): the wave-2 flag led
+                        // the deadline by a full ticker grain
+                        // (1 s) because a 520 ms window tested
+                        // on a 1 s ticker is a coin flip. Now
+                        // the ticker only DISCOVERS the window:
+                        // on the first beat at or after
+                        // deadline − 520 ms it sets the fade and
+                        // SCHEDULES the clear for the deadline
+                        // exactly (performDeskClockYield). The
+                        // fade runs its 520 Curve C and the flag
+                        // clears at the deadline — ten surrenders
+                        // fade ten times, by appointment, not by
+                        // phase luck.
+                        when {
+                            clockNowMono >= deadline -> {
+                                // Discovered at/past the
+                                // deadline (a late first beat):
+                                // yield now — no fade can precede
+                                // an instant already gone.
+                                cancelScheduledYield()
+                                performDeskClockYield(clockSession.id)
+                            }
+                            clockNowMono >= deadline - SURRENDER_FADE_MILLIS -> {
+                                _deskClockSurrenderFade.value = true
+                                if (deskClockYieldScheduledFor != deadline) {
+                                    cancelScheduledYield()
+                                    deskClockYieldScheduledFor = deadline
+                                    val yieldSessionId = clockSession.id
+                                    deskClockYieldJob = viewModelScope.launch {
+                                        val wait = deadline -
+                                            SystemClock.elapsedRealtime()
+                                        if (wait > 0L) delay(wait)
+                                        performDeskClockYield(yieldSessionId)
+                                    }
+                                }
+                            }
+                            else -> _deskClockSurrenderFade.value = false
                         }
                     } else {
+                        // A plug-in before the deadline cancels
+                        // the yield AND its scheduled clear.
+                        cancelScheduledYield()
                         _deskClockSurrenderFade.value = false
                     }
                 } else if (!_isAlwaysOnDeskClockVisible.value) {
+                    cancelScheduledYield()
                     _deskClockKeepAwake.value = false
                     _deskClockSurrenderFade.value = false
                     // Disconnect stamping lives in the every-beat
@@ -1568,9 +1759,24 @@ class MonolithViewModel(
                 // no-session beat fell through both branches
                 // above and left keep-awake at whatever the last
                 // session beat set — the flag could stick ON with
-                // no session to surrender. No session, no hold.
+                // no session to surrender.
+                // Wave-3 (Glaette G-4): A-10(v)'s move of
+                // keep-awake into this session machinery silently
+                // dropped the IDLE hand-raised clock — the face
+                // itself used to hold the flag whenever it stood,
+                // idle included; the chip's whole purpose (§1.1
+                // KEEP state) is a nightstand that stays up. A
+                // hand-raised face with no session therefore
+                // keeps awake (no surrender deadline — there is
+                // no session to surrender); every other
+                // no-session beat clears the hold, as wave-2
+                // ruled.
                 if (clockSession == null) {
-                    _deskClockKeepAwake.value = false
+                    cancelScheduledYield()
+                    _deskClockKeepAwake.value =
+                        _isAlwaysOnDeskClockVisible.value &&
+                            _deskClockEntryCause.value ==
+                            com.example.ui.components.DeskClockEntryCause.HAND
                     _deskClockSurrenderFade.value = false
                     _deskClockDescentApplies.value = false
                 }
@@ -1816,12 +2022,25 @@ class MonolithViewModel(
         val sessionId = row.id
         val e0Mono = SystemClock.elapsedRealtime()
         val e0Wall = System.currentTimeMillis()
-        if (activeSession.value?.id == sessionId) {
+        if (witnessed && activeSession.value?.id == sessionId) {
             // Zeile's coarse ended edge: the desk clock's hide
             // lives here now, not in the ticker. A-4: this hide
-            // is a FINISH exit (print fades, ground holds), not
-            // a dismissal.
+            // is a FINISH exit (print fades, ground holds for
+            // the issuance event — wave-3, DAE-8), not a
+            // dismissal.
+            // Wave-3 (Glanz G-3): the hide lives INSIDE the
+            // witnessed branch now. The wave-1/2 code set the
+            // FINISH exit unconditionally at E0, so an
+            // UNWITNESSED finish published its receipt at
+            // discovery and then held black over it for a
+            // further 1.2 s — the seam running backwards. The
+            // unwitnessed branch below publishes FIRST and
+            // hides after, with a snap exit.
             _deskClockExitIsFinish.value = true
+            _deskClockExitSnap.value = false
+            _deskClockExitIsYield.value = false
+            _deskClockGroundRelease.value = false
+            _deskClockDecisionMade.value = true
             _isAlwaysOnDeskClockVisible.value = false
         }
         // E-1: a SLEEP STAND-DOWN is the night machine-return —
@@ -1830,8 +2049,19 @@ class MonolithViewModel(
         // EVERY routine-born kind at any hour — a witnessed noon
         // finish blacked the Deck at 0.80 in his hand. The veil's
         // grammar is the stand-down; gate on that kind alone.
+        // Wave-3 (Hauch H-3 / Daemmer DAE-4 remainder): the
+        // freshness half of the gate lives in the pure machine —
+        // witnessed veils; a cold discovery veils only within
+        // 30 min of the window's end; older discoveries file
+        // their receipt and wear no veil.
         if (kind == com.example.data.FinishKind.ROUTINE_SLEEP_STANDDOWN) {
-            _nightVeil.value = true
+            applyNightReturn(
+                nightReturnOnStandDown(
+                    nightReturn, witnessed = witnessed,
+                    windowEndMillis = row.windowEndMillis,
+                    nowWallMillis = e0Wall
+                )
+            )
         }
         viewModelScope.launch {
             _sevenDayStats.value = repository.compute7DayHistory()
@@ -1844,8 +2074,21 @@ class MonolithViewModel(
                 // Branch U, late: claim + issue at discovery. No
                 // held frame, no pulse, no detention — the
                 // receipt simply stands when he next looks.
+                // Wave-3 (Glanz G-3): publish FIRST, hide after,
+                // in the same order — the seam never holds a
+                // ground over a receipt that has already
+                // arrived (or, for routine kinds, over one that
+                // will never stand). The hide is a SNAP exit:
+                // its receipt is already standing / filed.
                 val receipt = repository.publishReceipt(pending, faulted = false)
                 if (receipt != null) emitReceipt(receipt)
+                if (_isAlwaysOnDeskClockVisible.value) {
+                    _deskClockExitIsFinish.value = false
+                    _deskClockExitSnap.value = true
+                    _deskClockExitIsYield.value = false
+                    _deskClockDecisionMade.value = true
+                    _isAlwaysOnDeskClockVisible.value = false
+                }
                 return@launch
             }
 
@@ -1909,6 +2152,13 @@ class MonolithViewModel(
                 if (issueAt != null && offset >= issueAt) {
                     val faulted = com.example.data.Detention.isFaulted(pawlLiftMs, halted, offset)
                     issuedReceipt = repository.publishReceipt(pending, faulted)
+                    // Wave-3 (DAE-8 / Glanz G-2): the finish
+                    // ground releases on THIS event — issuance —
+                    // not on a fixed 1,200 ms clock. For
+                    // routine-born kinds publish IS the
+                    // filed-issuance (emitReceipt refuses them
+                    // below); the release fires either way.
+                    if (issuedReceipt != null) _deskClockGroundRelease.value = true
                     if (faulted) {
                         val faultWall = System.currentTimeMillis()
                         com.example.service.ReleaseRetryScheduler.scheduleNext(
@@ -1928,6 +2178,8 @@ class MonolithViewModel(
                     // The ceiling passed with no issue computed —
                     // issue now, faulted, rather than never.
                     issuedReceipt = repository.publishReceipt(pending, faulted = true)
+                    // DAE-8: this issuance releases the ground too.
+                    if (issuedReceipt != null) _deskClockGroundRelease.value = true
                     if (issuedReceipt != null) emitReceipt(issuedReceipt)
                     _finishState.value = _finishState.value?.copy(
                         faulted = true, issued = true,
@@ -2024,6 +2276,8 @@ class MonolithViewModel(
      *  rehydration cannot re-stand what a hand put away. One
      *  mechanism, two writers. */
     fun dismissReceipt(sessionId: Int) {
+        // Ruhe §1.2: dismissal writes the filed fact — a VERB.
+        bloomNightLanding()
         repository.markReceiptFiled(sessionId)
         val receipt = _receiptState.value
         if (receipt?.sessionId == sessionId) {
@@ -2070,6 +2324,11 @@ class MonolithViewModel(
     private var lastNavRefusalMono = 0L
 
     fun navigateTo(destination: MonolithDestination) {
+        // Ruhe R-3: navigation is a true verb — it blooms the
+        // Landing (at the head, per the cure; a refused
+        // navigation still reads as his committed intent to
+        // move, and the bloom never gates the verb).
+        bloomNightLanding()
         if (destination != _currentDestination.value && navigationLocked()) {
             val now = SystemClock.elapsedRealtime()
             if (now - lastNavRefusalMono >= 250L) {
@@ -2118,6 +2377,7 @@ class MonolithViewModel(
      *  a hand-ended break and an expired one speak identically,
      *  exactly once, whoever crossed the boundary. */
     fun endSafeBreakEarly() {
+        bloomNightLanding() // Ruhe R-3 verb
         val session = activeSession.value ?: return
         if (!session.isActive || !session.isInSafeBreak) return
         viewModelScope.launch {
@@ -2126,6 +2386,7 @@ class MonolithViewModel(
     }
 
     fun selectStudyPreset(preset: StudyModePreset) {
+        bloomNightLanding() // Ruhe R-3 verb
         soundEngine.playMechanicalLatch(true)
         _studyPreset.value = preset
         _dialMinutes.value = preset.workMinutes
@@ -2133,6 +2394,7 @@ class MonolithViewModel(
     }
 
     fun setStudyBlocksCount(blocks: Int) {
+        bloomNightLanding() // Ruhe R-3 verb
         soundEngine.playRotaryDetent(640.0)
         _studyBlocksCount.value = blocks.coerceIn(1, 8)
     }
@@ -2140,6 +2402,9 @@ class MonolithViewModel(
     fun setDialMinutes(minutes: Int) {
         val clamped = minutes.coerceIn(3, 180)
         if (clamped != _dialMinutes.value) {
+            // Ruhe §1.2: the dial blooms on its first ACTUAL
+            // change — inside this guard, never on a touch.
+            bloomNightLanding()
             val pitch = 440.0 + (clamped * 2.8)
             soundEngine.playRotaryDetent(pitch)
             _dialMinutes.value = clamped
@@ -2147,6 +2412,9 @@ class MonolithViewModel(
     }
 
     fun setIntentionText(text: String) {
+        // Ruhe §1.2: the intention field blooms on its first
+        // CHANGED character — a real diff, not on focus.
+        if (text != _intentionText.value) bloomNightLanding()
         _intentionText.value = text
     }
 
@@ -2241,12 +2509,39 @@ class MonolithViewModel(
         // descent's 60 s suspension window from a real stamp).
         deskClockLastInteractionMono = SystemClock.elapsedRealtime()
         if (visible) {
-            _deskClockEntryCause.value =
+            // Wave-3 (Glanz G-8): through the one raise stamp —
+            // generation, cause, seam resets, decision.
+            stampDeskClockRaise(
                 com.example.ui.components.DeskClockEntryCause.HAND
-            _deskClockExitIsFinish.value = false
+            )
             deskClockSettleStampMono = deskClockLastInteractionMono
+        } else {
+            _deskClockExitIsYield.value = false
+            _deskClockExitSnap.value = false
+            _deskClockGroundRelease.value = false
+            _deskClockDecisionMade.value = true
+            _isAlwaysOnDeskClockVisible.value = false
+            // Wave-3 (Ruhe R-1 / Daemmer DAE-5 / Hauch H-7):
+            // a NIGHT hand dismissal lands on the Landing —
+            // the Landing exists for the hand now, not only
+            // behind the veil. The discriminator is the
+            // house's one: themeEvaluation.isNight (a session
+            // standing, or a SLEEP window open), OR an open
+            // night-return episode (Ruhe §1.5 stickiness — an
+            // in-episode re-dismissal re-lands even across the
+            // evaluation's flip). The entry SNAPS in the host
+            // (nightReturnEntryIsSnap: OPEN → LANDING), covered
+            // by this dismissal's own 180 Throw. Explicitly NOT
+            // a bloom site: the clock's own dismissal is a
+            // reading round-trip (Ruhe §1.2).
+            applyNightReturn(
+                nightReturnOnHandDismissal(
+                    nightReturn,
+                    isNight = themeEvaluation.value.isNight || nightReturn.episodeOpen,
+                    nowWallMillis = System.currentTimeMillis()
+                )
+            )
         }
-        _isAlwaysOnDeskClockVisible.value = visible
         val session = activeSession.value
         if (session != null && session.isActive) {
             deskClockSettle.noteHandDecision(session.id)
@@ -2386,6 +2681,7 @@ class MonolithViewModel(
     }
 
     fun completeTaskAndAdvance(taskId: Int) {
+        bloomNightLanding() // Ruhe R-3 verb (toggleChecklistItem delegates here)
         // No sound here (merge ruling on Linea's flag): the seal is
         // the SESSION sound and was misspent on a task act - and it
         // fired before the completion even ran. The tear's
@@ -2427,6 +2723,7 @@ class MonolithViewModel(
             armProving.phase.value is ArmPhase.Jammed
 
     fun promoteTaskToActive(taskId: Int) {
+        bloomNightLanding() // Ruhe R-3 verb
         if (midSeal()) return
         soundEngine.playMechanicalLatch(true)
         viewModelScope.launch {
@@ -2446,6 +2743,7 @@ class MonolithViewModel(
     }
 
     fun deferTask(taskId: Int) {
+        bloomNightLanding() // Ruhe R-3 verb
         soundEngine.playRotaryDetent(510.0)
         viewModelScope.launch {
             val nextActive = repository.deferTask(taskId)
@@ -2779,6 +3077,7 @@ class MonolithViewModel(
     }
 
     fun applySmartLoadout(loadout: SmartLoadout) {
+        bloomNightLanding() // Ruhe R-3 verb
         soundEngine.playHarmonicSeal(true)
         _selectedProfileName.value = loadout.title
         // UNA-07: a hand pick is a fact — persist it and rest the cap
@@ -2822,6 +3121,7 @@ class MonolithViewModel(
     }
 
     fun selectAndApplyProfile(profile: FocusProfileEntity) {
+        bloomNightLanding() // Ruhe R-3 verb
         soundEngine.playHarmonicSeal(true)
         _selectedProfileName.value = profile.name
         _dialMinutes.value = profile.defaultMinutes
@@ -2878,6 +3178,7 @@ class MonolithViewModel(
      *  old body fired after startShield now fires inside the
      *  controller, once L1 lands. */
     fun armMonolithSession() {
+        bloomNightLanding() // Ruhe R-3 verb: the arm latch
         // Schlitten §3.1: the standing receipt and its sled gate
         // clear at the next arm — the slip stood until now.
         _receiptState.value = null
@@ -2917,6 +3218,7 @@ class MonolithViewModel(
     }
 
     fun requestDisarmChallenge() {
+        bloomNightLanding() // Ruhe R-3 verb: a disarm request
         val current = activeSession.value ?: return
         val isBelowFloor = current.isStopwatchMode &&
             current.elapsedSeconds < MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS

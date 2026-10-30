@@ -17,6 +17,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -36,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -291,8 +293,19 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val deskClockSurrenderFade by viewModel.deskClockSurrenderFade.collectAsStateWithLifecycle()
     val deskClockKeepAwake by viewModel.deskClockKeepAwake.collectAsStateWithLifecycle()
     val deskClockDescentApplies by viewModel.deskClockDescentApplies.collectAsStateWithLifecycle()
-    val nightVeil by viewModel.nightVeil.collectAsStateWithLifecycle()
-    val deckLandingDim by viewModel.deckLandingDim.collectAsStateWithLifecycle()
+    // Wave-3 (E-1 as one scrim): the night return's phase +
+    // snap-entry fact, the yield's black, the finish ground's
+    // release, the snap/yield exit kinds, the raise generation,
+    // and the pre-decision black gate — all VM-owned.
+    val nightReturnPhase by viewModel.nightReturnPhase.collectAsStateWithLifecycle()
+    val nightReturnSnapEntry by viewModel.nightReturnSnapEntry.collectAsStateWithLifecycle()
+    val deskClockYielded by viewModel.deskClockYielded.collectAsStateWithLifecycle()
+    val deskClockGroundRelease by viewModel.deskClockGroundRelease.collectAsStateWithLifecycle()
+    val deskClockExitIsYield by viewModel.deskClockExitIsYield.collectAsStateWithLifecycle()
+    val deskClockExitSnap by viewModel.deskClockExitSnap.collectAsStateWithLifecycle()
+    val deskClockRaiseGeneration by viewModel.deskClockRaiseGeneration.collectAsStateWithLifecycle()
+    val deskClockEntryStartsAtFull by viewModel.deskClockEntryStartsAtFull.collectAsStateWithLifecycle()
+    val deskClockColdGate by viewModel.deskClockColdGate.collectAsStateWithLifecycle()
 
     // A-10(v): keep-awake ownership is the VM's session
     // machinery; this host only APPLIES the flag it is handed.
@@ -304,20 +317,40 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             activityWindow?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
-    // E-1 Landing bloom: the dim lifts over 520 Curve C at the
-    // first interaction after the unveil (the VM clears
-    // deckLandingDim in noteUserInteraction — the Activity hook
-    // cannot tell a true verb from any other touch, and this
-    // code does not claim it can; Wave-2 honesty fix). The
-    // scrim alpha 0.45 leaves the Deck at 0.55 light — the
-    // room's light law stated as its complement.
-    val landingDimAlpha by androidx.compose.animation.core.animateFloatAsState(
-        targetValue = if (deckLandingDim) 0.45f else 0f,
-        animationSpec = androidx.compose.animation.core.tween(
-            520, easing = com.example.ui.theme.MonolithCurves.EasingC
-        ),
-        label = "night_landing_dim"
-    )
+    // E-1 AS ONE SCRIM (wave-3 — Daemmer DAE-6 / Hauch H-1 /
+    // Ruhe R-2): ONE animated alpha over the VM's night-return
+    // phase — VEILED 0.80 / LANDING 0.45 / OPEN 0 — every leg
+    // tween(520, Curve C), except the entries the phase machine
+    // marks as snaps (the veil's covered entry, a hand
+    // dismissal's Landing entry, an expiry clear). The wave-1/2
+    // form was two objects (a boolean 0.80 veil box + this
+    // separate Landing animator starting from 0), whose sum
+    // flashed full Deck light for ~300 ms at the unveil. One
+    // value cannot overshoot: after the stand-down the light
+    // never rises except at his unveil (to 0.45) and his verb.
+    val nightScrimAlpha = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(nightReturnPhase) {
+        val target = when (nightReturnPhase) {
+            com.example.ui.NightReturnPhase.VEILED -> 0.80f
+            com.example.ui.NightReturnPhase.LANDING -> 0.45f
+            com.example.ui.NightReturnPhase.OPEN -> 0f
+        }
+        if (nightReturnSnapEntry) {
+            nightScrimAlpha.snapTo(target)
+        } else {
+            nightScrimAlpha.animateTo(
+                target,
+                androidx.compose.animation.core.tween(
+                    520, easing = com.example.ui.theme.MonolithCurves.EasingC
+                )
+            )
+        }
+    }
+    // Ruhe R-4: while a night return is armed, the Deck holds
+    // its NIGHT scheme — 0.55 is a weight only against a known
+    // ground, and the stand-down path's evaluation has already
+    // flipped to day by the time the return begins.
+    val nightReturnArmed = nightReturnPhase != com.example.ui.NightReturnPhase.OPEN
     val burnInFigure8MinuteStep by viewModel.burnInFigure8MinuteStep.collectAsStateWithLifecycle()
     val showNotificationDigestSheet by viewModel.showNotificationDigestSheet.collectAsStateWithLifecycle()
     val capturedNotifications by viewModel.capturedNotifications.collectAsStateWithLifecycle()
@@ -344,7 +377,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // doorLocked now, so the print and the lock can never part
     // again.
     val doorLocked = sealed || viewModel.navigationLocked()
-    val effectiveNight = darkTheme || sealed
+    // Wave-3 (Ruhe R-4): an armed night return holds the night
+    // scheme for the header/PARK/Shield neighbours too, until
+    // the bloom hands the scheme back to the evaluation.
+    val effectiveNight = darkTheme || sealed || nightReturnArmed
     // Slice E (Zug-II §5.1): the GROUND night — the header band's
     // room and the rail step at t=400 with the scheme pin; the
     // Deck derives its own split internally and Shield / Tasks /
@@ -643,6 +679,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 parkReturnTick++
                 viewModel.onAppResumed()
                 viewModel.refreshDeckWarrant()
+                // Wave-3 (Ruhe R-5): the night return's
+                // staleness re-check rides this same resume.
+                viewModel.expireNightReturnIfStale()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -796,7 +835,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     // session-night is its own split
                                     // (hero at t=0, ground at t=400),
                                     // never the host's immediate one.
-                                    isDarkTheme = darkTheme,
+                                    // Wave-3 (Ruhe R-4): plus the
+                                    // night return's scheme hold —
+                                    // while VEILED/LANDING is armed
+                                    // the Deck composes in night,
+                                    // whatever the evaluation says.
+                                    isDarkTheme = darkTheme || nightReturnArmed,
                                     onDialMinutesChanged = viewModel::setDialMinutes,
                                     onSelectStudyPreset = viewModel::selectStudyPreset,
                                     onSetStudyBlocksCount = viewModel::setStudyBlocksCount,
@@ -1050,38 +1094,94 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             // =================================================================
             // FULL-SCREEN OVERLAYS & MODALS
             // =================================================================
+            // Wave-3 (Schimmer FE-2, piece 2): the pre-decision
+            // black gate — while a cold process has a live
+            // pre-birth session and no settle decision yet, black
+            // stands over the Deck, so the cold open's first
+            // surface is black and SEEDED's cut is black → face.
+            // Non-clickable: it takes no touch and names nothing.
+            if (deskClockColdGate) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(androidx.compose.ui.graphics.Color.Black)
+                        .testTag("desk_clock_cold_gate")
+                )
+            }
+
+            // E-1 AS ONE SCRIM (wave-3; Hauch H-2 / Glanz G-4):
+            // composed BELOW the desk-clock overlay — while the
+            // clock stands, its opaque ground covers the scrim
+            // completely, so the veil's entry at E0 no longer
+            // cuts the finish print's ruled 260 Curve A fade; the
+            // scrim becomes visible exactly when the ground
+            // lifts, already at its phase weight, over the Deck
+            // alone. In LANDING and OPEN the scrim consumes NO
+            // touch (every Deck control live under the dim); in
+            // VEILED it takes the first touch on pointer DOWN
+            // (Hauch H-4 — a click's UP was a completed-tap law
+            // a half-awake hand could fail), with NO indication
+            // (H-5: a raw pointerInput draws no ripple on the
+            // black).
+            if (nightScrimAlpha.value > 0f) {
+                val veiled = nightReturnPhase == com.example.ui.NightReturnPhase.VEILED
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            androidx.compose.ui.graphics.Color.Black.copy(
+                                alpha = nightScrimAlpha.value
+                            )
+                        )
+                        .then(
+                            if (veiled) {
+                                Modifier
+                                    .pointerInput(Unit) {
+                                        detectTapGestures(
+                                            onPress = { viewModel.unveilNightReturn() }
+                                        )
+                                    }
+                                    .testTag("night_return_veil")
+                            } else {
+                                Modifier
+                            }
+                        )
+                )
+            }
+
             AlwaysOnDeskClockOverlay(
                 visible = isAlwaysOnDeskClockVisible,
                 activeSession = activeSession,
                 activeTask = activeTask,
-                dialMinutes = dialMinutes,
+                // Glaette G-6: dialMinutes no longer threads
+                // into the face (see the overlay's signature).
                 burnInStep = burnInFigure8MinuteStep,
                 entryCause = deskClockEntryCause,
                 exitIsFinish = deskClockExitIsFinish,
                 surrenderFade = deskClockSurrenderFade,
                 descentApplies = deskClockDescentApplies,
+                raiseGeneration = deskClockRaiseGeneration,
+                entryStartsAtFull = deskClockEntryStartsAtFull,
+                groundReleased = deskClockGroundRelease,
+                exitIsYield = deskClockExitIsYield,
+                exitSnap = deskClockExitSnap,
                 onDismiss = { viewModel.toggleAlwaysOnDeskClock(false) }
             )
 
-            // E-1 — the night return, composed over the Deck:
-            // the VEIL (black scrim 0.80) stands after a routine
-            // finish until first touch; beneath it the LANDING
-            // dim holds the Deck at the room's light law until
-            // the first true verb blooms it to full light.
-            if (landingDimAlpha > 0f) {
+            // Wave-3 (Kante K-1 / Samt S-3): the yield's own
+            // exit — while a yielded session lives, a plain
+            // true-black surface stands above the Deck, so the
+            // surrender flag clears INTO black and stays black
+            // until his wake touch re-raises SEEDED (the VM's
+            // wake path; this box is non-clickable and consumes
+            // nothing — the Activity's onUserInteraction
+            // receives the touch first).
+            if (deskClockYielded) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = landingDimAlpha))
-                )
-            }
-            if (nightVeil) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.80f))
-                        .clickable { viewModel.unveilNightReturn() }
-                        .testTag("night_return_veil")
+                        .background(androidx.compose.ui.graphics.Color.Black)
+                        .testTag("desk_clock_yielded_black")
                 )
             }
 
