@@ -129,8 +129,15 @@ private val PLATE_BODY = listOf(
     // restoration is a merge-time act on that evidence, not before.
     "ROUTINES: SET BY HAND ON SHIELD",
     "SITES: KEPT WITH APPS ON SHIELD · DATA: ON THIS PHONE ONLY",
-    "STUDY HOURS: IN YEOLPUMTA",
-    "SOUND: FLOAT-PCM, 4 PARTIALS · POWER: YOUR PHONE"
+    // Issue #115: the timer app is named in full — a bare acronym
+    // ("YPT") sent users to a place that did not exist under any
+    // name they could find; DURCH-C rebase ruling: no bare acronym
+    // as a destination name, the study timer named plainly (the
+    // W-43 direction on the receipt footer). The SOUND line's
+    // synthesis jargon (FLOAT-PCM, 4 PARTIALS) is likewise struck
+    // for plain words.
+    "STUDY HOURS: IN YEOLPUMTA, THE STUDY TIMER",
+    "SOUND: MADE ON THIS PHONE · POWER: YOUR PHONE"
 )
 
 /** Issue #56, finding 2: the sheet-drag dismiss law's threshold. */
