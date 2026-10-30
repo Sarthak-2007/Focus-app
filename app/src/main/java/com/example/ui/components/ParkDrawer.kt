@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,6 +67,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -123,6 +125,44 @@ private val PLATE_BODY = listOf(
     "SOUND: FLOAT-PCM, 4 PARTIALS · POWER: YOUR PHONE"
 )
 
+/** Issue #56, finding 2: the sheet-drag dismiss law's threshold. */
+internal const val PARK_DISMISS_FRACTION = 0.4f
+
+/**
+ * Issue #56, finding 2: one grip-drag step, as pure arithmetic.
+ * The drag handler accumulates into a plain snapshot state on the
+ * pointer thread — events arrive in order and each step reads the
+ * value the previous step wrote — so the fraction the 40% law
+ * judges at drag-end is never a stale Animatable read raced by
+ * per-event coroutines.
+ */
+internal fun gripDraggedFraction(current: Float, dragAmountPx: Float, sheetHeightPx: Int): Float =
+    (current + dragAmountPx / sheetHeightPx.coerceAtLeast(1)).coerceIn(0f, 1f)
+
+/**
+ * Issue #56, finding 4: a FIX return verdict may judge ONLY the
+ * trip that was in flight when its return tick landed. A second
+ * press inside the 800ms stability window advances the trip (and
+ * replaces the item), and the first trip's timer must then stand
+ * down — it neither judges nor clears the newer press.
+ */
+/**
+ * Issue #56, fresh-eyes A: the FIX dip holds for the return
+ * verdict ONLY when the press completed with a clean release.
+ * An interrupted press (tryAwaitRelease() == false) clears its
+ * state at once — it must never be judged by a later return tick.
+ */
+internal fun fixPressHoldsForReturn(released: Boolean): Boolean = released
+
+internal fun fixReturnStillOwns(
+    capturedTrip: Int,
+    capturedItem: WatchItemId?,
+    currentTrip: Int,
+    currentItem: WatchItemId?,
+    stillPressed: Boolean
+): Boolean =
+    stillPressed && capturedItem != null && capturedTrip == currentTrip && capturedItem == currentItem
+
 @Composable
 fun ParkDrawer(
     visible: Boolean,
@@ -130,16 +170,24 @@ fun ParkDrawer(
     isSealed: Boolean,
     isNight: Boolean,
     soundEnabled: Boolean,
-    shortsReelsSniperEnabled: Boolean,
+    // Defaults on the sled facts (issue #56, test-compile unblock):
+    // several pre-existing test renders were written against a
+    // ParkDrawer whose sled parameters had defaults and no longer
+    // compiled once the parameters lost them — the whole unit-test
+    // suite failed to compile on main. The one production caller
+    // (MainActivity) passes every argument explicitly, so these
+    // defaults change nothing at runtime; they only let the older
+    // renders compile again.
+    shortsReelsSniperEnabled: Boolean = false,
     soundEngine: TactileSoundEngine?,
     themeReadout: String,
     parkReturnTick: Int,
     onDismiss: () -> Unit,
     onFixClick: (WatchItemId) -> Unit,
     onToggleSound: () -> Unit,
-    onToggleShortsReelsSniper: () -> Unit,
-    socialSitesEnabled: Boolean,
-    onToggleSocialSites: () -> Unit,
+    onToggleShortsReelsSniper: () -> Unit = {},
+    socialSitesEnabled: Boolean = false,
+    onToggleSocialSites: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -148,6 +196,11 @@ fun ParkDrawer(
     // KIN-DRAWER travel: fraction 1 = shut (sheet below the host),
     // 0 = seated open. Exactly two rest heights.
     val fraction = remember { Animatable(1f) }
+    // Issue #56, finding 2: the grip drag's accumulated fraction.
+    // Non-null only between drag-start and drag-end/cancel; written
+    // synchronously per drag event (never via a launched coroutine),
+    // so it is always the latest, in-order drag position.
+    var gripDragFraction by remember { mutableStateOf<Float?>(null) }
     var sheetHeightPx by remember { mutableStateOf(0) }
     LaunchedEffect(visible) {
         if (visible) {
@@ -158,8 +211,18 @@ fun ParkDrawer(
     }
     if (!visible && fraction.value >= 1f) return
 
-    val settled = fraction.value == 0f
+    // While the grip owns the sheet, the RENDERED fraction is the
+    // drag accumulator, not the Animatable (which is parked until
+    // the gesture resolves in one ordered coroutine at drag-end).
+    val effectiveFraction = gripDragFraction ?: fraction.value
+    // Issue #56, finding 1: `interactive` is THE gate for every
+    // control on this sheet — the FIX key (as before) and all three
+    // sleds (previously gated only by the seal, so they fired
+    // mid-rise, mid-throw, and throughout the close). A grip drag
+    // in flight also un-settles the sheet.
+    val settled = effectiveFraction == 0f && gripDragFraction == null
     val interactive = visible && settled && !isSealed
+    val interactiveState = rememberUpdatedState(interactive)
 
     // Staleness is derived at render; while PARK stands open the
     // print re-derives on a slow beat so a line can go STALE in
@@ -182,6 +245,10 @@ fun ParkDrawer(
     // resolved on the return (see the return effect below).
     var fixPressed by remember { mutableStateOf(false) }
     var fixPressedItem by remember { mutableStateOf<WatchItemId?>(null) }
+    // Issue #56, finding 4: the FIX trip identity. Every press
+    // advances it; a return verdict is bound to the trip value it
+    // captured when its tick landed (see fixReturnStillOwns).
+    var fixTrip by remember { mutableStateOf(0) }
     LaunchedEffect(visible) {
         if (!visible) {
             fixPressed = false
@@ -190,13 +257,23 @@ fun ParkDrawer(
     }
     LaunchedEffect(parkReturnTick) {
         if (parkReturnTick <= 0 || !fixPressed) return@LaunchedEffect
+        // Issue #56, finding 4: capture THIS trip's identity before
+        // the wait. The old body read fixPressedItem only after the
+        // delay, so a second press inside the window was judged —
+        // and cleared — by the first trip's timer.
+        val tripAtReturn = fixTrip
+        val item = fixPressedItem ?: return@LaunchedEffect
         // Return is proving: the host's sweep lands within ~300ms;
         // the stability beat runs 500ms past it before any verdict.
         // The verdict reads the store LIVE at that instant — the
         // composed snapshot may predate the sweep's landings.
         delay(800L)
+        if (!fixReturnStillOwns(tripAtReturn, item, fixTrip, fixPressedItem, fixPressed)) {
+            // A newer trip owns the verdict now; its own return
+            // tick will judge it. This timer stands down silently.
+            return@LaunchedEffect
+        }
         val snap = WatchStore.snapshots.value
-        val item = fixPressedItem ?: return@LaunchedEffect
         val repaired = WatchStore.permPrintAt(snap, item, SystemClock.elapsedRealtime()) ==
             PermPrint.GRANTED
         if (repaired) {
@@ -216,13 +293,20 @@ fun ParkDrawer(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.32f * (1f - fraction.value)))
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f * (1f - effectiveFraction)))
                 .then(
-                    if (visible) {
+                    // Issue #56, finding 5: the scrim blocks for as
+                    // long as it is DRAWN — the old `if (visible)`
+                    // dropped the blocker the instant dismissal
+                    // started, so taps fell through the still-visible
+                    // scrim for the whole 160ms close throw. It now
+                    // consumes touches until the sheet is fully shut;
+                    // only a tap while open still dismisses.
+                    if (fraction.value < 1f) {
                         Modifier.clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
-                        ) { onDismiss() }
+                        ) { if (visible) onDismiss() }
                     } else Modifier
                 )
         )
@@ -232,7 +316,7 @@ fun ParkDrawer(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .offset { IntOffset(0, (fraction.value * sheetHeightPx).roundToInt()) }
+                .offset { IntOffset(0, (effectiveFraction * sheetHeightPx).roundToInt()) }
                 .onSizeChanged { sheetHeightPx = it.height }
                 .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
                 .background(scheme.background)
@@ -248,15 +332,40 @@ fun ParkDrawer(
                     .height(48.dp)
                     .pointerInput(visible) {
                         detectVerticalDragGestures(
-                            onDragStart = { gripPressed = true },
+                            onDragStart = {
+                                gripPressed = true
+                                // Issue #56, finding 2: the drag
+                                // starts from the sheet's true
+                                // position, accumulated from here.
+                                if (visible) gripDragFraction = fraction.value
+                            },
                             onDragEnd = {
                                 gripPressed = false
-                                if (fraction.value > 0.4f) {
-                                    // Dismissal (b): sheet thrown shut,
-                                    // cap returns to its origin stop.
-                                    onDismiss()
+                                val dragged = gripDragFraction
+                                if (dragged == null || !visible) {
+                                    gripDragFraction = null
+                                    return@detectVerticalDragGestures
+                                }
+                                // The 40% law judges `dragged` —
+                                // the synchronously accumulated,
+                                // in-order final position, never a
+                                // raced Animatable read. Exactly ONE
+                                // coroutine resolves the gesture:
+                                // it seats the Animatable on the
+                                // dragged position first, then the
+                                // throw/seat runs from there, in order.
+                                if (dragged > PARK_DISMISS_FRACTION) {
+                                    scope.launch {
+                                        fraction.snapTo(dragged)
+                                        gripDragFraction = null
+                                        // Dismissal (b): sheet thrown
+                                        // shut, cap returns to origin.
+                                        onDismiss()
+                                    }
                                 } else {
                                     scope.launch {
+                                        fraction.snapTo(dragged)
+                                        gripDragFraction = null
                                         fraction.animateTo(
                                             0f,
                                             tween(MonolithKin.DRAWER_OPEN_MS, easing = MonolithKin.EasingSeat)
@@ -264,12 +373,35 @@ fun ParkDrawer(
                                     }
                                 }
                             },
-                            onDragCancel = { gripPressed = false },
+                            onDragCancel = {
+                                gripPressed = false
+                                // A cancelled drag re-seats from the
+                                // accumulated position, in the same
+                                // single ordered coroutine.
+                                val dragged = gripDragFraction
+                                if (dragged != null) {
+                                    scope.launch {
+                                        fraction.snapTo(dragged)
+                                        gripDragFraction = null
+                                        if (visible) {
+                                            fraction.animateTo(
+                                                0f,
+                                                tween(MonolithKin.DRAWER_OPEN_MS, easing = MonolithKin.EasingSeat)
+                                            )
+                                        }
+                                    }
+                                }
+                            },
                             onVerticalDrag = { _, dragAmount ->
-                                scope.launch {
-                                    val h = sheetHeightPx.coerceAtLeast(1)
-                                    fraction.snapTo(
-                                        (fraction.value + dragAmount / h).coerceIn(0f, 1f)
+                                // No coroutine per event (finding 2):
+                                // pointer events are delivered in
+                                // order on one thread, so this plain
+                                // accumulation IS the ordered truth.
+                                if (visible) {
+                                    gripDragFraction = gripDraggedFraction(
+                                        gripDragFraction ?: fraction.value,
+                                        dragAmount,
+                                        sheetHeightPx
                                     )
                                 }
                             }
@@ -372,7 +504,7 @@ fun ParkDrawer(
                                 wordIsLack = m?.interceptor != InterceptorState.RUNNING,
                                 enabled = socialSitesEnabled,
                                 soundEngine = soundEngine,
-                                isSealed = isSealed,
+                                interactive = interactive,
                                 onToggle = onToggleSocialSites
                             )
                         } else {
@@ -400,7 +532,7 @@ fun ParkDrawer(
                                 wordIsLack = true,
                                 enabled = socialSitesEnabled,
                                 soundEngine = soundEngine,
-                                isSealed = isSealed,
+                                interactive = interactive,
                                 onToggle = onToggleSocialSites
                             )
                         } else {
@@ -436,6 +568,12 @@ fun ParkDrawer(
                                                 onPress = {
                                                     fixPressed = true
                                                     fixPressedItem = item
+                                                    // Issue #56, finding 4:
+                                                    // a new trip begins —
+                                                    // any pending return
+                                                    // timer for an older
+                                                    // trip is now stale.
+                                                    fixTrip++
                                                     // The engine's quietest
                                                     // existing voice: the seat
                                                     // knock at its floor.
@@ -445,7 +583,38 @@ fun ParkDrawer(
                                                         pitchHz = 300f
                                                     )
                                                     onFixClick(item)
-                                                    tryAwaitRelease()
+                                                    // Issue #56, fresh-eyes A:
+                                                    // a press INTERRUPTED before
+                                                    // release (gesture stolen by
+                                                    // the sheet's scroll/drag, or
+                                                    // the composition tearing
+                                                    // down) must not leave the
+                                                    // dip armed — otherwise the
+                                                    // next unrelated return tick
+                                                    // (every ON_RESUME bumps it)
+                                                    // would judge a press that
+                                                    // never completed. A clean
+                                                    // release keeps the state:
+                                                    // the Settings absence is
+                                                    // the hold, and the return
+                                                    // effect is its only judge.
+                                                    // This composes with
+                                                    // issue-9's release-commit:
+                                                    // there a cancelled press
+                                                    // never fires onFixClick,
+                                                    // and this cleanup is what
+                                                    // guarantees its state.
+                                                    val released = try {
+                                                        tryAwaitRelease()
+                                                    } catch (ce: CancellationException) {
+                                                        fixPressed = false
+                                                        fixPressedItem = null
+                                                        throw ce
+                                                    }
+                                                    if (!fixPressHoldsForReturn(released)) {
+                                                        fixPressed = false
+                                                        fixPressedItem = null
+                                                    }
                                                 }
                                             )
                                         }
@@ -499,7 +668,15 @@ fun ParkDrawer(
                                     chromeMode = true
                                     this.soundEngine = soundEngine
                                     isChecked = soundEnabled
-                                    onToggleRequested = { onToggleSound() }
+                                    // Issue #56, finding 1: the sled
+                                    // obeys the same gate as the FIX
+                                    // key — no toggle mid-rise,
+                                    // mid-throw, or while closing.
+                                    onToggleRequested = { if (interactiveState.value) onToggleSound() }
+                                    // Fresh-eyes B: the view itself
+                                    // consults this before any haptic,
+                                    // so a gated press stays silent.
+                                    gateCheck = { interactiveState.value }
                                 }
                             },
                             update = { view ->
@@ -507,16 +684,19 @@ fun ParkDrawer(
                                 if (view.isChecked != soundEnabled) {
                                     view.isChecked = soundEnabled
                                 }
-                                view.onToggleRequested = { onToggleSound() }
+                                view.onToggleRequested = { if (interactiveState.value) onToggleSound() }
+                                view.gateCheck = { interactiveState.value }
                             },
                             modifier = Modifier
                                 .width(76.dp)
                                 .height(34.dp)
                                 .testTag("park_sound_sled")
                         )
-                        if (isSealed) {
-                            // Read-only under the seal: the sled is
-                            // print; the overlay takes the touch.
+                        if (!interactive) {
+                            // Issue #56, finding 1: whenever the
+                            // sheet is not settled-and-open (sealed,
+                            // mid-rise, mid-throw, closing) the sled
+                            // is print; the overlay takes the touch.
                             Box(
                                 modifier = Modifier
                                     .width(76.dp)
@@ -544,8 +724,12 @@ fun ParkDrawer(
                         .height(52.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // #131 truth scope: the sled arms the FEED
+                    // sniper only — it never policed long-form,
+                    // home feeds, Stories or DMs (those are the
+                    // app tier's job), so the plate says FEED.
                     Text(
-                        text = "SHORTS + REELS",
+                        text = "SHORTS + REELS FEED",
                         style = PillBadgeTextStyle,
                         color = scheme.onSurfaceVariant
                     )
@@ -568,7 +752,10 @@ fun ParkDrawer(
                                     chromeMode = true
                                     this.soundEngine = soundEngine
                                     isChecked = shortsReelsSniperEnabled
-                                    onToggleRequested = { onToggleShortsReelsSniper() }
+                                    // Issue #56, finding 1: same gate
+                                    // as the Sound sled and FIX key.
+                                    onToggleRequested = { if (interactiveState.value) onToggleShortsReelsSniper() }
+                                    gateCheck = { interactiveState.value }
                                 }
                             },
                             update = { view ->
@@ -576,16 +763,18 @@ fun ParkDrawer(
                                 if (view.isChecked != shortsReelsSniperEnabled) {
                                     view.isChecked = shortsReelsSniperEnabled
                                 }
-                                view.onToggleRequested = { onToggleShortsReelsSniper() }
+                                view.onToggleRequested = { if (interactiveState.value) onToggleShortsReelsSniper() }
+                                view.gateCheck = { interactiveState.value }
                             },
                             modifier = Modifier
                                 .width(76.dp)
                                 .height(34.dp)
                                 .testTag("park_shorts_sled")
                         )
-                        if (isSealed) {
-                            // Read-only under the seal, as the
-                            // Sound sled: print, not a control.
+                        if (!interactive) {
+                            // Issue #56, finding 1: not settled-and-
+                            // open — print, not a control, as the
+                            // Sound sled above.
                             Box(
                                 modifier = Modifier
                                     .width(76.dp)
@@ -702,10 +891,13 @@ private fun ParkSocialSitesRow(
     wordIsLack: Boolean,
     enabled: Boolean,
     soundEngine: TactileSoundEngine?,
-    isSealed: Boolean,
+    interactive: Boolean,
     onToggle: () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
+    // Issue #56, finding 1: this row receives the drawer's one
+    // `interactive` gate (not merely the seal) — see ParkDrawer.
+    val interactiveState = rememberUpdatedState(interactive)
     Column {
         Row(
             modifier = Modifier
@@ -737,7 +929,8 @@ private fun ParkSocialSitesRow(
                             chromeMode = true
                             this.soundEngine = soundEngine
                             isChecked = enabled
-                            onToggleRequested = { onToggle() }
+                            onToggleRequested = { if (interactiveState.value) onToggle() }
+                            gateCheck = { interactiveState.value }
                         }
                     },
                     update = { view ->
@@ -745,16 +938,17 @@ private fun ParkSocialSitesRow(
                         if (view.isChecked != enabled) {
                             view.isChecked = enabled
                         }
-                        view.onToggleRequested = { onToggle() }
+                        view.onToggleRequested = { if (interactiveState.value) onToggle() }
+                        view.gateCheck = { interactiveState.value }
                     },
                     modifier = Modifier
                         .width(76.dp)
                         .height(34.dp)
                         .testTag("park_social_sled")
                 )
-                if (isSealed) {
-                    // Read-only under the seal, as the sound sled:
-                    // the sled is print; the overlay takes the touch.
+                if (!interactive) {
+                    // Not settled-and-open: print, not a control —
+                    // the overlay takes the touch, as the sound sled.
                     Box(
                         modifier = Modifier
                             .width(76.dp)
