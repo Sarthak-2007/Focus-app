@@ -12,6 +12,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.example.MainActivity
+import com.example.MLog
 import com.example.data.AppBlockTier
 import com.example.data.BlockedBrowserDomains
 import com.example.data.GuardSettingsEntity
@@ -656,6 +657,14 @@ class MonolithAccessibilityService : AccessibilityService() {
         val tamperSurface: Boolean = false,
         val sniperFeedVisible: Boolean = false,
         val browserUrlTexts: List<String> = emptyList(),
+        /** Issue #80 findings 3+5 (STURM3-13 port): this window's
+         *  node texts, bounded (depth 12 / 200 texts, focused nodes
+         *  skipped), captured for non-browser packages so the worker
+         *  can judge loaded URLs in any host (Custom Tabs, in-app
+         *  WebViews) and content on launcher/Assistant surfaces.
+         *  Supported browsers keep their dedicated URL-bar door and
+         *  carry an empty list here. */
+        val windowTexts: List<String> = emptyList(),
         /** Issue #79 finding 3: the browser window's text, captured
          *  for the embed scan at match time in the worker. Empty
          *  while a URL bar is focused (never fire mid-typing). */
@@ -682,9 +691,11 @@ class MonolithAccessibilityService : AccessibilityService() {
                     processEvent(snapshot)
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     // One bad event must not kill the pipeline: the
                     // next snapshot still deserves its verdict.
+                    // Issue #75 F1 wiring: the drop now speaks.
+                    MLog.w("a11y event worker dropped an event", e)
                 }
             }
         }
@@ -826,9 +837,11 @@ class MonolithAccessibilityService : AccessibilityService() {
                     processEvent(snapshot)
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     // Same law as the worker: one bad event must
-                    // not kill enforcement.
+                    // not kill enforcement. Issue #75 F1 wiring:
+                    // the drop now speaks.
+                    MLog.w("a11y tamper event dropped", e)
                 }
             }
         } else {
@@ -871,9 +884,11 @@ class MonolithAccessibilityService : AccessibilityService() {
                         processEvent(winSnapshot)
                     } catch (e: CancellationException) {
                         throw e
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
                         // Same law as the worker: one bad event
-                        // must not kill enforcement.
+                        // must not kill enforcement. Issue #75 F1
+                        // wiring: the drop now speaks.
+                        MLog.w("a11y collector tamper event dropped", e)
                     }
                 }
             } else {
@@ -895,9 +910,12 @@ class MonolithAccessibilityService : AccessibilityService() {
         return try {
             windows?.mapNotNull { window ->
                 if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) null
-                else try { window.root } catch (_: Exception) { null }
+                else try { window.root } catch (e: Exception) { MLog.d("a11y window.root probe failed: ${e.message}"); null }
             } ?: emptyList()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // Issue #75 F1 wiring: a failed window sweep read as
+            // "no windows" — the absence now speaks.
+            MLog.w("a11y interactiveWindowRoots failed; reading as no windows", e)
             emptyList()
         }
     }
@@ -967,7 +985,20 @@ class MonolithAccessibilityService : AccessibilityService() {
             pkgName == "com.google.android.youtube" ||
             pkgName == "com.instagram.android" ||
             isSupportedBrowser(pkgName)
-        if (!needsRoot) return EventFacts()
+        // Issue #80 (STURM3-13 port): non-browser windows carry
+        // their texts for the any-host URL door and the surface
+        // door — including packages whose other doors need no root
+        // at all. The #92 sweep routes every window through this
+        // same capture, so PiP/split/Custom-Tab windows are judged
+        // with their own package, not the foreground one.
+        val windowTexts = if (isSupportedBrowser(pkgName)) {
+            emptyList()
+        } else {
+            val out = mutableListOf<String>()
+            collectNodeTexts(rootNode, out, 0)
+            out
+        }
+        if (!needsRoot) return EventFacts(windowTexts = windowTexts)
         return EventFacts(
             tamperSurface = isPackageInstallerOrTamperSettings(pkgName, rootNode),
             sniperFeedVisible = detectShortsOrReelsFeed(rootNode),
@@ -976,12 +1007,31 @@ class MonolithAccessibilityService : AccessibilityService() {
             } else {
                 emptyList()
             },
+            windowTexts = windowTexts,
             browserContentText = if (isSupportedBrowser(pkgName) && !hasFocusedUrlBar(rootNode)) {
                 collectWindowTextLowercase(rootNode)
             } else {
                 ""
             }
         )
+    }
+
+    /** Issue #80's bounded tree walk: depth- and count-capped,
+     *  skips focused (being-typed) nodes. */
+    private fun collectNodeTexts(
+        node: AccessibilityNodeInfo?,
+        out: MutableList<String>,
+        depth: Int
+    ) {
+        if (node == null || depth > 12 || out.size > 200) return
+        if (!node.isFocused) {
+            node.text?.toString()?.let { out.add(it) }
+            node.contentDescription?.toString()?.let { out.add(it) }
+        }
+        for (i in 0 until node.childCount) {
+            if (out.size > 200) return
+            collectNodeTexts(node.getChild(i), out, depth + 1)
+        }
     }
 
     /** The ONE worker's per-event body: sequential, single-flight,
@@ -1086,6 +1136,68 @@ class MonolithAccessibilityService : AccessibilityService() {
             }
         }
 
+        // 4b. Any-host loaded-URL door + host-surface door
+        // (Issue #80 findings 3+5, STURM3-13 port). Step 4 polices
+        // the five supported browsers' URL bars; a blocked site
+        // loaded inside Gmail, Telegram, a Custom Tab or any other
+        // app's WebView used to sail past every door. The shape
+        // gate is load-bearing: only a text that LOOKS like a
+        // loaded URL (no whitespace, domain/path shape) can fire —
+        // prose mentioning a domain never does. Peek leases and
+        // the persisted Guard toggle are honoured exactly as in
+        // step 4. The #92 sweep feeds other windows' snapshots
+        // through this same step under their own package.
+        if (!leaseLive && (guardSettings?.browserBlockerEnabled ?: true) &&
+            !isSupportedBrowser(pkgName) && snapshot.facts.windowTexts.isNotEmpty()
+        ) {
+            val userDomains = dao.getAllSitesSnapshot().map { it.domain }
+            val loadedHit = snapshot.facts.windowTexts.firstNotNullOfOrNull { text ->
+                matchBlockedDomainInLoadedUrl(text, userDomains)
+            }
+            if (loadedHit != null) {
+                performGlobalAction(GLOBAL_ACTION_BACK)
+                launchInterceptScreen(
+                    packageName = pkgName,
+                    appName = loadedHit,
+                    reasonBadge = "Site Blocked",
+                    path = InterceptPath.SITE
+                )
+                return
+            }
+            // Finding 5: launcher widgets / Discover and the
+            // Assistant render OTHER apps' content under the host's
+            // package. Judge the surface by what it NAMES: a
+            // content-length node naming a non-OPEN app fires for
+            // that app. A bare icon label can never fire — the home
+            // grid is exactly that, and intercepting the launcher
+            // itself in a loop would be a cure worse than the
+            // finding. UNKNOWN path: this door cannot honour a
+            // peek lease for the named app, so it offers none.
+            if (surfaceHostKindFor(pkgName) != SurfaceHostKind.OTHER) {
+                val blockedNames = appsSnapshot
+                    .filter { it.resolvedTier != AppBlockTier.OPEN }
+                    .map { it.appName }
+                val named = surfaceNodeTextNamesBlockedApp(
+                    snapshot.facts.windowTexts, blockedNames
+                )
+                if (named != null) {
+                    val namedRule = appsSnapshot.firstOrNull { it.appName == named }
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                    launchInterceptScreen(
+                        packageName = namedRule?.packageName ?: pkgName,
+                        appName = named,
+                        reasonBadge = if (surfaceHostKindFor(pkgName) == SurfaceHostKind.LAUNCHER) {
+                            "Widget / Feed Blocked"
+                        } else {
+                            "Assistant Blocked"
+                        },
+                        path = InterceptPath.UNKNOWN
+                    )
+                    return
+                }
+            }
+        }
+
         // 5. 3-Tier Per-App & Safe Break Blocking
         val appRule = appsSnapshot.find { it.packageName == pkgName }
         if (appRule == null) {
@@ -1180,7 +1292,8 @@ class MonolithAccessibilityService : AccessibilityService() {
             val defaultDialer = try {
                 (getSystemService(Context.TELECOM_SERVICE) as? TelecomManager)
                     ?.defaultDialerPackage
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                MLog.d("a11y defaultDialerPackage probe failed: ${e.message}")
                 null
             }
             shouldBypassForCall(am.mode, pkgName, callOwnerPackage, defaultDialer)
@@ -1326,7 +1439,10 @@ class MonolithAccessibilityService : AccessibilityService() {
                     processEvent(snapshot)
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    // Issue #75 F1 wiring: this drop was not even
+                    // commented — it speaks now.
+                    MLog.w("a11y event dropped (uncommented catch)", e)
                 }
             }
         } else {
@@ -1353,7 +1469,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         // 'Shorts' channel tab or search chip sits far above the
         // nav bar and is mere browsing; it must not fire.
         val rootRect = Rect()
-        try { rootNode.getBoundsInScreen(rootRect) } catch (_: Exception) { /* no bounds: B cannot prove its case */ }
+        try { rootNode.getBoundsInScreen(rootRect) } catch (e: Exception) { MLog.d("a11y getBoundsInScreen failed: ${e.message}") /* no bounds: B cannot prove its case */ }
         return isSelectedBottomTabShortsOrReels(rootNode, rootRect.height())
     }
 
@@ -1363,7 +1479,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         val text = node.text?.toString()?.trim()?.lowercase(Locale.ROOT) ?: ""
         if (node.isSelected && isFeedTabLabel(text, desc)) {
             val rect = Rect()
-            val hasBounds = try { node.getBoundsInScreen(rect); true } catch (_: Exception) { false }
+            val hasBounds = try { node.getBoundsInScreen(rect); true } catch (e: Exception) { MLog.d("a11y getBoundsInScreen probe failed: ${e.message}"); false }
             if (hasBounds && isBottomNavBounds(rect.bottom, rootHeightPx)) return true
         }
         // Structural fallback (Wave-3 #42): a SELECTED node whose
@@ -1380,7 +1496,7 @@ class MonolithAccessibilityService : AccessibilityService() {
             )
         ) {
             val rect = Rect()
-            val hasBounds = try { node.getBoundsInScreen(rect); true } catch (_: Exception) { false }
+            val hasBounds = try { node.getBoundsInScreen(rect); true } catch (e: Exception) { MLog.d("a11y getBoundsInScreen probe failed: ${e.message}"); false }
             if (hasBounds && isBottomNavBounds(rect.bottom, rootHeightPx)) return true
         }
         for (i in 0 until node.childCount) {

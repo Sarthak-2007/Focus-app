@@ -268,6 +268,13 @@ enum class AppCategory(val label: String, val code: String) {
     // a study app had no home at all and fell to SHOPPING or a
     // name-substring trap.
     EDUCATION("Education", "Study"),
+    // Issue #120 (otp-banking-mid-session): finance gets a real
+    // home. Banks, UPI apps and authenticators are time-critical
+    // infrastructure — an OTP or a UPI collect request dies in
+    // minutes — not shopping. Before this value existed they fell
+    // through to SHOPPING, and the Sleep profile bulk-locked every
+    // one of them without the user ever reviewing a single bank.
+    FINANCE("Finance & Payments", "Money"),
     SHOPPING("Other Apps", "Tools")
 }
 
