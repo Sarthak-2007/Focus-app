@@ -15,6 +15,9 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.io.File
 
 /**
@@ -24,7 +27,18 @@ import java.io.File
  * and the boot helpers did not exist, limit-password was declared,
  * the fix pane used a hardcoded Settings component, and boot work
  * ran in a bare uncaught coroutine.
+ *
+ * Issue #166 (floor U1): the class runs under Robolectric like its
+ * siblings. The containment test exercises runGuardedBootAction's
+ * no-reporter form, whose default reporter is Log.e — on the plain
+ * stub android.jar that call throws "not mocked" from inside the
+ * catch handler and escapes the guard, so the failure could not be
+ * contained as it is on device. ShadowLog absorbs the report and
+ * the guard's containment is what is actually judged. Every
+ * assertion in this class is unchanged by the runner.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
 class BootDeviceAdminTruthTest {
 
     // ---------------------------------------------------------------

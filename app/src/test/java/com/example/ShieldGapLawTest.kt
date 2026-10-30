@@ -14,6 +14,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 
 /**
  * Audit R2 #95 — the shield-gap law's truth guards, at the
@@ -59,6 +61,16 @@ class ShieldGapLawTest {
 
     @Test
     fun gapLawStory() = runBlocking {
+        // Issue #166 (floor U1): Robolectric's shadow clock starts
+        // near zero, so the story's hour-old monotonic anchors
+        // (mono − 3_600_000) would be negative — rows that "started
+        // before the device booted", which production's #82 honesty
+        // math rightly judges on the post-reboot branch and the law
+        // can never latch. Advance the shadow clock past the story's
+        // span first (wall and monotonic move together, so the wall
+        // anchors stay consistent), then capture the clocks. Every
+        // assertion below is unchanged.
+        ShadowSystemClock.advanceBy(Duration.ofHours(2))
         val repo = repository()
         val dao = MonolithDatabase.getInstance(context).monolithDao()
         val now = System.currentTimeMillis()
