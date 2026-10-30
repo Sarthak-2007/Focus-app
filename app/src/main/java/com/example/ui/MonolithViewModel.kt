@@ -45,6 +45,28 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+/**
+ * Issue #107 (Audit R3, shield-setup-lived #5): the Shield search
+ * match. It used to test the display name only, while the screen
+ * printed "NO APP BY THAT NAME ON THIS PHONE" for any zero result —
+ * a false claim of absence for an app installed under another name
+ * or findable by its package. The match now also covers the package
+ * name and the category (name and printed label), and the screen's
+ * no-match line no longer claims absence.
+ */
+fun appMatchesQuery(app: BlockedAppEntity, query: String): Boolean {
+    val q = query.trim()
+    if (q.isBlank()) return true
+    if (app.appName.contains(q, ignoreCase = true)) return true
+    if (app.packageName.contains(q, ignoreCase = true)) return true
+    val category = runCatching { AppCategory.valueOf(app.category) }.getOrNull()
+    if (category != null) {
+        if (category.name.contains(q, ignoreCase = true)) return true
+        if (category.label.contains(q, ignoreCase = true)) return true
+    }
+    return app.category.contains(q, ignoreCase = true)
+}
+
 enum class MonolithDestination(val route: String, val label: String) {
     DECK("deck", "Focus"),
     TASKS("tasks", "Tasks"),
@@ -150,6 +172,32 @@ internal fun peekOfferFor(
         cooldownLeftSeconds == 0 &&
         !pillActive
 
+/**
+ * Issue #55: the withheld reason for a peek offer, computed from
+ * live facts — used at intercept time AND when a grant is refused,
+ * so the standing overlay always prints the current truth. A
+ * running pill binds before the cooldown (verifier, pill race):
+ * naming COOLDOWN while a pill also runs would let the overlay
+ * locally unlock into a chip the grant would refuse.
+ */
+internal fun peekWithheldFor(
+    canPeek: Boolean,
+    path: InterceptPath,
+    appEntity: BlockedAppEntity?,
+    cooldownLeft: Int,
+    pillActive: Boolean
+): PeekWithheld? = when {
+    canPeek -> null
+    !path.canHonourPeekLease -> null
+    appEntity?.resolvedTier != AppBlockTier.PEEK_2M -> null
+    // Hale W-30: a peek length of zero is its own reason — the peek
+    // is OFF, not cooling down.
+    MonolithRepository.PEEK_DURATION_SECONDS <= 0 -> PeekWithheld.PEEK_OFF
+    pillActive -> PeekWithheld.ALREADY_ACTIVE
+    cooldownLeft > 0 -> PeekWithheld.COOLDOWN
+    else -> null
+}
+
 data class AirlockInterceptState(
     val isVisible: Boolean = false,
     val interceptedPackageName: String = "",
@@ -159,6 +207,23 @@ data class AirlockInterceptState(
     val selectedReason: DistractionTriggerReason = DistractionTriggerReason.MUSCLE_MEMORY,
     val transmutedParticles: Int = 0,
     val canUse2MinutePeek: Boolean = true,
+    /** Issue #55: a fresh identity for EVERY intercept — even a
+     *  same-package re-intercept while the overlay already stands.
+     *  The overlay keys its 5s wall and cooldown on this, never on
+     *  (package, visibility), which a re-intercept left unchanged. */
+    val interceptInstanceId: Long = 0L,
+    /** Issue #55: when this intercept fired, in the MONOTONIC
+     *  `SystemClock.elapsedRealtime()` domain — the overlay's wall
+     *  is deadline-derived from this instant, so a wall-clock jump
+     *  can never zero or stretch the 5 seconds. */
+    val interceptedAtMonoMillis: Long = 0L,
+    /** Issue #55: the peek cooldown's absolute deadline in the
+     *  same monotonic domain (repository anchor + 20 min), 0 when
+     *  no cooldown is armed. The overlay derives its remaining
+     *  time from this instant with ceiling math, mirroring
+     *  [peekSecondsRemaining] — its unlock instant is never before
+     *  the repository's grant instant. */
+    val peekCooldownEndsAtMonoMillis: Long = 0L,
     val peekCooldownRemainingSeconds: Int = 0,
     /** The door that fired (UNA2-01): carried from the firing
      *  service through the intent into this state, never inferred
@@ -381,6 +446,7 @@ class MonolithViewModel(
     private val _selectedCategoryFilter = MutableStateFlow<AppCategory?>(null)
     val selectedCategoryFilter: StateFlow<AppCategory?> = _selectedCategoryFilter.asStateFlow()
 
+    private var airlockInstanceSeq: Long = 0L
     private val _airlockState = MutableStateFlow(AirlockInterceptState())
     val airlockState: StateFlow<AirlockInterceptState> = _airlockState.asStateFlow()
 
@@ -430,10 +496,8 @@ class MonolithViewModel(
         _selectedCategoryFilter
     ) { allApps, query, category ->
         allApps.filter { app ->
-            val matchesQuery = query.isBlank() ||
-                app.appName.contains(query, ignoreCase = true)
             val matchesCategory = category == null || app.category == category.name
-            matchesQuery && matchesCategory
+            appMatchesQuery(app, query) && matchesCategory
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -1455,10 +1519,12 @@ class MonolithViewModel(
      *  when turning ON, and by then the fact already says ON. */
     fun toggleSound(): Boolean {
         val next = !SoundEffectsSetting.isEnabled(appContext)
-        SoundEffectsSetting.setEnabled(appContext, next)
-        _soundEnabled.value = next
-        if (next) soundEngine.playRotaryDetent(720.0)
-        return next
+        // Issue #49: the print follows the DISK, not the attempt —
+        // a failed commit leaves the flow on the persisted fact.
+        val committed = SoundEffectsSetting.setEnabled(appContext, next)
+        _soundEnabled.value = if (committed) next else SoundEffectsSetting.isEnabled(appContext)
+        if (_soundEnabled.value) soundEngine.playRotaryDetent(720.0)
+        return _soundEnabled.value
     }
 
     /** ST-02 (Truth Car 3): the Deck's END BREAK chip. Ends the
@@ -1670,7 +1736,8 @@ class MonolithViewModel(
 
     fun addTaskToQueue(
         title: String,
-        estimatedMinutes: Int = 25,
+        // Issue #32 F1: default 0 = no estimate given (was 25).
+        estimatedMinutes: Int = 0,
         categoryTag: String = "Study",
         notesOrSubsteps: String = "",
         promoteToActive: Boolean = false
@@ -2091,6 +2158,15 @@ class MonolithViewModel(
         }
     }
 
+    /** Issue #107 (shield-setup-lived #3): correct the printed
+     *  category guess on a catalogue row. A plain row update in the
+     *  repository — no schema change. */
+    fun setAppCategory(packageName: String, category: AppCategory) {
+        viewModelScope.launch {
+            repository.setAppCategory(packageName, category)
+        }
+    }
+
     fun setAppBlockTier(app: BlockedAppEntity, tier: AppBlockTier) {
         dismissPruneNote()
         val isLockedSession = activeSession.value?.isActive == true
@@ -2362,19 +2438,7 @@ class MonolithViewModel(
         // The withheld reason is owed only where the door could
         // have honoured a peek and the tier is PEEK: elsewhere no
         // peek line prints at all (Held Door Truth Baseline).
-        val withheld = when {
-            canPeek -> null
-            !path.canHonourPeekLease -> null
-            appEntity?.resolvedTier != AppBlockTier.PEEK_2M -> null
-            // Hale W-30: a peek length of zero is its own reason —
-            // the peek is OFF, not cooling down. (Trunk's constant
-            // is 120 s; the branch arms the day Rurik's editable
-            // store can set it to 0.)
-            MonolithRepository.PEEK_DURATION_SECONDS <= 0 -> PeekWithheld.PEEK_OFF
-            cooldownLeft > 0 -> PeekWithheld.COOLDOWN
-            pillActive -> PeekWithheld.ALREADY_ACTIVE
-            else -> null
-        }
+        val withheld = peekWithheldFor(canPeek, path, appEntity, cooldownLeft, pillActive)
 
         _airlockState.value = AirlockInterceptState(
             isVisible = true,
@@ -2383,7 +2447,16 @@ class MonolithViewModel(
             interceptReasonBadge = reasonBadge,
             sessionIntention = active?.intention ?: _intentionText.value,
             selectedReason = DistractionTriggerReason.MUSCLE_MEMORY,
-            transmutedParticles = 0,
+            interceptInstanceId = ++airlockInstanceSeq,
+            // ANCHOR (Issue #55, DECISION-NEEDED recorded in the
+            // wave-3 report): the wall is anchored to the INTERCEPT
+            // instant (deadline truth); service→overlay latency
+            // therefore subtracts from the visible wall. The
+            // alternative — anchoring at the first visible frame —
+            // is Sarthak's/Ren's call, not silently changed here.
+            interceptedAtMonoMillis = SystemClock.elapsedRealtime(),
+            peekCooldownEndsAtMonoMillis =
+                appEntity?.let { repository.getPeekCooldownDeadlineMono(it) } ?: 0L,
             canUse2MinutePeek = canPeek,
             peekCooldownRemainingSeconds = cooldownLeft,
             interceptPath = path,
@@ -2421,6 +2494,23 @@ class MonolithViewModel(
         val entity = apps.value.find { it.packageName == state.interceptedPackageName }
         val cooldownNow = entity?.let { repository.getPeekCooldownRemainingSeconds(it) } ?: 0
         if (!peekOfferFor(state.interceptPath, entity, cooldownNow, _floatingPeekPill.value.isActive)) {
+            // Issue #55 (fresh-eyes): a refused grant must never be a
+            // silent no-op under a tappable chip. Recompute the offer
+            // from the same live facts and re-present the truth in
+            // place — the chip is replaced by the real withheld
+            // reason (or by nothing, where the door owes no peek).
+            // The intercept instance and wall stamps are preserved:
+            // this is a correction of the offer, not a new intercept.
+            _airlockState.value = state.copy(
+                canUse2MinutePeek = false,
+                peekCooldownRemainingSeconds = cooldownNow,
+                peekCooldownEndsAtMonoMillis =
+                    entity?.let { repository.getPeekCooldownDeadlineMono(it) } ?: 0L,
+                peekWithheld = peekWithheldFor(
+                    false, state.interceptPath, entity, cooldownNow,
+                    _floatingPeekPill.value.isActive
+                )
+            )
             return
         }
         val pkg = state.interceptedPackageName
@@ -2491,12 +2581,19 @@ class MonolithViewModel(
 
     class Factory(
         private val appContext: Context,
-        private val repository: MonolithRepository,
-        private val soundEngine: TactileSoundEngine
+        private val repository: MonolithRepository
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return MonolithViewModel(appContext, repository, soundEngine) as T
+            // Issue #27: the sound engine is born HERE, inside
+            // create() — ViewModelProvider calls create() only when
+            // no retained instance exists, so an Activity recreation
+            // can never mint an orphaned engine the retained
+            // ViewModel will ignore, and the engine's death stays
+            // where it belongs: onCleared().
+            return MonolithViewModel(
+                appContext, repository, TactileSoundEngine(appContext)
+            ) as T
         }
     }
 }

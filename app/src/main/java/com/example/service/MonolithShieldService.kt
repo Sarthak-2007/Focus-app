@@ -72,6 +72,7 @@ class MonolithShieldService : Service() {
         // startForeground has actually succeeded - no instance, no
         // flag, no rumour.
         instance = this
+        WatchStore.bind(applicationContext)
         WatchStore.poke()
         startMonitoringLoop()
 
