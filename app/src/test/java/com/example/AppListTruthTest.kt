@@ -146,6 +146,7 @@ class AppListTruthTest {
         )
         repository.ensureSeededAndSyncPackages()
         assertEquals(
+            "control sync must discover the control app and keep the stored one",
             setOf("com.only.app", "com.control.app"),
             dao.getAllAppsSnapshot().map { it.packageName }.toSet()
         )
@@ -159,9 +160,17 @@ class AppListTruthTest {
         val query = Intent(Intent.ACTION_MAIN, null).addCategory(Intent.CATEGORY_LAUNCHER)
         shadow.removeResolveInfosForIntent(query, "com.only.app")
         shadow.removeResolveInfosForIntent(query, "com.control.app")
+        // Verifiably empty AS THE REPOSITORY SEES IT: the raw
+        // query may still answer the app's own launcher activity
+        // (and com.android.settings), which the sync filters out
+        // before reconciling — what must be empty is the
+        // post-filter installed set the reconcile would consume.
+        val postFilterInstalled = context.packageManager.queryIntentActivities(query, 0)
+            .mapNotNull { it.activityInfo?.packageName }
+            .filter { it != context.packageName && !it.startsWith("com.android.settings") }
         assertTrue(
-            "the second run's launcher query must be verifiably empty",
-            context.packageManager.queryIntentActivities(query, 0).isEmpty()
+            "the second run's installed set must be verifiably empty, was $postFilterInstalled",
+            postFilterInstalled.isEmpty()
         )
         // A post-catalog effect as the second run's pulse: the
         // sync seeds default tasks AFTER the catalog block, so
@@ -184,6 +193,7 @@ class AppListTruthTest {
         // guard and both rows are pruned; kill the run and the
         // tasks never come back.
         assertEquals(
+            "empty-query run must prune nothing",
             setOf("com.only.app", "com.control.app"),
             dao.getAllAppsSnapshot().map { it.packageName }.toSet()
         )
