@@ -94,5 +94,17 @@ class DayWordStore(context: Context) {
 
         /** The complete, closed word list. Never TEST. */
         val WORDS: List<String> = listOf("REST", "ILL", "FAMILY")
+
+        /** The excuse words (issue #137, F1): a filing date
+         *  carrying one of these is excused from routine
+         *  judgement — RoutineDerive grants it the paused-window
+         *  amnesty (never MISSED), the heartbeat does not
+         *  auto-start its routines, and the finalise funnel
+         *  stamps UNKNOWN, never MISSED, over it. Today the
+         *  excuse set is the whole closed list above. */
+        val EXCUSE_WORDS: Set<String> = setOf("ILL", "REST", "FAMILY")
+
+        /** True when [word] is an excuse word. */
+        fun isExcuse(word: String?): Boolean = word in EXCUSE_WORDS
     }
 }

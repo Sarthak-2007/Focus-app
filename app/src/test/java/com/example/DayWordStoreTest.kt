@@ -84,6 +84,18 @@ class DayWordStoreTest {
     }
 
     @Test
+    fun isExcuse_coversExactlyTheClosedList() {
+        // Issue #137, F1: the amnesty keys off isExcuse — every
+        // declarable word excuses, nothing else does.
+        assertTrue(DayWordStore.isExcuse("ILL"))
+        assertTrue(DayWordStore.isExcuse("REST"))
+        assertTrue(DayWordStore.isExcuse("FAMILY"))
+        assertFalse(DayWordStore.isExcuse("TEST"))
+        assertFalse(DayWordStore.isExcuse(null))
+        assertEquals(DayWordStore.WORDS.toSet(), DayWordStore.EXCUSE_WORDS)
+    }
+
+    @Test
     fun all_filtersStrayAndCorruptedEntries() {
         // Poison the file directly, as legacy/corruption would.
         prefs.edit()
