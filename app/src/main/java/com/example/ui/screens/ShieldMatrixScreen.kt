@@ -722,19 +722,25 @@ fun ShieldMatrixScreen(
         }
 
         // The first sentence the installed-only cure lets the app say
-        // honestly (Liv, adopted by Gust): a search with no match is
-        // answered in print, never with a void.
+        // honestly (Liv, adopted by Gust): an empty list is answered
+        // in print, never with a void. Fresh-eyes L7: the filtered
+        // list is query AND category chip, so a search hit that
+        // lives under another category must say exactly that — the
+        // phone fact is only claimed when the name matches NOTHING
+        // in the full catalog. Issue #51 F5 widened the trigger:
+        // the non-search empties (a category void, a whole-list
+        // void) print their fact too. (Union merged by STOSS-34:
+        // L7's cross-category case first, #107's never-deny search
+        // line second, #51's two void facts last.)
         if (filteredApps.isEmpty()) {
             item {
+                val existsOutsideFilter = allApps.any {
+                    it.appName.contains(searchQuery, ignoreCase = true)
+                }
                 Text(
-                    // Merged cures — issue #107 (#5) for search: never
-                    // claim an installed app is absent; a zero result
-                    // means the SEARCH matched nothing, and the app may
-                    // live under another name or its package name.
-                    // Issue #51 F5 for the non-search empties: a category
-                    // or whole-list void prints its fact too, never a
-                    // silent blank.
                     text = when {
+                        searchQuery.isNotBlank() && existsOutsideFilter ->
+                            "THAT NAME IS ON THIS PHONE — NOT IN THIS CATEGORY"
                         searchQuery.isNotBlank() ->
                             "NO MATCH FOR THAT SEARCH — TRY THE APP'S NAME OR ITS PACKAGE NAME"
                         selectedCategory != null ->
