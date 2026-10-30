@@ -406,8 +406,17 @@ class MonolithAccessibilityService : AccessibilityService() {
                 if (session != null && session.isActive) {
                     if (armedSessionId != session.id) {
                         val wasDisarmed = armedSessionId == -1
-                        armedSessionId = session.id
+                        // Issue #77: stamp the mono BEFORE publishing
+                        // the id. The old order let a sampler pair the
+                        // NEW session's id with the PREVIOUS session's
+                        // still-standing mono — link L3 'confirmed' for
+                        // a session this gate never observed. With
+                        // mono-first, a mid-write sampler sees either
+                        // the old id with a fresh mono (harmless: the
+                        // old session is gone) or the new id with its
+                        // own stamp — never the torn pair.
                         armedMono = SystemClock.elapsedRealtime()
+                        armedSessionId = session.id
                         if (wasDisarmed) {
                             // Catch-up scan (Verifier, Wave-3
                             // #42): events dropped while the gate
