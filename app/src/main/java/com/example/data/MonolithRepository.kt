@@ -839,7 +839,9 @@ class MonolithRepository(
         dao.getGuardSettingsSnapshot()?.shortsReelsSniperEnabled ?: true
 
     suspend fun updateRoutine(routine: RoutineEntity) {
-        dao.updateRoutine(routine)
+        // Issue #32 F2: THE routine write funnel (ViewModel's
+        // persistRoutine routes here) — sanitize at the boundary.
+        dao.updateRoutine(routine.sanitized())
     }
 
     /** Guard settings as a flow (reset-note strip + tick stamps). */
@@ -1170,10 +1172,9 @@ class MonolithRepository(
                     }
                 }
             }
-            app.copy(
-                isBlocked = tier != AppBlockTier.OPEN,
-                blockTier = tier.name
-            )
+            // Issue #32 F4: set the tier ONLY; normalized() derives
+            // isBlocked from it at the single derivation point.
+            app.copy(blockTier = tier.name).normalized()
         }
         dao.insertApps(updated)
     }
@@ -1280,7 +1281,11 @@ class MonolithRepository(
                 app.category == AppCategory.MESSAGING.name -> AppBlockTier.PEEK_2M
                 else -> AppBlockTier.LOCKED
             }
-            app.copy(isBlocked = shouldBlock, blockTier = tier.name)
+            // Issue #32 F4: tier is the truth; isBlocked is derived
+            // by normalized() — note shouldBlock (category match) and
+            // tier != OPEN can differ for MESSAGING (PEEK), and the
+            // tier is what enforcement reads, so the tier wins.
+            app.copy(blockTier = tier.name).normalized()
         }
         dao.insertApps(updated)
     }
@@ -1327,7 +1332,7 @@ class MonolithRepository(
                 startMinute = 0,
                 endHour = endHour,
                 endMinute = 0
-            )
+            ).sanitized() // Issue #32 F2: write-boundary sanitize
         )
     }
 
@@ -1397,7 +1402,7 @@ class MonolithRepository(
             // E1: the window is open and his kit is on (Sten §1.6.1).
             // first/last evidence stamps stay 0 until E2/E4 land.
             evidenceMask = if (routineId != null) EVIDENCE_E1_START else 0
-        )
+        ).sanitized() // Issue #32 F2: write-boundary sanitize (startSession funnel)
         // Slice E (Fader's writer law): the held counts are captured
         // INSIDE the birth transaction, from the same snapshot that
         // deactivates the predecessor — the set the shield will
@@ -2468,7 +2473,9 @@ class MonolithRepository(
 
     suspend fun addTaskToQueue(
         title: String,
-        estimatedMinutes: Int = 25,
+        // Issue #32 F1: default 0 = no estimate given (was 25, which
+        // fabricated an estimate for every caller that omitted it).
+        estimatedMinutes: Int = 0,
         categoryTag: String = "Study",
         notesOrSubsteps: String = "",
         promoteToActive: Boolean = false
