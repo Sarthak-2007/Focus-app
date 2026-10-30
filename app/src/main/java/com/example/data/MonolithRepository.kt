@@ -733,7 +733,11 @@ class MonolithRepository(
     }
 
     /**
-     * Tamper-Proof Monotonic Clock + Boot Count + Hardware Keystore HMAC Verification:
+     * Tamper-Proof Monotonic Clock + Boot Count + Keystore HMAC Verification
+     * (keys are requested from the AndroidKeyStore; hardware/TEE backing is
+     * not verified — no StrongBox request, no KeyInfo security-level check —
+     * and signing falls back to a built-in software key when the KeyStore is
+     * unavailable; audit R1 #36 finding 4, substance parked as decision #21):
      * 1. Cross-checks wall-clock elapsed time against hardware `SystemClock.elapsedRealtime()` and `BOOT_COUNT`.
      *    Advancing the phone's system clock forward by +2 hours is ignored because elapsed time is anchored to
      *    `SystemClock.elapsedRealtime()`.
