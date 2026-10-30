@@ -21,3 +21,23 @@ debug.keystore
 *.jks
 my-upload-key.jks
 keystore.properties
+
+# Lane-local render redirect (issue #66 finisher cure): each lane tree drops its
+# own untracked copy; a committed one poisoned CI captures with a dead absolute path.
+shots-redirect.txt
+# Repo hygiene (audit round 2, issue #84): tool caches + run debris never re-enter
+.aistudio/
+.tempmediaStorage/
+/public/
+*.log
+*.tmp
+*.flag
+*.note
+
+# Any keystore material, any name (audit #25: patterns, not single names).
+# The ONE exception is the standard debug keystore: it is committed on
+# purpose (Sarthak 05:22 order — CI and local builds sign with the same
+# key so APKs install over his installed Monolith).
+*.keystore
+!debug.keystore
+*.p12
