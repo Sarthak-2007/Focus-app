@@ -1,10 +1,20 @@
 package com.example
 
+import android.Manifest
+import android.app.AlarmManager
+import android.app.admin.DevicePolicyManager
+import android.content.pm.PackageManager
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -28,9 +38,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,19 +52,26 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.MonolithDatabase
-import com.example.data.MonolithRepository
+import com.example.service.InterceptConsumptionStore
+import com.example.service.InterceptNonce
 import com.example.service.InterceptPath
+import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithShieldService
-import com.example.service.TactileSoundEngine
+import com.example.service.PermissionReturnService
+import com.example.service.WatchStore
 import com.example.ui.MonolithDestination
 import com.example.ui.ArmPhase
 import com.example.ui.MonolithViewModel
 import com.example.ui.components.AirlockInterceptOverlay
+import com.example.ui.components.BlockitActionChip
 import com.example.ui.components.AlwaysOnDeskClockOverlay
+import com.example.ui.components.LauncherBlockScreen
+import com.example.ui.components.PeekCountdownPill
+import com.example.ui.components.LauncherPage
 import com.example.ui.components.CapturedNotificationsDigestSheet
 import com.example.ui.components.DisarmChallengeOverlay
 import com.example.ui.components.MonolithPullDownHeader
@@ -64,9 +83,32 @@ import com.example.ui.screens.TactileDeckScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.views.MonolithRailView
 
+/** Issue #78 (Audit R2, ipc-intents): the system Settings app's
+ *  package — the ONLY lawful home of every Settings pane this app
+ *  navigates to. */
+internal const val SYSTEM_SETTINGS_PACKAGE = "com.android.settings"
+
+/**
+ * A Settings intent PINNED to the system Settings app. An unpinned
+ * implicit Settings intent enters system-wide resolution: any
+ * installed app declaring a matching intent-filter can be picked
+ * and present a fake Settings pane in place of the real one. The
+ * FIX routes hand the user to permission panes for THIS app's own
+ * protection grants — that hand-off is never offered to a resolver.
+ */
+internal fun pinnedSettingsIntent(action: String, data: Uri? = null): Intent {
+    val intent = if (data != null) Intent(action, data) else Intent(action)
+    return intent.setPackage(SYSTEM_SETTINGS_PACKAGE)
+}
+
 class MainActivity : ComponentActivity() {
 
-    private lateinit var soundEngine: TactileSoundEngine
+    // Issue #27 (finding 1): intercept intents that arrive while
+    // the Activity is alive (singleTop re-delivery lands in
+    // onNewIntent) are bridged into composition through this
+    // state. setIntent() alone is invisible to Compose, which is
+    // how re-intercepts used to be silently dropped.
+    private var pendingInterceptIntent by mutableStateOf<Intent?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -80,29 +122,48 @@ class MainActivity : ComponentActivity() {
             )
         )
 
-        val database = MonolithDatabase.getInstance(applicationContext)
-        val repository = MonolithRepository(applicationContext, database.monolithDao())
-        soundEngine = TactileSoundEngine(applicationContext)
+        // Watch Store bind (issue #48): LAST PROVED restored before
+        // any surface reads the store.
+        WatchStore.bind(applicationContext)
+
+        // ISSUE-67: the repository comes from the single
+        // construction point (AppContainer: DAO + live service
+        // port + the same database instance).
+        val repository = AppContainer.repository(applicationContext)
+        // Issue #27 (finding 2): the ViewModel is obtained through
+        // the provider BEFORE any engine exists. On recreation the
+        // provider returns the retained instance and the Factory's
+        // create() never runs — no orphaned sound engine, and the
+        // retained ViewModel's engine is never stopped by an
+        // Activity's onDestroy (its death is onCleared's job).
+        val rootViewModel = ViewModelProvider(
+            this,
+            MonolithViewModel.Factory(
+                appContext = applicationContext,
+                repository = repository
+            )
+        )[MonolithViewModel::class.java]
+        pendingInterceptIntent = intent
 
         setContent {
-            val viewModel: MonolithViewModel = viewModel(
-                factory = MonolithViewModel.Factory(
-                    appContext = applicationContext,
-                    repository = repository,
-                    soundEngine = soundEngine
-                )
-            )
+            val viewModel = rootViewModel
             val darkTheme by viewModel.darkTheme.collectAsStateWithLifecycle()
             val activeSessionForTheme by viewModel.activeSession.collectAsStateWithLifecycle()
             val shotGround by viewModel.shotGround.collectAsStateWithLifecycle()
 
-            LaunchedEffect(Unit) {
-                handleIncomingInterceptIntent(intent, viewModel)
+            // Issue #27 (finding 1): every pending intent — the
+            // launch intent AND any onNewIntent re-delivery — is
+            // handled exactly once, then cleared.
+            LaunchedEffect(pendingInterceptIntent) {
+                val pending = pendingInterceptIntent
+                if (pending != null) {
+                    handleIncomingInterceptIntent(pending, viewModel)
+                    pendingInterceptIntent = null
+                }
             }
 
             MyApplicationTheme(
                 darkTheme = darkTheme,
-                dynamicColor = false,
                 // Slice E (F-Z1 + Zug-II §5.1): the scheme pin —
                 // session-night applies only once the ground has
                 // STEPPED (t=0 + 400ms), never at the row's birth
@@ -121,40 +182,155 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // Issue #27 (finding 1): bridge the re-delivered intent
+        // into composition — without this, a re-intercept while
+        // the Activity is alive never reaches the Airlock.
+        pendingInterceptIntent = intent
     }
 
     private fun handleIncomingInterceptIntent(intent: Intent?, viewModel: MonolithViewModel) {
         if (intent == null) return
+        // Issue #155 (F5, re-homed at the STURM-4 merge): a tap on
+        // the shield notification is about the shield — land on
+        // SHIELD, not the default Deck. Intercept extras take
+        // precedence: when a firing's package rides the same intent,
+        // the intercept path below owns the delivery and this extra
+        // is simply consumed.
+        val fromShieldNotification = intent.getBooleanExtra(
+            MonolithShieldService.EXTRA_FROM_SHIELD_NOTIFICATION, false
+        )
+        if (fromShieldNotification) {
+            intent.removeExtra(MonolithShieldService.EXTRA_FROM_SHIELD_NOTIFICATION)
+        }
         val pkg = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
-        if (!pkg.isNullOrBlank()) {
-            val name = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
-                ?: "Short-Form Feed"
-            val badge = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
-                ?: "Locked"
-            // WHICH door fired (Truth Car 3, UNA2-01): the peek
-            // offer is computed per-path — an extra that is missing
-            // or names no known door parses to UNKNOWN, and UNKNOWN
-            // never offers a peek.
-            val path = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
-                ?.let { runCatching { InterceptPath.valueOf(it) }.getOrNull() }
-                ?: InterceptPath.UNKNOWN
-            viewModel.triggerAirlockIntercept(pkg, name, badge, path)
+        if (pkg.isNullOrBlank()) {
+            if (fromShieldNotification) {
+                viewModel.navigateTo(MonolithDestination.SHIELD)
+            }
+            return
+        }
+        // Issue #68 F5, Tier 2 — provenance before trust: this
+        // activity is exported (LAUNCHER), so any installed app
+        // can send these extras. Honour them only with the
+        // single-use nonce an in-app service minted moments ago
+        // (InterceptNonce); without one the extras are dropped
+        // here and never reach the airlock.
+        val nonce = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_NONCE)
+        if (!InterceptNonce.consume(applicationContext, nonce)) {
             intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
             intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
+            intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_NONCE)
+            intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_ID)
+            return
         }
+        val name = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
+            ?: "Short-Form Feed"
+        val badge = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
+            ?: "Locked"
+        // WHICH door fired (Truth Car 3, UNA2-01): the peek
+        // offer is computed per-path — an extra that is missing
+        // or names no known door parses to UNKNOWN, and UNKNOWN
+        // never offers a peek.
+        val path = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
+            ?.let { runCatching { InterceptPath.valueOf(it) }.getOrNull() }
+            ?: InterceptPath.UNKNOWN
+        // Issue #78: consumption is PERSISTED, not just in-memory.
+        // The platform retains the launching intent and redelivers
+        // it intact after process death, so removeExtra on this
+        // copy alone let the same stale Airlock fire again. The
+        // firing's id is marked consumed (synchronous commit)
+        // BEFORE the Airlock can show; an already-consumed
+        // redelivery is dropped, and a delivery whose consumption
+        // cannot be persisted is dropped too (fail closed — the
+        // enforcement door fires a fresh intercept if the user is
+        // actually standing in the blocked app). Id-less deliveries
+        // are fingerprinted from their extras: the same stale copy
+        // redelivered is the same fingerprint. (Merge note,
+        // STURM3-15: the nonce gate above runs first — it is the
+        // provenance proof; this store is the redelivery memory.
+        // A lawful firing carries both, and must pass both.)
+        val interceptId = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?: InterceptConsumptionStore.fingerprint(pkg, name, badge, path.name)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_ID)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_NONCE)
+        if (InterceptConsumptionStore.isConsumed(this, interceptId)) return
+        if (!InterceptConsumptionStore.markConsumed(this, interceptId)) return
+        // The showing itself is revalidated in the VM against the
+        // live session and the package's live tier/lease — a
+        // first-delivered but long-delayed intent does not resurrect
+        // an Airlock its facts no longer support.
+        viewModel.triggerAirlockInterceptFromIntent(pkg, name, badge, path)
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        if (::soundEngine.isInitialized) {
-            soundEngine.stopAllAudio()
-        }
-    }
+    // Issue #27 (finding 2): there is deliberately NO onDestroy
+    // audio stop here any more. The old override stopped the
+    // Activity's own engine field — which WAS the retained
+    // ViewModel's engine — on every rotation, killing all sound
+    // until process death. The ViewModel stops its engine in
+    // onCleared(), the one true end of its life.
 }
 
+// ------------------------------------------------------------------
+// Issue #90 (complexity F3, hoist step): these four helpers used to
+// be nested funs inside MonolithRootApp — three of them named in
+// the audit finding itself. They are file-level now, with every
+// captured value passed explicitly; bodies are verbatim, so
+// behaviour is unchanged and each helper is testable in isolation.
+// ------------------------------------------------------------------
+
+private fun closePark(
+    parkOpenState: MutableState<Boolean>,
+    digestSheetVisible: Boolean,
+    viewModel: MonolithViewModel,
+    dismissReceipt: Boolean
+) {
+    parkOpenState.value = false
+    if (dismissReceipt && digestSheetVisible) {
+        viewModel.toggleNotificationDigestSheet(false)
+    }
+    // The intro bit is NOT spent here (issue-156, F3): a
+    // dismissal — above all a reflexive scrim tap before the
+    // sweep has printed a single word — spends nothing. The
+    // bit is spent on delivery, by the effect in the root, once
+    // the measured board is actually on screen.
+}
+
+private fun openPark(
+    parkOpenState: MutableState<Boolean>,
+    sealed: Boolean,
+    viewModel: MonolithViewModel
+) {
+    // HB-2: the tap-time read of the SAME doorLocked predicate —
+    // the synchronous backstop for a Guard tap landing inside
+    // the finish machine's detention window before the state
+    // collectors recompose. The predicate is evaluated HERE, at
+    // the tap: navigationLocked() reads the VM's flows directly,
+    // so the answer is true even while the composition's
+    // doorLocked still holds its pre-detention value. (The
+    // first form of this guard read the captured doorLocked
+    // val — a print, not a lock; hb4DetentionGuardTap caught
+    // it on the gate build's first full test run.)
+    if (!sealed && !viewModel.navigationLocked()) parkOpenState.value = true
+}
+
+// Issue #27 (finding 5): a FIX trip must never die silently.
+// Every Settings launch goes through here: the exact pane
+// first; if the OEM throws, the generic Settings home is the
+// fallback; if even that fails, the user is TOLD, in words,
+// instead of being stranded on a dead tap.
 @Composable
 fun MonolithRootApp(viewModel: MonolithViewModel) {
     val context = LocalContext.current
+    // Issue #339 (Second-pass F1): the Web Gate's persisted store
+    // and its render-cache states (the store is the truth).
+    val webGateStore = remember { com.example.data.WebGateStore(context) }
+    var webBlockAllState by remember { mutableStateOf(webGateStore.blockAll()) }
+    var allowedWebHostsState by remember { mutableStateOf(webGateStore.allowedHosts()) }
     val lifecycleOwner = LocalLifecycleOwner.current
     val scheme = MaterialTheme.colorScheme
 
@@ -189,12 +365,23 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val deletedTaskForUndo by viewModel.deletedTaskForUndo.collectAsStateWithLifecycle()
     val totalQueueMinutes by viewModel.totalQueueMinutes.collectAsStateWithLifecycle()
     val selectedProfileName by viewModel.selectedProfileName.collectAsStateWithLifecycle()
+    val profileUndoAvailable by viewModel.profileUndoAvailable.collectAsStateWithLifecycle()
     val intentionText by viewModel.intentionText.collectAsStateWithLifecycle()
     val activeSession by viewModel.activeSession.collectAsStateWithLifecycle()
+
+    // Issue #70 F3: the Deck primer's bit flips the moment the
+    // first session is live — the primer is a first-run-only
+    // surface and never returns.
+    LaunchedEffect(activeSession) {
+        if (activeSession?.isActive == true && viewModel.deckPrimerPending()) {
+            viewModel.markDeckPrimerDone()
+        }
+    }
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
     val allApps by viewModel.apps.collectAsStateWithLifecycle()
     val filteredApps by viewModel.filteredApps.collectAsStateWithLifecycle()
     val pruneNote by viewModel.pruneNote.collectAsStateWithLifecycle()
+    val unreviewedOpenNames by viewModel.unreviewedOpenNames.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val selectedCategory by viewModel.selectedCategoryFilter.collectAsStateWithLifecycle()
     val shortsReelsSniperEnabled by viewModel.shortsReelsSniperEnabled.collectAsStateWithLifecycle()
@@ -205,6 +392,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // from the persisted store by way of the VM.
     val loadoutCapIndex by viewModel.loadoutCapIndex.collectAsStateWithLifecycle()
     val showRoutineResetNote by viewModel.showRoutineResetNote.collectAsStateWithLifecycle()
+    val activeTaskFromYesterday by viewModel.activeTaskFromYesterday.collectAsStateWithLifecycle()
+    val freshStartNoteVisible by viewModel.freshStartNoteVisible.collectAsStateWithLifecycle()
+    val updateNoteVisible by viewModel.updateNoteVisible.collectAsStateWithLifecycle()
     val frozenDigest by viewModel.frozenDigest.collectAsStateWithLifecycle()
     val storedMonths by viewModel.storedMonths.collectAsStateWithLifecycle()
     val drawerMonth by viewModel.drawerMonth.collectAsStateWithLifecycle()
@@ -213,8 +403,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val drawerQuery by viewModel.drawerQuery.collectAsStateWithLifecycle()
     val drawerResults by viewModel.drawerResults.collectAsStateWithLifecycle()
     val drawerSearchHasEarlier by viewModel.drawerSearchHasEarlier.collectAsStateWithLifecycle()
+    val drawerLoading by viewModel.drawerLoading.collectAsStateWithLifecycle()
+    val drawerError by viewModel.drawerError.collectAsStateWithLifecycle()
+    val drawerSearchDayWords by viewModel.drawerSearchDayWords.collectAsStateWithLifecycle()
     val dayWords by viewModel.dayWords.collectAsStateWithLifecycle()
     val forgedArtifactIds by viewModel.forgedArtifactIds.collectAsStateWithLifecycle()
+    val curioForgeRecords by viewModel.curioForgeRecords.collectAsStateWithLifecycle()
+    val forgeStats by viewModel.forgeStats.collectAsStateWithLifecycle()
+    val receiptIndex by viewModel.receiptIndex.collectAsStateWithLifecycle()
     val appsCellCount by viewModel.appsCellCount.collectAsStateWithLifecycle()
     val appsSplit by viewModel.appsSplit.collectAsStateWithLifecycle()
     val deckWarrant by viewModel.deckWarrant.collectAsStateWithLifecycle()
@@ -228,6 +424,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val shotGround by viewModel.shotGround.collectAsStateWithLifecycle()
     val finishState by viewModel.finishState.collectAsStateWithLifecycle()
     val receiptState by viewModel.receiptState.collectAsStateWithLifecycle()
+    val lastReceiptSessionId by viewModel.lastReceiptSessionId.collectAsStateWithLifecycle()
     val isAlwaysOnDeskClockVisible by viewModel.isAlwaysOnDeskClockVisible.collectAsStateWithLifecycle()
     val burnInFigure8MinuteStep by viewModel.burnInFigure8MinuteStep.collectAsStateWithLifecycle()
     val showNotificationDigestSheet by viewModel.showNotificationDigestSheet.collectAsStateWithLifecycle()
@@ -236,9 +433,11 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val totalInterceptions by viewModel.totalInterceptions.collectAsStateWithLifecycle()
     val soundEnabled by viewModel.soundEnabled.collectAsStateWithLifecycle()
     val airlockState by viewModel.airlockState.collectAsStateWithLifecycle()
+    val floatingPeekPill by viewModel.floatingPeekPill.collectAsStateWithLifecycle()
     val disarmChallenge by viewModel.disarmChallenge.collectAsStateWithLifecycle()
     val weeklyEmergencyTokensRemaining by viewModel.weeklyEmergencyTokensRemaining.collectAsStateWithLifecycle()
     val ratchetWarningMessage by viewModel.ratchetWarningMessage.collectAsStateWithLifecycle()
+    val tierChangeForUndo by viewModel.tierChangeForUndo.collectAsStateWithLifecycle()
 
     val sealed = activeSession?.isActive == true
     // HB-1 / HB-2 (Truth Car 2; Band's header-band audit): ONE
@@ -260,80 +459,187 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // Vault keep the immediate session-night above.
     val groundNight = darkTheme ||
         shotGround == com.example.ui.MonolithViewModel.ShotGround.GROUNDED
+    // Issue #143 (F5): the system bars follow the ground night.
+    // onCreate pins a light status bar exactly once; without this,
+    // dark status glyphs sat on the night ground for the whole
+    // session. Re-applied whenever the ground steps, and the day
+    // values are restored when it steps back. (This composable is
+    // top-level, so the bars are set through the host Activity
+    // from LocalContext, not the onCreate receiver.)
+    val hostActivity = context as? androidx.activity.ComponentActivity
+    LaunchedEffect(groundNight, hostActivity) {
+        hostActivity?.enableEdgeToEdge(
+            statusBarStyle = if (groundNight) {
+                // SystemBarStyle.dark takes ONE scrim arg (the
+                // two-arg form is light()'s) — the two-arg call
+                // was PR #359's CI compile failure, fixed here.
+                SystemBarStyle.dark(
+                    android.graphics.Color.TRANSPARENT
+                )
+            } else {
+                SystemBarStyle.light(
+                    android.graphics.Color.TRANSPARENT,
+                    android.graphics.Color.TRANSPARENT
+                )
+            },
+            navigationBarStyle = SystemBarStyle.dark(
+                android.graphics.Color.TRANSPARENT
+            )
+        )
+    }
     // The receipt sheet's dismissal is host state (F-B1): the
-    // slip stands until the next DOWN anywhere, a navigation, or
-    // PARK's invocation — it is never dismissed by a timer. (The
-    // nav/PARK effect itself sits below, beside the PARK state
-    // it reads.)
-    var dismissedReceiptSessionId by remember { mutableStateOf(-1) }
+    // slip stands until its own scrim takes the next DOWN — it
+    // is never dismissed by a timer, by navigation, or by PARK.
+    // Off the Deck it simply unmounts (its render gate below);
+    // the flag stays untouched, so it re-stands on return.
+    // (Issue #157: the navigation/PARK dismissal effect is
+    // deleted — the tap to "Receipts" was the shredder.)
+    // Issue #27 (finding 4): host state is rememberSaveable, not
+    // plain remember — a rotation must not resurrect a dismissed
+    // receipt, snap PARK shut mid-diagnosis, or restart the
+    // return-tick diagnostic.
+    // Audit R1 #40: the saveable is SEEDED from the persisted
+    // dismissal (ReceiptDismissalStore) — rememberSaveable covers
+    // rotation and state-restore, but a put-away receipt must
+    // also survive a cold process death with no saved state to
+    // restore; every dismissal below writes through to the store
+    // (viewModel.persistReceiptDismissal).
+    var dismissedReceiptSessionId by rememberSaveable {
+        mutableStateOf(viewModel.dismissedReceiptSessionId())
+    }
 
     // ------------------------------------------------------------------
     // PARK state (chrome C4). The drawer is invoked by arrival (the
-    // rail), by the Guard line's tap, and — on the first run only,
-    // while the store has never measured — by itself at first
-    // composition. While sealed it cannot be invoked at all.
+    // rail), by the Guard line's tap, and — on the first run only —
+    // by itself, once the first measured snapshot lands and the
+    // door is open. While sealed it cannot be invoked at all.
     // ------------------------------------------------------------------
-    var parkOpen by remember { mutableStateOf(false) }
-    var parkReturnTick by remember { mutableStateOf(0) }
+    // Issue #90 (complexity F3): the PARK open flag's state holder
+    // is named so the hoisted file-level closePark/openPark below
+    // can take it as an explicit parameter; every existing read and
+    // write of parkOpen goes through this same holder, unchanged.
+    val parkOpenState = rememberSaveable { mutableStateOf(false) }
+    var parkOpen by parkOpenState
+    var parkReturnTick by rememberSaveable { mutableStateOf(0) }
 
-    fun closePark(dismissReceipt: Boolean) {
-        parkOpen = false
-        if (dismissReceipt && showNotificationDigestSheet) {
-            viewModel.toggleNotificationDigestSheet(false)
-        }
-        if (viewModel.parkIntroPending()) {
-            viewModel.markParkIntroDone()
-        }
-    }
+    // THE LAUNCHER (Sarthak's ruling, Oct 30 04:29 IST): while the
+    // phone is sealed, the block surface is a launcher. It opens
+    // from the Guard line's tap (a dead tap while sealed until now —
+    // PARK refuses under seal) and from the Airlock's two doors.
+    // D-07 (design-revamp salvage, 2dac73e): launcher state is
+    // rememberSaveable, like the neighbouring host state above
+    // (issue #27 pattern) — plain remember lost the open launcher
+    // and its page to any Activity recreation / process death,
+    // above all while the user was inside a launched allowed app.
+    var launcherOpen by rememberSaveable { mutableStateOf(false) }
+    var launcherPage by rememberSaveable { mutableStateOf(LauncherPage.HOME) }
 
-    fun openPark() {
-        // HB-2: the tap-time read of the SAME doorLocked predicate —
-        // the synchronous backstop for a Guard tap landing inside
-        // the finish machine's detention window before the state
-        // collectors recompose. The predicate is evaluated HERE, at
-        // the tap: navigationLocked() reads the VM's flows directly,
-        // so the answer is true even while this composition's
-        // doorLocked still holds its pre-detention value. (The
-        // first form of this guard read the captured doorLocked
-        // val — a print, not a lock; hb4DetentionGuardTap caught
-        // it on the gate build's first full test run.)
-        if (!sealed && !viewModel.navigationLocked()) parkOpen = true
-    }
+    // closePark / openPark are file-level functions since the
+    // issue-90 F3 hoist (they were nested inside this composable);
+    // call sites pass parkOpenState, the digest-sheet visibility
+    // and the seal explicitly.
 
-    // F-B1: PARK's invocation dismisses the receipt sheet on the
-    // same input, and so does any navigation away from the Deck.
-    LaunchedEffect(currentDestination, parkOpen) {
-        if (currentDestination != MonolithDestination.DECK || parkOpen) {
-            receiptState?.let { dismissedReceiptSessionId = it.sessionId }
-        }
-    }
+    // Issue #157: there is deliberately NO effect here dismissing
+    // the receipt slip on navigation or on PARK's invocation —
+    // that effect (F-B1) was the shredder: the tap to "Receipts"
+    // itself destroyed the standing slip. The slip's only
+    // dismissal is its own scrim, and any claimed slip can be
+    // re-presented from the Vault receipts index regardless.
 
-    // First run (§5.7): the store has never measured — PARK opens
-    // directly at first composition. The persisted bit keeps a cold
-    // start's unmeasured instant from re-inviting on later runs.
-    LaunchedEffect(Unit) {
-        if (viewModel.parkIntroPending()) {
+
+    // First run (§5.7, issue-156 F1+F2): the auto-open obeys the
+    // SAME door predicate as openPark() — a seal defers the intro,
+    // never burns it — and it waits for the first measured
+    // snapshot, so the board never rises blank: it arrives with
+    // state words and, if a lack exists, the FIX key. Keyed on
+    // doorLocked and the snapshot, so it re-fires the moment the
+    // seal lifts or the first measurement lands while the intro
+    // is still pending. The persisted bit keeps a cold start's
+    // unmeasured instant from re-inviting on later runs.
+    LaunchedEffect(doorLocked, watchSnapshot) {
+        if (!sealed && !viewModel.navigationLocked() &&
+            viewModel.parkIntroPending() &&
+            watchSnapshot.items.isNotEmpty()
+        ) {
             parkOpen = true
         }
     }
 
-    // PARK's on-open diagnostic (§3.3): opening PARK fires the old
-    // refreshSystemGuard() sweep. Its result renders NOWHERE — the
-    // board renders the Watch Store — unless a diagnostic line is
-    // invoked; the sweep itself is the point (clock/HMAC/boot facts
-    // stay warm for the day a diagnostic needs them).
+    // The intro header's latch for the current opening (issue-156,
+    // F5): pending is read at the moment PARK opens, BEFORE the
+    // delivery-spend below can land, and held for that whole
+    // opening — the spend must not unprint the header mid-reading
+    // on the next snapshot emission.
+    var parkIntroForOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(parkOpen) {
+        parkIntroForOpen = parkOpen && viewModel.parkIntroPending()
+    }
+
+    // The intro is spent on DELIVERY, not on dismissal (issue-156,
+    // F3): once PARK stands open over a measured board, the intro
+    // has been delivered — mark it done. Declared after the latch
+    // above so the latch reads the pending bit first.
+    LaunchedEffect(parkOpen, watchSnapshot) {
+        if (parkOpen && watchSnapshot.items.isNotEmpty() &&
+            viewModel.parkIntroPending()
+        ) {
+            viewModel.markParkIntroDone()
+        }
+    }
+
+    // Issue #280 (R5 supplement): POST_NOTIFICATIONS was declared
+    // in the manifest but never asked, so the seal's own
+    // notifications could be silently unpostable. It is asked
+    // once, as a runtime permission, when the first-run board is
+    // delivered — not as a Settings trip and never as a gate: the
+    // board and the seal work the same whether it is granted.
+    val notifPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+    var notifAsked by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(parkIntroForOpen) {
+        if (parkIntroForOpen && !notifAsked &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notifAsked = true
+            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    // Issue #109, F3: opening PARK fires the real Watch sweep.
+    // Until now the board opened on whatever the last ON_RESUME /
+    // Deck-entry sweep left behind, and its own GRANTED lines aged
+    // into STALE in front of the reader with no re-measure anywhere
+    // on the surface. The sweep is the board's re-measure; the
+    // drawer's RE-CHECK key fires the same one on demand.
+    // Issue #75 F2 (re-cut, STURM3-15): the old refreshSystemGuard()
+    // diagnostic sweep that also fired here — its own comment
+    // admitted its result rendered NOWHERE — is removed. The cut
+    // shipped in PR #375's branch but was lost in that branch's
+    // merge chain before it merged; the ViewModel's own init caller
+    // of refreshSystemGuard is untouched.
     LaunchedEffect(parkOpen) {
         if (parkOpen) {
-            viewModel.refreshSystemGuard()
+            viewModel.runWatchSweep()
         }
     }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
+            // Issue #99 F3: stopping with an Airlock still standing
+            // means the user left by Home/Recents — the VM logs it.
+            if (event == Lifecycle.Event.ON_STOP) {
+                viewModel.noteAirlockAbandonedIfStanding()
+            }
             if (event == Lifecycle.Event.ON_RESUME) {
                 // Return is proving (chrome C4 §4.4): the sweep
                 // re-reads every grant; a FIX trip's hand-back is
                 // judged against these landings.
+                // Issue #308: the user is back (by the return
+                // service or by hand) — any return watch ends here.
+                PermissionReturnService.stop(context)
                 viewModel.runWatchSweep()
                 parkReturnTick++
                 viewModel.onAppResumed()
@@ -345,9 +651,36 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     }
 
     if (parkOpen) {
-        BackHandler { closePark(dismissReceipt = false) }
+        BackHandler {
+            closePark(parkOpenState, showNotificationDigestSheet, viewModel, dismissReceipt = false)
+        }
     } else if (currentDestination != MonolithDestination.DECK) {
         BackHandler { viewModel.navigateTo(MonolithDestination.DECK) }
+    }
+
+    // Issue #27 (finding 3): full-screen overlays own Back. Before
+    // this handler, Back on the DECK fell through to the default
+    // dispatcher and FINISHED the Activity — including from the
+    // Airlock, where Back was an escape hatch out of the
+    // intercept. Priority: the Airlock holds (Back is consumed,
+    // no exit — the door's own RETURN/PEEK are the only ways
+    // out), then the disarm challenge (Back = keep focusing),
+    // then the desk clock, the digest sheet, and the receipt.
+    val receiptStandingForBack = receiptState != null &&
+        dismissedReceiptSessionId != receiptState!!.sessionId &&
+        currentDestination == MonolithDestination.DECK
+    BackHandler(
+        enabled = airlockState.isVisible || disarmChallenge.isVisible ||
+            isAlwaysOnDeskClockVisible || showNotificationDigestSheet ||
+            receiptStandingForBack
+    ) {
+        when {
+            airlockState.isVisible -> Unit // the door holds; Back is not an exit
+            disarmChallenge.isVisible -> viewModel.dismissDisarmChallenge()
+            isAlwaysOnDeskClockVisible -> viewModel.toggleAlwaysOnDeskClock(false)
+            showNotificationDigestSheet -> viewModel.toggleNotificationDigestSheet(false)
+            receiptStandingForBack -> dismissedReceiptSessionId = receiptState!!.sessionId
+        }
     }
 
     val selectedTabIndex = when (currentDestination) {
@@ -357,52 +690,112 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         MonolithDestination.VAULT -> 3
     }
 
-    // The FIX key's panes: the exact Settings pane per grant,
-    // including the device-admin pane the app has never had.
+    // Issue #27 (finding 5): a FIX trip must never die silently.
+    // Every Settings launch goes through here: the exact pane
+    // first; if the OEM throws, the generic Settings home is the
+    // fallback; if even that fails, the user is TOLD, in words,
+    // instead of being stranded on a dead tap.
+    fun launchSettings(intent: Intent, what: String) {
+        runCatching { context.startActivity(intent) }
+            .onFailure {
+                runCatching { context.startActivity(pinnedSettingsIntent(Settings.ACTION_SETTINGS)) }
+                    .onFailure {
+                        android.widget.Toast.makeText(
+                            context,
+                            "COULDN'T OPEN SETTINGS FOR $what — OPEN ANDROID SETTINGS AND GRANT IT FROM APPS",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+
+            }
+    }
+
+    // The FIX key's panes: the exact Settings pane per grant; device
+    // admin instead fires the official activation intent for this
+    // app's own admin (issue #44), with Security Settings as fallback.
     fun openFixPane(item: com.example.service.WatchItemId) {
-        runCatching {
-            when (item) {
-                com.example.service.WatchItemId.ACCESSIBILITY ->
-                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                com.example.service.WatchItemId.USAGE_ACCESS ->
-                    context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
-                com.example.service.WatchItemId.DEVICE_ADMIN -> {
-                    val direct = Intent().setComponent(
-                        android.content.ComponentName(
-                            "com.android.settings",
-                            "com.android.settings.DeviceAdminSettings"
-                        )
+        // Issue #308: arm the return trip BEFORE the pane opens —
+        // the service polls this item's grant and brings the user
+        // back the moment it lands, instead of stranding them in
+        // Settings.
+        PermissionReturnService.arm(context, item)
+        when (item) {
+            com.example.service.WatchItemId.ACCESSIBILITY ->
+                launchSettings(pinnedSettingsIntent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "ACCESSIBILITY")
+            com.example.service.WatchItemId.USAGE_ACCESS ->
+                launchSettings(pinnedSettingsIntent(Settings.ACTION_USAGE_ACCESS_SETTINGS), "USAGE ACCESS")
+            com.example.service.WatchItemId.DEVICE_ADMIN -> {
+                // Issue #44: ask Android for THIS admin through the
+                // official activation intent — the old hardcoded
+                // com.android.settings component only opened a
+                // generic list (and broke wherever that class name
+                // differed) and never actually requested the admin.
+                // Security Settings is only the fallback for when
+                // the official intent itself cannot be fired.
+                val requestAdmin = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                    putExtra(
+                        DevicePolicyManager.EXTRA_DEVICE_ADMIN,
+                        ComponentName(context, MonolithDeviceAdminReceiver::class.java)
                     )
-                    runCatching { context.startActivity(direct) }
-                        .getOrElse {
-                            context.startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
-                        }
+                    putExtra(
+                        DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                        context.getString(R.string.device_admin_add_explanation)
+                    )
                 }
-                com.example.service.WatchItemId.NOTIFICATION_LISTENER ->
-                    context.startActivity(
-                        Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
-                    )
-                com.example.service.WatchItemId.OVERLAY ->
-                    context.startActivity(
-                        Intent(
-                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:${context.packageName}")
-                        )
-                    )
-                com.example.service.WatchItemId.BATTERY -> {
-                    val direct = Intent(
+                runCatching { context.startActivity(requestAdmin) }
+                    .getOrElse {
+                        launchSettings(pinnedSettingsIntent(Settings.ACTION_SECURITY_SETTINGS), "DEVICE ADMIN")
+                    }
+            }
+            com.example.service.WatchItemId.NOTIFICATION_LISTENER ->
+                launchSettings(
+                    pinnedSettingsIntent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"),
+                    "NOTIFICATION ACCESS"
+                )
+            com.example.service.WatchItemId.OVERLAY ->
+                launchSettings(
+                    pinnedSettingsIntent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:${context.packageName}")
+                    ),
+                    "DISPLAY OVER OTHER APPS"
+                )
+            com.example.service.WatchItemId.BATTERY -> {
+                // Issue #94 (F1): on an OEM-autostart-gated skin the
+                // survival trip is the vendor's AUTOSTART pane first —
+                // the AOSP battery pane alone leaves the boot receiver
+                // dead. Each vendor component is a guess that may not
+                // exist on this build; walk the list, then fall back
+                // to the AOSP battery trip.
+                // Issue #78 (merge, STURM3-15): the AOSP fallbacks
+                // below go through pinnedSettingsIntent like every
+                // other Settings route — main's #94 flow arrived with
+                // them bare, which would have reopened the unpinned-
+                // intent finding on this one pane.
+                val gate = com.example.data.OemPolicy.currentGate()
+                val autostartOpened = gate !=
+                    com.example.data.OemPolicy.AutostartGate.NONE &&
+                    com.example.data.OemPolicy
+                        .autostartIntents(gate, context.packageName)
+                        .any { pane ->
+                            runCatching { context.startActivity(pane) }
+                                .isSuccess
+                        }
+                if (!autostartOpened) {
+                    val direct = pinnedSettingsIntent(
                         Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                         Uri.parse("package:${context.packageName}")
                     )
                     runCatching { context.startActivity(direct) }
                         .getOrElse {
-                            context.startActivity(
-                                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                            launchSettings(
+                                pinnedSettingsIntent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+                                "BATTERY"
                             )
                         }
                 }
-                else -> Unit
             }
+            else -> launchSettings(pinnedSettingsIntent(Settings.ACTION_SETTINGS), item.name)
         }
     }
 
@@ -430,7 +823,19 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     // rides it.
                     isSealed = doorLocked,
                     onGuardLineTap = {
-                        if (parkOpen) closePark(dismissReceipt = false) else openPark()
+                        when {
+                            parkOpen -> closePark(
+                                parkOpenState, showNotificationDigestSheet, viewModel,
+                                dismissReceipt = false
+                            )
+                            // While sealed, the Guard line opens the
+                            // launcher — the sealed phone's home.
+                            sealed -> {
+                                launcherPage = LauncherPage.HOME
+                                launcherOpen = true
+                            }
+                            else -> openPark(parkOpenState, sealed, viewModel)
+                        }
                     }
                 )
 
@@ -471,20 +876,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     activeSession = activeSession,
                                     dialMinutes = dialMinutes,
                                     studyBlocksCount = studyBlocksCount,
-                                    studyPreset = studyPreset,
-                                    checklist = checklist,
                                     activeTask = activeTask,
+                                    activeTaskFromYesterday = activeTaskFromYesterday,
                                     queuedTasks = queuedTasks,
-                                    completedTasksCount = completedTasks.size,
-                                    totalQueueMinutes = totalQueueMinutes,
-                                    selectedProfileName = selectedProfileName,
-                                    intentionText = intentionText,
-                                    totalFocusedMinutes = totalFocusedMinutes,
-                                    totalInterceptions = totalInterceptions,
-                                    profiles = profiles,
-                                    apps = allApps,
-                                    shortsReelsSniperEnabled = shortsReelsSniperEnabled,
-                                    browserUrlBlockerEnabled = browserUrlBlockerEnabled,
                                     capturedNotificationsCount = capturedNotifications.size,
                                     soundEngine = viewModel.soundEngine,
                                     // Zug-II §5.1: the Deck receives
@@ -496,19 +890,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onDialMinutesChanged = viewModel::setDialMinutes,
                                     onSelectStudyPreset = viewModel::selectStudyPreset,
                                     onSetStudyBlocksCount = viewModel::setStudyBlocksCount,
-                                    onToggleChecklistItem = viewModel::toggleChecklistItem,
-                                    onAddChecklistItem = viewModel::addChecklistItem,
                                     onCompleteActiveTask = viewModel::completeTaskAndAdvance,
-                                    onDeferActiveTask = viewModel::deferTask,
-                                    onExtendActiveTaskOvertime = { viewModel.extendActiveTaskOvertime(5) },
-                                    onAddQuickTaskToQueue = { title, mins ->
-                                        viewModel.addTaskToQueue(title, mins, "Study", "", false)
-                                    },
                                     onToggleTaskSubStep = viewModel::toggleTaskSubStep,
                                     onOpenTaskSequencer = { viewModel.navigateTo(MonolithDestination.TASKS) },
-                                    onOpenCurioVault = { viewModel.navigateTo(MonolithDestination.VAULT) },
-                                    onIntentionChanged = viewModel::setIntentionText,
-                                    onProfileSelected = viewModel::selectAndApplyProfile,
                                     onArmSession = viewModel::armMonolithSession,
                                     onRequestDisarm = viewModel::requestDisarmChallenge,
                                     onCancelWithinGraceWindow = {
@@ -517,10 +901,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onOpenAlwaysOnDeskClock = { viewModel.toggleAlwaysOnDeskClock(true) },
                                     onOpenNotificationDigest = { viewModel.toggleNotificationDigestSheet(true) },
                                     onEndSafeBreak = { viewModel.endSafeBreakEarly() },
+                                    onExtendSession = viewModel::extendActiveSession,
                                     weeklyEmergencyTokensRemaining = weeklyEmergencyTokensRemaining,
                                     appsCellCount = appsCellCount,
                                     appsSplit = appsSplit,
                                     deckWarrant = deckWarrant,
+                                    deckPrimerPending = viewModel.deckPrimerPending(),
                                     sealFreeze = sealFreeze,
                                     armPhase = armPhase,
                                     armSentence = armSentence,
@@ -530,6 +916,16 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     sealT0MonoMs = (armPhase as? ArmPhase.SealedRunning)?.t0Mono,
                                     finishState = finishState,
                                     receiptState = receiptState,
+                                    lastReceiptSessionId = lastReceiptSessionId,
+                                    onShowLastReceipt = { sessionId ->
+                                        // Un-dismiss first: this slip may
+                                        // have been dismissed before the arm
+                                        // that cleared it, and the host's
+                                        // dismissed id would otherwise hide
+                                        // the re-issued slip forever.
+                                        dismissedReceiptSessionId = -1
+                                        viewModel.publishReceipt(sessionId)
+                                    },
                                     onWitnessSledReturn = viewModel::witnessSledReturn,
                                     onTryStartSledReturn = viewModel::tryStartSledReturn,
                                     sledInitialFraction = {
@@ -537,10 +933,17 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     },
                                     warrantProvider = viewModel::armWarrantNow,
                                     onFixBlockingAccess = {
-                                        runCatching { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                                        launchSettings(
+                                            pinnedSettingsIntent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
+                                            "ACCESSIBILITY"
+                                        )
                                     },
                                     onFixUsageAccess = {
-                                        runCatching { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
+                                        launchSettings(
+                                            pinnedSettingsIntent(Settings.ACTION_USAGE_ACCESS_SETTINGS),
+                                            "USAGE ACCESS"
+                                        )
+
                                     },
                                     onRetryBlockingCheck = viewModel::refreshDeckWarrant,
                                     onHandBackTick = viewModel::playHandBackTick,
@@ -560,6 +963,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     loadoutCapIndex = loadoutCapIndex,
                                     isSessionActive = sealed,
                                     ratchetWarningMessage = ratchetWarningMessage,
+                                    tierChangeForUndo = tierChangeForUndo,
+                                    onUndoTierChange = viewModel::undoLastTierChange,
                                     soundEngine = viewModel.soundEngine,
                                     isDarkTheme = effectiveNight,
                                     onSearchQueryChanged = viewModel::updateSearchQuery,
@@ -570,16 +975,104 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                             viewModel.setAppBlockTier(app, tier)
                                         }
                                     },
+                                    onCycleDailyLimit = viewModel::cycleAppDailyLimit,
                                     onApplySmartLoadout = viewModel::applySmartLoadout,
+                                    onSetAppCategory = viewModel::setAppCategory,
                                     onSelectProfile = viewModel::selectAndApplyProfile,
+                                    profileUndoAvailable = profileUndoAvailable,
+                                    onUndoProfileApply = viewModel::undoLastProfileApply,
                                     onToggleShortsReelsSniper = viewModel::toggleShortsReelsSniper,
                                     onToggleBrowserUrlBlocker = viewModel::toggleBrowserUrlBlocker,
+                                    // #337 F1: shortcut binding state
+                                    // read live; the chip deep-links
+                                    // to the system's shortcut screen,
+                                    // falling back to Accessibility
+                                    // Settings where the ROM lacks it.
+                                    accessibilityShortcutSet =
+                                        com.example.service.AccessibilityShortcutSupport
+                                            .isMonolithShortcutTarget(context),
+                                    onOpenAccessibilityShortcutSettings = {
+                                        runCatching {
+                                            context.startActivity(
+                                                com.example.service.AccessibilityShortcutSupport
+                                                    .shortcutSettingsIntent()
+                                            )
+                                        }.getOrElse {
+                                            runCatching {
+                                                context.startActivity(
+                                                    com.example.service.AccessibilityShortcutSupport
+                                                        .accessibilitySettingsIntent()
+                                                )
+                                            }
+                                        }
+                                        Unit
+                                    },
+                                    // #339 F1: the Web Gate — state is
+                                    // held here against the persisted
+                                    // WebGateStore (the store is the
+                                    // truth; these states are its
+                                    // render cache).
+                                    webBlockAll = webBlockAllState,
+                                    onToggleWebBlockAll = {
+                                        val next = !webGateStore.blockAll()
+                                        webGateStore.setBlockAll(next)
+                                        webBlockAllState = next
+                                    },
+                                    allowedWebHosts = allowedWebHostsState,
+                                    onAddAllowedWebHost = { host ->
+                                        if (webGateStore.addAllowedHost(host)) {
+                                            allowedWebHostsState = webGateStore.allowedHosts()
+                                        }
+                                    },
+                                    onRemoveAllowedWebHost = { host ->
+                                        webGateStore.removeAllowedHost(host)
+                                        allowedWebHostsState = webGateStore.allowedHosts()
+                                    },
                                     routines = routines,
                                     showResetNote = showRoutineResetNote,
-                                    onToggleRoutine = viewModel::toggleRoutine,
+                                    onDismissResetNote = viewModel::dismissRoutineResetNote,
+                                    showFreshStartNote = freshStartNoteVisible,
+                                    showUpdateNote = updateNoteVisible,
+                                    onDismissFreshStartNote = viewModel::dismissFreshStartNote,
+                                    onDismissUpdateNote = viewModel::dismissUpdateNote,
+                                    onToggleRoutine = { routine ->
+                                        // Issue #280: enabling a
+                                        // routine is the moment the
+                                        // exact-alarm grant is asked
+                                        // (the original gates its
+                                        // routine sheet the same
+                                        // way) — once, as an offer,
+                                        // never a block: the chain
+                                        // alarm and the heartbeat
+                                        // run without it.
+                                        if (!routine.enabled &&
+                                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                                        ) {
+                                            val am = context.getSystemService(
+                                                android.content.Context.ALARM_SERVICE
+                                            ) as? AlarmManager
+                                            if (am != null && !am.canScheduleExactAlarms()) {
+                                                runCatching {
+                                                    context.startActivity(
+                                                        Intent(
+                                                            Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                                                            Uri.parse("package:" + context.packageName)
+                                                        )
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        viewModel.toggleRoutine(routine)
+                                    },
                                     onCycleRoutineLoadout = viewModel::cycleRoutineLoadout,
                                     onAdjustRoutineTime = viewModel::adjustRoutineTime,
                                     onToggleRoutineDay = viewModel::toggleRoutineDay,
+                                    onSkipRoutineToday = viewModel::skipRoutineToday,
+                                    onResumeRoutine = viewModel::resumeRoutine,
+                                    onAddRoutine = viewModel::addRoutine,
+                                    onDeleteRoutine = viewModel::deleteRoutine,
+                                    onRenameRoutine = viewModel::renameRoutine,
+                                    onSetRoutineTime = { r, start, end -> viewModel.setRoutineTime(r, start, end) },
                                     blockedSites = blockedSites,
                                     onAddSite = viewModel::addBlockedSite,
                                     onRemoveSite = viewModel::removeBlockedSite,
@@ -587,7 +1080,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                         "${note.appsRemoved} APPS NOT ON THIS PHONE WERE TAKEN OFF THIS LIST" +
                                             if (note.rulesRemoved) " — AND THEIR RULES WITH THEM" else ""
                                     },
-                                    onPruneNoteDismissed = viewModel::dismissPruneNote
+                                    onPruneNoteDismissed = viewModel::dismissPruneNote,
+                                    unreviewedOpenText = unreviewedOpenNames.takeIf { it.isNotEmpty() }?.let { names ->
+                                        val shown = names.take(3).joinToString(", ") { it.uppercase() }
+                                        val more = if (names.size > 3) " +${names.size - 3} MORE" else ""
+                                        "${names.size} APPS ARE OPEN WITHOUT YOUR REVIEW: $shown$more — SET A RULE FOR EACH BELOW"
+                                    }
                                 )
                             }
 
@@ -596,27 +1094,19 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     activeTask = activeTask,
                                     queuedTasks = queuedTasks,
                                     completedTasks = completedTasks,
-                                    deferredTasks = deferredTasks,
-                                    deletedTaskForUndo = deletedTaskForUndo,
-                                    totalQueueMinutes = totalQueueMinutes,
-                                    isSessionActive = sealed,
+                                                                        deletedTaskForUndo = deletedTaskForUndo,
+                                                                        isSessionActive = sealed,
                                     soundEngine = viewModel.soundEngine,
                                     isDarkTheme = effectiveNight,
                                     onAddTask = viewModel::addTaskToQueue,
-                                    onEditTask = viewModel::editTask,
-                                    onUpdateTaskDuration = viewModel::updateTaskDuration,
-                                    onCueTaskToFocus = viewModel::cueTaskAndNavigateToFocus,
+                                                                                                            onCueTaskToFocus = viewModel::cueTaskAndNavigateToFocus,
                                     onCompleteTask = viewModel::completeTaskAndAdvance,
-                                    onPromoteTask = viewModel::promoteTaskToActive,
-                                    onMoveTaskOrder = viewModel::moveTaskOrder,
-                                    onDeferTask = viewModel::deferTask,
-                                    onDeleteTask = viewModel::deleteTaskWithUndo,
+                                                                                                                                                onDeleteTask = viewModel::deleteTaskWithUndo,
                                     onUndoDeleteTask = viewModel::undoDeleteTask,
                                     onDismissUndoBanner = viewModel::dismissUndoDeleteBanner,
                                     onReopenTask = viewModel::reopenTask,
                                     onToggleSubStep = viewModel::toggleTaskSubStep,
-                                    onAddSubStep = viewModel::addTaskSubStep,
-                                    onAutoSplitTask = viewModel::autoSplitTaskIntoMicroSteps,
+                                                                        onAutoSplitTask = viewModel::autoSplitTaskIntoMicroSteps,
                                     onNavigateToDeck = { viewModel.navigateTo(MonolithDestination.DECK) }
                                 )
                             }
@@ -630,6 +1120,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     drawerQuery = drawerQuery,
                                     drawerResults = drawerResults,
                                     drawerSearchHasEarlier = drawerSearchHasEarlier,
+                                    drawerSearchDayWords = drawerSearchDayWords,
                                     dayWords = dayWords,
                                     isSealed = sealed,
                                     isDarkTheme = effectiveNight,
@@ -638,8 +1129,15 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onQueryChange = viewModel::setDrawerQuery,
                                     onLoadEarlierSearch = viewModel::loadEarlierDrawerSearch,
                                     onDeclareTodayWord = viewModel::declareTodayWord,
+                                    onDeclareDayWord = viewModel::declareDayWordFor,
                                     artifacts = com.example.data.CurioCatalog.artifacts,
-                                    forgedArtifactIds = forgedArtifactIds
+                                    forgedArtifactIds = forgedArtifactIds,
+                                    curioForgeRecords = curioForgeRecords,
+                                    drawerLoading = drawerLoading,
+                                    drawerError = drawerError,
+                                    forgeStats = forgeStats,
+                                    receipts = receiptIndex,
+                                    onReceiptClick = viewModel::presentReceipt
                                 )
                             }
                         }
@@ -651,6 +1149,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     ParkDrawer(
                         visible = parkOpen,
                         snapshot = watchSnapshot,
+                        introPending = parkIntroForOpen,
                         isSealed = sealed,
                         isNight = effectiveNight,
                         soundEnabled = soundEnabled,
@@ -658,8 +1157,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         soundEngine = viewModel.soundEngine,
                         themeReadout = themeEvaluation.readout,
                         parkReturnTick = parkReturnTick,
-                        onDismiss = { closePark(dismissReceipt = false) },
+                        onDismiss = {
+                            closePark(
+                                parkOpenState, showNotificationDigestSheet, viewModel,
+                                dismissReceipt = false
+                            )
+                        },
                         onFixClick = { item -> openFixPane(item) },
+                        onRecheck = { viewModel.runWatchSweep() },
                         onToggleSound = { viewModel.toggleSound() },
                         onToggleShortsReelsSniper = { viewModel.toggleShortsReelsSniper() },
                         // Truth Car 3 (UNA-02): the SOCIAL SITES
@@ -691,11 +1196,38 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     )
                 }
 
+                // Issue #125 (armed-wrong F5): the grace abort does
+                // not live only on the Deck anymore. For the whole
+                // 10s window, every other tab carries the same chip
+                // above the rail — leaving the Deck to check what
+                // you armed wrong no longer burns the window
+                // invisibly. Same words, same badge, same call as
+                // the Deck's own chip.
+                val graceSession = activeSession
+                if (graceSession != null && graceSession.elapsedSeconds <= 10 &&
+                    currentDestination != MonolithDestination.DECK
+                ) {
+                    BlockitActionChip(
+                        wordLabel = "GRACE WINDOW ABORT",
+                        monoBadge = "${10 - graceSession.elapsedSeconds}s",
+                        isPrimaryInk = true,
+                        onClick = {
+                            viewModel.confirmDisarmSession("Accidental Start Grace Cancel")
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                            .height(58.dp),
+                        testTag = "grace_abort_button_off_deck"
+                    )
+                }
+
                 // THE RAIL (chrome C1): the 52dp band. A stop press
                 // while PARK is open is dismissal path (a) — the
                 // sheet dismisses AND the cap departs on the same
-                // input, and the session receipt sheet goes with it
-                // (F-B1).
+                // input. The session receipt sheet is NOT dismissed
+                // by navigation (issue #157): it unmounts off the
+                // Deck and re-stands on return.
                 AndroidView(
                     factory = { ctx ->
                         MonolithRailView(ctx).apply {
@@ -713,7 +1245,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                             view.selectedTabIndex = selectedTabIndex
                         }
                         view.onTabSelected = { idx ->
-                            if (parkOpen) closePark(dismissReceipt = true)
+                            if (parkOpen) closePark(
+                                parkOpenState, showNotificationDigestSheet, viewModel,
+                                dismissReceipt = true
+                            )
                             val dest = when (idx) {
                                 0 -> MonolithDestination.DECK
                                 1 -> MonolithDestination.SHIELD
@@ -724,9 +1259,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         }
                         view.onParkInvoked = {
                             if (parkOpen) {
-                                closePark(dismissReceipt = false)
+                                closePark(
+                                    parkOpenState, showNotificationDigestSheet, viewModel,
+                                    dismissReceipt = false
+                                )
                             } else {
-                                openPark()
+                                openPark(parkOpenState, sealed, viewModel)
                             }
                         }
                     },
@@ -749,9 +1287,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onDismiss = { viewModel.toggleAlwaysOnDeskClock(false) }
             )
 
-            // The digest renders the FROZEN snapshot whenever a
+            // The digest renders the sealed snapshot whenever a
             // freeze exists or a session is sealing the phone — the
-            // live list is passed only when unsealed and unfrozen.
+            // snapshot refreshes on open and on new arrivals (issue
+            // #118, finding 3) but renders in frozen MODE: read-only,
+            // nothing opens. The live list is passed only when
+            // unsealed and unfrozen.
             val digestFrozen = frozenDigest != null || sealed
             CapturedNotificationsDigestSheet(
                 visible = showNotificationDigestSheet,
@@ -768,11 +1309,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             )
 
             // THE RECEIPT SLIP (Slice E, F-L1/F-B1): viewport-
-            // hosted over the Deck's room, dismissed by the next
-            // DOWN (its scrim), by navigation, or by PARK — the
-            // two sheets (this and the digest) never stack: PARK
-            // and the digest live in their own invocations, and
-            // opening either dismisses this one first.
+            // hosted over the Deck's room, dismissed ONLY by the
+            // next DOWN on its scrim (issue #157) — navigation and
+            // PARK merely unmount it via the DECK gate below, and
+            // it re-stands untouched on return. The two sheets
+            // (this and the digest) never stack: PARK and the
+            // digest live in their own invocations.
             val standingReceipt = receiptState
             if (standingReceipt != null &&
                 dismissedReceiptSessionId != standingReceipt.sessionId &&
@@ -780,7 +1322,42 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             ) {
                 com.example.ui.components.ReceiptSheet(
                     receipt = standingReceipt,
-                    onDismiss = { dismissedReceiptSessionId = standingReceipt.sessionId }
+                    onDismiss = {
+                        dismissedReceiptSessionId = standingReceipt.sessionId
+                        viewModel.persistReceiptDismissal(standingReceipt.sessionId)
+                    },
+                    // Issue #135 F3: NEXT SESSION — dismiss the slip;
+                    // the Deck underneath is already idle and ready
+                    // to arm. The detention/sled ceremony is untouched.
+                    onNextSession = { dismissedReceiptSessionId = standingReceipt.sessionId },
+                    // Issue #135 F4: DONE WITH THIS TASK — only while
+                    // the session's task is still open (the host's
+                    // active task, not yet COMPLETED); completes it
+                    // through the same path the Deck/Tasks use, then
+                    // dismisses the slip.
+                    onDoneWithTask = activeTask
+                        ?.takeIf {
+                            it.resolvedStatus != com.example.data.TaskQueueStatus.COMPLETED
+                        }
+                        ?.let { task ->
+                            {
+                                viewModel.completeTaskAndAdvance(task.id)
+                                dismissedReceiptSessionId = standingReceipt.sessionId
+                            }
+                        }
+                )
+            }
+
+            // A PAST SLIP, re-presented from the Vault's receipts
+            // index (issue #157): the SAME sheet composable,
+            // verbatim, over whatever screen invoked it. Its
+            // dismissal is its own — it never touches the standing
+            // receipt's flag above.
+            val presentedReceipt by viewModel.presentedReceipt.collectAsStateWithLifecycle()
+            presentedReceipt?.let { pastReceipt ->
+                com.example.ui.components.ReceiptSheet(
+                    receipt = pastReceipt,
+                    onDismiss = { viewModel.dismissPresentedReceipt() }
                 )
             }
 
@@ -790,12 +1367,153 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             // itself now and refuses in the open, with the FIX
             // routes on the sentence itself.
 
+            // THE LAUNCHER BLOCK SURFACE: hosted under the Airlock,
+            // so a fresh intercept's door always stands above it.
+            LauncherBlockScreen(
+                visible = launcherOpen && sealed,
+                session = activeSession,
+                apps = allApps,
+                initialPage = launcherPage,
+                onClose = { launcherOpen = false },
+                onLaunchApp = { app ->
+                    // TAP-TIME LAUNCH GATE (design-revamp salvage,
+                    // b027368): the entity handed in was composed when
+                    // the grid rendered — re-read the VM's live rows
+                    // at the tap and launch only what is still true
+                    // NOW. On any refusal: no launch, the launcher
+                    // stays open, nothing crashes.
+                    val liveApp = viewModel.apps.value
+                        .find { it.packageName == app.packageName }
+                    val tapSealed =
+                        viewModel.activeSession.value?.isActive == true
+                    val launchAllowed = liveApp != null &&
+                        liveApp.resolvedTier == com.example.data.AppBlockTier.OPEN &&
+                        tapSealed &&
+                        !viewModel.navigationLocked() &&
+                        // Defence in depth, even if OPEN: the Play
+                        // Store is an install vector, and browsers
+                        // sit behind only a partial site blocker.
+                        // BlockedAppEntity.category stores the
+                        // AppCategory enum's name (see
+                        // MonolithModels / repository writers).
+                        liveApp.packageName != "com.android.vending" &&
+                        liveApp.category != com.example.data.AppCategory.BROWSERS.name
+                    if (launchAllowed && liveApp != null) {
+                        // D-05 (2dac73e): close only once an intent
+                        // has actually started — closing first made
+                        // a failed launch a silent nothing.
+                        val started = runCatching {
+                            context.packageManager
+                                .getLaunchIntentForPackage(liveApp.packageName)
+                                ?.let { launch ->
+                                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    context.startActivity(launch)
+                                    true
+                                } ?: false
+                        }.getOrDefault(false)
+                        if (started) launcherOpen = false
+                    }
+                },
+                onPeekApp = { app ->
+                    // SAFE-BREAK PEEK (design-revamp salvage, b027368):
+                    // during a Safe Break the active session already
+                    // suspends the interceptors (WatchStore reads
+                    // isInSafeBreak), so PEEK apps are already free —
+                    // launch directly, no peek lease is started and
+                    // no cooldown is armed. Read at tap time from
+                    // the VM's activeSession flow.
+                    val tapSession = viewModel.activeSession.value
+                    // D-03 re-gate (2dac73e): same tap-time discipline
+                    // as the OPEN gate — re-read the live entity; an
+                    // app tightened to LOCKED mid-break must not
+                    // launch off the stale composed row.
+                    val livePeekApp = viewModel.apps.value.firstOrNull {
+                        it.packageName == app.packageName
+                    }
+                    if (tapSession != null && tapSession.isActive && tapSession.isInSafeBreak &&
+                        !viewModel.navigationLocked() && livePeekApp != null &&
+                        livePeekApp.resolvedTier != com.example.data.AppBlockTier.LOCKED
+                    ) {
+                        val started = runCatching {
+                            context.packageManager
+                                .getLaunchIntentForPackage(livePeekApp.packageName)
+                                ?.let { launch ->
+                                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    context.startActivity(launch)
+                                    true
+                                } ?: false
+                        }.getOrDefault(false)
+                        if (started) launcherOpen = false
+                    } else {
+                        // Outside a Safe Break (or refused by the
+                        // re-gate) the existing Airlock route stands
+                        // exactly as it was — the peek offer / lease
+                        // machinery decides from there.
+                        launcherOpen = false
+                        viewModel.triggerAirlockIntercept(
+                            app.packageName,
+                            app.appName,
+                            app.resolvedTier.badge,
+                            InterceptPath.APP_TIER
+                        )
+                    }
+                },
+                onRequestEmergencyBreak = {
+                    launcherOpen = false
+                    viewModel.requestDisarmChallenge()
+                }
+            )
+
             AirlockInterceptOverlay(
                 state = airlockState,
                 onSelectReason = viewModel::selectDistractionReason,
                 onTransmuteParticleTap = viewModel::incrementAirlockParticlePulse,
-                onReturnToFocus = viewModel::transmuteImpulseAndReturn,
-                onTake2MinutePeek = viewModel::start2MinutePeek
+                // Issue #114, finding 2: RETURN TO FOCUS now
+                // returns. The ViewModel closes the sheet and books
+                // the intercept; the host then sends Monolith's
+                // whole task to the back, so the user lands on
+                // whatever they were doing before the intercept
+                // yanked them in — not stranded on the Deck having
+                // to navigate back by hand for choosing the honest
+                // door. Blocking itself is untouched: the session
+                // stays sealed and the shield keeps enforcing.
+                onReturnToFocus = {
+                    viewModel.transmuteImpulseAndReturn()
+                    (context as? android.app.Activity)?.moveTaskToBack(true)
+                },
+                onTake2MinutePeek = viewModel::start2MinutePeek,
+                allowedAppsCount = allApps.count {
+                    it.resolvedTier == com.example.data.AppBlockTier.OPEN &&
+                        it.category != com.example.data.AppCategory.BROWSERS.name &&
+                        it.packageName != "com.android.vending"
+                },
+                peekAppsCount = allApps.count {
+                    it.resolvedTier == com.example.data.AppBlockTier.PEEK_2M
+                },
+                onOpenAllowedApps = {
+                    viewModel.leaveAirlockViaLauncherDoors()
+                    launcherPage = LauncherPage.ALLOWED
+                    launcherOpen = true
+                },
+                onOpenPeekApps = {
+                    viewModel.leaveAirlockViaLauncherDoors()
+                    launcherPage = LauncherPage.PEEK
+                    launcherOpen = true
+                },
+                onRequestEmergencyBreak = viewModel::requestDisarmFromAirlock,
+                // Issue #318 F4: the wall breathes for the stored,
+                // configured length — not a composable-local 5.
+                breathSeconds = remember {
+                    com.example.data.AirlockBreathStore(context).breathSeconds()
+                }
+            )
+
+            // Issue #99 F2: the peek countdown pill — the one
+            // rendering of floatingPeekPill (canonical; #101-F3
+            // cross-ref). Shows while a peek lease runs in Monolith.
+            PeekCountdownPill(
+                state = floatingPeekPill,
+                onEndEarly = viewModel::end2MinutePeekEarly
             )
 
             DisarmChallengeOverlay(

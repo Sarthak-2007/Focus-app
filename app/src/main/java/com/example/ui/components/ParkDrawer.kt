@@ -1,4 +1,8 @@
 package com.example.ui.components
+import androidx.compose.ui.res.stringResource
+import com.example.R
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
 
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
@@ -35,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,6 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -57,6 +63,7 @@ import com.example.service.WatchStore
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AppTitleTextStyle
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
+import com.example.ui.theme.BodyTextStyle
 import com.example.ui.theme.DrawerHeaderTextStyle
 import com.example.ui.theme.MonolithKin
 import com.example.ui.theme.PillBadgeTextStyle
@@ -66,6 +73,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -95,7 +103,10 @@ import kotlinx.coroutines.launch
  * press or cap drag out (the rail reports it), a sheet drag past
  * 40%, and a scrim tap or PARK re-tap. While sealed the drawer —
  * if open at the seal — is read-only: print and reading, no FIX,
- * no sled.
+ * no sled — and since issue #109 (F2) it PRINTS that state at its
+ * head instead of going silently inert. A second key, RE-CHECK,
+ * stands where FIX stands when the only lack is a STALE reading
+ * (issue #109, F3): it fires a fresh Watch sweep from the host.
  * ============================================================================
  */
 
@@ -111,6 +122,7 @@ private val PLATE_BODY = listOf(
     "HOLD: 60 SECONDS, BANKED EVERY 15 · ONE BREAK A WEEK",
     "PEEK: 2 MINUTES, THEN SHUT AGAIN",
     "COLOUR IS A VERB: ORANGE = COMMIT · INK = SHUT · GREY = PEEK · PORCELAIN = OPEN",
+    "BIND: MONOLITH IS ATTACHED · PROOF: IT JUST CHECKED · SEAL: THE SESSION IS SHUT",
     // UNA-05 (Truth Car 3, words half; Hale W-11, Una's brief):
     // the "FIRED AS SET" clause is STRUCK in this lane. It was
     // falsified on his phone (Oct 29, 20:00 SLEEP no-fire) and the
@@ -119,27 +131,82 @@ private val PLATE_BODY = listOf(
     // restoration is a merge-time act on that evidence, not before.
     "ROUTINES: SET BY HAND ON SHIELD",
     "SITES: KEPT WITH APPS ON SHIELD · DATA: ON THIS PHONE ONLY",
-    "STUDY HOURS: IN YPT",
-    "SOUND: FLOAT-PCM, 4 PARTIALS · POWER: YOUR PHONE"
+    // Issue #115: the timer app is named in full — a bare acronym
+    // ("YPT") sent users to a place that did not exist under any
+    // name they could find; DURCH-C rebase ruling: no bare acronym
+    // as a destination name, the study timer named plainly (the
+    // W-43 direction on the receipt footer). The SOUND line's
+    // synthesis jargon (FLOAT-PCM, 4 PARTIALS) is likewise struck
+    // for plain words.
+    "STUDY HOURS: IN YEOLPUMTA, THE STUDY TIMER",
+    "SOUND: MADE ON THIS PHONE · POWER: YOUR PHONE"
 )
+
+/** Issue #56, finding 2: the sheet-drag dismiss law's threshold. */
+internal const val PARK_DISMISS_FRACTION = 0.4f
+
+/**
+ * Issue #56, finding 2: one grip-drag step, as pure arithmetic.
+ * The drag handler accumulates into a plain snapshot state on the
+ * pointer thread — events arrive in order and each step reads the
+ * value the previous step wrote — so the fraction the 40% law
+ * judges at drag-end is never a stale Animatable read raced by
+ * per-event coroutines.
+ */
+internal fun gripDraggedFraction(current: Float, dragAmountPx: Float, sheetHeightPx: Int): Float =
+    (current + dragAmountPx / sheetHeightPx.coerceAtLeast(1)).coerceIn(0f, 1f)
+
+/**
+ * Issue #56, finding 4: a FIX return verdict may judge ONLY the
+ * trip that was in flight when its return tick landed. A second
+ * press inside the 800ms stability window advances the trip (and
+ * replaces the item), and the first trip's timer must then stand
+ * down — it neither judges nor clears the newer press.
+ */
+/**
+ * Issue #56, fresh-eyes A: the FIX dip holds for the return
+ * verdict ONLY when the press completed with a clean release.
+ * An interrupted press (tryAwaitRelease() == false) clears its
+ * state at once — it must never be judged by a later return tick.
+ */
+internal fun fixPressHoldsForReturn(released: Boolean): Boolean = released
+
+internal fun fixReturnStillOwns(
+    capturedTrip: Int,
+    capturedItem: WatchItemId?,
+    currentTrip: Int,
+    currentItem: WatchItemId?,
+    stillPressed: Boolean
+): Boolean =
+    stillPressed && capturedItem != null && capturedTrip == currentTrip && capturedItem == currentItem
 
 @Composable
 fun ParkDrawer(
     visible: Boolean,
     snapshot: WatchSnapshot?,
+    introPending: Boolean = false,
     isSealed: Boolean,
     isNight: Boolean,
     soundEnabled: Boolean,
-    shortsReelsSniperEnabled: Boolean,
+    // Defaults on the sled facts (issue #56, test-compile unblock):
+    // several pre-existing test renders were written against a
+    // ParkDrawer whose sled parameters had defaults and no longer
+    // compiled once the parameters lost them — the whole unit-test
+    // suite failed to compile on main. The one production caller
+    // (MainActivity) passes every argument explicitly, so these
+    // defaults change nothing at runtime; they only let the older
+    // renders compile again.
+    shortsReelsSniperEnabled: Boolean = false,
     soundEngine: TactileSoundEngine?,
     themeReadout: String,
     parkReturnTick: Int,
     onDismiss: () -> Unit,
     onFixClick: (WatchItemId) -> Unit,
+    onRecheck: () -> Unit = {},
     onToggleSound: () -> Unit,
-    onToggleShortsReelsSniper: () -> Unit,
-    socialSitesEnabled: Boolean,
-    onToggleSocialSites: () -> Unit,
+    onToggleShortsReelsSniper: () -> Unit = {},
+    socialSitesEnabled: Boolean = false,
+    onToggleSocialSites: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -148,6 +215,11 @@ fun ParkDrawer(
     // KIN-DRAWER travel: fraction 1 = shut (sheet below the host),
     // 0 = seated open. Exactly two rest heights.
     val fraction = remember { Animatable(1f) }
+    // Issue #56, finding 2: the grip drag's accumulated fraction.
+    // Non-null only between drag-start and drag-end/cancel; written
+    // synchronously per drag event (never via a launched coroutine),
+    // so it is always the latest, in-order drag position.
+    var gripDragFraction by remember { mutableStateOf<Float?>(null) }
     var sheetHeightPx by remember { mutableStateOf(0) }
     LaunchedEffect(visible) {
         if (visible) {
@@ -158,8 +230,18 @@ fun ParkDrawer(
     }
     if (!visible && fraction.value >= 1f) return
 
-    val settled = fraction.value == 0f
+    // While the grip owns the sheet, the RENDERED fraction is the
+    // drag accumulator, not the Animatable (which is parked until
+    // the gesture resolves in one ordered coroutine at drag-end).
+    val effectiveFraction = gripDragFraction ?: fraction.value
+    // Issue #56, finding 1: `interactive` is THE gate for every
+    // control on this sheet — the FIX key (as before) and all three
+    // sleds (previously gated only by the seal, so they fired
+    // mid-rise, mid-throw, and throughout the close). A grip drag
+    // in flight also un-settles the sheet.
+    val settled = effectiveFraction == 0f && gripDragFraction == null
     val interactive = visible && settled && !isSealed
+    val interactiveState = rememberUpdatedState(interactive)
 
     // Staleness is derived at render; while PARK stands open the
     // print re-derives on a slow beat so a line can go STALE in
@@ -172,16 +254,47 @@ fun ParkDrawer(
         }
     }
 
+    // The FIX key's target: the first line that lacks — MISSING, or
+    // UNPROVED (issue #94: the BATTERY line on an OEM-autostart-gated
+    // skin, whose FIX trip is the autostart pane, not a dead end).
     val firstMissing = snapshot?.let { snap ->
         WatchItemId.PERMISSIONS.firstOrNull {
-            WatchStore.permPrintAt(snap, it, nowMono) == PermPrint.MISSING
+            // A stale denial is still a denial (#58 F1): the FIX
+            // key keeps targeting it, it just no longer PRINTS as
+            // current on the board below. UNPROVED (#94) targets too.
+            val print = WatchStore.permPrintAt(snap, it, nowMono)
+            print == PermPrint.MISSING || print == PermPrint.MISSING_STALE ||
+                print == PermPrint.UNPROVED
         }
+    }
+
+    // Issue #109, F3: STALE was a dead end — styled and named as a
+    // lack, with no remedy on the board. The first stale line (only
+    // when nothing is MISSING — a missing grant outranks a stale
+    // reading) gets the RE-CHECK key below: a fresh Watch sweep
+    // re-measures it on the spot.
+    val firstStale = snapshot?.let { snap ->
+        if (firstMissing != null) {
+            null
+        } else {
+            WatchItemId.PERMISSIONS.firstOrNull {
+                WatchStore.permPrintAt(snap, it, nowMono) == PermPrint.STALE
+            }
+        }
+    }
+    var recheckPressed by remember { mutableStateOf(false) }
+    LaunchedEffect(visible) {
+        if (!visible) recheckPressed = false
     }
 
     // The FIX key's dip: pressed on DOWN, held for the whole absence,
     // resolved on the return (see the return effect below).
     var fixPressed by remember { mutableStateOf(false) }
     var fixPressedItem by remember { mutableStateOf<WatchItemId?>(null) }
+    // Issue #56, finding 4: the FIX trip identity. Every press
+    // advances it; a return verdict is bound to the trip value it
+    // captured when its tick landed (see fixReturnStillOwns).
+    var fixTrip by remember { mutableStateOf(0) }
     LaunchedEffect(visible) {
         if (!visible) {
             fixPressed = false
@@ -190,13 +303,23 @@ fun ParkDrawer(
     }
     LaunchedEffect(parkReturnTick) {
         if (parkReturnTick <= 0 || !fixPressed) return@LaunchedEffect
+        // Issue #56, finding 4: capture THIS trip's identity before
+        // the wait. The old body read fixPressedItem only after the
+        // delay, so a second press inside the window was judged —
+        // and cleared — by the first trip's timer.
+        val tripAtReturn = fixTrip
+        val item = fixPressedItem ?: return@LaunchedEffect
         // Return is proving: the host's sweep lands within ~300ms;
         // the stability beat runs 500ms past it before any verdict.
         // The verdict reads the store LIVE at that instant — the
         // composed snapshot may predate the sweep's landings.
         delay(800L)
+        if (!fixReturnStillOwns(tripAtReturn, item, fixTrip, fixPressedItem, fixPressed)) {
+            // A newer trip owns the verdict now; its own return
+            // tick will judge it. This timer stands down silently.
+            return@LaunchedEffect
+        }
         val snap = WatchStore.snapshots.value
-        val item = fixPressedItem ?: return@LaunchedEffect
         val repaired = WatchStore.permPrintAt(snap, item, SystemClock.elapsedRealtime()) ==
             PermPrint.GRANTED
         if (repaired) {
@@ -216,13 +339,20 @@ fun ParkDrawer(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.32f * (1f - fraction.value)))
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f * (1f - effectiveFraction)))
                 .then(
-                    if (visible) {
+                    // Issue #56, finding 5: the scrim blocks for as
+                    // long as it is DRAWN — the old `if (visible)`
+                    // dropped the blocker the instant dismissal
+                    // started, so taps fell through the still-visible
+                    // scrim for the whole 160ms close throw. It now
+                    // consumes touches until the sheet is fully shut;
+                    // only a tap while open still dismisses.
+                    if (fraction.value < 1f) {
                         Modifier.clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
-                        ) { onDismiss() }
+                        ) { if (visible) onDismiss() }
                     } else Modifier
                 )
         )
@@ -232,7 +362,7 @@ fun ParkDrawer(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .offset { IntOffset(0, (fraction.value * sheetHeightPx).roundToInt()) }
+                .offset { IntOffset(0, (effectiveFraction * sheetHeightPx).roundToInt()) }
                 .onSizeChanged { sheetHeightPx = it.height }
                 .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
                 .background(scheme.background)
@@ -248,15 +378,40 @@ fun ParkDrawer(
                     .height(48.dp)
                     .pointerInput(visible) {
                         detectVerticalDragGestures(
-                            onDragStart = { gripPressed = true },
+                            onDragStart = {
+                                gripPressed = true
+                                // Issue #56, finding 2: the drag
+                                // starts from the sheet's true
+                                // position, accumulated from here.
+                                if (visible) gripDragFraction = fraction.value
+                            },
                             onDragEnd = {
                                 gripPressed = false
-                                if (fraction.value > 0.4f) {
-                                    // Dismissal (b): sheet thrown shut,
-                                    // cap returns to its origin stop.
-                                    onDismiss()
+                                val dragged = gripDragFraction
+                                if (dragged == null || !visible) {
+                                    gripDragFraction = null
+                                    return@detectVerticalDragGestures
+                                }
+                                // The 40% law judges `dragged` —
+                                // the synchronously accumulated,
+                                // in-order final position, never a
+                                // raced Animatable read. Exactly ONE
+                                // coroutine resolves the gesture:
+                                // it seats the Animatable on the
+                                // dragged position first, then the
+                                // throw/seat runs from there, in order.
+                                if (dragged > PARK_DISMISS_FRACTION) {
+                                    scope.launch {
+                                        fraction.snapTo(dragged)
+                                        gripDragFraction = null
+                                        // Dismissal (b): sheet thrown
+                                        // shut, cap returns to origin.
+                                        onDismiss()
+                                    }
                                 } else {
                                     scope.launch {
+                                        fraction.snapTo(dragged)
+                                        gripDragFraction = null
                                         fraction.animateTo(
                                             0f,
                                             tween(MonolithKin.DRAWER_OPEN_MS, easing = MonolithKin.EasingSeat)
@@ -264,12 +419,35 @@ fun ParkDrawer(
                                     }
                                 }
                             },
-                            onDragCancel = { gripPressed = false },
+                            onDragCancel = {
+                                gripPressed = false
+                                // A cancelled drag re-seats from the
+                                // accumulated position, in the same
+                                // single ordered coroutine.
+                                val dragged = gripDragFraction
+                                if (dragged != null) {
+                                    scope.launch {
+                                        fraction.snapTo(dragged)
+                                        gripDragFraction = null
+                                        if (visible) {
+                                            fraction.animateTo(
+                                                0f,
+                                                tween(MonolithKin.DRAWER_OPEN_MS, easing = MonolithKin.EasingSeat)
+                                            )
+                                        }
+                                    }
+                                }
+                            },
                             onVerticalDrag = { _, dragAmount ->
-                                scope.launch {
-                                    val h = sheetHeightPx.coerceAtLeast(1)
-                                    fraction.snapTo(
-                                        (fraction.value + dragAmount / h).coerceIn(0f, 1f)
+                                // No coroutine per event (finding 2):
+                                // pointer events are delivered in
+                                // order on one thread, so this plain
+                                // accumulation IS the ordered truth.
+                                if (visible) {
+                                    gripDragFraction = gripDraggedFraction(
+                                        gripDragFraction ?: fraction.value,
+                                        dragAmount,
+                                        sheetHeightPx
                                     )
                                 }
                             }
@@ -301,18 +479,60 @@ fun ParkDrawer(
                     .verticalScroll(rememberScrollState())
                     .padding(PaddingValues(start = 20.dp, end = 20.dp, bottom = 100.dp))
             ) {
+                // First-run intro (issue-156, F5): plain words at
+                // the TOP of the board, only while the intro is
+                // pending — what PARK is and what FIX does, in the
+                // board's normal title/body type. The spec plate
+                // at the foot stays untouched.
+                if (introPending) {
+                    Text(
+                        text = "PARK — THE MACHINE'S OWN REPORT CARD.",
+                        style = AppTitleTextStyle,
+                        color = scheme.onBackground
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Every line names a guard and whether it is SET or MISSING. " +
+                            "FIX takes you to the first one that is missing. " +
+                            "Monolith asks for six system grants, one at a time; " +
+                            "each FIX trip first says what the grant does and what it never does. " +
+                            "THE WAY OUT, BEFORE ANY GRANT: every session carries an emergency " +
+                            "break — a 60-second hold, once a week. You are never sealed in without an exit.",
+                        style = BodyTextStyle,
+                        color = scheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                }
+
                 // (1) Header + the LAST PROVED telltale. The instant
                 // lives HERE and nowhere else; the slot is blank
                 // until the first complete set lands.
                 Text(
-                    text = "GUARD",
+                    text = stringResource(R.string.park_guard),
                     style = DrawerHeaderTextStyle,
                     color = scheme.onBackground
                 )
+                if (isSealed) {
+                    // Issue #109, F2: a seal landing under an open
+                    // drawer used to hide the FIX key and freeze the
+                    // sleds in silence — the drawer never said it had
+                    // gone read-only or why. Now it prints it, at the
+                    // head, where the change is lived. The lock itself
+                    // is HOLD-absolutely and stays; only the silence
+                    // was the defect.
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "SEALED — READ-ONLY. A SESSION IS RUNNING: " +
+                            "THE BOARD CAN BE READ, NOT CHANGED, UNTIL IT ENDS.",
+                        style = PillBadgeTextStyle,
+                        color = scheme.onBackground,
+                        modifier = Modifier.testTag("park_sealed_note")
+                    )
+                }
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "LAST PROVED",
+                        text = stringResource(R.string.park_last_proved),
                         style = PillBadgeTextStyle,
                         color = scheme.onSurfaceVariant
                     )
@@ -320,7 +540,7 @@ fun ParkDrawer(
                     if (proved != null) {
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = SimpleDateFormat("HH:mm", Locale.US).format(Date(proved)) +
+                            text = ClockText.timeOfDay(LocalContext.current, proved) +
                                 " · SELF-REPORT",
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
@@ -331,24 +551,69 @@ fun ParkDrawer(
                     }
                 }
 
+                // Issue #339 (Second-pass F4): the criticality
+                // line — which single grant is fatal, stated as a
+                // state, above the board's per-item rows.
+                val availabilityLine = snapshot?.let {
+                    com.example.ui.components.availabilityLineFor(it, nowMono)
+                }
+                if (availabilityLine != null) {
+                    Text(
+                        text = availabilityLine.text,
+                        style = PillBadgeTextStyle,
+                        color = scheme.onBackground,
+                        modifier = Modifier.testTag("park_blocking_availability")
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // (2) The board: nine ruled lines, fixed order.
                 if (snapshot != null) {
                     WatchItemId.PERMISSIONS.forEach { item ->
-                        ParkBoardRow(
-                            name = item.boardName,
-                            word = when (WatchStore.permPrintAt(snapshot, item, nowMono)) {
-                                PermPrint.GRANTED -> "GRANTED"
-                                PermPrint.MISSING -> "MISSING"
-                                PermPrint.STALE -> "STALE"
-                                PermPrint.UNMEASURED -> null
-                            },
-                            wordIsLack = when (WatchStore.permPrintAt(snapshot, item, nowMono)) {
-                                PermPrint.GRANTED -> false
-                                else -> true
+                        // Issue #122, rebased onto #94's UNPROVED print:
+                        // the BATTERY line prints the battery itself
+                        // (level \u00b7 saver/charging \u00b7 NOT EXEMPT) from the
+                        // snapshot's battery read \u2014 the exemption bit
+                        // alone read "GRANTED" over an 8% battery with
+                        // saver on. The perm print is NOT discarded:
+                        // an UNPROVED / STALE exemption verdict still
+                        // appends and still counts as a lack, so the
+                        // line can never read satisfied while either
+                        // the battery or the proof is lacking. No
+                        // battery read yet \u2192 the perm print, as before.
+                        val battery = snapshot.battery
+                        val permPrint = WatchStore.permPrintAt(snapshot, item, nowMono)
+                        if (item == WatchItemId.BATTERY && battery != null) {
+                            val suffix = when (permPrint) {
+                                PermPrint.UNPROVED -> " \u00b7 UNPROVED"
+                                PermPrint.STALE, PermPrint.MISSING_STALE -> " \u00b7 STALE"
+                                else -> ""
                             }
-                        )
+                            ParkBoardRow(
+                                name = item.boardName,
+                                word = com.example.data.batteryBoardWord(battery) + suffix,
+                                wordIsLack = com.example.data.batteryBoardIsLack(battery) ||
+                                    permPrint != PermPrint.GRANTED
+                            )
+                        } else {
+                            ParkBoardRow(
+                                name = item.boardName,
+                                word = when (permPrint) {
+                                    PermPrint.GRANTED -> "GRANTED"
+                                    PermPrint.MISSING -> "MISSING"
+                                    PermPrint.STALE -> "STALE"
+                                    PermPrint.UNPROVED -> "UNPROVED"
+                                    PermPrint.MISSING_STALE -> "STALE"
+                                    PermPrint.UNMEASURED -> null
+                                },
+                                wordIsLack = when (permPrint) {
+                                    PermPrint.GRANTED -> false
+                                    else -> true
+                                }
+                            )
+                        }
                     }
                     // The doubled gap: 16dp, no hairline, no eyebrow —
                     // the family break is whitespace, not a heading.
@@ -372,39 +637,71 @@ fun ParkDrawer(
                                 wordIsLack = m?.interceptor != InterceptorState.RUNNING,
                                 enabled = socialSitesEnabled,
                                 soundEngine = soundEngine,
-                                isSealed = isSealed,
+                                interactive = interactive,
                                 onToggle = onToggleSocialSites
                             )
                         } else {
                             ParkBoardRow(
-                                name = item.boardName,
+                                // Issue #109, F5: the SHORTS + REELS
+                                // board line is the MEASURED outcome;
+                                // the sled row below is the SETTING.
+                                // The two lines used to carry the same
+                                // bare name and could print OFF over
+                                // ON with nothing saying why both were
+                                // true. The qualifier is the link.
+                                name = if (item == WatchItemId.SHORTS_REELS) {
+                                    "${item.boardName} — MEASURED"
+                                } else {
+                                    item.boardName
+                                },
                                 word = word,
                                 wordIsLack = m?.interceptor != InterceptorState.RUNNING
                             )
                         }
                     }
                 } else {
-                    // Never measured: the board prints its names only.
+                    // Never measured: the board prints its names
+                    // only — except the two sled-backed rows
+                    // (SHORTS + REELS, SOCIAL SITES), whose sleds
+                    // stand on persisted settings even here. Those
+                    // rows print SETTING (issue-156, F4): a
+                    // persisted fact, not a measurement, so the
+                    // board never presents a default as a measured
+                    // state. Print only — no default or enforcement
+                    // changes.
                     WatchItemId.entries.forEachIndexed { idx, item ->
                         if (idx == WatchItemId.PERMISSIONS.size) {
                             Spacer(modifier = Modifier.height(16.dp))
                         }
                         if (item == WatchItemId.SOCIAL_SITES) {
                             // Never measured: the line prints its
-                            // name and its switch — the setting is
-                            // a persisted fact, not a measurement,
-                            // so the sled stands even here (UNA-02).
+                            // name, its SETTING word, and its
+                            // switch — the setting is a persisted
+                            // fact, not a measurement, so the sled
+                            // stands even here (UNA-02).
                             ParkSocialSitesRow(
                                 name = item.boardName,
-                                word = null,
+                                word = "SETTING",
                                 wordIsLack = true,
                                 enabled = socialSitesEnabled,
                                 soundEngine = soundEngine,
-                                isSealed = isSealed,
+                                interactive = interactive,
                                 onToggle = onToggleSocialSites
                             )
                         } else {
-                            ParkBoardRow(name = item.boardName, word = null, wordIsLack = true)
+                            ParkBoardRow(
+                                // Issue #109 F5 (merge resolution):
+                                // this is the NEVER-MEASURED board —
+                                // main's form is the truthful one
+                                // (bare name + SETTING word badge);
+                                // the branch's "— MEASURED" suffix
+                                // belongs to the measured rows above
+                                // and would lie here, where nothing
+                                // has been measured yet.
+                                name = item.boardName,
+                                word = if (item == WatchItemId.SHORTS_REELS) "SETTING" else null,
+                                wordIsLack = true
+                            )
                         }
                     }
                 }
@@ -436,6 +733,12 @@ fun ParkDrawer(
                                                 onPress = {
                                                     fixPressed = true
                                                     fixPressedItem = item
+                                                    // Issue #56, finding 4:
+                                                    // a new trip begins —
+                                                    // any pending return
+                                                    // timer for an older
+                                                    // trip is now stale.
+                                                    fixTrip++
                                                     // The engine's quietest
                                                     // existing voice: the seat
                                                     // knock at its floor.
@@ -445,7 +748,38 @@ fun ParkDrawer(
                                                         pitchHz = 300f
                                                     )
                                                     onFixClick(item)
-                                                    tryAwaitRelease()
+                                                    // Issue #56, fresh-eyes A:
+                                                    // a press INTERRUPTED before
+                                                    // release (gesture stolen by
+                                                    // the sheet's scroll/drag, or
+                                                    // the composition tearing
+                                                    // down) must not leave the
+                                                    // dip armed — otherwise the
+                                                    // next unrelated return tick
+                                                    // (every ON_RESUME bumps it)
+                                                    // would judge a press that
+                                                    // never completed. A clean
+                                                    // release keeps the state:
+                                                    // the Settings absence is
+                                                    // the hold, and the return
+                                                    // effect is its only judge.
+                                                    // This composes with
+                                                    // issue-9's release-commit:
+                                                    // there a cancelled press
+                                                    // never fires onFixClick,
+                                                    // and this cleanup is what
+                                                    // guarantees its state.
+                                                    val released = try {
+                                                        tryAwaitRelease()
+                                                    } catch (ce: CancellationException) {
+                                                        fixPressed = false
+                                                        fixPressedItem = null
+                                                        throw ce
+                                                    }
+                                                    if (!fixPressHoldsForReturn(released)) {
+                                                        fixPressed = false
+                                                        fixPressedItem = null
+                                                    }
                                                 }
                                             )
                                         }
@@ -455,7 +789,141 @@ fun ParkDrawer(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "FIX — ${item.boardName}",
+                                text = stringResource(R.string.park_fix_item, item.boardName),
+                                style = PrimaryButtonTextStyle,
+                                color = onInkControlFill()
+                            )
+                        }
+                        // The trip's one warning, printed before he
+                        // leaves (issue #94, F3 + F1): two of these
+                        // panes can be dead ends on a sideloaded
+                        // install, and the battery pane is only half
+                        // the trip on a gated skin — say so here, in
+                        // plain words, where the FIX is pressed.
+                        val fixNote = when (item) {
+                            WatchItemId.ACCESSIBILITY,
+                            WatchItemId.NOTIFICATION_LISTENER ->
+                                "IF THE SWITCH WON'T MOVE, THE INSTALL IS " +
+                                    "RESTRICTED: SETTINGS → APPS → MONOLITH → " +
+                                    "⋮ MENU → ALLOW RESTRICTED SETTINGS, " +
+                                    "THEN COME BACK AND FIX AGAIN."
+                            WatchItemId.BATTERY ->
+                                // Issue #296 (Audit R5, ScreenZen
+                                // second-pass F10): the battery step
+                                // teaches, it does not just link — a
+                                // named purpose and the OEM-killer
+                                // pointer (dontkillmyapp.com, the
+                                // public database of per-maker
+                                // background-killing behaviour), on
+                                // every skin, not only gated ones.
+                                if (com.example.data.OemPolicy.gatesAutostart()) {
+                                    "THIS PHONE ALSO GATES RESTARTS BEHIND " +
+                                        "AUTOSTART: FIX OPENS THE AUTOSTART " +
+                                        "LIST — SWITCH MONOLITH ON THERE. " +
+                                        "THE APP CANNOT READ THAT SWITCH " +
+                                        "BACK, SO THIS LINE STAYS UNPROVED. " +
+                                        "DONTKILLMYAPP.COM LISTS THIS " +
+                                        "MAKER'S EXTRA STEPS."
+                                } else {
+                                    "REQUIRED SO THE PHONE DOES NOT " +
+                                        "SWITCH BLOCKING OFF IN THE " +
+                                        "BACKGROUND: SET MONOLITH TO " +
+                                        "UNRESTRICTED. DONTKILLMYAPP.COM " +
+                                        "LISTS EACH MAKER'S EXTRA STEPS."
+                                }
+                            else -> null
+                        }
+                        if (fixNote != null) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = fixNote,
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Normal,
+                                fontSize = 10.sp,
+                                lineHeight = 16.sp,
+                                letterSpacing = 1.2.sp,
+                                color = scheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                // Issue #280: the rationale for the grant the FIX
+                // key targets — printed under the key, before any
+                // Settings trip, in the board's body type.
+                if (firstMissing != null && !isSealed) {
+                    WatchStore.boardRationale(firstMissing!!)?.let { rationale ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = rationale,
+                            style = BodyTextStyle,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("park_fix_rationale")
+                        )
+                    }
+                }
+
+                // (3b) The RE-CHECK key (issue #109, F3): STALE's
+                // remedy. Present only while a permission line is
+                // STALE and nothing is MISSING; a press fires a fresh
+                // Watch sweep from the host and the lines re-measure
+                // where he stands — no leaving the app and coming
+                // back. Sealed, it is absent like the FIX key: the
+                // drawer is read-only and prints so at its head.
+                AnimatedVisibility(
+                    visible = firstStale != null && !isSealed,
+                    enter = expandVertically(tween(MonolithKin.DRAWER_CLOSE_MS, easing = MonolithKin.EasingSeat)) +
+                        fadeIn(tween(MonolithKin.DRAWER_CLOSE_MS)),
+                    exit = shrinkVertically(tween(MonolithKin.DRAWER_CLOSE_MS, easing = MonolithKin.EasingThrow)) +
+                        fadeOut(tween(MonolithKin.DRAWER_CLOSE_MS))
+                ) {
+                    val item = firstStale ?: return@AnimatedVisibility
+                    Column {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .offset(y = if (recheckPressed) 1.dp else 0.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(inkControlFill())
+                                .then(
+                                    if (interactive) {
+                                        Modifier.pointerInput(item) {
+                                            detectTapGestures(
+                                                onPress = {
+                                                    recheckPressed = true
+                                                    // Same quiet seat knock
+                                                    // as the FIX key.
+                                                    soundEngine?.playSeatKnock(
+                                                        durationMs = 10,
+                                                        amplitude01 = if (isNight) 0.06f else 0.1f,
+                                                        pitchHz = 300f
+                                                    )
+                                                    // Issue #9, Zahn Z-11
+                                                    // (RE-CHECK form): the
+                                                    // dispatch commits on
+                                                    // RELEASE, like FIX —
+                                                    // a scroll that merely
+                                                    // starts on this key
+                                                    // fires no sweep. The
+                                                    // knock stays on DOWN:
+                                                    // it is furniture, not
+                                                    // a commit.
+                                                    val released =
+                                                        tryAwaitRelease()
+                                                    if (released) onRecheck()
+                                                    recheckPressed = false
+                                                }
+                                            )
+                                        }
+                                    } else Modifier
+                                )
+                                .testTag("park_recheck_key"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "RE-CHECK — ${item.boardName}",
                                 style = PrimaryButtonTextStyle,
                                 color = onInkControlFill()
                             )
@@ -472,11 +940,12 @@ fun ParkDrawer(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp),
+                        .height(52.dp)
+                        .semantics(mergeDescendants = true) {},
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "SOUND EFFECTS",
+                        text = stringResource(R.string.park_sound_effects),
                         style = PillBadgeTextStyle,
                         color = scheme.onSurfaceVariant
                     )
@@ -497,9 +966,18 @@ fun ParkDrawer(
                             factory = { ctx ->
                                 SledSwitchView(ctx).apply {
                                     chromeMode = true
+                                    contentDescription = "Sound"
                                     this.soundEngine = soundEngine
                                     isChecked = soundEnabled
-                                    onToggleRequested = { onToggleSound() }
+                                    // Issue #56, finding 1: the sled
+                                    // obeys the same gate as the FIX
+                                    // key — no toggle mid-rise,
+                                    // mid-throw, or while closing.
+                                    onToggleRequested = { if (interactiveState.value) onToggleSound() }
+                                    // Fresh-eyes B: the view itself
+                                    // consults this before any haptic,
+                                    // so a gated press stays silent.
+                                    gateCheck = { interactiveState.value }
                                 }
                             },
                             update = { view ->
@@ -507,20 +985,23 @@ fun ParkDrawer(
                                 if (view.isChecked != soundEnabled) {
                                     view.isChecked = soundEnabled
                                 }
-                                view.onToggleRequested = { onToggleSound() }
+                                view.onToggleRequested = { if (interactiveState.value) onToggleSound() }
+                                view.gateCheck = { interactiveState.value }
                             },
                             modifier = Modifier
                                 .width(76.dp)
-                                .height(34.dp)
+                                .height(48.dp)
                                 .testTag("park_sound_sled")
                         )
-                        if (isSealed) {
-                            // Read-only under the seal: the sled is
-                            // print; the overlay takes the touch.
+                        if (!interactive) {
+                            // Issue #56, finding 1: whenever the
+                            // sheet is not settled-and-open (sealed,
+                            // mid-rise, mid-throw, closing) the sled
+                            // is print; the overlay takes the touch.
                             Box(
                                 modifier = Modifier
                                     .width(76.dp)
-                                    .height(34.dp)
+                                    .height(48.dp)
                                     .clickable(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = null
@@ -529,6 +1010,18 @@ fun ParkDrawer(
                         }
                     }
                 }
+                // Issue #150: the sled's word must not lie by
+                // omission — OFF silences the voice, never the
+                // event: the haptic twin still fires at full
+                // amplitude by design (S0). One caption line in
+                // the plate's own grammar, printed always, so the
+                // fact is read before it is discovered on a
+                // library desk.
+                Text(
+                    text = "SOUND OFF KEEPS THE TOUCH — THE BUZZ CARRIES THE EVENT",
+                    style = PillBadgeTextStyle,
+                    color = scheme.onSurfaceVariant
+                )
                 ParkHairline()
 
                 // (5) Shorts + Reels — the sniper's sled, seated
@@ -538,14 +1031,27 @@ fun ParkDrawer(
                 // source was the ViewModel's memory; the sled reads
                 // and writes the persisted Guard row, and the board
                 // above now prints the same fact the sled holds.
+                // Issue #109, F5: this row is the SETTING and prints
+                // so — the board's line above is the MEASURED
+                // outcome, and the two qualifiers are what keep an
+                // honest OFF-over-ON from reading as a contradiction.
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp),
+                        .height(52.dp)
+                        .semantics(mergeDescendants = true) {},
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // #131 truth scope: the sled arms the FEED
+                    // sniper only — it never policed long-form,
+                    // home feeds, Stories or DMs (those are the
+                    // app tier's job), so the plate says FEED.
+                    // Issue #109 F5 (merge resolution): the plate
+                    // also carries — SETTING, the link to the
+                    // board's "— MEASURED" line above; the two
+                    // lines must never carry the same bare name.
                     Text(
-                        text = "SHORTS + REELS",
+                        text = "SHORTS + REELS FEED — SETTING",
                         style = PillBadgeTextStyle,
                         color = scheme.onSurfaceVariant
                     )
@@ -566,9 +1072,13 @@ fun ParkDrawer(
                             factory = { ctx ->
                                 SledSwitchView(ctx).apply {
                                     chromeMode = true
+                                    contentDescription = "Shorts and Reels blocker"
                                     this.soundEngine = soundEngine
                                     isChecked = shortsReelsSniperEnabled
-                                    onToggleRequested = { onToggleShortsReelsSniper() }
+                                    // Issue #56, finding 1: same gate
+                                    // as the Sound sled and FIX key.
+                                    onToggleRequested = { if (interactiveState.value) onToggleShortsReelsSniper() }
+                                    gateCheck = { interactiveState.value }
                                 }
                             },
                             update = { view ->
@@ -576,20 +1086,22 @@ fun ParkDrawer(
                                 if (view.isChecked != shortsReelsSniperEnabled) {
                                     view.isChecked = shortsReelsSniperEnabled
                                 }
-                                view.onToggleRequested = { onToggleShortsReelsSniper() }
+                                view.onToggleRequested = { if (interactiveState.value) onToggleShortsReelsSniper() }
+                                view.gateCheck = { interactiveState.value }
                             },
                             modifier = Modifier
                                 .width(76.dp)
-                                .height(34.dp)
+                                .height(48.dp)
                                 .testTag("park_shorts_sled")
                         )
-                        if (isSealed) {
-                            // Read-only under the seal, as the
-                            // Sound sled: print, not a control.
+                        if (!interactive) {
+                            // Issue #56, finding 1: not settled-and-
+                            // open — print, not a control, as the
+                            // Sound sled above.
                             Box(
                                 modifier = Modifier
                                     .width(76.dp)
-                                    .height(34.dp)
+                                    .height(48.dp)
                                     .clickable(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = null
@@ -607,7 +1119,7 @@ fun ParkDrawer(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "THEME",
+                        text = stringResource(R.string.park_theme),
                         style = PillBadgeTextStyle,
                         color = scheme.onSurfaceVariant
                     )
@@ -648,7 +1160,9 @@ fun ParkDrawer(
 }
 
 /** One board line: name plate left, state word right, ruled under.
- *  A never-measured line prints its NAME ONLY — no word, no fill. */
+ *  A never-measured line prints its NAME ONLY — no word, no fill —
+ *  except a sled-backed row's SETTING word, which names a persisted
+ *  setting, never a measurement (issue-156, F4). */
 @Composable
 private fun ParkBoardRow(name: String, word: String?, wordIsLack: Boolean) {
     val scheme = MaterialTheme.colorScheme
@@ -656,7 +1170,8 @@ private fun ParkBoardRow(name: String, word: String?, wordIsLack: Boolean) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
+                .height(48.dp)
+                .semantics(mergeDescendants = true) {},
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -702,15 +1217,19 @@ private fun ParkSocialSitesRow(
     wordIsLack: Boolean,
     enabled: Boolean,
     soundEngine: TactileSoundEngine?,
-    isSealed: Boolean,
+    interactive: Boolean,
     onToggle: () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
+    // Issue #56, finding 1: this row receives the drawer's one
+    // `interactive` gate (not merely the seal) — see ParkDrawer.
+    val interactiveState = rememberUpdatedState(interactive)
     Column {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
+                .height(48.dp)
+                .semantics(mergeDescendants = true) {},
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -735,9 +1254,11 @@ private fun ParkSocialSitesRow(
                     factory = { ctx ->
                         SledSwitchView(ctx).apply {
                             chromeMode = true
+                            contentDescription = "Social sites blocker"
                             this.soundEngine = soundEngine
                             isChecked = enabled
-                            onToggleRequested = { onToggle() }
+                            onToggleRequested = { if (interactiveState.value) onToggle() }
+                            gateCheck = { interactiveState.value }
                         }
                     },
                     update = { view ->
@@ -745,20 +1266,21 @@ private fun ParkSocialSitesRow(
                         if (view.isChecked != enabled) {
                             view.isChecked = enabled
                         }
-                        view.onToggleRequested = { onToggle() }
+                        view.onToggleRequested = { if (interactiveState.value) onToggle() }
+                        view.gateCheck = { interactiveState.value }
                     },
                     modifier = Modifier
                         .width(76.dp)
-                        .height(34.dp)
+                        .height(48.dp)
                         .testTag("park_social_sled")
                 )
-                if (isSealed) {
-                    // Read-only under the seal, as the sound sled:
-                    // the sled is print; the overlay takes the touch.
+                if (!interactive) {
+                    // Not settled-and-open: print, not a control —
+                    // the overlay takes the touch, as the sound sled.
                     Box(
                         modifier = Modifier
                             .width(76.dp)
-                            .height(34.dp)
+                            .height(48.dp)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null
