@@ -344,6 +344,14 @@ class MonolithAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        // Cold-start cure (issue #7): a rebind mid-residency
+        // re-proves itself. The stamp died with the old binding
+        // (onUnbind zeroes lastRootMono), so a residency that is
+        // already in force would rest UNPROVEN until some event
+        // happened to fire — probe actively instead of waiting.
+        if (WatchStore.residencyActive()) {
+            requestPipelineProbe()
+        }
         // Watch Store bind (issue #48): restore the persisted LAST
         // PROVED into the fresh process's store.
         WatchStore.bind(applicationContext)
@@ -352,6 +360,44 @@ class MonolithAccessibilityService : AccessibilityService() {
         WatchStore.onAccessibilityBound(true)
         startSessionArmedCollector()
         startEventWorker()
+    }
+
+    /**
+     * Active self-probe (issue #7, cold-start cure): the SAME proof
+     * the event path performs in [onAccessibilityEvent], done on
+     * demand instead of waiting for an event. The stamp races
+     * residency start on a cold open — the Deck can appear before
+     * this service binds, and a quiet Deck generates no events — so
+     * residency start (and a rebind mid-residency) probe the
+     * pipeline actively. A live root stamps [lastRootMono] and pokes
+     * the store, exactly as an event would; a null root or a thrown
+     * query stamps NOTHING and returns false — the wire reads dead,
+     * which is the truth.
+     */
+    fun probePipelineNow(): Boolean {
+        return try {
+            if (rootInActiveWindow != null) {
+                lastRootMono = SystemClock.elapsedRealtime()
+                WatchStore.poke()
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            // No stamp — and (issue #76) the failure is counted, not silent.
+            noteDetectionFailure("pipelineProbe", e)
+            false
+        }
+    }
+
+    /** Fire-and-forget probe request: runs [probePipelineNow] on
+     *  this service's existing scope, so a caller on any thread —
+     *  including the UI thread at residency start — never blocks
+     *  waiting for the root window. */
+    fun requestPipelineProbe() {
+        scope.launch {
+            probePipelineNow()
+        }
     }
 
     // ------------------------------------------------------------------
