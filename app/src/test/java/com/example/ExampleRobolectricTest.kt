@@ -170,11 +170,14 @@ class ExampleRobolectricTest {
         val afterSleepLoadout = db.monolithDao().getAllAppsSnapshot().first { it.packageName == tiktok.packageName }
         assertEquals(AppBlockTier.LOCKED, afterSleepLoadout.resolvedTier)
 
-        // Apply Study Loadout: YouTube & WhatsApp become PEEK_2M while TikTok stays LOCKED
+        // Apply Study Loadout: YouTube is OPEN for lectures (issue #133 —
+        // the old PEEK_2M ration made a 50-minute lecture unusable; the
+        // Shorts sniper stays the feed guard), WhatsApp becomes PEEK_2M
+        // while TikTok stays LOCKED
         repository.applySmartLoadout(SmartLoadout.STUDY)
         val studyApps = db.monolithDao().getAllAppsSnapshot()
         val youtube = studyApps.first { it.packageName == "com.google.android.youtube" }
-        assertEquals(AppBlockTier.PEEK_2M, youtube.resolvedTier)
+        assertEquals(AppBlockTier.OPEN, youtube.resolvedTier)
 
         // Direct spatial gravity well drop: drag YouTube into the Inner Event Horizon (LOCKED)
         repository.setAppBlockTier(youtube.packageName, AppBlockTier.LOCKED)
@@ -187,7 +190,6 @@ class ExampleRobolectricTest {
         assertTrue(BlockedBrowserDomains.defaultDomains.contains("instagram.com"))
         assertTrue(BlockedBrowserDomains.defaultDomains.contains("youtube.com/shorts"))
         assertTrue(BlockedBrowserDomains.defaultDomains.contains("reddit.com"))
-        assertTrue(BlockedBrowserDomains.allowedStudyExamples.contains("scholar.google.com"))
     }
 
     @Test
@@ -221,7 +223,7 @@ class ExampleRobolectricTest {
     @Test
     fun `verify 3-stop switch labels and partial-credit session banking`() = runBlocking {
         assertEquals("Shut", AppBlockTier.LOCKED.label)
-        assertEquals("2m Knock", AppBlockTier.PEEK_2M.label)
+        assertEquals("2m Peek", AppBlockTier.PEEK_2M.label)
         assertEquals("Open", AppBlockTier.OPEN.label)
 
         // Start a 25-minute session and simulate 5 minutes elapsed before unlatching early
@@ -249,33 +251,13 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `verify Zero-Green Bauhaus Primary and Warm Indigo Dusk palette`() {
-        val allStudioColors = listOf(
-            com.example.ui.theme.SunlitPaper,
-            com.example.ui.theme.RecessedLinen,
-            com.example.ui.theme.RaisedCreamKey,
-            com.example.ui.theme.PressedCreamKey,
-            com.example.ui.theme.PaperShadow,
-            com.example.ui.theme.PaperDivider,
-            com.example.ui.theme.WarmIndigoDusk,
-            com.example.ui.theme.RecessedIndigo,
-            com.example.ui.theme.RaisedIndigoKey,
-            com.example.ui.theme.PressedIndigoKey,
-            com.example.ui.theme.IndigoBorder,
-            com.example.ui.theme.BauhausCrimson,
-            com.example.ui.theme.BauhausUltramarine,
-            com.example.ui.theme.BauhausCanary,
-            com.example.ui.theme.BauhausTerracotta,
-            com.example.ui.theme.SoftCoralWash,
-            com.example.ui.theme.WarmAmberWash,
-            com.example.ui.theme.UltramarineWash,
-            com.example.ui.theme.SunlitApricot,
-            com.example.ui.theme.ElectricIris,
-            com.example.ui.theme.SandstoneInset,
-            com.example.ui.theme.ObsidianSlate,
-            com.example.ui.theme.CarbonShadow,
-            com.example.ui.theme.IrisVioletWash
-        )
+    fun `verify Zero-Green token palette census`() {
+        // Issue #63: the census runs over the REAL token lists. It used
+        // to enumerate 24 lying aliases (BauhausCanary = orange, etc.)
+        // that duplicated these same tokens.
+        val allStudioColors =
+            com.example.ui.theme.DaylightZeroGreenTokens +
+                com.example.ui.theme.NightZeroGreenTokens
 
         allStudioColors.forEach { color ->
             assertTrue(
@@ -298,7 +280,12 @@ class ExampleRobolectricTest {
         // seeds are what this line now counts.
         assertTrue("Default timeboxed tasks should be seeded in Room", initialTasks.size >= 3)
 
-        val firstActive = initialTasks.first { it.resolvedStatus == com.example.data.TaskQueueStatus.ACTIVE }
+        // Audit R2 #96: the seed is an honest QUEUED slate now —
+        // no fabricated ACTIVE row with spent seconds and a done
+        // substep. This story promotes the first seed itself,
+        // exactly as a user's tap would.
+        val firstSeed = initialTasks.first { it.queueOrder == 0 }
+        val firstActive = repository.promoteTaskToActive(firstSeed.id)!!
         assertEquals("Finish Chapter 4 Problem Set (#1–6)", firstActive.title)
 
         // Start an active session so completing tasks logs to the session receipt

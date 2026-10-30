@@ -214,6 +214,15 @@ class SoundHapticsLivedTest {
         sled.soundEngine = engine
         sled.onToggleRequested = { handlerCalls++ }
         val before = engine.enqueuedTransientCountForTest()
+        // Merged contract (HERD merge of #112 onto current main):
+        // main's sled press discipline (#56 finding 3 / #60
+        // finding 2) lawfully ignores a bare UP — a flip is a
+        // COMPLETE press, DOWN+UP on the sled. The voice claim
+        // under test is unchanged: one complete press reaches the
+        // handler exactly once and the sled spends no voice.
+        sled.dispatchTouchEvent(
+            MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 0f, 0f, 0)
+        )
         sled.dispatchTouchEvent(
             MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_UP, 0f, 0f, 0)
         )

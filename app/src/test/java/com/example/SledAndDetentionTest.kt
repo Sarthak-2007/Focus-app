@@ -132,6 +132,22 @@ class DetentionTableTest {
     }
 
     @Test
+    fun rackStartWithNoPawlIsTheCeiling_notTheSentinel() {
+        // Audit R1 #40: the ViewModel's detention tail delays by
+        // rackStartMs(pawl) + RACK_AFTER_PAWL_MS. With no pawl the
+        // old sentinel (Long.MAX_VALUE/4) parked that delay at
+        // ~2^61 ms — the faulted finish never retired. The rack
+        // now deems itself started at the ceiling: bounded tail.
+        assertEquals(1800L, Detention.rackStartMs(null))
+        assertTrue(
+            Detention.rackStartMs(null) + Detention.RACK_AFTER_PAWL_MS <= 2_200L
+        )
+        // A real pawl is untouched by the cure.
+        assertEquals(1200L, Detention.rackStartMs(900L))
+        assertEquals(1500L, Detention.rackStartMs(1500L))
+    }
+
+    @Test
     fun faultDeadlineIs1520AndHaltIsImmediate() {
         assertFalse(Detention.isFaulted(null, halted = false, nowOffsetMs = 1519L))
         assertTrue(Detention.isFaulted(null, halted = false, nowOffsetMs = 1520L))

@@ -189,11 +189,17 @@ class StripDerivationsTest {
         val usageSentence = refusalSentenceFor(warrant(WarrantState.OFF, usage = UsageAccess.DENIED))
         assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", usageSentence?.text)
         assertEquals(RefusalAction.FIX_USAGE, usageSentence?.action)
-        // Usage never granted: can't check.
-        assertEquals(
-            RefusalAction.RETRY_CHECK,
-            refusalSentenceFor(warrant(WarrantState.UNPROVEN, usage = UsageAccess.UNSET))?.action
-        )
+        // Usage never granted (issue #6 C3): the sentence names
+        // the Usage pane — the door its tap has always opened.
+        val unsetSentence = refusalSentenceFor(warrant(WarrantState.UNPROVEN, usage = UsageAccess.UNSET))
+        assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", unsetSentence?.text)
+        assertEquals(RefusalAction.FIX_USAGE, unsetSentence?.action)
+        // UNSET + unstamped + UNPROVEN (the C3 lie's other door): the
+        // RETRY row must not claim this warrant — its tap opens the
+        // Usage pane, so the Usage sentence is the only honest print.
+        val unsetUnstamped = refusalSentenceFor(warrant(WarrantState.UNPROVEN, stamped = false, usage = UsageAccess.UNSET))
+        assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", unsetUnstamped?.text)
+        assertEquals(RefusalAction.FIX_USAGE, unsetUnstamped?.action)
         // Healthy wire: the slot stands empty.
         assertNull(refusalSentenceFor(warrant(WarrantState.LIVE)))
         assertNull(refusalSentenceFor(null))
@@ -207,15 +213,15 @@ class StripDerivationsTest {
         // state; over a wire that reads OFF at the print instant
         // the words stand but carry their tense — " · AS SEALED".
         assertEquals(
-            "7 HELD",
+            "7 HELD · THIS PHONE ONLY",
             imprintTenantText(true, 7, 0, WarrantState.OFF)
         )
         assertEquals(
-            "1 HELD",
+            "1 HELD · THIS PHONE ONLY",
             imprintTenantText(true, 1, 0, WarrantState.LIVE)
         )
         assertEquals(
-            "7 HELD · AS SEALED",
+            "7 HELD · THIS PHONE ONLY · AS SEALED",
             imprintTenantText(true, 7, 0, WarrantState.LIVE, wireNow = WarrantState.OFF)
         )
         assertNull(imprintTenantText(true, null, 0, WarrantState.LIVE))
@@ -245,7 +251,7 @@ class StripDerivationsTest {
             imprintTenantText(false, 3, 2, WarrantState.LIVE)
         )
         assertEquals(
-            "3 HELD · 2 PEEK",
+            "3 HELD · 2 PEEK · THIS PHONE ONLY",
             imprintTenantText(true, 3, 2, WarrantState.LIVE)
         )
         assertEquals(
@@ -258,7 +264,7 @@ class StripDerivationsTest {
             imprintTenantText(false, 0, 1, WarrantState.LIVE)
         )
         assertEquals(
-            "3 PEEK",
+            "3 PEEK · THIS PHONE ONLY",
             imprintTenantText(true, 0, 3, WarrantState.LIVE)
         )
         assertNull(imprintTenantText(false, 0, 0, WarrantState.LIVE))
@@ -268,8 +274,13 @@ class StripDerivationsTest {
     @Test
     fun endsAtIsAPureFunctionOfTheEndInstant() {
         val millis = 1_700_000_000_000L
-        val expected = "ENDS " + SimpleDateFormat("HH:mm", Locale.US).format(Date(millis))
-        assertEquals(expected, endsAtText(millis))
-        assertEquals(endsAtText(millis), endsAtText(millis))
+        // #88: endsAtText takes the device's 12/24-hour choice as a
+        // boolean, so both branches pin exactly (test JVM default
+        // locale is en, matching the Locale.US expectations below).
+        val expected24 = "ENDS " + SimpleDateFormat("HH:mm", Locale.US).format(Date(millis))
+        assertEquals(expected24, endsAtText(true, millis))
+        assertEquals(endsAtText(true, millis), endsAtText(true, millis))
+        val expected12 = "ENDS " + SimpleDateFormat("h:mm a", Locale.US).format(Date(millis))
+        assertEquals(expected12, endsAtText(false, millis))
     }
 }
