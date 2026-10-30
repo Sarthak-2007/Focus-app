@@ -101,7 +101,14 @@ class SledSwitchView(context: Context) : BlockitCanvasView(context) {
     }
 
     override fun performClick(): Boolean {
+        // Issue #56 fresh-eyes B, reconciled with issue-60's single
+        // action path: the host gate is consulted HERE, once, before
+        // any feedback — a rejected activation (finger or AT) is
+        // silent: no firm click, no toggle, no click announcement
+        // for a change that never happened.
+        if (gateCheck?.invoke() == false) return true
         super.performClick()
+        // §6: 8ms Firm click on SledSwitch throw!
         fireFeel(8L)
         onToggleRequested?.invoke()
         sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_CLICKED)
@@ -115,6 +122,19 @@ class SledSwitchView(context: Context) : BlockitCanvasView(context) {
         throwAnimator = null
         super.onDetachedFromWindow()
     }
+
+    /**
+     * Issue #56, fresh-eyes B: an optional host gate, consulted at
+     * the moment a complete press lands — AFTER the press discipline
+     * below, BEFORE any feedback. When it returns false the press is
+     * rejected SILENTLY: no firm click, no toggle. Without this, a
+     * host-side guard (Park's `interactive` gate) could stop the
+     * state change while this view still delivered the 8ms "thrown"
+     * haptic — felt confirmation for a change that never happened.
+     * Hosts that seat the sled ungated (Shield) leave this null and
+     * keep the original behaviour.
+     */
+    var gateCheck: (() -> Boolean)? = null
 
     /**
      * PARK mode (chrome C4): the sled seated on PARK's ground. The
@@ -232,33 +252,45 @@ class SledSwitchView(context: Context) : BlockitCanvasView(context) {
         }
     }
 
-    // Issue-60 (finding 2): the throw fires ONLY for a gesture that
-    // STARTED on this switch and ENDS on it. Previously any stray
-    // ACTION_UP delivered to the view toggled a safety blocker.
-    private var gestureOnSwitch = false
+    // Issue #56 finding 3 + Issue-60 finding 2 (same defect, cured
+    // twice, reconciled at the #60 surge merge): a toggle is a
+    // COMPLETE press that both starts and ends on this sled. The old
+    // body fired on ANY ACTION_UP — no DOWN tracking, no bounds
+    // check, no CANCEL handling — so a sheet scroll that merely
+    // ended over the sled (or a gesture the scroller cancelled)
+    // flipped a persisted setting.
+    private var pressStartedOnSled: Boolean = false
 
-    private fun pointOnSwitch(x: Float, y: Float): Boolean =
-        x >= 0f && x <= width.toFloat() && y >= 0f && y <= height.toFloat()
+    private fun insideSled(event: MotionEvent): Boolean =
+        event.x >= 0f && event.x <= width.toFloat() &&
+            event.y >= 0f && event.y <= height.toFloat()
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                gestureOnSwitch = pointOnSwitch(event.x, event.y)
+                pressStartedOnSled = insideSled(event)
                 return true
             }
             MotionEvent.ACTION_MOVE -> return true
             MotionEvent.ACTION_UP -> {
-                val startedHere = gestureOnSwitch
-                gestureOnSwitch = false
-                if (startedHere && pointOnSwitch(event.x, event.y)) {
-                    // Route through performClick: one action path for
-                    // finger and assistive technology alike.
+                val completedHere = pressStartedOnSled && insideSled(event)
+                pressStartedOnSled = false
+                if (completedHere) {
+                    // Route through performClick: one action path
+                    // for finger and assistive technology alike
+                    // (issue-60 finding 3). The host gate lives
+                    // INSIDE performClick, so it is consulted exactly
+                    // once per complete press — never by stray UPs,
+                    // cancels or slide-offs — and a rejected press is
+                    // silent on every path (#56 fresh-eyes B).
                     performClick()
                 }
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
-                gestureOnSwitch = false
+                // The parent scroller took the gesture: no toggle,
+                // and the next UP (if any) must not find a stale press.
+                pressStartedOnSled = false
                 return true
             }
         }
