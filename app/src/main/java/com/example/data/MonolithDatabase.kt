@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         EmergencyBreakSpendEntity::class,
         DayNoteEntity::class
     ],
-    version = 14,
+    version = 15,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -240,6 +240,27 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
+         * W3 #134, DURCH-D closure recomposition (14→15; renumbered
+         * again at landing — main took 13→14 itself for issue #10's
+         * held-split while this lane was in flight, exactly as it
+         * had taken 12→13 for #287 before that): schema only, zero
+         * data writes, no backfill — the default IS the truthful
+         * pre-v15 value (0 = no call seconds were ever excluded;
+         * before this column the progress machine never looked, so
+         * no past row can claim any).
+         *
+         * focus_sessions +1: callExcludedSeconds — the per-block
+         * seconds the call bypass was active, excluded from the
+         * booked elapsed by updateSessionProgress so call time
+         * is never certified as focus time.
+         */
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN callExcludedSeconds INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
          * TOKEN-SPEC §6: the spend ledger arrives as an explicit
          * migration. There is NO backfill — today's in-memory spends
          * were never recorded, so v8 truthfully starts with an empty
@@ -307,6 +328,15 @@ abstract class MonolithDatabase : RoomDatabase() {
 
         fun getInstance(context: Context): MonolithDatabase {
             return INSTANCE ?: synchronized(this) {
+                // The second check INSIDE the lock (issue #31
+                // finding 1): the pre-fix shape re-checked nothing
+                // after acquiring it, so two racing callers (boot
+                // receivers + the activity's first read are the
+                // realistic pair) could each build a database —
+                // the second overwriting INSTANCE and orphaning
+                // the first's open instance, its DAOs, and any
+                // transaction in flight on it.
+                INSTANCE?.let { return@synchronized it }
                 val appCtx = context.applicationContext
                 val storageContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     appCtx.createDeviceProtectedStorageContext() ?: appCtx
@@ -318,11 +348,28 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        /**
+         * Test-only escape hatch (issue #31 finding 4): closes
+         * the singleton and clears it under the same lock
+         * [getInstance] builds under, so a test can start from a
+         * cold database instead of inheriting whatever a previous
+         * test built. Production paths never call this — in
+         * production the singleton's immortality is deliberate
+         * (Direct-Boot enforcement reads it from boot receivers
+         * before any unlock exists).
+         */
+        fun closeAndResetForTests() {
+            synchronized(this) {
+                INSTANCE?.close()
+                INSTANCE = null
             }
         }
     }

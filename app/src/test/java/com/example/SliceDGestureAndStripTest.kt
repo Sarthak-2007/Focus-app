@@ -137,7 +137,7 @@ class StripDerivationsTest {
         )
         // Room (i): held, unstamped.
         assertEquals(
-            "BIND HELD · UNSEEN" to "PROOF: BIND ONLY",
+            "BIND HELD · NOT SEEN" to "PROOF: BIND ONLY",
             seamMarksFor(warrant(WarrantState.UNPROVEN, stamped = false))
         )
         // Held and stamped, a grant unproven: still BIND ONLY,
@@ -150,7 +150,7 @@ class StripDerivationsTest {
         // NOTE (Rosa, review F1): this state is function-correct but
         // production-unreachable on the shipped substrate —
         // liveWarrant maps every !a11yBound to OFF, so the
-        // process-start window prints POSITIVE on mere absence
+        // process-start window prints OFF CONFIRMED on mere absence
         // until the substrate gains Rosa's tri-state bind leg.
         // Flagged to Ren with her evidence; the function is ready.
         assertEquals(
@@ -159,15 +159,15 @@ class StripDerivationsTest {
         )
         // OFF: the bind fact is stated truthfully from the legs.
         assertEquals(
-            "BIND NOT HELD" to "PROOF: POSITIVE",
+            "BIND NOT HELD" to "PROOF: OFF CONFIRMED",
             seamMarksFor(warrant(WarrantState.OFF, bound = false, stamped = false))
         )
         assertEquals(
-            "BIND HELD · THIS VISIT" to "PROOF: POSITIVE",
+            "BIND HELD · THIS VISIT" to "PROOF: OFF CONFIRMED",
             seamMarksFor(warrant(WarrantState.OFF, usage = UsageAccess.DENIED))
         )
         assertEquals(
-            "BIND HELD · UNSEEN" to "PROOF: POSITIVE",
+            "BIND HELD · NOT SEEN" to "PROOF: OFF CONFIRMED",
             seamMarksFor(warrant(WarrantState.OFF, stamped = false, usage = UsageAccess.DENIED))
         )
         assertNull(seamMarksFor(null))
@@ -177,8 +177,8 @@ class StripDerivationsTest {
     fun causeTablePicksOneSentenceByCausalPriority() {
         // A11y death outranks everything.
         assertEquals(
-            "BLOCKING IS OFF — TAP TO FIX",
-            refusalSentenceFor(warrant(WarrantState.OFF, bound = false, stamped = false, usage = UsageAccess.DENIED))?.text
+            R.string.sentence_blocking_off,
+            refusalSentenceFor(warrant(WarrantState.OFF, bound = false, stamped = false, usage = UsageAccess.DENIED))?.textRes
         )
         // Bound but unstamped: can't check.
         assertEquals(
@@ -187,18 +187,18 @@ class StripDerivationsTest {
         )
         // Usage positively denied names its own pane.
         val usageSentence = refusalSentenceFor(warrant(WarrantState.OFF, usage = UsageAccess.DENIED))
-        assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", usageSentence?.text)
+        assertEquals(R.string.sentence_usage_off, usageSentence?.textRes)
         assertEquals(RefusalAction.FIX_USAGE, usageSentence?.action)
         // Usage never granted (issue #6 C3): the sentence names
         // the Usage pane — the door its tap has always opened.
         val unsetSentence = refusalSentenceFor(warrant(WarrantState.UNPROVEN, usage = UsageAccess.UNSET))
-        assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", unsetSentence?.text)
+        assertEquals(R.string.sentence_usage_off, unsetSentence?.textRes)
         assertEquals(RefusalAction.FIX_USAGE, unsetSentence?.action)
         // UNSET + unstamped + UNPROVEN (the C3 lie's other door): the
         // RETRY row must not claim this warrant — its tap opens the
         // Usage pane, so the Usage sentence is the only honest print.
         val unsetUnstamped = refusalSentenceFor(warrant(WarrantState.UNPROVEN, stamped = false, usage = UsageAccess.UNSET))
-        assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", unsetUnstamped?.text)
+        assertEquals(R.string.sentence_usage_off, unsetUnstamped?.textRes)
         assertEquals(RefusalAction.FIX_USAGE, unsetUnstamped?.action)
         // Healthy wire: the slot stands empty.
         assertNull(refusalSentenceFor(warrant(WarrantState.LIVE)))
