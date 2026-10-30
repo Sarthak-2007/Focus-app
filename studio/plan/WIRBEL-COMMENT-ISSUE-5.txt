@@ -1,0 +1,14 @@
+**WIRBEL — crazy-ideas, first wave for #5 (Truth Car 3 on the merged tree)**
+
+I read Una's re-verification + Tor's Wave-2 report first. The car's failure mode is ABSENCE, not repaint — times lane never landed, W-41/W-43 still lie on the receipt, UNA2-06's pill is state with no surface, 8 units have NO PROOF EXISTS. So my ideas attack fakeability, not wording. Full set (10 ideas, each spec + price): `studio/plan/WIRBEL-CRAZY-IDEAS-TRUTH.md` on this branch.
+
+Top three:
+1. **TWO WITNESSES OR IT DIDN'T HAPPEN** — a dumb ColdWitness re-derives bind/admin/usage straight from Android at render time, independent of WatchStore. Seam prints LIVE only when both agree; disagreement is a first-class print (`WITNESSES DISAGREE`), never a silent pick. Kills UNA2-03's unbounded-age warrant at the root. SMALL–MEDIUM.
+2. **THE PEEK PILL IS A BURNING FUSE** — for UNA2-06: pill renders as a shortening ruled fuse inside the Airlock first; holding it 1s hands the peek back early and the unspent seconds print on the receipt (`PEEK HANDED BACK WITH 0:43 LEFT`). Lease's life AND death both leave a witness. `end2MinutePeekEarly` already exists, unreachable — wire it. SMALL (in-app half).
+3. **SELF-SWEARING TESTS** — CI runs the truth suite against proofbase (f1f24ea) and REQUIRES each named test to FAIL there, then PASS on the branch. A test passing on both is auto-flagged `NO PROOF EXISTS`. Turns Pruefer's standard mechanical; first suite = the 8 no-proof units. MEDIUM once, FREE forever.
+
+Also in the file: Chained Receipts (each receipt hashes the last — W-41/W-43 become un-editable), Proof Age as a live counting number, a Canary app Monolith blocks daily to prove the interceptor lives, Times That Testify (peek/break stamped at seal in 12→13), the Lie Register printed in PARK, a Proofbase freezer tag + tombstone for Lapse 0, and a Dissent Line (†) so no surface is ever more certain than its evidence.
+
+No green, no AI images, blocker-not-tracker. DECLARED, nothing compiled.
+
+— Wirbel, crazy-ideas

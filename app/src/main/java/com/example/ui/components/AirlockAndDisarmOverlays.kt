@@ -50,6 +50,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.CapturedNotificationEntity
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
 import com.example.data.DistractionTriggerReason
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
@@ -155,7 +157,17 @@ fun AlwaysOnDeskClockOverlay(
         }
         val mm = displaySecs / 60
         val ss = displaySecs % 60
-        val timeText = String.format(Locale.US, "%02d:%02d", mm, ss)
+        // Audit R3b #147: a stopwatch clock counts UP — the bare
+        // MM:SS was indistinguishable from a countdown at a glance.
+        // The + prefix is the direction marker, here and on the
+        // Deck's hero readout alike.
+        val timeText = if (activeSession != null && activeSession.isActive &&
+            activeSession.isStopwatchMode
+        ) {
+            String.format(Locale.US, "+%02d:%02d", mm, ss)
+        } else {
+            String.format(Locale.US, "%02d:%02d", mm, ss)
+        }
 
         // Issue #111 findings 3+4: the glance now NAMES what the
         // number is (REMAINING vs ELAPSED — the two directions were
@@ -177,7 +189,7 @@ fun AlwaysOnDeskClockOverlay(
         // row ticks every second; idle, the burn-in step still
         // steps every minute — the HH:mm print can never ride
         // more than a minute stale.
-        val glanceLine = deskClockGlanceLine(System.currentTimeMillis(), activeSession)
+        val glanceLine = deskClockGlanceLine(ClockText.is24Hour(LocalContext.current), System.currentTimeMillis(), activeSession)
 
         // Issue #111 finding 2: a real figure-8 (lemniscate) wander
         // in dp — see deskClockBurnInOffsetDp. The old 5x5 raster
@@ -365,12 +377,17 @@ internal fun deskClockModeLabel(session: FocusSessionEntity?): String = when {
  * stopwatch honestly states it has no set end; no session, no end
  * is invented.
  */
-internal fun deskClockGlanceLine(nowMillis: Long, session: FocusSessionEntity?): String {
-    val dayTime = java.text.SimpleDateFormat("EEE d MMM • HH:mm", Locale.US)
-        .format(java.util.Date(nowMillis)).uppercase(Locale.US)
+internal fun deskClockGlanceLine(is24Hour: Boolean, nowMillis: Long, session: FocusSessionEntity?): String {
+    // #88: the day names follow the device locale and the time the
+    // system 12/24-hour setting (ClockText's pure core) — this line
+    // landed via #111 with a pinned Locale.US "HH:mm".
+    val dayTime = java.text.SimpleDateFormat("EEE d MMM", Locale.getDefault())
+        .format(java.util.Date(nowMillis)).uppercase(Locale.getDefault()) +
+        " • " + ClockText.timeOfDay(is24Hour, nowMillis)
     return when {
         session != null && session.isActive && !session.isStopwatchMode ->
             dayTime + " • " + endsAtText(
+                is24Hour,
                 session.startWallTimeMillis + session.spanTargetSeconds * 1000L
             )
         session != null && session.isActive -> "$dayTime • NO SET END"
@@ -468,8 +485,23 @@ internal fun peekUnlocked(
  * [endsAtText]'s instant; a stopwatch states that it has no set
  * end; no session, no line. The door never invents an end.
  */
-internal fun airlockSessionLine(endsAtMillis: Long?, isStopwatch: Boolean): String? = when {
-    endsAtMillis != null -> "SESSION " + endsAtText(endsAtMillis)
+internal fun airlockSessionLine(
+    is24Hour: Boolean,
+    endsAtMillis: Long?,
+    isStopwatch: Boolean,
+    stopwatchFloorAtMillis: Long? = null
+): String? = when {
+    endsAtMillis != null -> "SESSION " + endsAtText(is24Hour, endsAtMillis)
+    // Audit R3b #147: "NO SET END" was true and useless — a
+    // stopwatch session's one scheduled fact is its floor moment,
+    // when stopping becomes free. State it; once it has passed,
+    // state that the clean exit stands open.
+    isStopwatch && stopwatchFloorAtMillis != null &&
+        stopwatchFloorAtMillis > System.currentTimeMillis() ->
+        "SESSION RUNNING · CLEAN EXIT FROM " +
+            ClockText.timeOfDay(is24Hour, stopwatchFloorAtMillis)
+    isStopwatch && stopwatchFloorAtMillis != null ->
+        "SESSION RUNNING · CLEAN EXIT OPEN"
     isStopwatch -> "SESSION RUNNING · NO SET END"
     else -> null
 }
@@ -499,12 +531,16 @@ internal fun peekPriceText(cooldownMillis: Long): String {
  *  capture is from today, d MMM · HH:mm when it is not — yesterday's
  *  held rows legitimately sit in this morning's snapshot, and the
  *  AS OF stamp dates the snapshot, not the rows. */
-private fun captureTimeLabel(timestampMillis: Long): String {
+private fun captureTimeLabel(is24Hour: Boolean, timestampMillis: Long): String {
     val zone = java.time.ZoneId.systemDefault()
     val captureDate = java.time.Instant.ofEpochMilli(timestampMillis).atZone(zone).toLocalDate()
-    val pattern = if (captureDate == java.time.LocalDate.now(zone)) "HH:mm" else "d MMM · HH:mm"
-    return java.text.SimpleDateFormat(pattern, java.util.Locale.US)
-        .format(java.util.Date(timestampMillis))
+    // #88: the time half follows the system 12/24-hour setting; the
+    // day half names the day in the device locale when it is not today.
+    return if (captureDate == java.time.LocalDate.now(zone)) {
+        ClockText.timeOfDay(is24Hour, timestampMillis)
+    } else {
+        ClockText.dayAndTime(is24Hour, timestampMillis)
+    }
 }
 
 /**
@@ -571,8 +607,7 @@ fun CapturedNotificationsDigestSheet(
                             Text(
                                 text = rememberMixedTypographyText(
                                     wordPrefix = "HELD · AS OF ",
-                                    monoNumber = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
-                                        .format(java.util.Date(frozenAtMillis)),
+                                    monoNumber = ClockText.timeOfDay(LocalContext.current, frozenAtMillis),
                                     wordColor = scheme.onBackground,
                                     monoColor = scheme.primaryContainer
                                 ),
@@ -660,7 +695,7 @@ fun CapturedNotificationsDigestSheet(
                                         // time (issue #138): a live row
                                         // without its time hides whether
                                         // it is fresh or hours old.
-                                        text = "${item.appName} • ${item.senderTitle} • ${captureTimeLabel(item.timestampMillis)}",
+                                        text = "${item.appName} • ${item.senderTitle} • ${captureTimeLabel(ClockText.is24Hour(LocalContext.current), item.timestampMillis)}",
                                         fontFamily = AtkinsonHyperlegibleFamily,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 12.sp,
@@ -707,84 +742,6 @@ fun CapturedNotificationsDigestSheet(
 }
 
 /**
- * 4. SHIELD PERMISSION PRIMER MODAL
- */
-@Composable
-fun ShieldPermissionPrimerModal(
-    visible: Boolean,
-    systemGuardStatus: com.example.data.SystemGuardStatus,
-    onOpenAccessibilitySettings: () -> Unit,
-    onOpenUsageAccessSettings: () -> Unit,
-    onConfirmAndArmAnyway: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(MonolithCurves.specC()),
-        exit = fadeOut(MonolithCurves.specA())
-    ) {
-        val scheme = MaterialTheme.colorScheme
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(scheme.scrim.copy(alpha = 0.7f))
-                .clickable(onClick = onDismiss)
-                .padding(12.dp),
-            contentAlignment = Alignment.BottomCenter
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(scheme.surfaceBright)
-                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(24.dp))
-                    .clickable(enabled = false) {}
-                    .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    text = "SYSTEM GUARD PRE-FLIGHT",
-                    fontFamily = AtkinsonHyperlegibleFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    color = scheme.onBackground
-                )
-                Text(
-                    text = "Grant Accessibility & Usage Access so Monolith can intercept distracting apps, or arm the session immediately.",
-                    fontFamily = AtkinsonHyperlegibleFamily,
-                    fontSize = 12.5.sp,
-                    color = scheme.onSurfaceVariant
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    BlockitActionChip(
-                        wordLabel = "ACCESSIBILITY",
-                        onClick = onOpenAccessibilitySettings,
-                        modifier = Modifier.weight(1f)
-                    )
-                    BlockitActionChip(
-                        wordLabel = "USAGE STATS",
-                        onClick = onOpenUsageAccessSettings,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                BlockitActionChip(
-                    wordLabel = "COMMIT & ARM SESSION NOW",
-                    isAccentArmed = true,
-                    onClick = onConfirmAndArmAnyway,
-                    modifier = Modifier.fillMaxWidth(),
-                    testTag = "confirm_arm_anyway_button"
-                )
-            }
-        }
-    }
-}
-
-/**
  * 5. AIRLOCK INTERCEPTION OVERLAY (Decision #16: 5s Breathing Delay Wall)
  */
 @Composable
@@ -808,7 +765,11 @@ fun AirlockInterceptOverlay(
     // token), identical mechanism (the continuous 60s hold),
     // identical effect (the session ends). Placement only; the
     // valve's price and power are untouched.
-    onRequestEmergencyBreak: () -> Unit = {}
+    onRequestEmergencyBreak: () -> Unit = {},
+    // Issue #318 F4: the breathing wall's length is a stored,
+    // per-configuration value (AirlockBreathStore), no longer a
+    // composable-local literal. Default = Decision #16's 5 seconds.
+    breathSeconds: Int = com.example.data.AirlockBreathStore.DEFAULT_SECONDS
 ) {
     // Issue #55 (HIGH): System Back must never bypass the wall toward
     // the blocked app. While the airlock stands, Back is swallowed —
@@ -828,13 +789,17 @@ fun AirlockInterceptOverlay(
             state.interceptedAtMonoMillis.takeIf { it > 0L } ?: SystemClock.elapsedRealtime()
         }
         var countdownSecs by remember(state.interceptInstanceId) {
-            mutableIntStateOf(airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime()))
+            mutableIntStateOf(
+                airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), breathSeconds)
+            )
         }
         LaunchedEffect(state.interceptInstanceId, state.isVisible) {
-            countdownSecs = airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime())
+            countdownSecs =
+                airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), breathSeconds)
             while (countdownSecs > 0) {
                 delay(200L)
-                countdownSecs = airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime())
+                countdownSecs =
+                    airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), breathSeconds)
             }
         }
 
@@ -913,7 +878,12 @@ fun AirlockInterceptOverlay(
                 // SIL-1 / Hale W-28: under the app name, the door
                 // states the session's end — its own statement,
                 // from the session's own numbers.
-                airlockSessionLine(state.sessionEndsAtMillis, state.sessionIsStopwatch)?.let { line ->
+                airlockSessionLine(
+                    ClockText.is24Hour(LocalContext.current),
+                    state.sessionEndsAtMillis,
+                    state.sessionIsStopwatch,
+                    state.stopwatchFloorAtMillis
+                )?.let { line ->
                     Text(
                         text = line,
                         fontFamily = AtkinsonHyperlegibleFamily,
@@ -1268,6 +1238,24 @@ fun DisarmChallengeOverlay(
                     fontSize = 13.sp,
                     color = NightColorPrimary
                 )
+
+                // Audit R3b #147: below the stopwatch floor, the
+                // valve is not the only door — waiting is. The
+                // overlay names the floor, the minutes left to it,
+                // and that reaching it makes the stop free, so the
+                // token is never presented as the sole way out.
+                if (state.sessionIsStopwatch && state.remainingFloorSeconds > 0) {
+                    val floorMinutes =
+                        (state.remainingFloorSeconds + 59) / 60
+                    Text(
+                        text = "Or wait: this is a stopwatch session with a " +
+                            "20-minute floor. $floorMinutes more minutes and " +
+                            "stopping is free — no break spent.",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 13.sp,
+                        color = NightColorPrimary
+                    )
+                }
 
                 if (tokensRemaining > 0) {
                     AndroidView(

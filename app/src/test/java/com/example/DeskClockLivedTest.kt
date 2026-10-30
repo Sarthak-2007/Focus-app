@@ -116,18 +116,27 @@ class DeskClockLivedTest {
     @Test
     fun glanceLine_statesDayTimeAndTheSpansOwnEnd() {
         val s = row() // 2 blocks x 1500 + 1 break x 600 = 3600s span
-        val line = deskClockGlanceLine(1_700_000_000_000L, s)
+        val line = deskClockGlanceLine(true, 1_700_000_000_000L, s)
         val expectedEnd = "ENDS " + SimpleDateFormat("HH:mm", Locale.US)
             .format(Date(1_700_000_000_000L + 3_600_000L))
         assertTrue(line, line.endsWith(expectedEnd))
-        val expectedDay = SimpleDateFormat("EEE d MMM • HH:mm", Locale.US)
-            .format(Date(1_700_000_000_000L)).uppercase(Locale.US)
+        // #88: day names in the device locale (the test JVM's is en,
+        // matching Locale.US here) + the system-setting time.
+        val expectedDay = SimpleDateFormat("EEE d MMM", Locale.US)
+            .format(Date(1_700_000_000_000L)).uppercase(Locale.US) +
+            " • " + SimpleDateFormat("HH:mm", Locale.US)
+            .format(Date(1_700_000_000_000L))
         assertTrue(line, line.startsWith(expectedDay))
+        // The 12-hour branch prints the same day with a 12h clock.
+        val expectedEnd12 = "ENDS " + SimpleDateFormat("h:mm a", Locale.US)
+            .format(Date(1_700_000_000_000L + 3_600_000L))
+        assertTrue(deskClockGlanceLine(false, 1_700_000_000_000L, s)
+            .endsWith(expectedEnd12))
         // Stopwatch: no end is invented.
-        assertTrue(deskClockGlanceLine(1_700_000_000_000L, row(stopwatch = true))
+        assertTrue(deskClockGlanceLine(true, 1_700_000_000_000L, row(stopwatch = true))
             .endsWith("NO SET END"))
         // No session: day/time only, no fabricated end.
-        assertEquals(expectedDay, deskClockGlanceLine(1_700_000_000_000L, null))
+        assertEquals(expectedDay, deskClockGlanceLine(true, 1_700_000_000_000L, null))
     }
 
     @Test
@@ -148,7 +157,7 @@ class DeskClockLivedTest {
     fun renderedClock_breakFaceAnnouncesAndTapDoesNotDismiss_holdDoes() {
         var dismissed = false
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = true, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = true) {
                 AlwaysOnDeskClockOverlay(
                     visible = true,
                     activeSession = row(inBreak = true, breakRemaining = 452),

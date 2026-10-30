@@ -151,7 +151,16 @@ object RoutineHeartbeat {
         val dao = database.monolithDao()
         val repository = MonolithRepository(appContext, dao)
 
-        val now = System.currentTimeMillis()
+        // Issue #82 (clock-attacks F2): the reconcile's "now" is
+        // the HONEST now (monotonic-anchored), never the raw wall
+        // clock. A forward jump used to materialise a session
+        // inside a future window — claiming it forever ("no second
+        // mint, ever") and even stamping it MISSED before the
+        // window honestly happened; a TIME_CHANGED broadcast made
+        // the attack one settings visit long. With the honest now,
+        // derive/finalise/materialise all reason about the time
+        // that has actually elapsed.
+        val now = repository.honestNowMillis()
         val routines = dao.getAllRoutinesSnapshot()
         val routinesById = routines.associateBy { it.id }
         val active = dao.getActiveSessionSnapshot()
@@ -192,7 +201,11 @@ object RoutineHeartbeat {
         // 2. SLEEP stand-downs: an active SLEEP session past its stored
         //    window end is stood down unstamped (J2) — a plain
         //    deactivation, never a judgement.
-        if (active != null && active.routineId != null && active.windowEndMillis in 1..now) {
+        // #153 F1: a disabled SLEEP routine also stands down at
+        // once, window end or not — OFF means off.
+        if (active != null && active.routineId != null &&
+            (active.windowEndMillis in 1..now || routinesById[active.routineId]?.enabled == false)
+        ) {
             if (routinesById[active.routineId]?.loadoutName == SmartLoadout.SLEEP.name) {
                 repository.deactivateRoutineSession(active)
                 activeFinalised = true

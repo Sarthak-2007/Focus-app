@@ -29,8 +29,11 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -112,6 +115,9 @@ fun ShieldMatrixScreen(
     onSearchQueryChanged: (String) -> Unit,
     onSelectCategory: (AppCategory?) -> Unit,
     onSetAppTier: (String, AppBlockTier) -> Unit,
+    // Issue #140: the catalogue row's hold gesture steps the app's
+    // daily limit (the limit is printed on the row; the hold sets it).
+    onCycleDailyLimit: (BlockedAppEntity) -> Unit = {},
     onApplySmartLoadout: (SmartLoadout) -> Unit,
     // Issue #107 (#3): correct the category printed on a catalogue
     // row. Default no-op for render harnesses and previews.
@@ -132,6 +138,14 @@ fun ShieldMatrixScreen(
     onCycleRoutineLoadout: (com.example.data.RoutineEntity) -> Unit = {},
     onAdjustRoutineTime: (com.example.data.RoutineEntity, Boolean, Int) -> Unit = { _, _, _ -> },
     onToggleRoutineDay: (com.example.data.RoutineEntity, Int) -> Unit = { _, _ -> },
+    // #153 change-of-plans verbs: skip today / resume, add / delete /
+    // rename, and the one-shot drafted-time apply (F5).
+    onSkipRoutineToday: (com.example.data.RoutineEntity) -> Unit = {},
+    onResumeRoutine: (com.example.data.RoutineEntity) -> Unit = {},
+    onAddRoutine: () -> Unit = {},
+    onDeleteRoutine: (com.example.data.RoutineEntity) -> Unit = {},
+    onRenameRoutine: (com.example.data.RoutineEntity, String) -> Unit = { _, _ -> },
+    onSetRoutineTime: (com.example.data.RoutineEntity, Int, Int) -> Unit = { _, _, _ -> },
     // The websites editor, transplanted from the dissolved Guard
     // screen (chrome wave): a MOVE, not a copy — the Guard screen is
     // deleted and this section is the editor's only home. Wired to
@@ -271,7 +285,7 @@ fun ShieldMatrixScreen(
         // AppRules' total order (issue #35): name, then package —
         // a name tie can never inherit feed/intercept order here.
         return lines.sortedWith(
-            compareBy<SlipLine> { it.app.appName.lowercase() }.thenBy { it.app.packageName }
+            compareBy<SlipLine> { it.app.appName.lowercase(java.util.Locale.ROOT) }.thenBy { it.app.packageName }
         )
     }
 
@@ -305,6 +319,9 @@ fun ShieldMatrixScreen(
                         color = TokenColorOnPrimary
                     )
                 }
+                // #153 F4: a day that needs a different block can
+                // get one — routines are addable, not just seeded.
+                BlockitActionChip(wordLabel = "+ ADD ROUTINE", isPrimaryInk = true, onClick = onAddRoutine)
             }
         }
 
@@ -467,7 +484,12 @@ fun ShieldMatrixScreen(
                         onCycleLoadout = { onCycleRoutineLoadout(routine) },
                         onAdjustStart = { delta -> onAdjustRoutineTime(routine, true, delta) },
                         onAdjustEnd = { delta -> onAdjustRoutineTime(routine, false, delta) },
-                        onToggleDay = { day -> onToggleRoutineDay(routine, day) }
+                        onToggleDay = { day -> onToggleRoutineDay(routine, day) },
+                        onSkipToday = { onSkipRoutineToday(routine) },
+                        onResume = { onResumeRoutine(routine) },
+                        onDelete = { onDeleteRoutine(routine) },
+                        onRename = { name -> onRenameRoutine(routine, name) },
+                        onSetTime = { start, end -> onSetRoutineTime(routine, start, end) }
                     )
                 }
             }
@@ -717,6 +739,7 @@ fun ShieldMatrixScreen(
                 effectiveNight = effectiveNight,
                 soundEngine = soundEngine,
                 onSetAppTier = onSetAppTier,
+                onCycleDailyLimit = onCycleDailyLimit,
                 onSetAppCategory = onSetAppCategory
             )
         }
@@ -1058,13 +1081,37 @@ private fun RoutineRow(
     onCycleLoadout: () -> Unit,
     onAdjustStart: (Int) -> Unit,
     onAdjustEnd: (Int) -> Unit,
-    onToggleDay: (Int) -> Unit
+    onToggleDay: (Int) -> Unit,
+    onSkipToday: () -> Unit = {},
+    onResume: () -> Unit = {},
+    onDelete: () -> Unit = {},
+    onRename: (String) -> Unit = {},
+    onSetTime: (Int, Int) -> Unit = { _, _ -> }
 ) {
     val scheme = MaterialTheme.colorScheme
     // Collapsed by default (Ren): a routine is one calm line — name, window,
     // days, state. The full control set appears only when the row is tapped,
     // the way Blockit keeps its surfaces quiet until touched.
     var expanded by remember { mutableStateOf(false) }
+    // #153 F5: the window is DRAFTED, not live-fired. ±30 taps move
+    // only this local draft; APPLY persists once through the single
+    // funnel; DISCARD throws the draft away. A tap that would leave
+    // the 30 min – 18 h clamp says so on the row instead of dying
+    // silently.
+    var draftStart by remember(routine.id, routine.startMinutes) { mutableIntStateOf(routine.startMinutes) }
+    var draftEnd by remember(routine.id, routine.endMinutes) { mutableIntStateOf(routine.endMinutes) }
+    var clampNote by remember(routine.id) { mutableStateOf(false) }
+    val draftDirty = draftStart != routine.startMinutes || draftEnd != routine.endMinutes
+    fun draftAdjust(isStart: Boolean, delta: Int) {
+        val ns = if (isStart) (draftStart + delta + 1440) % 1440 else draftStart
+        val ne = if (isStart) draftEnd else (draftEnd + delta + 1440) % 1440
+        val span = (ne - ns + 1440) % 1440
+        if (span !in 30..1080) { clampNote = true; return }
+        clampNote = false
+        if (isStart) draftStart = ns else draftEnd = ne
+    }
+    var renameOpen by remember(routine.id) { mutableStateOf(false) }
+    var deleteArmed by remember(routine.id) { mutableStateOf(false) }
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1084,14 +1131,14 @@ private fun RoutineRow(
                 verticalArrangement = Arrangement.spacedBy(1.dp)
             ) {
                 Text(
-                    text = fmtRoutineTime(routine.startMinutes),
+                    text = fmtRoutineTime(draftStart),
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
                     color = scheme.onBackground
                 )
                 Text(
-                    text = "→ " + fmtRoutineTime(routine.endMinutes),
+                    text = "→ " + fmtRoutineTime(draftEnd),
                     fontFamily = AnonymousProFamily,
                     fontSize = 11.sp,
                     color = scheme.onSurfaceVariant
@@ -1151,16 +1198,16 @@ private fun RoutineRow(
                 fontSize = 11.sp,
                 color = scheme.onSurfaceVariant
             )
-            BlockitActionChip(wordLabel = "−30", onClick = { onAdjustStart(-30) })
-            BlockitActionChip(wordLabel = "+30", onClick = { onAdjustStart(30) })
+            BlockitActionChip(wordLabel = "−30", onClick = { draftAdjust(true, -30) })
+            BlockitActionChip(wordLabel = "+30", onClick = { draftAdjust(true, 30) })
             Text(
                 text = "END",
                 fontFamily = AnonymousProFamily,
                 fontSize = 11.sp,
                 color = scheme.onSurfaceVariant
             )
-            BlockitActionChip(wordLabel = "−30", onClick = { onAdjustEnd(-30) })
-            BlockitActionChip(wordLabel = "+30", onClick = { onAdjustEnd(30) })
+            BlockitActionChip(wordLabel = "−30", onClick = { draftAdjust(false, -30) })
+            BlockitActionChip(wordLabel = "+30", onClick = { draftAdjust(false, 30) })
             BlockitActionChip(
                 wordLabel = routineLoadoutLabel(routine.loadoutName),
                 isPrimaryInk = true,
@@ -1176,7 +1223,69 @@ private fun RoutineRow(
                 )
             }
         }
+        if (clampNote) {
+            Text(
+                text = "WINDOW MUST STAY BETWEEN 30 MIN AND 18 H",
+                fontFamily = AnonymousProFamily,
+                fontSize = 11.sp,
+                color = scheme.error
+            )
         }
+        if (draftDirty) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                BlockitActionChip(
+                    wordLabel = "APPLY TIME",
+                    isPrimaryInk = true,
+                    onClick = { onSetTime(draftStart, draftEnd) }
+                )
+                BlockitActionChip(
+                    wordLabel = "DISCARD",
+                    onClick = {
+                        draftStart = routine.startMinutes
+                        draftEnd = routine.endMinutes
+                        clampNote = false
+                    }
+                )
+            }
+        }
+        // #153 F2/F3/F4 verbs: forgive today, resume, rename, delete.
+        val pausedNow = routine.pausedUntilMillis > System.currentTimeMillis()
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (pausedNow) {
+                BlockitActionChip(wordLabel = "PAUSED — RESUME", isPrimaryInk = true, onClick = onResume)
+            } else if (routine.enabled) {
+                BlockitActionChip(wordLabel = "SKIP TODAY", onClick = onSkipToday)
+            }
+            BlockitActionChip(wordLabel = "RENAME", onClick = { renameOpen = true })
+            BlockitActionChip(
+                wordLabel = if (deleteArmed) "DELETE — SURE?" else "DELETE",
+                isPrimaryInk = deleteArmed,
+                onClick = { if (deleteArmed) onDelete() else deleteArmed = true }
+            )
+        }
+        }
+    }
+    if (renameOpen) {
+        var draftName by remember(routine.id) { mutableStateOf(routine.name) }
+        AlertDialog(
+            onDismissRequest = { renameOpen = false },
+            title = { Text(text = "RENAME ROUTINE") },
+            text = {
+                TextField(
+                    value = draftName,
+                    onValueChange = { draftName = it },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { onRename(draftName); renameOpen = false }) {
+                    Text(text = "APPLY")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameOpen = false }) { Text(text = "CANCEL") }
+            }
+        )
     }
 }
 
@@ -1484,6 +1593,7 @@ private fun CatalogueAppRow(
     effectiveNight: Boolean,
     soundEngine: TactileSoundEngine?,
     onSetAppTier: (String, AppBlockTier) -> Unit,
+    onCycleDailyLimit: (BlockedAppEntity) -> Unit = {},
     onSetAppCategory: (String, AppCategory) -> Unit = { _, _ -> }
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -1502,6 +1612,11 @@ private fun CatalogueAppRow(
                 view.soundEngine = soundEngine
                 view.appName = app.appName
                 view.currentTier = app.resolvedTier
+                // Issue #140: the daily limit, printed on the row,
+                // and the hold that steps it — see MonolithViewModel
+                // .cycleAppDailyLimit.
+                view.usageCaption = "USED ${app.todayUsageMinutes} OF ${app.dailyLimitMinutes} MIN TODAY"
+                view.onDailyLimitLongPress = { onCycleDailyLimit(app) }
                 view.onTierSelected = { newTier ->
                     onSetAppTier(app.packageName, newTier)
                 }
