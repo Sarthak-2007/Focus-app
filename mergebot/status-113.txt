@@ -1,1 +1,259 @@
-round2 trigger (plain) — STURM3-11
+status=aborted rc_merge=1 utc=2026-10-30T11:10:39Z
+== unmerged files ==
+app/src/main/java/com/example/data/MonolithRepository.kt
+app/src/main/java/com/example/data/ReceiptState.kt
+app/src/main/java/com/example/ui/components/ReceiptSheet.kt
+== conflict segments ==
+--- app/src/main/java/com/example/data/MonolithRepository.kt
+1596:<<<<<<< HEAD
+1597-            // resume from the elapsed banked before the reboot, and credit
+1598-            // NOTHING for the interval nobody witnessed — the old form added
+1599-            // the device's ENTIRE uptime at this tick, booking hours the
+1600-            // phone may have sat unguarded as focus time (Audit R3 #113,
+1601-            // finding 5). Tamper here is the signature's verdict alone:
+1602-            // a reboot is not a clock crime, and the wall/mono drift test
+1603-            // is meaningless across a boot boundary (finding 4).
+1604-            val priorElapsed = max(session.accumulatedBeforeRebootSeconds, session.elapsedSeconds)
+1605-            Pair(priorElapsed, !hmacValid)
+1606-=======
+1607-            // Resume from accumulated elapsed seconds prior to reboot + seconds elapsed since current boot.
+1608-            // Issue #81 F3: the tamper term is no longer !hmacValid
+1609-            // alone. An unwitnessed intermediate boot (Safe Mode —
+1610-            // Monolith cannot run there, so it never re-anchors —
+1611-            // or a force-stop spanning a reboot) leaves a BOOT_COUNT
+1612-            // delta of 2+ against the row's anchor; that span is
+1613-            // unproven and convicts like any other tamper (the
+1614-            // caller's penalty ratchet applies). The elapsed figure
+1615-            // still credits only witnessed time — unproven hours
+1616-            // are neither credited toward completion nor silently
+1617-            // forgiven: they cost the tamper penalty instead of
+1618-            // passing as a free, invisible freeze.
+1619-            val priorElapsed = max(session.accumulatedBeforeRebootSeconds, session.elapsedSeconds)
+1620-            val sinceRebootSec = (nowMono / 1000L).toInt().coerceAtLeast(0)
+1621-            val unwitnessed = TamperWitness.unwitnessedBoot(session.bootCount, currentBoot)
+1622-            Pair(priorElapsed + sinceRebootSec, !hmacValid || unwitnessed)
+1623->>>>>>> origin/main
+1624-        }
+1625-    }
+1626-
+--
+2896:<<<<<<< HEAD
+2897-            penaltySecondsAdded = row.penaltySecondsAdded,
+2898-=======
+2899-            openExposureApps = openExposureApps,
+2900->>>>>>> origin/main
+2901-            // Audit R3b #145: the forged curio's name rides the
+2902-            // slip — read off the row's own stamp, never re-drawn.
+2903-            forgedArtifactName = row.forgedArtifactId?.let { forgedId ->
+2904-                CurioCatalog.artifacts.firstOrNull { it.id == forgedId }?.name
+2905-            },
+2906-            // W-41: the row's stored split, threaded through.
+2907-            heldShutAtSeal = row.heldShutAtSeal,
+2908-            heldPeekAtSeal = row.heldPeekAtSeal
+2909-        )
+2910-    }
+2911-
+2912-    /** F-Z5's assembly evaluation for a hand-armed row: the line
+2913-     *  of an enabled routine whose window contains the arm
+2914-     *  instant (today's or yesterday's instance, for windows that
+2915-     *  cross midnight). Null when no window contains it. */
+2916-    private suspend fun routineWindowLabelAt(armWallMs: Long): String? {
+2917-        val routines = dao.getAllRoutinesSnapshot().filter { it.enabled }
+2918-        if (routines.isEmpty()) return null
+2919-        val cal = java.util.Calendar.getInstance().apply { timeInMillis = armWallMs }
+2920-        val minutesOfDay = cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 +
+2921-            cal.get(java.util.Calendar.MINUTE)
+2922-        val dayBit = (cal.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
+2923-        val prevDayBit = (dayBit + 6) % 7
+2924-        for (routine in routines) {
+2925-            val wraps = routine.endMinutes <= routine.startMinutes
+2926-            val contains = when {
+--
+3016:<<<<<<< HEAD
+3017-            penaltySecondsAdded = pending.penaltySecondsAdded,
+3018-            forgedArtifactName = pending.forgedArtifactName
+3019-=======
+3020-            forgedArtifactName = pending.forgedArtifactName,
+3021-            heldShutAtSeal = pending.heldShutAtSeal,
+3022-            heldPeekAtSeal = pending.heldPeekAtSeal
+3023->>>>>>> origin/main
+3024-        )
+3025-    }
+3026-
+3027-    /**
+3028-     * Rehydration (Z6 case b): rebuild the standing slip from the
+3029-     * stored № + the row, marked restored. Ended-at for routine
+3030-     * rows is the row's windowEndMillis exactly (Reihe §3 rule
+3031-     * 2 — never the observation time); for manual rows it is the
+3032-     * same-boot derivation startWall + (lastTickMono −
+3033-     * startMono), named here as the rehydration approximation.
+3034-     *
+3035-     * Truth Car 2 (RC-01): the derivation below is now only the
+3036-     * FALLBACK for rows whose ending write predates the stamp.
+3037-     * Where the row carries endWallMillis, assemblePendingReceipt
+3038-     * reads the stamp over any derived value — the true E0 wall
+3039-     * IS persisted now, and a restored slip prints the witnessed
+3040-     * end, not the approximation.
+3041-     */
+3042-    suspend fun rehydrateReceipt(): ReceiptState? {
+3043-        val (number, sessionId, _) = standingReceipt() ?: return null
+3044-        return rehydrateReceipt(sessionId, number)
+3045-    }
+3046-
+--
+3136:<<<<<<< HEAD
+3137-            penaltySecondsAdded = pending.penaltySecondsAdded,
+3138-            forgedArtifactName = pending.forgedArtifactName
+3139-=======
+3140-            forgedArtifactName = pending.forgedArtifactName,
+3141-            heldShutAtSeal = pending.heldShutAtSeal,
+3142-            heldPeekAtSeal = pending.heldPeekAtSeal
+3143-        )
+3144-    }
+3145-
+3146-    /** Issue #135 F2: rebuild the slip for ANY session that already
+3147-     *  claimed its № — the re-issue door behind the Deck's LAST
+3148-     *  RECEIPT. Settled form only (restored = true, no mono stamp):
+3149-     *  it never re-claims, never re-mints, and the row's own
+3150-     *  receiptNumber is the № it prints. Null when the row is gone,
+3151-     *  still active, never claimed a №, or no longer a finish. */
+3152-    suspend fun receiptForSession(sessionId: Int): ReceiptState? {
+3153-        val row = dao.getSessionById(sessionId) ?: return null
+3154-        if (row.isActive || row.receiptNumber <= 0) return null
+3155-        val isSleep = row.routineId?.let { dao.getRoutineById(it)?.loadoutName } ==
+3156-            SmartLoadout.SLEEP.name
+3157-        val kind = finishKindOf(row, isSleep, System.currentTimeMillis()) ?: return null
+3158-        val endedAt = if (row.routineId != null && row.windowEndMillis > 0L) {
+3159-            row.windowEndMillis
+3160-        } else {
+3161-            row.startWallTimeMillis +
+3162-                (row.lastTickElapsedRealtimeMillis - row.startElapsedRealtimeMillis)
+3163-                    .coerceAtLeast(0L)
+3164-        }
+3165-        val pending = assemblePendingReceipt(sessionId, kind, endedAt) ?: return null
+3166-        return ReceiptState(
+--- app/src/main/java/com/example/data/ReceiptState.kt
+264:<<<<<<< HEAD
+265-    // Audit R3 #113, finding 4: the tamper penalty the row carries,
+266-    // threaded so the slip can NAME it — before this the penalty
+267-    // silently stretched the plan (it is inside spanTargetSeconds)
+268-    // and no surface ever mentioned it.
+269-    val penaltySecondsAdded: Int = 0,
+270-=======
+271-    /** Issue #129 F3: the unguarded apps actually used inside
+272-     *  this session's window (labels, longest-use first), read
+273-     *  back from the ending write's exposure booking. Empty for
+274-     *  every session not stamped ELAPSED_OPEN_EXPOSURE. */
+275-    val openExposureApps: List<String> = emptyList()
+276->>>>>>> origin/main
+277-    // Audit R3b #145: the curio this finish forged, by name — the
+278-    // completion moment must not be silent about its own reward.
+279-    // Null when the span forged nothing (routine-born rows, valve
+280-    // breaks publish nothing at all); the sheet omits the line.
+281-    val forgedArtifactName: String? = null,
+282-    // W-41: the seal's held split, read off the row (see
+283-    // FocusSessionEntity.heldShutAtSeal). -1 on a pre-v14 row:
+284-    // the sheet falls back to the stored total.
+285-    val heldShutAtSeal: Int = -1,
+286-    val heldPeekAtSeal: Int = -1
+287-)
+288-
+289-/**
+290- * The issued receipt — the slip's whole content (Zettel §1, 18
+291- * fields). [number] is the № (prints `№ 048`, zero-padded to 3,
+292- * never truncated). [restored] marks a rehydrated slip (Z6 case
+293- * b): it renders settled, never re-Strikes, and never arms E6.
+294- * [receiptPublishedMonoMs] is sampled by the VM inside
+--
+319:<<<<<<< HEAD
+320-    // Audit R3 #113, finding 4: see PendingReceipt — the slip
+321-    // prints the penalty its plan silently included.
+322-    val penaltySecondsAdded: Int = 0,
+323-=======
+324-    /** Issue #129 F3: see [PendingReceipt.openExposureApps]. */
+325-    val openExposureApps: List<String> = emptyList()
+326->>>>>>> origin/main
+327-    // Audit R3b #145: see PendingReceipt.forgedArtifactName.
+328-    val forgedArtifactName: String? = null,
+329-    // W-41: see PendingReceipt.heldShutAtSeal.
+330-    val heldShutAtSeal: Int = -1,
+331-    val heldPeekAtSeal: Int = -1
+332-) {
+333-    /** The printed №: zero-padded to a minimum of 3, never
+334-     *  truncated (№ 048 … № 1048). */
+335-    val numberPrint: String get() = "№ " + number.toString().padStart(3, '0')
+336-}
+337-
+338-/**
+339- * Nocke §4's detention arithmetic — pure, table-tested (T3):
+340- *   R0 (rack start)  = max(E1200, P)
+341- *   receipt t=0      = min(max(E1480, R0 + 280), E1800)
+342- *   faulted          ⇔ no P by E1520, or the chain halted
+343- * All values are offsets from E0 in milliseconds; P is the
+344- * pawl-lift offset (the frame the one commanded link — the
+345- * shield's stop — confirmed open), or null while unconfirmed.
+346- */
+347-object Detention {
+348-    const val HELD_FRAME_MS = 1200L
+349-    const val RACK_AFTER_PAWL_MS = 280L
+--- app/src/main/java/com/example/ui/components/ReceiptSheet.kt
+304:<<<<<<< HEAD
+305-                if (receipt.penaltySecondsAdded > 0) {
+306-                    // Audit R3 #113, finding 4: the penalty was
+307-                    // already inside the PLANNED figure above (the
+308-                    // span prices it in) — this line names what the
+309-                    // plan silently included, in the same bold
+310-                    // register as the shield-gap line.
+311-                    Text(
+312-                        text = "A ${receipt.penaltySecondsAdded / 60} MIN TAMPER PENALTY WAS ADDED TO THIS SESSION",
+313-=======
+314-                if (receipt.openExposureApps.isNotEmpty()) {
+315-                    // Issue #129 F3: the slip names what was
+316-                    // actually used through the open door — a
+317-                    // session stamped OPEN APP USED never reads
+318-                    // as clean, and the names are the evidence.
+319-                    Text(
+320-                        text = "OPEN APPS USED IN THAT SESSION: " +
+321-                            receipt.openExposureApps.joinToString(", ") { it.uppercase() },
+322->>>>>>> origin/main
+323-                        fontFamily = AtkinsonHyperlegibleFamily,
+324-                        fontWeight = FontWeight.Bold,
+325-                        fontSize = 12.sp,
+326-                        color = scheme.onBackground
+327-                    )
+328-                }
+329-                if (receipt.faulted) {
+330-                    // The one lawful receipt-only fault line
+331-                    // (build-ready §7.2) — it never prints on the
+332-                    // imprint, the strip, or anywhere else.
+333-                    Text(
+334-                        text = "SHIELD — STILL BLOCKED (SERVICE DIDN'T STOP)",
+== resolver rc=1 ==
+unknown conflict segment in app/src/main/java/com/example/data/MonolithRepository.kt:
+OUR:
+            // resume from the elapsed banked before the reboot, and credit
+            // NOTHING for the interval nobody witnessed — the old form added
+            // the device's ENTIRE uptime at this tick, booking hours the
+            // phone may have sat unguarded as focus time (Audit R3 #113,
+            // finding 5). Tamper here is the signature's verdict alone:
+            // a reboot is not a clock crime, and the wall/mono drift test
+            // is meaningless across a boot boundary (finding 4).
+            val priorElapsed = max(session.accumulatedBeforeRebootSeconds, session.elapsedSeconds)
+            Pair(priorElapsed, !hmacValid)
+THEIR:
+            // Resume from accumulated elapsed seconds prior to reboot + seconds elapsed since current boot.
+            // Issue #81 F3: the tamper term is no longer !hmacValid
+            // alone. An unwitnessed intermediate boot (Safe Mode —
+            // Monolith cannot run there, so it never re-anchors —
+            // or a force-stop spanning a reboot) leaves a BOOT_COUNT
+            // delta of 2+ against the row's anchor; that span is
+            // unproven and convicts like any other tamper (the
+            // caller's penalty ratchet applies). The elapsed figure
+            // still credits only witnessed time — unproven hours
+            // are neither credited toward completion nor silently
+            // forgiven: they cost the tamper penalty instead of
+            // passing as a free, invisible freeze.
+            val priorElapsed = max(session.accumulatedBeforeRebootSeconds, session.elapsedSeconds)
+            val sinceRebootSec = (nowMono / 1000L).toInt().coerceAtLeast(0)
+            val unwitnessed = TamperWitness.unwitnessedBoot(session.bootCount, currentBoot)
+            Pair(priorElapsed + sinceRebootSec, !hmacValid || unwitnessed)
