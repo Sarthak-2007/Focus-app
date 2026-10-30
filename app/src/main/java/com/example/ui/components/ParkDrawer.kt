@@ -529,6 +529,18 @@ fun ParkDrawer(
                         }
                     }
                 }
+                // Issue #150: the sled's word must not lie by
+                // omission — OFF silences the voice, never the
+                // event: the haptic twin still fires at full
+                // amplitude by design (S0). One caption line in
+                // the plate's own grammar, printed always, so the
+                // fact is read before it is discovered on a
+                // library desk.
+                Text(
+                    text = "SOUND OFF KEEPS THE TOUCH — THE BUZZ CARRIES THE EVENT",
+                    style = PillBadgeTextStyle,
+                    color = scheme.onSurfaceVariant
+                )
                 ParkHairline()
 
                 // (5) Shorts + Reels — the sniper's sled, seated

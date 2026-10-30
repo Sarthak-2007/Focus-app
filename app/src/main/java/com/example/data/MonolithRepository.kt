@@ -1809,9 +1809,16 @@ class MonolithRepository(
      *  is not alive mid-break, and this machine crosses breaks
      *  from the shield's tick as readily as from the screen's.
      *
-     *  The voice is the engine's existing latch pair — release
-     *  (false) as the block lets go into the break, engage (true)
-     *  as the next block takes hold. No new sound machinery. The
+     *  The voices: release (false) is the engine's latch, fired
+     *  as the block lets go into the break; engage (true) — the
+     *  break END, the one cue a user plans around — is the
+     *  engine's dedicated break-end voice since issue #150 (a
+     *  low double strike, not the toggle latch's single click:
+     *  the exit cue was being missed and block time ran while
+     *  the user believed the break still held). Both are
+     *  machinery-fired, so both are spoken as unattended: the
+     *  ringer's word and Do Not Disturb bind them in the engine.
+     *  The
      *  player is a seam for exactly one reason: the transition
      *  tests count knock REQUESTS at the flip (Pruefer's proof
      *  standard — call level, never an acoustic claim). In
@@ -1825,7 +1832,11 @@ class MonolithRepository(
      *  door creates honours the setting exactly as the screen's
      *  engine does. */
     internal var breakBoundaryKnock: (engaged: Boolean) -> Unit = { engaged ->
-        breakSoundEngine.playMechanicalLatch(engaged)
+        if (engaged) {
+            breakSoundEngine.playBreakEndCue()
+        } else {
+            breakSoundEngine.playMechanicalLatch(engaged = false, unattended = true)
+        }
     }
 
     private val breakSoundEngine: TactileSoundEngine by lazy {

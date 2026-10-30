@@ -1245,19 +1245,23 @@ class MonolithViewModel(
             // pair. Death-booked: the E700 slot stands EMPTY.
             val pulses = com.example.data.finishPulses(kind, row)
             launch {
-                soundEngine.playSeatKnock(24, 1.0f, 320f)
+                // Issue #150: the whole cascade is timer-fired
+                // against e0Mono — unattended voices, so Do Not
+                // Disturb binds them in the engine (the ringer's
+                // word already binds every voice).
+                soundEngine.playSeatKnock(24, 1.0f, 320f, unattended = true)
                 if (pulses) {
                     val toPulse = 700L - (SystemClock.elapsedRealtime() - e0Mono)
                     if (toPulse > 0L) delay(toPulse)
                     if (SystemClock.elapsedRealtime() - e0Mono < 900L) {
-                        soundEngine.playCompletionPulse()
+                        soundEngine.playCompletionPulse(unattended = true)
                     }
                 }
                 val toPair = 880L - (SystemClock.elapsedRealtime() - e0Mono)
                 if (toPair > 0L) delay(toPair)
-                soundEngine.playSeatKnock(24, 1.0f, 320f)
+                soundEngine.playSeatKnock(24, 1.0f, 320f, unattended = true)
                 delay(90L)
-                soundEngine.playSeatKnock(12, 0.5f, 320f)
+                soundEngine.playSeatKnock(12, 0.5f, 320f, unattended = true)
             }
 
             var pawlLiftMs: Long? = null

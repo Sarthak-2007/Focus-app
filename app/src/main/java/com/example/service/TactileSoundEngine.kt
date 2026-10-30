@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.app.NotificationManager
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
@@ -290,6 +291,59 @@ class TactileSoundEngine(private val context: Context) {
      *  while PARK printed OFF. */
     var soundEnabled: Boolean = SoundEffectsSetting.isEnabled(context)
     var hapticsEnabled: Boolean = true
+
+    // =====================================================================
+    // THE ROOM'S TWO WORDS (issue #150 — sound-in-quiet-places).
+    // Until now the only gate any playback path read was the app's
+    // own soundEnabled: silent mode, vibrate and Do Not Disturb
+    // changed nothing this engine consulted, so timer-fired voices
+    // (break flips, the finish cascade, routine seals) spoke into
+    // quiet rooms at fixed gain, and interactive knocks sounded on
+    // a phone its owner had explicitly silenced. Two system facts
+    // are now read at every playback gate:
+    //
+    //  1. THE RINGER'S WORD BINDS EVERY VOICE. Ringer mode SILENT
+    //     or VIBRATE silences ALL audio this engine makes. The
+    //     haptic twin still fires — S0's law is untouched (muting
+    //     loses timbre, never the event); the event is carried as
+    //     touch, exactly what vibrate mode asks the phone for.
+    //
+    //  2. DO NOT DISTURB BINDS UNATTENDED VOICES. A sound nobody
+    //     is touching the phone to hear (break boundaries, the
+    //     finish cascade — call sites pass unattended = true) is
+    //     additionally suppressed whenever an interruption filter
+    //     other than ALL is in force. Interactive voices under
+    //     DND remain the user's own act, gated by the ringer only.
+    //
+    // A lookup failure reads as "not silenced": a fact the engine
+    // cannot read must never invent a silence of its own.
+    // =====================================================================
+
+    /** True when the ringer's word is "make no sound" (SILENT or
+     *  VIBRATE). Binds every audio path in this engine. */
+    internal fun ringerSilencesAudio(): Boolean = try {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        am != null && am.ringerMode != AudioManager.RINGER_MODE_NORMAL
+    } catch (_: Exception) {
+        false
+    }
+
+    /** True when Do Not Disturb bars interruptions (any filter
+     *  other than INTERRUPTION_FILTER_ALL). Binds unattended
+     *  voices only. */
+    internal fun doNotDisturbBarsUnattended(): Boolean = try {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        nm != null &&
+            nm.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL
+    } catch (_: Exception) {
+        false
+    }
+
+    /** The audio gate, whole: the app's own fact, the ringer's
+     *  word, and — for unattended voices — DND's word. */
+    private fun audioPermitted(unattended: Boolean): Boolean =
+        soundEnabled && !ringerSilencesAudio() &&
+            !(unattended && doNotDisturbBarsUnattended())
     private val commandQueue = LinkedBlockingQueue<SynthCommand>(64)
 
     @Volatile
@@ -453,7 +507,10 @@ class TactileSoundEngine(private val context: Context) {
                 // purge, so it can never delay the Throw.
                 val barrier = sealBarrierSeq
                 if (barrier >= 0L && cmd.seq < barrier) continue
-                if (!soundEnabled) continue
+                // Re-read at play time, not only at enqueue: a
+                // phone silenced after the command was queued
+                // still does not speak (issue #150).
+                if (!soundEnabled || ringerSilencesAudio()) continue
 
                 requestTransientAudioFocus()
 
@@ -602,9 +659,10 @@ class TactileSoundEngine(private val context: Context) {
         fundamentalHz: Float,
         durationMs: Int,
         gain: Float,
-        chordRatio: Float = 1.0f
+        chordRatio: Float = 1.0f,
+        unattended: Boolean = false
     ) {
-        if (!soundEnabled) return
+        if (!audioPermitted(unattended)) return
         val samples = ((SAMPLE_RATE * durationMs) / 1000).coerceIn(96, 6000)
         commandQueue.offer(
             SynthCommand(
@@ -662,7 +720,12 @@ class TactileSoundEngine(private val context: Context) {
      *  mass rises. The same voice at other weights speaks the
      *  strait's gate landings (FLOW shore 14ms @ 0.8, toll 10ms
      *  @ 0.5). */
-    fun playSeatKnock(durationMs: Int, amplitude01: Float, pitchHz: Float = 300f) {
+    fun playSeatKnock(
+        durationMs: Int,
+        amplitude01: Float,
+        pitchHz: Float = 300f,
+        unattended: Boolean = false
+    ) {
         val amp = (amplitude01.coerceIn(0f, 1f) * 255f).toInt()
         val strike = durationMs.coerceIn(6, 32).toLong()
         triggerWaveform(
@@ -674,13 +737,16 @@ class TactileSoundEngine(private val context: Context) {
             fundamentalHz = pitchHz.coerceIn(160f, 420f),
             durationMs = (durationMs + 6).coerceIn(10, 44),
             gain = 0.22f + 0.3f * amplitude01.coerceIn(0f, 1f),
-            chordRatio = 0.9f
+            chordRatio = 0.9f,
+            unattended = unattended
         )
     }
 
     /** Two-stage latch: strike, gap, seat. Engaging snaps sharp;
-     *  releasing lands heavier on the seat. */
-    fun playMechanicalLatch(engaged: Boolean) {
+     *  releasing lands heavier on the seat. [unattended] marks a
+     *  machinery-fired latch (the break boundaries): DND then
+     *  binds it too (issue #150). */
+    fun playMechanicalLatch(engaged: Boolean, unattended: Boolean = false) {
         if (engaged) {
             triggerWaveform(
                 timingsMs = longArrayOf(0, 11, 26, 9),
@@ -698,7 +764,41 @@ class TactileSoundEngine(private val context: Context) {
             fundamentalHz = if (engaged) 760f else 520f,
             durationMs = 16,
             gain = 0.54f,
-            chordRatio = if (engaged) 1.2f else 0.9f
+            chordRatio = if (engaged) 1.2f else 0.9f,
+            unattended = unattended
+        )
+    }
+
+    /** THE BREAK-END VOICE (issue #150): the one cue a user plans
+     *  around — the break is over, the next block has begun — was
+     *  the plain latch: a single 16 ms click in the same voice as
+     *  every settings toggle, fired once, trivially missed by a
+     *  user in the kitchen while their block time already ran.
+     *  This is its own voice, not a toggle's: a low double strike
+     *  (knock-knock at 430 Hz, 80 ms bodies — the queue serialises
+     *  the pair), heavier in the hand than any latch, and spoken
+     *  by nobody else in the app. Machinery-fired by construction
+     *  (the repository's break-boundary seam is its only caller),
+     *  so it is born unattended: DND and the ringer bind it. */
+    fun playBreakEndCue() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 16, 70, 16),
+            amplitudes = intArrayOf(0, 235, 0, 205),
+            fallbackMs = HAPTIC_SWITCH_FLIP_4MS
+        )
+        enqueueTransient(
+            fundamentalHz = 430f,
+            durationMs = 80,
+            gain = 0.60f,
+            chordRatio = 0.9f,
+            unattended = true
+        )
+        enqueueTransient(
+            fundamentalHz = 430f,
+            durationMs = 80,
+            gain = 0.60f,
+            chordRatio = 0.9f,
+            unattended = true
         )
     }
 
@@ -770,7 +870,15 @@ class TactileSoundEngine(private val context: Context) {
             amplitudes = SEAL_THROW_AMPLITUDES,
             fallbackMs = HAPTIC_SESSION_LOCK_8MS
         )
-        if (!soundEnabled) {
+        // Issue #150: the ringer's word binds the Throw's audio
+        // too — a phone on SILENT or VIBRATE seals in touch alone
+        // (the waveform above already fired; the event is never
+        // lost, only unspoken). Provenance (routine vs hand) is
+        // deliberately NOT distinguished here: the Throw occurs
+        // exactly once in production code, at the converged seal,
+        // and plumbing provenance through it is the routines
+        // rethink's call, not this fix's.
+        if (!audioPermitted(unattended = false)) {
             sealReady = false
             sealBarrierSeq = -1L
             return
@@ -830,7 +938,7 @@ class TactileSoundEngine(private val context: Context) {
 
     /** Completion: three ticks that soften as they land —
      *  the machine winding down, not alarming. */
-    fun playCompletionPulse() {
+    fun playCompletionPulse(unattended: Boolean = false) {
         triggerWaveform(
             timingsMs = longArrayOf(0, 10, 24, 10, 24, 14),
             amplitudes = intArrayOf(0, 175, 0, 125, 0, 80),
@@ -840,7 +948,8 @@ class TactileSoundEngine(private val context: Context) {
             fundamentalHz = 185f,
             durationMs = 64,
             gain = 0.68f,
-            chordRatio = 1.33f
+            chordRatio = 1.33f,
+            unattended = unattended
         )
     }
 
