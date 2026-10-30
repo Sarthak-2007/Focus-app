@@ -120,6 +120,33 @@ class MainActivity : ComponentActivity() {
             val activeSessionForTheme by viewModel.activeSession.collectAsStateWithLifecycle()
             val shotGround by viewModel.shotGround.collectAsStateWithLifecycle()
 
+            // Issue #256 (B-256-18): the system bars follow the ACTIVE
+            // scheme. The onCreate call above can only guess (light);
+            // once the real darkTheme fact lands — and every time the
+            // session-night pin flips it — the bar styles are re-applied
+            // to match, so neither mode ships an illegible bar.
+            DisposableEffect(darkTheme) {
+                enableEdgeToEdge(
+                    statusBarStyle = if (darkTheme) {
+                        SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                    } else {
+                        SystemBarStyle.light(
+                            android.graphics.Color.TRANSPARENT,
+                            android.graphics.Color.TRANSPARENT
+                        )
+                    },
+                    navigationBarStyle = if (darkTheme) {
+                        SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                    } else {
+                        SystemBarStyle.light(
+                            android.graphics.Color.TRANSPARENT,
+                            android.graphics.Color.TRANSPARENT
+                        )
+                    }
+                )
+                onDispose { }
+            }
+
             // Issue #27 (finding 1): every pending intent — the
             // launch intent AND any onNewIntent re-delivery — is
             // handled exactly once, then cleared.
