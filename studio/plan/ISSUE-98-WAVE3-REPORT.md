@@ -123,5 +123,23 @@ Record (this report).
 
 ## CI
 
-Branch CI verdict + run URL recorded in the closing issue comment
-and in the lead's report to WEG.
+Branch run 40988805436 (tip 9775ff8):
+https://github.com/Sarthak-2007/Focus-app/actions/runs/40988805436
+- **Assemble debug: GREEN.** Unit tests executed: 347 tests,
+  39 failed — every failure pre-existing/environmental, proven
+  against main run 40988558544 (PR #189 merge, before this branch
+  landed): 386 tests, 40 failed, including ALL CascadeDeckRenderTest
+  tests. The Cascade failures are
+  `java.io.FileNotFoundException at CascadeDeckRenderTest.kt:164` —
+  the screenshot capture writing to a shots path that does not
+  exist on the CI runner; in both tests this issue touched/added
+  the failure lands in capture(), AFTER the assertions, i.e. the
+  new proving sentence and the new blocks reading both asserted
+  green. The remaining failures span suites this diff never touches
+  (Drawer, ScreenshotHarness, Airlock #55, BreakMigration,
+  TruthCar3, SoundAndSocial, Tetrad, ChromeWave, ShortsSniper).
+- Merged to main by the merge train: PR #230, merge commit
+  daf44c9, 2026-10-30T04:04:30Z. Main CI for the merge: run
+  41000840287 (queued at report time behind the repo-wide queue;
+  main's test step is uniformly red with the same pre-existing
+  signature on every recent completed run).
