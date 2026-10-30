@@ -120,6 +120,13 @@ interface MonolithDao {
     @Query("SELECT * FROM focus_sessions ORDER BY startWallTimeMillis DESC")
     suspend fun getSessionHistorySnapshot(): List<FocusSessionEntity>
 
+    /** Issue #157: the Vault's receipts index — every session row
+     *  that claimed a № (stamped inside the claim transaction,
+     *  RC-04), newest № first. Rows with receiptNumber = 0 claimed
+     *  nothing and never appear. */
+    @Query("SELECT * FROM focus_sessions WHERE receiptNumber > 0 ORDER BY receiptNumber DESC")
+    suspend fun getClaimedReceiptSessions(): List<FocusSessionEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSession(session: FocusSessionEntity): Long
 

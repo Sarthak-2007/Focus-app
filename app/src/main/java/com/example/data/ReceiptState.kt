@@ -171,6 +171,26 @@ object InterceptOutcome {
 fun isBlockedInterceptOutcome(outcome: String): Boolean =
     InterceptOutcome.BLOCKED_OUTCOMES.any { it.equals(outcome.trim(), ignoreCase = true) }
 
+
+/** One row of the Vault's receipts index (issue #157): the facts
+ *  a claimed session's own row proves, nothing more — its №, its
+ *  session id, the instant it ended, its outcome word, and the
+ *  two warning facts the row itself carries (the release-fault
+ *  stamp and the shield-gap outcome). The slip is NOT stored; a
+ *  tap on this row re-derives it via the repository. */
+data class ReceiptIndexEntry(
+    val sessionId: Int,
+    val number: Int,
+    val endedAtWallMs: Long,
+    val outcomeWord: String,
+    val releaseFaultShield: Boolean,
+    val shieldWasOff: Boolean
+) {
+    /** The printed №, the slip's own voice: zero-padded to a
+     *  minimum of 3, never truncated. */
+    val numberPrint: String get() = "№ " + number.toString().padStart(3, '0')
+}
+
 /** One deflection on the slip: a blocked attempt the machine
  *  turned away during the session, reduced at assembly (window
  *  ∩ intention match ∩ 30s-per-package dedupe, first kept).

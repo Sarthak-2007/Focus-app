@@ -2376,6 +2376,53 @@ class MonolithRepository(
      */
     suspend fun rehydrateReceipt(): ReceiptState? {
         val (number, sessionId, _) = standingReceipt() ?: return null
+        return rehydrateReceipt(sessionId, number)
+    }
+
+    /** Issue #157: re-derive ANY claimed session's slip by its
+     *  session id — the Vault receipts index's tap. The № is the
+     *  one stamped on the session's own row at claim (RC-04); a
+     *  row that claimed nothing re-derives nothing. */
+    suspend fun rehydrateReceipt(sessionId: Int): ReceiptState? {
+        val row = dao.getSessionById(sessionId) ?: return null
+        if (row.receiptNumber <= 0) return null
+        return rehydrateReceipt(sessionId, row.receiptNumber)
+    }
+
+    /** The Vault's receipts index (issue #157): every claimed
+     *  session, newest № first, carrying only what its row
+     *  proves. The outcome word is the slip's own dialect,
+     *  derived from the row's finish kind exactly as assembly
+     *  derives it; a row whose kind no longer classifies (its
+     *  receipt was claimed, so one did) falls back to the bare
+     *  ended word its outcome column still proves. */
+    suspend fun claimedReceipts(): List<ReceiptIndexEntry> {
+        return dao.getClaimedReceiptSessions().map { row ->
+            val isSleep = row.routineId?.let { dao.getRoutineById(it)?.loadoutName } ==
+                SmartLoadout.SLEEP.name
+            val kind = finishKindOf(row, isSleep, System.currentTimeMillis())
+            ReceiptIndexEntry(
+                sessionId = row.id,
+                number = row.receiptNumber,
+                endedAtWallMs = if (row.endWallMillis > 0L) {
+                    row.endWallMillis
+                } else {
+                    row.startWallTimeMillis
+                },
+                outcomeWord = if (kind != null) {
+                    receiptOutcomeWord(row, kind)
+                } else if (row.outcome == SessionOutcome.ELAPSED_SHIELD_GAP) {
+                    "ENDED · SHIELD GAP"
+                } else {
+                    "ENDED"
+                },
+                releaseFaultShield = row.releaseFaultShield,
+                shieldWasOff = row.outcome == SessionOutcome.ELAPSED_SHIELD_GAP
+            )
+        }
+    }
+
+    private suspend fun rehydrateReceipt(sessionId: Int, number: Int): ReceiptState? {
         val row = dao.getSessionById(sessionId) ?: return null
         if (row.isActive) return null
         val isSleep = row.routineId?.let { dao.getRoutineById(it)?.loadoutName } ==
