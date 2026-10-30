@@ -1,33 +1,60 @@
 package com.example.service
 
+import android.util.Log
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
+import android.graphics.Rect
 import android.media.AudioManager
 import android.os.SystemClock
+import android.telecom.TelecomManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import com.example.MainActivity
 import com.example.data.AppBlockTier
 import com.example.data.GuardSettingsEntity
 import com.example.data.MonolithDatabase
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 
 /**
  * Enforces real-time platform-level protections during an active focus session:
  * 1. Active Phone & VoIP Call Bypass: Checks AudioManager.mode (MODE_RINGTONE, MODE_IN_CALL,
- *    MODE_IN_COMMUNICATION) BEFORE any block check so incoming WhatsApp/Telegram/cellular calls are never kicked.
+ *    MODE_IN_COMMUNICATION) and exempts ONLY the call's own surface (dialer / in-call UI packages) —
+ *    incoming WhatsApp/Telegram/cellular calls are never kicked on their own screen, and a call
+ *    never suspends blocking for other apps (Wave-3 #42; the bypass used to be global).
  * 2. Settings & Package Installer Blocker: Blocks attempts to Force stop, Uninstall, Clear storage,
- *    or Deactivate Monolith in Android Settings or system package installers.
+ *    or Deactivate Monolith in Android Settings, OEM package installers, and app markets showing
+ *    Monolith's page. Detection keys on locale-independent app-info button resource IDs first,
+ *    with the English text match kept only as a fallback (Wave-3 #42).
  * 3. YouTube Shorts & Instagram Reels Sniper: Checks BOTH internal View IDs AND selected bottom-navigation
  *    tabs (`node.isSelected` with text/description "Shorts" or "Reels"). Remains strictly active even during Safe Breaks.
  *    Gated by the persisted Guard switch `shortsReelsSniperEnabled` (Truth Car 3, UNA-01) — OFF leaves feeds alone.
+ *    A peek lease does NOT silence it (#131): the lease buys a time-boxed glance at the app, never a
+ *    Shorts/Reels binge — the sniper is the feed-specific door, the lease is an app-access door.
+ *    Scope, stated honestly (#131): the sniper polices ONLY the vertical Shorts/Reels feed. It does
+ *    not police long-form video, home feeds, Stories or DMs — those surfaces are governed solely by
+ *    the app's tier below (an OPEN app is open there because the user tiered it OPEN).
  * 4. In-Browser URL Bar Blocker: Ignores the address bar while the user is actively typing (`node.isFocused == true`),
  *    and blocks distracting domains once committed/loaded—even during Safe Breaks.
+ * 6. Least-privilege exercise + honest degradation (Wave-3 #42,
+ *    Scout-2 Finds 11/18): the config grant stays content-capable
+ *    because the sniper, site and tamper doors genuinely need node
+ *    content — splitting it away would trade HOLD strength, which
+ *    is never traded. What is least-privilege is the EXERCISE: no
+ *    content is read with no session armed, and root traversal
+ *    happens only for packages whose door needs node evidence
+ *    (captureEventFacts). isAccessibilityTool is pinned false in
+ *    the config — Monolith is not an accessibility tool, and under
+ *    Android 17 Advanced Protection this service may be revoked;
+ *    blocking then honestly degrades to the UsageStats/shield
+ *    layer instead of claiming a status it does not hold.
  * 5. 3-Tier Per-App & Safe Break Enforcement:
  *    - During a 10-minute Safe Break (`activeSession.isInSafeBreak`), `2m Peek` apps (e.g., WhatsApp) unlock freely
  *      while `Locked` apps, Shorts, Reels, and blocked browser domains stay strictly locked.
@@ -58,14 +85,199 @@ enum class InterceptPath {
 }
 
 /**
- * The browser blocker's matching core, pure (Truth Car 3, UNA-06):
- * the FIRST stored domain the URL text contains, or null. The list
- * it receives IS the enforced list — callers pass the user's stored
- * sites unchanged, so an empty list matches nothing. There is no
- * factory fallback anywhere upstream of this function.
+ * The browser blocker's matching core, pure (Truth Car 3, UNA-06;
+ * Wave-3 #42): the FIRST stored domain that is the URL's HOST or a
+ * parent of it, or null. Host-exact matching replaced raw substring
+ * matching: before the cure, a stored domain appearing anywhere in
+ * the URL text — a query parameter, a path segment, another site's
+ * subdomain label (`notyoutube.com`, `youtube.com.evil.example`) —
+ * fired the blocker, and the false positives were indistinguishable
+ * from real hits. The list it receives IS the enforced list —
+ * callers pass the user's stored sites unchanged, so an empty list
+ * matches nothing. There is no factory fallback anywhere upstream
+ * of this function.
  */
-internal fun matchBlockedDomain(urlText: String, domains: List<String>): String? =
-    domains.firstOrNull { domain -> urlText.contains(domain) }
+internal fun matchBlockedDomain(urlText: String, domains: List<String>): String? {
+    val host = extractUrlHost(urlText) ?: return null
+    // Returns the NORMALISED stored domain (a "*.youtube.com" entry
+    // reports as "youtube.com") — the value names the blocked site
+    // on the intercept screen, so it must be the site, not the
+    // pattern syntax the user happened to type.
+    return domains.asSequence()
+        .map { raw ->
+            raw.trim().lowercase()
+                .removePrefix("*.").substringBefore('/').substringBefore(':')
+        }
+        .firstOrNull { domain ->
+            domain.isNotEmpty() && (host == domain || host.endsWith(".$domain"))
+        }
+}
+
+/** The host of a URL-bar text, or null when the text carries no
+ *  plausible host. Tolerates a missing scheme (users see bare
+ *  hosts in some bars), userinfo, ports, paths, queries, fragments. */
+internal fun extractUrlHost(urlText: String): String? {
+    var rest = urlText.trim().lowercase()
+    if (rest.isEmpty() || rest.contains(' ')) return null
+    val schemeEnd = rest.indexOf("://")
+    if (schemeEnd >= 0) rest = rest.substring(schemeEnd + 3)
+    rest = rest.substringBefore('/').substringBefore('?').substringBefore('#')
+    if (rest.contains('@')) rest = rest.substringAfterLast('@')
+    val host = if (rest.startsWith("[")) {
+        rest.substringAfter('[').substringBefore(']')
+    } else {
+        rest.substringBefore(':')
+    }.trimEnd('.')
+    return host.ifEmpty { null }
+}
+
+/**
+ * Call exemption (Wave-3 #42, Verifier-hardened): the ONLY packages
+ * a live call may exempt. Before the first cure, `isCallActive()`
+ * was a global kill-switch — AudioManager in a call mode suspended
+ * EVERY block for EVERY app, so an incoming call opened a hole the
+ * size of the whole session. The first cure's name-matching was
+ * then broken by the C5 Verifier: a VoIP call's surface is the
+ * app's OWN package (WhatsApp, Telegram, Signal name themselves
+ * nothing like a dialer), so name rules alone would have blocked
+ * the very calls the feature promises to protect.
+ *
+ * The exemption therefore has three independent legs, and a live
+ * call exempts a package only if one of them names it:
+ *  1. SURFACE — the system dialer / in-call UI packages (set +
+ *     dialer/incallui name rules): the cellular call UI.
+ *  2. OWNER — the package that was in the foreground when this
+ *     call became active, tracked from window-state events. For a
+ *     VoIP call that is the VoIP app itself, whatever its name.
+ *  3. DEFAULT DIALER — the package holding Telecom's default
+ *     dialer role (covers replacement dialers like Truecaller
+ *     that no name rule can enumerate).
+ * A blocked app that is none of the three stays blocked mid-call;
+ * a call app that IS blocked is exempt on its own surface only —
+ * the shipped promise — and its call unblocks nothing else.
+ */
+internal val CALL_SURFACE_PACKAGES = setOf(
+    "com.google.android.dialer",
+    "com.android.dialer",
+    "com.android.incallui",
+    "com.google.android.incallui",
+    "com.samsung.android.dialer",
+    "com.samsung.android.incallui",
+    "com.android.server.telecom",
+    "com.android.phone"
+)
+
+internal fun isCallSurfacePackage(packageName: String): Boolean =
+    packageName in CALL_SURFACE_PACKAGES ||
+        packageName.endsWith(".dialer") ||
+        packageName.endsWith(".incallui") ||
+        packageName.contains(".incallui.")
+
+/** Pure decision: does a live call exempt THIS event's package?
+ *  [callOwnerPackage] is the foreground package captured when the
+ *  current call became active (null when unknown); [defaultDialerPackage]
+ *  is Telecom's current default dialer (null when unread). */
+internal fun shouldBypassForCall(
+    audioMode: Int,
+    packageName: String,
+    callOwnerPackage: String? = null,
+    defaultDialerPackage: String? = null
+): Boolean {
+    val callMode = audioMode == AudioManager.MODE_RINGTONE ||
+        audioMode == AudioManager.MODE_IN_CALL ||
+        audioMode == AudioManager.MODE_IN_COMMUNICATION
+    if (!callMode) return false
+    return isCallSurfacePackage(packageName) ||
+        packageName == callOwnerPackage ||
+        packageName == defaultDialerPackage
+}
+
+/** Installer surfaces that can force-stop / uninstall Monolith
+ *  (Wave-3 #42): the system package installers across OEMs. An
+ *  installer window only exists during an install/uninstall flow,
+ *  so presence alone is the signal (the pre-cure behaviour for the
+ *  original four, kept). */
+internal val INSTALLER_PACKAGES = setOf(
+    "com.google.android.packageinstaller",
+    "com.android.packageinstaller",
+    "com.samsung.android.packageinstaller",
+    "com.miui.packageinstaller",
+    "com.coloros.packageinstaller",
+    "com.oplus.packageinstaller",
+    "com.bbk.packageinstaller",
+    "com.huawei.packageinstaller"
+)
+
+/** App markets that host an uninstall action on an app's page.
+ *  Unlike installers they also host ordinary browsing, so the
+ *  guard fires only when the window is about Monolith itself. */
+internal val MARKET_PACKAGES = setOf(
+    "com.android.vending",
+    "com.sec.android.app.samsungapps",
+    "com.xiaomi.mipicks",
+    "com.heytap.market",
+    "com.oppo.market",
+    "com.bbk.appstore",
+    "com.huawei.appmarket"
+)
+
+/** Settings surfaces whose app-info page can force-stop, disable,
+ *  clear, or uninstall Monolith. */
+internal val SETTINGS_PACKAGES = setOf(
+    "com.android.settings",
+    "com.miui.securitycenter"
+)
+
+/**
+ * Locale-independent tamper evidence (Wave-3 #42): the resource
+ * IDs of the app-info action buttons are code identifiers — they
+ * do not translate. Before the cure the guard matched English
+ * button TEXT ("force stop", "uninstall", …), so a phone in any
+ * other language walked straight past it. A Settings window that
+ * carries one of these buttons is an app-info screen in every
+ * locale Android ships.
+ */
+internal fun isTamperActionViewId(viewIdResourceName: String?): Boolean {
+    val id = viewIdResourceName?.lowercase() ?: return false
+    return id.endsWith(":id/uninstall_button") ||
+        id.endsWith(":id/force_stop_button") ||
+        id.endsWith(":id/disable_button") ||
+        id.endsWith(":id/clear_data_button") ||
+        id.endsWith(":id/clear_storage_button") ||
+        id.endsWith(":id/button_uninstall") ||
+        id.endsWith(":id/button_force_stop") ||
+        id.endsWith(":id/button_disable")
+}
+
+/**
+ * #131: the player/viewer surfaces whose VISIBLE presence means a
+ * Short or Reel is actually on screen. Deliberately absent:
+ * `com.google.android.youtube:id/reel_recycler` — that is the
+ * Shorts SHELF container, present on home/channel/search screens
+ * while the user is merely near Shorts, not watching one. Presence
+ * of a shelf is proximity; only a visible player is watching.
+ */
+internal val SHORTS_PLAYER_VIEW_IDS: List<String> = listOf(
+    "com.google.android.youtube:id/reel_player_page_container",
+    "com.google.android.youtube:id/shorts_player",
+    "com.instagram.android:id/clips_viewer_view_pager",
+    "com.instagram.android:id/reel_viewer_fragment"
+)
+
+/** #131: the selected-tab label match, extracted pure. A label
+ *  alone is NOT evidence of watching — the caller must also place
+ *  the tab in the bottom-navigation region ([isBottomNavBounds]),
+ *  so a selected 'Shorts' channel tab or search chip never fires. */
+internal fun isFeedTabLabel(textLower: String, descLower: String): Boolean =
+    descLower == "shorts" || descLower == "reels" ||
+        textLower == "shorts" || textLower == "reels" ||
+        descLower.startsWith("shorts,") || descLower.startsWith("reels,")
+
+/** #131: a node sits in the bottom-navigation region when its
+ *  bottom edge reaches the lowest fifth of the window. Channel
+ *  tab strips and search filter chips live far above this line. */
+internal fun isBottomNavBounds(boundsBottomPx: Int, rootHeightPx: Int): Boolean =
+    rootHeightPx > 0 && boundsBottomPx >= (rootHeightPx * 4) / 5
 
 class MonolithAccessibilityService : AccessibilityService() {
 
@@ -78,6 +290,21 @@ class MonolithAccessibilityService : AccessibilityService() {
         @Volatile
         var instance: MonolithAccessibilityService? = null
             internal set
+
+        /** Truth (issue #76): detection queries that THREW, counted
+         *  and logged instead of silently masquerading as "evidence
+         *  absent". The fail directions themselves are unchanged
+         *  (enforcement fails open, the call bypass fails closed) —
+         *  what changed is that the failure is no longer invisible:
+         *  a rising count on a healthy phone is itself the signal. */
+        @Volatile
+        var detectionFailures: Int = 0
+            internal set
+
+        internal fun noteDetectionFailure(where: String, e: Exception) {
+            detectionFailures++
+            Log.w("MonolithA11y", "detection query failed at $where (total $detectionFailures)", e)
+        }
 
         /** Monotonic stamp of the last event whose root window was
          *  successfully acquired. Pipeline proof (the service is
@@ -118,10 +345,69 @@ class MonolithAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        // Watch Store bind (issue #48): restore the persisted LAST
+        // PROVED into the fresh process's store.
+        WatchStore.bind(applicationContext)
         // Watch Store BIND writer (chrome C3): the binding itself is
         // the measurement; the store stamps it.
         WatchStore.onAccessibilityBound(true)
         startSessionArmedCollector()
+        startEventWorker()
+    }
+
+    // ------------------------------------------------------------------
+    // Event pipeline (Wave-3 #42): before the cure, EVERY relevant
+    // event launched its own unbounded IO coroutine, and each one
+    // re-read rootInActiveWindow AFTER async dispatch — the root it
+    // inspected could belong to a different, later window than the
+    // event it claimed to police, while a burst of window-content
+    // events fanned out into dozens of racing DB reads (two full
+    // getAllAppsSnapshot() calls per event among them). The pipeline
+    // now has ONE worker and a CONFLATED channel:
+    //  - onAccessibilityEvent captures every node-derived fact
+    //    SYNCHRONOUSLY, on the event thread, while the root still
+    //    describes this event's window;
+    //  - the worker processes snapshots strictly sequentially;
+    //  - a burst conflates to the latest snapshot — which is the
+    //    only window that can still be on screen anyway;
+    //  - the app table is read ONCE per processed event and shared
+    //    by the lease check and the tier door.
+    // ------------------------------------------------------------------
+
+    /** Node-derived facts about one event's window, captured
+     *  synchronously before any async hop. */
+    private data class EventFacts(
+        val tamperSurface: Boolean = false,
+        val sniperFeedVisible: Boolean = false,
+        val browserUrlTexts: List<String> = emptyList()
+    )
+
+    private data class EventSnapshot(
+        val packageName: String,
+        val facts: EventFacts,
+        /** The session this event was captured under (the armed
+         *  witness at capture time). The worker drops a snapshot
+         *  whose session is no longer the active one — an event
+         *  from a dead session must never fire inside its
+         *  successor (Verifier, Wave-3 #42). */
+        val sessionId: Int = -1
+    )
+
+    private val eventChannel = Channel<EventSnapshot>(Channel.CONFLATED)
+
+    private fun startEventWorker() {
+        scope.launch {
+            for (snapshot in eventChannel) {
+                try {
+                    processEvent(snapshot)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // One bad event must not kill the pipeline: the
+                    // next snapshot still deserves its verdict.
+                }
+            }
+        }
     }
 
     /** L3's collector: watches the active-session Flow for the
@@ -136,8 +422,19 @@ class MonolithAccessibilityService : AccessibilityService() {
             dao.getActiveSessionFlow().collect { session ->
                 if (session != null && session.isActive) {
                     if (armedSessionId != session.id) {
+                        val wasDisarmed = armedSessionId == -1
                         armedSessionId = session.id
                         armedMono = SystemClock.elapsedRealtime()
+                        if (wasDisarmed) {
+                            // Catch-up scan (Verifier, Wave-3
+                            // #42): events dropped while the gate
+                            // was shut are gone, and a static
+                            // window (Settings, a paused feed)
+                            // may never re-fire — so the instant
+                            // the gate opens, judge the window
+                            // that is already on screen.
+                            enqueueCurrentWindowSnapshot()
+                        }
                     }
                 } else if (armedSessionId != -1) {
                     armedSessionId = -1
@@ -174,8 +471,9 @@ class MonolithAccessibilityService : AccessibilityService() {
                 lastRootMono = SystemClock.elapsedRealtime()
                 WatchStore.poke()
             }
-        } catch (_: Exception) {
-            // No stamp.
+        } catch (e: Exception) {
+            // No stamp — and (issue #76) the failure is counted, not silent.
+            noteDetectionFailure("rootStamp", e)
         }
 
         val pkgName = event?.packageName?.toString() ?: return
@@ -186,181 +484,476 @@ class MonolithAccessibilityService : AccessibilityService() {
         // and in use, so a missed boundary gets caught here too.
         RoutineHeartbeat.tickOpportunistic(applicationContext)
 
-        // 1. Active Phone & VoIP Call Bypass (WhatsApp, Telegram, Cellular calls never blocked mid-ring)
-        if (isCallActive()) return
+        // Session gate BEFORE any window content is read (Wave-3
+        // #42): with no session armed, this service reads nothing,
+        // traverses nothing, and launches no DB work. The pre-cure
+        // path acquired the root window and fanned out DB reads for
+        // every event on the phone, session or not — maximum
+        // accessibility power exercised around the clock, under a
+        // one-line disclosure that mentioned none of it. (The
+        // liveness stamp above is untouched by this gate: it checks
+        // only that a root EXISTS, never its content.)
+        if (armedSessionId == -1) return
 
-        scope.launch {
-            val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
-            val activeSession = dao.getActiveSessionSnapshot() ?: return@launch
-            if (!activeSession.isActive) return@launch
+        // Call tracking + bypass — PER CALL (Wave-3 #42): refresh
+        // the foreground tracker and the call owner from this
+        // event first, then ask the pure decision. A live call
+        // exempts its own surface only; it no longer suspends
+        // blocking for every other app on the phone.
+        refreshCallTracking(pkgName, event.eventType)
+        if (isCallActiveForPackage(pkgName)) return
 
-            val rootNode = try { rootInActiveWindow } catch (_: Exception) { null }
-
-            // The persisted Guard row, read once per event and
-            // honoured by both interceptors below (the browser
-            // step read it alone before Truth Car 3; the sniper
-            // read nothing at all — UNA-01).
-            val guardSettings = dao.getGuardSettingsSnapshot()
-
-            // 2. Settings & Package Installer Blocker
-            if (isPackageInstallerOrTamperSettings(pkgName, rootNode)) {
-                performGlobalAction(GLOBAL_ACTION_BACK)
-                launchInterceptScreen(
-                    packageName = pkgName,
-                    appName = "System Settings Guard",
-                    reasonBadge = "Uninstall Guard",
-                    path = InterceptPath.UNINSTALL_GUARD
-                )
-                return@launch
-            }
-
-            // UNA2-01, the lease agreement: a live peek lease on
-            // THIS package silences the sniper and the site blocker
-            // too — a lease is honoured by every door or it is
-            // honoured by none. The per-app door (branch 5) and the
-            // shield service's set filter already read the lease;
-            // these two doors fired blind, so a peek bought on the
-            // per-app door could be re-intercepted mid-lease by the
-            // sniper — the lease protecting nothing again.
-            val leaseRow = dao.getAllAppsSnapshot().find { it.packageName == pkgName }
-            val leaseLive = leaseRow != null &&
-                leaseRow.resolvedTier == AppBlockTier.PEEK_2M &&
-                SystemClock.elapsedRealtime() < leaseRow.activePeekUntilElapsedRealtime
-
-            // 3. YouTube Shorts & Instagram Reels Sniper (Strictly active during both Work Blocks and Safe Breaks — and only while its persisted switch is ON: UNA-01)
-            if (!leaseLive && shortsSniperArmed(guardSettings, pkgName)) {
-                if (detectShortsOrReelsFeed(rootNode)) {
-                    performGlobalAction(GLOBAL_ACTION_BACK)
-                    launchInterceptScreen(
-                        packageName = pkgName,
-                        appName = if (pkgName.contains("youtube")) "YouTube Shorts" else "Instagram Reels",
-                        reasonBadge = if (pkgName.contains("youtube")) "Shorts Blocked" else "Reels Blocked",
-                        path = InterceptPath.SNIPER
-                    )
-                    return@launch
+        // Synchronous fact capture: every node-derived verdict is
+        // taken HERE, while rootInActiveWindow still describes
+        // this event's window — never after an async hop.
+        val facts = captureEventFacts(pkgName)
+        val snapshot = EventSnapshot(pkgName, facts, armedSessionId)
+        if (facts.tamperSurface) {
+            // The tamper door does NOT ride the conflated channel
+            // (Verifier, Wave-3 #42): conflation is per-channel,
+            // not per-window, so a later harmless event could
+            // silently evict a tamper snapshot for a STATIC
+            // Settings/installer page that will never re-fire.
+            // Tamper events are rare by nature; they take the
+            // direct path and are processed in arrival order.
+            scope.launch {
+                try {
+                    processEvent(snapshot)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // Same law as the worker: one bad event must
+                    // not kill enforcement.
                 }
             }
+        } else {
+            eventChannel.trySend(snapshot)
+        }
 
-            // 4. In-Browser URL Bar Blocker (Strictly active during both Work Blocks and Safe Breaks; ignores focused typing)
-            // Enforces the USER'S persisted site list + persisted Guard toggle (Ren).
-            // UNA-06 (Truth Car 3): the stored list IS the enforced list.
-            // There is NO factory fallback — an emptied list blocks no
-            // websites, exactly as Shield's "0 SITES" print says. (The
-            // factory defaults live in the seeded stored list itself,
-            // his to edit or empty; they are never smuggled back in at
-            // enforcement time.) The settings row is the hoisted read
-            // above (Falk's A-4 placement, composed at merge): one
-            // read per event, honoured by both interceptors.
-            if (!leaseLive && (guardSettings?.browserBlockerEnabled ?: true) && isSupportedBrowser(pkgName) && rootNode != null) {
-                val userDomains = dao.getAllSitesSnapshot().map { it.domain }
-                val matchedDomain = detectBlockedBrowserUrl(
-                    rootNode,
-                    userDomains
-                )
-                if (matchedDomain != null) {
-                    performGlobalAction(GLOBAL_ACTION_BACK)
-                    launchInterceptScreen(
-                        packageName = pkgName,
-                        appName = matchedDomain,
-                        reasonBadge = "Site Blocked",
-                        path = InterceptPath.SITE
-                    )
-                    return@launch
+        // Interactive-window sweep (#92): the checks above police
+        // only the ACTIVE window. A blocked app in the non-active
+        // split-screen pane, or a feed playing in a picture-in-
+        // picture window, was never scanned at all — the config
+        // now grants flagRetrieveInteractiveWindows, so every
+        // other application window is judged too, through the
+        // same snapshot pipeline and the same doors.
+        sweepOtherWindows(pkgName)
+    }
+
+    /** #92: judge every OTHER application window on this event.
+     *  Facts are captured synchronously from each window's own
+     *  root, with captureEventFacts' needs-root discipline, and
+     *  dispatched exactly like the active window's snapshot —
+     *  tamper direct (never evicted by conflation), the rest via
+     *  the conflated channel. processEvent applies the same
+     *  session binding, call exemption, lease rules (#131: the
+     *  sniper is not lease-silenced; the site door is) and tier
+     *  door to a swept package as to the foreground one. */
+    private fun sweepOtherWindows(eventPkg: String) {
+        for (winRoot in interactiveWindowRoots()) {
+            val winPkg = winRoot.packageName?.toString() ?: continue
+            if (winPkg == eventPkg) continue
+            if (winPkg == applicationContext.packageName ||
+                winPkg.startsWith("com.android.systemui")
+            ) {
+                continue
+            }
+            val winFacts = captureEventFacts(winPkg, winRoot)
+            val winSnapshot = EventSnapshot(winPkg, winFacts, armedSessionId)
+            if (winFacts.tamperSurface) {
+                scope.launch {
+                    try {
+                        processEvent(winSnapshot)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // Same law as the worker: one bad event
+                        // must not kill enforcement.
+                    }
                 }
+            } else {
+                eventChannel.trySend(winSnapshot)
             }
-
-            // 5. 3-Tier Per-App & Safe Break Blocking
-            val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkgName } ?: return@launch
-            val tier = appRule.resolvedTier
-            if (tier == AppBlockTier.OPEN) return@launch
-
-            // Safe Break Rule: 2m Peek apps unlock freely during the 10-minute Safe Break, while Locked apps stay locked
-            if (activeSession.isInSafeBreak && tier == AppBlockTier.PEEK_2M) {
-                return@launch
-            }
-
-            // Active 2-Minute Peek Lease Rule: allow access while monotonic clock is within the 2m lease window
-            val nowMono = SystemClock.elapsedRealtime()
-            if (tier == AppBlockTier.PEEK_2M && nowMono < appRule.activePeekUntilElapsedRealtime) {
-                return@launch
-            }
-
-            launchInterceptScreen(
-                packageName = appRule.packageName,
-                appName = appRule.appName,
-                reasonBadge = tier.badge,
-                path = InterceptPath.APP_TIER
-            )
         }
     }
 
-    private fun isCallActive(): Boolean {
+    /**
+     * Roots of every TYPE_APPLICATION window the system exposes
+     * to this service — requires flagRetrieveInteractiveWindows
+     * in the service config (#92). Split-screen panes and
+     * picture-in-picture windows are application windows, so
+     * they arrive here even when they are not the active window.
+     * Any failure reads as an empty list: the sweep simply does
+     * not run, never a crash on the event path.
+     */
+    private fun interactiveWindowRoots(): List<AccessibilityNodeInfo> {
+        return try {
+            windows?.mapNotNull { window ->
+                if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) null
+                else try { window.root } catch (_: Exception) { null }
+            } ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Call tracking (Wave-3 #42): the foreground package is tracked
+    // from window-state events (package name only — no content), so
+    // the moment a call becomes active the service can name its
+    // OWNER: the app that was in front when the call began. The
+    // owner locks on first observation and clears when the call
+    // ends; it never follows the user into other apps mid-call.
+    // ------------------------------------------------------------------
+
+    @Volatile
+    private var lastForegroundPackage: String? = null
+
+    @Volatile
+    private var callOwnerPackage: String? = null
+
+    private fun refreshCallTracking(pkgName: String, eventType: Int) {
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            lastForegroundPackage = pkgName
+        }
+        val mode = try {
+            (getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.mode
+        } catch (_: Exception) {
+            null
+        } ?: return
+        val callMode = mode == AudioManager.MODE_RINGTONE ||
+            mode == AudioManager.MODE_IN_CALL ||
+            mode == AudioManager.MODE_IN_COMMUNICATION
+        if (callMode) {
+            if (callOwnerPackage == null) {
+                callOwnerPackage = if (
+                    eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                ) {
+                    pkgName
+                } else {
+                    lastForegroundPackage
+                }
+            }
+        } else if (callOwnerPackage != null) {
+            callOwnerPackage = null
+        }
+    }
+
+    /** Reads the root window ONCE for the packages whose doors
+     *  need node evidence (installer/settings surfaces, the two
+     *  sniper apps, supported browsers) and distils it into plain
+     *  facts. All other packages need no content at all — the tier
+     *  door works from the package name alone. */
+    private fun captureEventFacts(pkgName: String): EventFacts {
+        val rootNode = try { rootInActiveWindow } catch (e: Exception) { noteDetectionFailure("rootInActiveWindow", e); null }
+            ?: return EventFacts()
+        return captureEventFacts(pkgName, rootNode)
+    }
+
+    /** The fact capture itself, against a GIVEN window's root —
+     *  the active window for the event's own snapshot, another
+     *  application window for the #92 sweep's snapshots. The same
+     *  needs-root discipline applies either way: packages whose
+     *  doors work from the name alone never have content read. */
+    private fun captureEventFacts(pkgName: String, rootNode: AccessibilityNodeInfo): EventFacts {
+        val needsRoot = pkgName in INSTALLER_PACKAGES ||
+            pkgName in MARKET_PACKAGES ||
+            pkgName in SETTINGS_PACKAGES ||
+            pkgName == "com.google.android.youtube" ||
+            pkgName == "com.instagram.android" ||
+            isSupportedBrowser(pkgName)
+        if (!needsRoot) return EventFacts()
+        return EventFacts(
+            tamperSurface = isPackageInstallerOrTamperSettings(pkgName, rootNode),
+            sniperFeedVisible = detectShortsOrReelsFeed(rootNode),
+            browserUrlTexts = if (isSupportedBrowser(pkgName)) {
+                extractBrowserUrlTexts(rootNode)
+            } else {
+                emptyList()
+            }
+        )
+    }
+
+    /** The ONE worker's per-event body: sequential, single-flight,
+     *  fed only by synchronously captured facts. The app table is
+     *  read once and shared by the lease check and the tier door
+     *  (the pre-cure fan-out read it twice per event per coroutine). */
+    private suspend fun processEvent(snapshot: EventSnapshot) {
+        val pkgName = snapshot.packageName
+        val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
+        val activeSession = dao.getActiveSessionSnapshot() ?: return
+        if (!activeSession.isActive) return
+        // Session binding: a snapshot captured under a dead session
+        // never fires inside its successor.
+        if (snapshot.sessionId != -1 && snapshot.sessionId != activeSession.id) return
+        // Call re-check at processing time: a call that began after
+        // this event was captured (owner not yet locked at capture)
+        // still exempts its own surface — the intercept must never
+        // win the race against the ring.
+        if (isCallActiveForPackage(pkgName)) return
+
+        // The persisted Guard row, read once per event and
+        // honoured by both interceptors below (the browser
+        // step read it alone before Truth Car 3; the sniper
+        // read nothing at all — UNA-01).
+        val guardSettings = dao.getGuardSettingsSnapshot()
+
+        // 2. Settings & Package Installer Blocker
+        if (snapshot.facts.tamperSurface) {
+            performGlobalAction(GLOBAL_ACTION_BACK)
+            launchInterceptScreen(
+                packageName = pkgName,
+                appName = "System Settings Guard",
+                reasonBadge = "Uninstall Guard",
+                path = InterceptPath.UNINSTALL_GUARD
+            )
+            return
+        }
+
+        // UNA2-01, the lease agreement — AMENDED by #131 for
+        // the sniper only (ported into this pipeline at the
+        // #42 merge): a live peek lease on THIS package still
+        // silences the site blocker below (a browser peek must
+        // not be re-intercepted by the door it was bought
+        // through), but it no longer silences the sniper. The
+        // old blanket rule turned the one sanctioned YouTube
+        // entry — its factory tier is PEEK_2M — into a 2-minute
+        // Shorts pass, and made the PARK sniper toggle a lived
+        // no-op in the default configuration. A lease is an
+        // app-access door: it buys a time-boxed, counted glance
+        // at the app (branch 5 still honours it exactly as
+        // before); it was never a feed licence. Inside a peeked
+        // YouTube/Instagram the user may use the app — and the
+        // moment a Short/Reel actually plays, the sniper fires.
+        val appsSnapshot = dao.getAllAppsSnapshot()
+        val leaseRow = appsSnapshot.find { it.packageName == pkgName }
+        val leaseLive = leaseRow != null &&
+            leaseRow.resolvedTier == AppBlockTier.PEEK_2M &&
+            SystemClock.elapsedRealtime() < leaseRow.activePeekUntilElapsedRealtime
+
+        // 3. YouTube Shorts & Instagram Reels Sniper (Strictly active during both Work Blocks and Safe Breaks, during peek leases (#131) — and only while its persisted switch is ON: UNA-01)
+        if (shortsSniperArmed(guardSettings, pkgName) && snapshot.facts.sniperFeedVisible) {
+            performGlobalAction(GLOBAL_ACTION_BACK)
+            launchInterceptScreen(
+                packageName = pkgName,
+                appName = if (pkgName.contains("youtube")) "YouTube Shorts" else "Instagram Reels",
+                reasonBadge = if (pkgName.contains("youtube")) "Shorts Blocked" else "Reels Blocked",
+                path = InterceptPath.SNIPER
+            )
+            return
+        }
+
+        // 4. In-Browser URL Bar Blocker (Strictly active during both Work Blocks and Safe Breaks; ignores focused typing)
+        // Enforces the USER'S persisted site list + persisted Guard toggle (Ren).
+        // UNA-06 (Truth Car 3): the stored list IS the enforced list.
+        // There is NO factory fallback — an emptied list blocks no
+        // websites, exactly as Shield's "0 SITES" print says. (The
+        // factory defaults live in the seeded stored list itself,
+        // his to edit or empty; they are never smuggled back in at
+        // enforcement time.) The URL texts were captured
+        // synchronously with the event; the domain match itself is
+        // host-exact (Wave-3 #42).
+        if (!leaseLive && (guardSettings?.browserBlockerEnabled ?: true) && isSupportedBrowser(pkgName)) {
+            val userDomains = dao.getAllSitesSnapshot().map { it.domain }
+            val matchedDomain = snapshot.facts.browserUrlTexts.firstNotNullOfOrNull { urlText ->
+                matchBlockedDomain(urlText, userDomains)
+            }
+            if (matchedDomain != null) {
+                performGlobalAction(GLOBAL_ACTION_BACK)
+                launchInterceptScreen(
+                    packageName = pkgName,
+                    appName = matchedDomain,
+                    reasonBadge = "Site Blocked",
+                    path = InterceptPath.SITE
+                )
+                return
+            }
+        }
+
+        // 5. 3-Tier Per-App & Safe Break Blocking
+        val appRule = appsSnapshot.find { it.packageName == pkgName } ?: return
+        val tier = appRule.resolvedTier
+        if (tier == AppBlockTier.OPEN) return
+
+        // Safe Break Rule: 2m Peek apps unlock freely during the 10-minute Safe Break, while Locked apps stay locked
+        if (activeSession.isInSafeBreak && tier == AppBlockTier.PEEK_2M) {
+            return
+        }
+
+        // Active 2-Minute Peek Lease Rule: allow access while monotonic clock is within the 2m lease window
+        val nowMono = SystemClock.elapsedRealtime()
+        if (tier == AppBlockTier.PEEK_2M && nowMono < appRule.activePeekUntilElapsedRealtime) {
+            return
+        }
+
+        launchInterceptScreen(
+            packageName = appRule.packageName,
+            appName = appRule.appName,
+            reasonBadge = tier.badge,
+            path = InterceptPath.APP_TIER
+        )
+    }
+
+    private fun isCallActiveForPackage(pkgName: String): Boolean {
         return try {
             val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return false
-            val mode = am.mode
-            mode == AudioManager.MODE_RINGTONE ||
-                mode == AudioManager.MODE_IN_CALL ||
-                mode == AudioManager.MODE_IN_COMMUNICATION
-        } catch (_: Exception) {
+            val defaultDialer = try {
+                (getSystemService(Context.TELECOM_SERVICE) as? TelecomManager)
+                    ?.defaultDialerPackage
+            } catch (_: Exception) {
+                null
+            }
+            shouldBypassForCall(am.mode, pkgName, callOwnerPackage, defaultDialer)
+        } catch (e: Exception) {
+            // Issue #76: a thrown AudioManager query is not "no call"
+            // — the bypass is still lost (fail-closed stands), but
+            // the loss is counted and logged, never silent.
+            noteDetectionFailure("isCallActive", e)
             false
         }
     }
 
     private fun isPackageInstallerOrTamperSettings(pkgName: String, rootNode: AccessibilityNodeInfo?): Boolean {
-        val installerPackages = setOf(
-            "com.google.android.packageinstaller",
-            "com.android.packageinstaller",
-            "com.samsung.android.packageinstaller",
-            "com.miui.packageinstaller"
-        )
-        if (installerPackages.contains(pkgName)) return true
+        if (pkgName in INSTALLER_PACKAGES) return true
+        if (rootNode == null) return false
 
-        if (pkgName == "com.android.settings" && rootNode != null) {
+        if (pkgName in MARKET_PACKAGES) {
+            // A market window is a tamper surface only when BOTH
+            // hold (Verifier, Wave-3 #42 — the bare substring rule
+            // fired on a store SEARCH for "monolith"): the window
+            // is about Monolith itself AND an uninstall affordance
+            // is actually present on it. Search results and list
+            // cards carry no uninstall action; the app page does.
+            if (!collectWindowTextLowercase(rootNode).contains("monolith")) return false
+            return hasTamperActionButton(rootNode) || hasUninstallAffordance(rootNode)
+        }
+
+        if (pkgName in SETTINGS_PACKAGES) {
             val dump = collectWindowTextLowercase(rootNode)
             val mentionsMonolith = dump.contains("monolith")
+            if (!mentionsMonolith) return false
+            // Primary evidence is locale-independent: the app-info
+            // action buttons' resource IDs. The English text match
+            // survives only as a fallback for OEM skins that rename
+            // the IDs — it is no longer the only door.
             val mentionsTamperAction = dump.contains("force stop") ||
                 dump.contains("deactivate") ||
                 dump.contains("uninstall") ||
                 dump.contains("clear storage") ||
                 dump.contains("clear data") ||
                 dump.contains("device admin")
-            return mentionsMonolith && mentionsTamperAction
+            return hasTamperActionButton(rootNode) || mentionsTamperAction
         }
         return false
     }
 
-    private fun detectShortsOrReelsFeed(rootNode: AccessibilityNodeInfo?): Boolean {
-        if (rootNode == null) return false
-        // Strategy A: Known internal View IDs
-        val shortsViewIds = listOf(
-            "com.google.android.youtube:id/reel_recycler",
-            "com.google.android.youtube:id/reel_player_page_container",
-            "com.google.android.youtube:id/shorts_player",
-            "com.instagram.android:id/clips_viewer_view_pager",
-            "com.instagram.android:id/reel_viewer_fragment"
-        )
-        for (id in shortsViewIds) {
-            val nodes = try { rootNode.findAccessibilityNodeInfosByViewId(id) } catch (_: Exception) { null }
-            if (!nodes.isNullOrEmpty()) return true
+    /** Recursive scan for an app-info action button by resource ID. */
+    private fun hasTamperActionButton(node: AccessibilityNodeInfo?, depth: Int = 0): Boolean {
+        if (node == null || depth > 14) return false
+        if (isTamperActionViewId(node.viewIdResourceName)) return true
+        for (i in 0 until node.childCount) {
+            if (hasTamperActionButton(node.getChild(i), depth + 1)) return true
         }
-        // Strategy B: Resilient selected bottom-navigation tab inspection (`node.isSelected`)
-        return isSelectedBottomTabShortsOrReels(rootNode)
+        return false
     }
 
-    private fun isSelectedBottomTabShortsOrReels(node: AccessibilityNodeInfo?): Boolean {
+    /** Market-side uninstall evidence: a node whose resource ID
+     *  names an uninstall action, or a button whose label does.
+     *  The label leg is English-only by necessity (market UIs do
+     *  not expose stable IDs for it) — it is a second leg behind
+     *  the Monolith anchor, never the only door. */
+    private fun hasUninstallAffordance(node: AccessibilityNodeInfo?, depth: Int = 0): Boolean {
+        if (node == null || depth > 14) return false
+        val viewId = node.viewIdResourceName?.lowercase() ?: ""
+        if (viewId.contains("uninstall")) return true
+        val className = node.className?.toString() ?: ""
+        if (className.endsWith("Button")) {
+            val label = (node.text?.toString() ?: node.contentDescription?.toString() ?: "")
+                .trim().lowercase()
+            if (label == "uninstall") return true
+        }
+        for (i in 0 until node.childCount) {
+            if (hasUninstallAffordance(node.getChild(i), depth + 1)) return true
+        }
+        return false
+    }
+
+    /** One synthetic snapshot of the window already on screen, for
+     *  the collector's catch-up scan when the session gate opens. */
+    private fun enqueueCurrentWindowSnapshot() {
+        val rootNode = try { rootInActiveWindow } catch (e: Exception) { noteDetectionFailure("rootInActiveWindow", e); null } ?: return
+        val pkgName = rootNode.packageName?.toString() ?: return
+        if (pkgName == applicationContext.packageName ||
+            pkgName.startsWith("com.android.systemui")
+        ) {
+            return
+        }
+        val snapshot = EventSnapshot(pkgName, captureEventFacts(pkgName), armedSessionId)
+        if (snapshot.facts.tamperSurface) {
+            scope.launch {
+                try {
+                    processEvent(snapshot)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
+            }
+        } else {
+            eventChannel.trySend(snapshot)
+        }
+    }
+
+    private fun detectShortsOrReelsFeed(rootNode: AccessibilityNodeInfo?): Boolean {
+        if (rootNode == null) return false
+        // Strategy A (#131, tightened): known player/viewer View
+        // IDs — and only when a node is actually VISIBLE to the
+        // user. Mere presence anywhere in the tree is proximity,
+        // not watching: the Shorts shelf ID (reel_recycler) is
+        // excluded entirely (see SHORTS_PLAYER_VIEW_IDS), and a
+        // player surface instantiated off-screen no longer fires.
+        for (id in SHORTS_PLAYER_VIEW_IDS) {
+            val nodes = try { rootNode.findAccessibilityNodeInfosByViewId(id) } catch (e: Exception) { noteDetectionFailure("findByViewId", e); null }
+            if (nodes?.any { it.isVisibleToUser } == true) return true
+        }
+        // Strategy B (#131, tightened): a selected Shorts/Reels
+        // tab counts only in the bottom-navigation region — the
+        // main apps open their feed the moment that tab is
+        // selected, so there selection IS watching. A selected
+        // 'Shorts' channel tab or search chip sits far above the
+        // nav bar and is mere browsing; it must not fire.
+        val rootRect = Rect()
+        try { rootNode.getBoundsInScreen(rootRect) } catch (_: Exception) { /* no bounds: B cannot prove its case */ }
+        return isSelectedBottomTabShortsOrReels(rootNode, rootRect.height())
+    }
+
+    private fun isSelectedBottomTabShortsOrReels(node: AccessibilityNodeInfo?, rootHeightPx: Int): Boolean {
         if (node == null) return false
         val desc = node.contentDescription?.toString()?.trim()?.lowercase() ?: ""
         val text = node.text?.toString()?.trim()?.lowercase() ?: ""
+        if (node.isSelected && isFeedTabLabel(text, desc)) {
+            val rect = Rect()
+            val hasBounds = try { node.getBoundsInScreen(rect); true } catch (_: Exception) { false }
+            if (hasBounds && isBottomNavBounds(rect.bottom, rootHeightPx)) return true
+        }
+        // Structural fallback (Wave-3 #42): a SELECTED node whose
+        // resource ID names the feed tab. Resource IDs are code
+        // identifiers — they survive locales that translate the
+        // tab's spoken label, which the text match above cannot.
+        // It takes the same bottom-nav bounds gate as the label
+        // leg (#131): a selected channel tab or search chip whose
+        // ID happens to name the feed is browsing, not watching.
+        val viewId = node.viewIdResourceName?.lowercase() ?: ""
         if (node.isSelected && (
-                desc == "shorts" || desc == "reels" ||
-                    text == "shorts" || text == "reels" ||
-                    desc.startsWith("shorts,") || desc.startsWith("reels,")
+                viewId.contains("shorts") || viewId.contains("reels") ||
+                    viewId.contains("clips_tab") || viewId.contains("clips_entry")
             )
         ) {
-            return true
+            val rect = Rect()
+            val hasBounds = try { node.getBoundsInScreen(rect); true } catch (_: Exception) { false }
+            if (hasBounds && isBottomNavBounds(rect.bottom, rootHeightPx)) return true
         }
         for (i in 0 until node.childCount) {
-            if (isSelectedBottomTabShortsOrReels(node.getChild(i))) return true
+            if (isSelectedBottomTabShortsOrReels(node.getChild(i), rootHeightPx)) return true
         }
         return false
     }
@@ -371,35 +964,50 @@ class MonolithAccessibilityService : AccessibilityService() {
             "com.brave.browser",
             "org.mozilla.firefox",
             "com.microsoft.emmx",
-            "com.sec.android.app.sbrowser"
+            "com.sec.android.app.sbrowser",
+            "com.duckduckgo.mobile.android",
+            "com.vivaldi.browser",
+            "com.opera.browser",
+            "com.opera.browser.beta"
         )
     }
 
     /**
-     * Reads the browser URL bar across Chrome, Brave, Firefox, Edge, and Samsung Internet.
-     * Ignores the URL bar when `node.isFocused == true` so it never falsely triggers while the user is typing.
+     * Captures the browser URL bar's text across Chrome, Brave,
+     * Firefox, Edge, Samsung Internet, DuckDuckGo, Vivaldi and
+     * Opera (Wave-3 #42). Bars are found by resource-ID SUFFIX, not
+     * by a full package-qualified ID list: Chromium forks and OEM
+     * skins reuse the same bar IDs under their own package names,
+     * and the old closed list silently read nothing on any browser
+     * it did not name. The focused bar is skipped — never trigger
+     * while the user is actively typing. Runs synchronously on the
+     * event thread; the domain match happens later, in the worker,
+     * against these captured texts.
      */
-    private fun detectBlockedBrowserUrl(rootNode: AccessibilityNodeInfo, domains: List<String>): String? {
-        val urlBarViewIds = listOf(
-            "com.android.chrome:id/url_bar",
-            "com.brave.browser:id/url_bar",
-            "org.mozilla.firefox:id/mozac_browser_toolbar_url_view",
-            "com.microsoft.emmx:id/url_bar",
-            "com.sec.android.app.sbrowser:id/location_bar_edit_text"
-        )
-        for (viewId in urlBarViewIds) {
-            val nodes = try { rootNode.findAccessibilityNodeInfosByViewId(viewId) } catch (_: Exception) { null }
-            if (!nodes.isNullOrEmpty()) {
-                for (node in nodes) {
-                    // Do NOT trigger while the address bar is focused and the user is actively typing
-                    if (node.isFocused) continue
-                    val urlText = node.text?.toString()?.lowercase() ?: continue
-                    val matched = matchBlockedDomain(urlText, domains)
-                    if (matched != null) return matched
-                }
-            }
+    private fun extractBrowserUrlTexts(rootNode: AccessibilityNodeInfo): List<String> {
+        val texts = mutableListOf<String>()
+        collectUrlBarTexts(rootNode, 0, texts)
+        return texts
+    }
+
+    private fun collectUrlBarTexts(
+        node: AccessibilityNodeInfo?,
+        depth: Int,
+        out: MutableList<String>
+    ) {
+        if (node == null || depth > 32 || out.size >= 6) return
+        val viewId = node.viewIdResourceName?.lowercase() ?: ""
+        if (!node.isFocused && (
+                viewId.endsWith(":id/url_bar") ||
+                    viewId.endsWith(":id/location_bar_edit_text") ||
+                    viewId.endsWith(":id/mozac_browser_toolbar_url_view")
+                )
+        ) {
+            node.text?.toString()?.lowercase()?.takeIf { it.isNotBlank() }?.let { out.add(it) }
         }
-        return null
+        for (i in 0 until node.childCount) {
+            collectUrlBarTexts(node.getChild(i), depth + 1, out)
+        }
     }
 
     private fun collectWindowTextLowercase(node: AccessibilityNodeInfo?, depth: Int = 0): String {
@@ -425,6 +1033,10 @@ class MonolithAccessibilityService : AccessibilityService() {
             putExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME, appName)
             putExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE, reasonBadge)
             putExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH, path.name)
+            putExtra(
+                MonolithShieldService.EXTRA_INTERCEPT_NONCE,
+                InterceptNonce.mint(applicationContext)
+            )
         }
         startActivity(interceptIntent)
     }

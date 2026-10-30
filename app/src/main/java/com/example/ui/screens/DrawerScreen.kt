@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.HorizontalDivider
@@ -21,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -43,7 +45,10 @@ import com.example.data.DayWordStore
 import com.example.data.DrawerDay
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
+import com.example.data.ForgeStat
 import com.example.data.KineticArtifact
+import com.example.data.PARTIAL_STAMP_ARTIFACT
+import com.example.data.PARTIAL_STAMP_ID
 import com.example.data.SessionOutcome
 import com.example.data.StoredMonth
 import com.example.ui.theme.AnonymousProFamily
@@ -69,6 +74,17 @@ import java.util.Locale
  * Days file by the 03:30 rule (DrawerDay); row finish times print
  * true clock. A declared day word (REST / ILL / FAMILY) prints
  * beside its date heading as his authored word — never a number.
+ *
+ * SPENT is a task's LIFETIME total (Issue #110, finding 2): the
+ * stored row carries one accrual scalar and no per-session or
+ * per-day segments — accrual segments were never written (the
+ * startedAtSessionElapsedSec column landed unwritten), so no
+ * truthful per-day split can be computed from stored data. The
+ * shelves file a task under its FINISH day and every SPENT print
+ * says IN TOTAL / TOTAL, so the shelf never claims the finish
+ * day contained time that was actually spread over earlier days.
+ * A real per-day split needs segment storage — a new table and
+ * migration, owned by the schema train, not this screen.
  */
 
 private enum class DrawerView { LANDING, INDEX, MONTH, CABINET }
@@ -108,6 +124,14 @@ private fun buildDayGroups(
     }
 }
 
+/** #158 F2: does [query] name the declared day [word]? Same rule
+ *  as the repository's: the trimmed, upper-cased query equals the
+ *  word or is a prefix of it ("IL" names ILL). */
+private fun dayWordMatchesQuery(word: String, query: String): Boolean {
+    val q = query.trim().uppercase(Locale.US)
+    return q.isNotEmpty() && (word == q || word.startsWith(q))
+}
+
 private fun headingLabel(date: LocalDate, withYear: Boolean): String {
     val pattern = if (withYear) "EEE d MMM yyyy" else "EEE d MMM"
     return DateTimeFormatter.ofPattern(pattern, Locale.US).format(date).uppercase(Locale.US)
@@ -141,6 +165,12 @@ fun DrawerScreen(
     drawerQuery: String,
     drawerResults: List<FocusTaskEntity>,
     drawerSearchHasEarlier: Boolean,
+    // #158 F2: the ViewModel's word-aware search state — every
+    // date carrying a word the query names (word-only days
+    // included), merged with the words of the task-hit dates.
+    // Defaults empty so a caller without it still gets the
+    // dayWords-derived search rendering below.
+    drawerSearchDayWords: Map<String, String> = emptyMap(),
     dayWords: Map<String, String>,
     isSealed: Boolean,
     isDarkTheme: Boolean = false,
@@ -164,10 +194,20 @@ fun DrawerScreen(
     // Audit R3b #145: forge provenance per artifact — the sessions
     // that forged it (date, intention, outcome ride the row), so
     // the cabinet can count duplicates and name their spans.
-    curioForgeRecords: Map<String, List<FocusSessionEntity>> = emptyMap()
+    curioForgeRecords: Map<String, List<FocusSessionEntity>> = emptyMap(),
+    // Issue #110, finding 5: the forge record per artifact — count
+    // of forging sessions + most recent forge instant, derived by
+    // the repository from stored session rows. The cabinet detail
+    // prints it, so a forged artifact names real days instead of
+    // only standing there. The Partial Stamp row joins the list
+    // whenever a session actually carries the stamp.
+    forgeStats: Map<String, ForgeStat> = emptyMap()
 ) {
     val scheme = MaterialTheme.colorScheme
     var view by remember { mutableStateOf(DrawerView.LANDING) }
+    // #158 F3: the surface the MONTH view was entered from, so its
+    // BACK returns there — never a silent month reload.
+    var monthEnteredFrom by remember { mutableStateOf(DrawerView.LANDING) }
     var selectedTask by remember { mutableStateOf<FocusTaskEntity?>(null) }
     var cabinetArtifact by remember { mutableStateOf<KineticArtifact?>(null) }
 
@@ -189,6 +229,83 @@ fun DrawerScreen(
     val currentYearMonth = DrawerDay.filingYearMonth(nowMillis)
     val searching = drawerQuery.isNotBlank()
     val globallyEmpty = storedMonths.isEmpty() && dayWords.isEmpty()
+
+    // #158 F2: the words the search rendering stands on, derived
+    // from the REAL dayWords map — never emptyMap(), never the
+    // whole map either: the whole map would file every declared
+    // day under every query, a print that isn't true. A search
+    // day keeps its word when (a) a task hit files under it, or
+    // (b) its word is the word the query names (the ViewModel's
+    // word-aware state, drawerSearchDayWords, carries exactly
+    // those dates, word-only ones included). Union of the three
+    // sources — all read the same declared words.
+    val effectiveSearchDayWords = remember(drawerQuery, drawerResults, dayWords, drawerSearchDayWords) {
+        val resultIsos = drawerResults.mapTo(HashSet()) {
+            DrawerDay.dateIso(DrawerDay.filingDate(it.completedAtMillis))
+        }
+        dayWords.filterKeys { it in resultIsos } +
+            dayWords.filterValues { dayWordMatchesQuery(it, drawerQuery) } +
+            drawerSearchDayWords
+    }
+
+    // #158 F5(ii): every regrouping memoised on exactly the
+    // inputs its call site builds from — recomposition no longer
+    // re-groups the whole accumulated list from scratch.
+    val searchGroups = remember(drawerResults, effectiveSearchDayWords, today) {
+        buildDayGroups(
+            rows = drawerResults,
+            dayWords = effectiveSearchDayWords,
+            scopeMonth = null,
+            includeTodayGroup = false,
+            today = today
+        )
+    }
+    val monthGroups = remember(drawerRows, dayWords, drawerMonth, isSealed, today, currentYearMonth) {
+        buildDayGroups(
+            rows = drawerRows,
+            dayWords = dayWords,
+            scopeMonth = drawerMonth,
+            includeTodayGroup = !isSealed && drawerMonth == currentYearMonth,
+            today = today
+        )
+    }
+    val landingGroups = remember(drawerRows, dayWords, currentYearMonth, isSealed, today) {
+        buildDayGroups(
+            rows = drawerRows,
+            dayWords = dayWords,
+            scopeMonth = currentYearMonth,
+            includeTodayGroup = !isSealed,
+            today = today
+        )
+    }
+
+    // #158 F5(i): scroll state for the list views + the auto-load
+    // trigger — when the last visible item approaches the end and
+    // an earlier page exists, fetch it; the EARLIER row stays as
+    // the manual fallback. The row/size keys re-arm the effect
+    // after each landed page, so a still-near-end list keeps
+    // paging until hasEarlier runs out. loadEarlierDrawer's own
+    // month guard keeps a stale trigger from appending a
+    // previous month's page.
+    val listState = rememberLazyListState()
+    val nearListEnd by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            info.totalItemsCount > 0 && lastVisible >= info.totalItemsCount - 3
+        }
+    }
+    LaunchedEffect(
+        nearListEnd, searching, drawerHasEarlier, drawerSearchHasEarlier,
+        drawerRows, drawerResults
+    ) {
+        if (!nearListEnd) return@LaunchedEffect
+        if (searching) {
+            if (drawerSearchHasEarlier) onLoadEarlierSearch()
+        } else if (drawerHasEarlier) {
+            onLoadEarlier()
+        }
+    }
 
     // ------------------------------------------------------------------
     // DETAIL — one stored task, read-only. BACK is the only action.
@@ -283,10 +400,14 @@ fun DrawerScreen(
                         )
                     }
                     Text(
-                        text = "SPENT ${spentLabel(detail.actualSecondsSpent)}",
+                        // Issue #110, finding 2: SPENT IN TOTAL —
+                        // the lifetime accrual, filed under the
+                        // finish day; never that day's own time.
+                        text = "SPENT IN TOTAL ${spentLabel(detail.actualSecondsSpent)}",
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 13.sp,
-                        color = scheme.onBackground
+                        color = scheme.onBackground,
+                        modifier = Modifier.testTag("drawer_detail_spent")
                     )
                 }
             }
@@ -377,8 +498,20 @@ fun DrawerScreen(
                 }
             }
             if (artifact == null) {
-                items(artifacts, key = { "cabinet-${it.id}" }) { item ->
+                // Issue #110, finding 5: the Partial Stamp joins
+                // the cabinet's list only when a real session
+                // carries it — an honest row for a real record,
+                // never a seventh curio on offer.
+                val cabinetArtifacts = if (
+                    PARTIAL_STAMP_ID in forgedArtifactIds || forgeStats.containsKey(PARTIAL_STAMP_ID)
+                ) {
+                    artifacts + PARTIAL_STAMP_ARTIFACT
+                } else {
+                    artifacts
+                }
+                items(cabinetArtifacts, key = { "cabinet-${it.id}" }) { item ->
                     val forged = item.id in forgedArtifactIds
+                    val stat = forgeStats[item.id]
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -401,7 +534,13 @@ fun DrawerScreen(
                             )
                             if (forged) {
                                 Text(
-                                    text = "FORGED",
+                                    // The stamp is STAMPED, never
+                                    // FORGED; a repeat forge counts.
+                                    text = when {
+                                        item.id == PARTIAL_STAMP_ID -> "STAMPED"
+                                        stat != null && stat.count > 1 -> "FORGED ×${stat.count}"
+                                        else -> "FORGED"
+                                    },
                                     fontFamily = AnonymousProFamily,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 10.5.sp,
@@ -517,10 +656,15 @@ fun DrawerScreen(
                         // rule prints once, on the cabinet's list
                         // (below), not as a per-artifact price.
                         Text(
-                            text = if (artifact.id in forgedArtifactIds) {
-                                "FORGED — IT STANDS IN THE CABINET"
-                            } else {
-                                "NOT YET FORGED"
+                            text = when {
+                                artifact.id == PARTIAL_STAMP_ID &&
+                                    artifact.id in forgedArtifactIds ->
+                                    "STAMPED — IT STANDS IN THE CABINET"
+                                artifact.id == PARTIAL_STAMP_ID ->
+                                    "NOT YET STAMPED"
+                                artifact.id in forgedArtifactIds ->
+                                    "FORGED — IT STANDS IN THE CABINET"
+                                else -> "NOT YET FORGED"
                             },
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
@@ -528,39 +672,55 @@ fun DrawerScreen(
                             letterSpacing = 1.sp,
                             color = scheme.onBackground
                         )
-                        // Audit R3b #145: provenance — every forge
-                        // of this artifact, counted and dated, with
-                        // the span's intention and its outcome. A
-                        // duplicate forge is a second line, never a
-                        // silent no-op; a shield-gap forge says so.
-                        val forgeRecords = curioForgeRecords[artifact.id].orEmpty()
-                        if (forgeRecords.isNotEmpty()) {
+                        // Issue #110, finding 5: the forge record —
+                        // how many sessions forged (or stamped) it,
+                        // and the most recent one's date, from the
+                        // stored session rows. A cabinet that names
+                        // real days is a record; one that doesn't
+                        // was decoration.
+                        val detailStat = forgeStats[artifact.id]
+                        if (detailStat != null && detailStat.count > 0) {
+                            val lastDate = java.time.Instant
+                                .ofEpochMilli(detailStat.lastForgedAtMillis)
+                                .atZone(java.time.ZoneId.systemDefault())
+                                .toLocalDate()
                             Text(
-                                text = "FORGED ×${forgeRecords.size}",
+                                text = if (artifact.id == PARTIAL_STAMP_ID) {
+                                    "STAMPED ×${detailStat.count} · LAST ${headingLabel(lastDate, withYear = true)}"
+                                } else {
+                                    "FORGED ×${detailStat.count} · LAST ${headingLabel(lastDate, withYear = true)}"
+                                },
                                 fontFamily = AnonymousProFamily,
-                                fontWeight = FontWeight.Bold,
                                 fontSize = 11.sp,
                                 letterSpacing = 1.sp,
-                                color = scheme.onBackground
+                                color = scheme.onSurfaceVariant,
+                                modifier = Modifier.testTag("cabinet_forge_record_${artifact.id}")
                             )
-                            forgeRecords.forEach { record ->
-                                val forgeDay = java.text.SimpleDateFormat(
-                                    "d MMM yyyy", Locale.US
-                                ).format(java.util.Date(record.startWallTimeMillis))
-                                val gapMark = if (
-                                    record.outcome == SessionOutcome.ELAPSED_SHIELD_GAP
-                                ) {
-                                    " · SHIELD GAP"
-                                } else {
-                                    ""
-                                }
-                                Text(
-                                    text = "$forgeDay · ${record.intention}$gapMark",
-                                    fontFamily = AnonymousProFamily,
-                                    fontSize = 10.5.sp,
-                                    color = scheme.onSurfaceVariant
-                                )
+                        }
+                        // Audit R3b #145: provenance under the
+                        // summary — every forge of this artifact,
+                        // dated, with the span's intention and its
+                        // outcome. A duplicate forge is a second
+                        // line, never a silent no-op; a shield-gap
+                        // forge says so.
+                        val forgeRecords = curioForgeRecords[artifact.id].orEmpty()
+                        forgeRecords.forEach { record ->
+                            val forgeDay = java.text.SimpleDateFormat(
+                                "d MMM yyyy", Locale.US
+                            ).format(java.util.Date(record.startWallTimeMillis))
+                            val gapMark = if (
+                                record.outcome == SessionOutcome.ELAPSED_SHIELD_GAP
+                            ) {
+                                " · SHIELD GAP"
+                            } else {
+                                ""
                             }
+                            Text(
+                                text = "$forgeDay · ${record.intention}$gapMark",
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 10.5.sp,
+                                color = scheme.onSurfaceVariant
+                            )
                         }
                         // DRW-06: no SELECT verb, no SELECTED
                         // state — the selection was consumed by
@@ -578,6 +738,7 @@ fun DrawerScreen(
     // LIST VIEWS — landing / month index / one month / search results.
     // ------------------------------------------------------------------
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
             .background(scheme.background)
@@ -640,7 +801,10 @@ fun DrawerScreen(
 
         if (searching) {
             // ---------- SEARCH RESULTS (all years, paged) ----------
-            if (drawerResults.isEmpty()) {
+            // The empty line prints only when NEITHER a task nor a
+            // named day word matched (#158 F2): a word match alone
+            // yields groups (possibly row-less, word-only days).
+            if (searchGroups.isEmpty()) {
                 item {
                     Text(
                         text = "NOTHING STORED UNDER “$drawerQuery”",
@@ -651,23 +815,15 @@ fun DrawerScreen(
                     )
                 }
             } else {
-                val groups = buildDayGroups(
-                    rows = drawerResults,
-                    dayWords = emptyMap(),
-                    scopeMonth = null,
-                    includeTodayGroup = false,
-                    today = today
-                )
-                groups.forEach { group ->
+                searchGroups.forEach { group ->
                     item(key = "search-head-${group.date}") {
-                        Text(
-                            text = headingLabel(group.date, withYear = true),
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 6.dp)
+                        // #158 F2: the real DayHeading, so a found
+                        // day keeps its declared word in search too.
+                        DayHeading(
+                            group = group,
+                            isToday = group.date == today,
+                            isSealed = isSealed,
+                            onDeclareTodayWord = onDeclareTodayWord
                         )
                     }
                     items(group.rows, key = { "search-${it.id}" }) { task ->
@@ -700,6 +856,7 @@ fun DrawerScreen(
                             .fillMaxWidth()
                             .clickable {
                                 onSelectMonth(month.year, month.month)
+                                monthEnteredFrom = DrawerView.INDEX
                                 view = DrawerView.MONTH
                             }
                             .padding(vertical = 10.dp)
@@ -720,6 +877,15 @@ fun DrawerScreen(
 
             DrawerView.MONTH -> {
                 // ---------- ONE MONTH ----------
+                // #158 F3(ii): prev/next walk the months actually
+                // present in storedMonths (newest first): ‹ goes
+                // to the previous (older) stored month, › to the
+                // next (newer) one, both through selectDrawerMonth.
+                val monthPos = storedMonths.indexOfFirst {
+                    it.year == drawerMonth.first && it.month == drawerMonth.second
+                }
+                val olderMonth = if (monthPos >= 0) storedMonths.getOrNull(monthPos + 1) else null
+                val newerMonth = if (monthPos >= 0) storedMonths.getOrNull(monthPos - 1) else null
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -734,28 +900,57 @@ fun DrawerScreen(
                             letterSpacing = 1.sp,
                             color = scheme.onSurfaceVariant
                         )
-                        Text(
-                            text = "BACK",
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = scheme.onBackground,
-                            modifier = Modifier.clickable {
-                                onSelectMonth(currentYearMonth.first, currentYearMonth.second)
-                                view = DrawerView.LANDING
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (olderMonth != null) {
+                                Text(
+                                    text = "‹",
+                                    fontFamily = AtkinsonHyperlegibleFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp,
+                                    color = scheme.onBackground,
+                                    modifier = Modifier
+                                        .clickable { onSelectMonth(olderMonth.year, olderMonth.month) }
+                                        .testTag("drawer_month_prev")
+                                )
                             }
-                        )
+                            if (newerMonth != null) {
+                                Text(
+                                    text = "›",
+                                    fontFamily = AtkinsonHyperlegibleFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp,
+                                    color = scheme.onBackground,
+                                    modifier = Modifier
+                                        .clickable { onSelectMonth(newerMonth.year, newerMonth.month) }
+                                        .testTag("drawer_month_next")
+                                )
+                            }
+                            Text(
+                                text = "BACK",
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = scheme.onBackground,
+                                modifier = Modifier
+                                    .clickable {
+                                        // #158 F3(i): back to the
+                                        // surface entered from, and
+                                        // NOTHING else — no
+                                        // onSelectMonth(current…):
+                                        // going back must not reload
+                                        // the current month or throw
+                                        // away the place being read.
+                                        view = monthEnteredFrom
+                                    }
+                                    .testTag("drawer_month_back")
+                            )
+                        }
                     }
                 }
-                val groups = buildDayGroups(
-                    rows = drawerRows,
-                    dayWords = dayWords,
-                    scopeMonth = drawerMonth,
-                    includeTodayGroup = !isSealed &&
-                        drawerMonth == currentYearMonth,
-                    today = today
-                )
-                groups.forEach { group ->
+                monthGroups.forEach { group ->
                     item(key = "month-head-${group.date}") {
                         DayHeading(
                             group = group,
@@ -851,14 +1046,7 @@ fun DrawerScreen(
                     // The current month, newest first. An empty current
                     // month renders in SILENCE under the ALL MONTHS row —
                     // no absence line greets a month that has barely begun.
-                    val groups = buildDayGroups(
-                        rows = drawerRows,
-                        dayWords = dayWords,
-                        scopeMonth = currentYearMonth,
-                        includeTodayGroup = !isSealed,
-                        today = today
-                    )
-                    groups.forEach { group ->
+                    landingGroups.forEach { group ->
                         item(key = "land-head-${group.date}") {
                             DayHeading(
                                 group = group,
@@ -949,7 +1137,8 @@ private fun DayHeading(
     }
 }
 
-/** One stored row: title, category, finish time, time spent. No
+/** One stored row: title, category, finish time, lifetime total
+ *  spent (printed TOTAL — see the file header, Issue #110). No
  *  estimate, no checkbox, no bar, no rank. */
 @Composable
 private fun StoredRow(task: FocusTaskEntity, onClick: () -> Unit) {
@@ -985,7 +1174,10 @@ private fun StoredRow(task: FocusTaskEntity, onClick: () -> Unit) {
                 color = scheme.onSurfaceVariant
             )
             Text(
-                text = spentLabel(task.actualSecondsSpent),
+                // Issue #110, finding 2: TOTAL — the lifetime
+                // accrual riding under the finish day's shelf,
+                // not time that day contained.
+                text = "TOTAL ${spentLabel(task.actualSecondsSpent)}",
                 fontFamily = AnonymousProFamily,
                 fontSize = 10.5.sp,
                 color = scheme.onSurfaceVariant

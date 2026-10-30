@@ -1,1 +1,2 @@
 /home/hatch/workspace/clone-inspect/builds/truth-3-sound/shots-own
+shots/ is NOT in this repo; every doc citing shots/… (e.g. FINISH-LIST-1.md:4-5) cites evidence outside the repo (Issue #71).
