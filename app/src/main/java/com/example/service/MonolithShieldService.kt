@@ -202,8 +202,13 @@ class MonolithShieldService : Service() {
                 // Issue #99 F1: a package whose peek lease just
                 // expired is evicted on this poll even though its
                 // lastTimeUsed is minutes stale (stay-put user).
+                // Issue #69 F1 (surge fold-in): reads the SAME single
+                // snapshot as the blocked set above — #99 landed after
+                // Prisma's pass with its own second full-table scan;
+                // same rows, same nowMono, so the eviction set is
+                // identical and the iteration keeps one scan total.
                 val expiredPeeks = com.example.data.expiredPeekPackages(
-                    dao.getAllAppsSnapshot(), nowMono
+                    appsSnapshot, nowMono
                 )
                 val foregroundBlockedPkg = repository.queryForegroundBlockedApp(blockedPackages, expiredPeeks)
                 if (foregroundBlockedPkg != null && foregroundBlockedPkg != applicationContext.packageName) {
