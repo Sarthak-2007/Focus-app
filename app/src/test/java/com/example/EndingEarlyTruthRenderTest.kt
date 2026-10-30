@@ -145,8 +145,18 @@ class EndingEarlyTruthRenderTest {
                 )
             }
         }
-        composeRule.onNodeWithTag("valve_refusal_message").assertIsDisplayed()
-        composeRule.onNodeWithText(DisarmChallengeState.REFUSAL_NO_TOKEN).assertIsDisplayed()
+        ShadowLooper.idleMainLooper()
+        // The overlay's modal tap-guards (clickable(enabled = false)
+        // on the Box and the Column) merge descendant semantics, so
+        // the refusal's tag/text are only addressable in the
+        // unmerged tree — same merged-semantics fact the Deck chips
+        // document at the top of this file.
+        composeRule.onNodeWithTag("valve_refusal_message", useUnmergedTree = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText(
+            DisarmChallengeState.REFUSAL_NO_TOKEN,
+            useUnmergedTree = true
+        ).assertIsDisplayed()
     }
 
     @Test
@@ -164,7 +174,12 @@ class EndingEarlyTruthRenderTest {
                 )
             }
         }
-        composeRule.onNodeWithTag("valve_refusal_message").assertIsDisplayed()
-        composeRule.onNodeWithText(DisarmChallengeState.REFUSAL_NO_SESSION).assertIsDisplayed()
+        ShadowLooper.idleMainLooper()
+        composeRule.onNodeWithTag("valve_refusal_message", useUnmergedTree = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText(
+            DisarmChallengeState.REFUSAL_NO_SESSION,
+            useUnmergedTree = true
+        ).assertIsDisplayed()
     }
 }
