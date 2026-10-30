@@ -114,6 +114,36 @@ internal fun expiredPeekPackages(
     .map { it.packageName }
     .toSet()
 
+/**
+ * Issue #90 (complexity F5, classifier extraction): the ending
+ * write's outcome classification in updateSessionProgress, as a
+ * pure function of the row's own facts (Slice E, Nocke §2.3 —
+ * extracted verbatim, unit-tested in SessionOutcomeClassifierTest).
+ * The gap test reads the INCOMING beat: gap ⇔ the latch was ever
+ * set, or the last beat is older than the 10s law (5 missed 2s
+ * beats) measured from the later of the beat and the session's
+ * start. A session that has not completed keeps its standing
+ * outcome; a routine row keeps its standing outcome too — its
+ * judgement is routineOutcome, booked by the finalise funnel.
+ */
+internal fun classifyElapsedOutcome(
+    session: FocusSessionEntity,
+    allBlocksCompleted: Boolean,
+    isRoutineSession: Boolean,
+    nowWallMillis: Long
+): String {
+    if (!allBlocksCompleted) return session.outcome
+    if (isRoutineSession) return session.outcome
+    val beatRef = maxOf(session.shieldLastBeatWallMillis, session.startWallTimeMillis)
+    return if (session.shieldGapSeen ||
+        nowWallMillis - beatRef > MonolithRepository.SHIELD_GAP_THRESHOLD_MILLIS
+    ) {
+        SessionOutcome.ELAPSED_SHIELD_GAP
+    } else {
+        SessionOutcome.ELAPSED_CLEAN
+    }
+}
+
 class MonolithRepository(
     private val context: Context,
     private val dao: MonolithDao
@@ -2185,19 +2215,12 @@ class MonolithRepository(
         // (5 missed 2s beats) measured from the later of the beat
         // and the session's start. Routine rows keep '' — their
         // judgement is routineOutcome, booked by the funnel.
-        val outcomeStamp = if (!allBlocksCompleted) {
-            session.outcome
-        } else if (isRoutineSession) {
-            session.outcome
-        } else {
-            val nowWall = System.currentTimeMillis()
-            val beatRef = maxOf(session.shieldLastBeatWallMillis, session.startWallTimeMillis)
-            if (session.shieldGapSeen || nowWall - beatRef > SHIELD_GAP_THRESHOLD_MILLIS) {
-                SessionOutcome.ELAPSED_SHIELD_GAP
-            } else {
-                SessionOutcome.ELAPSED_CLEAN
-            }
-        }
+        val outcomeStamp = classifyElapsedOutcome(
+            session = session,
+            allBlocksCompleted = allBlocksCompleted,
+            isRoutineSession = isRoutineSession,
+            nowWallMillis = System.currentTimeMillis()
+        )
 
         val updated = session.copy(
             elapsedSeconds = verifiedElapsed.coerceAtMost(effectiveTarget),
