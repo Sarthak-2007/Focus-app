@@ -108,7 +108,11 @@ data class FocusTaskEntity(
     // never on a task. Rows written before the order keep their
     // stored estimate as history, and surfaces print an estimate
     // only where one was actually given (estimatedMinutes > 0).
-    val estimatedMinutes: Int = 25,
+    // Issue #32 F1: the default IS the invariant — 0 = no estimate
+    // was ever given. The old default of 25 fabricated an estimate
+    // on every direct construction / copy() / Room default, which
+    // the >0 surfaces then printed as if the user had given it.
+    val estimatedMinutes: Int = 0,
     val actualSecondsSpent: Int = 0,
     val categoryTag: String = "Study",
     val queueOrder: Int = 0,
@@ -122,8 +126,35 @@ data class FocusTaskEntity(
     // promotion funnel; this build lands the column only.
     val startedAtSessionElapsedSec: Int? = null
 ) {
+    /** Issue #32 F3: true when the stored status string is not a
+     *  real [TaskQueueStatus] — a corrupt row, marked, never
+     *  laundered into a plausible-looking state. */
+    val statusIsCorrupt: Boolean
+        get() = runCatching { TaskQueueStatus.valueOf(status) }.isFailure
+
+    // Issue #32 F3 (as landed): a corrupt status is MARKED via
+    // [statusIsCorrupt] above, and the fallback stays QUEUED —
+    // exactly the pre-audit behaviour. The stronger cure (corrupt
+    // → DEFERRED, inert + visible instead of promotable) changes
+    // what the app DOES with a corrupt row: a garbled task would
+    // stop auto-promoting into the live queue. Per Sarthak's
+    // no-downgrade rule (Oct 30, 04:58 IST) that behaviour change
+    // is NOT landed unilaterally — it is DECISION-NEEDED, options
+    // spelled out in studio/plan/ISSUE-32-WAVE3-REPORT.md.
     val resolvedStatus: TaskQueueStatus
         get() = runCatching { TaskQueueStatus.valueOf(status) }.getOrDefault(TaskQueueStatus.QUEUED)
+
+    /** Issue #32 F2 (write-boundary cure): a copy of this row with
+     *  every numeric field inside its lawful range. Applied at
+     *  construction/write funnels ONLY — Room reads legacy rows
+     *  through the plain constructor, so nothing here can throw on
+     *  or rewrite stored data by itself. */
+    fun sanitized(): FocusTaskEntity = copy(
+        estimatedMinutes = if (estimatedMinutes < 0) 0 else estimatedMinutes,
+        actualSecondsSpent = actualSecondsSpent.coerceAtLeast(0),
+        queueOrder = queueOrder.coerceAtLeast(0),
+        completedAtMillis = completedAtMillis.coerceAtLeast(0L)
+    )
 
     val subSteps: List<TaskSubStep>
         get() = parseSubSteps(notesOrSubsteps)
@@ -225,6 +256,11 @@ enum class AppCategory(val label: String, val code: String) {
     GAMES("Games", "Games"),
     MESSAGING("Messaging", "Chat"),
     BROWSERS("Web & News", "Web"),
+    // Issue #132 (music-during-focus): media players get a real
+    // home in the EXISTING category system — before this, a player
+    // was filed by substring luck (YouTube Music as SHORT_VIDEO,
+    // "…Player" labels as GAMES, Spotify as SHOPPING by accident).
+    MUSIC("Music & Audio", "Music"),
     SHOPPING("Other Apps", "Tools")
 }
 
@@ -242,10 +278,47 @@ data class BlockedAppEntity(
     val lastPeekEndElapsedRealtime: Long = 0L,
     val isSystemDetected: Boolean = false
 ) {
+    /** Issue #32 F3/F4: true when the two stored tier facts
+     *  disagree or the tier string is garbage — corruption is
+     *  marked here, never silently laundered. */
+    val tierIsCorrupt: Boolean
+        get() {
+            val parsed = runCatching { AppBlockTier.valueOf(blockTier) }.getOrNull()
+                ?: return true
+            return isBlocked != (parsed != AppBlockTier.OPEN)
+        }
+
+    // Issue #32 F3/F4 — THE single derivation point for this row's
+    // tier. blockTier is the truth; isBlocked is its derived cache
+    // (isBlocked == tier != OPEN). Resolution order:
+    //  1. a valid blockTier wins, exactly as stored;
+    //  2. a GARBAGE blockTier fails CLOSED to LOCKED when the row
+    //     claims any block (isBlocked) — a corrupt tier must never
+    //     silently become OPEN and defeat the block;
+    //  3. garbage tier + isBlocked=false resolves OPEN (the row
+    //     claims no block; inventing one would lock a user's app
+    //     on a typo) — and [tierIsCorrupt] marks the row.
     val resolvedTier: AppBlockTier
         get() = runCatching { AppBlockTier.valueOf(blockTier) }.getOrElse {
             if (isBlocked) AppBlockTier.LOCKED else AppBlockTier.OPEN
         }
+
+    /** Issue #32 F4: the normalized form of this row — both stored
+     *  facts rewritten from the ONE derivation ([resolvedTier]),
+     *  counts floored at 0. Every write funnel that sets a tier
+     *  routes through here (or writes both fields from one tier
+     *  value), so isBlocked and blockTier cannot diverge after a
+     *  copy() the way they could when each was set independently. */
+    fun normalized(): BlockedAppEntity {
+        val tier = resolvedTier
+        return copy(
+            isBlocked = tier != AppBlockTier.OPEN,
+            blockTier = tier.name,
+            dailyLimitMinutes = dailyLimitMinutes.coerceAtLeast(0),
+            todayUsageMinutes = todayUsageMinutes.coerceAtLeast(0),
+            interceptCount = interceptCount.coerceAtLeast(0)
+        )
+    }
 }
 
 @Entity(tableName = "focus_profiles")
@@ -262,7 +335,22 @@ data class FocusProfileEntity(
     val startMinute: Int,
     val endHour: Int,
     val endMinute: Int
-)
+) {
+    /** Issue #32 F2 (write-boundary cure): hours/minutes inside
+     *  their lawful ranges. endHour may be 24 — the existing
+     *  updateProfileTimeWindow writer uses 24 as its midnight-end
+     *  sentinel (coerceIn(1, 24)), so the range is 0..24, not
+     *  0..23. Applied at write funnels only; Room reads legacy
+     *  rows through the plain constructor, so stored rows can
+     *  never crash or be rewritten by this. */
+    fun sanitized(): FocusProfileEntity = copy(
+        startHour = startHour.coerceIn(0, 23),
+        startMinute = startMinute.coerceIn(0, 59),
+        endHour = endHour.coerceIn(0, 24),
+        endMinute = endMinute.coerceIn(0, 59),
+        defaultMinutes = defaultMinutes.coerceIn(1, 1440)
+    )
+}
 
 @Entity(tableName = "focus_sessions")
 data class FocusSessionEntity(
@@ -379,7 +467,7 @@ data class FocusSessionEntity(
     // Shield service added it: two screens could disagree with the
     // service doing the actual blocking. That lie dies here.
     val effectiveTargetSeconds: Int
-        get() = targetDurationSeconds + penaltySecondsAdded
+        get() = (targetDurationSeconds.coerceAtLeast(0) + penaltySecondsAdded.coerceAtLeast(0))
 
     val remainingSeconds: Int
         get() = (effectiveTargetSeconds - elapsedSeconds).coerceAtLeast(0)
@@ -398,9 +486,48 @@ data class FocusSessionEntity(
     // boundary, so EVERY block's enforced target includes it - the
     // span therefore prices every block at effectiveTargetSeconds,
     // no more and no less.
+    // Issue #32 F2: block counts read through these clamps at
+    // every derivation point, so a legacy row with totalStudyBlocks
+    // = 0 or currentBlockIndex = 999 prices a sane span instead of
+    // a negative/absurd one — coercion at READ, because Room loads
+    // stored rows through the plain constructor and an init{}
+    // require() would crash on exactly those rows.
+    val safeTotalBlocks: Int
+        get() = totalStudyBlocks.coerceIn(1, 64)
+
+    val safeCurrentBlockIndex: Int
+        get() = currentBlockIndex.coerceIn(1, safeTotalBlocks)
+
+    /** Issue #32 F2 (write-boundary cure): durations/counts floored
+     *  and block counts bounded. Sentinels are untouched on
+     *  purpose: heldAppsAtSeal/heldSitesAtSeal keep -1 =
+     *  uncaptured, evidenceMask keeps its bits. Applied at the
+     *  startSession write funnel only. */
+    fun sanitized(): FocusSessionEntity = copy(
+        targetDurationSeconds = targetDurationSeconds.coerceAtLeast(0),
+        elapsedSeconds = elapsedSeconds.coerceAtLeast(0),
+        accumulatedBeforeRebootSeconds = accumulatedBeforeRebootSeconds.coerceAtLeast(0),
+        totalStudyBlocks = totalStudyBlocks.coerceIn(1, 64),
+        currentBlockIndex = currentBlockIndex.coerceIn(1, totalStudyBlocks.coerceIn(1, 64)),
+        safeBreakSecondsRemaining = safeBreakSecondsRemaining.coerceAtLeast(0),
+        breakTakenSeconds = breakTakenSeconds.coerceAtLeast(0),
+        penaltySecondsAdded = penaltySecondsAdded.coerceAtLeast(0),
+        tasksCompletedCount = tasksCompletedCount.coerceAtLeast(0),
+        receiptNumber = receiptNumber.coerceAtLeast(0)
+    )
+
+    // Issue #32 F5: the break length in the span TARGET is the
+    // repository's named constant — the same one spanElapsedSeconds
+    // reads — never the magic 600 that used to sit here. Change
+    // SAFE_BREAK_DURATION_SECONDS and target and elapsed move
+    // together. (The audit's wider claim — that the span should
+    // price StudyModePreset breakMinutes 5/10/15 — does not hold
+    // against current code: Safe Break is a fixed 10-minute
+    // mechanism everywhere it is armed, MonolithRepository.kt's
+    // SAFE_BREAK_DURATION_SECONDS, and presets never arm it.)
     val spanTargetSeconds: Int
-        get() = totalStudyBlocks * effectiveTargetSeconds +
-            (totalStudyBlocks - 1).coerceAtLeast(0) * 600
+        get() = safeTotalBlocks * effectiveTargetSeconds +
+            (safeTotalBlocks - 1).coerceAtLeast(0) * MonolithRepository.SAFE_BREAK_DURATION_SECONDS
 
     // Truth Car 3 (ST-02, Tamm): completed breaks contribute the
     // seconds ACTUALLY taken (breakTakenSeconds, booked at every
@@ -416,14 +543,14 @@ data class FocusSessionEntity(
     val spanElapsedSeconds: Int
         get() {
             return if (isInSafeBreak) {
-                currentBlockIndex * effectiveTargetSeconds +
-                    breakTakenSeconds +
+                safeCurrentBlockIndex * effectiveTargetSeconds +
+                    breakTakenSeconds.coerceAtLeast(0) +
                     (MonolithRepository.SAFE_BREAK_DURATION_SECONDS - safeBreakSecondsRemaining)
                         .coerceAtLeast(0)
             } else {
-                (currentBlockIndex - 1).coerceAtLeast(0) * effectiveTargetSeconds +
-                    breakTakenSeconds +
-                    elapsedSeconds
+                (safeCurrentBlockIndex - 1).coerceAtLeast(0) * effectiveTargetSeconds +
+                    breakTakenSeconds.coerceAtLeast(0) +
+                    elapsedSeconds.coerceAtLeast(0)
             }
         }
 
@@ -568,7 +695,20 @@ data class RoutineEntity(
     // single persistRoutine funnel on every write. 0 = no edit
     // recorded under the new engine.
     val scheduleEditedAtMillis: Long = 0L
-)
+) {
+    /** Issue #32 F2 (write-boundary + derive-point cure): minutes
+     *  wrapped into 0..1439 and the days mask masked to its 7
+     *  lawful bits (bit 0 = Mon … bit 6 = Sun). A stored daysMask
+     *  of -1 used to mean "every day, plus garbage bits"; masked,
+     *  it means exactly every day. Applied at the updateRoutine
+     *  write funnel and inside RoutineSchedule's derivations —
+     *  never in init{}, so Room can always load a legacy row. */
+    fun sanitized(): RoutineEntity = copy(
+        startMinutes = ((startMinutes % 1440) + 1440) % 1440,
+        endMinutes = ((endMinutes % 1440) + 1440) % 1440,
+        daysMask = daysMask and RoutineSchedule.ALL_DAYS
+    )
+}
 
 /** Pure window math for routines. daysMask: bit 0 = Monday … bit 6 = Sunday. */
 object RoutineSchedule {
@@ -577,7 +717,11 @@ object RoutineSchedule {
     const val MON_FRI = 31
 
     fun durationMinutes(routine: RoutineEntity): Int {
-        var d = routine.endMinutes - routine.startMinutes
+        // Issue #32 F2: derivations read the sanitized row (wrapped
+        // minutes, 7-bit mask) — a corrupt stored row prices a sane
+        // window instead of crashing or spanning negative time.
+        val r = routine.sanitized()
+        var d = r.endMinutes - r.startMinutes
         if (d <= 0) d += DAY_MINUTES
         // Routines rebuild: the clamp unifies at 30..1080 with
         // adjustRoutineTime's editor clamp (Sten §1.9) — printed
@@ -600,11 +744,12 @@ object RoutineSchedule {
 
     /** Next window start strictly after [nowMillis]; null if no days selected. */
     fun nextStartMillis(routine: RoutineEntity, nowMillis: Long): Long? {
-        if (routine.daysMask == 0) return null
+        val r = routine.sanitized()
+        if (r.daysMask == 0) return null
         val day = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
         repeat(8) {
-            if (routine.daysMask and (1 shl bitFor(day)) != 0) {
-                val start = atMinutes(day, routine.startMinutes)
+            if (r.daysMask and (1 shl bitFor(day)) != 0) {
+                val start = atMinutes(day, r.startMinutes)
                 if (start > nowMillis) return start
             }
             day.add(java.util.Calendar.DAY_OF_YEAR, 1)
@@ -614,14 +759,15 @@ object RoutineSchedule {
 
     /** End of the window containing [nowMillis], or of the next window if none contains it. */
     fun nextEndMillis(routine: RoutineEntity, nowMillis: Long): Long? {
-        if (routine.daysMask == 0) return null
-        val durMs = durationMinutes(routine) * 60_000L
+        val r = routine.sanitized()
+        if (r.daysMask == 0) return null
+        val durMs = durationMinutes(r) * 60_000L
         val day = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
         // A window that started yesterday may still be running (overnight).
         day.add(java.util.Calendar.DAY_OF_YEAR, -1)
         repeat(9) {
-            if (routine.daysMask and (1 shl bitFor(day)) != 0) {
-                val start = atMinutes(day, routine.startMinutes)
+            if (r.daysMask and (1 shl bitFor(day)) != 0) {
+                val start = atMinutes(day, r.startMinutes)
                 val end = start + durMs
                 if (nowMillis < end && end > nowMillis && start <= nowMillis) return end
                 if (start > nowMillis) return end
@@ -639,13 +785,14 @@ object RoutineSchedule {
      * window end any other way (Sten §1.9).
      */
     fun windowContaining(routine: RoutineEntity, nowMillis: Long): WindowInstance? {
-        if (routine.daysMask == 0) return null
-        val durMs = durationMinutes(routine) * 60_000L
+        val r = routine.sanitized()
+        if (r.daysMask == 0) return null
+        val durMs = durationMinutes(r) * 60_000L
         val day = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
         day.add(java.util.Calendar.DAY_OF_YEAR, -1)
         repeat(2) {
-            if (routine.daysMask and (1 shl bitFor(day)) != 0) {
-                val start = atMinutes(day, routine.startMinutes)
+            if (r.daysMask and (1 shl bitFor(day)) != 0) {
+                val start = atMinutes(day, r.startMinutes)
                 val end = start + durMs
                 if (nowMillis in start until end) {
                     return WindowInstance(
@@ -680,12 +827,13 @@ object RoutineSchedule {
      * scanning backwards is the latest closed window.
      */
     fun latestClosedWindow(routine: RoutineEntity, nowMillis: Long): WindowInstance? {
-        if (routine.daysMask == 0) return null
-        val durMs = durationMinutes(routine) * 60_000L
+        val r = routine.sanitized()
+        if (r.daysMask == 0) return null
+        val durMs = durationMinutes(r) * 60_000L
         val day = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
         repeat(9) {
-            if (routine.daysMask and (1 shl bitFor(day)) != 0) {
-                val start = atMinutes(day, routine.startMinutes)
+            if (r.daysMask and (1 shl bitFor(day)) != 0) {
+                val start = atMinutes(day, r.startMinutes)
                 val end = start + durMs
                 if (end <= nowMillis) {
                     return WindowInstance(
@@ -720,20 +868,21 @@ object RoutineSchedule {
      * silently skips.
      */
     fun isLive(routine: RoutineEntity): Boolean =
-        routine.enabled && routine.daysMask != 0
+        routine.enabled && routine.sanitized().daysMask != 0
 
     /** How many of [routines] are LIVE — Shield's "n ACTIVE" number. */
     fun liveCount(routines: List<RoutineEntity>): Int =
         routines.count { isLive(it) }
 
     fun isActiveNow(routine: RoutineEntity, nowMillis: Long): Boolean {
-        if (!isLive(routine)) return false
-        val durMs = durationMinutes(routine) * 60_000L
+        val r = routine.sanitized()
+        if (!isLive(r)) return false
+        val durMs = durationMinutes(r) * 60_000L
         val day = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
         day.add(java.util.Calendar.DAY_OF_YEAR, -1)
         repeat(2) {
-            if (routine.daysMask and (1 shl bitFor(day)) != 0) {
-                val start = atMinutes(day, routine.startMinutes)
+            if (r.daysMask and (1 shl bitFor(day)) != 0) {
+                val start = atMinutes(day, r.startMinutes)
                 if (nowMillis in start until start + durMs) return true
             }
             day.add(java.util.Calendar.DAY_OF_YEAR, 1)

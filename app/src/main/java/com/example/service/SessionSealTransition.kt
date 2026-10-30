@@ -108,7 +108,7 @@ class SessionSealTransitionImpl(
      *  hand out a transition whose engine carries anything but
      *  the fact as it stands at bind time. */
     fun resyncSoundFromPersistedFact() {
-        engine.soundEnabled = SoundEffectsSetting.isEnabled(appContext)
+        engine.resyncSoundEnabledFromFact()
     }
 
     /** Test seam: this transition's engine's sound gate, as bound. */
