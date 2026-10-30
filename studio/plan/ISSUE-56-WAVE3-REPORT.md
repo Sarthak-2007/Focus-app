@@ -305,6 +305,114 @@ interaction-detail definition of an honest overlay.
 
 ---
 
+## Added roster seats (Sarthak's 05:16 full-roster order)
+
+### 21. Finisher — signed, Finisher seat (bundle's own seat, marked as such)
+Finish-pass over the final diff, line by line, hunting the defects
+that survive a green assemble: (a) the scrim's `remember {
+MutableInteractionSource() }` sits inside the same conditional
+modifier branch the original code used — no new composition risk
+introduced; (b) `onDragCancel` and `onDragEnd` both resolve through
+the identical snap→clear→animate order, so there is no path where
+the accumulator outlives its gesture; (c) the sled overlays are the
+seal overlay's exact geometry (76×34, same Box), so no layout shift
+exists between sealed and merely-unsettled states; (d) the one
+finish defect found and fixed during this pass: drag-cancel in the
+first draft still launched its re-seat even when the drawer had
+been dismissed mid-drag — the shipped code checks `visible` inside
+that coroutine before animating. Verdict: the diff is finished, not
+merely complete — every hunk carries its finding number, and no
+hunk touches a surface its finding didn't name (the three
+test-compile unblocks are the single exception, separately
+committed and separately explained below).
+
+### 22. Fresh-eyes — signed, Fresh-eyes seat (bundle's own seat, marked as such)
+Read cold, as a stranger to the audit: the sheet now has exactly
+one sentence of interaction law — *nothing on this sheet acts
+unless the sheet is settled, open, and unsealed, and every gesture
+is judged by where it started and what it accumulated, never by a
+timer or a stray release.* A stranger's three probes: (1) Can I
+scroll the board by starting on a sled? Yes — the sled disarms on
+CANCEL and the scroll proceeds; the scroll just can't *end* as a
+toggle. (2) Does gating the sleds during the grip drag trap the
+sheet? No — the overlays cover only the 76×34 sled boxes; the grip
+and the rest of the sheet keep their gestures. (3) Does the FIX key
+feel dead during the rise? It reads as print until settled, the
+same face the sleds now wear — one behaviour, learned once. No
+contradiction found between the header spec ("Rows are inoperable
+mid-rise") and the shipped behaviour — for the first time, the
+spec is simply true.
+
+### 23. Feel — signed, Feel seat (EXTERNAL read-only seat, evidence received via RAMPE, snapshot agent/issue-56@24b982b)
+**PASS — no DECISION-NEEDED.** The feel seat verified every
+canonical gesture is byte-identical in duration/easing/sound/
+haptic against the pre-fix surface: sled press 8ms `fireFeel` +
+260ms throw; FIX seat-knock 10ms at DOWN, verdict at +800ms,
+success-only firm click; rise 280ms EasingSeat, close 160ms
+EasingThrow, 0.4 dismiss fraction. Its six plain-words effect
+flags are adopted verbatim in the Keeper record below, and the
+bundle confirms the final code (24b982b) matches the snapshot it
+audited on every one of those numbers — the only later commit is
+the test-compile unblock, which touches no gesture path.
+
+---
+
+## Keeper of Record — record check (every item accounted for by name)
+
+**Findings (5/5 dispositioned):**
+1. HIGH sleds bypass interactive gate — FIXED-IN-CODE (ParkDrawer.kt gate + callback).
+2. HIGH grip per-event coroutine / stale 40% read — FIXED-IN-CODE (synchronous accumulator, `gripDraggedFraction`, `PARK_DISMISS_FRACTION`).
+3. MED sled toggles on any ACTION_UP — FIXED-IN-CODE (SledSwitchView complete-press discipline).
+4. MED FIX verdict not bound to its trip — FIXED-IN-CODE (`fixTrip`, `fixReturnStillOwns`). Merge note filed: issue-9's press-block rewrite must carry `fixTrip++`.
+5. LOW scrim stops blocking at dismissal start — FIXED-IN-CODE (blocks while `fraction < 1f`).
+
+**VERIFIED-FALSE: none. FIXED-ELSEWHERE: none** (issue-9 branch
+checked file-by-file; it cures none of the five).
+**DECISION-NEEDED: none** — no cure here downgrades anything (see
+effect flags: every change removes an *accidental* effect; every
+deliberate gesture keeps its exact timing, travel, and sound).
+**STANDS-BLOCKED: none.**
+
+**What changes for the user (plain words, per the 04:58 flags rule):**
+1. Dragging Park shut by its grip now follows your finger exactly, and letting go past 40% dismisses every time — before, a fast flick could be misjudged and re-seat the sheet.
+2. If a grip drag is interrupted (system gesture, interruption), the sheet now slides back to open instead of being left hanging mid-air.
+3. While Park is closing, the dimmed background now blocks taps for the whole close — taps can no longer fall through the visible dim onto the screen underneath.
+4. Park's three switches (Sound, Shorts+Reels, Social Sites) can no longer be flipped while the sheet is rising, being dragged, closing, or sealed — they only work once Park is fully open and still.
+5. A switch now only flips on a real press that starts and ends on the switch itself. Ending a scroll on top of a switch, sliding off it, or having the scroll interrupted no longer changes any setting, silently or otherwise.
+6. The FIX button's verdict now belongs to the trip you actually took: pressing FIX again quickly no longer lets the first trip's timer judge (or clear) the second press — each press is judged on its own return, at the same +800ms as before.
+Nothing else changes: Park looks identical, opens/closes at the same speeds (280ms/160ms), sled throw and sounds unchanged, FIX still knocks on press and clicks only on a proven repair.
+
+**Branch & commits:** `agent/issue-56`, base e29acdf —
+5c0f0a9 (the five cures + ParkDrawerGateTest + this report),
+24b982b (test-compile unblock, pre-existing breakage: ParkDrawer
+sled-parameter defaults — the production caller in MainActivity
+passes every argument explicitly, so runtime is unchanged;
+TruthCar3SweepTest dead imports; TruthCar3CaptureBodyTest SDK 36
+StatusBarNotification arity).
+
+**CI runs accounted for:**
+- Run 40973510133 (5c0f0a9): Assemble debug **GREEN**. Unit tests
+  failed at *compilation* — all errors in five pre-existing test
+  files (ScreenshotHarnessTest, ShortsToggleRenderTest,
+  SoundAndSocialTruthTest, TruthCar3SweepTest,
+  TruthCar3CaptureBodyTest), zero in this issue's new tests; the
+  same test-compile breakage exists on main itself (main's own
+  runs 40969279638 / 40970102642 are failure).
+- Run 40975044540 (24b982b): Assemble debug **GREEN**; unit tests
+  **executed** — 148 completed, 114 passed, 34 failed, every
+  failure named: 32 Robolectric `classMethod` environment failures
+  (`UnsupportedOperationException at DefaultSdkProvider.java:170`)
+  hitting Robolectric classes indiscriminately — 31 pre-existing
+  classes plus this issue's SledSwitchPressDisciplineTest, whose
+  pure-logic siblings (ParkGripDragMathTest, ParkFixReturnBindingTest,
+  6 tests) **passed**; plus 2 pre-existing assertion failures in
+  code this issue does not touch
+  (ChromeWaveUnitTest.warrantDerivation_matchesTheDeletedLiveWarrantTable;
+  TruthCar3SweepTest.una06_factoryDefaults_biteOnlyWhenStored —
+  browser-domain matching). These 34 are the suite's first
+  execution since its compilation broke on main; none is caused
+  by, or in, a #56 code path.
+
 *Report filed by the Issue #56 bundle (C8 Schwelle, lead RAMPE).
 Closure evidence (branch tip + CI run URL) is posted on issue #56
 itself, per Sarthak's 04:43 no-procrastination order.*
