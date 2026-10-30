@@ -1,1 +1,71 @@
-round2 trigger — STURM3-11
+status=aborted rc_merge=1 utc=2026-10-30T11:23:19Z
+== unmerged files ==
+app/src/main/java/com/example/ui/MonolithViewModel.kt
+app/src/main/java/com/example/ui/components/AirlockAndDisarmOverlays.kt
+== conflict segments ==
+--- app/src/main/java/com/example/ui/MonolithViewModel.kt
+3487:<<<<<<< HEAD
+3488-=======
+3489-        // Issue #99 F4 (HAND-MERGE: Konto batch-10 flag on this
+3490-        // function — keep this block minimal): taking the peek takes
+3491-        // you to the app. The lease no longer burns while the user
+3492-        // navigates home and relaunches by hand.
+3493-        runCatching {
+3494-            appContext.packageManager.getLaunchIntentForPackage(pkg)?.let { launch ->
+3495-                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+3496-                appContext.startActivity(launch)
+3497-            }
+3498-        }.onFailure {
+3499-            // Issue #75 F1 wiring: the peek was granted and the
+3500-            // pill armed, but the app launch itself failed —
+3501-            // silently until now.
+3502-            MLog.w("peek launch intent failed for $pkg", it)
+3503-        }
+3504->>>>>>> origin/main
+3505-        _floatingPeekPill.value = FloatingPeekPillState(
+3506-            isActive = true,
+3507-            packageName = pkg,
+3508-            appName = name,
+3509-            secondsRemaining = MonolithRepository.PEEK_DURATION_SECONDS
+3510-        )
+3511-        viewModelScope.launch {
+3512-            repository.startPeekLease(pkg)
+3513-            repository.recordIntercept(
+3514-                packageName = pkg,
+3515-                appName = name,
+3516-                sessionIntention = state.sessionIntention.ifBlank { _intentionText.value },
+3517-                outcome = "Used 2m Peek",
+--- app/src/main/java/com/example/ui/components/AirlockAndDisarmOverlays.kt
+564:<<<<<<< HEAD
+565- * The cooldown's SCOPE, printed beside its price (issue #114,
+566- * finding 3): the cooldown is per app — this app's timer says
+567- * nothing about any other peek app's. Until this line existed the
+568- * scope was discoverable only by rotating to the next app and
+569- * finding a fresh wall there. Pure text; the scope itself is a
+570- * policy Sarthak has not ruled on changing (see the issue-114
+571- * report's DECISION-NEEDED), so the surface's job is to state it,
+572- * never to imply a global lock it does not deliver.
+573- */
+574-internal fun peekCooldownScopeText(): String =
+575-    "THE COOLDOWN IS PER APP — OTHER PEEK APPS KEEP THEIR OWN TIMERS"
+576-
+577-/**
+578- * What waits at the end of the breath, printed DURING the breath
+579- * (issue #114, finding 3): the wall's whole exchange — wait, then
+580- * one tap buys the lease — stated before the countdown reaches
+581- * zero, not revealed by it. [durationSeconds] is the lease's own
+582- * constant, read at the call site, never hardcoded here.
+583- */
+584-internal fun peekOfferPreviewText(durationSeconds: Int): String {
+585-    val minutes = durationSeconds / 60
+586-    return "AFTER THE BREATH: ONE TAP OPENS THIS APP FOR $minutes MINUTES"
+587-}
+588-=======
+589- * Issue #324 (Audit R5, Zario head-to-head): the pause carries a
+590- * SUBSTITUTE, not dead air. Zario feeds its Friction pause a
+591- * micro-challenge pack — do this instead — while Monolith's wall
+592- * offered two verbs and a numeral to wait out. The pack is local
+593- * and fixed (no backend, no download, no tracking of whether it
+594- * was done — the app is a blocker, not a tracker): one-minute
+== resolver rc=1 ==
+report-only stub: no resolution attempted
