@@ -2153,9 +2153,18 @@ class MonolithRepository(
         val remainderSec = ((session.windowEndMillis -
             maxOf(session.windowStartMillis, session.startWallTimeMillis)) / 1000L).coerceAtLeast(0L)
         val yardstickSec = if (lateFire) remainderSec else windowSec
+        // Issue #137, F1c/F5: a window on an excused date (its
+        // filing date carries ILL / REST / FAMILY) can never be
+        // stamped MISSED — the sub-floor arm books UNKNOWN, the
+        // existing "prints nothing, books nothing" judgement, so
+        // the durable row never contradicts the declared word.
+        // Attendance he actually gave still judges ATTENDED /
+        // PARTIAL on its own evidence.
+        val excused = session.windowStartMillis > 0L && isExcusedFilingDate(session.windowStartMillis)
         val outcome = when {
             attended < ATTENDANCE_FLOOR_SECONDS ->
-                if (lateFire) WindowJudgement.LATE_FIRE else WindowJudgement.MISSED
+                if (excused) WindowJudgement.UNKNOWN
+                else if (lateFire) WindowJudgement.LATE_FIRE else WindowJudgement.MISSED
             attended >= yardstickSec - ATTENDANCE_FLOOR_SECONDS -> WindowJudgement.ATTENDED
             else -> WindowJudgement.PARTIAL
         }
@@ -2182,6 +2191,14 @@ class MonolithRepository(
         // #152 residue: witness the end zone at this ending write.
         captureEndZone(session.endWallMillis, nowMillis)
         outcome.name
+    }
+
+    /** Issue #137, F1: true when the filing date of [millis]
+     *  (DrawerDay's 03:30 rule — the date the Drawer files words
+     *  under) carries an excuse word in either word store. */
+    suspend fun isExcusedFilingDate(millis: Long): Boolean {
+        val iso = DrawerDay.dateIso(DrawerDay.filingDate(millis))
+        return DayWordStore.isExcuse(allDayWords()[iso])
     }
 
     /**
