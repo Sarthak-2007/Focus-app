@@ -7,6 +7,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Issues #280 + #319 F2 + #309 F2: exact-alarm grant, asked
+         only when the user first enables a routine (MainActivity) —
+         never a first-run gate. Routine boundaries and the
+         release-retry cadence fire on the minute when the grant is
+         held; ExactAlarm probes the grant and falls back to the
+         inexact arm whenever it is absent (the heartbeat
+         reconciles). -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Declared so MainActivity can fire Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS directly (issue #26) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -37,6 +45,7 @@
          exclude every domain for cloud backup AND device transfer, so
          the sentence stays true even if this flag is ever revisited. -->
     <application
+        android:name=".MonolithApp"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -48,10 +57,11 @@
 
         <activity
             android:name=".MainActivity"
+            android:excludeFromRecents="true"
             android:exported="true"
             android:launchMode="singleTop"
             android:label="@string/app_name"
-            android:theme="@style/Theme.MyApplication">
+            android:theme="@style/Theme.MyApplication.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -59,16 +69,28 @@
         </activity>
 
         <!-- Direct-Boot Aware Foreground Service for active focus session & call-aware usage polling -->
+        <!-- Issue #328 (Audit R5, Zario): stopWithTask=false — a
+             Recents swipe of the Monolith task must not take the
+             shield down with it; the service answers the swipe in
+             onTaskRemoved by re-arming while a session is protected. -->
         <service
             android:name=".service.MonolithShieldService"
             android:directBootAware="true"
             android:enabled="true"
             android:exported="false"
+            android:stopWithTask="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Active app-blocking focus session timer and usage monitor" />
         </service>
+
+        <!-- Issue #308: polls the grant during a permission FIX trip
+             and returns the user to the app the moment it lands. -->
+        <service
+            android:name=".service.PermissionReturnService"
+            android:enabled="true"
+            android:exported="false" />
 
         <!-- Direct-Boot Aware Window, Shorts/Reels Sniper, Settings Blocker & URL Bar Interceptor -->
         <service
@@ -113,17 +135,66 @@
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
             </intent-filter>
+            <!-- Issue #81 F5: a component state change anywhere
+                 (including Monolith's own components via adb /
+                 pm disable) prompts a heartbeat reconcile, whose
+                 pass re-reads the critical components' enabled
+                 states and latches the live session's gap if one
+                 was disabled. The poll in the pass is the proof;
+                 this receiver only shortens the time to notice. -->
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_CHANGED" />
+                <data android:scheme="package" />
+            </intent-filter>
         </receiver>
 
+        <!-- Issue #281 (R5 supplement): directBootAware is kept ONLY on
+             the four components with a real pre-unlock job — the boot
+             receiver and the three services it raises before first
+             unlock so an active session stays sealed across a reboot
+             (MonolithBootReceiver's filed design). The three receivers
+             below have no pre-unlock job (alarm hints for a
+             credential-protected store, a retry hint, admin events)
+             and no longer declare it. -->
         <receiver
             android:name=".service.RoutineAlarmReceiver"
-            android:directBootAware="true"
             android:exported="false" />
+
+        <!-- Issue #155 (F1): the home-screen glance widget. -->
+        <receiver
+            android:name=".widget.MonolithWidgetProvider"
+            android:exported="false"
+            android:label="Monolith">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/monolith_widget_info" />
+        </receiver>
+
+        <!-- Issue #309 F7: package added/removed/replaced/changed —
+             reconcile the app catalogue at install time instead of
+             discovering installs on the next UI-driven sync. These
+             are protected system broadcasts; exported=false still
+             receives them. -->
+        <receiver
+            android:name=".service.MonolithPackageReceiver"
+            android:directBootAware="true"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_ADDED" />
+                <action android:name="android.intent.action.PACKAGE_REMOVED" />
+                <action android:name="android.intent.action.PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.PACKAGE_CHANGED" />
+                <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
 
         <!-- Slice E (Draht): the release-retry cadence's hint. -->
         <receiver
             android:name=".service.ReleaseRetryReceiver"
-            android:directBootAware="true"
             android:exported="false" />
 
         <!-- Device Admin (DeviceAdminReceiver): friction + a warning
@@ -132,7 +203,6 @@
         <receiver
             android:name=".service.MonolithDeviceAdminReceiver"
             android:description="@string/device_admin_description"
-            android:directBootAware="true"
             android:exported="false"
             android:label="@string/device_admin_label"
             android:permission="android.permission.BIND_DEVICE_ADMIN">

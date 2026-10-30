@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.util.Log
+import com.example.MLog
 import android.content.Context
 import android.os.SystemClock
 import android.view.Choreographer
@@ -44,22 +45,22 @@ import kotlinx.coroutines.launch
  *  intercepted on the attempt, never shut in advance, so there
  *  is nothing per-app to confirm (Opal §1 — the per-app link and
  *  the rack's N=loadout died together). */
-enum class ArmLink(val displayName: String) {
+enum class ArmLink(val displayName: String, val plainName: String) {
     /** The session row exists and is the active row: the insert
      *  returned an id AND a snapshot read returns that id with
      *  isActive == true. */
-    SESSION_ROW("SESSION"),
+    SESSION_ROW("SESSION", "THE SESSION"),
 
     /** The shield is a live instance, its foreground start
      *  succeeded, AND its monitor loop completed a first
      *  iteration that read the latched row as active. */
-    SHIELD_PROTECTING("SHIELD"),
+    SHIELD_PROTECTING("SHIELD", "THE SHIELD"),
 
     /** The accessibility service is bound AND has observed this
      *  session as active — its own session gate, which early-
      *  returns when no active session exists, is open for this
      *  row. */
-    A11Y_SESSION_ARMED("ACCESS")
+    A11Y_SESSION_ARMED("ACCESS", "ACCESSIBILITY")
 }
 
 sealed interface LinkMark {
@@ -365,7 +366,9 @@ class ArmProvingController(
                     studyBlocksCount = studyBlocksCount
                 )
                 onSessionRowInserted(attemptId, id)
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                // Issue #75 F1 wiring: the failed insert now speaks.
+                MLog.e("startSession insert failed; L1 stays pending", e)
                 // The insert never returned: L1 stays pending and
                 // the clocks judge it. Annulment with no row is
                 // stopShield + attempt discard only.
@@ -390,7 +393,9 @@ class ArmProvingController(
         // L1's second half: a snapshot read returns the latched
         // id as the active row. The stamp is read on the
         // snapshot's return, per the link's definition.
-        val snapshotId = runCatching { port.activeSnapshotId() }.getOrNull()
+        val snapshotId = runCatching { port.activeSnapshotId() }
+            .onFailure { MLog.w("activeSnapshotId read failed after session insert", it) }
+            .getOrNull()
         if (snapshotId == sessionId) {
             // The snapshot read suspended: the attempt may have
             // been annulled or superseded while it was in flight.
@@ -402,12 +407,68 @@ class ArmProvingController(
             // attempt that died during the read).
             if (attemptId in deadAttempts) {
                 runCatching { port.annulProvingSession(sessionId) }
+                    .onFailure { MLog.e("annul of superseded attempt's session $sessionId failed", it) }
                 return
             }
             if (_phase.value.attemptIdOrNull() != attemptId) return
             applyMark(attemptId, ArmLink.SESSION_ROW, clock())
             flushHeldMarks(attemptId)
             port.onSessionStartedEdge()
+        }
+    }
+
+    /**
+     * Issue #126 F1 — RECOVERY GATE. A born-active row found at
+     * relaunch is re-proven by the seal transition's recover()
+     * (SessionSealTransition), but that machine is not this
+     * phase: without a gate the Deck reads ArmPhase.Idle for the
+     * whole recovery and renders the unproven row as fully
+     * RUNNING — a surface claiming the seal before its verdict,
+     * against this file's own header law. The ViewModel calls
+     * this before recover() for exactly the rows recover() will
+     * actually re-prove (marker absent, row young — recover's
+     * own forks, mirrored so a lawful marker/old-row adoption
+     * never flashes PROVING), and [resolveRecovery] with the
+     * verdict when it lands. While the gate stands the Deck's
+     * existing gate (provingThisSession) renders the row's idle
+     * form and navigation locks, exactly as for a live attempt.
+     */
+    fun beginRecovery(sessionId: Int) {
+        if (_phase.value != ArmPhase.Idle) return
+        _phase.value = ArmPhase.Proving(
+            attemptId = ++attemptSeq,
+            latchMono = clock(),
+            sessionId = sessionId,
+            links = ArmLink.entries.associateWith { LinkMark.Pending },
+            retryCount = 0
+        )
+    }
+
+    /** The recovery verdict lands. SEALED relaxes to Idle (the
+     *  row was re-proven and re-anchored by the transition, or
+     *  adopted on its marker — the Deck then runs it settled,
+     *  no shot replayed). ANNULLED means the transition deleted
+     *  the row itself: this only hands the view back and speaks
+     *  the past-tense sentence, mirroring [annul] without
+     *  touching the port. Any other/null verdict (recover threw,
+     *  or its proving slot was busy) is inconclusive: relax
+     *  silently rather than print a verdict nobody reached. */
+    fun resolveRecovery(sessionId: Int, verdict: com.example.service.SealVerdict?) {
+        val current = _phase.value
+        if (current !is ArmPhase.Proving || current.sessionId != sessionId) return
+        _phase.value = ArmPhase.Idle
+        if (verdict == com.example.service.SealVerdict.ANNULLED) {
+            _annulCount.value += 1
+            val sentence = RefusalSentence(
+                text = "${ArmLink.SESSION_ROW.displayName} — NO PROOF. NOTHING WAS SEALED. ANY BLOCKING FROM THE WAIT IS OFF.",
+                action = null
+            )
+            _armSentence.value = sentence
+            sentenceClearJob?.cancel()
+            sentenceClearJob = scope.launch {
+                delay(SENTENCE_HOLD_MS)
+                if (_armSentence.value === sentence) _armSentence.value = null
+            }
         }
     }
 
@@ -498,7 +559,9 @@ class ArmProvingController(
                 // the link's definition is a state of the world,
                 // not of one read. Held marks flush on its landing.
                 if (current.linksOrNull()?.get(ArmLink.SESSION_ROW) is LinkMark.Pending) {
-                    val snap = runCatching { port.activeSnapshotId() }.getOrNull()
+                    val snap = runCatching { port.activeSnapshotId() }
+                        .onFailure { MLog.d("sampler activeSnapshotId read failed: ${it.message}") }
+                        .getOrNull()
                     if (snap == sessionId) {
                         applyMark(attemptId, ArmLink.SESSION_ROW, clock())
                         flushHeldMarks(attemptId)
@@ -622,7 +685,9 @@ class ArmProvingController(
             if (current.attemptIdOrNull() != attemptId) return@launch
             val sessionId = current.sessionIdOrNull()
             if (sessionId != null && transition.isSealed(sessionId)) {
-                val rowT0 = runCatching { port.sealedRowT0Mono(sessionId) }.getOrNull()
+                val rowT0 = runCatching { port.sealedRowT0Mono(sessionId) }
+                .onFailure { MLog.d("sealedRowT0Mono($sessionId) read failed: ${it.message}") }
+                .getOrNull()
                 _phase.value = ArmPhase.SealedRunning(
                     sessionId = sessionId,
                     t0Mono = rowT0 ?: candidate
@@ -685,7 +750,10 @@ class ArmProvingController(
                     )
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    // Issue #75 F1 wiring: a thrown seal attempt read
+                    // as a plain false — it speaks now.
+                    MLog.e("executeSeal threw for session $sessionId; treating as not sealed", e)
                     false
                 }
                 if (!sealedOk) {
@@ -699,7 +767,9 @@ class ArmProvingController(
                         // invented t0 misstated when the session
                         // actually began whenever the other door
                         // sealed at a different instant).
-                        val rowT0 = runCatching { port.sealedRowT0Mono(sessionId) }.getOrNull()
+                        val rowT0 = runCatching { port.sealedRowT0Mono(sessionId) }
+                .onFailure { MLog.d("sealedRowT0Mono($sessionId) read failed: ${it.message}") }
+                .getOrNull()
                         _phase.value = ArmPhase.SealedRunning(
                             sessionId = sessionId,
                             t0Mono = rowT0 ?: t0
@@ -725,7 +795,7 @@ class ArmProvingController(
         _phase.value = ArmPhase.Idle
         _annulCount.value += 1
         val sentence = RefusalSentence(
-            text = "SESSION-ROW — NO PROOF. NOTHING WAS SEALED.",
+            text = "NOT SEALED — THE SESSION DIDN'T ANSWER.",
             action = null
         )
         _armSentence.value = sentence
@@ -783,11 +853,32 @@ class ArmProvingController(
         _phase.value = ArmPhase.Idle
         _annulCount.value += 1
         val first = unanswering.minByOrNull { it.ordinal } ?: ArmLink.SESSION_ROW
+        // Issue #126 F5: the batch started the shield in the
+        // latch frame, so blocking may genuinely have intercepted
+        // the user during the wait — enforcement the old sentence
+        // ("NOTHING WAS SEALED") left him to discover alone,
+        // against a row that no longer exists. The sentence now
+        // closes that loop truthfully in every annul path: any
+        // blocking the wait ran is off (annul stops the shield
+        // above). Wording is conditional ("ANY") because in the
+        // SESSION_ROW-jammed path no row ever armed the gate.
         val sentence = RefusalSentence(
             text = if (annulFailed) {
                 "ANNUL FAILED — THE ROW MAY STILL STAND. NOTHING WAS PROVED."
             } else {
-                "${first.displayName} — NO PROOF. NOTHING WAS SEALED."
+                // R3b #164 F5: the failed link is named in plain
+                // words and the sentence says what happened, in
+                // the order it happened — no studio code, and no
+                // "NOTHING WAS SEALED" standing against the
+                // screen's own ARM SESSION NOW.
+                // (Merge note, #126 F5: this wording superseded
+                // the branch's "ANY BLOCKING FROM THE WAIT IS OFF"
+                // form when #164 re-ruled the annul sentence on
+                // main; the F5 substance stands — annul stops the
+                // shield above, so any blocking the wait ran is
+                // off, and the recovery path's sentence in
+                // resolveRecovery still says so in words.)
+                "NOT SEALED — ${first.plainName} DIDN'T ANSWER."
             },
             action = null
         )
