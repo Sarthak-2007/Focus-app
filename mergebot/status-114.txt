@@ -1,4 +1,4 @@
-status=aborted rc_merge=1 utc=2026-10-30T11:27:37Z
+status=resolved rc_merge=1 utc=2026-10-30T11:43:02Z
 == unmerged files ==
 app/src/main/java/com/example/ui/MonolithViewModel.kt
 app/src/main/java/com/example/ui/components/AirlockAndDisarmOverlays.kt
@@ -67,5 +67,7 @@ app/src/main/java/com/example/ui/components/AirlockAndDisarmOverlays.kt
 592- * offered two verbs and a numeral to wait out. The pack is local
 593- * and fixed (no backend, no download, no tracking of whether it
 594- * was done — the app is a blocker, not a tracker): one-minute
-== resolver rc=1 ==
-no segments matched in app/src/main/java/com/example/ui/MonolithViewModel.kt
+== resolver rc=0 ==
+resolved app/src/main/java/com/example/ui/MonolithViewModel.kt: 1 segment(s)
+resolved app/src/main/java/com/example/ui/components/AirlockAndDisarmOverlays.kt: 1 segment(s)
+all resolved: ['app/src/main/java/com/example/ui/MonolithViewModel.kt', 'app/src/main/java/com/example/ui/components/AirlockAndDisarmOverlays.kt']
