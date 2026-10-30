@@ -2,7 +2,9 @@ package com.example.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -12,15 +14,19 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -90,6 +96,13 @@ fun ReceiptSheet(
         exit = ExitTransition.None
     ) {
         val scheme = MaterialTheme.colorScheme
+        // Issue #143 (F6): the slip's raised colour cross-fades
+        // with the scheme instead of cutting in one frame.
+        val animatedSlip by animateColorAsState(
+            targetValue = scheme.surfaceBright,
+            animationSpec = tween(durationMillis = 450),
+            label = "receiptSlipNightFade"
+        )
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -108,7 +121,7 @@ fun ReceiptSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(24.dp))
-                    .background(scheme.surfaceBright)
+                    .background(animatedSlip)
                     .border(1.dp, scheme.outlineVariant, RoundedCornerShape(24.dp))
                     .clickable(enabled = false) {}
                     .padding(20.dp)
@@ -179,8 +192,14 @@ fun ReceiptSheet(
                 // nowhere. A zero seals nothing to total:
                 // omitted, never `RAN 0 MIN`.
                 if (receipt.sealedElapsedSeconds > 0) {
+                    // Nachdruck R1 (Finisher 2 §4.3, landed via
+                    // WELLE-6 recovery): the total STRIKES —
+                    // Anonymous Pro Bold. Adapted to main's
+                    // divider-less sheet: no rule is added, only
+                    // the strike the wave-2 line never carried.
                     ReceiptMonoLine(
-                        text = "RAN ${longSpan(receipt.sealedElapsedSeconds)}"
+                        text = "RAN ${longSpan(receipt.sealedElapsedSeconds)}",
+                        bold = true
                     )
                 }
                 receipt.routineLabelWithin?.let { label ->
@@ -207,11 +226,45 @@ fun ReceiptSheet(
                         text = "BREAK BANKED ${longSpan(receipt.bankedBreakSeconds)}"
                     )
                 }
-                receipt.deflections.forEach { d ->
-                    ReceiptMonoLine(
-                        text = "${hhmm(LocalContext.current, d.atWallMillis)} · ${d.appName}",
-                        dim = true
-                    )
+                // Nachdruck R2/R3/R4 (Finisher 3 §2.2/§3/§4,
+                // landed via WELLE-6 recovery, adapted to main's
+                // divider-less sheet): each deflection is a
+                // two-column Row — the time column never wraps;
+                // wrapped name continuations align under the `·`
+                // (a hanging indent, not a padded string). One
+                // ink — the old `dim` second ink dies here, its
+                // last caller. A ≥20-minute silence between two
+                // printed entries earns a labelled QUIET span
+                // rule (ReceiptQuietRule). A site entry prints
+                // its domain verbatim plus the `· SITE` tag.
+                // Listed, never summed — unchanged.
+                receipt.deflections.forEachIndexed { index, d ->
+                    if (index > 0) {
+                        val gapMs = d.atWallMillis -
+                            receipt.deflections[index - 1].atWallMillis
+                        if (gapMs >= QUIET_GAP_MS) {
+                            ReceiptQuietRule(gapSeconds = (gapMs / 1000L).toInt())
+                        }
+                    }
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = hhmm(LocalContext.current, d.atWallMillis),
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onBackground,
+                            softWrap = false
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "· " + d.appName + if (d.isSite) " · SITE" else "",
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onBackground,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
                 if (receipt.shieldWasOff) {
                     Text(
@@ -219,6 +272,11 @@ fun ReceiptSheet(
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
+                        // Nachdruck R1 (Finisher 2 §5.3): the
+                        // statements wrap on 18sp leading, so a
+                        // wrapped statement reads as ONE struck
+                        // statement, never two ledger lines.
+                        lineHeight = 18.sp,
                         color = scheme.onBackground
                     )
                 }
@@ -231,6 +289,9 @@ fun ReceiptSheet(
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
+                        // Nachdruck R1: same 18sp statement
+                        // leading as above.
+                        lineHeight = 18.sp,
                         color = scheme.onBackground
                     )
                 }
@@ -256,19 +317,74 @@ fun ReceiptSheet(
 }
 
 @Composable
-private fun ReceiptMonoLine(text: String, dim: Boolean = false) {
+private fun ReceiptMonoLine(text: String, bold: Boolean = false) {
     val scheme = MaterialTheme.colorScheme
+    // Nachdruck R1 (WELLE-6 recovery): the dead `dim` parameter
+    // is DELETED — it was the second ink; its last caller (the
+    // deflection list) now prints in full ink via the R2 rows.
+    // The signature offers no way to print greyer: one ink,
+    // enforced structurally. `bold` replaces it — its only
+    // caller is the RAN total.
     Text(
         text = text,
         fontFamily = AnonymousProFamily,
+        fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
         fontSize = 11.sp,
         letterSpacing = 1.sp,
-        color = if (dim) scheme.onSurfaceVariant else scheme.onBackground
+        color = scheme.onBackground
     )
 }
 
 private fun hhmm(context: android.content.Context, wallMillis: Long): String =
     ClockText.timeOfDay(context, wallMillis)
+/** Nachdruck R3 (Finisher 3 §3, Emil P5): the silence threshold
+ *  — a gap of ≥20 minutes between two consecutive PRINTED
+ *  deflections earns a QUIET span rule (boundary included,
+ *  pinned by ReceiptNachdruckTest). Gaps measure on the printed
+ *  list only (post-filter, post-dedupe — a row the truth filter
+ *  removes lengthens the silence honestly); never before the
+ *  first entry (ARMED bounds that silence), never after the
+ *  last (ENDED bounds it). */
+private const val QUIET_GAP_MS = 1_200_000L
+
+/** The QUIET span rule: a Row in the list's own 8dp rhythm —
+ *  hairline, 8dp, label in full body ink (never wraps), 8dp,
+ *  hairline. The rule is not an entry: no time, never counted —
+ *  the listed-never-summed acquittal is untouched. Hairlines
+ *  are ruled in outlineVariant — the ink of the sheet's own
+ *  border — per the improver spec's recorded judgment call. */
+@Composable
+private fun ReceiptQuietRule(gapSeconds: Int) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(scheme.outlineVariant)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = "${longSpan(gapSeconds)} QUIET",
+            fontFamily = AnonymousProFamily,
+            fontSize = 11.sp,
+            letterSpacing = 1.sp,
+            color = scheme.onBackground,
+            maxLines = 1
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(scheme.outlineVariant)
+        )
+    }
+}
+
 
 /** The printed day for a wall instant: `TUE 4 NOV`. #88: the day
  *  and month names follow the device locale, like every other

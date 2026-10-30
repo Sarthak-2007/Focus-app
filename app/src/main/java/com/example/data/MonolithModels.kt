@@ -827,6 +827,24 @@ object RoutineSchedule {
         return null
     }
 
+    /**
+     * Audit R5 #306 F2: is this routine ENFORCING at [nowMillis] —
+     * enabled, not paused, and a window contains the instant. While
+     * this holds the routine is forced-on: the editor's off-switch
+     * and current-day removal are refused in MonolithViewModel, the
+     * forced state StayFree's scheduled modes carry (its
+     * focus_mode_forced_* strings exist to refuse the same tap).
+     * A paused routine is NOT enforcing — the pause was already
+     * bought at the pause's own price — so it stays editable, and a
+     * disabled routine enforces nothing by definition.
+     */
+    fun isEnforcingAt(routine: RoutineEntity, nowMillis: Long): Boolean {
+        val r = routine.sanitized()
+        if (!r.enabled) return false
+        if (r.pausedUntilMillis > nowMillis) return false
+        return windowContaining(r, nowMillis) != null
+    }
+
     /** The next window to start strictly after [nowMillis], as an instance. */
     fun nextWindow(routine: RoutineEntity, nowMillis: Long): WindowInstance? {
         val start = nextStartMillis(routine, nowMillis) ?: return null
@@ -838,6 +856,15 @@ object RoutineSchedule {
             driftMinutes = 0
         )
     }
+
+    /** #153 F2/F3 — the pause horizon for "skip today": the end of
+     *  the window containing [nowMillis], or of the next window if
+     *  none contains it. Pausing until this instant forgives exactly
+     *  that one window (judgement J6: a pause-covered window is
+     *  never a miss) and no other day — the weekly mask is untouched. */
+    fun skipWindowEndMillis(routine: RoutineEntity, nowMillis: Long): Long? =
+        windowContaining(routine, nowMillis)?.endMillis
+            ?: nextWindow(routine, nowMillis)?.endMillis
 
     /**
      * The most recent window whose end is at or before [nowMillis],
@@ -868,14 +895,6 @@ object RoutineSchedule {
         return null
     }
 
-    /**
-     * Pause-aware next start (Sten §1.9): the scheduler and the
-     * ribbon read this one helper so they can never disagree. The
-     * origin is `max(now, pausedUntilMillis)` — a paused routine's
-     * next start is computed from the pause's end.
-     */
-    fun effectiveNextStartMillis(routine: RoutineEntity, nowMillis: Long): Long? =
-        nextStartMillis(routine, maxOf(nowMillis, routine.pausedUntilMillis))
 
     /**
      * LIVE (UNA-09, Truth Car 3): a routine the scheduler will ever
@@ -893,21 +912,6 @@ object RoutineSchedule {
     fun liveCount(routines: List<RoutineEntity>): Int =
         routines.count { isLive(it) }
 
-    fun isActiveNow(routine: RoutineEntity, nowMillis: Long): Boolean {
-        val r = routine.sanitized()
-        if (!isLive(r)) return false
-        val durMs = durationMinutes(r) * 60_000L
-        val day = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
-        day.add(java.util.Calendar.DAY_OF_YEAR, -1)
-        repeat(2) {
-            if (r.daysMask and (1 shl bitFor(day)) != 0) {
-                val start = atMinutes(day, r.startMinutes)
-                if (nowMillis in start until start + durMs) return true
-            }
-            day.add(java.util.Calendar.DAY_OF_YEAR, 1)
-        }
-        return false
-    }
 }
 
 /** Single-row guard settings the accessibility service must honour (Ren). */

@@ -124,15 +124,96 @@ fun finishPulses(kind: String, row: FocusSessionEntity): Boolean = when (kind) {
     else -> false
 }
 
+/**
+ * The intercept log's outcome vocabulary, enumerated from EVERY
+ * writer in the tree (receipt audit item 11 / issue #10 A4,
+ * ported by WELLE-6 from e39ae62 — the one e39ae62 code cure
+ * current main had not absorbed by another route). The column
+ * is free text at the writers; these are all the values that
+ * exist:
+ *
+ * - [BLOCKED] — the harness/test spelling of a plain block
+ *   ("Blocked" / "BLOCKED" in the test suites; matched
+ *   case-insensitively).
+ * - [STAYED_FOCUSED] — MonolithViewModel.transmuteImpulseAndReturn:
+ *   the airlock turned him away and he returned to the work.
+ * - [SPLIT_INTO_MICRO_STEP] — MonolithViewModel
+ *   .splitActiveTaskAndReturn: intercepted, never let in; he
+ *   split the task instead.
+ * - [USED_PEEK] — MonolithViewModel's peek grant: he was LET IN
+ *   on a 2-minute lease. NOT a block, and the one value this
+ *   enumeration exists to keep off the slip.
+ *
+ * (The repository's disarm path also writes intercept rows with
+ * the disarm reason as outcome, but always under the system
+ * package — assembly's system-row exclusion already keeps them
+ * off the slip. A newer writer, "Left Airlock Without
+ * Choosing", is deliberately NOT in the allowlist: no choice
+ * was recorded, so the slip cannot back it as a block — it
+ * stays off until a ruling classifies it.)
+ */
+object InterceptOutcome {
+    const val BLOCKED = "Blocked"
+    const val STAYED_FOCUSED = "Stayed Focused"
+    const val SPLIT_INTO_MICRO_STEP = "Split Into 10m Micro-Step"
+    const val USED_PEEK = "Used 2m Peek"
+
+    /** The outcomes that were truly turned away. Anything else —
+     *  a peek grant, or a value no writer above produces — is
+     *  NOT a deflection: the slip prints only what it can back,
+     *  so the filter is an allowlist, never a denylist. */
+    val BLOCKED_OUTCOMES: Set<String> = setOf(BLOCKED, STAYED_FOCUSED, SPLIT_INTO_MICRO_STEP)
+}
+
+/** True iff this intercept row's outcome was a block (see
+ *  [InterceptOutcome]). Case-insensitive: the writers' spelling
+ *  and the test suites' spelling differ in case only. */
+fun isBlockedInterceptOutcome(outcome: String): Boolean =
+    InterceptOutcome.BLOCKED_OUTCOMES.any { it.equals(outcome.trim(), ignoreCase = true) }
+
+
+/** One row of the Vault's receipts index (issue #157): the facts
+ *  a claimed session's own row proves, nothing more — its №, its
+ *  session id, the instant it ended, its outcome word, and the
+ *  two warning facts the row itself carries (the release-fault
+ *  stamp and the shield-gap outcome). The slip is NOT stored; a
+ *  tap on this row re-derives it via the repository. */
+data class ReceiptIndexEntry(
+    val sessionId: Int,
+    val number: Int,
+    val endedAtWallMs: Long,
+    val outcomeWord: String,
+    val releaseFaultShield: Boolean,
+    val shieldWasOff: Boolean
+) {
+    /** The printed №, the slip's own voice: zero-padded to a
+     *  minimum of 3, never truncated. */
+    val numberPrint: String get() = "№ " + number.toString().padStart(3, '0')
+}
+
 /** One deflection on the slip: a blocked attempt the machine
  *  turned away during the session, reduced at assembly (window
  *  ∩ intention match ∩ 30s-per-package dedupe, first kept).
  *  There is deliberately NO total/count field anywhere in this
- *  contract (Zettel): the slip lists; it never sums. */
+ *  contract (Zettel): the slip lists; it never sums.
+ *
+ *  [isSite] (Nachdruck R4, Finisher 3 §4): true when the reach
+ *  was a SITE — the row's appName is the matched domain, stamped
+ *  by the enforcer, not an app label. Derived at assembly by
+ *  exact match against the blocked-site list (no DB change), so
+ *  rehydrated slips — which re-run assembly — print identically
+ *  to fresh ones. The default keeps every existing constructor
+ *  (test fixtures, harness frames) valid. Named edge (Finisher
+ *  3 §4.1, accepted there): if a domain is removed from the site
+ *  list between the session and a later rehydration, that row's
+ *  match fails and it prints as an app entry; the cure (a
+ *  persisted kind stamp on the intercept row) is a DB change
+ *  and stays Zettel/Ren's call. */
 data class ReceiptDeflection(
     val appName: String,
     val packageName: String,
-    val atWallMillis: Long
+    val atWallMillis: Long,
+    val isSite: Boolean = false
 )
 
 /** The facts gathered at E0 for a publish, before the claim

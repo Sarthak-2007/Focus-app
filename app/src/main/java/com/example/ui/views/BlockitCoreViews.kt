@@ -9,6 +9,8 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Build
+import android.os.Parcel
+import android.os.Parcelable
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -49,7 +51,10 @@ import kotlin.math.sqrt
  * ============================================================================
  * - Every colour resolves strictly to the 19 tokens (Light & Night).
  * - Only ONE saturated accent exists: colorPrimaryContainer (#F55314 / #F47442).
- * - Words render in Google Sans / PlusJakartaSans; EVERY number renders in Space Mono / JetBrainsMono.
+ * - Words render in Atkinson Hyperlegible; EVERY number renders in Anonymous Pro
+ *   (Sarthak's standing font picks, Oct 18 2026 — the same pairing Type.kt
+ *   registers for Compose; an older comment here promised Google Sans /
+ *   Space Mono fonts the app never shipped — corrected, issue #282).
  * - Only two corner radii exist app-wide: 12dp (small) and 24dp (large), with 12dp universal gap.
  * - Pre-allocated final Paint, final RectF, final Path fields — zero allocation in onDraw().
  * - Every animation uses Curve A, B, C or OvershootInterpolator and durations {180, 260, 280, 420, 520}ms.
@@ -156,17 +161,14 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
         }
         return (0xFF shl 24) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
     }
-    protected fun tokOnAccent(): Int = if (isNightMode) NIGHT_ON_PRIMARY_CONTAINER else LIGHT_ON_PRIMARY_CONTAINER
     protected fun tokSecondaryContainer(): Int = if (isNightMode) NIGHT_SECONDARY_CONTAINER else LIGHT_SECONDARY_CONTAINER
     protected fun tokOnSecondaryContainer(): Int = if (isNightMode) NIGHT_ON_SECONDARY_CONTAINER else LIGHT_ON_SECONDARY_CONTAINER
     protected fun tokOnSurface(): Int = if (isNightMode) NIGHT_ON_SURFACE else LIGHT_ON_SURFACE
     protected fun tokOnSurfaceVariant(): Int = if (isNightMode) NIGHT_ON_SURFACE_VARIANT else LIGHT_ON_SURFACE_VARIANT
-    protected fun tokOutline(): Int = if (isNightMode) NIGHT_OUTLINE else LIGHT_OUTLINE
     protected fun tokHairline(): Int = if (isNightMode) NIGHT_OUTLINE_VARIANT else LIGHT_OUTLINE_VARIANT
     protected fun tokBlockBar(): Int = if (isNightMode) NIGHT_BLOCK_BAR else LIGHT_BLOCK_BAR
     protected fun tokTextPrimary(): Int = if (isNightMode) NIGHT_TEXT_PRIMARY else LIGHT_TEXT_PRIMARY
     protected fun tokTextSecondary(): Int = if (isNightMode) NIGHT_TEXT_SECONDARY else LIGHT_TEXT_SECONDARY
-    protected fun tokAlert(): Int = if (isNightMode) NIGHT_ALERT else LIGHT_ALERT
 
     /**
      * #88: the bundled faces carry zero Devanagari and zero Arabic
@@ -191,7 +193,7 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
         }.getOrDefault(base)
     }
 
-    // Pre-allocated Typefaces (§2: Words = Sans, Numbers = Space Mono / JetBrainsMono)
+    // Pre-allocated Typefaces (§2: Words = Atkinson Hyperlegible, Numbers = Anonymous Pro)
     protected val wordTypefaceBold: Typeface by lazy {
         // The REAL Bold file (Round 0b fix) — Typeface.create(base, BOLD) on
         // the Regular file was synthesized smear across every Canvas view.
@@ -300,7 +302,7 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
     }
 
     /**
-     * Draws a mixed label where words use Google Sans and quantities use Space Mono (§2).
+     * Draws a mixed label where words use Atkinson Hyperlegible and quantities use Anonymous Pro (§2).
      */
     protected fun drawMixedWordAndMono(
         canvas: Canvas,
@@ -342,44 +344,6 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
         }
     }
 
-    private val dotDigitMasks = intArrayOf(
-        0b111_101_101_101_111, // 0
-        0b010_110_010_010_111, // 1
-        0b111_001_111_100_111, // 2
-        0b111_001_111_001_111, // 3
-        0b101_101_111_001_001, // 4
-        0b111_100_111_001_111, // 5
-        0b111_100_111_101_111, // 6
-        0b111_001_001_001_001, // 7
-        0b111_101_111_101_111, // 8
-        0b111_101_111_001_111  // 9
-    )
-
-    /**
-     * Draws a 3x5 dot-matrix digit on the 4dp grid (§2 & §4.2 #8 TileNumberView).
-     */
-    protected fun drawDotMatrixDigit(
-        canvas: Canvas,
-        digit: Int,
-        left: Float,
-        top: Float,
-        tilePx: Float,
-        gapPx: Float,
-        onColor: Int,
-        offColor: Int
-    ) {
-        val mask = dotDigitMasks[digit.coerceIn(0, 9)]
-        val step = tilePx + gapPx
-        for (row in 0 until 5) {
-            for (col in 0 until 3) {
-                val bit = 1 shl (14 - (row * 3 + col))
-                paintFill.color = if ((mask and bit) != 0) onColor else offColor
-                val cx = left + col * step
-                val cy = top + row * step
-                canvas.drawRect(cx, cy, cx + tilePx, cy + tilePx, paintFill)
-            }
-        }
-    }
 }
 
 /**
@@ -457,6 +421,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
             val clamped = value.coerceIn(5, 180)
             if (field != clamped) {
                 field = clamped
+                refreshAccessibilityLabel()
                 if (!isDragging && !inPhysics) {
                     wheelAngleDeg = minutesToAngle(clamped)
                 }
@@ -468,6 +433,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         set(value) {
             if (field != value) {
                 field = value.coerceIn(1, 8)
+                refreshAccessibilityLabel()
                 // Tetrad closure (Vega): landing on 4 or 8 joins four
                 // wells into one bar; the bar lands at 88% ink and
                 // settles to full over 160ms - the one place the hub
@@ -492,6 +458,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         set(value) {
             if (field != value) {
                 field = value
+                refreshAccessibilityLabel()
                 if (value) {
                     // Zug-II §4.2's freezeAtSeal completion: the
                     // wheel's physics HALTS at the seal — no coast
@@ -543,6 +510,87 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
          *  Flipped ONLY on the DEVICE_PASS_E5A result — never on
          *  a render, a screenshot, or taste. */
         const val CORE_TRAVEL_GATE = 1
+    }
+
+    init {
+        // Issue #59 (finding 4): not a touch-only black box.
+        isClickable = true
+        isFocusable = true
+        refreshAccessibilityLabel()
+    }
+
+    private fun refreshAccessibilityLabel() {
+        contentDescription = if (isLockedSession) {
+            "Rotary wheel, locked"
+        } else if (minutesValue < 10) {
+            "Rotary wheel, open flow, $studyBlocksCount blocks. Activate to cycle blocks."
+        } else {
+            "Rotary wheel, $minutesValue minutes, $studyBlocksCount blocks. Activate to cycle blocks."
+        }
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val desired = dp(288f).toInt()
+        setMeasuredDimension(
+            resolveSize(desired, widthMeasureSpec),
+            resolveSize(desired, heightMeasureSpec)
+        )
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        if (isLockedSession) return true
+        if (minutesValue >= 10) {
+            fireFeel(4L)
+            onCycleBlocksCount?.invoke()
+        }
+        return true
+    }
+
+    override fun onSaveInstanceState(): Parcelable {
+        val ss = SavedState(super.onSaveInstanceState())
+        ss.minutes = minutesValue
+        ss.blocks = studyBlocksCount
+        ss.locked = isLockedSession
+        return ss
+    }
+
+    override fun onRestoreInstanceState(state: Parcelable?) {
+        if (state !is SavedState) {
+            super.onRestoreInstanceState(state)
+            return
+        }
+        super.onRestoreInstanceState(state.superState)
+        minutesValue = state.minutes
+        studyBlocksCount = state.blocks
+        isLockedSession = state.locked
+        invalidate()
+    }
+
+    class SavedState : BaseSavedState {
+        var minutes: Int = 50
+        var blocks: Int = 2
+        var locked: Boolean = false
+
+        constructor(superState: Parcelable?) : super(superState)
+
+        private constructor(parcel: Parcel) : super(parcel) {
+            minutes = parcel.readInt()
+            blocks = parcel.readInt()
+            locked = parcel.readInt() == 1
+        }
+
+        override fun writeToParcel(out: Parcel, flags: Int) {
+            super.writeToParcel(out, flags)
+            out.writeInt(minutes)
+            out.writeInt(blocks)
+            out.writeInt(if (locked) 1 else 0)
+        }
+
+        companion object CREATOR : Parcelable.Creator<SavedState> {
+            override fun createFromParcel(parcel: Parcel): SavedState = SavedState(parcel)
+            override fun newArray(size: Int): Array<SavedState?> = arrayOfNulls(size)
+        }
     }
 
     private fun startHubDip() {
@@ -1744,6 +1792,61 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
     private var frozenPlayTimeMs: Long = 0L
     private var resumeUsed: Boolean = false
     private var pendingResume: Boolean = false
+
+    init {
+        // Issue #59 (finding 4): labelled, clickable, focusable —
+        // not a touch-only black box.
+        isClickable = true
+        isFocusable = true
+        contentDescription = "Slide or tap to start"
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        setMeasuredDimension(
+            resolveSize(dp(280f).toInt(), widthMeasureSpec),
+            resolveSize(dp(72f).toInt(), heightMeasureSpec)
+        )
+    }
+
+    /** Accessibility activation = a classified tap (the same
+     *  warrant-owned outcome as the tap path's UP frame): OFF earns
+     *  the refusal, UNPROVEN drives only to the catch, LIVE runs
+     *  the mesh to the seat doorstep. No commit dispatches here —
+     *  enforcement still dispatches only at the latch frame. */
+    override fun performClick(): Boolean {
+        super.performClick()
+        if (sealedGate || isReturning || mode != Mode.REST) return true
+        // Attempt start, under beginAttempt's per-attempt law: a
+        // fresh warrant read and a clean refusal latch (without the
+        // latch reset, a repeat activation after a refusal would
+        // die silently inside startRefusal's already-fired guard).
+        attemptWarrant = readWarrant()
+        refusalFired = false
+        onPressStart?.invoke(attemptWarrant)
+        if (attemptWarrant == WarrantState.OFF) {
+            startRefusal(knockFirst = true)
+        } else {
+            startMesh(
+                target = if (attemptWarrant == WarrantState.UNPROVEN) {
+                    SlideGestureMath.CATCH
+                } else {
+                    0.92f
+                }
+            )
+        }
+        return true
+    }
+
+    // Issue #59 (finding 4), the deliberate omission: this view
+    // carries NO SavedState. Its posture is transient-by-law —
+    // detach resets the machine to REST, displayed home, refusal
+    // latch clean (Schlitten §4.5 + the detach-reset ruling in
+    // onDetachedFromWindow below), and the gate's factory rule
+    // rebuilds the posture from initialFraction on the next attach
+    // (§2.3). A framework-saved `displayed` would resurrect
+    // mid-gesture travel the detach law annulled. The durable
+    // state — minutes, blocks, lock — lives on the wheel and the
+    // host, never on this gesture surface.
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
