@@ -112,6 +112,32 @@ data class PruneNote(
 internal fun heldSitesCount(siteCount: Int, browserBlockerEnabled: Boolean): Int =
     if (browserBlockerEnabled) siteCount else 0
 
+/**
+ * W3 #130 finding 2 — the seed-upgrade for EXISTING installs
+ * (verifier correction, DURCH-D): the v1 site seed is once-ever
+ * (SEED_SITES_KEY), so an install seeded before "youtube.com"
+ * joined [BlockedBrowserDomains.defaultDomains] would keep the
+ * legacy list forever and never receive the host rule. This pure
+ * decision is the delivery path: given the install's stored
+ * domains, the domains the one-shot v2 upgrade must ADD.
+ *
+ * The trigger is hard evidence, not a guess: the legacy factory
+ * entry "youtube.com/shorts" still stands in the list, proving
+ * the factory seed is in force and unedited at that entry. The
+ * seeded-ever law (Audit R2 #96) bounds it the other way — a
+ * list WITHOUT the legacy entry is the user's own editing (he
+ * deleted the Shorts rule, or emptied the list, or built his
+ * own), and the upgrade adds NOTHING: a deletion is a ruling,
+ * never resurrected by an upgrade. A list already carrying the
+ * host is complete. Pure, so the matrix is unit-tested.
+ */
+internal fun youtubeHostSeedUpgrade(existingDomains: Collection<String>): List<String> =
+    if ("youtube.com/shorts" in existingDomains && "youtube.com" !in existingDomains) {
+        listOf("youtube.com")
+    } else {
+        emptyList()
+    }
+
 /** Issue #99 F1: how long after a peek lease's end its package still
  *  counts as "just expired" for eviction purposes. The shield polls
  *  every 2s, so this only needs to cover the first polls after
@@ -358,6 +384,13 @@ class MonolithRepository(
         const val SEED_SITES_KEY = "seeded_sites_v1"
         const val SEED_TASKS_KEY = "seeded_tasks_v1"
 
+        /** W3 #130 F2 (verifier correction): the one-shot flag for
+         *  the youtube.com host seed-upgrade — set the first time
+         *  the upgrade has been CONSIDERED on an install that ran
+         *  the v1 seed, whether or not it added the host, so the
+         *  consideration never repeats (see youtubeHostSeedUpgrade). */
+        const val SEED_SITES_V2_KEY = "seeded_sites_v2_youtube_host"
+
         /** The prune note's prefs home (Ordner lane, Mikro M5): a
          *  record of what the catalog reconcile removed, kept until
          *  Shield has shown it once. Prefs, not Room — announcing a
@@ -530,6 +563,26 @@ class MonolithRepository(
             }
             seedPrefs.edit().putBoolean(SEED_SITES_KEY, true).apply()
 
+        }
+        // W3 #130 F2 seed-upgrade (verifier correction, DURCH-D):
+        // an install that ran the v1 seed before "youtube.com"
+        // joined the defaults never re-seeds, so the host rule
+        // must be DELIVERED — once, and only where the legacy
+        // factory entry proves the seed stands unedited (the pure
+        // decision above; a user's deletion is never resurrected).
+        // A fresh install reaches this line with the current
+        // defaults just seeded, so the decision adds nothing and
+        // the flag simply closes. Runs under the same seed lock.
+        if (!seedPrefs.getBoolean(SEED_SITES_V2_KEY, false)) {
+            if (seedPrefs.getBoolean(SEED_SITES_KEY, false)) {
+                val upgradeAdds = youtubeHostSeedUpgrade(
+                    dao.getAllSitesSnapshot().map { it.domain }
+                )
+                if (upgradeAdds.isNotEmpty()) {
+                    dao.insertSites(upgradeAdds.map { BlockedSiteEntity(it) })
+                }
+            }
+            seedPrefs.edit().putBoolean(SEED_SITES_V2_KEY, true).apply()
         }
         if (dao.getGuardSettingsSnapshot() == null) {
             dao.insertGuardSettings(GuardSettingsEntity())
