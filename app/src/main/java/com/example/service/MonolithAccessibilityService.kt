@@ -327,7 +327,8 @@ class MonolithAccessibilityService : AccessibilityService() {
 
         /** Binding generation (FIX-1 Addendum 2, answering TECH-1
          *  MAJOR-1 — probe stamp resurrection across unbind):
-         *  incremented in onUnbind and onDestroy. A probe captures
+         *  incremented in onServiceConnected, onUnbind and
+         *  onDestroy. A probe captures
          *  this generation (and instance identity) BEFORE its root
          *  query — a query that can wait on the binder for seconds —
          *  and stamps ONLY if the generation is unchanged and
@@ -376,6 +377,10 @@ class MonolithAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        // A new binding is a new generation (adopted at the round-2
+        // merge from e1b988de): probes still in flight from any
+        // previous binding fail their stamp-time re-check.
+        bindingGeneration++
         instance = this
         // Probe on connect is UNCONDITIONAL (FIX-1 Addendum 1,
         // MAX-1 4a — the residencyActive() conditional is dropped):
