@@ -135,6 +135,10 @@ fun ShieldMatrixScreen(
     onUndoProfileApply: () -> Unit = {},
     onToggleShortsReelsSniper: () -> Unit,
     onToggleBrowserUrlBlocker: () -> Unit,
+    // Issue #337 F1: the accessibility-shortcut binding state and
+    // its deep link. Defaults keep render harnesses unchanged.
+    accessibilityShortcutSet: Boolean = false,
+    onOpenAccessibilityShortcutSettings: () -> Unit = {},
     routines: List<com.example.data.RoutineEntity> = emptyList(),
     showResetNote: Boolean = false,
     onDismissResetNote: () -> Unit = {},
@@ -328,6 +332,7 @@ fun ShieldMatrixScreen(
         // the same 84dp slot the knob's AndroidView held)
         // =====================================================================
         item {
+            val context = LocalContext.current
             // The counts left this header (Liv D3, adopted by Gust):
             // SHUT / PEEK / OPEN live on the standing-orders tally
             // below — one home per number, or numbers are decoration.
@@ -352,7 +357,22 @@ fun ShieldMatrixScreen(
                 LoadoutPreviewPanel(
                     loadout = loadout,
                     preview = remember(loadout, allApps) {
-                        LoadoutRules.preview(loadout, allApps)
+                        // Issue #121: the preview resolves the same
+                        // structural time-critical set the commit
+                        // path uses (SLEEP only) — issue #107's law:
+                        // the printed counts are computed by the
+                        // exact rule that will commit them.
+                        LoadoutRules.preview(
+                            loadout, allApps,
+                            if (loadout == com.example.data.SmartLoadout.SLEEP) {
+                                com.example.data.TimeCriticalApps
+                                    .resolveTimeCriticalPackages(
+                                        context, allApps.map { it.packageName }
+                                    )
+                            } else {
+                                emptySet()
+                            }
+                        )
                     },
                     onApply = {
                         // Reverse direction of the same ONE mapping
@@ -769,6 +789,41 @@ fun ShieldMatrixScreen(
                         testTag = "shield_sniper_toggle"
                     )
                 }
+                // #337 F1: the accessibility shortcut — the second,
+                // system-level activation path for the service. The
+                // chip names the binding's actual state and opens
+                // the exact system screen where it is made.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "ACCESSIBILITY SHORTCUT",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground
+                    )
+                    BlockitActionChip(
+                        wordLabel = if (accessibilityShortcutSet) "SET" else "BIND",
+                        isPrimaryInk = accessibilityShortcutSet,
+                        onClick = onOpenAccessibilityShortcutSettings,
+                        testTag = "shield_a11y_shortcut_chip"
+                    )
+                }
+                // #335 F5: the detector-health line — first/last
+                // node, stale and slow-scan states, printed from
+                // the DetectorHealth record the services write.
+                Text(
+                    text = com.example.ui.components.detectorLineFor(
+                        com.example.service.DetectorHealth.snapshot(),
+                        SystemClock.elapsedRealtime()
+                    ).text,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("shield_detector_health_line")
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
