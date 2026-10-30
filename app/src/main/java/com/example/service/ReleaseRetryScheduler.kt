@@ -55,7 +55,8 @@ object ReleaseRetryScheduler {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         val intent = pendingIntent(context, PendingIntent.FLAG_UPDATE_CURRENT) ?: return
         alarmManager.cancel(intent)
-        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atWallMillis, intent)
+        // Issue #319 F2: same exact-alarm law as the routine chain.
+        ExactAlarm.setWakeup(alarmManager, atWallMillis, intent)
     }
 
     fun cancel(context: Context) {

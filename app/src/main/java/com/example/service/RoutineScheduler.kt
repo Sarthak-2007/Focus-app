@@ -4,7 +4,6 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import com.example.data.RoutineDerive
 import com.example.data.RoutineEntity
 
@@ -50,21 +49,16 @@ object RoutineScheduler {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         val intent = chainPendingIntent(context, PendingIntent.FLAG_UPDATE_CURRENT) ?: return
         alarmManager.cancel(intent)
-        // Issue #280 (R5 supplement): when the user has granted
-        // exact alarms, the chain boundary fires exactly; the
-        // inexact form stays as the fallback, and the heartbeat
-        // reconcile remains the mechanism either way — an exact
-        // alarm sharpens the hint, it never becomes the truth.
-        val canExact = if (android.os.Build.VERSION.SDK_INT >= 31) {
-            alarmManager.canScheduleExactAlarms()
-        } else {
-            true
-        }
-        if (exactAlarmPermitted(android.os.Build.VERSION.SDK_INT, canExact)) {
-            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, boundaryMillis, intent)
-        } else {
-            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, boundaryMillis, intent)
-        }
+        // Issues #319 F2 + #280 + #309 F2: exact when the exact-alarm
+        // grant is held, inexact otherwise — one law (ExactAlarm)
+        // for the chain and the release-retry cadence alike. #309's
+        // exactAlarmPermitted (bottom of this file) states the same
+        // decision and is kept — Issue309SecondPassTest pins it;
+        // ExactAlarm.useExact mirrors it exactly (pre-API-31 exact
+        // needs no grant). An exact alarm sharpens the hint, it
+        // never becomes the truth: the heartbeat reconcile remains
+        // the mechanism either way.
+        ExactAlarm.setWakeup(alarmManager, boundaryMillis, intent)
     }
 
     fun cancelChain(context: Context) {

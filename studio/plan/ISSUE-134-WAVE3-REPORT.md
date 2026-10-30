@@ -186,3 +186,40 @@ hunk was carried into the composed files, none dropped:
   a call instead of draining.
 - The Phone app is always openable during a session, whatever its tier or
   loadout says.
+
+---
+
+## DURCH-D CLOSURE ADDENDUM (Oct 30, closure lead under DURCH-D)
+
+**Recomposition onto main 2531c847.** Since the wave-3 composition
+(base cdbeaca, DB v14), main took 13→14 itself (issue #10,
+heldShutAtSeal/heldPeekAtSeal) and moved ~30 commits. A test merge
+of tip 278abe9 onto 2531c847 conflicted in 5 files. Resolved as a
+union of both intents; **this lane's migration is renumbered again,
+14→15** (`MIGRATION_14_15`, version 15, chain 7→…→13→14→15), and
+CallMigrationTest + the three chain-head tests were recomposed to
+v15. Repository hunks: main's `startWallTimeMillis = newStartWall`
+now rides alongside the call-ledger writes in the stopwatch and
+final bookings; the receipt constructions carry main's
+penalty/held-split fields AND #135's `receiptForSession` (which
+main's ViewModel still calls — its definition had been lost on
+main, one of main's own compile breaks; keeping it here heals
+that reference in the merged tree).
+
+**Finding 4 — disposition corrected: FIXED, not struck.** The
+Wave-3 flag is settled as follows. NEVER THROUGH (MASTER-PLAN,
+Oct 29, Freund/Humans Q3) reads: "a sealed block stays sealed —
+his mother's call does not ring through" — it governs INCOMING
+calls piercing a sealed block. Finding 4 is about OUTGOING
+dialling: a LOCKED Phone app blocked dial-out like any
+distraction. #429 adds no incoming breakthrough (no change to
+ring/notification behaviour; the pre-existing call-audio bypass
+is main's own, and findings 1–3 exist precisely to stop it
+certifying focus time). The dialer exemption is package-scoped
+only (stock dialers + system default-dialer role), exempt at the
+accessibility door, the shield blocked set, and loadout commits —
+the dialer is never lockable, which is also main's own #119 law
+(EssentialApps.floorTier: dialler never LOCKED, "you cannot dial
+for help" removed). STURM-4's removal of the identification test
+rested on the conflation; the test is restored in
+CallMidSessionRepositoryTest (`dialerPackage_isIdentifiedPackageExact`).

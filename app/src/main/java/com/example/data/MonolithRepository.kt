@@ -1610,8 +1610,13 @@ class MonolithRepository(
      *    Advancing the phone's system clock forward by +2 hours is ignored because elapsed time is anchored to
      *    `SystemClock.elapsedRealtime()`.
      * 2. Across device reboots (`LOCKED_BOOT_COMPLETED` where `currentBoot != session.bootCount` or
-     *    `nowMono < session.lastTickElapsedRealtimeMillis`), preserves `session.accumulatedBeforeRebootSeconds`
-     *    and adds `(nowMono / 1000L).toInt()`, so a reboot never resets or skips the timer.
+     *    `nowMono < session.lastTickElapsedRealtimeMillis`), preserves the elapsed banked before
+     *    the reboot and credits NOTHING for the unobserved interval — neither the powered-off
+     *    downtime nor the new boot's uptime before this first post-reboot tick. That time was
+     *    never witnessed by the shield or the session clock, so booking it as focus was a
+     *    fabrication (Audit R3 #113, finding 5). A reboot neither resets the timer nor
+     *    inflates it: the count resumes from the banked figure and ticks from the re-anchor
+     *    [updateSessionProgress] persists.
      * 3. Verifies the AndroidKeyStore `HmacSHA256` signature via `CryptoIntegrityManager.verifySessionState`.
      */
     @WorkerThread
@@ -1628,6 +1633,11 @@ class MonolithRepository(
 
         return if (!rebootOccurred && session.startElapsedRealtimeMillis > 0L && nowMono >= session.startElapsedRealtimeMillis) {
             val monoElapsedSec = ((nowMono - session.startElapsedRealtimeMillis) / 1000L).coerceAtLeast(0L)
+            // The drift test is SEGMENT-local: it compares wall against
+            // mono since the pair of anchors was set — and every
+            // re-anchor in this codebase (seal, block advance, reboot)
+            // moves BOTH anchors to the same frame, so the comparison
+            // never spans a boot or a block boundary.
             val drift = abs(wallElapsedSec - monoElapsedSec)
             val tamper = drift > 90L || !hmacValid
             Pair((session.accumulatedBeforeRebootSeconds + monoElapsedSec.toInt()), tamper)
@@ -1647,7 +1657,7 @@ class MonolithRepository(
             // passing as a free, invisible freeze.
             val priorElapsed = max(session.accumulatedBeforeRebootSeconds, session.elapsedSeconds)
             val sinceRebootSec = (nowMono / 1000L).toInt().coerceAtLeast(0)
-            val unwitnessed = TamperWitness.unwitnessedBoot(session.bootCount, currentBoot)
+            val unwitnessed = currentBoot != null && TamperWitness.unwitnessedBoot(session.bootCount, currentBoot)
             Pair(priorElapsed + sinceRebootSec, !hmacValid || unwitnessed)
         }
     }
@@ -2471,6 +2481,18 @@ class MonolithRepository(
         // ISSUE-67: domain derivation (FocusDomain), fed tier names.
         FocusDomain.countHeldApps(apps.map { it.resolvedTier.name })
 
+    /** W-41: the same held count, split by tier — SHUT (LOCKED)
+     *  first, PEEK (PEEK_2M) second. The receipt's HELD line
+     *  prints the two as separate counts: a shut app and a
+     *  peek-lease app are different promises and never flatten
+     *  into one figure on the slip. A tier string no code here
+     *  writes resolves fail-closed to LOCKED (see resolvedTier),
+     *  so it lands in the SHUT count and the split still sums to
+     *  [countHeldApps]. */
+    fun countHeldAppsSplit(apps: List<BlockedAppEntity>): Pair<Int, Int> =
+        apps.count { it.resolvedTier == AppBlockTier.LOCKED } to
+            apps.count { it.resolvedTier == AppBlockTier.PEEK_2M }
+
     suspend fun startSession(
         intention: String,
         profileName: String,
@@ -2543,13 +2565,25 @@ class MonolithRepository(
         // (this insert); no DAO update for them will ever exist.
         val database = db() // ISSUE-67: injected database, no re-fetch
         return database.withTransaction {
-            val heldApps = countHeldApps(dao.getAllAppsSnapshot())
+            val snapshotApps = dao.getAllAppsSnapshot()
+            val heldApps = countHeldApps(snapshotApps)
+            // W-41: the tier split rides the same snapshot and
+            // the same single writer — the split is a seal fact
+            // stored on the row, never a receipt-time re-count
+            // against tiers that may have changed since.
+            val (heldShut, heldPeek) = countHeldAppsSplit(snapshotApps)
             val heldSites = dao.getAllSitesSnapshot().size
             dao.deactivateAllSessions()
             val id = dao.insertSession(
-                session.copy(heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites)
+                session.copy(
+                    heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites,
+                    heldShutAtSeal = heldShut, heldPeekAtSeal = heldPeek
+                )
             ).toInt()
-            session.copy(id = id, heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites)
+            session.copy(
+                id = id, heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites,
+                heldShutAtSeal = heldShut, heldPeekAtSeal = heldPeek
+            )
         }
     }
 
@@ -2908,12 +2942,16 @@ class MonolithRepository(
             bankedBreakSeconds = banked,
             shieldWasOff = row.outcome == SessionOutcome.ELAPSED_SHIELD_GAP,
             deflections = deflections,
+            penaltySecondsAdded = row.penaltySecondsAdded,
             openExposureApps = openExposureApps,
             // Audit R3b #145: the forged curio's name rides the
             // slip — read off the row's own stamp, never re-drawn.
             forgedArtifactName = row.forgedArtifactId?.let { forgedId ->
                 CurioCatalog.artifacts.firstOrNull { it.id == forgedId }?.name
-            }
+            },
+            // W-41: the row's stored split, threaded through.
+            heldShutAtSeal = row.heldShutAtSeal,
+            heldPeekAtSeal = row.heldPeekAtSeal
         )
     }
 
@@ -3021,7 +3059,10 @@ class MonolithRepository(
             openExposureApps = pending.openExposureApps,
             restored = false,
             receiptPublishedMonoMs = 0L,
-            forgedArtifactName = pending.forgedArtifactName
+            penaltySecondsAdded = pending.penaltySecondsAdded,
+            forgedArtifactName = pending.forgedArtifactName,
+            heldShutAtSeal = pending.heldShutAtSeal,
+            heldPeekAtSeal = pending.heldPeekAtSeal
         )
     }
 
@@ -3134,7 +3175,10 @@ class MonolithRepository(
             openExposureApps = pending.openExposureApps,
             restored = true,
             receiptPublishedMonoMs = 0L,
-            forgedArtifactName = pending.forgedArtifactName
+            penaltySecondsAdded = pending.penaltySecondsAdded,
+            forgedArtifactName = pending.forgedArtifactName,
+            heldShutAtSeal = pending.heldShutAtSeal,
+            heldPeekAtSeal = pending.heldPeekAtSeal
         )
     }
 
@@ -3177,7 +3221,10 @@ class MonolithRepository(
             deflections = pending.deflections,
             restored = true,
             receiptPublishedMonoMs = 0L,
-            forgedArtifactName = pending.forgedArtifactName
+            penaltySecondsAdded = pending.penaltySecondsAdded,
+            forgedArtifactName = pending.forgedArtifactName,
+            heldShutAtSeal = pending.heldShutAtSeal,
+            heldPeekAtSeal = pending.heldPeekAtSeal
         )
     }
 
@@ -3448,7 +3495,7 @@ class MonolithRepository(
      * (its 'still 60 min' refusal). Stopwatch sessions have no
      * target to extend and refuse.
      */
-    suspend fun extendActiveSession(addSeconds: Int = 900): Boolean {
+    suspend fun extendActiveSessionBySeconds(addSeconds: Int = 900): Boolean {
         val session = dao.getActiveSessionSnapshot() ?: return false
         if (!session.isActive || session.isStopwatchMode) return false
         val (verifiedElapsed, _) = computeVerifiedSessionElapsed(session)
@@ -3495,6 +3542,7 @@ class MonolithRepository(
         stampShieldBeat: Boolean
     ): FocusSessionEntity {
         val nowMono = SystemClock.elapsedRealtime()
+        val nowWall = System.currentTimeMillis()
         val currentBoot = querySystemBootCountOrNull()
         // Slice E (Nocke §2.2): the shield's own tick stamps its
         // beat into every copy this function persists — the beat
@@ -3522,15 +3570,25 @@ class MonolithRepository(
         }
         val effectiveTarget = session.targetDurationSeconds + penaltyAdd
 
-        // Re-anchor if device rebooted so subsequent ticks on the new boot stay monotonic
+        // Re-anchor if device rebooted so subsequent ticks on the new boot stay monotonic.
+        // BOTH anchors move to this frame — the seal's own law (sealSession:
+        // "Both anchors move to the same frame so the mono/wall cross-check
+        // stays consistent"), which this path used to break: it moved the
+        // mono anchor and left the wall anchor at the session's start, so
+        // every later tick compared wall-since-start against
+        // mono-since-reboot, the drift read permanently > 90s, and an
+        // honest reboot branded the user a tamperer and drew the 15-minute
+        // penalty (Audit R3 #113, finding 4). The re-sign covers the NEW
+        // anchor pair, exactly as the seal's re-sign does.
         val rebootDetected = (currentBoot != null && session.bootCount > 0 && currentBoot != session.bootCount) ||
             (session.lastTickElapsedRealtimeMillis > 0L && nowMono < session.lastTickElapsedRealtimeMillis)
         val newAccumulated = if (rebootDetected) verifiedElapsed else session.accumulatedBeforeRebootSeconds
         val newStartMono = if (rebootDetected) nowMono else session.startElapsedRealtimeMillis
+        val newStartWall = if (rebootDetected) nowWall else session.startWallTimeMillis
         val newBootCount = if (rebootDetected) currentBoot ?: session.bootCount else session.bootCount
         val newHmac = if (rebootDetected) {
             CryptoIntegrityManager.signSessionState(
-                session.startWallTimeMillis,
+                newStartWall,
                 newStartMono,
                 newBootCount,
                 session.targetDurationSeconds,
@@ -3596,6 +3654,7 @@ class MonolithRepository(
             val updated = session.copy(
                 elapsedSeconds = focusElapsed,
                 callExcludedSeconds = callExcluded,
+                startWallTimeMillis = newStartWall,
                 startElapsedRealtimeMillis = newStartMono,
                 bootCount = newBootCount,
                 accumulatedBeforeRebootSeconds = newAccumulated,
@@ -3785,7 +3844,7 @@ class MonolithRepository(
             session = session,
             allBlocksCompleted = allBlocksCompleted,
             isRoutineSession = isRoutineSession,
-            verifiedElapsedSeconds = verifiedElapsed,
+            verifiedElapsedSeconds = verifiedElapsed.toLong(),
             appLastUpdateMillis = appLastUpdateMillis(),
             usageStatsPermissionHeld = hasUsageStatsPermission(),
             openExposureSeen = exposedAtEnd.isNotEmpty()
@@ -3794,6 +3853,7 @@ class MonolithRepository(
         val updated = session.copy(
             elapsedSeconds = focusElapsed.coerceAtMost(effectiveTarget),
             callExcludedSeconds = callExcluded,
+            startWallTimeMillis = newStartWall,
             startElapsedRealtimeMillis = newStartMono,
             bootCount = newBootCount,
             accumulatedBeforeRebootSeconds = newAccumulated,
@@ -3869,8 +3929,15 @@ class MonolithRepository(
         // three permanently disagreeing, and the session row is
         // re-read inside the transaction so the +1 never lands on a
         // stale whole-row copy.
+        // W-41/R-09 (BELEG): a granted peek is not a blocked
+        // reach. The intercept is still LOGGED (below, always —
+        // the row is the evidence the slip's outcome filter
+        // reads), but neither counter may call a let-through a
+        // stop: the shield's "N reaches blocked" counts only
+        // reaches that were not let through.
+        val countAsBlocked = countAsReach && outcome != InterceptOutcome.USED_PEEK
         databaseProvider().withTransaction {
-            if (countAsReach) {
+            if (countAsBlocked) {
                 dao.incrementInterceptCount(packageName)
             }
             dao.insertInterceptLog(
@@ -3882,7 +3949,7 @@ class MonolithRepository(
                     triggerReason = triggerReason
                 )
             )
-            if (countAsReach) {
+            if (countAsBlocked) {
                 val active = dao.getActiveSessionSnapshot()
                 if (active != null) {
                     dao.updateSession(active.copy(phantomReachesBlocked = active.phantomReachesBlocked + 1))
@@ -4116,7 +4183,7 @@ class MonolithRepository(
      * meaningless). Returns the updated row, or null when no
      * session is active.
      */
-    suspend fun extendActiveSession(extraMinutes: Int): FocusSessionEntity? =
+    suspend fun extendActiveSessionReturningSession(extraMinutes: Int): FocusSessionEntity? =
         withContext(Dispatchers.IO) {
             val active = dao.getActiveSessionSnapshot() ?: return@withContext null
             if (extraMinutes <= 0 || active.isStopwatchMode) return@withContext active

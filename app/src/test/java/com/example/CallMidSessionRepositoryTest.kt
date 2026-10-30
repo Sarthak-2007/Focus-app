@@ -39,8 +39,17 @@ import java.time.Duration
  *     countdown holds at its full remainder for the whole call,
  *     then drains and flips normally after hang-up — and the
  *     per-block call ledger resets at the break exit.
- *  (Finding 4's dialer exemption is deliberately absent —
- *  struck under Sarthak's NEVER THROUGH verdict; see #134.)
+ *  4. Finding 4 (dial-out): the dialer package is identified
+ *     package-exact (stock dialers + the system's default-dialer
+ *     role) so the doors can exempt it — placing a call is never
+ *     blocked. DURCH-D closure note: STURM-4's strike of this
+ *     test conflated outgoing dialling with the NEVER THROUGH
+ *     ruling, which governs INCOMING family calls ringing
+ *     through a sealed block (MASTER-PLAN, Oct 29 Q3) — this
+ *     lane adds no incoming breakthrough; the exemption is
+ *     dialer-package-scoped only, and main's #119 floor
+ *     (dialler never LOCKED) points the same way. Test restored
+ *     at closure.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -216,4 +225,13 @@ class CallMidSessionRepositoryTest {
         }
     }
 
+
+    @Test
+    fun dialerPackage_isIdentifiedPackageExact() {
+        assertTrue(MonolithRepository.isDialerPackage(context, "com.google.android.dialer"))
+        assertTrue(MonolithRepository.isDialerPackage(context, "com.android.dialer"))
+        assertTrue(MonolithRepository.isDialerPackage(context, "com.samsung.android.dialer"))
+        assertFalse(MonolithRepository.isDialerPackage(context, "com.instagram.android"))
+        assertFalse(MonolithRepository.isDialerPackage(context, "com.example.fakedialer"))
+    }
 }

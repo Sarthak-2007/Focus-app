@@ -19,17 +19,18 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * W3 #134 (13→14; renumbered at composition — main's 12→13
- *  slot was taken by issue #287 while this lane was in flight):
+ * W3 #134 (14→15; renumbered twice at composition — main took
+ *  12→13 for issue #287 and then 13→14 for issue #10's held-split
+ *  while this lane was in flight):
  *  the migration that carries callExcludedSeconds.
  *
- *  A: a v13-shaped file takes 13→14 alone: the column lands, the
+ *  A: a v14-shaped file takes 14→15 alone: the column lands, the
  *     pre-existing row reads the truthful default (0 — before
  *     this column the progress machine never looked at call
  *     state, so no past row can claim an excluded second), the
  *     row survives, and the struck testDateEpochDay exists
  *     nowhere.
- *  B: Room itself at v14 — an in-memory build from the entities
+ *  B: Room itself at v15 — an in-memory build from the entities
  *     round-trips the new field, so the entity and the migrated
  *     schema are one shape.
  */
@@ -57,12 +58,12 @@ class CallMigrationTest {
     }
 
     @Test
-    fun migration13to14_addsCallExcludedColumn_withTruthfulDefault() {
-        // Shape a v13 file: focus_sessions as it stood, one row in.
+    fun migration14to15_addsCallExcludedColumn_withTruthfulDefault() {
+        // Shape a v14 file: focus_sessions as it stood, one row in.
         val factory = FrameworkSQLiteOpenHelperFactory()
         val createConfig = SupportSQLiteOpenHelper.Configuration.builder(context)
             .name(dbName)
-            .callback(object : SupportSQLiteOpenHelper.Callback(13) {
+            .callback(object : SupportSQLiteOpenHelper.Callback(14) {
                 override fun onCreate(db: SupportSQLiteDatabase) {
                     db.execSQL(
                         "CREATE TABLE IF NOT EXISTS `focus_sessions` (" +
@@ -77,15 +78,15 @@ class CallMigrationTest {
             .build()
         factory.create(createConfig).writableDatabase.close()
 
-        // Open it at 14 through the lane's migration alone.
+        // Open it at 15 through the lane's migration alone.
         val openConfig = SupportSQLiteOpenHelper.Configuration.builder(context)
             .name(dbName)
-            .callback(object : SupportSQLiteOpenHelper.Callback(14) {
+            .callback(object : SupportSQLiteOpenHelper.Callback(15) {
                 override fun onCreate(db: SupportSQLiteDatabase) {}
                 override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {
-                    assertEquals(13, oldVersion)
-                    assertEquals(14, newVersion)
-                    MonolithDatabase.MIGRATION_13_14.migrate(db)
+                    assertEquals(14, oldVersion)
+                    assertEquals(15, newVersion)
+                    MonolithDatabase.MIGRATION_14_15.migrate(db)
                 }
             })
             .build()
@@ -106,7 +107,7 @@ class CallMigrationTest {
     }
 
     @Test
-    fun roomAtV14_roundTripsCallExcludedSeconds() = runBlocking {
+    fun roomAtV15_roundTripsCallExcludedSeconds() = runBlocking {
         val db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
             .addMigrations(
                 MonolithDatabase.MIGRATION_7_8,
@@ -115,7 +116,8 @@ class CallMigrationTest {
                 MonolithDatabase.MIGRATION_10_11,
                 MonolithDatabase.MIGRATION_11_12,
                 MonolithDatabase.MIGRATION_12_13,
-                MonolithDatabase.MIGRATION_13_14
+                MonolithDatabase.MIGRATION_13_14,
+                MonolithDatabase.MIGRATION_14_15
             )
             .build()
         try {
