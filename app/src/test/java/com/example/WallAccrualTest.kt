@@ -2,6 +2,8 @@ package com.example
 
 import com.example.data.WallAccrual
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -99,6 +101,63 @@ class WallAccrualTest {
     fun breakCountdown_rebootTick_creditsNothing() {
         // Monotonic clock reset by a reboot: no negative drain.
         assertEquals(600, com.example.data.breakRemainingAfter(600, 900_000L, 5_000L))
+    }
+
+    @Test
+    fun sharedInstance_twoTickersStillSumToWallTime() {
+        // Audit R1 #41: repositories no longer mint private
+        // accruals — there is ONE shared instance, so the second
+        // ticker (here: the "other repository's" handle on the
+        // same object) finds every delta already consumed.
+        val tickerA = WallAccrual.shared
+        val tickerB = WallAccrual.shared
+        assertSame(tickerA, tickerB)
+        val session = 990_041
+        var credited = tickerA.observe(session, 7, 1_000_000L)
+        for (tick in 1..60) {
+            credited += tickerA.observe(session, 7, 1_000_000L + tick * 1000L)
+            credited += tickerB.observe(session, 7, 1_000_000L + tick * 1000L)
+        }
+        assertEquals(60, credited)
+    }
+
+    @Test
+    fun seed_resumesTheAnchorAfterProcessDeath() {
+        // Audit R1 #41: a fresh instance seeded from the
+        // persisted anchor credits the death gap once, through
+        // the ordinary observe path.
+        val accrual = WallAccrual()
+        accrual.seed(sessionId = 5, taskId = 9, lastMonoMillis = 10_000L)
+        assertEquals(60, accrual.observe(5, 9, 70_000L))
+        // Seeding an already-anchored instance is a no-op: the
+        // live anchor is fresher than any stored one.
+        accrual.seed(sessionId = 6, taskId = 6, lastMonoMillis = 0L)
+        assertEquals(1, accrual.observe(5, 9, 71_000L))
+        // The snapshot round-trips the anchor for persistence.
+        assertEquals(Triple(5, 9, 71_000L), accrual.anchorSnapshot())
+    }
+
+    @Test
+    fun breakTickPair_conservesTheSubSecondRemainder() {
+        // Audit R1 #41: at a 1,050 ms cadence the old pair
+        // (truncated remaining, FULL instant as anchor) leaked
+        // 50 ms per tick — a 600 s break needed ~630 s of wall
+        // time. The pair function ends the break on wall time.
+        var remaining = 600
+        var anchor = 0L
+        var now = 0L
+        var ticks = 0
+        while (remaining > 0 && ticks < 1_000) {
+            now += 1_050L
+            val (nextRemaining, nextAnchor) =
+                com.example.data.breakTickAfter(remaining, anchor, now)
+            remaining = nextRemaining
+            anchor = nextAnchor
+            ticks++
+        }
+        assertEquals(0, remaining)
+        assertTrue("break ended at ${now}ms wall", now in 600_000L..601_050L)
+        assertTrue("anchor never runs ahead of now", anchor <= now)
     }
 
     @Test

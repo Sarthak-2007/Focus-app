@@ -331,7 +331,7 @@ class TruthCar3SweepRoboTest {
             }
         }
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("STUDY HOURS: IN YPT", substring = true).assertExists()
+        composeRule.onNodeWithText("STUDY HOURS: IN YEOLPUMTA", substring = true).assertExists()
         composeRule.onNodeWithText("STUDY RECORD: IN YPT", substring = true).assertDoesNotExist()
     }
 
