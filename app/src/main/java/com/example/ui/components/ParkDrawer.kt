@@ -1,4 +1,6 @@
 package com.example.ui.components
+import androidx.compose.ui.res.stringResource
+import com.example.R
 import com.example.data.ClockText
 import androidx.compose.ui.platform.LocalContext
 
@@ -46,6 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -129,8 +132,15 @@ private val PLATE_BODY = listOf(
     // restoration is a merge-time act on that evidence, not before.
     "ROUTINES: SET BY HAND ON SHIELD",
     "SITES: KEPT WITH APPS ON SHIELD · DATA: ON THIS PHONE ONLY",
-    "STUDY HOURS: IN YEOLPUMTA",
-    "SOUND: FLOAT-PCM, 4 PARTIALS · POWER: YOUR PHONE"
+    // Issue #115: the timer app is named in full — a bare acronym
+    // ("YPT") sent users to a place that did not exist under any
+    // name they could find; DURCH-C rebase ruling: no bare acronym
+    // as a destination name, the study timer named plainly (the
+    // W-43 direction on the receipt footer). The SOUND line's
+    // synthesis jargon (FLOAT-PCM, 4 PARTIALS) is likewise struck
+    // for plain words.
+    "STUDY HOURS: IN YEOLPUMTA, THE STUDY TIMER",
+    "SOUND: MADE ON THIS PHONE · POWER: YOUR PHONE"
 )
 
 /** Issue #56, finding 2: the sheet-drag dismiss law's threshold. */
@@ -499,7 +509,7 @@ fun ParkDrawer(
                 // lives HERE and nowhere else; the slot is blank
                 // until the first complete set lands.
                 Text(
-                    text = "GUARD",
+                    text = stringResource(R.string.park_guard),
                     style = DrawerHeaderTextStyle,
                     color = scheme.onBackground
                 )
@@ -523,7 +533,7 @@ fun ParkDrawer(
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "LAST PROVED",
+                        text = stringResource(R.string.park_last_proved),
                         style = PillBadgeTextStyle,
                         color = scheme.onSurfaceVariant
                     )
@@ -542,26 +552,69 @@ fun ParkDrawer(
                     }
                 }
 
+                // Issue #339 (Second-pass F4): the criticality
+                // line — which single grant is fatal, stated as a
+                // state, above the board's per-item rows.
+                val availabilityLine = snapshot?.let {
+                    com.example.ui.components.availabilityLineFor(it, nowMono)
+                }
+                if (availabilityLine != null) {
+                    Text(
+                        text = availabilityLine.text,
+                        style = PillBadgeTextStyle,
+                        color = scheme.onBackground,
+                        modifier = Modifier.testTag("park_blocking_availability")
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // (2) The board: nine ruled lines, fixed order.
                 if (snapshot != null) {
                     WatchItemId.PERMISSIONS.forEach { item ->
-                        ParkBoardRow(
-                            name = item.boardName,
-                            word = when (WatchStore.permPrintAt(snapshot, item, nowMono)) {
-                                PermPrint.GRANTED -> "GRANTED"
-                                PermPrint.MISSING -> "MISSING"
-                                PermPrint.STALE -> "STALE"
-                                PermPrint.UNPROVED -> "UNPROVED"
-                                PermPrint.MISSING_STALE -> "STALE"
-                                PermPrint.UNMEASURED -> null
-                            },
-                            wordIsLack = when (WatchStore.permPrintAt(snapshot, item, nowMono)) {
-                                PermPrint.GRANTED -> false
-                                else -> true
+                        // Issue #122, rebased onto #94's UNPROVED print:
+                        // the BATTERY line prints the battery itself
+                        // (level \u00b7 saver/charging \u00b7 NOT EXEMPT) from the
+                        // snapshot's battery read \u2014 the exemption bit
+                        // alone read "GRANTED" over an 8% battery with
+                        // saver on. The perm print is NOT discarded:
+                        // an UNPROVED / STALE exemption verdict still
+                        // appends and still counts as a lack, so the
+                        // line can never read satisfied while either
+                        // the battery or the proof is lacking. No
+                        // battery read yet \u2192 the perm print, as before.
+                        val battery = snapshot.battery
+                        val permPrint = WatchStore.permPrintAt(snapshot, item, nowMono)
+                        if (item == WatchItemId.BATTERY && battery != null) {
+                            val suffix = when (permPrint) {
+                                PermPrint.UNPROVED -> " \u00b7 UNPROVED"
+                                PermPrint.STALE, PermPrint.MISSING_STALE -> " \u00b7 STALE"
+                                else -> ""
                             }
-                        )
+                            ParkBoardRow(
+                                name = item.boardName,
+                                word = com.example.data.batteryBoardWord(battery) + suffix,
+                                wordIsLack = com.example.data.batteryBoardIsLack(battery) ||
+                                    permPrint != PermPrint.GRANTED
+                            )
+                        } else {
+                            ParkBoardRow(
+                                name = item.boardName,
+                                word = when (permPrint) {
+                                    PermPrint.GRANTED -> "GRANTED"
+                                    PermPrint.MISSING -> "MISSING"
+                                    PermPrint.STALE -> "STALE"
+                                    PermPrint.UNPROVED -> "UNPROVED"
+                                    PermPrint.MISSING_STALE -> "STALE"
+                                    PermPrint.UNMEASURED -> null
+                                },
+                                wordIsLack = when (permPrint) {
+                                    PermPrint.GRANTED -> false
+                                    else -> true
+                                }
+                            )
+                        }
                     }
                     // The doubled gap: 16dp, no hairline, no eyebrow —
                     // the family break is whitespace, not a heading.
@@ -678,6 +731,7 @@ fun ParkDrawer(
                                     if (interactive) {
                                         Modifier.pointerInput(item) {
                                             detectTapGestures(
+                                                onTap = { onFixClick(item) },
                                                 onPress = {
                                                     fixPressed = true
                                                     fixPressedItem = item
@@ -695,7 +749,17 @@ fun ParkDrawer(
                                                         amplitude01 = if (isNight) 0.06f else 0.1f,
                                                         pitchHz = 300f
                                                     )
-                                                    onFixClick(item)
+                                                    // Audit R6 #341 F24: the
+                                                    // Settings trip used to
+                                                    // commit HERE, on
+                                                    // finger-down — a tremor
+                                                    // landing ejected the
+                                                    // user before they could
+                                                    // slide off. The commit
+                                                    // now lives in onTap
+                                                    // below (release inside
+                                                    // bounds); onPress only
+                                                    // dips the key and knocks.
                                                     // Issue #56, fresh-eyes A:
                                                     // a press INTERRUPTED before
                                                     // release (gesture stolen by
@@ -737,7 +801,7 @@ fun ParkDrawer(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "FIX — ${item.boardName}",
+                                text = stringResource(R.string.park_fix_item, item.boardName),
                                 style = PrimaryButtonTextStyle,
                                 color = onInkControlFill()
                             )
@@ -848,8 +912,19 @@ fun ParkDrawer(
                                                         amplitude01 = if (isNight) 0.06f else 0.1f,
                                                         pitchHz = 300f
                                                     )
-                                                    onRecheck()
-                                                    tryAwaitRelease()
+                                                    // Issue #9, Zahn Z-11
+                                                    // (RE-CHECK form): the
+                                                    // dispatch commits on
+                                                    // RELEASE, like FIX —
+                                                    // a scroll that merely
+                                                    // starts on this key
+                                                    // fires no sweep. The
+                                                    // knock stays on DOWN:
+                                                    // it is furniture, not
+                                                    // a commit.
+                                                    val released =
+                                                        tryAwaitRelease()
+                                                    if (released) onRecheck()
                                                     recheckPressed = false
                                                 }
                                             )
@@ -877,11 +952,12 @@ fun ParkDrawer(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp),
+                        .height(52.dp)
+                        .semantics(mergeDescendants = true) {},
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "SOUND EFFECTS",
+                        text = stringResource(R.string.park_sound_effects),
                         style = PillBadgeTextStyle,
                         color = scheme.onSurfaceVariant
                     )
@@ -939,7 +1015,7 @@ fun ParkDrawer(
                             },
                             modifier = Modifier
                                 .width(76.dp)
-                                .height(34.dp)
+                                .height(48.dp)
                                 .testTag("park_sound_sled")
                         )
                         if (!interactive) {
@@ -950,7 +1026,7 @@ fun ParkDrawer(
                             Box(
                                 modifier = Modifier
                                     .width(76.dp)
-                                    .height(34.dp)
+                                    .height(48.dp)
                                     .clickable(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = null
@@ -987,7 +1063,8 @@ fun ParkDrawer(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp),
+                        .height(52.dp)
+                        .semantics(mergeDescendants = true) {},
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // #131 truth scope: the sled arms the FEED
@@ -1039,7 +1116,7 @@ fun ParkDrawer(
                             },
                             modifier = Modifier
                                 .width(76.dp)
-                                .height(34.dp)
+                                .height(48.dp)
                                 .testTag("park_shorts_sled")
                         )
                         if (!interactive) {
@@ -1049,7 +1126,7 @@ fun ParkDrawer(
                             Box(
                                 modifier = Modifier
                                     .width(76.dp)
-                                    .height(34.dp)
+                                    .height(48.dp)
                                     .clickable(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = null
@@ -1067,7 +1144,7 @@ fun ParkDrawer(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "THEME",
+                        text = stringResource(R.string.park_theme),
                         style = PillBadgeTextStyle,
                         color = scheme.onSurfaceVariant
                     )
@@ -1118,7 +1195,8 @@ private fun ParkBoardRow(name: String, word: String?, wordIsLack: Boolean) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
+                .height(48.dp)
+                .semantics(mergeDescendants = true) {},
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -1175,7 +1253,8 @@ private fun ParkSocialSitesRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
+                .height(48.dp)
+                .semantics(mergeDescendants = true) {},
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -1217,7 +1296,7 @@ private fun ParkSocialSitesRow(
                     },
                     modifier = Modifier
                         .width(76.dp)
-                        .height(34.dp)
+                        .height(48.dp)
                         .testTag("park_social_sled")
                 )
                 if (!interactive) {
@@ -1226,7 +1305,7 @@ private fun ParkSocialSitesRow(
                     Box(
                         modifier = Modifier
                             .width(76.dp)
-                            .height(34.dp)
+                            .height(48.dp)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null

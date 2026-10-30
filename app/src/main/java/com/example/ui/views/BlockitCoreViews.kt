@@ -102,7 +102,7 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
         const val NIGHT_SECONDARY_CONTAINER = 0xFF4A423C.toInt()
         const val NIGHT_ON_SECONDARY_CONTAINER = 0xFFFFE4CF.toInt()
         const val NIGHT_ON_SURFACE = 0xFFEDE3D8.toInt()
-        const val NIGHT_ON_SURFACE_VARIANT = 0xFF776A60.toInt()
+        const val NIGHT_ON_SURFACE_VARIANT = 0xFF9C8E84.toInt() // Issue #70 F5: 5.8:1 (was 0xFF776A60, 3.5:1) — twin of Color.kt's NightColorOnSurfaceVariant; the two must move together
         const val NIGHT_OUTLINE = 0xFF807A7A.toInt()
         const val NIGHT_OUTLINE_VARIANT = 0x758F8888
         const val NIGHT_BLOCK_BAR = 0xFF161311.toInt()
@@ -120,6 +120,25 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
         }
 
     var soundEngine: TactileSoundEngine? = null
+
+    // Issue #70 F1 (fresh-base port): the base accessibility
+    // machinery for the canvas family. Each CONTROL subclass
+    // opts in (isFocusable/isClickable + its own spoken
+    // description via [describeAs]); display-only canvas views
+    // stay out of the focus order. Subclasses that override
+    // performClick call super, which lands here.
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
+    }
+
+    /** Set this view's spoken description (Issue #70 F1). Kept as
+     *  a named helper so subclasses refresh their description at
+     *  the same call sites that refresh their drawn state. */
+    protected fun describeAs(text: String) {
+        contentDescription = text
+    }
 
     protected val density: Float = resources.displayMetrics.density
     protected val scaledDensity: Float = resources.displayMetrics.scaledDensity
@@ -1851,7 +1870,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
      *  still attached (annulment is not a detach). */
     fun resetToRest() {
         stopIntegrator()
-        springBackAnimator?.cancel()
+        cancelSpringBackSilently()
         mode = Mode.REST
         displayed = 0f
         velocity = 0f
@@ -1924,6 +1943,21 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
     private var sinkUntilMs: Long = 0L
 
     private var springBackAnimator: ValueAnimator? = null
+    // Issue #59 (finding 5): the pending spring-back end callback.
+    // Android's cancel() delivers onAnimationCancel AND
+    // onAnimationEnd, so a listener pair that invokes onEnd from
+    // both fires twice per cancel. Here the callback lives OUTSIDE
+    // the listener: cancelSpringBackSilently() clears it BEFORE
+    // cancelling, so a cancel can never invoke it; a natural end
+    // consumes it exactly once.
+    private var springBackEndCallback: (() -> Unit)? = null
+
+    private fun cancelSpringBackSilently() {
+        springBackEndCallback = null
+        val anim = springBackAnimator
+        springBackAnimator = null
+        anim?.cancel()
+    }
 
     // --- Slice E: the seal ghost + the sled return (Zug-II §4.3,
     // Schlitten §§2/4/6). The ghost is the view's sealed posture:
@@ -2033,7 +2067,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
      *  stopped so no frame after t=0 advances it). */
     fun sealGhost() {
         stopIntegrator()
-        springBackAnimator?.cancel()
+        cancelSpringBackSilently()
         mode = Mode.SEATED
         displayed = 1f
         sealedGate = true
@@ -2352,7 +2386,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
 
     private fun beginAttempt(event: MotionEvent) {
         parent?.requestDisallowInterceptTouchEvent(true)
-        springBackAnimator?.cancel()
+        cancelSpringBackSilently()
         stopIntegrator()
         attemptWarrant = readWarrant()
         refusalFired = false
@@ -2826,29 +2860,37 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
     }
 
     private fun animateSpringBack(target: Float, onEnd: (() -> Unit)? = null) {
-        springBackAnimator?.cancel()
-        springBackAnimator = ValueAnimator.ofFloat(displayed, target).apply {
-            duration = MonolithCurves.DURATION_280.toLong()
-            interpolator = MonolithCurves.MechanicalOvershoot
-            addUpdateListener {
-                displayed = (it.animatedValue as Float).coerceIn(0f, 1f)
-                invalidate()
-            }
-            addListener(object : android.animation.AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: android.animation.Animator) {
-                    onEnd?.invoke()
-                }
-                override fun onAnimationCancel(animation: android.animation.Animator) {
-                    onEnd?.invoke()
-                }
-            })
-            start()
+        cancelSpringBackSilently()
+        springBackEndCallback = onEnd
+        val anim = ValueAnimator.ofFloat(displayed, target)
+        anim.duration = MonolithCurves.DURATION_280.toLong()
+        anim.interpolator = MonolithCurves.MechanicalOvershoot
+        anim.addUpdateListener {
+            displayed = (it.animatedValue as Float).coerceIn(0f, 1f)
+            invalidate()
         }
+        anim.addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: android.animation.Animator) {
+                // Exactly-once, current-animator-only, and never on
+                // a silent cancel (the callback is already null then,
+                // because every cancel path clears it first). The
+                // framework's end-after-cancel therefore lands here
+                // with nothing to invoke.
+                if (springBackAnimator === animation) {
+                    springBackAnimator = null
+                    val cb = springBackEndCallback
+                    springBackEndCallback = null
+                    cb?.invoke()
+                }
+            }
+        })
+        springBackAnimator = anim
+        anim.start()
     }
 
     override fun onDetachedFromWindow() {
         stopIntegrator()
-        springBackAnimator?.cancel()
+        cancelSpringBackSilently()
         // Schlitten §4.5: detach cancels the return where it
         // stands — no completion fires, no state pretends the
         // travel happened; the gate's factory rule rebuilds the
@@ -2868,6 +2910,9 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         refusalFired = false
         super.onDetachedFromWindow()
     }
+
+    internal val springBackAnimatorForTest: ValueAnimator? get() = springBackAnimator
+    internal fun animateSpringBackForTest(onEnd: () -> Unit) = animateSpringBack(0f, onEnd)
 
     companion object {
         // Aldo: the cap words are compile-time constants (Teo: no

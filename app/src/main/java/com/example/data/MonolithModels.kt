@@ -394,6 +394,17 @@ data class FocusSessionEntity(
     // counted whole by the span — break time that never ran,
     // claimed on the desk clock and the receipt alike.
     val breakTakenSeconds: Int = 0,
+    // W3 #134 (phone-call-mid-session, DB 14→15): the seconds of THIS
+    // block the call bypass was active — AudioManager in a call
+    // mode (ringing / in-call / VoIP) while the progress machine
+    // ticked. Those seconds are excluded from the block's booked
+    // elapsed at every tick: call time is not focus time, and a
+    // session may not finish, flip into its Safe Break, or stamp
+    // ELAPSED_CLEAN on the strength of minutes spent talking.
+    // Booked per block: the break-exit write (advancePastBreak)
+    // resets it to 0 alongside the anchors it re-bases, so one
+    // block's call never taxes the next block's clock.
+    val callExcludedSeconds: Int = 0,
     val penaltySecondsAdded: Int = 0,
     val isActive: Boolean,
     val completedSuccessfully: Boolean,
@@ -808,12 +819,24 @@ object RoutineSchedule {
         (calendar.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
 
     private fun atMinutes(day: java.util.Calendar, minutes: Int): Long {
-        val c = day.clone() as java.util.Calendar
-        c.set(java.util.Calendar.HOUR_OF_DAY, minutes / 60)
-        c.set(java.util.Calendar.MINUTE, minutes % 60)
-        c.set(java.util.Calendar.SECOND, 0)
-        c.set(java.util.Calendar.MILLISECOND, 0)
-        return c.timeInMillis
+        // Audit R6 #341 F29: java.time resolution, the same rules
+        // MonolithWeek and DrawerDay already live by — this was the
+        // one schedule surface still on lenient Calendar, which
+        // silently shifted gap starts and dropped the second
+        // occurrence of repeated-hour windows without a word.
+        // Stated policy: a start inside a spring-forward gap fires
+        // at the first valid instant after the gap (atZone's forward
+        // shift); a start inside a fall-back repeated hour fires at
+        // its FIRST occurrence (atZone's earlier-offset choice) and
+        // the window's elapsed duration runs from there.
+        val zone = java.time.ZoneId.of(day.timeZone.id)
+        val date = java.time.LocalDate.of(
+            day.get(java.util.Calendar.YEAR),
+            day.get(java.util.Calendar.MONTH) + 1,
+            day.get(java.util.Calendar.DAY_OF_MONTH)
+        )
+        return date.atTime(minutes / 60, minutes % 60).atZone(zone)
+            .toInstant().toEpochMilli()
     }
 
     /** Next window start strictly after [nowMillis]; null if no days selected. */
@@ -841,6 +864,11 @@ object RoutineSchedule {
      * fire, so they are never the next start. This one helper is
      * what the scheduler and every "next seal" reader (Deck
      * ribbon, widget) share, so they can never disagree.
+     *
+     * (Composed at the e1996c16 merge on the #152 branch: main's
+     * §3.6 helper supersedes the pause-stepping version this
+     * branch's fix-forward 2 added when no definition existed —
+     * same contract, one shared implementation.)
      */
     fun effectiveNextStartMillis(routine: RoutineEntity, nowMillis: Long): Long? {
         val r = routine.sanitized()

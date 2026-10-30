@@ -18,7 +18,14 @@ object LoadoutRules {
         packageName: String,
         appName: String,
         categoryName: String,
-        currentTier: AppBlockTier? = null
+        currentTier: AppBlockTier? = null,
+        // Issue #121: packages structurally classified time-critical
+        // (alarm / calendar class — TimeCriticalApps, resolved by the
+        // caller from the PackageManager). SLEEP only: a member of
+        // the class stays OPEN whatever its branding. Callers that
+        // cannot resolve the classification pass the default empty
+        // set and get exactly the pre-#121 rule.
+        timeCriticalPackages: Set<String> = emptySet()
     ): AppBlockTier {
         val lower = "$packageName $appName".lowercase(Locale.ROOT)
         val rawTier = when (loadout) {
@@ -63,12 +70,25 @@ object LoadoutRules {
                 else -> AppBlockTier.OPEN
             }
             SmartLoadout.SLEEP -> {
-                // Issue #119, finding 4: essentials by PACKAGE, not
-                // substring luck — a stock Camera (com.android.camera2)
-                // and Waze (com.waze) contain none of the old five
-                // substrings and were LOCKED all night. EssentialApps
-                // keeps the substring test only as a superset fallback.
-                EssentialApps.sleepLoadoutTierFor(packageName, appName)
+                // Issue #121: structurally time-critical packages
+                // (alarm / calendar class by intent identity or exact
+                // package identity — TimeCriticalApps) stay OPEN: an
+                // alarm app branded without 'clock'/'alarm' and the
+                // calendar were both LOCKED all night by the name
+                // rules alone. This rides the same #129 no-loosen
+                // clamp and sealed-session gate as every other OPEN
+                // below — it is an exemption of the loadout's own
+                // derivation, not a loosening back door.
+                if (packageName in timeCriticalPackages) {
+                    AppBlockTier.OPEN
+                } else {
+                    // Issue #119, finding 4: essentials by PACKAGE, not
+                    // substring luck — a stock Camera (com.android.camera2)
+                    // and Waze (com.waze) contain none of the old five
+                    // substrings and were LOCKED all night. EssentialApps
+                    // keeps the substring test only as a superset fallback.
+                    EssentialApps.sleepLoadoutTierFor(packageName, appName)
+                }
             }
         }
         // Issue #129 (unlisted-distraction, HIGH): a loadout NEVER
@@ -93,11 +113,15 @@ object LoadoutRules {
     /** Issue #304 F1: would applying [loadout] loosen ANY app's
      *  current tier? The hand loadout tap uses this to surface the
      *  one-way ratchet honestly instead of silently clamping. */
-    fun anyLoosening(loadout: SmartLoadout, apps: List<BlockedAppEntity>): Boolean =
+    fun anyLoosening(
+        loadout: SmartLoadout,
+        apps: List<BlockedAppEntity>,
+        timeCriticalPackages: Set<String> = emptySet()
+    ): Boolean =
         apps.any { app ->
             SessionTierGate.loosens(
                 app.resolvedTier,
-                tierFor(loadout, app.packageName, app.appName, app.category)
+                tierFor(loadout, app.packageName, app.appName, app.category, timeCriticalPackages = timeCriticalPackages)
             )
         }
 
@@ -105,13 +129,17 @@ object LoadoutRules {
      *  and the SHUT / PEEK / OPEN counts the phone would land on. */
     data class Preview(val changed: Int, val shut: Int, val peek: Int, val open: Int)
 
-    fun preview(loadout: SmartLoadout, apps: List<BlockedAppEntity>): Preview {
+    fun preview(
+        loadout: SmartLoadout,
+        apps: List<BlockedAppEntity>,
+        timeCriticalPackages: Set<String> = emptySet()
+    ): Preview {
         var changed = 0
         var shut = 0
         var peek = 0
         var open = 0
         for (app in apps) {
-            val tier = tierFor(loadout, app.packageName, app.appName, app.category, app.resolvedTier)
+            val tier = tierFor(loadout, app.packageName, app.appName, app.category, app.resolvedTier, timeCriticalPackages)
             if (tier != app.resolvedTier) changed++
             when (tier) {
                 AppBlockTier.LOCKED -> shut++

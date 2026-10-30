@@ -1,4 +1,6 @@
 package com.example.ui.components
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
@@ -21,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -50,10 +53,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.data.BatterySnapshot
 import com.example.data.CapturedNotificationEntity
 import com.example.data.ClockText
 import androidx.compose.ui.platform.LocalContext
 import com.example.data.DistractionTriggerReason
+import com.example.data.deskClockBatteryNotice
+import com.example.data.deskClockKeepsScreenOn
+import com.example.data.readBatterySnapshot
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
 import com.example.service.InterceptPath
@@ -130,8 +137,39 @@ fun AlwaysOnDeskClockOverlay(
         // would ALSO float the Deck over the keyguard after the clock
         // exits — the exact exposure finding 5 names. On dispose both
         // grants are revoked before the Deck can inherit them.
+        // Issue #122 (finding 3): the premise now has a battery law.
+        // The battery is re-read every 30s while the clock shows;
+        // at a battery in risk (low / critical / saver on, not
+        // charging) the flag is NEVER added — the system timeout
+        // governs and the clock prints why — because holding an
+        // OLED on at 8% is the fastest route to the death the
+        // shield never survives. Before the first read lands the
+        // premise holds as before (the read is synchronous inside
+        // the same effect's first pass).
         val clockView = LocalView.current
-        DisposableEffect(visible) {
+        var batterySnap by remember { mutableStateOf<BatterySnapshot?>(null) }
+        LaunchedEffect(visible) {
+            if (visible) {
+                while (true) {
+                    batterySnap = readBatterySnapshot(clockView.context)
+                    delay(30_000L)
+                }
+            }
+        }
+        // WELLE-5 / #253-10: the clock also tells the time of day.
+        // The hero numeral stays the session span (the span law
+        // below is untouched); the wall time rides as a small
+        // secondary line under it, ticked once a second while the
+        // overlay is visible.
+        var nowWallMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        LaunchedEffect(visible) {
+            while (visible) {
+                nowWallMs = System.currentTimeMillis()
+                delay(1000)
+            }
+        }
+        val keepScreenOn = batterySnap?.let { deskClockKeepsScreenOn(it) } ?: true
+        DisposableEffect(visible, keepScreenOn) {
             var ctx: android.content.Context? = clockView.context
             var activity: android.app.Activity? = null
             while (ctx is android.content.ContextWrapper) {
@@ -139,7 +177,13 @@ fun AlwaysOnDeskClockOverlay(
                 ctx = ctx.baseContext
             }
             val window = activity?.window
-            window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            // Issue #122: at battery risk the flag is NEVER added
+            // (this effect is keyed on keepScreenOn, so a drop to
+            // risk re-runs it and the dispose above has already
+            // cleared the flag) — the system timeout governs.
+            if (keepScreenOn) {
+                window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
             // Nightstand dimming (#116 finding 3): hold the window
             // at 5% while the clock shows; release the override on
             // dispose so the rest of the app gets system brightness.
@@ -284,6 +328,21 @@ fun AlwaysOnDeskClockOverlay(
                     modifier = Modifier.testTag("desk_clock_mode_label")
                 )
 
+                // Issue #122: when the battery law refuses the
+                // always-on hold, the clock says so on its face —
+                // never a silent early death to the screen timeout.
+                val batteryNotice = batterySnap?.let { deskClockBatteryNotice(it) }
+                if (batteryNotice != null) {
+                    Text(
+                        text = batteryNotice,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = NightColorPrimary,
+                        modifier = Modifier.testTag("desk_clock_battery_notice")
+                    )
+                }
+
                 // Hero architectural Space Mono numerals (112sp)
                 Text(
                     text = timeText,
@@ -294,6 +353,17 @@ fun AlwaysOnDeskClockOverlay(
                     // Dimmed cream (#116 finding 3): the kept
                     // nightstand face, at night luminance.
                     color = NightColorPrimary.copy(alpha = DESK_CLOCK_TIME_ALPHA)
+                )
+
+                // The time of day, small under the span (WELLE-5 / #253-10).
+                Text(
+                    text = "LOCAL TIME " + deskClockWallTimeText(nowWallMs),
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    letterSpacing = 2.sp,
+                    color = NightColorPrimary.copy(alpha = 0.75f),
+                    modifier = Modifier.testTag("desk_clock_wall_time")
                 )
 
                 // The Safe Break announcement (finding 3): while a
@@ -462,6 +532,17 @@ internal fun deskClockProgress(session: FocusSessionEntity?): Float = when {
 }
 
 /**
+ * The desk clock's time-of-day print (WELLE-5 / #253-10): the
+ * overlay's hero numeral is the session span, and until this
+ * helper the surface never told the time of day at all — a
+ * "desk clock" that could not answer "what time is it?".
+ * 24-hour HH:mm, the slip's own convention (ReceiptSheet.hhmm).
+ */
+internal fun deskClockWallTimeText(nowMillis: Long): String =
+    java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+        .format(java.util.Date(nowMillis))
+
+/**
  * The withheld peek's cooldown print (Truth Car 3, SIL-3; Hale
  * W-30's words): whole minutes, ceiling — 61 seconds is "AGAIN
  * IN 2 MIN", never a rounded-down promise.
@@ -581,6 +662,33 @@ internal fun airlockStakeLine(emergencyBreaksRemaining: Int): String? = when {
         "EMERGENCY BREAK: $emergencyBreaksRemaining LEFT THIS WEEK"
 }
 
+/** English ordinal for the attempt mirror ("1ST", "2ND", "3RD",
+ *  "4TH" — the 11/12/13 teens take TH, never ST/ND/RD). */
+internal fun attemptOrdinal(n: Int): String {
+    val suffix = when {
+        n % 100 in 11..13 -> "TH"
+        n % 10 == 1 -> "ST"
+        n % 10 == 2 -> "ND"
+        n % 10 == 3 -> "RD"
+        else -> "TH"
+    }
+    return "$n$suffix"
+}
+
+/**
+ * Issue #254 F12 (Audit R5): the attempt mirror the door prints
+ * under the app name — which reach today this is, counted from
+ * the intercept ledger. The per-app count used to be buried in
+ * a buried row (BlockedAppEntity.interceptCount) and never stood
+ * at the decision point. 0 = not carried (previews, tests, or
+ * the count not yet read back): the door prints nothing rather
+ * than inventing a number.
+ */
+internal fun airlockAttemptLine(todayAttempts: Int): String? = when {
+    todayAttempts <= 0 -> null
+    else -> "${attemptOrdinal(todayAttempts)} REACH TODAY"
+}
+
 /**
  * The cooldown's SCOPE, printed beside its price (issue #114,
  * finding 3): the cooldown is per app — this app's timer says
@@ -593,6 +701,30 @@ internal fun airlockStakeLine(emergencyBreaksRemaining: Int): String? = when {
  */
 internal fun peekCooldownScopeText(): String =
     "THE COOLDOWN IS PER APP — OTHER PEEK APPS KEEP THEIR OWN TIMERS"
+
+/**
+ * Issue #102 (peek-lived, finding 5): the peek offer's terms, in
+ * the app's own words, printed BEFORE the peek is taken. The peek
+ * chip is labelled "2-MINUTE PEEK" while the token-spending door
+ * is "EMERGENCY BREAK" — this line is what tells the user the two
+ * are different doors: the peek spends no weekly break and does
+ * not end the session. Pure, so the wording is unit-tested.
+ * (Ported from PR #351's peekTermsText — its pill/enforcer build
+ * was superseded by #114/#99 on main; this sentence was not.)
+ */
+internal fun peekTermsText(): String =
+    "THE PEEK DOES NOT SPEND YOUR EMERGENCY BREAK AND DOES NOT END THE SESSION"
+
+/**
+ * Issue #102 (peek-lived, finding 4): the withheld peek's reason
+ * stands on the door from the FIRST second — it is not gated on
+ * the breath countdown finishing. Before this, the reason block
+ * waited for `countdownSecs == 0`, so a user who returned from a
+ * peek (or hit a cooldown) stared at a wall that explained
+ * nothing for a second countdown. Pure decision, unit-tested;
+ * the countdown deliberately plays no part in it.
+ */
+internal fun peekWithheldReasonVisible(peekReady: Boolean): Boolean = !peekReady
 
 /**
  * What waits at the end of the breath, printed DURING the breath
@@ -735,7 +867,7 @@ fun CapturedNotificationsDigestSheet(
                             // frame with no stamp and no rows yet —
                             // never one frame of the live list.
                             Text(
-                                text = "HELD",
+                                text = stringResource(R.string.label_held),
                                 fontFamily = AtkinsonHyperlegibleFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp,
@@ -821,7 +953,7 @@ fun CapturedNotificationsDigestSheet(
                                     )
                                     if (!frozenMode) {
                                         Text(
-                                            text = "DEL",
+                                            text = stringResource(R.string.key_del),
                                             fontFamily = AtkinsonHyperlegibleFamily,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 11.sp,
@@ -977,7 +1109,7 @@ fun AirlockInterceptOverlay(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text(
-                    text = "AIRLOCK INTERCEPTION • ${state.interceptReasonBadge.uppercase(Locale.US)}",
+                    text = stringResource(R.string.airlock_interception_badge, state.interceptReasonBadge.uppercase(Locale.US)),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.5.sp,
@@ -991,6 +1123,20 @@ fun AirlockInterceptOverlay(
                     fontSize = 24.sp,
                     color = NightColorPrimary
                 )
+
+                // Issue #254 F12 (Audit R5): the attempt mirror —
+                // under the app name, the door states which reach
+                // today this is, counted from the intercept ledger.
+                airlockAttemptLine(state.todayAttempts)?.let { line ->
+                    Text(
+                        text = line,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary,
+                        modifier = Modifier.testTag("airlock_attempt_line")
+                    )
+                }
 
                 // SIL-1 / Hale W-28: under the app name, the door
                 // states the session's end — its own statement,
@@ -1044,7 +1190,7 @@ fun AirlockInterceptOverlay(
                 // over a blank.
                 if (state.sessionIntention.isNotBlank()) {
                     Text(
-                        text = "ACTIVE INTENTION: ${state.sessionIntention}",
+                        text = stringResource(R.string.active_intention, state.sessionIntention),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 12.5.sp,
                         color = NightColorPrimary.copy(alpha = 0.8f),
@@ -1133,72 +1279,79 @@ fun AirlockInterceptOverlay(
                     testTag = "airlock_return_button"
                 )
 
-                // Issue #114, finding 3: the whole exchange is
-                // printed DURING the breath, not revealed by it —
-                // what waits at zero, what it costs, and the
-                // cooldown's per-app scope all stand on the door
-                // from the first second.
-                if (countdownSecs > 0 && peekReady) {
-                    Text(
-                        text = peekOfferPreviewText(MonolithRepository.PEEK_DURATION_SECONDS),
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 12.5.sp,
-                        color = NightColorPrimary.copy(alpha = 0.8f)
-                    )
-                    Text(
-                        text = peekPriceText(MonolithRepository.PEEK_COOLDOWN_MILLIS),
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 12.5.sp,
-                        color = NightColorPrimary.copy(alpha = 0.8f)
-                    )
-                    Text(
-                        text = peekCooldownScopeText(),
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 12.5.sp,
-                        color = NightColorPrimary.copy(alpha = 0.8f)
-                    )
-                }
-
-                if (countdownSecs == 0 && peekReady) {
-                    BlockitActionChip(
-                        wordLabel = "2-MINUTE PEEK",
-                        // Issue #114, finding 5: this door is NOT an
-                        // emergency — it is the routine, repeatable,
-                        // cooldown-priced peek. The EMERGENCY name now
-                        // belongs only to the session-ending weekly
-                        // break, so the two doors can never again be
-                        // confused at the moment of least capacity.
-                        // SIL-2 / W-29: the badge is the SET value,
-                        // read from the lease machinery's own
-                        // constant — no hardcoded minutes here.
-                        monoBadge = peekBadgeText(MonolithRepository.PEEK_DURATION_SECONDS),
-                        onClick = onTake2MinutePeek,
-                        modifier = Modifier.fillMaxWidth(),
-                        testTag = "airlock_peek_button"
-                    )
-                    // SIL-2 / W-29: the price stands on the offer,
-                    // before the peek is taken — the cooldown the
-                    // repository will arm, named in full.
-                    Text(
-                        text = peekPriceText(MonolithRepository.PEEK_COOLDOWN_MILLIS),
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 12.5.sp,
-                        color = NightColorPrimary.copy(alpha = 0.8f)
-                    )
-                    Text(
-                        text = peekCooldownScopeText(),
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 12.5.sp,
-                        color = NightColorPrimary.copy(alpha = 0.8f)
-                    )
+                if (peekReady) {
+                    // Audit R6 #341 F60: composed from the FIRST frame,
+                    // disabled and priced while the countdown runs.
+                    // Before this the chip (and its price line) only
+                    // appeared at second 0's end — the card grew
+                    // mid-decision, switch scanners restarted their
+                    // scan, and the offer could not even be READ
+                    // before the timer ran out.
+                    // Issue #114, finding 3 (composed with F60 above): the offer
+                    // line also stands during the breath — what waits at zero is
+                    // printed from the first second, while the price, scope and terms
+                    // print with the chip itself below, so the whole exchange is
+                    // readable during the countdown without duplicated lines.
+                    if (countdownSecs > 0) {
+                        Text(
+                            text = peekOfferPreviewText(MonolithRepository.PEEK_DURATION_SECONDS),
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 12.5.sp,
+                            color = NightColorPrimary.copy(alpha = 0.8f)
+                        )
+                    }
+                BlockitActionChip(
+                    wordLabel = "2-MINUTE PEEK",
+                    // Issue #114, finding 5: this door is NOT an
+                    // emergency — it is the routine, repeatable,
+                    // cooldown-priced peek. The EMERGENCY name now
+                    // belongs only to the session-ending weekly
+                    // break, so the two doors can never again be
+                    // confused at the moment of least capacity.
+                    // SIL-2 / W-29: the badge is the SET value,
+                    // read from the lease machinery's own
+                    // constant — no hardcoded minutes here.
+                    monoBadge = peekBadgeText(MonolithRepository.PEEK_DURATION_SECONDS),
+                    onClick = { if (countdownSecs == 0) onTake2MinutePeek() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (countdownSecs == 0) Modifier else Modifier.alpha(0.45f)),
+                    testTag = "airlock_peek_button"
+                )
+                // SIL-2 / W-29: the price stands on the offer,
+                // before the peek is taken — the cooldown the
+                // repository will arm, named in full.
+                Text(
+                    text = peekPriceText(MonolithRepository.PEEK_COOLDOWN_MILLIS),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontSize = 12.5.sp,
+                    color = NightColorPrimary.copy(alpha = 0.8f)
+                )
+                Text(
+                    text = peekCooldownScopeText(),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontSize = 12.5.sp,
+                    color = NightColorPrimary.copy(alpha = 0.8f)
+                )
+                // Issue #102, finding 5: the terms stand on
+                // the offer itself, before the tap.
+                Text(
+                    text = peekTermsText(),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontSize = 12.5.sp,
+                    color = NightColorPrimary.copy(alpha = 0.8f)
+                )
                 }
 
                 // The withheld peek prints its state AND its reason
                 // (Held Door Truth Baseline): cooldown with its
                 // live remaining time, or the running pill named.
                 // Doors that never owed a peek carry withheld ==
-                // null and print nothing here.
-                if (countdownSecs == 0 && !peekReady) {
+                // null and print nothing here. Issue #102, finding
+                // 4: the reason is NOT gated on the breath countdown
+                // — it shows from the first second, not after a
+                // second countdown (see peekWithheldReasonVisible).
+                if (peekWithheldReasonVisible(peekReady)) {
                     when (state.peekWithheld) {
                         PeekWithheld.COOLDOWN -> {
                             if (cooldownSecs > 0) {
@@ -1211,13 +1364,13 @@ fun AirlockInterceptOverlay(
                             }
                         }
                         PeekWithheld.ALREADY_ACTIVE -> Text(
-                            text = "A PEEK IS ALREADY RUNNING",
+                            text = stringResource(R.string.peek_already_running),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontSize = 12.5.sp,
                             color = NightColorPrimary.copy(alpha = 0.8f)
                         )
                         PeekWithheld.PEEK_OFF -> Text(
-                            text = "PEEK IS OFF",
+                            text = stringResource(R.string.peek_off),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontSize = 12.5.sp,
                             color = NightColorPrimary.copy(alpha = 0.8f)
@@ -1330,16 +1483,17 @@ fun PeekCountdownPill(
                 color = NightColorPrimary,
                 modifier = Modifier.testTag("peek_pill_countdown")
             )
-            Text(
-                text = "✕",
-                fontFamily = AtkinsonHyperlegibleFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
-                color = NightColorPrimary,
+            // #336: the close glyph is an ICON from the one system
+            // (MonolithIcons), not a text character.
+            androidx.compose.material3.Icon(
+                imageVector = com.example.ui.theme.MonolithIcons.Close,
+                contentDescription = "End peek early",
+                tint = NightColorPrimary,
                 modifier = Modifier
                     .clickable { onEndEarly() }
                     .testTag("peek_pill_end_button")
                     .padding(horizontal = 4.dp)
+                    .size(16.dp)
             )
         }
     }
@@ -1419,7 +1573,7 @@ fun DisarmChallengeOverlay(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text(
-                    text = "EMERGENCY BREAK",
+                    text = stringResource(R.string.emergency_break),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
