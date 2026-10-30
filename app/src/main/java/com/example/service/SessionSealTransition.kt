@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.SystemClock
 import com.example.data.MonolithDatabase
+import com.example.MLog
 import com.example.data.MonolithRepository
 import kotlinx.coroutines.delay
 import java.util.concurrent.atomic.AtomicBoolean
@@ -276,7 +277,9 @@ class SessionSealTransitionImpl(
         unattended: Boolean
     ): Boolean {
         if (!claim(sessionId)) return false
-        val ok = runCatching { sealRow() }.getOrDefault(false)
+        val ok = runCatching { sealRow() }
+            .onFailure { MLog.e("sealRow failed for session $sessionId; seal not written", it) }
+            .getOrDefault(false)
         if (!ok) {
             // The claim stays spent (Klinke G5): a dead attempt
             // cannot seal late, and no Throw ever sounds over an
@@ -292,7 +295,9 @@ class SessionSealTransitionImpl(
         // the claim stays spent (above), so nothing re-seals in
         // this process, and recovery re-proves from the true
         // marker-absent state.
-        val published = runCatching { publish() }.isSuccess
+        val published = runCatching { publish() }
+            .onFailure { MLog.w("seal publish() failed for session $sessionId", it) }
+            .isSuccess
         if (!published) {
             clearSealMarker(sessionId)
             return false
@@ -372,7 +377,9 @@ class SessionSealTransitionImpl(
                 // Witnesses are re-read live every sample; a
                 // confirmed link whose witness dies pre-t=0
                 // re-pends (the cascade's law, mirrored).
-                val row = runCatching { repository.activeSessionSnapshot() }.getOrNull()
+                val row = runCatching { repository.activeSessionSnapshot() }
+                    .onFailure { MLog.d("prove-loop session snapshot read failed: ${it.message}") }
+                    .getOrNull()
                 l1 = if (row != null && row.id == sessionId && row.isActive) l1 ?: now else null
                 val sNow = shieldMono(sessionId)
                 l2 = if (sNow == null) null else (l2 ?: sNow)
@@ -404,8 +411,11 @@ class SessionSealTransitionImpl(
                 if (now >= latchMono + ANNUL_MS) {
                     cancelSealPrime()
                     if (!annulOnFailure) return SealVerdict.JAMMED
-                    val dead = runCatching { repository.sessionById(sessionId) }.getOrNull()
+                    val dead = runCatching { repository.sessionById(sessionId) }
+                        .onFailure { MLog.w("recover: sessionById($sessionId) read failed", it) }
+                        .getOrNull()
                     runCatching { repository.annulProvingSession(sessionId) }
+                        .onFailure { MLog.e("recover: annulProvingSession($sessionId) failed", it) }
                     if (dead?.routineId != null) {
                         synchronized(tombstones) {
                             tombstones += (dead.routineId to dead.windowStartMillis)

@@ -20,6 +20,7 @@ import com.example.R
 import com.example.data.AppBlockTier
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
+import com.example.MLog
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -80,6 +81,11 @@ class MonolithShieldService : Service() {
             MonolithDatabase.getInstance(applicationContext).monolithDao()
                 .getActiveSessionSnapshot()?.takeIf { it.isActive }?.id
         }
+    }.onFailure {
+        // Issue #75 F1 wiring: a thrown read reads as "no live
+        // session" to the dispatch — that conversion must not be
+        // silent, or a wedged DB stands the shield down invisibly.
+        MLog.w("liveActiveSessionId read failed; dispatch treats it as no live session", it)
     }.getOrNull()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.util.Log
+import com.example.MLog
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
@@ -1034,7 +1035,9 @@ class MonolithViewModel(
     fun presentReceipt(sessionId: Int) {
         viewModelScope.launch {
             _presentedReceipt.value =
-                runCatching { repository.rehydrateReceipt(sessionId) }.getOrNull()
+                runCatching { repository.rehydrateReceipt(sessionId) }
+                    .onFailure { MLog.w("rehydrateReceipt($sessionId) failed; receipt not presented", it) }
+                    .getOrNull()
         }
     }
 
@@ -1498,10 +1501,14 @@ class MonolithViewModel(
      *  NOT called for it, and E6 never arms from it). */
     private fun runSliceERecovery() {
         viewModelScope.launch {
-            runCatching { repository.rehydrateReceipt() }.getOrNull()?.let { restored ->
+            runCatching { repository.rehydrateReceipt() }
+                .onFailure { MLog.w("Slice-E receipt rehydrate failed", it) }
+                .getOrNull()?.let { restored ->
                 if (_receiptState.value == null) _receiptState.value = restored
             }
-            val active = runCatching { repository.activeSessionSnapshot() }.getOrNull()
+            val active = runCatching { repository.activeSessionSnapshot() }
+                .onFailure { MLog.w("Slice-E active-session snapshot failed; recovery skipped this launch", it) }
+                .getOrNull()
             if (active != null && armProving.phase.value == ArmPhase.Idle) {
                 // Issue #126 F1: gate the Deck on the recovery's
                 // verdict for exactly the rows recover() will
@@ -3230,8 +3237,12 @@ class MonolithViewModel(
         path: InterceptPath = InterceptPath.UNKNOWN
     ) {
         viewModelScope.launch {
-            val session = runCatching { repository.activeSessionSnapshot() }.getOrNull()
-            val entity = runCatching { repository.appsSnapshot() }.getOrNull()
+            val session = runCatching { repository.activeSessionSnapshot() }
+                .onFailure { MLog.w("intercept-from-intent: session snapshot read failed; Airlock dropped", it) }
+                .getOrNull()
+            val entity = runCatching { repository.appsSnapshot() }
+                .onFailure { MLog.w("intercept-from-intent: apps snapshot read failed; Airlock dropped", it) }
+                .getOrNull()
                 ?.find { it.packageName == packageName }
             val leaseLive = entity != null &&
                 entity.resolvedTier == AppBlockTier.PEEK_2M &&
@@ -3404,6 +3415,11 @@ class MonolithViewModel(
                 launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 appContext.startActivity(launch)
             }
+        }.onFailure {
+            // Issue #75 F1 wiring: the peek was granted and the
+            // pill armed, but the app launch itself failed —
+            // silently until now.
+            MLog.w("peek launch intent failed for $pkg", it)
         }
         _floatingPeekPill.value = FloatingPeekPillState(
             isActive = true,
@@ -3456,6 +3472,11 @@ class MonolithViewModel(
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                         }
                     )
+                }.onFailure {
+                    // Issue #75 F1 wiring: the post-peek eviction
+                    // relaunch failed — the intercept below still
+                    // fires, but the failed relaunch now speaks.
+                    MLog.w("expirePeekAndEvict relaunch failed for $pkg", it)
                 }
                 val entity = apps.value.find { it.packageName == pkg }
                 triggerAirlockIntercept(
