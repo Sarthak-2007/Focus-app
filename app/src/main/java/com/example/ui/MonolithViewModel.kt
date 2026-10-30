@@ -1102,11 +1102,26 @@ class MonolithViewModel(
             }
             val active = runCatching { repository.activeSessionSnapshot() }.getOrNull()
             if (active != null && armProving.phase.value == ArmPhase.Idle) {
-                runCatching {
+                // Issue #126 F1: gate the Deck on the recovery's
+                // verdict for exactly the rows recover() will
+                // re-prove (marker absent + young — recover's own
+                // forks in SessionSealTransition, mirrored here
+                // only to decide the gate; recover() remains the
+                // judge and re-derives both facts itself). A
+                // marker-sealed or older-build row adopts without
+                // ever entering PROVING, so a lawful relaunch of a
+                // running session renders settled, unchanged.
+                val nowWall = System.currentTimeMillis()
+                val needsProof = repository.sealedSessionIdFromMarker() != active.id &&
+                    nowWall - active.startWallTimeMillis <
+                    com.example.service.SessionSealTransitionImpl.RECOVERY_YOUNG_WINDOW_MS
+                if (needsProof) armProving.beginRecovery(active.id)
+                val verdict = runCatching {
                     sealTransition.recover(
-                        active.id, active.startWallTimeMillis, System.currentTimeMillis()
+                        active.id, active.startWallTimeMillis, nowWall
                     )
-                }
+                }.getOrNull()
+                if (needsProof) armProving.resolveRecovery(active.id, verdict)
             }
             // Draht: a faulted finish from a previous process
             // resumes its cadence from the row's own stamps.

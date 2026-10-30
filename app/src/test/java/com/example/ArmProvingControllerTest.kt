@@ -457,6 +457,57 @@ class ArmProvingControllerTest {
     }
 
     @Test
+    fun recoveryGateHoldsProvingUntilTheVerdict() = runTest {
+        // Issue #126 F1: a row under relaunch recovery reads
+        // PROVING (the Deck's gate renders it not-running) until
+        // the transition's verdict resolves it. SEALED relaxes
+        // silently — no hand-back, no sentence.
+        val controller = newController()
+        now = 20_000L
+        controller.beginRecovery(41)
+        val gated = controller.phase.value
+        assertTrue(gated is ArmPhase.Proving)
+        assertEquals(41, (gated as ArmPhase.Proving).sessionId)
+        assertEquals(0, gated.provenCount())
+        controller.resolveRecovery(41, com.example.service.SealVerdict.SEALED)
+        assertEquals(ArmPhase.Idle, controller.phase.value)
+        assertEquals(0, controller.annulCount.value)
+        assertNull(controller.armSentence.value)
+    }
+
+    @Test
+    fun recoveryAnnulmentHandsBackAndSpeaksPastTense() = runTest {
+        // The transition deleted the row; the controller's part
+        // is the hand-back + the past-tense sentence, and it must
+        // NOT annul through the port a second time.
+        val controller = newController()
+        now = 20_000L
+        controller.beginRecovery(41)
+        controller.resolveRecovery(41, com.example.service.SealVerdict.ANNULLED)
+        assertEquals(ArmPhase.Idle, controller.phase.value)
+        assertEquals(1, controller.annulCount.value)
+        assertTrue(port.annulCalls.isEmpty())
+        assertEquals(
+            "SESSION — NO PROOF. NOTHING WAS SEALED.",
+            controller.armSentence.value?.text
+        )
+    }
+
+    @Test
+    fun recoveryGateNeverHijacksALiveAttempt() = runTest {
+        val controller = newController()
+        now = 10_000L
+        controller.latch()
+        runCurrent()
+        val attempt = controller.phase.value
+        controller.beginRecovery(99)
+        assertEquals(attempt, controller.phase.value)
+        // And a verdict for some other row resolves nothing.
+        controller.resolveRecovery(99, com.example.service.SealVerdict.ANNULLED)
+        assertEquals(attempt, controller.phase.value)
+    }
+
+    @Test
     fun jamSentenceAndProvenCountArePhasePure() {
         val proving = ArmPhase.Proving(
             attemptId = 1,
