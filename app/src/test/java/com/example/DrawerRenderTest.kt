@@ -169,43 +169,62 @@ class DrawerRenderTest {
         date.atTime(hour, minute).atZone(java.time.ZoneId.systemDefault())
             .toInstant().toEpochMilli()
 
-    /** The populated Drawer fixture: five completions across three
-     *  filing groups and two months, plus today's declared word. */
+    /** The populated Drawer fixture: five completions across four
+     *  filing groups and two filing months, plus the current
+     *  filing day's declared word.
+     *
+     *  Reproducible on any run date/time (#91): every instant is a
+     *  deterministic function of the CURRENT FILING DAY — the
+     *  app's own 03:30 rule (DrawerDay.filingDate), not the
+     *  calendar date or the wall clock. Each fixture uses a wall
+     *  time after 03:30, so its filing date is exactly the date
+     *  named here. The old shape anchored to LocalDate.now() /
+     *  System.currentTimeMillis(): the day-5 task was future-dated
+     *  on the 1st-4th, the minusMonths fixture shifted on the 1st,
+     *  and 00:00-03:30 runs filed the "today" tasks under the
+     *  previous DrawerDay — a different fixture every day.
+     *  Guaranteed on every run date: filingToday and
+     *  filingToday-1d are distinct groups in (possibly) two months,
+     *  filingToday-10d is a third distinct date never in the
+     *  future, and the 12th of the month before filingToday's
+     *  month is a fourth — so the months present are always
+     *  exactly filingToday's month and the one before it. */
     private suspend fun seedPopulated() {
         val dao = db.monolithDao()
-        val today = LocalDate.now()
+        val filingToday = DrawerDay.filingDate(System.currentTimeMillis())
         dao.insertTask(
             completed(
-                "Electrostatics Problem Set 12", System.currentTimeMillis() - 30 * 60_000,
+                "Electrostatics Problem Set 12", at(filingToday, 14, 30),
                 "PHYSICS", 2_640,
                 notes = "Coulomb force drills\nField lines sketch\nGauss law set"
             )
         )
         dao.insertTask(
             completed(
-                "Botany NCERT Re-Read — Cell Cycle", System.currentTimeMillis() - 2 * 3_600_000,
+                "Botany NCERT Re-Read — Cell Cycle", at(filingToday, 11, 15),
                 "BIOLOGY", 1_500
             )
         )
         dao.insertTask(
             completed(
-                "Physics Mock — Full Syllabus", at(today.minusDays(1), 21, 14),
+                "Physics Mock — Full Syllabus", at(filingToday.minusDays(1), 21, 14),
                 "PHYSICS", 10_800
             )
         )
         dao.insertTask(
             completed(
-                "Organic Chemistry — GOC Worksheet", at(today.withDayOfMonth(5), 9, 15),
+                "Organic Chemistry — GOC Worksheet", at(filingToday.minusDays(10), 9, 15),
                 "CHEMISTRY", 3_300
             )
         )
         dao.insertTask(
             completed(
-                "Human Physiology MCQ Set", at(today.minusMonths(1).withDayOfMonth(12), 18, 40),
+                "Human Physiology MCQ Set",
+                at(filingToday.minusMonths(1).withDayOfMonth(12), 18, 40),
                 "BIOLOGY", 4_200
             )
         )
-        repository.declareDayWord(DrawerDay.dateIso(today), "REST")
+        repository.declareDayWord(DrawerDay.dateIso(filingToday), "REST")
     }
 
     private fun setRoot(dark: Boolean) {
