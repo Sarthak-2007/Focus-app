@@ -21,7 +21,7 @@ Truth lives in code:
   order; AES-GCM backup export killed Oct 29, 2026
   (CryptoIntegrityManager.kt:17); CurioVaultScreen,
   StampPressStudioModal, FallingSquares grep 0 in app/src/main.
-  Curios survive as data (CurioCatalog, MonolithModels.kt:799)
+  Curios survive as data (CurioCatalog object, MonolithModels.kt:779; built at call sites MainActivity.kt:624-625, 799-809)
   rendered as Drawer cabinet rows (DrawerScreen.kt:160); the desk
   clock survives as an overlay (AirlockAndDisarmOverlays.kt:70 via
   MonolithViewModel.kt:1563 toggleAlwaysOnDeskClock).
