@@ -1,29 +1,24 @@
 package com.example
 
-import com.example.service.shieldResurrectOnTaskRemoved
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
 /**
- * Issue #328 (Audit R5, Zario second pass): the shield's
- * resurrection story. Zario stacks re-arm paths; Monolith's
- * shield had none — no onTaskRemoved, no stopWithTask, no
- * excludeFromRecents. The decision table and the manifest
- * declarations are both pinned here.
+ * Issue #324 (Audit R5, Zario second pass): the shield's
+ * resurrection story. Zario stacks re-arm paths; when this lane
+ * started, Monolith's shield had none — no onTaskRemoved, no
+ * stopWithTask, no excludeFromRecents.
+ *
+ * Merge reconciliation (Oct 30): while this lane was in flight,
+ * main landed the onTaskRemoved resurrection itself via issue
+ * #43 — the ShieldRestartPolicy alarm re-dispatch in
+ * MonolithShieldService, its truth table pinned by
+ * ForegroundSelectionTest. This lane's duplicate override was
+ * therefore dropped; what this lane uniquely adds is the
+ * manifest surface below, pinned here.
  */
 class ShieldResurrectionTest {
-
-    @Test
-    fun protectingShieldResurrectsOnTaskRemoval() {
-        assertTrue(shieldResurrectOnTaskRemoved(protecting = true))
-    }
-
-    @Test
-    fun idleShieldStaysDownOnTaskRemoval() {
-        assertFalse(shieldResurrectOnTaskRemoved(protecting = false))
-    }
 
     @Test
     fun manifestDeclaresTheResurrectionSurface() {
