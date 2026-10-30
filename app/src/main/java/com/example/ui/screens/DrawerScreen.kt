@@ -1324,6 +1324,12 @@ fun DrawerScreen(
                         )
                     }
                     item {
+                        // Issue #115: the row prints the name of
+                        // the place it opens — CABINET, matching the
+                        // screen's own header. "CURIOS" (trinkets in
+                        // a shop) told a cold reader nothing about
+                        // earned records living behind it. The
+                        // testTag keeps its name (internal only).
                         DrawerNavRow(
                             label = "CABINET",
                             onClick = { viewName = DrawerView.CABINET.name },

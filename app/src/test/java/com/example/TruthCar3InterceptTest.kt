@@ -166,7 +166,7 @@ class TruthCar3InterceptTest {
             seamMarksFor(warrant(WarrantState.OFF, readMono = 100_000L, bound = false), 200_000L)
         )
         assertEquals(
-            "BIND HELD · UNSEEN" to "PROOF: STALE",
+            "BIND HELD · NOT SEEN" to "PROOF: STALE",
             seamMarksFor(warrant(WarrantState.UNPROVEN, readMono = 100_000L, stamped = false), 200_000L)
         )
         assertNull(seamMarksFor(null, 200_000L))

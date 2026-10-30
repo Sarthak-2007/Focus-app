@@ -1450,6 +1450,18 @@ class MonolithAccessibilityService : AccessibilityService() {
         }
 
         // 5. 3-Tier Per-App & Safe Break Blocking
+        // W3 #134: the dialer never takes this door. The call
+        // bypass above (step 1) covers calls that already
+        // exist; placing one starts in MODE_NORMAL, so a
+        // LOCKED Phone app was intercepted like any
+        // distraction and the user could not dial out
+        // mid-session. Telephony is a safety surface: the
+        // dialer package is exempt whatever its tier says.
+        // (Composed onto main's processEvent pipeline; main's
+        // #129 unlisted-app branch below exempts the dialer in
+        // its own right — this line keeps the listed-row path
+        // equally exempt, as the lane's finding requires.)
+        if (MonolithRepository.isDialerPackage(applicationContext, pkgName)) return
         val appRule = appsSnapshot.find { it.packageName == pkgName }
         if (appRule == null) {
             // Issue #129 (unlisted-distraction, CRITICAL): no row

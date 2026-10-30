@@ -8,12 +8,14 @@
     <string name="accessibility_service_summary">Guards a sealed focus session: blocked apps, Shorts/Reels and blocked sites are intercepted, including in split-screen and picture-in-picture. Open Monolith to configure what is blocked.</string>
     <string name="notification_channel_name">Monolith Active Shield</string>
     <string name="notification_channel_desc">Shows the active focus session\'s countdown and shield status.</string>
-    <string name="tab_deck">Focus</string>
+    <!-- Issue #115: one name per destination — the rail's words.
+         tab_reliability (Guard, dissolved into PARK) and
+         tab_web_studio (no such destination; sites live on Shield)
+         are deleted with the names they carried. -->
+    <string name="tab_deck">Deck</string>
     <string name="tab_tasks">Tasks</string>
     <string name="tab_shield">Shield</string>
-    <string name="tab_vault">Receipts</string>
-    <string name="tab_reliability">Guard</string>
-    <string name="tab_web_studio">Web Deck</string>
+    <string name="tab_vault">Ledger</string>
 
     <!-- Ritual-flavored vocabulary (DEVELOPER-GUIDE.pdf §9.10) -->
     <string name="ritual_lock_session">SLIDE TO SEAL VAULT</string>
