@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.content.Context
 import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,11 +41,19 @@ import kotlinx.coroutines.launch
  * from (setting, parent items, suspension) — never written directly,
  * and its value words never cross into the permission family.
  *
- * Persistence: NONE this wave. The store is in-memory behind this
- * writer interface; the Readiness Log implementation (an append-only
- * measurement table, Migration 9→10) is Slice E's, and swaps in
- * behind these same writers. The no-op is named, not hidden: nothing
- * in this file touches Room.
+ * Persistence (issue #48, audit R1 seal-watchstore): exactly ONE
+ * fact is durable — LAST PROVED, a wall-clock historical fact ("a
+ * complete set was proved at T") that stays true forever once
+ * landed. It is written to SharedPreferences the instant it
+ * advances (forward only — it never regresses) and restored by
+ * [bind] in the next process. The measurements themselves are
+ * deliberately NOT persisted: every writer re-measures from the
+ * living services (BIND hooks on connect, the shield loop every
+ * iteration, the sweep on Deck entry/resume), so the store
+ * converges to current truth within one pass — while a restored
+ * measurement would print old proof as fresh, the exact lie this
+ * store exists to prevent. Residency stays process-scoped by
+ * definition: a new process is a new residency.
  * ============================================================================
  */
 
@@ -131,7 +140,13 @@ data class WatchSnapshot(
     val engineHeartbeatMono: Long,
     val engineHeartbeatWall: Long,
     val engineProtecting: Boolean,
-    val lastProvedWallMillis: Long?
+    val lastProvedWallMillis: Long?,
+    /** Emission generation (issue #48): bumped by [WatchStore.poke]
+     *  so a poke is a REAL emission — StateFlow suppresses equal
+     *  values, and a bare copy() of a data class is equal to the
+     *  value it copies, so the old poke could never notify a
+     *  collector. */
+    val pokeGen: Long = 0L
 ) {
     fun measurement(item: WatchItemId): WatchMeasurement? = items[item]
 
@@ -142,12 +157,56 @@ data class WatchSnapshot(
 
 /** What a permission line prints at a given instant (spec §4.2):
  *  never-measured, the measured value, or its stale derivative. */
-enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE }
+enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE, MISSING_STALE }
 
 object WatchStore {
 
     /** A PASS measurement older than this (monotonic) is stale. */
     const val STALE_AFTER_MS: Long = 45_000L
+
+    // Issue #48: LAST PROVED's durable home — a tiny wall-clock
+    // fact needs no table (the seal marker's SharedPreferences
+    // precedent, MonolithRepository SEAL_PREFS).
+    private const val PREFS_NAME = "monolith_watch"
+    private const val KEY_LAST_PROVED_WALL = "last_proved_wall_ms"
+
+    @Volatile private var boundContext: Context? = null
+
+    /**
+     * Bind the store to this process (idempotent): restores the
+     * persisted LAST PROVED, so a fresh process opens with the
+     * historical fact intact instead of "never proved". Called by
+     * the store's own writers' homes — the two BIND services, the
+     * shield service — and by MainActivity.
+     */
+    fun bind(context: Context) {
+        val app = context.applicationContext
+        if (boundContext === app) return
+        boundContext = app
+        val persisted = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getLong(KEY_LAST_PROVED_WALL, 0L)
+        if (persisted > 0L) {
+            publish { current ->
+                if ((current.lastProvedWallMillis ?: 0L) < persisted) {
+                    current.copy(lastProvedWallMillis = persisted)
+                } else {
+                    current
+                }
+            }
+        }
+    }
+
+    private fun persistLastProved(wallMillis: Long) {
+        val app = boundContext ?: return
+        // commit(), not apply() (verifier pass, issue #48): the
+        // fact must be on disk when this returns — the seal
+        // marker's own standard. Advances are rare (one per
+        // completed sweep), so the synchronous write is cheap.
+        app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(KEY_LAST_PROVED_WALL, wallMillis)
+            .commit()
+    }
 
     private val _snapshots = MutableStateFlow(WatchSnapshot.EMPTY)
     val snapshots: StateFlow<WatchSnapshot> = _snapshots.asStateFlow()
@@ -188,9 +247,15 @@ object WatchStore {
             MonolithAccessibilityService.lastRootMono >= residencyStartMono
 
     /** A nudge with no data: forces a snapshot re-emission so derived
-     *  readers (the Deck warrant) re-read the living facts. */
+     *  readers (the Deck warrant) re-read the living facts. Routed
+     *  through [publish] (issue #48): the generation bump makes the
+     *  emission real — StateFlow suppresses equal values, and the
+     *  old bare copy() was equal by construction, so collectors were
+     *  never notified — and the @Synchronized publish lock ends the
+     *  old poke's second sin: it wrote the flow directly, outside
+     *  the lock, where it could clobber a concurrent publication. */
     fun poke() {
-        _snapshots.value = _snapshots.value.copy()
+        publish { current -> current.copy(pokeGen = current.pokeGen + 1) }
     }
 
     // ------------------------------------------------------------------
@@ -350,15 +415,23 @@ object WatchStore {
     }
 
     /** The permission print at [nowMono]: staleness derived here,
-     *  never stored. A PASS older than [STALE_AFTER_MS] is STALE;
-     *  MISSING never stales. */
+     *  never stored. ANY measurement older than [STALE_AFTER_MS]
+     *  is stale — a PASS prints STALE and a denial prints
+     *  MISSING_STALE (issue #58 F1). The old asymmetry — GRANTED
+     *  expired after 45s while a MISSING measured hours ago printed
+     *  bare and current forever — presented an ancient denial as
+     *  current fact on the Guard line. MISSING_STALE stays a
+     *  distinct print, not a collapse into STALE, so consumers
+     *  that act on a lack (PARK's FIX key) still know the item is
+     *  missing, not merely old. */
     fun permPrintAt(snapshot: WatchSnapshot, item: WatchItemId, nowMono: Long): PermPrint {
         val m = snapshot.items[item] ?: return PermPrint.UNMEASURED
         val perm = m.perm ?: return PermPrint.UNMEASURED
+        val stale = nowMono - m.measuredMono > STALE_AFTER_MS
         return when {
-            perm == PermState.GRANTED && nowMono - m.measuredMono > STALE_AFTER_MS ->
-                PermPrint.STALE
+            perm == PermState.GRANTED && stale -> PermPrint.STALE
             perm == PermState.GRANTED -> PermPrint.GRANTED
+            stale -> PermPrint.MISSING_STALE
             else -> PermPrint.MISSING
         }
     }
@@ -425,8 +498,14 @@ object WatchStore {
                 perms.all { it.measuredWall >= sweepStart }
             ) {
                 val completedAt = perms.maxOf { it.measuredWall }
-                if (completedAt != next.lastProvedWallMillis) {
+                // Forward only (issue #48): LAST PROVED is a
+                // historical fact — a late-completing set from an
+                // older era never regresses it. On a real advance
+                // the fact is persisted in the same breath, so it
+                // survives the process that proved it.
+                if (completedAt > (next.lastProvedWallMillis ?: 0L)) {
                     next = next.copy(lastProvedWallMillis = completedAt)
+                    persistLastProved(completedAt)
                 }
                 pendingSweepStartWall = 0L
             }
@@ -483,6 +562,7 @@ object WatchStore {
      *  it between cases. Production code never calls this. */
     fun resetForTest() {
         _snapshots.value = WatchSnapshot.EMPTY
+        boundContext = null
         sweepGen = 0
         pendingSweepStartWall = 0L
         shortsSettingOn = true

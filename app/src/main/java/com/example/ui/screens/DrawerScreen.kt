@@ -42,8 +42,11 @@ import com.example.data.CurioCatalog
 import com.example.data.DayWordStore
 import com.example.data.DrawerDay
 import com.example.data.FocusTaskEntity
+import com.example.data.ForgeStat
 import com.example.data.KineticArtifact
 import com.example.data.ReceiptIndexEntry
+import com.example.data.PARTIAL_STAMP_ARTIFACT
+import com.example.data.PARTIAL_STAMP_ID
 import com.example.data.StoredMonth
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
@@ -68,6 +71,17 @@ import java.util.Locale
  * Days file by the 03:30 rule (DrawerDay); row finish times print
  * true clock. A declared day word (REST / ILL / FAMILY) prints
  * beside its date heading as his authored word — never a number.
+ *
+ * SPENT is a task's LIFETIME total (Issue #110, finding 2): the
+ * stored row carries one accrual scalar and no per-session or
+ * per-day segments — accrual segments were never written (the
+ * startedAtSessionElapsedSec column landed unwritten), so no
+ * truthful per-day split can be computed from stored data. The
+ * shelves file a task under its FINISH day and every SPENT print
+ * says IN TOTAL / TOTAL, so the shelf never claims the finish
+ * day contained time that was actually spread over earlier days.
+ * A real per-day split needs segment storage — a new table and
+ * migration, owned by the schema train, not this screen.
  */
 
 private enum class DrawerView { LANDING, INDEX, MONTH, CABINET, RECEIPTS }
@@ -167,7 +181,14 @@ fun DrawerScreen(
     // same ReceiptSheet); the slip itself is never stored and
     // nothing is printed on it from here.
     receipts: List<ReceiptIndexEntry> = emptyList(),
-    onReceiptClick: (Int) -> Unit = {}
+    onReceiptClick: (Int) -> Unit = {},
+    // Issue #110, finding 5: the forge record per artifact — count
+    // of forging sessions + most recent forge instant, derived by
+    // the repository from stored session rows. The cabinet detail
+    // prints it, so a forged artifact names real days instead of
+    // only standing there. The Partial Stamp row joins the list
+    // whenever a session actually carries the stamp.
+    forgeStats: Map<String, ForgeStat> = emptyMap()
 ) {
     val scheme = MaterialTheme.colorScheme
     var view by remember { mutableStateOf(DrawerView.LANDING) }
@@ -286,10 +307,14 @@ fun DrawerScreen(
                         )
                     }
                     Text(
-                        text = "SPENT ${spentLabel(detail.actualSecondsSpent)}",
+                        // Issue #110, finding 2: SPENT IN TOTAL —
+                        // the lifetime accrual, filed under the
+                        // finish day; never that day's own time.
+                        text = "SPENT IN TOTAL ${spentLabel(detail.actualSecondsSpent)}",
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 13.sp,
-                        color = scheme.onBackground
+                        color = scheme.onBackground,
+                        modifier = Modifier.testTag("drawer_detail_spent")
                     )
                 }
             }
@@ -380,8 +405,20 @@ fun DrawerScreen(
                 }
             }
             if (artifact == null) {
-                items(artifacts, key = { "cabinet-${it.id}" }) { item ->
+                // Issue #110, finding 5: the Partial Stamp joins
+                // the cabinet's list only when a real session
+                // carries it — an honest row for a real record,
+                // never a seventh curio on offer.
+                val cabinetArtifacts = if (
+                    PARTIAL_STAMP_ID in forgedArtifactIds || forgeStats.containsKey(PARTIAL_STAMP_ID)
+                ) {
+                    artifacts + PARTIAL_STAMP_ARTIFACT
+                } else {
+                    artifacts
+                }
+                items(cabinetArtifacts, key = { "cabinet-${it.id}" }) { item ->
                     val forged = item.id in forgedArtifactIds
+                    val stat = forgeStats[item.id]
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -404,7 +441,13 @@ fun DrawerScreen(
                             )
                             if (forged) {
                                 Text(
-                                    text = "FORGED",
+                                    // The stamp is STAMPED, never
+                                    // FORGED; a repeat forge counts.
+                                    text = when {
+                                        item.id == PARTIAL_STAMP_ID -> "STAMPED"
+                                        stat != null && stat.count > 1 -> "FORGED ×${stat.count}"
+                                        else -> "FORGED"
+                                    },
                                     fontFamily = AnonymousProFamily,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 10.5.sp,
@@ -491,10 +534,15 @@ fun DrawerScreen(
                         // rule prints once, on the cabinet's list
                         // (below), not as a per-artifact price.
                         Text(
-                            text = if (artifact.id in forgedArtifactIds) {
-                                "FORGED — IT STANDS IN THE CABINET"
-                            } else {
-                                "NOT YET FORGED"
+                            text = when {
+                                artifact.id == PARTIAL_STAMP_ID &&
+                                    artifact.id in forgedArtifactIds ->
+                                    "STAMPED — IT STANDS IN THE CABINET"
+                                artifact.id == PARTIAL_STAMP_ID ->
+                                    "NOT YET STAMPED"
+                                artifact.id in forgedArtifactIds ->
+                                    "FORGED — IT STANDS IN THE CABINET"
+                                else -> "NOT YET FORGED"
                             },
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
@@ -502,6 +550,31 @@ fun DrawerScreen(
                             letterSpacing = 1.sp,
                             color = scheme.onBackground
                         )
+                        // Issue #110, finding 5: the forge record —
+                        // how many sessions forged (or stamped) it,
+                        // and the most recent one's date, from the
+                        // stored session rows. A cabinet that names
+                        // real days is a record; one that doesn't
+                        // was decoration.
+                        val detailStat = forgeStats[artifact.id]
+                        if (detailStat != null && detailStat.count > 0) {
+                            val lastDate = java.time.Instant
+                                .ofEpochMilli(detailStat.lastForgedAtMillis)
+                                .atZone(java.time.ZoneId.systemDefault())
+                                .toLocalDate()
+                            Text(
+                                text = if (artifact.id == PARTIAL_STAMP_ID) {
+                                    "STAMPED ×${detailStat.count} · LAST ${headingLabel(lastDate, withYear = true)}"
+                                } else {
+                                    "FORGED ×${detailStat.count} · LAST ${headingLabel(lastDate, withYear = true)}"
+                                },
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onSurfaceVariant,
+                                modifier = Modifier.testTag("cabinet_forge_record_${artifact.id}")
+                            )
+                        }
                         // DRW-06: no SELECT verb, no SELECTED
                         // state — the selection was consumed by
                         // nothing, survived nothing, and chose
@@ -975,7 +1048,8 @@ private fun DayHeading(
     }
 }
 
-/** One stored row: title, category, finish time, time spent. No
+/** One stored row: title, category, finish time, lifetime total
+ *  spent (printed TOTAL — see the file header, Issue #110). No
  *  estimate, no checkbox, no bar, no rank. */
 @Composable
 private fun StoredRow(task: FocusTaskEntity, onClick: () -> Unit) {
@@ -1011,7 +1085,10 @@ private fun StoredRow(task: FocusTaskEntity, onClick: () -> Unit) {
                 color = scheme.onSurfaceVariant
             )
             Text(
-                text = spentLabel(task.actualSecondsSpent),
+                // Issue #110, finding 2: TOTAL — the lifetime
+                // accrual riding under the finish day's shelf,
+                // not time that day contained.
+                text = "TOTAL ${spentLabel(task.actualSecondsSpent)}",
                 fontFamily = AnonymousProFamily,
                 fontSize = 10.5.sp,
                 color = scheme.onSurfaceVariant
