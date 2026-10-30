@@ -69,6 +69,7 @@ import com.example.ui.components.RefusalSentence
 import com.example.ui.components.endsAtText
 import com.example.ui.components.imprintTenantText
 import com.example.ui.components.jamSentenceFor
+import com.example.ui.components.provingSentenceFor
 import com.example.ui.components.refusalSentenceFor
 import com.example.ui.components.seamMarksFor
 import com.example.ui.components.inkControlFill
@@ -692,7 +693,15 @@ fun TactileDeckScreen(
                         view.soundEngine = soundEngine
                         view.minutesValue = dialMinutes
                         view.studyBlocksCount = studyBlocksCount
-                        view.isLockedSession = shotActive
+                        // Issue #126 F2: the wheel is a session
+                        // parameter — while an attempt is proving,
+                        // its parameters are already captured by
+                        // onLatch, so a turn here would silently
+                        // not apply. Lock it for the wait's span
+                        // (the view consumes and drops, its sealed
+                        // grammar) instead of letting it spin free
+                        // and lie about being settable.
+                        view.isLockedSession = shotActive || provingThisSession
                         view.onMinutesChanged = { mins -> onDialMinutesChanged(mins) }
                         view.onCycleBlocksCount = {
                             val nextBlocks = if (studyBlocksCount >= 8) 1 else studyBlocksCount + 1
@@ -718,7 +727,10 @@ fun TactileDeckScreen(
                             .clip(RoundedCornerShape(8.dp))
                             .background(if (isStopwatchMode) inkControlFill() else scheme.surfaceVariant)
                             .border(1.dp, if (isStopwatchMode) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(8.dp))
-                            .clickable {
+                            // Issue #126 F2: FLOW is the other
+                            // session parameter on this card — the
+                            // same proving lock as the wheel's.
+                            .clickable(enabled = !provingThisSession) {
                                 onSelectStudyPreset(StudyModePreset.STOPWATCH_FLOW)
                                 onDialMinutesChanged(5)
                             }
@@ -1059,16 +1071,18 @@ fun TactileDeckScreen(
             Spacer(Modifier.height(8.dp))
             RefusalSentenceSlot(
                 // The slot's tenant by phase (step 4): a JAMMED
-                // attempt names its unanswering link; PROVING is
-                // silent (the machine is working, and the wire's
-                // standing sentence would be a second rendering of
-                // a fact the cascade is already judging); an
+                // attempt names its unanswering link; PROVING names
+                // itself and its answered count (issue #126 F2 —
+                // the wait is no longer silent: the wire's standing
+                // sentence would still be a second rendering of a
+                // fact the cascade is judging, so the slot carries
+                // the cascade's own word instead of nothing); an
                 // annulment's past-tense sentence stands until the
                 // controller clears it; a running session is
                 // silent; otherwise the wire's standing sentence.
                 sentence = when {
                     armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase)
-                    armPhase is ArmPhase.Proving -> null
+                    armPhase is ArmPhase.Proving -> provingSentenceFor(armPhase)
                     isSessionRunning -> null
                     armSentence != null -> armSentence
                     else -> refusalSentenceFor(deckWarrant, nowMono)

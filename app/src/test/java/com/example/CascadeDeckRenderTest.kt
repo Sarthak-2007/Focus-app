@@ -37,7 +37,8 @@ import org.robolectric.shadows.ShadowLooper
  * evidence for the phase gate's rendering, not for the arm
  * itself. What each frame must show:
  *  - PROVING (row exists, t=0 not declared): the slide tenancy
- *    still stands, no running chips, no sentence, no strike.
+ *    still stands, no running chips, no strike — and since issue
+ *    #126 F2 the slot names the wait and its answered count.
  *  - JAMMED: the slot names the unanswering link.
  *  - SEALED (t=0 declared): the running tenancy takes the zone.
  *  - A row with the phase Idle (a routine-born session): runs
@@ -191,11 +192,13 @@ class CascadeDeckRenderTest {
     )
 
     @Test
-    fun provingKeepsTheSlideTenancyAndPrintsNothing() {
+    fun provingKeepsTheSlideTenancyAndNamesTheWait() {
         setDeck(proving(sessionId = 7), dark = false)
         // The row exists but t=0 has not fired: the slide zone
         // still holds the slide (not the running chips), and the
-        // sentence slot is silent. The running chips are asserted
+        // sentence slot names the proving wait (issue #126 F2 —
+        // the fabricated phase has SESSION confirmed, so the
+        // count prints 1 OF 3). The running chips are asserted
         // by their testTags, not their text: a chip's label lives
         // inside its clickable's merged semantics, where the text
         // finder cannot see it in ANY state (proven the hard way —
@@ -207,6 +210,7 @@ class CascadeDeckRenderTest {
         composeRule.onNodeWithTag("request_disarm_button").assertDoesNotExist()
         composeRule.onNodeWithTag("grace_abort_button").assertDoesNotExist()
         composeRule.onNodeWithText("SHIELD DIDN'T ANSWER — STILL PROVING.").assertDoesNotExist()
+        composeRule.onNodeWithText("PROVING THE SEAL — 1 OF 3 LINKS ANSWERED.").assertIsDisplayed()
         capture("cascade_proving_day.png")
     }
 

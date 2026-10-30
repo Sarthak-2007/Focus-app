@@ -7,6 +7,7 @@ import com.example.ui.ArmSessionPort
 import com.example.ui.ArmWitnesses
 import com.example.ui.LinkMark
 import com.example.ui.components.jamSentenceFor
+import com.example.ui.components.provingSentenceFor
 import com.example.ui.provenCount
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -520,6 +521,14 @@ class ArmProvingControllerTest {
             )
         )
         assertEquals(2, proving.provenCount())
+        // Issue #126 F2: PROVING speaks, counting its answered
+        // links from the same derived count.
+        assertEquals(
+            "PROVING THE SEAL — 2 OF 3 LINKS ANSWERED.",
+            provingSentenceFor(proving)?.text
+        )
+        assertNull(provingSentenceFor(ArmPhase.Idle))
+        assertNull(provingSentenceFor(ArmPhase.SealedRunning(7, 100)))
         assertNull(jamSentenceFor(proving))
         assertNull(jamSentenceFor(ArmPhase.Idle))
         assertNull(jamSentenceFor(ArmPhase.SealedRunning(7, 100)))

@@ -41,6 +41,7 @@ import com.example.data.SystemGuardStatus
 import com.example.service.UsageAccess
 import com.example.service.WatchStore
 import com.example.ui.ArmPhase
+import com.example.ui.provenCount
 import com.example.service.Warrant
 import com.example.service.WarrantState
 import com.example.ui.theme.AnonymousProFamily
@@ -534,15 +535,37 @@ internal fun refusalSentenceFor(warrant: Warrant?, nowMono: Long): RefusalSenten
  * never a count — in the present tense of a machine still
  * working. It carries no action: the retry fires on the
  * machine's own clock and offers him no verb. Non-jammed phases
- * print nothing here (PROVING's silence is the machine working;
- * the annulment's past-tense sentence is the controller's own
- * armSentence, not this function's).
+ * print nothing here (PROVING has its own sentence since issue
+ * #126 F2 — see [provingSentenceFor]; the annulment's past-tense
+ * sentence is the controller's own armSentence, not this
+ * function's).
  */
 internal fun jamSentenceFor(phase: ArmPhase): RefusalSentence? {
     if (phase !is ArmPhase.Jammed) return null
     val first = phase.jamSet.minByOrNull { it.ordinal } ?: return null
     return RefusalSentence(
         text = "${first.displayName} DIDN'T ANSWER — STILL PROVING.",
+        action = null
+    )
+}
+
+/**
+ * Issue #126 F2 — the proving wait speaks. The old law printed
+ * nothing while PROVING ("silence is the machine working"), so
+ * for 210–1500ms the Deck looked idle and tappable while a seal
+ * was in fact being judged — illegible to anyone watching, and
+ * a lie of omission beside the header law that no surface may
+ * claim a state it has not earned: the inverse also holds, a
+ * state being earned must be named. The sentence names the act
+ * and counts from the DERIVED provenCount (one field, so the
+ * print can never disagree with the controller). It carries no
+ * action, like the jam's: there is no verb for him here — the
+ * wait is the machine's — but now the wait is visible.
+ */
+internal fun provingSentenceFor(phase: ArmPhase): RefusalSentence? {
+    if (phase !is ArmPhase.Proving) return null
+    return RefusalSentence(
+        text = "PROVING THE SEAL — ${phase.provenCount()} OF ${com.example.ui.ArmLink.entries.size} LINKS ANSWERED.",
         action = null
     )
 }
