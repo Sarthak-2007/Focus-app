@@ -276,8 +276,12 @@ class DrawerPermanenceTest {
         assertEquals("ILL", repo.dayWords()["2026-08-14"])
         val months = repo.storedMonths().map { it.year to it.month }
         assertTrue(months.contains(2026 to 8))
-        // The closed word list refuses anything else, TEST included.
-        repo.declareDayWord("2026-08-15", "TEST")
-        assertNull(repo.dayWords()["2026-08-15"])
+        // Issue #137, F4: the vocabulary is open — a custom word
+        // he names himself is accepted; only a word that cannot
+        // normalise (here: two tokens) is refused.
+        repo.declareDayWord("2026-08-15", "GRIEF")
+        assertEquals("GRIEF", repo.dayWords()["2026-08-15"])
+        repo.declareDayWord("2026-08-16", "TWO WORDS")
+        assertNull(repo.dayWords()["2026-08-16"])
     }
 }

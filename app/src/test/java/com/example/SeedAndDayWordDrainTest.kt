@@ -31,9 +31,11 @@ import org.robolectric.annotation.Config
  * 2. F-SCH-1 DRAIN. Declared day words captured in the prefs
  *    file `monolith_day_words` (the Drawer lane's DayWordStore
  *    contract: dateIso → word) drain into the `day_notes` Room
- *    table at seed-sync. Only the closed word list drains —
- *    REST / ILL / FAMILY. A TEST word is refused and left
- *    sitting in prefs: never stored, never silently dropped.
+ *    table at seed-sync. Since issue #137 (F4) the vocabulary
+ *    is open: any word DayWordStore.normalize accepts drains,
+ *    suggestions and custom words alike. A word that cannot
+ *    normalise is refused and left sitting in prefs: never
+ *    stored, never silently dropped.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -115,34 +117,37 @@ class SeedAndDayWordDrainTest {
     }
 
     @Test
-    fun seedSync_drainsDeclaredWords_refusesTestAndNonStrings_idempotent() = runBlocking {
+    fun seedSync_drainsDeclaredWords_refusesInvalidAndNonStrings_idempotent() = runBlocking {
         prefs.edit()
             .putString("2026-10-26", "REST")
             .putString("2026-10-27", "ILL")
-            .putString("2026-10-28", "TEST")
+            .putString("2026-10-28", "TWO WORDS")
             .putInt("2026-10-29", 42)
+            .putString("2026-10-30", "TRAVEL")
             .commit()
 
         repository.ensureSeededAndSyncPackages()
         val dao = db.monolithDao()
 
-        // Only the closed list drained, in date order.
+        // Every normalisable word drained, in date order —
+        // the custom/suggested TRAVEL included (issue #137, F4).
         assertEquals(
             listOf(
                 DayNoteEntity("2026-10-26", "REST"),
-                DayNoteEntity("2026-10-27", "ILL")
+                DayNoteEntity("2026-10-27", "ILL"),
+                DayNoteEntity("2026-10-30", "TRAVEL")
             ),
             dao.getAllDayNotesSnapshot()
         )
         // The refused entries stay in prefs, untouched and visible:
-        // TEST was never stored and never silently dropped.
-        assertEquals("TEST", prefs.getString("2026-10-28", null))
+        // the two-token word was never stored and never silently dropped.
+        assertEquals("TWO WORDS", prefs.getString("2026-10-28", null))
         assertEquals(42, prefs.getInt("2026-10-29", -1))
         assertEquals(2, prefs.all.size)
 
         // Second seed-sync: a strict no-op for the table and prefs.
         repository.ensureSeededAndSyncPackages()
-        assertEquals(2, dao.getAllDayNotesSnapshot().size)
+        assertEquals(3, dao.getAllDayNotesSnapshot().size)
         assertEquals(2, prefs.all.size)
     }
 

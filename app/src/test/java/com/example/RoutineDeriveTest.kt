@@ -1,5 +1,6 @@
 package com.example
 
+import com.example.data.DrawerDay
 import com.example.data.FocusSessionEntity
 import com.example.data.GuardSettingsEntity
 import com.example.data.RoutineDerive
@@ -77,8 +78,13 @@ class RoutineDeriveTest {
         now: Long,
         active: FocusSessionEntity? = null,
         sessions: List<FocusSessionEntity> = emptyList(),
-        settings: GuardSettingsEntity = this.settings
-    ) = RoutineDerive.derive(routines, now, active, sessions, settings)
+        settings: GuardSettingsEntity = this.settings,
+        excused: Set<String> = emptySet()
+    ) = RoutineDerive.derive(routines, now, active, sessions, settings, excused)
+
+    /** The filing-date iso of an instant, as the Drawer files it. */
+    private fun filingIso(millis: Long): String =
+        DrawerDay.dateIso(DrawerDay.filingDate(millis))
 
     // --- Window states -------------------------------------------------
 
@@ -189,6 +195,35 @@ class RoutineDeriveTest {
         val r = routine(editedAt = at(3, 0, 0)) // edited Thu 00:00; Wed window predates it
         val d = derive(listOf(r), now).derivations.single()
         assertEquals(WindowJudgement.UNKNOWN, d.judgement)
+    }
+
+    // --- Excused dates (issue #137, F1) --------------------------------
+
+    @Test
+    fun excusedClosedWindow_judgesNothing_neverMissed() {
+        val now = at(3, 8, 0) // Thu 08:00; latest closed = Wed window
+        val excused = setOf(filingIso(at(2, 9, 0))) // Wed's filing date
+        val d = derive(listOf(routine()), now, excused = excused).derivations.single()
+        assertNull(d.judgement)
+        assertEquals(WindowState.OUTSIDE, d.state)
+    }
+
+    @Test
+    fun excusedOpenWindow_desiresNoSession() {
+        val now = at(2, 10, 0) // Wed 10:00, inside DAY BLOCKS
+        val excused = setOf(filingIso(at(2, 9, 0)))
+        val d = derive(listOf(routine()), now, excused = excused).derivations.single()
+        assertNull(d.desiredSession)
+        assertEquals(WindowState.PAUSED, d.state)
+    }
+
+    @Test
+    fun unexcusedClosedWindow_stillMissed() {
+        // Control: a different date's excuse does not leak.
+        val now = at(3, 8, 0)
+        val excused = setOf(filingIso(at(0, 9, 0))) // Monday only
+        val d = derive(listOf(routine()), now, excused = excused).derivations.single()
+        assertEquals(WindowJudgement.MISSED, d.judgement)
     }
 
     // --- Pause semantics ---------------------------------------------------
