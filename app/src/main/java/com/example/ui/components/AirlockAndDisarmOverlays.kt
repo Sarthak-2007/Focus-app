@@ -663,6 +663,20 @@ internal fun airlockStakeLine(emergencyBreaksRemaining: Int): String? = when {
 }
 
 /**
+ * Issue #265 (B-265-19): the self-monitoring half of the
+ * intervention — the door states which reach of this session
+ * this is, but only from the second reach on: a first reach has
+ * no cascade to report, and an uncarried count (0) prints
+ * nothing rather than inventing a history.
+ */
+internal fun airlockReachLine(sessionReachCount: Int): String? =
+    if (sessionReachCount >= 2) {
+        "REACH $sessionReachCount THIS SESSION — THE WALL STANDS LONGER"
+    } else {
+        null
+    }
+
+/**
  * The cooldown's SCOPE, printed beside its price (issue #114,
  * finding 3): the cooldown is per app — this app's timer says
  * nothing about any other peek app's. Until this line existed the
@@ -1124,6 +1138,20 @@ fun AirlockInterceptOverlay(
                         fontSize = 12.5.sp,
                         color = NightColorPrimary.copy(alpha = 0.8f),
                         modifier = Modifier.testTag("airlock_stake_line")
+                    )
+                }
+
+                // Issue #265 (B-265-19): the reach count stands on
+                // the door from the second reach on — the cascade
+                // is named at the moment of decision, beside the
+                // stake it escalates against.
+                airlockReachLine(state.sessionReachCount)?.let { line ->
+                    Text(
+                        text = line,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f),
+                        modifier = Modifier.testTag("airlock_reach_line")
                     )
                 }
 

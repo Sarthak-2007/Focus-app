@@ -1503,8 +1503,16 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onRequestEmergencyBreak = viewModel::requestDisarmFromAirlock,
                 // Issue #318 F4: the wall breathes for the stored,
                 // configured length — not a composable-local 5.
-                breathSeconds = remember {
-                    com.example.data.AirlockBreathStore(context).breathSeconds()
+                // Issue #265: the wall for THIS reach rides on the
+                // intercept state, escalated per reach; the stored
+                // base remains the fallback for states that carry
+                // no priced wall (0).
+                breathSeconds = if (airlockState.breathSeconds > 0) {
+                    airlockState.breathSeconds
+                } else {
+                    remember {
+                        com.example.data.AirlockBreathStore(context).breathSeconds()
+                    }
                 }
             )
 

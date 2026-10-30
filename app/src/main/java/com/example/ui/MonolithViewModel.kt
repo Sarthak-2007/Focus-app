@@ -9,6 +9,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppBlockTier
+import com.example.data.AirlockBreathStore
+import com.example.data.AirlockEscalation
 import com.example.data.ClockText
 import com.example.data.AppCategory
 import com.example.data.BreakResult
@@ -420,7 +422,19 @@ data class AirlockInterceptState(
      *  opens (start + the 20-minute floor, on the session's own
      *  banked elapsed). The door states it instead of the bare
      *  "NO SET END". Null for timed sessions and no session. */
-    val stopwatchFloorAtMillis: Long? = null
+    val stopwatchFloorAtMillis: Long? = null,
+    /** Issue #265 (B-265-19): how many times the user has reached
+     *  for a blocked app in THIS session, this reach included —
+     *  counted in the ViewModel at the intercept instant, never
+     *  read back from a stored total. 0 = not carried (previews,
+     *  tests): the door prints no reach line rather than inventing
+     *  a count. */
+    val sessionReachCount: Int = 0,
+    /** Issue #265 (B-265-20): the breath wall for THIS reach,
+     *  escalated from the configured base by
+     *  [com.example.data.AirlockEscalation]. 0 = not carried:
+     *  MainActivity falls back to the configured base. */
+    val breathSeconds: Int = 0
 )
 
 /**
@@ -741,6 +755,12 @@ class MonolithViewModel(
     val selectedCategoryFilter: StateFlow<AppCategory?> = _selectedCategoryFilter.asStateFlow()
 
     private var airlockInstanceSeq: Long = 0L
+    // Issue #265: the per-session reach cascade. Keyed on the
+    // session row's id — a new session restarts the ladder at the
+    // configured base. In-memory only, like airlockInstanceSeq:
+    // it is a fact about the live session, not a stored total.
+    private var airlockReachSessionId: Int = -1
+    private var airlockReachCount: Int = 0
     /** Issue #99 F3: the intercept instance whose dishonest exit
      *  (Home/Recents while the Airlock stood) was last logged — one
      *  trace per standing Airlock, never a duplicate per pause. */
@@ -3658,7 +3678,8 @@ class MonolithViewModel(
         }
         soundEngine.playMechanicalLatch(true)
         _airlockState.value = mintAirlockState(
-            packageName, appName, effectiveBadge, path, active, appEntity
+            packageName, appName, effectiveBadge, path, active, appEntity,
+            countAsReach = true
         )
         // Issue #87 (process-death F4): the intercept itself is booked
         // at trigger, with the verb handlers' own call — before this,
@@ -3700,7 +3721,12 @@ class MonolithViewModel(
         reasonBadge: String,
         path: InterceptPath,
         active: FocusSessionEntity?,
-        appEntity: BlockedAppEntity?
+        appEntity: BlockedAppEntity?,
+        // Issue #265: only the live trigger counts a reach. The
+        // re-derive mint (process-death restoration of the SAME
+        // reach) passes false and carries the standing count, so
+        // a restored door never double-counts its own reach.
+        countAsReach: Boolean = false
     ): AirlockInterceptState {
         val cooldownLeft = if (appEntity != null) repository.getPeekCooldownRemainingSeconds(appEntity) else 0
         val pillActive = _floatingPeekPill.value.isActive
@@ -3717,6 +3743,29 @@ class MonolithViewModel(
         // prints its state line (TIER_LOCKED), because total
         // silence there read as a broken door.
         val withheld = peekWithheldFor(canPeek, path, appEntity, cooldownLeft, pillActive)
+
+        // Issue #265 (B-265-19/B-265-20): count this reach against
+        // its session and price the wall for it — reach 1 breathes
+        // the configured base, later reaches climb the escalation
+        // ladder. A mint for a different session restarts the
+        // cascade; a mint with no session carries no count (0).
+        val sessionIdForReach = active?.id ?: -1
+        if (sessionIdForReach != airlockReachSessionId) {
+            airlockReachSessionId = sessionIdForReach
+            airlockReachCount = 0
+        }
+        if (countAsReach && sessionIdForReach >= 0) {
+            airlockReachCount += 1
+        }
+        val reachCountForState = if (sessionIdForReach >= 0) airlockReachCount else 0
+        val breathSecondsForState = if (reachCountForState > 0) {
+            AirlockEscalation.effectiveBreathSeconds(
+                AirlockBreathStore(appContext).breathSeconds(),
+                reachCountForState
+            )
+        } else {
+            0
+        }
 
         return AirlockInterceptState(
             isVisible = true,
@@ -3768,7 +3817,12 @@ class MonolithViewModel(
                     System.currentTimeMillis() +
                         (MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS - it.elapsedSeconds)
                             .coerceAtLeast(0) * 1000L
-                }
+                },
+            // Issue #265: the reach cascade rides onto the door —
+            // the count and the escalated wall priced at this
+            // instant, never a remembered or re-derived copy.
+            sessionReachCount = reachCountForState,
+            breathSeconds = breathSecondsForState
         )
     }
 
