@@ -50,10 +50,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.data.BatterySnapshot
 import com.example.data.CapturedNotificationEntity
 import com.example.data.ClockText
 import androidx.compose.ui.platform.LocalContext
 import com.example.data.DistractionTriggerReason
+import com.example.data.deskClockBatteryNotice
+import com.example.data.deskClockKeepsScreenOn
+import com.example.data.readBatterySnapshot
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
 import com.example.service.InterceptPath
@@ -130,8 +134,27 @@ fun AlwaysOnDeskClockOverlay(
         // would ALSO float the Deck over the keyguard after the clock
         // exits — the exact exposure finding 5 names. On dispose both
         // grants are revoked before the Deck can inherit them.
+        // Issue #122 (finding 3): the premise now has a battery law.
+        // The battery is re-read every 30s while the clock shows;
+        // at a battery in risk (low / critical / saver on, not
+        // charging) the flag is NEVER added — the system timeout
+        // governs and the clock prints why — because holding an
+        // OLED on at 8% is the fastest route to the death the
+        // shield never survives. Before the first read lands the
+        // premise holds as before (the read is synchronous inside
+        // the same effect's first pass).
         val clockView = LocalView.current
-        DisposableEffect(visible) {
+        var batterySnap by remember { mutableStateOf<BatterySnapshot?>(null) }
+        LaunchedEffect(visible) {
+            if (visible) {
+                while (true) {
+                    batterySnap = readBatterySnapshot(clockView.context)
+                    delay(30_000L)
+                }
+            }
+        }
+        val keepScreenOn = batterySnap?.let { deskClockKeepsScreenOn(it) } ?: true
+        DisposableEffect(visible, keepScreenOn) {
             var ctx: android.content.Context? = clockView.context
             var activity: android.app.Activity? = null
             while (ctx is android.content.ContextWrapper) {
@@ -139,7 +162,13 @@ fun AlwaysOnDeskClockOverlay(
                 ctx = ctx.baseContext
             }
             val window = activity?.window
-            window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            // Issue #122: at battery risk the flag is NEVER added
+            // (this effect is keyed on keepScreenOn, so a drop to
+            // risk re-runs it and the dispose above has already
+            // cleared the flag) — the system timeout governs.
+            if (keepScreenOn) {
+                window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
             // Nightstand dimming (#116 finding 3): hold the window
             // at 5% while the clock shows; release the override on
             // dispose so the rest of the app gets system brightness.
@@ -283,6 +312,21 @@ fun AlwaysOnDeskClockOverlay(
                     color = NightColorPrimary.copy(alpha = 0.75f),
                     modifier = Modifier.testTag("desk_clock_mode_label")
                 )
+
+                // Issue #122: when the battery law refuses the
+                // always-on hold, the clock says so on its face —
+                // never a silent early death to the screen timeout.
+                val batteryNotice = batterySnap?.let { deskClockBatteryNotice(it) }
+                if (batteryNotice != null) {
+                    Text(
+                        text = batteryNotice,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = NightColorPrimary,
+                        modifier = Modifier.testTag("desk_clock_battery_notice")
+                    )
+                }
 
                 // Hero architectural Space Mono numerals (112sp)
                 Text(
