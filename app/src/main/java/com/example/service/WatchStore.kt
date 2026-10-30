@@ -91,7 +91,7 @@ enum class WatchItemId(val boardName: String, val counted: Boolean) {
     USAGE_ACCESS("USAGE ACCESS", true),
     DEVICE_ADMIN("DEVICE ADMIN", true),
     NOTIFICATION_LISTENER("NOTIFICATION LISTENER", true),
-    OVERLAY("OVERLAY", false),
+    POST_NOTIFICATIONS("POST NOTIFICATIONS", false),
     BATTERY("BATTERY", false),
     SHORTS_REELS("SHORTS + REELS", false),
     SOCIAL_SITES("SOCIAL SITES", false),
@@ -101,7 +101,7 @@ enum class WatchItemId(val boardName: String, val counted: Boolean) {
         /** The six permission-family items, board order. */
         val PERMISSIONS: List<WatchItemId> = listOf(
             ACCESSIBILITY, USAGE_ACCESS, DEVICE_ADMIN,
-            NOTIFICATION_LISTENER, OVERLAY, BATTERY
+            NOTIFICATION_LISTENER, POST_NOTIFICATIONS, BATTERY
         )
         /** The counted four, board order. */
         val COUNTED: List<WatchItemId> = listOf(

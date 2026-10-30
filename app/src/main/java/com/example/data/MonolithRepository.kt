@@ -1,5 +1,8 @@
 package com.example.data
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import android.app.AppOpsManager
 import android.app.admin.DevicePolicyManager
 import android.app.usage.UsageStatsManager
@@ -44,7 +47,6 @@ import kotlin.math.max
 
 data class SystemGuardStatus(
     val hasUsageStatsPermission: Boolean = false,
-    val hasOverlayPermission: Boolean = false,
     val isAccessibilityServiceEnabled: Boolean = false,
     val isNotificationListenerEnabled: Boolean = false,
     val isDeviceAdminEnabled: Boolean = false,
@@ -708,7 +710,7 @@ class MonolithRepository(
         WatchItemId.DEVICE_ADMIN -> isDeviceAdminActive()
         WatchItemId.NOTIFICATION_LISTENER ->
             com.example.service.MonolithNotificationListener.instance != null
-        WatchItemId.OVERLAY -> hasOverlayPermission()
+        WatchItemId.POST_NOTIFICATIONS -> hasPostNotificationsPermission()
         WatchItemId.BATTERY -> isBatteryOptimizationIgnored()
         else -> false
     }
@@ -760,9 +762,19 @@ class MonolithRepository(
         return stats
     }
 
-    fun hasOverlayPermission(): Boolean {
+    /** POST_NOTIFICATIONS (issue #86): a runtime permission since
+     *  Android 13 — below API 33 notifications post by default, so
+     *  the honest state there is GRANTED-by-default; on 33+ the
+     *  state is whatever the user answered to the runtime prompt
+     *  (MainActivity's FIX route launches it). Without this grant
+     *  the shield's foreground-service notification never reaches
+     *  the drawer at targetSdk 36. */
+    fun hasPostNotificationsPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
         return try {
-            Settings.canDrawOverlays(context)
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
         } catch (_: Exception) {
             false
         }
@@ -872,7 +884,6 @@ class MonolithRepository(
         val appsCount = dao.getAllAppsSnapshot().size
         SystemGuardStatus(
             hasUsageStatsPermission = hasUsageStatsPermission(),
-            hasOverlayPermission = hasOverlayPermission(),
             isAccessibilityServiceEnabled = isAccessibilityEnabled(),
             isNotificationListenerEnabled = isNotificationListenerEnabled(),
             isDeviceAdminEnabled = isDeviceAdminActive(),

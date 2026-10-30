@@ -1,12 +1,16 @@
 package com.example
 
+import android.Manifest
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -189,6 +193,15 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MonolithRootApp(viewModel: MonolithViewModel) {
     val context = LocalContext.current
+
+    // POST_NOTIFICATIONS (issue #86): the one runtime permission in
+    // the guard family — the others are Settings panes. The FIX key
+    // for the POST NOTIFICATIONS board item launches this system
+    // prompt; the answer re-runs the sweep so the board re-reads
+    // the grant instead of trusting the callback.
+    val postNotificationsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { viewModel.runWatchSweep() }
     val lifecycleOwner = LocalLifecycleOwner.current
     val scheme = MaterialTheme.colorScheme
 
@@ -524,14 +537,17 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"),
                     "NOTIFICATION ACCESS"
                 )
-            com.example.service.WatchItemId.OVERLAY ->
-                launchSettings(
-                    Intent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:${context.packageName}")
-                    ),
-                    "DISPLAY OVER OTHER APPS"
-                )
+            com.example.service.WatchItemId.POST_NOTIFICATIONS -> {
+                // POST_NOTIFICATIONS (issue #86): a runtime prompt,
+                // not a Settings pane — and only where the permission
+                // exists (API 33+); below that the repository reads
+                // granted-by-default and this item never lacks.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    postNotificationsLauncher.launch(
+                        Manifest.permission.POST_NOTIFICATIONS
+                    )
+                }
+            }
             com.example.service.WatchItemId.BATTERY -> {
                 val direct = Intent(
                     Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
