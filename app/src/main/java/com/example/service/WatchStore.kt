@@ -172,7 +172,13 @@ data class WatchSnapshot(
      *  sworn. Validated at bind (boot count + package stamp must
      *  still match); an invalidated oath never enters a snapshot,
      *  so no print can resurrect it. */
-    val attestations: Map<WatchItemId, Long> = emptyMap()
+    val attestations: Map<WatchItemId, Long> = emptyMap(),
+    /** Issue #122: the latest battery snapshot (level / saver /
+     *  charging / exemption), published by the BATTERY sweep
+     *  query and by the shield loop. PARK's BATTERY line prints
+     *  THIS, not the exemption bit alone. Null = never read —
+     *  the line then falls back to the perm print, as before. */
+    val battery: com.example.data.BatterySnapshot? = null
 ) {
     fun measurement(item: WatchItemId): WatchMeasurement? = items[item]
 
@@ -456,6 +462,14 @@ object WatchStore {
             }
             next
         }
+    }
+
+    /** Issue #122: publish the latest battery snapshot. The perm
+     *  measurement for BATTERY stays the exemption bit (that is
+     *  the FIX door's business); this carries the battery itself
+     *  for PARK's line. */
+    fun publishBattery(snapshot: com.example.data.BatterySnapshot) {
+        publish { current -> current.copy(battery = snapshot) }
     }
 
     /**

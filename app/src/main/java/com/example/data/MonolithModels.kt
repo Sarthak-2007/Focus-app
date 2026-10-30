@@ -394,6 +394,17 @@ data class FocusSessionEntity(
     // counted whole by the span — break time that never ran,
     // claimed on the desk clock and the receipt alike.
     val breakTakenSeconds: Int = 0,
+    // W3 #134 (phone-call-mid-session, DB 14→15): the seconds of THIS
+    // block the call bypass was active — AudioManager in a call
+    // mode (ringing / in-call / VoIP) while the progress machine
+    // ticked. Those seconds are excluded from the block's booked
+    // elapsed at every tick: call time is not focus time, and a
+    // session may not finish, flip into its Safe Break, or stamp
+    // ELAPSED_CLEAN on the strength of minutes spent talking.
+    // Booked per block: the break-exit write (advancePastBreak)
+    // resets it to 0 alongside the anchors it re-bases, so one
+    // block's call never taxes the next block's clock.
+    val callExcludedSeconds: Int = 0,
     val penaltySecondsAdded: Int = 0,
     val isActive: Boolean,
     val completedSuccessfully: Boolean,
@@ -861,6 +872,11 @@ object RoutineSchedule {
      * fire, so they are never the next start. This one helper is
      * what the scheduler and every "next seal" reader (Deck
      * ribbon, widget) share, so they can never disagree.
+     *
+     * (Composed at the e1996c16 merge on the #152 branch: main's
+     * §3.6 helper supersedes the pause-stepping version this
+     * branch's fix-forward 2 added when no definition existed —
+     * same contract, one shared implementation.)
      */
     fun effectiveNextStartMillis(routine: RoutineEntity, nowMillis: Long): Long? {
         val r = routine.sanitized()

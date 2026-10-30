@@ -385,6 +385,15 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val profileUndoAvailable by viewModel.profileUndoAvailable.collectAsStateWithLifecycle()
     val intentionText by viewModel.intentionText.collectAsStateWithLifecycle()
     val activeSession by viewModel.activeSession.collectAsStateWithLifecycle()
+
+    // Issue #70 F3: the Deck primer's bit flips the moment the
+    // first session is live — the primer is a first-run-only
+    // surface and never returns.
+    LaunchedEffect(activeSession) {
+        if (activeSession?.isActive == true && viewModel.deckPrimerPending()) {
+            viewModel.markDeckPrimerDone()
+        }
+    }
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
     val allApps by viewModel.apps.collectAsStateWithLifecycle()
     val filteredApps by viewModel.filteredApps.collectAsStateWithLifecycle()
@@ -922,6 +931,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     appsCellCount = appsCellCount,
                                     appsSplit = appsSplit,
                                     deckWarrant = deckWarrant,
+                                    deckPrimerPending = viewModel.deckPrimerPending(),
                                     sealFreeze = sealFreeze,
                                     armPhase = armPhase,
                                     armSentence = armSentence,
@@ -1066,27 +1076,19 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     activeTask = activeTask,
                                     queuedTasks = queuedTasks,
                                     completedTasks = completedTasks,
-                                    deferredTasks = deferredTasks,
-                                    deletedTaskForUndo = deletedTaskForUndo,
-                                    totalQueueMinutes = totalQueueMinutes,
-                                    isSessionActive = sealed,
+                                                                        deletedTaskForUndo = deletedTaskForUndo,
+                                                                        isSessionActive = sealed,
                                     soundEngine = viewModel.soundEngine,
                                     isDarkTheme = effectiveNight,
                                     onAddTask = viewModel::addTaskToQueue,
-                                    onEditTask = viewModel::editTask,
-                                    onUpdateTaskDuration = viewModel::updateTaskDuration,
-                                    onCueTaskToFocus = viewModel::cueTaskAndNavigateToFocus,
+                                                                                                            onCueTaskToFocus = viewModel::cueTaskAndNavigateToFocus,
                                     onCompleteTask = viewModel::completeTaskAndAdvance,
-                                    onPromoteTask = viewModel::promoteTaskToActive,
-                                    onMoveTaskOrder = viewModel::moveTaskOrder,
-                                    onDeferTask = viewModel::deferTask,
-                                    onDeleteTask = viewModel::deleteTaskWithUndo,
+                                                                                                                                                onDeleteTask = viewModel::deleteTaskWithUndo,
                                     onUndoDeleteTask = viewModel::undoDeleteTask,
                                     onDismissUndoBanner = viewModel::dismissUndoDeleteBanner,
                                     onReopenTask = viewModel::reopenTask,
                                     onToggleSubStep = viewModel::toggleTaskSubStep,
-                                    onAddSubStep = viewModel::addTaskSubStep,
-                                    onAutoSplitTask = viewModel::autoSplitTaskIntoMicroSteps,
+                                                                        onAutoSplitTask = viewModel::autoSplitTaskIntoMicroSteps,
                                     onNavigateToDeck = { viewModel.navigateTo(MonolithDestination.DECK) }
                                 )
                             }

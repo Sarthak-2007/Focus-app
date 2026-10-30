@@ -332,8 +332,9 @@ class RoutinesMigrationChainTest {
             .addMigrations(
                 MonolithDatabase.MIGRATION_7_8, MonolithDatabase.MIGRATION_8_9,
                 MonolithDatabase.MIGRATION_9_10, MonolithDatabase.MIGRATION_10_11,
-                MonolithDatabase.MIGRATION_11_12, MonolithDatabase.MIGRATION_12_13, MonolithDatabase.MIGRATION_13_14,
-                MonolithDatabase.MIGRATION_14_15
+                MonolithDatabase.MIGRATION_11_12, MonolithDatabase.MIGRATION_12_13,
+                MonolithDatabase.MIGRATION_13_14,
+                MonolithDatabase.MIGRATION_14_15, MonolithDatabase.MIGRATION_15_16
             )
             .build()
 

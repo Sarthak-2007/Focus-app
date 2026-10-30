@@ -249,7 +249,7 @@ class SliceEMigrationChainTest {
     }
 
     @Test
-    fun v7EntitySchema_fullChain_roomValidatesAtV15() {
+    fun v7EntitySchema_fullChain_roomValidatesAtV16() {
         createV7EntityFile()
         val room = Room.databaseBuilder(context, MonolithDatabase::class.java, dbName)
             .addMigrations(
@@ -258,19 +258,24 @@ class SliceEMigrationChainTest {
                 MonolithDatabase.MIGRATION_9_10,
                 MonolithDatabase.MIGRATION_10_11,
                 MonolithDatabase.MIGRATION_11_12,
-                MonolithDatabase.MIGRATION_12_13, MonolithDatabase.MIGRATION_13_14,
-                MonolithDatabase.MIGRATION_14_15
+                MonolithDatabase.MIGRATION_12_13,
+                MonolithDatabase.MIGRATION_13_14,
+                MonolithDatabase.MIGRATION_14_15,
+                MonolithDatabase.MIGRATION_15_16
             )
             .build()
         runBlocking {
             val dao = room.monolithDao()
             // The read forces the open: Room has migrated
-            // 7→8→9→10→11→12→13→14→15 AND validated the result
-            // against every v15 entity.
+            // 7→8→9→10→11→12→13→14→15→16 AND validated the
+            // result against every v16 entity.
             val session = dao.getSessionHistorySnapshot().single()
             assertEquals("shaped session", session.intention)
             assertEquals(0L, session.endWallMillis)
             assertEquals(0, session.receiptNumber)
+            // W3 #134 (14→15): a pre-v15 row never had a call
+            // second excluded — 0 is the fact.
+            assertEquals(0, session.callExcludedSeconds)
             // Truth Car 3 (breaks lane, 11→12): a pre-v12 row took
             // no early-ended break — 0 taken seconds is the fact.
             assertEquals(0, session.breakTakenSeconds)
@@ -281,7 +286,7 @@ class SliceEMigrationChainTest {
             // the receipt will print its stored total, not a split.
             assertEquals(-1, session.heldShutAtSeal)
             assertEquals(-1, session.heldPeekAtSeal)
-            // Audit R6 #340 (14→15): a pre-v15 row was never
+            // Audit R6 #340 (15→16): a pre-v16 row was never
             // finish-sealed — '' is the truth, no retroactive seal.
             assertEquals("", session.finishSignature)
             assertEquals("", session.prevFinishSignature)

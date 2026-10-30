@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -50,10 +51,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.data.BatterySnapshot
 import com.example.data.CapturedNotificationEntity
 import com.example.data.ClockText
 import androidx.compose.ui.platform.LocalContext
 import com.example.data.DistractionTriggerReason
+import com.example.data.deskClockBatteryNotice
+import com.example.data.deskClockKeepsScreenOn
+import com.example.data.readBatterySnapshot
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
 import com.example.service.InterceptPath
@@ -130,8 +135,27 @@ fun AlwaysOnDeskClockOverlay(
         // would ALSO float the Deck over the keyguard after the clock
         // exits — the exact exposure finding 5 names. On dispose both
         // grants are revoked before the Deck can inherit them.
+        // Issue #122 (finding 3): the premise now has a battery law.
+        // The battery is re-read every 30s while the clock shows;
+        // at a battery in risk (low / critical / saver on, not
+        // charging) the flag is NEVER added — the system timeout
+        // governs and the clock prints why — because holding an
+        // OLED on at 8% is the fastest route to the death the
+        // shield never survives. Before the first read lands the
+        // premise holds as before (the read is synchronous inside
+        // the same effect's first pass).
         val clockView = LocalView.current
-        DisposableEffect(visible) {
+        var batterySnap by remember { mutableStateOf<BatterySnapshot?>(null) }
+        LaunchedEffect(visible) {
+            if (visible) {
+                while (true) {
+                    batterySnap = readBatterySnapshot(clockView.context)
+                    delay(30_000L)
+                }
+            }
+        }
+        val keepScreenOn = batterySnap?.let { deskClockKeepsScreenOn(it) } ?: true
+        DisposableEffect(visible, keepScreenOn) {
             var ctx: android.content.Context? = clockView.context
             var activity: android.app.Activity? = null
             while (ctx is android.content.ContextWrapper) {
@@ -139,7 +163,13 @@ fun AlwaysOnDeskClockOverlay(
                 ctx = ctx.baseContext
             }
             val window = activity?.window
-            window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            // Issue #122: at battery risk the flag is NEVER added
+            // (this effect is keyed on keepScreenOn, so a drop to
+            // risk re-runs it and the dispose above has already
+            // cleared the flag) — the system timeout governs.
+            if (keepScreenOn) {
+                window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
             // Nightstand dimming (#116 finding 3): hold the window
             // at 5% while the clock shows; release the override on
             // dispose so the rest of the app gets system brightness.
@@ -283,6 +313,21 @@ fun AlwaysOnDeskClockOverlay(
                     color = NightColorPrimary.copy(alpha = 0.75f),
                     modifier = Modifier.testTag("desk_clock_mode_label")
                 )
+
+                // Issue #122: when the battery law refuses the
+                // always-on hold, the clock says so on its face —
+                // never a silent early death to the screen timeout.
+                val batteryNotice = batterySnap?.let { deskClockBatteryNotice(it) }
+                if (batteryNotice != null) {
+                    Text(
+                        text = batteryNotice,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = NightColorPrimary,
+                        modifier = Modifier.testTag("desk_clock_battery_notice")
+                    )
+                }
 
                 // Hero architectural Space Mono numerals (112sp)
                 Text(
@@ -614,6 +659,30 @@ internal fun airlockStakeLine(emergencyBreaksRemaining: Int): String? = when {
  */
 internal fun peekCooldownScopeText(): String =
     "THE COOLDOWN IS PER APP — OTHER PEEK APPS KEEP THEIR OWN TIMERS"
+
+/**
+ * Issue #102 (peek-lived, finding 5): the peek offer's terms, in
+ * the app's own words, printed BEFORE the peek is taken. The peek
+ * chip is labelled "2-MINUTE PEEK" while the token-spending door
+ * is "EMERGENCY BREAK" — this line is what tells the user the two
+ * are different doors: the peek spends no weekly break and does
+ * not end the session. Pure, so the wording is unit-tested.
+ * (Ported from PR #351's peekTermsText — its pill/enforcer build
+ * was superseded by #114/#99 on main; this sentence was not.)
+ */
+internal fun peekTermsText(): String =
+    "THE PEEK DOES NOT SPEND YOUR EMERGENCY BREAK AND DOES NOT END THE SESSION"
+
+/**
+ * Issue #102 (peek-lived, finding 4): the withheld peek's reason
+ * stands on the door from the FIRST second — it is not gated on
+ * the breath countdown finishing. Before this, the reason block
+ * waited for `countdownSecs == 0`, so a user who returned from a
+ * peek (or hit a cooldown) stared at a wall that explained
+ * nothing for a second countdown. Pure decision, unit-tested;
+ * the countdown deliberately plays no part in it.
+ */
+internal fun peekWithheldReasonVisible(peekReady: Boolean): Boolean = !peekReady
 
 /**
  * What waits at the end of the breath, printed DURING the breath
@@ -1187,6 +1256,14 @@ fun AirlockInterceptOverlay(
                         fontSize = 12.5.sp,
                         color = NightColorPrimary.copy(alpha = 0.8f)
                     )
+                    // Issue #102, finding 5: the terms stand with
+                    // the preview — the peek is not the break.
+                    Text(
+                        text = peekTermsText(),
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f)
+                    )
                 }
 
                 if (countdownSecs == 0 && peekReady) {
@@ -1221,14 +1298,25 @@ fun AirlockInterceptOverlay(
                         fontSize = 12.5.sp,
                         color = NightColorPrimary.copy(alpha = 0.8f)
                     )
+                    // Issue #102, finding 5: the terms stand on
+                    // the offer itself, before the tap.
+                    Text(
+                        text = peekTermsText(),
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f)
+                    )
                 }
 
                 // The withheld peek prints its state AND its reason
                 // (Held Door Truth Baseline): cooldown with its
                 // live remaining time, or the running pill named.
                 // Doors that never owed a peek carry withheld ==
-                // null and print nothing here.
-                if (countdownSecs == 0 && !peekReady) {
+                // null and print nothing here. Issue #102, finding
+                // 4: the reason is NOT gated on the breath countdown
+                // — it shows from the first second, not after a
+                // second countdown (see peekWithheldReasonVisible).
+                if (peekWithheldReasonVisible(peekReady)) {
                     when (state.peekWithheld) {
                         PeekWithheld.COOLDOWN -> {
                             if (cooldownSecs > 0) {
@@ -1360,16 +1448,17 @@ fun PeekCountdownPill(
                 color = NightColorPrimary,
                 modifier = Modifier.testTag("peek_pill_countdown")
             )
-            Text(
-                text = "✕",
-                fontFamily = AtkinsonHyperlegibleFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
-                color = NightColorPrimary,
+            // #336: the close glyph is an ICON from the one system
+            // (MonolithIcons), not a text character.
+            androidx.compose.material3.Icon(
+                imageVector = com.example.ui.theme.MonolithIcons.Close,
+                contentDescription = "End peek early",
+                tint = NightColorPrimary,
                 modifier = Modifier
                     .clickable { onEndEarly() }
                     .testTag("peek_pill_end_button")
                     .padding(horizontal = 4.dp)
+                    .size(16.dp)
             )
         }
     }

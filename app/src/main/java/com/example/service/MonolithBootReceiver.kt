@@ -3,6 +3,7 @@ package com.example.service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.PowerManager
 import android.util.Log
 import com.example.data.UndoDeleteStore
 import kotlinx.coroutines.CancellationException
@@ -57,6 +58,14 @@ class MonolithBootReceiver : BroadcastReceiver() {
         val action = intent?.action ?: return
         val appContext = context.applicationContext
         when (action) {
+            // Issue #122: the battery turned — the shield's
+            // standing notification must re-read it now (its own
+            // dynamic receiver usually beats this manifest one;
+            // both are idempotent re-posts of the same facts).
+            Intent.ACTION_BATTERY_LOW,
+            PowerManager.ACTION_POWER_SAVE_MODE_CHANGED -> {
+                MonolithShieldService.instance?.refreshBatteryNotification()
+            }
             Intent.ACTION_LOCKED_BOOT_COMPLETED,
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED,

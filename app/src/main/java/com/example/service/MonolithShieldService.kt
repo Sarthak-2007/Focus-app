@@ -18,12 +18,14 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
+import com.example.MLog
 import com.example.R
 import com.example.data.AppBlockTier
 import com.example.data.MonolithDatabase
-import com.example.data.MonolithRepository
 import com.example.widget.MonolithWidgetProvider
-import com.example.MLog
+import com.example.data.batteryShieldWarning
+import com.example.data.readBatterySnapshot
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -162,6 +164,48 @@ class MonolithShieldService : Service() {
         MLog.w("liveActiveSessionId read failed; dispatch treats it as no live session", it)
     }.getOrNull()
 
+    // Issue #122: the last notification this service posted, in
+    // its BASE form (no battery segment) — a battery broadcast
+    // re-posts it with the fresh warning without inventing a
+    // title or a countdown of its own.
+    @Volatile private var lastBaseTitle: String? = null
+    @Volatile private var lastBaseSubtitle: String? = null
+
+    /** Battery events that change what the shield may honestly
+     *  promise: the battery running out, the charger arriving or
+     *  leaving, saver flipping. Each one re-reads the battery and
+     *  re-posts the standing notification with the fresh segment.
+     *  (The monitor loop also re-reads every iteration; this makes
+     *  the warning land at the event, not at the next tick.) */
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent?) {
+            refreshBatteryNotification()
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_BATTERY_LOW)
+            addAction(Intent.ACTION_POWER_CONNECTED)
+            addAction(Intent.ACTION_POWER_DISCONNECTED)
+            addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
+        }
+        ContextCompat.registerReceiver(
+            this, batteryReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+    }
+
+    /** Re-post the standing notification with a fresh battery
+     *  read. Called by the battery receiver and by the manifest
+     *  MonolithBootReceiver's battery branch. No-op before the
+     *  first post — there is no promise on screen to correct. */
+    fun refreshBatteryNotification() {
+        val title = lastBaseTitle ?: return
+        val subtitle = lastBaseSubtitle ?: return
+        updateNotification(title, subtitle)
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
         // A null delivery (sticky restart) is dispatched on the
@@ -266,12 +310,15 @@ class MonolithShieldService : Service() {
         // Issue #155 (F2): the guarded call below carries the
         // honest arming text ("Monolith" / "Arming shield\u2026"),
         // not a claim of a lock that has not happened yet.
-
+        // Issue #122: remember that BASE form so a battery
+        // broadcast can re-post it with a fresh warning segment.
+        lastBaseTitle = "Monolith"
+        lastBaseSubtitle = "Arming shield\u2026"
         try {
             ServiceCompat.startForeground(
                 this,
                 NOTIFICATION_ID,
-                buildNotification("Monolith", "Arming shield\u2026"),
+                buildNotification(lastBaseTitle!!, withBatteryWarning(lastBaseSubtitle!!)),
                 fgsType
             )
         } catch (e: Exception) {
@@ -564,6 +611,10 @@ class MonolithShieldService : Service() {
                         badgeNumber = badgeNumber
                     )
                 }
+                // Issue #122: PARK's battery stays fresh while a
+                // session runs — the shield loop is already awake
+                // every 2s; publishing here costs one sticky read.
+                WatchStore.publishBattery(readBatterySnapshot(applicationContext))
 
                 // Live Wire: the shield is PROTECTING only once a
                 // full monitor iteration has run under a live
@@ -624,6 +675,14 @@ class MonolithShieldService : Service() {
                 val nowMono = SystemClock.elapsedRealtime()
                 val blockedPackages = repository.allAppsSnapshot() /* ISSUE-67(d): via repository */
                     .filter { app ->
+                        // W3 #134: the dialer is never in the
+                        // blocked set — this door's usage-stats
+                        // sweep would otherwise intercept the
+                        // Phone app mid-dial (MODE_NORMAL, before
+                        // any call mode exists), locking the user
+                        // out of placing a call exactly as the
+                        // accessibility door did.
+                        if (repository.isDialerPackage(app.packageName)) return@filter false
                         val tier = app.resolvedTier
                         // Issue #140: the daily limit is real. An app
                         // whose today's usage has reached its limit is
@@ -914,6 +973,16 @@ class MonolithShieldService : Service() {
         return builder.build()
     }
 
+    /** Issue #122: the battery segment, appended to a base
+     *  subtitle when the battery cannot keep the shield's
+     *  promise. The words state the mechanism plainly:
+     *  protection ends with the phone. No risk \u2192 no segment. */
+    private fun withBatteryWarning(subtitle: String): String {
+        val warning = batteryShieldWarning(readBatterySnapshot(applicationContext))
+            ?: return subtitle
+        return "$subtitle \u2022 $warning"
+    }
+
     private fun updateNotification(
         title: String,
         subtitle: String,
@@ -924,12 +993,26 @@ class MonolithShieldService : Service() {
         chronometerEndMillis: Long? = null,
         badgeNumber: Int? = null
     ) {
+        // Issue #122: only the standing (ongoing) protection
+        // promise is remembered for battery re-posts \u2014 a detached
+        // completion card is not a promise and is never revived
+        // by a battery broadcast.
+        if (ongoing) {
+            lastBaseTitle = title
+            lastBaseSubtitle = subtitle
+        }
+        val warnedSubtitle = withBatteryWarning(subtitle)
+        val warnedBigText = when {
+            bigText != null -> withBatteryWarning(bigText)
+            warnedSubtitle != subtitle -> warnedSubtitle
+            else -> null
+        }
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(
             NOTIFICATION_ID,
             buildNotification(
-                title, subtitle, ongoing, autoCancel, timeoutAfterMs,
-                bigText, chronometerEndMillis, badgeNumber
+                title, warnedSubtitle, ongoing, autoCancel, timeoutAfterMs,
+                warnedBigText, chronometerEndMillis, badgeNumber
             )
         )
     }
@@ -991,6 +1074,7 @@ class MonolithShieldService : Service() {
             screenReceiverRegistered = false
         }
         releaseTickWakeLock()
+        runCatching { unregisterReceiver(batteryReceiver) }
         if (instance === this) {
             instance = null
         }
