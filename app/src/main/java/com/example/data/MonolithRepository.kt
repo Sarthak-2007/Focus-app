@@ -507,8 +507,13 @@ class MonolithRepository(
             nowBootCount = boot
         )
         if (decision.reanchor) {
+            // Persist the DECISION's wall instant, never the raw wall:
+            // on a powered-off rollback the decision is the pre-travel
+            // anchor wall, and persisting nowWall here would re-anchor
+            // the travelled clock and reopen the escape on the very
+            // next read (issue #82 residual, STURM3-16 tightening 1).
             prefs.edit()
-                .putLong(CLOCK_ANCHOR_WALL_KEY, nowWall)
+                .putLong(CLOCK_ANCHOR_WALL_KEY, decision.honestNowMillis)
                 .putLong(CLOCK_ANCHOR_MONO_KEY, nowMono)
                 .putInt(CLOCK_ANCHOR_BOOT_KEY, boot)
                 .apply()
@@ -4254,9 +4259,15 @@ class MonolithRepository(
     // asks; every surface's number is a rendering of this truth.
     // =========================================================================
 
-    /** Remaining breaks for the week containing [nowMillis]. */
-    suspend fun emergencyBreaksRemaining(nowMillis: Long = System.currentTimeMillis()): Int {
-        val anchor = MonolithWeek.weekAnchorMillis(nowMillis)
+    /** Remaining breaks for the week containing [nowMillis].
+     *  The default is a sentinel ([Long.MIN_VALUE]) resolving to
+     *  [honestNowMillis] — never the raw wall clock: a caller that
+     *  forgets the argument must not silently reopen the F3 clock
+     *  route on this surface (issue #82 residual, STURM3-16
+     *  tightening 2). Explicit instants (tests) are honoured as-is. */
+    suspend fun emergencyBreaksRemaining(nowMillis: Long = Long.MIN_VALUE): Int {
+        val effectiveNow = if (nowMillis == Long.MIN_VALUE) honestNowMillis() else nowMillis
+        val anchor = MonolithWeek.weekAnchorMillis(effectiveNow)
         return emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(anchor).size)
     }
 

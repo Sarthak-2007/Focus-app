@@ -20,13 +20,19 @@ import kotlin.math.abs
  *   instant advanced by monotonic time only. A jump into next week
  *   does not move the honest now; a rollback does not rewind it.
  *
- * Known limit, stated plainly: the anchor re-bases at face value on
- * the first read of each boot (elapsedRealtime resets on reboot and
- * nothing monotonic survives one). Travel performed while the device
- * is off, before the app's first tick of the new boot, is anchored
- * as truth. Session-level verdicts are separately protected by the
- * session rows' own monotonic anchors, which re-anchor the same way
- * computeVerifiedSessionElapsed already accepts.
+ * Known limit, stated plainly: elapsedRealtime resets on reboot and
+ * nothing monotonic survives one, so the persisted anchor's monotonic
+ * pair is unusable on the first read of a new boot. That first read
+ * therefore never goes BELOW the last anchored wall instant: a
+ * rollback performed while the device was off, before the new boot's
+ * first read, no longer rewinds the honest now — it re-anchors at the
+ * anchor wall (STURM3-16 tightening, issue #82 residual). Forward
+ * travel performed while the device is off remains the stated
+ * fundamental limit: it is indistinguishable from real off-time, so
+ * it is anchored as truth — the same accepted shape as
+ * computeVerifiedSessionElapsed. Session-level verdicts are
+ * separately protected by the session rows' own monotonic anchors,
+ * which re-anchor the same way.
  */
 object ClockHonesty {
 
@@ -52,9 +58,13 @@ object ClockHonesty {
             anchorBootCount != nowBootCount ||
             nowElapsedRealtimeMillis < anchorElapsedRealtimeMillis
         ) {
-            // No usable anchor this boot: take the wall clock at face
-            // value once and anchor to it (the documented limit above).
-            return Decision(nowWallMillis, reanchor = true)
+            // No usable anchor this boot (new boot, or no anchor ever):
+            // re-anchor, but never below the last anchored wall
+            // instant — a rollback performed while powered off must
+            // not rewind the honest now. With no anchor ever
+            // (anchorWallMillis <= 0) maxOf is just the wall clock,
+            // taken at face value as before.
+            return Decision(maxOf(nowWallMillis, anchorWallMillis), reanchor = true)
         }
         val implied = anchorWallMillis + (nowElapsedRealtimeMillis - anchorElapsedRealtimeMillis)
         val drift = nowWallMillis - implied

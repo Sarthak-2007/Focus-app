@@ -89,6 +89,41 @@ class ClockHonestyTest {
         assertTrue(d.reanchor)
     }
 
+    @Test
+    fun rollbackAcrossRebootDoesNotRewindTheHonestNow() {
+        // Issue #82 residual (STURM3-16 tightening 1): the phone is
+        // powered off, the clock is rolled back a week, the phone
+        // boots, and this is the new boot's FIRST read — the anchor's
+        // monotonic pair is unusable (new boot count, mono restarted),
+        // but its wall instant survives. The honest now must be the
+        // anchor wall, never the travelled wall: the F3 token week
+        // must not rewind with the clock.
+        val d = ClockHonesty.decide(
+            anchorWall, anchorMono, boot,
+            nowWallMillis = anchorWall - 7 * 24 * 3600_000L,
+            nowElapsedRealtimeMillis = 30_000L,
+            nowBootCount = boot + 1
+        )
+        assertEquals(anchorWall, d.honestNowMillis)
+        assertTrue(d.reanchor)
+    }
+
+    @Test
+    fun forwardTravelAcrossRebootRemainsTheStatedLimit() {
+        // The documented fundamental limit, pinned so it is a choice
+        // and not an accident: forward travel while powered off is
+        // indistinguishable from real off-time, so the new boot's
+        // first read anchors the (later) wall clock at face value.
+        val d = ClockHonesty.decide(
+            anchorWall, anchorMono, boot,
+            nowWallMillis = anchorWall + 7 * 24 * 3600_000L,
+            nowElapsedRealtimeMillis = 30_000L,
+            nowBootCount = boot + 1
+        )
+        assertEquals(anchorWall + 7 * 24 * 3600_000L, d.honestNowMillis)
+        assertTrue(d.reanchor)
+    }
+
     // ---------- impliedNowMillis(): the shield-gap clock ----------
 
     @Test
