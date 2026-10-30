@@ -316,3 +316,69 @@ Total remainder programme: ~9–10 focused days, sequenced as above.
   hand: intercept addFlags NEW_TASK|SINGLE_TOP vs notification flags=
   SINGLE_TOP — preserved distinctly in the seam; a merged helper would
   have silently changed the notification tap. — *Interaction-detail specialist*
+
+---
+
+## THIRD-REBASE ADDENDUM (post-restart resume, base origin/main 0d439ec)
+
+Main moved again during the restart window (80856f6 → 0d439ec; PRs
+#377/#390/#223/#401/#226/#371/#421/#420 and the #68/#94/#148/#308 work
+landed). The branch was rebased onto 0d439ec; every conflict was
+resolved by the standing pattern — main's newer logic verbatim, only
+this branch's routing re-applied:
+
+1. **Constructor composition (Repository).** Main had grown its own
+   `databaseProvider` seam (used at ~9 transaction sites). Kept, and
+   composed with this branch's injection: the provider's default now
+   resolves the injected database when present, else the singleton;
+   `db()` delegates to the provider — one resolution path. No site
+   changed behaviour.
+2. **claimReceiptNumber.** Main's extended signature
+   (`faulted`, `faultWallMillis`) kept verbatim — taking this
+   branch's older 2-arg signature would have been a downgrade.
+   Only the transaction line routes via `db()`.
+3. **#148's blockWarningKnock.** The seam (name, var, call site) is
+   kept verbatim; its default is routed through the service port
+   (`playBreakLatch(engaged=true)` is the identical mechanical
+   latch) so the Repository holds no sound engine of its own. The
+   stray closing brace this created was removed (brace balance
+   446/446 verified).
+4. **#68 nonce + #94 InterceptLaunch (the sharp one).** Main's
+   intercept doors now mint a single-use nonce (MainActivity DROPS
+   intercept extras without one) and launch via InterceptLaunch's
+   stamped fallback. The seam now mints the nonce inside
+   `InterceptIntents.interceptIntent` (build time, both doors,
+   exactly as the inline code did), and both doors launch via
+   `InterceptLaunch.launch(...)`. Without this composition the
+   seam's intents would have been silently rejected — caught by
+   reading the conflict, not by CI.
+5. **#308's PermissionReturnService** (new on main) imported
+   MainActivity for its return intent. Converted to a new seam
+   function `InterceptIntents.returnIntent` with its distinct flag
+   set (NEW_TASK | REORDER_TO_FRONT | SINGLE_TOP) byte-identical.
+   Services → MainActivity compile-time dependency is zero again
+   on current main.
+6. **Shield badge default.** Main had changed the fallback badge
+   "Locked" → "Shut"; main's value kept.
+
+**Honest line, kept visible (Verifier's instruction):** the
+Repository GREW in this programme — 2932 lines at the audit base,
+2941 after this branch's surgical set at its own base, 3749 on
+current main after other lanes' growth (ViewModel 3178). The god
+classes are not split; finding 1 stands blocked with its priced
+programme (§4), exactly as dispositioned in the issue body.
+
+**Post-rebase census (0d439ec base):** conflict markers 0;
+`MonolithRepository(` constructions in main sources outside
+AppContainer: 0; `MonolithDatabase.getInstance` outside
+AppContainer/DB singleton: only the Repository provider default
+(documented fallback); service→MainActivity imports: 0; Repository
+service imports: 5, all non-driven (MonolithDeviceAdminReceiver,
+UsageAccess, Warrant, WatchItemId, WatchStore — identity/model
+types only).
+
+**User-visible flags:** every change in this addendum is an
+internal refactor with no user-visible effect intended — the
+nonce, launch-fallback, latch sound, return-intent flags and
+receipt signature are main's current behaviours, preserved
+byte-for-byte through the seams.

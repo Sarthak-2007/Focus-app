@@ -39,6 +39,21 @@ object InterceptIntents {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
 
+    /** The permission-return intent (#308's
+     *  PermissionReturnService, landed on main while this branch
+     *  was in flight): NEW_TASK | REORDER_TO_FRONT | SINGLE_TOP —
+     *  its own flag set, distinct from the intercept doors', kept
+     *  byte-identical through the seam. */
+    fun returnIntent(context: Context): Intent =
+        Intent().apply {
+            setClassName(context, MAIN_ACTIVITY_CLASS)
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+        }
+
     /** The notification content intent: addressed to the same
      *  activity, with flags SET to SINGLE_TOP only — the exact
      *  semantics the shield's notification builder always used
