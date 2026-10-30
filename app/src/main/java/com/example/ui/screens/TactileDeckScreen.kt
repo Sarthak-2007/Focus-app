@@ -945,6 +945,26 @@ fun TactileDeckScreen(
                 )
             }
 
+            // #127 finding 1: the hero's number is per-BLOCK (or, in a
+            // break, the break's — main's #148 derivation above); the
+            // strip's ENDS and the desk clock are per-SESSION. Both are
+            // true, so the hero now carries its scope in print directly
+            // under the digits: a glance reads which truth the big
+            // number is, and the session's own remaining time beside
+            // it. Same Anonymous Pro eyebrow register as the card's
+            // other print — no new surface, no redesign.
+            if (showRunningForm && activeSession != null) {
+                Text(
+                    text = activeSession.glanceCaption,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().testTag("deck_hero_glance_caption")
+                )
+            }
+
             if (!showRunningForm && !isStopwatchMode) {
                 // Issue #98 (R3 arming journey): the multiplier,
                 // printed as a reading — the hero above states only
