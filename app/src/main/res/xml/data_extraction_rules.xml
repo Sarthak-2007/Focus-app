@@ -1,10 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  UNA-04 (Truth Car 3): the app's plate promises "DATA: ON THIS PHONE
-  ONLY". Together with android:allowBackup="false", these rules make
-  that sentence true on Android 12+: NOTHING is extracted for cloud
-  backup and NOTHING moves in a device-to-device transfer — every
-  domain is excluded in both sections.
+  UNA-04 (Truth Car 3) + Audit R2 #93: the app's plate promises "DATA: ON
+  THIS PHONE ONLY". Together with android:allowBackup="false", these
+  rules make that sentence true on Android 12+: NOTHING is extracted for
+  cloud backup and NOTHING moves in a device-to-device transfer — every
+  domain is excluded in both sections, in EITHER storage tree. The
+  device_* domains are not decoration: the Room database (sessions,
+  receipts, captured notifications) is built in device-protected storage
+  for Direct Boot, the platform maps device_* to that separate tree, and
+  on some OEM devices allowBackup="false" alone cannot disable D2D
+  migration — these device-transfer excludes are the operative guard.
+  The seal marker (credential-encrypted prefs) and the sealed-session
+  rows (device-protected database) now sit on the SAME side of the
+  boundary: neither ever leaves the phone, so a transfer can never
+  restore a desynchronised half-state.
 -->
 <data-extraction-rules>
     <cloud-backup>
@@ -13,6 +22,11 @@
         <exclude domain="database" path="." />
         <exclude domain="sharedpref" path="." />
         <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+        <exclude domain="device_file" path="." />
+        <exclude domain="device_database" path="." />
+        <exclude domain="device_sharedpref" path="." />
+        <exclude domain="device_external" path="." />
     </cloud-backup>
     <device-transfer>
         <exclude domain="root" path="." />
@@ -20,5 +34,10 @@
         <exclude domain="database" path="." />
         <exclude domain="sharedpref" path="." />
         <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+        <exclude domain="device_file" path="." />
+        <exclude domain="device_database" path="." />
+        <exclude domain="device_sharedpref" path="." />
+        <exclude domain="device_external" path="." />
     </device-transfer>
 </data-extraction-rules>

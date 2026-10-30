@@ -154,13 +154,71 @@ class AppListTruthTest {
     fun sync_emptyQueryResult_prunesNothing() = runBlocking {
         val dao = db.monolithDao()
         dao.insertApps(listOf(storedRow("com.only.app", "Only", AppBlockTier.PEEK_2M)))
-        // Nothing registered: the launcher query can only fail or
-        // come back empty, and an empty answer must never be read
-        // as "he uninstalled everything".
+
+        // DISTINGUISHING CONTROL (audit R1 tests-1 #3): the old
+        // version of this test could not tell "the empty-query
+        // guard worked" from "the entire sync silently failed" —
+        // both leave the table untouched. So first, in this same
+        // harness, a sync whose query DOES answer must visibly
+        // work: it discovers the control app, keeps the stored
+        // one, and records no prune. The pipeline (launcher query
+        // → reconcile → DAO) is proven alive before it is trusted.
+        fakeInstalled(
+            "com.only.app" to "Only",
+            "com.control.app" to "Control"
+        )
         repository.ensureSeededAndSyncPackages()
         assertEquals(
-            listOf("com.only.app"),
-            dao.getAllAppsSnapshot().map { it.packageName }
+            "control sync must discover the control app and keep the stored one",
+            setOf("com.only.app", "com.control.app"),
+            dao.getAllAppsSnapshot().map { it.packageName }.toSet()
+        )
+        assertNull(repository.pendingPruneNote())
+
+        // Now make the launcher query TRULY empty and verify that
+        // as a direct fact (not an assumption): both faked answers
+        // are removed from the shadow package manager, and the
+        // exact query the repository issues returns nothing.
+        val shadow = Shadows.shadowOf(context.packageManager)
+        val query = Intent(Intent.ACTION_MAIN, null).addCategory(Intent.CATEGORY_LAUNCHER)
+        shadow.removeResolveInfosForIntent(query, "com.only.app")
+        shadow.removeResolveInfosForIntent(query, "com.control.app")
+        // Verifiably empty AS THE REPOSITORY SEES IT: the raw
+        // query may still answer the app's own launcher activity
+        // (and com.android.settings), which the sync filters out
+        // before reconciling — what must be empty is the
+        // post-filter installed set the reconcile would consume.
+        val postFilterInstalled = context.packageManager.queryIntentActivities(query, 0)
+            .mapNotNull { it.activityInfo?.packageName }
+            .filter { it != context.packageName && !it.startsWith("com.android.settings") }
+        assertTrue(
+            "the second run's installed set must be verifiably empty, was $postFilterInstalled",
+            postFilterInstalled.isEmpty()
+        )
+        // A post-catalog effect as the second run's pulse: the
+        // sync seeds default tasks AFTER the catalog block, so
+        // delete every seeded task — if the second run silently
+        // dies anywhere before its end, they stay deleted.
+        dao.getAllTasksSnapshot().forEach { dao.deleteTaskById(it.id) }
+        assertTrue(dao.getAllTasksSnapshot().isEmpty())
+
+        repository.ensureSeededAndSyncPackages()
+
+        // The run demonstrably ran to completion (tasks re-seeded
+        // past the catalog block)…
+        assertTrue(
+            "the empty-query run must execute past the catalog block",
+            dao.getAllTasksSnapshot().isNotEmpty()
+        )
+        // …its input was verifiably empty (asserted above), and
+        // still nothing was pruned: only a working empty-query
+        // guard explains all three facts together. Remove the
+        // guard and both rows are pruned; kill the run and the
+        // tasks never come back.
+        assertEquals(
+            "empty-query run must prune nothing",
+            setOf("com.only.app", "com.control.app"),
+            dao.getAllAppsSnapshot().map { it.packageName }.toSet()
         )
         assertNull(repository.pendingPruneNote())
     }
@@ -228,7 +286,17 @@ class AppListTruthTest {
         val rules = dao.getAllAppsSnapshot().groupedByRule()
         assertEquals(listOf("One"), rules.peek.map { it.appName })
         assertEquals(listOf("Two"), rules.shut.map { it.appName })
-        assertEquals(1, rules.peekCount)
-        assertEquals(1, rules.shutCount)
+        // Audit R1 tests-1 #5 (sibling site): the peekCount /
+        // shutCount assertions are replaced, not merely dropped —
+        // the counts are derived getters (`list.size`) over the
+        // lists just asserted, so they checked nothing. Content
+        // carries the claim instead: packages, tiers, and the
+        // untouched third app's exclusion from both groups.
+        assertEquals(listOf("com.one.app"), rules.peek.map { it.packageName })
+        assertEquals(listOf("com.two.app"), rules.shut.map { it.packageName })
+        assertTrue(rules.peek.all { it.resolvedTier == AppBlockTier.PEEK_2M })
+        assertTrue(rules.shut.all { it.resolvedTier == AppBlockTier.LOCKED })
+        assertTrue(rules.peek.none { it.packageName == "com.three.app" })
+        assertTrue(rules.shut.none { it.packageName == "com.three.app" })
     }
 }

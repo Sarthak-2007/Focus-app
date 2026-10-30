@@ -1,11 +1,13 @@
 package com.example.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,10 +21,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -31,6 +36,7 @@ import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.theme.MonolithCurves
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -51,23 +57,48 @@ import java.util.Locale
  * never prints anywhere) and exactly one receipt-only line;
  * the death-booked sheet books `THE SHIELD WAS OFF…` in words.
  * The footer is exact.
+ *
+ * Issue #57 truth cures (audit R1, slice receipt-sheet — the
+ * print character above is untouched; only false or missing
+ * facts changed): durations print EXACT to the second
+ * ([longSpan] — no ceiling, no integer-division truncation);
+ * the sealed elapsed prints as the `RAN …` total under ENDED;
+ * a span whose local dates differ puts its day on BOTH the
+ * ARMED and ENDED lines (same-day slips unchanged); dismissal
+ * fires on the press DOWN (the scrim's `onPress`), and the
+ * animation spec is honest — a [MutableTransitionState] runs
+ * the enter fade for real, and there is NO exit transition:
+ * the host unmounts the slip on dismiss, so an exit fade
+ * could never play and none is claimed.
  */
 @Composable
 fun ReceiptSheet(
     receipt: ReceiptState,
     onDismiss: () -> Unit
 ) {
+    // #57: the enter fade actually runs — the state starts
+    // false and targets true, where a hardcoded `visible = true`
+    // composed the slip already-settled and claimed an exit
+    // fade the host's unmount made impossible.
+    val enterState = remember { MutableTransitionState(false) }
+    enterState.targetState = true
     AnimatedVisibility(
-        visible = true,
+        visibleState = enterState,
         enter = fadeIn(MonolithCurves.specC()),
-        exit = fadeOut(MonolithCurves.specA())
+        exit = ExitTransition.None
     ) {
         val scheme = MaterialTheme.colorScheme
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.12f))
-                .clickable(onClick = onDismiss)
+                // #57: dismissal lands on the DOWN. `clickable`
+                // fires on release (UP); `onPress` is the press
+                // itself, as the header's spec has always said.
+                .pointerInput(receipt.sessionId) {
+                    detectTapGestures(onPress = { onDismiss() })
+                }
+                .testTag("receiptSheetScrim")
                 .padding(12.dp),
             contentAlignment = Alignment.BottomCenter
         ) {
@@ -112,17 +143,44 @@ fun ReceiptSheet(
                 // RC-02: a FLOW slip has no PLANNED segment —
                 // the line carries ARMED alone rather than a
                 // floor dressed as a plan.
+                // #57: when the span's local dates differ
+                // (cross-midnight, multi-day), BOTH lines carry
+                // their own day — a bare `ENDED 00:10` after
+                // `ARMED 23:50` otherwise reads as ending before
+                // it started. Same-day slips print as before.
+                val crossesDay = !sameLocalDay(
+                    receipt.armWallMs, receipt.endedAtWallMs
+                )
+                val armedPrint = if (crossesDay) {
+                    "ARMED ${dayLabel(receipt.armWallMs)} ${hhmm(receipt.armWallMs)}"
+                } else {
+                    "ARMED ${hhmm(receipt.armWallMs)}"
+                }
+                val endedPrint = if (crossesDay) {
+                    "ENDED ${dayLabel(receipt.endedAtWallMs)} ${hhmm(receipt.endedAtWallMs)}"
+                } else {
+                    "ENDED ${hhmm(receipt.endedAtWallMs)}"
+                }
                 val planned = receipt.plannedSeconds
                 ReceiptMonoLine(
                     text = if (planned != null) {
-                        "ARMED ${hhmm(receipt.armWallMs)} · PLANNED ${longSpan(planned)}"
+                        "$armedPrint · PLANNED ${longSpan(planned)}"
                     } else {
-                        "ARMED ${hhmm(receipt.armWallMs)}"
+                        armedPrint
                     }
                 )
                 ReceiptMonoLine(
-                    text = "ENDED ${hhmm(receipt.endedAtWallMs)} · ${receipt.outcomeWord}"
+                    text = "$endedPrint · ${receipt.outcomeWord}"
                 )
+                // #57: the slip's total — the sealed elapsed,
+                // carried in state since Slice E and printed
+                // nowhere. A zero seals nothing to total:
+                // omitted, never `RAN 0 MIN`.
+                if (receipt.sealedElapsedSeconds > 0) {
+                    ReceiptMonoLine(
+                        text = "RAN ${longSpan(receipt.sealedElapsedSeconds)}"
+                    )
+                }
                 receipt.routineLabelWithin?.let { label ->
                     ReceiptMonoLine(text = label)
                 }
@@ -132,8 +190,11 @@ fun ReceiptSheet(
                     )
                 }
                 if (receipt.bankedBreakSeconds > 0) {
+                    // #57: exact span — the old `/ 60` printed a
+                    // false `0 MIN` for 1–59 banked seconds and
+                    // truncated every other figure.
                     ReceiptMonoLine(
-                        text = "BREAK BANKED ${receipt.bankedBreakSeconds / 60} MIN"
+                        text = "BREAK BANKED ${longSpan(receipt.bankedBreakSeconds)}"
                     )
                 }
                 receipt.deflections.forEach { d ->
@@ -199,13 +260,39 @@ private fun ReceiptMonoLine(text: String, dim: Boolean = false) {
 private fun hhmm(wallMillis: Long): String =
     SimpleDateFormat("HH:mm", Locale.US).format(Date(wallMillis))
 
+/** The printed day for a wall instant: `TUE 4 NOV`. */
+internal fun dayLabel(wallMillis: Long): String =
+    SimpleDateFormat("EEE d MMM", Locale.US)
+        .format(Date(wallMillis)).uppercase(Locale.US)
+
+/** Whether two wall instants share one local calendar day. */
+internal fun sameLocalDay(aMillis: Long, bMillis: Long): Boolean {
+    val a = Calendar.getInstance().apply { timeInMillis = aMillis }
+    val b = Calendar.getInstance().apply { timeInMillis = bMillis }
+    return a.get(Calendar.YEAR) == b.get(Calendar.YEAR) &&
+        a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR)
+}
+
 /** The long-form dialect (F-W1): `50 MIN`, `1H 00M` — the same
- *  span classes the Deck's hero prints, never the short form. */
-private fun longSpan(seconds: Int): String {
-    val minutes = (seconds + 59) / 60
-    return if (minutes < 60) {
-        "$minutes MIN"
-    } else {
-        String.format(Locale.US, "%dH %02dM", minutes / 60, minutes % 60)
+ *  span classes the Deck's hero prints, never the short form.
+ *
+ *  #57: EXACT to the second. The old body ceiled minutes
+ *  (`(seconds + 59) / 60`), so a 61-second plan printed
+ *  `2 MIN`; whole-minute values — the normal case, plans are
+ *  set in minutes — print byte-identically to before, and any
+ *  sub-minute remainder is spoken, never rounded or dropped:
+ *  `45 SEC`, `1 MIN 01 SEC`, `1H 00M 01 SEC`. */
+internal fun longSpan(seconds: Int): String {
+    val total = seconds.coerceAtLeast(0)
+    val remSeconds = total % 60
+    val minutes = total / 60
+    val secSuffix =
+        if (remSeconds == 0) "" else String.format(Locale.US, " %02d SEC", remSeconds)
+    return when {
+        total < 60 -> "$total SEC"
+        minutes < 60 -> "$minutes MIN$secSuffix"
+        else -> String.format(
+            Locale.US, "%dH %02dM", minutes / 60, minutes % 60
+        ) + secSuffix
     }
 }
