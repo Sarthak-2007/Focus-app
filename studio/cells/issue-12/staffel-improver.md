@@ -198,3 +198,148 @@ makes that visible on the head, where it belongs — not as a second
 control on the composer). No confirmation dialog for FIRST.
 
 *— STAFFEL, improver · Round 1*
+
+---
+
+## ROUND 2 — The head leaf says what F-1 made it: the intention line
+
+*Improves: audit items 4 + 7 / F-4's head half, Designer §1.2 + §4.3
+(overruled in part by Amt — respected, see §2.2), Feel-5 Beats 2 + 6
++ 7, PLAN closing notes (NEXT marker overruled; provenance parked).
+The machinery is F-1's and is not touched: snapshot at seal instant,
+sealing consumes nothing, DEFERRED never headlines, SLEEP always
+keeps its own name, empty queue falls back to the routine name.*
+
+### 2.1 First, finish the audit's kill: ACTIVE / QUEUE plate words die
+
+The shipped leaf still prints them (`if (isCued) "ACTIVE" else
+"QUEUE"`, Anonymous Pro Bold 10.5sp, from index alone). Audit item 7
+killed them — ACTIVE is false as printed (it means "first in line"
+while nothing runs) and both words print as a state what position
+already says. In this recomposition they are deleted, not replaced:
+the plate row's left side carries only the existing 5dp running
+square when the head is cued *and* a session is active (shape and
+position, no word), and is otherwise empty. Head-ness keeps the
+audit's closed signal list — raised paper (`surfaceBright`), bold
+title, `#01`, the accent START — plus the one addition this round
+justifies below. The composer leaf's plate row (Round 1 §1.2) is
+built to the same law from the start: number only, no word.
+
+### 2.2 The intention line — a sentence, not a marker
+
+Amt overruled the Designer's `NEXT` head-card marker, and that
+ruling stands here in full: no NEXT badge, no head "card" treatment,
+no new label-word. What the Designer was reaching for — provenance
+visible in place — survives in the reduced form Amt's own plan
+adopted ("what the Designer got right — provenance should be
+visible — is adopted in reduced form"), and this line is that form:
+not a status word pinned to the leaf, but **one factual sentence
+about tomorrow, printed only where it is true.**
+
+**Placement.** On the head leaf only, directly under the title,
+above the sub-steps: the leaf's own consequence, read in the same
+glance as its name. Non-head leaves never carry it — the sentence is
+false for them, and a line printed everywhere teaches nothing.
+
+**Type.** Anonymous Pro, 10.5sp, Bold, letterSpacing 1sp — the plate
+telemetry voice the leaf already uses — in `onSurfaceVariant`
+(night: the leaf-local cure, Round 3 §3.4). Never the accent: the
+screen's one accent stays START's. Never Sora: this is telemetry
+about the title, not a second headline competing with his words.
+
+**States — exact strings.** `<time>` and `<ROUTINE>` are the next
+upcoming routine's own start and name, read from routine state the
+app already holds; no invented time is ever printed.
+
+| State | Line |
+|---|---|
+| Unsealed, next routine exists and is not SLEEP | `NAMES THE <time> <ROUTINE> WHEN IT SEALS` — e.g. `NAMES THE 05:00 FASTED BLOCK WHEN IT SEALS` |
+| Unsealed, no routine upcoming | *(absent)* — the head still names a hand-armed session as today; no routine, no sentence |
+| Unsealed, next routine is SLEEP | *(absent)* — SLEEP never takes the head (F-1's ruled exception); printing the promise here would lie by breakfast |
+| Sealed, running session's intention **equals** this leaf's title | `THIS LEAF NAMED THE RUNNING BLOCK · SEALED <time>` |
+| Sealed, intention differs (empty-queue seal, SLEEP seal, head torn/replaced after seal) | *(absent)* — the leaf must not claim a session it did not name |
+| Ghost leaf (tear's 260ms) | *(absent)* — a booked leaf is a record in motion; the line belongs to the live head that replaces it |
+
+Why these wordings tell the truth (the design work of this round):
+
+- **"WHEN IT SEALS" carries the conditionality.** F-1 reads the
+  head at the seal instant (and re-resolves at materialise, H1), so
+  the honest claim is not "this *will* be the intention no matter
+  what" but "the head *at seal* names it". Editing, reordering or
+  deleting before the seal moves the line with the head — it is
+  **rendered from position, never stored on the leaf** — so the
+  screen teaches live-before-seal / frozen-at-seal by observation:
+  he watches the sentence change hands when he CUEs a different
+  leaf, and watches it stop moving once sealed. No tooltip, no
+  onboarding copy can teach the snapshot rule as cheaply.
+- **The sealed state is checked by equality, not by a new column.**
+  The running session's stored `intention` string is compared with
+  the head leaf's title — data the screen can already reach, zero
+  schema, the parked provenance column stays parked. Equality is
+  sufficient here because the line claims only what the user can
+  verify from the two strings in front of him; the one ambiguity
+  (he hand-types a task identical to a routine name) prints a line
+  that is still literally true about the words on the session.
+- **Two routines, one morning:** the unsealed line always names the
+  *next* routine only. After the first seals, the sealed-state line
+  governs the running block; the head does not pre-claim the second
+  block while the first runs. When the first session ends, the line
+  re-points to the next routine on its own. One sentence at a time,
+  each one true when read.
+- **The tear is the divider, as Feel-5 ruled:** once the head is
+  torn, the next leaf rises, takes #01, and takes the line. Nothing
+  about the line survives on the torn leaf (ghost state, above).
+
+### 2.3 The empty queue teaches the fallback — once, on the blank
+
+Designer §2's `No task queued` headline was overruled by Amt for the
+Shield/receipt/drawer (it would archive a shame label as an
+intention), and that ruling stands — **nothing in this round puts
+that string on any session surface.** But Tasks itself may state the
+fallback as a fact about tomorrow, in the one place Round 1 created
+for it: under `NOTHING QUEUED` on the merged empty composer leaf,
+one telemetry line in the intention line's type, printed only when
+a non-SLEEP routine is upcoming:
+
+`WITH NOTHING QUEUED, THE <time> <ROUTINE> SEALS UNDER ITS OWN NAME`
+
+This is a statement about a routine, on the pad, at night — not a
+headline on a session, not a stored intention, not a scolding (no
+second sentence, no "add a task" exhortation; the ruled field below
+it is the whole invitation). It closes the last silent gap in F-1's
+surfacing: he learns the fallback *before* the morning it happens,
+from the pad he chose to leave empty. SLEEP-next or no-routine:
+line absent, blank stays blank.
+
+### 2.4 Downstream hierarchy: his words hold the highest line
+
+Feel-5 Beat 9 + the Critic's receipt flag, scoped to presentation
+only: wherever a routine-born session's record is printed (Shield
+headline, receipt headline), the **intention string is the headline**
+— Sora, the display voice — verbatim, untruncated in storage,
+wrapping to 3 lines on the Shield before any visual ellipsis; the
+routine's name demotes to the Anonymous Pro provenance line beneath
+it: `<time> <ROUTINE> · SEALED <time>`. That line claims only what is
+always true (which routine fired, when it sealed) — it does **not**
+print `FROM QUEUE` on stored records, because the provenance column
+that could prove it for old rows is parked, and a source claim that
+only *usually* holds is a lie with good odds. For sessions sealed
+before F-1, headline and provenance coincide (intention *is* the
+routine name) and the two lines simply agree — no `SOURCE NOT
+RECORDED` apology print, no relabelling of history. The Drawer
+entry inherits the same hierarchy and is searchable by the intention
+string, as the Designer specced — search is over the stored string
+that already exists, no new data.
+
+### 2.5 What Round 2 deliberately does not do
+
+No NEXT marker (Amt's overrule). No provenance column, no taskId
+bond, no claim/consume at seal (PLAN rulings 3 + 6 stand). No
+Eve Snapshot (killed in the plan; the seal-instant read is the
+truthful one, and this line is precisely what makes that visible).
+No divergence notice on Tasks during a session (Designer §3.3 puts
+`QUEUE MOVED AFTER SEAL` on the receipt only — unchanged; the head
+leaf under seal is a record, and records don't annotate themselves).
+No line on SLEEP, ever.
+
+*— STAFFEL, improver · Round 2*
