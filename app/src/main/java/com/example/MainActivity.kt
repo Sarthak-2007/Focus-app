@@ -31,6 +31,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -282,8 +283,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // phone is sealed, the block surface is a launcher. It opens
     // from the Guard line's tap (a dead tap while sealed until now —
     // PARK refuses under seal) and from the Airlock's two doors.
-    var launcherOpen by remember { mutableStateOf(false) }
-    var launcherPage by remember { mutableStateOf(LauncherPage.HOME) }
+    var launcherOpen by rememberSaveable { mutableStateOf(false) }
+    var launcherPage by rememberSaveable { mutableStateOf(LauncherPage.HOME) }
 
     fun closePark(dismissReceipt: Boolean) {
         parkOpen = false
@@ -858,15 +859,19 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         liveApp.packageName != "com.android.vending" &&
                         liveApp.category != com.example.data.AppCategory.BROWSERS.name
                     if (launchAllowed && liveApp != null) {
-                        launcherOpen = false
-                        runCatching {
+                        // Close only once an intent has actually
+                        // started — closing first made a failed
+                        // launch a silent nothing (D-05).
+                        val started = runCatching {
                             context.packageManager
                                 .getLaunchIntentForPackage(liveApp.packageName)
                                 ?.let { launch ->
                                     launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                     context.startActivity(launch)
-                                }
-                        }
+                                    true
+                                } ?: false
+                        }.getOrDefault(false)
+                        if (started) launcherOpen = false
                     }
                 },
                 onPeekApp = { app ->
@@ -878,16 +883,27 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     // no cooldown is armed. Read at tap time from
                     // the VM's activeSession flow.
                     val tapSession = viewModel.activeSession.value
-                    if (tapSession != null && tapSession.isActive && tapSession.isInSafeBreak) {
-                        launcherOpen = false
-                        runCatching {
+                    // Same tap-time discipline as the OPEN gate
+                    // (D-03): re-read the live entity — an app
+                    // tightened to LOCKED mid-break must not launch
+                    // off the stale composed row.
+                    val livePeekApp = viewModel.apps.value.firstOrNull {
+                        it.packageName == app.packageName
+                    }
+                    if (tapSession != null && tapSession.isActive && tapSession.isInSafeBreak &&
+                        !viewModel.navigationLocked() && livePeekApp != null &&
+                        livePeekApp.resolvedTier != com.example.data.AppBlockTier.LOCKED
+                    ) {
+                        val started = runCatching {
                             context.packageManager
-                                .getLaunchIntentForPackage(app.packageName)
+                                .getLaunchIntentForPackage(livePeekApp.packageName)
                                 ?.let { launch ->
                                     launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                     context.startActivity(launch)
-                                }
-                        }
+                                    true
+                                } ?: false
+                        }.getOrDefault(false)
+                        if (started) launcherOpen = false
                     } else {
                         // Outside a Safe Break the existing Airlock
                         // route stands exactly as it was — the peek
@@ -922,10 +938,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     it.resolvedTier == com.example.data.AppBlockTier.PEEK_2M
                 },
                 onOpenAllowedApps = {
+                    viewModel.leaveAirlockViaLauncherDoors()
                     launcherPage = LauncherPage.ALLOWED
                     launcherOpen = true
                 },
                 onOpenPeekApps = {
+                    viewModel.leaveAirlockViaLauncherDoors()
                     launcherPage = LauncherPage.PEEK
                     launcherOpen = true
                 }

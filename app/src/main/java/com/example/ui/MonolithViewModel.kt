@@ -2440,6 +2440,26 @@ class MonolithViewModel(
         }
     }
 
+    /** The launcher doors on the Airlock (revamp): the user leaves
+     *  the intercept through a launcher door, so the intercept
+     *  record says exactly that. Never "Stayed Focused" — that
+     *  would be a lie — and never silence, which would erase an
+     *  attempt that did happen (D-02). */
+    fun leaveAirlockViaLauncherDoors() {
+        val state = _airlockState.value
+        if (!state.isVisible) return
+        _airlockState.value = state.copy(isVisible = false)
+        viewModelScope.launch {
+            repository.recordIntercept(
+                packageName = state.interceptedPackageName.ifBlank { "com.zhiliaoapp.musically" },
+                appName = state.interceptedAppName.ifBlank { "Blocked App" },
+                sessionIntention = state.sessionIntention.ifBlank { _intentionText.value },
+                outcome = "Opened Launcher",
+                triggerReason = state.selectedReason.shortTag
+            )
+        }
+    }
+
     fun incrementAirlockParticlePulse() {
         val current = _airlockState.value
         soundEngine.playRotaryDetent(500.0 + (current.transmutedParticles * 35.0))

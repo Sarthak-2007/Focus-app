@@ -396,7 +396,7 @@ private fun LauncherHome(
 
         if (session != null && session.isInSafeBreak) {
             androidx.compose.material3.Text(
-                text = "ON A SAFE BREAK — THE SESSION CLOCK IS PAUSED",
+                text = "BREAK · ${(session.safeBreakSecondsRemaining + 59) / 60} MIN",
                 fontFamily = AnonymousProFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 11.sp,

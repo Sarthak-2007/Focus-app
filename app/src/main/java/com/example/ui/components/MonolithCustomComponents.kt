@@ -286,10 +286,14 @@ fun MonolithPullDownHeader(
                     color = scheme.onBackground,
                     modifier = Modifier
                         .padding(end = 20.dp)
-                        .then(
-                            if (isSealed) Modifier
-                            else Modifier.clickable { onGuardLineTap() }
-                        )
+                        // Always tappable: the host's onGuardLineTap
+                        // re-derives the door law at tap time (HB-2) —
+                        // unsealed it opens PARK, sealed it opens the
+                        // launcher, navigation-locked it stays dead.
+                        // Stripping the clickable here while sealed
+                        // (the old form) made the sealed door dead
+                        // code: the handler could never fire (D-01).
+                        .clickable { onGuardLineTap() }
                         .testTag("header_guard_line")
                 )
             }
