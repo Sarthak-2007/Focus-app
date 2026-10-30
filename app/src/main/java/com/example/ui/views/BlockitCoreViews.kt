@@ -49,7 +49,10 @@ import kotlin.math.sqrt
  * ============================================================================
  * - Every colour resolves strictly to the 19 tokens (Light & Night).
  * - Only ONE saturated accent exists: colorPrimaryContainer (#F55314 / #F47442).
- * - Words render in Google Sans / PlusJakartaSans; EVERY number renders in Space Mono / JetBrainsMono.
+ * - Words render in Atkinson Hyperlegible; EVERY number renders in Anonymous Pro
+ *   (Sarthak's standing font picks, Oct 18 2026 — the same pairing Type.kt
+ *   registers for Compose; an older comment here promised Google Sans /
+ *   Space Mono fonts the app never shipped — corrected, issue #282).
  * - Only two corner radii exist app-wide: 12dp (small) and 24dp (large), with 12dp universal gap.
  * - Pre-allocated final Paint, final RectF, final Path fields — zero allocation in onDraw().
  * - Every animation uses Curve A, B, C or OvershootInterpolator and durations {180, 260, 280, 420, 520}ms.
@@ -168,7 +171,7 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
     protected fun tokTextSecondary(): Int = if (isNightMode) NIGHT_TEXT_SECONDARY else LIGHT_TEXT_SECONDARY
     protected fun tokAlert(): Int = if (isNightMode) NIGHT_ALERT else LIGHT_ALERT
 
-    // Pre-allocated Typefaces (§2: Words = Sans, Numbers = Space Mono / JetBrainsMono)
+    // Pre-allocated Typefaces (§2: Words = Atkinson Hyperlegible, Numbers = Anonymous Pro)
     protected val wordTypefaceBold: Typeface by lazy {
         // The REAL Bold file (Round 0b fix) — Typeface.create(base, BOLD) on
         // the Regular file was synthesized smear across every Canvas view.
@@ -277,7 +280,7 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
     }
 
     /**
-     * Draws a mixed label where words use Google Sans and quantities use Space Mono (§2).
+     * Draws a mixed label where words use Atkinson Hyperlegible and quantities use Anonymous Pro (§2).
      */
     protected fun drawMixedWordAndMono(
         canvas: Canvas,
