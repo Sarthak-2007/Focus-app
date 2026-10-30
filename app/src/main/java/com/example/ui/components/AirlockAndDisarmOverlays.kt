@@ -595,6 +595,30 @@ internal fun peekCooldownScopeText(): String =
     "THE COOLDOWN IS PER APP — OTHER PEEK APPS KEEP THEIR OWN TIMERS"
 
 /**
+ * Issue #102 (peek-lived, finding 5): the peek offer's terms, in
+ * the app's own words, printed BEFORE the peek is taken. The peek
+ * chip is labelled "2-MINUTE PEEK" while the token-spending door
+ * is "EMERGENCY BREAK" — this line is what tells the user the two
+ * are different doors: the peek spends no weekly break and does
+ * not end the session. Pure, so the wording is unit-tested.
+ * (Ported from PR #351's peekTermsText — its pill/enforcer build
+ * was superseded by #114/#99 on main; this sentence was not.)
+ */
+internal fun peekTermsText(): String =
+    "THE PEEK DOES NOT SPEND YOUR EMERGENCY BREAK AND DOES NOT END THE SESSION"
+
+/**
+ * Issue #102 (peek-lived, finding 4): the withheld peek's reason
+ * stands on the door from the FIRST second — it is not gated on
+ * the breath countdown finishing. Before this, the reason block
+ * waited for `countdownSecs == 0`, so a user who returned from a
+ * peek (or hit a cooldown) stared at a wall that explained
+ * nothing for a second countdown. Pure decision, unit-tested;
+ * the countdown deliberately plays no part in it.
+ */
+internal fun peekWithheldReasonVisible(peekReady: Boolean): Boolean = !peekReady
+
+/**
  * What waits at the end of the breath, printed DURING the breath
  * (issue #114, finding 3): the wall's whole exchange — wait, then
  * one tap buys the lease — stated before the countdown reaches
@@ -1157,6 +1181,14 @@ fun AirlockInterceptOverlay(
                         fontSize = 12.5.sp,
                         color = NightColorPrimary.copy(alpha = 0.8f)
                     )
+                    // Issue #102, finding 5: the terms stand with
+                    // the preview — the peek is not the break.
+                    Text(
+                        text = peekTermsText(),
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f)
+                    )
                 }
 
                 if (countdownSecs == 0 && peekReady) {
@@ -1191,14 +1223,25 @@ fun AirlockInterceptOverlay(
                         fontSize = 12.5.sp,
                         color = NightColorPrimary.copy(alpha = 0.8f)
                     )
+                    // Issue #102, finding 5: the terms stand on
+                    // the offer itself, before the tap.
+                    Text(
+                        text = peekTermsText(),
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f)
+                    )
                 }
 
                 // The withheld peek prints its state AND its reason
                 // (Held Door Truth Baseline): cooldown with its
                 // live remaining time, or the running pill named.
                 // Doors that never owed a peek carry withheld ==
-                // null and print nothing here.
-                if (countdownSecs == 0 && !peekReady) {
+                // null and print nothing here. Issue #102, finding
+                // 4: the reason is NOT gated on the breath countdown
+                // — it shows from the first second, not after a
+                // second countdown (see peekWithheldReasonVisible).
+                if (peekWithheldReasonVisible(peekReady)) {
                     when (state.peekWithheld) {
                         PeekWithheld.COOLDOWN -> {
                             if (cooldownSecs > 0) {
