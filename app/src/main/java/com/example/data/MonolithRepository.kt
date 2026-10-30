@@ -3141,6 +3141,34 @@ class MonolithRepository(
             emptyList()
         }
 
+        // Issue #105 (F1): the finished tasks are the row's OWN
+        // booked summary — completeTaskAndAdvance appends each
+        // finished task to completedTasksSummary, and until now
+        // assembly never read it, so the slip attested a session
+        // while naming none of the work finished inside it.
+        val completedTasks = row.completedTasksSummary
+            .split(" • ")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+
+        // Issue #105 (F2, assembly side): the deflection match
+        // must survive the session's intention ever having been
+        // re-titled. The write side is cured on main by #124's
+        // total freeze (landed via PR #453): completeTaskAndAdvance
+        // and promoteTaskToActive never rewrite a session's
+        // intention at all — a superset of the seal guard #106's
+        // F2 cure carries, and the two agree (no session write on
+        // task finish/promotion). Assembly additionally accepts
+        // logs stamped with the title of any task this session
+        // booked as finished: those attempts happened under
+        // that task's watch, inside this window — so deflections
+        // booked under a title a pre-freeze build re-titled away
+        // are not silently dropped from the slip either.
+        val knownIntentions = buildSet {
+            add(row.intention)
+            completedTasks.forEach { entry -> add(entry.substringBefore(" (").trim()) }
+        }.filter { it.isNotEmpty() }.toSet()
+
         val lastByPackage = mutableMapOf<String, Long>()
         val deflections = dao.getInterceptLogsBetween(row.startWallTimeMillis, windowEnd)
             .filter { log ->
@@ -3150,7 +3178,7 @@ class MonolithRepository(
                 // row the filter removes can never eat a real
                 // block's dedupe slot. Only proven blocks print:
                 // a peek (he was LET IN) is not a deflection.
-                log.sessionIntention == row.intention &&
+                log.sessionIntention in knownIntentions &&
                     log.packageName != "com.monolith.system" &&
                     log.packageName != EXPOSURE_LOG_PACKAGE &&
                     isBlockedInterceptOutcome(log.outcome) &&
@@ -3170,7 +3198,11 @@ class MonolithRepository(
                     it.appName,
                     it.packageName,
                     it.timestampMillis,
-                    isSite = it.appName in siteDomains
+                    isSite = it.appName in siteDomains,
+                    // Issue #105 (F3): the outcome rides — the
+                    // slip prints which kind of block each
+                    // admitted attempt was.
+                    outcome = it.outcome
                 )
             }
 
@@ -3205,7 +3237,11 @@ class MonolithRepository(
             },
             // W-41: the row's stored split, threaded through.
             heldShutAtSeal = row.heldShutAtSeal,
-            heldPeekAtSeal = row.heldPeekAtSeal
+            heldPeekAtSeal = row.heldPeekAtSeal,
+            // Issue #105 (F1/F4): the session's booked work and
+            // its lived Safe Breaks, from the row's own ledgers.
+            completedTasks = completedTasks,
+            safeBreakSeconds = row.breakTakenSeconds
         )
     }
 
@@ -3323,7 +3359,9 @@ class MonolithRepository(
             forgedArtifactName = pending.forgedArtifactName,
             heldShutAtSeal = pending.heldShutAtSeal,
             heldPeekAtSeal = pending.heldPeekAtSeal,
-            armZoneId = armZoneStore.zoneFor(pending.armWallMs)
+            armZoneId = armZoneStore.zoneFor(pending.armWallMs),
+            completedTasks = pending.completedTasks,
+            safeBreakSeconds = pending.safeBreakSeconds
         )
     }
 
@@ -3518,7 +3556,9 @@ class MonolithRepository(
             forgedArtifactName = pending.forgedArtifactName,
             heldShutAtSeal = pending.heldShutAtSeal,
             heldPeekAtSeal = pending.heldPeekAtSeal,
-            armZoneId = armZoneStore.zoneFor(pending.armWallMs)
+            armZoneId = armZoneStore.zoneFor(pending.armWallMs),
+            completedTasks = pending.completedTasks,
+            safeBreakSeconds = pending.safeBreakSeconds
         )
     }
 

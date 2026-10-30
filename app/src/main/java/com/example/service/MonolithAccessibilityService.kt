@@ -1586,6 +1586,7 @@ class MonolithAccessibilityService : AccessibilityService() {
             noteDetectionFailure("sniperTabClick", e)
             false
         }
+    }
 
     /**
      * Issue #121, ringing-window route: the foreground window is

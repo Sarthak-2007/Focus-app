@@ -162,6 +162,23 @@ class MonolithBootReceiver : BroadcastReceiver() {
             UndoDeleteStore.expireIfStale(appContext)
         }
 
+        // Group 1c — Issue #87 (process-death F1): a REAL boot resets
+        // SystemClock.elapsedRealtime() to ~0, so every persisted
+        // peek lease/cooldown anchor — written against the PREVIOUS
+        // boot's monotonic clock — would otherwise read as a
+        // far-future expiry and resurrect a 2-minute peek for
+        // hours-to-days. Zero both fields on every row, BEFORE the
+        // shield groups read them. A package replace is NOT a boot:
+        // the monotonic clock survives it, so leases stay valid and
+        // are left alone there. LOCKED_BOOT and BOOT both fire for
+        // one boot; the clear is idempotent.
+        runGuardedBootAction {
+            if (action != Intent.ACTION_MY_PACKAGE_REPLACED) {
+                com.example.AppContainer.dao(appContext)
+                    .clearAllPeekLeases()
+            }
+        }
+
         // Group 2 — shield FIRST, before the slow reconcile: if a
         // session is already active, it is shielded now, so a slow
         // or failed tick cannot lose the shield.
