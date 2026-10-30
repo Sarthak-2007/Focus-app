@@ -77,6 +77,7 @@ import com.example.ui.components.RefusalSentenceSlot
 import com.example.ui.components.StripDensity
 import com.example.ui.components.RefusalSentence
 import com.example.ui.components.endsAtText
+import com.example.ui.components.isReducedMotion
 import com.example.ui.components.sessionEndsAtMillis
 import com.example.ui.components.imprintTenantText
 import com.example.ui.components.jamSentenceFor
@@ -286,6 +287,12 @@ fun TactileDeckScreen(
         (deckContext.getSystemService(android.content.Context.ACTIVITY_SERVICE)
             as? android.app.ActivityManager)?.isLowRamDevice == true
     }
+    // Issue #256: reduced motion — with the system animator scale
+    // at 0 the seal shot's vertigo/blur easings are never driven
+    // (same treatment as night calm below): the hero neither
+    // recedes nor blurs, while the phase latches still advance on
+    // the same 1050ms clock, so the seal's timing is unchanged.
+    val reducedMotion = remember { isReducedMotion(deckContext) }
     LaunchedEffect(shot) {
         if (shot == null || shot.preExisting) return@LaunchedEffect
         // The ghosts take their posts before the first shot frame.
@@ -297,7 +304,8 @@ fun TactileDeckScreen(
             // never driven — vertigoT/blurT stay at rest (0), so the
             // hero neither recedes nor blurs. The phase latches
             // below still advance on the same 1050ms clock.
-            if (!shot.nightCalm) {
+            // Issue #256: reduced motion earns the same calm.
+            if (!shot.nightCalm && !reducedMotion) {
                 shot.vertigoT = MonolithCurves.VertigoTransformEasing.transform(
                     (e / 1050f).coerceIn(0f, 1f)
                 )

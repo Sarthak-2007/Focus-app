@@ -120,7 +120,12 @@ class MainActivity : ComponentActivity() {
                 android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT
             ),
-            navigationBarStyle = SystemBarStyle.dark(
+            // Issue #256: the birth pin matches the day ground for
+            // BOTH bars (the ground effect below re-pins on night).
+            // The nav bar was pinned dark here and in the effect —
+            // light glyphs on the light day ground, illegible.
+            navigationBarStyle = SystemBarStyle.light(
+                android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT
             )
         )
@@ -491,9 +496,19 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     android.graphics.Color.TRANSPARENT
                 )
             },
-            navigationBarStyle = SystemBarStyle.dark(
-                android.graphics.Color.TRANSPARENT
-            )
+            // Issue #256: the nav bar follows the ground exactly
+            // like the status bar — it was pinned dark in both
+            // branches, guaranteeing an illegible bar by day.
+            navigationBarStyle = if (groundNight) {
+                SystemBarStyle.dark(
+                    android.graphics.Color.TRANSPARENT
+                )
+            } else {
+                SystemBarStyle.light(
+                    android.graphics.Color.TRANSPARENT,
+                    android.graphics.Color.TRANSPARENT
+                )
+            }
         )
     }
     // The receipt sheet's dismissal is host state (F-B1): the
