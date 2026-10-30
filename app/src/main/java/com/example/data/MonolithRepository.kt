@@ -21,6 +21,7 @@ import com.example.service.MonolithBootReceiver
 import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithNotificationListener
 import com.example.service.MonolithShieldService
+import com.example.service.TimeCriticalAlertGate
 import com.example.service.UsageAccess
 import com.example.service.Warrant
 import com.example.service.WatchItemId
@@ -111,6 +112,32 @@ data class PruneNote(
  */
 internal fun heldSitesCount(siteCount: Int, browserBlockerEnabled: Boolean): Int =
     if (browserBlockerEnabled) siteCount else 0
+
+/**
+ * W3 #130 finding 2 — the seed-upgrade for EXISTING installs
+ * (verifier correction, DURCH-D): the v1 site seed is once-ever
+ * (SEED_SITES_KEY), so an install seeded before "youtube.com"
+ * joined [BlockedBrowserDomains.defaultDomains] would keep the
+ * legacy list forever and never receive the host rule. This pure
+ * decision is the delivery path: given the install's stored
+ * domains, the domains the one-shot v2 upgrade must ADD.
+ *
+ * The trigger is hard evidence, not a guess: the legacy factory
+ * entry "youtube.com/shorts" still stands in the list, proving
+ * the factory seed is in force and unedited at that entry. The
+ * seeded-ever law (Audit R2 #96) bounds it the other way — a
+ * list WITHOUT the legacy entry is the user's own editing (he
+ * deleted the Shorts rule, or emptied the list, or built his
+ * own), and the upgrade adds NOTHING: a deletion is a ruling,
+ * never resurrected by an upgrade. A list already carrying the
+ * host is complete. Pure, so the matrix is unit-tested.
+ */
+internal fun youtubeHostSeedUpgrade(existingDomains: Collection<String>): List<String> =
+    if ("youtube.com/shorts" in existingDomains && "youtube.com" !in existingDomains) {
+        listOf("youtube.com")
+    } else {
+        emptyList()
+    }
 
 /** Issue #99 F1: how long after a peek lease's end its package still
  *  counts as "just expired" for eviction purposes. The shield polls
@@ -328,6 +355,8 @@ class MonolithRepository(
         /** Chrome's prefs file + PARK's first-run bit (chrome C4). */
         const val CHROME_PREFS_NAME = "monolith_chrome"
         const val PARK_INTRO_DONE_KEY = "park_intro_done"
+        /** Issue #70 F3: the Deck primer's first-run bit. */
+        const val DECK_PRIMER_DONE_KEY = "deck_primer_done"
 
         /** Audit R1 #41: the shared WallAccrual anchor's disk
          *  home (see seedAccrualFromDisk / persistAccrualAnchor). */
@@ -385,6 +414,13 @@ class MonolithRepository(
         const val SEED_PREFS_NAME = "monolith_seed"
         const val SEED_SITES_KEY = "seeded_sites_v1"
         const val SEED_TASKS_KEY = "seeded_tasks_v1"
+
+        /** W3 #130 F2 (verifier correction): the one-shot flag for
+         *  the youtube.com host seed-upgrade — set the first time
+         *  the upgrade has been CONSIDERED on an install that ran
+         *  the v1 seed, whether or not it added the host, so the
+         *  consideration never repeats (see youtubeHostSeedUpgrade). */
+        const val SEED_SITES_V2_KEY = "seeded_sites_v2_youtube_host"
 
         /** The prune note's prefs home (Ordner lane, Mikro M5): a
          *  record of what the catalog reconcile removed, kept until
@@ -558,6 +594,26 @@ class MonolithRepository(
             }
             seedPrefs.edit().putBoolean(SEED_SITES_KEY, true).apply()
 
+        }
+        // W3 #130 F2 seed-upgrade (verifier correction, DURCH-D):
+        // an install that ran the v1 seed before "youtube.com"
+        // joined the defaults never re-seeds, so the host rule
+        // must be DELIVERED — once, and only where the legacy
+        // factory entry proves the seed stands unedited (the pure
+        // decision above; a user's deletion is never resurrected).
+        // A fresh install reaches this line with the current
+        // defaults just seeded, so the decision adds nothing and
+        // the flag simply closes. Runs under the same seed lock.
+        if (!seedPrefs.getBoolean(SEED_SITES_V2_KEY, false)) {
+            if (seedPrefs.getBoolean(SEED_SITES_KEY, false)) {
+                val upgradeAdds = youtubeHostSeedUpgrade(
+                    dao.getAllSitesSnapshot().map { it.domain }
+                )
+                if (upgradeAdds.isNotEmpty()) {
+                    dao.insertSites(upgradeAdds.map { BlockedSiteEntity(it) })
+                }
+            }
+            seedPrefs.edit().putBoolean(SEED_SITES_V2_KEY, true).apply()
         }
         if (dao.getGuardSettingsSnapshot() == null) {
             dao.insertGuardSettings(GuardSettingsEntity())
@@ -991,6 +1047,20 @@ class MonolithRepository(
         context.getSharedPreferences(CHROME_PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(PARK_INTRO_DONE_KEY, false).not()
 
+    // Issue #70 F3: the Deck primer's gate — the same one-bit
+    // pattern as the PARK intro. Pending until the first session
+    // has ever run; the Deck prints its three lines only while
+    // this is pending (and no session is live and the warrant is
+    // OFF), then never again.
+    fun deckPrimerPending(): Boolean =
+        context.getSharedPreferences(CHROME_PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(DECK_PRIMER_DONE_KEY, false).not()
+
+    fun markDeckPrimerDone() {
+        context.getSharedPreferences(CHROME_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putBoolean(DECK_PRIMER_DONE_KEY, true).apply()
+    }
+
     // ------------------------------------------------------------------
     // THE PRUNE NOTE (Mikro M5): accumulate — read — clear.
     // ------------------------------------------------------------------
@@ -1327,7 +1397,14 @@ class MonolithRepository(
                             !SafetyFloor.isFloorPackage(it.packageName)
                     }
                     ?.maxByOrNull { it.lastTimeUsed }
-                if (expiredHit != null) return expiredHit.packageName
+                // Issue #121: the time-critical gate binds this
+                // return too — an expired peek never re-covers a
+                // screen whose alarm is ringing right now.
+                if (expiredHit != null &&
+                    !TimeCriticalAlertGate.isAlertLiveFor(context, expiredHit.packageName)
+                ) {
+                    return expiredHit.packageName
+                }
             }
 
             // Issue #332 F1: the door now reads the real UsageEvents
@@ -1356,7 +1433,20 @@ class MonolithRepository(
             // the safety floor covers dialer / incallui / telecom —
             // and every other blocked app stays blocked mid-call,
             // which is exactly Flipd's per-package construction.
-            ForegroundDoor.foregroundBlocked(events, blockedPackages)
+            val foreground = ForegroundDoor.foregroundBlocked(events, blockedPackages)
+                ?: return null
+            // Issue #121: this is the shield door's half of the
+            // time-critical alert gate (the call bypass above can
+            // never fire for an alarm — it plays on the ALARM
+            // stream, not a call mode). A foreground package whose
+            // alarm is ringing, or whose calendar reminder is live,
+            // is NOT reported blocked, so the shield never covers
+            // the ringing screen it cannot dismiss. The exemption
+            // lasts exactly as long as the alert; the package is
+            // reported again the moment it ends. The seal itself is
+            // untouched: the package's tier never changes, and no
+            // other package passes.
+            if (TimeCriticalAlertGate.isAlertLiveFor(context, foreground)) null else foreground
         } catch (e: Exception) {
             swallow("queryForegroundBlockedApp", e)
             null
@@ -1439,9 +1529,22 @@ class MonolithRepository(
         WatchItemId.DEVICE_ADMIN -> isDeviceAdminActive()
         WatchItemId.NOTIFICATION_LISTENER -> servicePort.notificationListenerBound
         WatchItemId.OVERLAY -> hasOverlayPermission()
-        WatchItemId.BATTERY -> isBatteryOptimizationIgnored()
+        WatchItemId.BATTERY -> {
+            // Issue #122: the sweep's BATTERY query also reads the
+            // battery ITSELF and publishes it, so PARK's line can
+            // print level / saver / charging — the perm bit stays
+            // the exemption (the FIX door's business), but it is no
+            // longer the only battery fact the user can check.
+            val snapshot = batterySnapshot()
+            WatchStore.publishBattery(snapshot)
+            snapshot.exemptionIgnored
+        }
         else -> false
     }
+
+    /** Issue #122: the one battery read (level, saver, charging,
+     *  exemption) every surface shares — see BatteryState.kt. */
+    fun batterySnapshot(): BatterySnapshot = readBatterySnapshot(context)
 
     /** Battery: whether the OS is told to leave Monolith alone.
      *  The read the dissolved Guard screen never had — its BATTERY &
@@ -2158,6 +2261,19 @@ class MonolithRepository(
         // routine materialisation (which applies the loadout BEFORE
         // its session starts), the preset lands whole, as before.
         val sealed = dao.getActiveSessionSnapshot()?.isActive == true
+        // Issue #121: the SLEEP loadout's structural time-critical
+        // set (alarm / calendar class by capability and exact
+        // identity — TimeCriticalApps), resolved once per
+        // application and shared with the Shield preview and the
+        // ratchet warning, so preview and commit cannot diverge.
+        val timeCriticalPackages =
+            if (loadout == SmartLoadout.SLEEP) {
+                TimeCriticalApps.resolveTimeCriticalPackages(
+                    context, allApps.map { it.packageName }
+                )
+            } else {
+                emptySet()
+            }
         val updated = allApps.map { app ->
             // Issue #107: the tier rule is LoadoutRules.tierFor —
             // the same pure function the Shield preview prints its
@@ -2171,7 +2287,7 @@ class MonolithRepository(
             // F4: tierFor also takes the current tier, so a loadout
             // never loosens LOCKED->OPEN on a category guess; the
             // sealed-session gate then clamps whatever remains.
-            // W3 #134 (composition with #107 + #304): telephony is a
+            // W3 #134 (composition with #107 + #304 + #121): telephony is a
             // safety surface — the dialer's desired tier is OPEN at
             // this commit point (tierFor itself stays pure for the
             // preview, and its own #119 floor already caps the
@@ -2181,7 +2297,7 @@ class MonolithRepository(
             val desired = if (isDialerPackage(app.packageName)) {
                 AppBlockTier.OPEN
             } else {
-                LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category, app.resolvedTier)
+                LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category, app.resolvedTier, timeCriticalPackages)
             }
             val tier = SessionTierGate.clampWhileSealed(app.resolvedTier, desired, sealed)
             app.copy(blockTier = tier.name).normalized()
@@ -3164,6 +3280,20 @@ class MonolithRepository(
         return rehydrateReceipt(sessionId, number)
     }
 
+    /** Issue #135 F2's door, called by the ViewModel's
+     *  publishReceipt: a session that already claimed its №
+     *  rebuilds SETTLED from its row — it never re-claims and
+     *  never re-enters the finish controller. The rebuild itself
+     *  is #157's [rehydrateReceipt] by session id (which already
+     *  returns null for a row that claimed nothing); this name
+     *  is the one the #135 call site was written against — the
+     *  merge train landed the call without its callee, leaving
+     *  main uncompilable (CI run 41057949156); restored here on
+     *  the #152 branch so the branch — and main on merge —
+     *  compiles again. */
+    suspend fun receiptForSession(sessionId: Int): ReceiptState? =
+        rehydrateReceipt(sessionId)
+
     /** Issue #157: re-derive ANY claimed session's slip by its
      *  session id — the Vault receipts index's tap. The № is the
      *  one stamped on the session's own row at claim (RC-04); a
@@ -3173,18 +3303,6 @@ class MonolithRepository(
         if (row.receiptNumber <= 0) return null
         return rehydrateReceipt(sessionId, row.receiptNumber)
     }
-
-    /** Issue #135 F2 (re-issue): the Deck's LAST RECEIPT door -
-     *  the standing slip for ONE session, rebuilt settled from
-     *  its row. The ViewModel's publishReceipt facade calls this
-     *  first: a session that claimed its № re-derives its slip
-     *  here (the #157 rehydration - restored, its fault read from
-     *  the row's own fault shield) and never re-claims; a session
-     *  that claimed nothing returns null and the caller falls
-     *  through to discovery. Re-issue is a read: it claims
-     *  nothing and stamps nothing. */
-    suspend fun receiptForSession(sessionId: Int): ReceiptState? =
-        rehydrateReceipt(sessionId)
 
     /** The Vault's receipts index (issue #157): every claimed
      *  session, newest № first, carrying only what its row
@@ -3641,6 +3759,43 @@ class MonolithRepository(
             )
         } else {
             session.hmacSignature
+        }
+
+        // Issue #122 (finding 4): battery death IS an ending. On
+        // the reboot branch only — the battery-death signature,
+        // where monotonic time cannot account for the downtime —
+        // a non-routine timed session whose planned wall end
+        // passed while the phone was off ends HERE, truthfully,
+        // instead of re-anchoring and re-locking the user for
+        // time that ran out hours ago. The ending is booked as
+        // ELAPSED_SHIELD_GAP (the span ran out while the shield
+        // was gone): no success bit, no forged artifact, no
+        // pulse, elapsed stays at its last PROVEN value, and the
+        // end stamp is the planned end — not the recharge
+        // instant that discovered it. Routine rows are excluded:
+        // the heartbeat's window finalise owns their endings.
+        if (rebootDetected && session.routineId == null &&
+            SessionWallClock.wallDeadlinePassed(session, System.currentTimeMillis())
+        ) {
+            val plannedEnd = SessionWallClock.plannedEndWallMillis(session)!!
+            val ended = session.copy(
+                isActive = false,
+                completedSuccessfully = false,
+                isInSafeBreak = false,
+                safeBreakSecondsRemaining = 0,
+                startElapsedRealtimeMillis = newStartMono,
+                bootCount = newBootCount,
+                accumulatedBeforeRebootSeconds = newAccumulated,
+                lastTickElapsedRealtimeMillis = nowMono,
+                hmacSignature = newHmac,
+                penaltySecondsAdded = penaltyAdd,
+                tamperDetected = tamper,
+                shieldLastBeatWallMillis = beatWall,
+                outcome = SessionOutcome.ELAPSED_SHIELD_GAP,
+                endWallMillis = if (session.endWallMillis == 0L) plannedEnd else session.endWallMillis
+            )
+            dao.updateSession(ended)
+            return ended
         }
 
         // W3 #134 (phone-call-mid-session): the call bypass signal

@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -546,21 +547,48 @@ fun ParkDrawer(
                 // (2) The board: nine ruled lines, fixed order.
                 if (snapshot != null) {
                     WatchItemId.PERMISSIONS.forEach { item ->
-                        ParkBoardRow(
-                            name = item.boardName,
-                            word = when (WatchStore.permPrintAt(snapshot, item, nowMono)) {
-                                PermPrint.GRANTED -> "GRANTED"
-                                PermPrint.MISSING -> "MISSING"
-                                PermPrint.STALE -> "STALE"
-                                PermPrint.UNPROVED -> "UNPROVED"
-                                PermPrint.MISSING_STALE -> "STALE"
-                                PermPrint.UNMEASURED -> null
-                            },
-                            wordIsLack = when (WatchStore.permPrintAt(snapshot, item, nowMono)) {
-                                PermPrint.GRANTED -> false
-                                else -> true
+                        // Issue #122, rebased onto #94's UNPROVED print:
+                        // the BATTERY line prints the battery itself
+                        // (level \u00b7 saver/charging \u00b7 NOT EXEMPT) from the
+                        // snapshot's battery read \u2014 the exemption bit
+                        // alone read "GRANTED" over an 8% battery with
+                        // saver on. The perm print is NOT discarded:
+                        // an UNPROVED / STALE exemption verdict still
+                        // appends and still counts as a lack, so the
+                        // line can never read satisfied while either
+                        // the battery or the proof is lacking. No
+                        // battery read yet \u2192 the perm print, as before.
+                        val battery = snapshot.battery
+                        val permPrint = WatchStore.permPrintAt(snapshot, item, nowMono)
+                        if (item == WatchItemId.BATTERY && battery != null) {
+                            val suffix = when (permPrint) {
+                                PermPrint.UNPROVED -> " \u00b7 UNPROVED"
+                                PermPrint.STALE, PermPrint.MISSING_STALE -> " \u00b7 STALE"
+                                else -> ""
                             }
-                        )
+                            ParkBoardRow(
+                                name = item.boardName,
+                                word = com.example.data.batteryBoardWord(battery) + suffix,
+                                wordIsLack = com.example.data.batteryBoardIsLack(battery) ||
+                                    permPrint != PermPrint.GRANTED
+                            )
+                        } else {
+                            ParkBoardRow(
+                                name = item.boardName,
+                                word = when (permPrint) {
+                                    PermPrint.GRANTED -> "GRANTED"
+                                    PermPrint.MISSING -> "MISSING"
+                                    PermPrint.STALE -> "STALE"
+                                    PermPrint.UNPROVED -> "UNPROVED"
+                                    PermPrint.MISSING_STALE -> "STALE"
+                                    PermPrint.UNMEASURED -> null
+                                },
+                                wordIsLack = when (permPrint) {
+                                    PermPrint.GRANTED -> false
+                                    else -> true
+                                }
+                            )
+                        }
                     }
                     // The doubled gap: 16dp, no hairline, no eyebrow —
                     // the family break is whitespace, not a heading.
@@ -876,7 +904,8 @@ fun ParkDrawer(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp),
+                        .height(52.dp)
+                        .semantics(mergeDescendants = true) {},
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -925,7 +954,7 @@ fun ParkDrawer(
                             },
                             modifier = Modifier
                                 .width(76.dp)
-                                .height(34.dp)
+                                .height(48.dp)
                                 .testTag("park_sound_sled")
                         )
                         if (!interactive) {
@@ -936,7 +965,7 @@ fun ParkDrawer(
                             Box(
                                 modifier = Modifier
                                     .width(76.dp)
-                                    .height(34.dp)
+                                    .height(48.dp)
                                     .clickable(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = null
@@ -973,7 +1002,8 @@ fun ParkDrawer(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp),
+                        .height(52.dp)
+                        .semantics(mergeDescendants = true) {},
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // #131 truth scope: the sled arms the FEED
@@ -1025,7 +1055,7 @@ fun ParkDrawer(
                             },
                             modifier = Modifier
                                 .width(76.dp)
-                                .height(34.dp)
+                                .height(48.dp)
                                 .testTag("park_shorts_sled")
                         )
                         if (!interactive) {
@@ -1035,7 +1065,7 @@ fun ParkDrawer(
                             Box(
                                 modifier = Modifier
                                     .width(76.dp)
-                                    .height(34.dp)
+                                    .height(48.dp)
                                     .clickable(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = null
@@ -1104,7 +1134,8 @@ private fun ParkBoardRow(name: String, word: String?, wordIsLack: Boolean) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
+                .height(48.dp)
+                .semantics(mergeDescendants = true) {},
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -1161,7 +1192,8 @@ private fun ParkSocialSitesRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
+                .height(48.dp)
+                .semantics(mergeDescendants = true) {},
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -1203,7 +1235,7 @@ private fun ParkSocialSitesRow(
                     },
                     modifier = Modifier
                         .width(76.dp)
-                        .height(34.dp)
+                        .height(48.dp)
                         .testTag("park_social_sled")
                 )
                 if (!interactive) {
@@ -1212,7 +1244,7 @@ private fun ParkSocialSitesRow(
                     Box(
                         modifier = Modifier
                             .width(76.dp)
-                            .height(34.dp)
+                            .height(48.dp)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null
