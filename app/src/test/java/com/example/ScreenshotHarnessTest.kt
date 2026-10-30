@@ -55,6 +55,12 @@ import java.time.Duration
 /**
  * Screenshot harness added by Ren (Oct 28, 2026) purely to render the app's real
  * current UI under Robolectric native graphics. Not part of the shipped app.
+ *
+ * Issue #66 (audit R1 tests-2) truth fix: this IS a screenshot factory and is
+ * now named/honest as such — but every capture is a real test: captureTo()
+ * asserts the PNG exists, is >1 KB and carries the PNG signature, the wheel
+ * drag no longer swallows failure, and zzAccentCensus FAILS on a missing
+ * input instead of silently skipping it (no vacuous pass).
  * Renders MonolithRootApp with a real ViewModel + in-memory Room DB (which the
  * ViewModel seeds with its default catalog on init), then captures each
  * destination to the lane's shots dir (shots-redirect.txt).
@@ -95,25 +101,14 @@ class ScreenshotHarnessTest {
             File("app/shots-redirect.txt")
         ).firstOrNull { it.isFile }
         val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        if (target != null) {
-            val dir = File(target)
-            if (dir.mkdirs() || dir.isDirectory) return@run dir
-            // Test-floor cure, round 3: a redirect committed to the repo
-            // (batch 9) names a dead lane's /home/hatch path. On the
-            // studio box that path is creatable and the redirect wins,
-            // exactly as the lane law intends; on a CI runner it can
-            // never exist, so an unusable redirect must fall through
-            // to the portable default instead of killing every capture
-            // with FileNotFoundException at the write.
-        }
-        // Test-floor cure: the studio default below only exists on the
-        // studio box; on CI runners /home/hatch cannot be created and
-        // every capture died with FileNotFoundException at the write.
-        // Keep the studio path when it is creatable, else fall back to
-        // a writable temp dir — the render, not the folder, is the point.
-        val studio = File("/home/hatch/workspace/clone-inspect/shots")
-        if (studio.mkdirs() || studio.isDirectory) studio
-        else File(System.getProperty("java.io.tmpdir"), "monolith-shots").apply { mkdirs() }
+        // Issue #66 finisher cure: a redirect naming a directory that cannot
+        // be created on THIS machine (a lane-local absolute path committed by
+        // accident poisoned every CI capture with FileNotFoundException at
+        // the FileOutputStream below) must fall through to the next
+        // candidate instead of being honoured blindly.
+        listOfNotNull(target, System.getenv("MONOLITH_SHOTS_DIR"), "build/outputs/screenshots")
+            .map { File(it) }
+            .first { it.mkdirs() || it.isDirectory }
     }
 
     @Before
@@ -145,8 +140,10 @@ class ScreenshotHarnessTest {
         ShadowLooper.idleMainLooper()
         try {
             composeRule.waitForIdle()
-        } catch (_: Throwable) {
-            // Infinite animations/ticker can keep the rule non-idle; capture anyway.
+        } catch (e: Throwable) {
+            // Infinite animations/ticker can keep the rule non-idle; capture anyway,
+            // but say so (issue #66: no silent swallow).
+            println("HARNESS settle: waitForIdle failed, capturing anyway: $e")
         }
         ShadowLooper.idleMainLooper()
     }
@@ -169,6 +166,16 @@ class ScreenshotHarnessTest {
             bitmap.recycle()
         }
         println("HARNESS captured ${out.name} -> ${out.absolutePath} size=${out.length()}")
+        // Issue #66: a capture that wrote nothing (or a non-PNG) is a FAILED
+        // test, not a pass. Real, failable assertions on every capture.
+        assertTrue("capture ${out.name} must exist", out.isFile)
+        assertTrue("capture ${out.name} must be a real frame (>1 KB, was ${out.length()})", out.length() > 1_000)
+        val sig = ByteArray(4)
+        out.inputStream().use { it.read(sig) }
+        assertTrue(
+            "capture ${out.name} must carry the PNG signature",
+            sig[0] == 0x89.toByte() && sig[1] == 'P'.code.toByte() && sig[2] == 'N'.code.toByte() && sig[3] == 'G'.code.toByte()
+        )
     }
 
     private fun waitForSeed() {
@@ -401,7 +408,7 @@ class ScreenshotHarnessTest {
         setRootApp()
         composeRule.runOnUiThread { viewModel.navigateTo(MonolithDestination.DECK) }
         settle(900)
-        runCatching {
+        run {
             composeRule.runOnUiThread {
                 val decor = composeRule.activity.window.decorView
                 val wheel = findView(decor) { it is RotaryWheelView } as? RotaryWheelView
@@ -433,7 +440,7 @@ class ScreenshotHarnessTest {
                     )
                 )
             }
-        }.onFailure { println("HARNESS wheel drag capture failed: $it") }
+        }
     }
 
     private fun findView(root: View, pred: (View) -> Boolean): View? {
@@ -853,6 +860,7 @@ class ScreenshotHarnessTest {
         data class Case(val file: File, val label: String, val maxAccent: Int)
         val everywhere = { _: Int, _: Int, _: Int, _: Int -> true }
         val cases = mutableListOf<Case>()
+        val censusMissing = mutableListOf<String>()
         val nightDir = File(shotsDir, "night")
         // Zero-fill screens: Shield, Drawer, PARK — fringe allowance only.
         for ((f, label) in listOf(
@@ -868,8 +876,10 @@ class ScreenshotHarnessTest {
             File(nightDir, "n03b_tasks_empty.png") to "tasks-empty night"
         )) {
             if (f.isFile) cases += Case(f, label, 120)
+            else censusMissing += "census input missing: ${f.path} ($label) — capture tests in this class must run first (full-class run)"
         }
         val failures = mutableListOf<String>()
+        failures += censusMissing
         for (case in cases) {
             val (a, b) = countIn(case.file, everywhere)
             println("CENSUS ${case.label}: accent=$a banned=$b (allowance ${case.maxAccent})")
@@ -886,7 +896,7 @@ class ScreenshotHarnessTest {
             File(shotsDir, "01_deck.png") to "deck day",
             File(nightDir, "n01_deck.png") to "deck night"
         )) {
-            if (!f.isFile) continue
+            if (!f.isFile) { failures += "census input missing: ${f.path} ($label)"; continue }
             val img = ImageIO.read(f)
             val ppd = img.width / 412f
             var minY = Int.MAX_VALUE
@@ -924,7 +934,7 @@ class ScreenshotHarnessTest {
             File(shotsDir, "03_tasks.png") to "tasks day",
             File(nightDir, "n03_tasks.png") to "tasks night"
         )) {
-            if (!f.isFile) continue
+            if (!f.isFile) { failures += "census input missing: ${f.path} ($label)"; continue }
             val (a, b) = countIn(f, everywhere)
             println("CENSUS $label: accent=$a banned=$b (START text only)")
             if (b > 0) failures += "$label: #FF8A5C present ($b px)"
