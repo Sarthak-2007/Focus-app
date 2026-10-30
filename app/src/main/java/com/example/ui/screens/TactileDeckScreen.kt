@@ -1028,8 +1028,22 @@ fun TactileDeckScreen(
                 } else {
                     val withinGraceWindow = activeSession != null && activeSession.elapsedSeconds <= 10
                     if (withinGraceWindow) {
+                        // Audit R3b #149: one chip, two bookings. A
+                        // manual session's grace cancel is free and
+                        // unrecorded; a routine-born session's abort
+                        // is funnel-booked with attendance
+                        // consequences (disarmActiveSession diverts
+                        // it before the grace classification). The
+                        // chip names which birth it serves — the
+                        // free promise is never printed over a
+                        // booking. (Copy only: the funnel's judgement
+                        // itself belongs to the routines rethink.)
                         BlockitActionChip(
-                            wordLabel = "GRACE WINDOW ABORT",
+                            wordLabel = if (activeSession?.routineId != null) {
+                                "GRACE ABORT — BOOKED BY ROUTINE"
+                            } else {
+                                "GRACE WINDOW ABORT"
+                            },
                             monoBadge = "${10 - (activeSession?.elapsedSeconds ?: 0)}s",
                             // E5b B6 (Horiz §2): the grace chip
                             // exits the accent with the rest — it
@@ -1055,6 +1069,30 @@ fun TactileDeckScreen(
                         )
                     }
                 }
+            }
+            // Audit R3b #149: the grace-to-valve cliff, named. The
+            // slot above swaps its chip at 10 seconds with nothing
+            // saying the door changed; this standing line states
+            // both states, in both states — in-window it counts the
+            // free cancel down, past it the valve's terms stand
+            // printed before they are ever needed.
+            if (activeSession != null) {
+                val graceLeft = 10 - activeSession.elapsedSeconds
+                Text(
+                    text = when {
+                        graceLeft > 0 && activeSession.routineId != null ->
+                            "GRACE ${graceLeft}S — ABORT IS BOOKED BY THE ROUTINE · AFTER: VALVE, 60S HOLD"
+                        graceLeft > 0 ->
+                            "GRACE ${graceLeft}S — CANCEL FREE, NOTHING BOOKED · AFTER: VALVE, 60S HOLD"
+                        else ->
+                            "GRACE SPENT · VALVE: 60S HOLD · $weeklyEmergencyTokensRemaining/1 WEEK"
+                    },
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 9.5.sp,
+                    letterSpacing = 0.8.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
             }
             Spacer(Modifier.height(8.dp))
             RefusalSentenceSlot(
