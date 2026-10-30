@@ -10,6 +10,7 @@ import com.example.data.MonolithRepository
 import com.example.data.MonolithWeek
 import com.example.data.SessionOutcome
 import com.example.ui.stopwatchRemainingFloorSeconds
+import java.time.Duration
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -19,6 +20,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSystemClock
 
 /**
  * Issue #147 REOPENED (Findings 2/3 seam): the valve's booking must
@@ -55,6 +57,10 @@ class ValveFloorRecheckTest {
     private val context: Context
         get() = ApplicationProvider.getApplicationContext()
 
+    /** Positive floor for the sandbox monotonic clock: session
+     *  anchors planted in the past must stay > 0 (see the seed). */
+    private val minMonoAnchorMillis = 2_000_000L
+
     /** The week the production code will anchor on RIGHT NOW. */
     private fun productionAnchor(repo: MonolithRepository): Long =
         MonolithWeek.weekAnchorMillis(repo.honestNowMillis())
@@ -89,6 +95,29 @@ class ValveFloorRecheckTest {
         )
     }
 
+    /**
+     * Session-side isolation, matching the ledger reset (FX-K5-1,
+     * determination on #147): the singleton DB file is shared
+     * across test classes in a run — TokenBreakRoutineSeamTest's
+     * own header documents this — and a class that dies mid-test
+     * leaves its active session standing. getActiveSessionSnapshot
+     * reads ORDER BY id DESC LIMIT 1 over ALL active rows, so a
+     * foreign active row resurfaces the moment this test's own
+     * session ends, failing the closing assertNull on a row this
+     * test never made. Every pre-existing active row is retired
+     * before the seed is planted, and the empty state is asserted
+     * by name, like every other precondition here.
+     */
+    private suspend fun retireForeignActiveSessions(db: MonolithDatabase) {
+        db.openHelper.writableDatabase.execSQL(
+            "UPDATE focus_sessions SET isActive = 0 WHERE isActive = 1"
+        )
+        assertNull(
+            "precondition: no active session standing after foreign-active reset",
+            db.monolithDao().getActiveSessionSnapshot()
+        )
+    }
+
     private fun cleanup(db: MonolithDatabase, sessionId: Int) {
         db.openHelper.writableDatabase.execSQL(
             "DELETE FROM emergency_break_spends WHERE sessionId = $sessionId"
@@ -104,27 +133,50 @@ class ValveFloorRecheckTest {
     /**
      * A stopwatch session whose BANKED elapsed (the overlay's
      * snapshot figure) sits at 19:30 — below the floor — while its
-     * VERIFIED elapsed is [verifiedSeconds]: the verified figure is
-     * carried in accumulatedBeforeRebootSeconds, the segment the
-     * verified-elapsed computation credits before the monotonic
-     * anchor's own span, so lawElapsed = max(verified, banked) is
-     * exactly [verifiedSeconds] (plus a sub-second tick), as it is
-     * on the phone when the hold itself carries the session across.
+     * VERIFIED elapsed is [verifiedSeconds].
+     *
+     * FX-K5-1 correction (determination on #147): the verified
+     * figure is planted on the branch of computeVerifiedSessionElapsed
+     * that a live session actually takes — accumulated + the
+     * monotonic span since the anchor — which the function enters
+     * ONLY when startElapsedRealtimeMillis > 0. The original seed
+     * copied SystemClock.elapsedRealtime() into the anchor; in
+     * this sandbox that clock starts at ~0 (the RebootTruth suite
+     * advances it 7200s in @Before for exactly this reason), so
+     * the anchor was 0 and the function lawfully fell into the
+     * reboot/resume branch, whose figure is
+     * max(accumulated, banked) + uptime — never the planted one,
+     * and the assertSeeded precondition could not hold for the
+     * row as seeded. So: the mono clock is topped up to a
+     * positive floor first, and both anchors are planted exactly
+     * [verifiedSeconds] in the past with accumulated = 0, making
+     * verified = [verifiedSeconds] (plus a sub-second tick) by
+     * construction — as it is on the phone when the hold itself
+     * carries the session across.
      */
     private suspend fun insertStopwatchSession(
         db: MonolithDatabase,
         verifiedSeconds: Int
     ): Int {
-        val now = System.currentTimeMillis()
+        if (SystemClock.elapsedRealtime() < minMonoAnchorMillis) {
+            ShadowSystemClock.advanceBy(
+                Duration.ofMillis(
+                    minMonoAnchorMillis - SystemClock.elapsedRealtime()
+                )
+            )
+        }
+        val nowMono = SystemClock.elapsedRealtime()
+        val nowWall = System.currentTimeMillis()
         return db.monolithDao().insertSession(
             FocusSessionEntity(
                 intention = "Valve floor test session",
                 profileName = "FLOW",
                 targetDurationSeconds = 0,
                 elapsedSeconds = 19 * 60 + 30,
-                accumulatedBeforeRebootSeconds = verifiedSeconds,
-                startWallTimeMillis = now,
-                startElapsedRealtimeMillis = SystemClock.elapsedRealtime(),
+                accumulatedBeforeRebootSeconds = 0,
+                startWallTimeMillis = nowWall - verifiedSeconds * 1000L,
+                startElapsedRealtimeMillis = nowMono - verifiedSeconds * 1000L,
+                lastTickElapsedRealtimeMillis = nowMono,
                 isActive = true,
                 completedSuccessfully = false,
                 isStopwatchMode = true
@@ -159,6 +211,7 @@ class ValveFloorRecheckTest {
         val dao = db.monolithDao()
         val repo = MonolithRepository(context, dao)
         resetWeekLedger(db, productionAnchor(repo))
+        retireForeignActiveSessions(db)
 
         // Banked 19:30 (below floor at overlay open), verified 21:00
         // (floor crossed by completion): the hold must NOT charge.
@@ -201,6 +254,7 @@ class ValveFloorRecheckTest {
         val dao = db.monolithDao()
         val repo = MonolithRepository(context, dao)
         resetWeekLedger(db, productionAnchor(repo))
+        retireForeignActiveSessions(db)
 
         // Banked 19:30 and verified ~0: lawElapsed is the banked
         // 19:30, still under the floor — the break is a real break
