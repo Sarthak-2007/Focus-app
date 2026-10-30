@@ -670,8 +670,40 @@ data class InterceptLogEntity(
     val appName: String,
     val sessionIntention: String,
     val outcome: String,
-    val triggerReason: String = "Habit"
-)
+    val triggerReason: String = "Habit",
+    // Issue #324 Finding 3, build half (v16): the typed event
+    // layer. The legacy strings above stay — the slip prints
+    // [outcome], the door prints [triggerReason]'s tag — but
+    // aggregation now reads these columns (an InterceptEventTypes
+    // NAME, or "UNKNOWN" where the fact was never recorded).
+    // Writers stamp them at the write; MIGRATION_15_16 backfills
+    // them for old rows from exactly what those rows prove.
+    val outcomeType: String = "UNKNOWN",
+    val stopReason: String = "UNKNOWN",
+    val triggerReasonType: String = "UNKNOWN"
+) {
+    /** This row's decision, typed. The v16 column is canonical;
+     *  a row it leaves UNKNOWN (written by a pre-v16 build, or
+     *  constructed bare in a test) falls back to classifying its
+     *  legacy outcome string, so every vintage reads one way. */
+    val outcomeKind: InterceptOutcomeType
+        get() = InterceptOutcomeType.fromStored(outcomeType)
+            .takeIf { it != InterceptOutcomeType.UNKNOWN }
+            ?: InterceptOutcomeType.fromLegacy(outcome)
+
+    /** Why this row's wall rose, typed — the column first, then
+     *  the narrow set of facts a bare row proves on its own (the
+     *  reserved packages, the uninstall outcome). */
+    val stopReasonKind: InterceptStopReason
+        get() = InterceptStopReason.fromStored(stopReason)
+            .takeIf { it != InterceptStopReason.UNKNOWN }
+            ?: interceptStopReasonFromLegacy(packageName, outcome)
+
+    /** The stated trigger reason, typed — null where none was
+     *  stated (the reserved-package rows never state one). */
+    val triggerReasonKind: DistractionTriggerReason?
+        get() = triggerReasonFromRow(triggerReasonType, triggerReason, packageName)
+}
 
 @Entity(tableName = "captured_notifications")
 data class CapturedNotificationEntity(

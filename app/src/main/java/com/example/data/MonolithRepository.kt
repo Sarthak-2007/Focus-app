@@ -470,6 +470,12 @@ class MonolithRepository(
         const val EXPOSURE_LOG_PACKAGE = "com.monolith.exposure"
         const val EXPOSURE_LOG_OUTCOME = "Open exposure"
 
+        /** The reserved intercept-log package of the disarm doors'
+         *  system rows (a session's ending booked into the log).
+         *  Receipt assembly excludes these rows from deflections;
+         *  issue #324's typed log reads them as SESSION_DISARM. */
+        const val SYSTEM_LOG_PACKAGE = "com.monolith.system"
+
 
         /** Issue #81 F1: the resurrection witness's prefs home.
          *  Written once, at seed time, when a virgin database meets
@@ -3110,7 +3116,13 @@ class MonolithRepository(
             dao.getInterceptLogsBetween(row.startWallTimeMillis, windowEnd)
                 .filter { log ->
                     log.packageName == EXPOSURE_LOG_PACKAGE &&
-                        log.outcome == EXPOSURE_LOG_OUTCOME &&
+                        // Issue #324 (typed log): the exposure read
+                        // is typed now — outcomeKind classifies the
+                        // stored v16 column, falling back to the
+                        // legacy string for un-migrated rows, so
+                        // this matches exactly the rows the old
+                        // string test matched.
+                        log.outcomeKind == InterceptOutcomeType.OPEN_EXPOSURE &&
                         log.sessionIntention == row.intention
                 }
                 .map { it.appName }
@@ -3157,9 +3169,14 @@ class MonolithRepository(
                 // block's dedupe slot. Only proven blocks print:
                 // a peek (he was LET IN) is not a deflection.
                 log.sessionIntention in knownIntentions &&
-                    log.packageName != "com.monolith.system" &&
+                    log.packageName != SYSTEM_LOG_PACKAGE &&
                     log.packageName != EXPOSURE_LOG_PACKAGE &&
-                    isBlockedInterceptOutcome(log.outcome) &&
+                    // Issue #324 (typed log): the deflection test
+                    // reads the row's typed outcome — the same
+                    // allowlist isBlockedInterceptOutcome carries,
+                    // now sourced from the stored type column with
+                    // the legacy string as its fallback.
+                    log.outcomeKind.isBlocked &&
                     breakWindows.none { log.timestampMillis in it }
             }
             .filter { log ->
@@ -4197,7 +4214,16 @@ class MonolithRepository(
                         appName = exposed.appName,
                         sessionIntention = session.intention,
                         outcome = EXPOSURE_LOG_OUTCOME,
-                        triggerReason = exposed.packageName
+                        triggerReason = exposed.packageName,
+                        // Issue #324 (typed log): an exposure booking
+                        // is its own event type; the legacy
+                        // triggerReason rides the exposed package
+                        // (see EXPOSURE_LOG_PACKAGE), so the typed
+                        // trigger stays UNKNOWN — no reason was
+                        // ever stated for this row.
+                        outcomeType = InterceptOutcomeType.storedOf(InterceptOutcomeType.OPEN_EXPOSURE),
+                        stopReason = InterceptStopReason.OPEN_EXPOSURE.name,
+                        triggerReasonType = InterceptTriggerReasonUnknown
                     )
                 )
             }
@@ -4216,7 +4242,15 @@ class MonolithRepository(
         // pass false: the intercept is still logged (with its
         // truthful outcome), but neither the per-app reach count nor
         // the session's phantom-reach count is inflated by it.
-        countAsReach: Boolean = true
+        countAsReach: Boolean = true,
+        // Issue #324 Finding 3 (typed log, v16): the event's typed
+        // layer. Defaults derive from the legacy arguments, so a
+        // caller that passes only the historical strings stamps
+        // exactly the types those strings prove; callers that know
+        // more (the Airlock verbs know their door) pass explicitly.
+        outcomeType: InterceptOutcomeType = InterceptOutcomeType.fromLegacy(outcome),
+        stopReason: InterceptStopReason = InterceptStopReason.UNKNOWN,
+        triggerReasonType: DistractionTriggerReason? = null
     ) {
         // Issue #33 (audit R1): count + log + phantom-reach increment
         // are ONE transaction — a kill between them used to leave the
@@ -4228,8 +4262,11 @@ class MonolithRepository(
         // the row is the evidence the slip's outcome filter
         // reads), but neither counter may call a let-through a
         // stop: the shield's "N reaches blocked" counts only
-        // reaches that were not let through.
-        val countAsBlocked = countAsReach && outcome != InterceptOutcome.USED_PEEK
+        // reaches that were not let through. (The test is the typed
+        // one now; fromLegacy("Used 2m Peek") IS USED_PEEK, so the
+        // derivation-default keeps this identical for every caller
+        // that does not pass a type.)
+        val countAsBlocked = countAsReach && outcomeType != InterceptOutcomeType.USED_PEEK
         databaseProvider().withTransaction {
             if (countAsBlocked) {
                 dao.incrementInterceptCount(packageName)
@@ -4240,7 +4277,12 @@ class MonolithRepository(
                     appName = appName,
                     sessionIntention = sessionIntention,
                     outcome = outcome,
-                    triggerReason = triggerReason
+                    triggerReason = triggerReason,
+                    outcomeType = InterceptOutcomeType.storedOf(outcomeType),
+                    stopReason = stopReason.name,
+                    triggerReasonType = storedTriggerReasonTypeOf(
+                        triggerReasonType ?: triggerReasonFromLegacyTag(triggerReason)
+                    )
                 )
             )
             if (countAsBlocked) {
@@ -4473,7 +4515,7 @@ class MonolithRepository(
         val culprit = dao.getInterceptLogsBetween(active.startWallTimeMillis, now)
             .filter {
                 it.sessionIntention == active.intention &&
-                    it.packageName != "com.monolith.system"
+                    it.packageName != SYSTEM_LOG_PACKAGE
             }
             .lastOrNull()
         return (culprit?.packageName ?: "") to kind
@@ -4633,10 +4675,18 @@ class MonolithRepository(
             if (!completed && !isGraceCancel) {
                 dao.insertInterceptLog(
                     InterceptLogEntity(
-                        packageName = "com.monolith.system",
+                        packageName = SYSTEM_LOG_PACKAGE,
                         appName = if (bankedElapsed >= 60) "Partial Stamp (${bankedElapsed / 60}m)" else "Unlatched Early",
                         sessionIntention = active.intention,
-                        outcome = outcomeReason
+                        outcome = outcomeReason,
+                        // Issue #324 (typed log): a system row's
+                        // legacy outcome is the disarm reason word —
+                        // a session outcome, not an intercept
+                        // decision. Typed as such; no trigger
+                        // reason was ever stated for this row.
+                        outcomeType = InterceptOutcomeType.storedOf(InterceptOutcomeType.ENDED_BY_DISARM),
+                        stopReason = InterceptStopReason.SESSION_DISARM.name,
+                        triggerReasonType = InterceptTriggerReasonUnknown
                     )
                 )
             }

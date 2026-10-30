@@ -260,14 +260,15 @@ class SliceEMigrationChainTest {
                 MonolithDatabase.MIGRATION_11_12,
                 MonolithDatabase.MIGRATION_12_13,
                 MonolithDatabase.MIGRATION_13_14,
-                MonolithDatabase.MIGRATION_14_15
+                MonolithDatabase.MIGRATION_14_15,
+                MonolithDatabase.MIGRATION_15_16
             )
             .build()
         runBlocking {
             val dao = room.monolithDao()
             // The read forces the open: Room has migrated
-            // 7→8→9→10→11→12→13→14→15 AND validated the result
-            // against every v15 entity.
+            // 7→8→9→10→11→12→13→14→15→16 AND validated the result
+            // against every v16 entity.
             val session = dao.getSessionHistorySnapshot().single()
             assertEquals("shaped session", session.intention)
             assertEquals(0L, session.endWallMillis)

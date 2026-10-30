@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         EmergencyBreakSpendEntity::class,
         DayNoteEntity::class
     ],
-    version = 15,
+    version = 16,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -261,6 +261,75 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
+         * Issue #324, Finding 3 — BUILD half (15→16): the intercept
+         * log goes typed. intercept_logs +3, all TEXT NOT NULL
+         * DEFAULT 'UNKNOWN' — UNKNOWN is the truthful pre-v16 value
+         * for any fact a row does not itself prove.
+         *
+         * The backfill below is evidence-only, and deliberately
+         * narrower than the writers' new stamps:
+         *  - outcomeType: classified from the row's own legacy
+         *    outcome string by the same mapping
+         *    InterceptOutcomeType.fromLegacy applies at read time
+         *    (system rows first: their outcome is a disarm reason,
+         *    not an intercept decision — ENDED_BY_DISARM).
+         *  - stopReason: a pre-v16 row's door is GONE. Only three
+         *    facts survive in the row itself — the two reserved
+         *    packages and the uninstall outcome — so only those
+         *    three are stamped; every other row stays UNKNOWN
+         *    rather than inherit a reconstructed door.
+         *  - triggerReasonType: mapped from the stated short tag
+         *    (Habit/Stuck/Tired/Message) on ordinary rows only —
+         *    the exposure rows ride a package name in that column
+         *    and the system rows never stated a reason, so both
+         *    stay UNKNOWN.
+         *
+         * The legacy outcome/triggerReason columns are NOT touched:
+         * the slip prints them, and the typed columns must agree
+         * with them, never rewrite them.
+         *
+         * NOT created, by name: testDateEpochDay — the test-date
+         * predicate stays STRUCK (Ren), as at v9–v15.
+         */
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE intercept_logs ADD COLUMN outcomeType TEXT NOT NULL DEFAULT 'UNKNOWN'")
+                db.execSQL("ALTER TABLE intercept_logs ADD COLUMN stopReason TEXT NOT NULL DEFAULT 'UNKNOWN'")
+                db.execSQL("ALTER TABLE intercept_logs ADD COLUMN triggerReasonType TEXT NOT NULL DEFAULT 'UNKNOWN'")
+                db.execSQL(
+                    "UPDATE intercept_logs SET outcomeType = CASE " +
+                        "WHEN packageName = 'com.monolith.system' THEN 'ENDED_BY_DISARM' " +
+                        "WHEN LOWER(TRIM(outcome)) = 'intercepted' THEN 'INTERCEPTED' " +
+                        "WHEN LOWER(TRIM(outcome)) = 'blocked' THEN 'BLOCKED' " +
+                        "WHEN LOWER(TRIM(outcome)) = 'stayed focused' THEN 'STAYED_FOCUSED' " +
+                        "WHEN LOWER(TRIM(outcome)) = 'split into 10m micro-step' THEN 'SPLIT_INTO_MICRO_STEP' " +
+                        "WHEN LOWER(TRIM(outcome)) = 'used 2m peek' THEN 'USED_PEEK' " +
+                        "WHEN LOWER(TRIM(outcome)) = 'left airlock without choosing' THEN 'LEFT_WITHOUT_CHOOSING' " +
+                        "WHEN LOWER(TRIM(outcome)) = 'opened launcher' THEN 'OPENED_LAUNCHER' " +
+                        "WHEN LOWER(TRIM(outcome)) LIKE 'uninstall attempt%' THEN 'UNINSTALL_ATTEMPT_RETURNED' " +
+                        "WHEN LOWER(TRIM(outcome)) = 'open exposure' THEN 'OPEN_EXPOSURE' " +
+                        "ELSE 'UNKNOWN' END"
+                )
+                db.execSQL(
+                    "UPDATE intercept_logs SET stopReason = CASE " +
+                        "WHEN packageName = 'com.monolith.system' THEN 'SESSION_DISARM' " +
+                        "WHEN packageName = 'com.monolith.exposure' THEN 'OPEN_EXPOSURE' " +
+                        "WHEN LOWER(TRIM(outcome)) LIKE 'uninstall attempt%' THEN 'UNINSTALL_GUARD' " +
+                        "ELSE 'UNKNOWN' END"
+                )
+                db.execSQL(
+                    "UPDATE intercept_logs SET triggerReasonType = CASE " +
+                        "WHEN packageName IN ('com.monolith.system', 'com.monolith.exposure') THEN 'UNKNOWN' " +
+                        "WHEN TRIM(triggerReason) = 'Habit' THEN 'MUSCLE_MEMORY' " +
+                        "WHEN TRIM(triggerReason) = 'Stuck' THEN 'STUCK_ON_PROBLEM' " +
+                        "WHEN TRIM(triggerReason) = 'Tired' THEN 'BORED_OR_TIRED' " +
+                        "WHEN TRIM(triggerReason) = 'Message' THEN 'NEED_INFO' " +
+                        "ELSE 'UNKNOWN' END"
+                )
+            }
+        }
+
+        /**
          * TOKEN-SPEC §6: the spend ledger arrives as an explicit
          * migration. There is NO backfill — today's in-memory spends
          * were never recorded, so v8 truthfully starts with an empty
@@ -348,7 +417,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance

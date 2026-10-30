@@ -21,6 +21,7 @@ import com.example.data.FocusProfileEntity
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
 import com.example.data.InterceptLogEntity
+import com.example.data.InterceptOutcomeType
 import com.example.data.KineticArtifact
 import com.example.data.MonolithRepository
 import com.example.data.PruneNote
@@ -3727,7 +3728,15 @@ class MonolithViewModel(
                 appName = appName,
                 sessionIntention = active?.intention ?: _intentionText.value,
                 outcome = "Intercepted",
-                triggerReason = DistractionTriggerReason.MUSCLE_MEMORY.shortTag
+                triggerReason = DistractionTriggerReason.MUSCLE_MEMORY.shortTag,
+                // Issue #324 (typed log): the arrival is its own
+                // event type, and the stop reason is stamped from
+                // the door that fired and the session's birth —
+                // the two facts this site actually holds.
+                outcomeType = InterceptOutcomeType.INTERCEPTED,
+                stopReason = com.example.data.interceptStopReasonFor(
+                    path, active?.routineId != null
+                )
             )
             // Issue #254 F12: the attempt mirror is read back only
             // AFTER the arrival above is booked, so the count the
@@ -3936,7 +3945,10 @@ class MonolithViewModel(
                 // from the live draft.
                 sessionIntention = state.sessionIntention,
                 outcome = "Used 2m Peek",
-                triggerReason = state.selectedReason.shortTag
+                triggerReason = state.selectedReason.shortTag,
+                outcomeType = InterceptOutcomeType.USED_PEEK,
+                stopReason = stopReasonFor(state),
+                triggerReasonType = state.selectedReason
             )
             // Take him to the app the lease is for (issue #114,
             // merging issue #99 F4's identical cure): fired HERE,
@@ -4012,6 +4024,14 @@ class MonolithViewModel(
         }
     }
 
+    /** Issue #324 (typed log): the stop reason for a standing
+     *  airlock's verb writes — the door the state itself carries,
+     *  told apart by the live session's birth. */
+    private fun stopReasonFor(state: AirlockInterceptState) =
+        com.example.data.interceptStopReasonFor(
+            state.interceptPath, activeSession.value?.routineId != null
+        )
+
     /**
      * Issue #99 F3: the dishonest exit leaves a trace. Called when
      * the host activity stops while an Airlock still stands
@@ -4037,7 +4057,10 @@ class MonolithViewModel(
                 // from the live draft.
                 sessionIntention = state.sessionIntention,
                 outcome = "Left Airlock Without Choosing",
-                triggerReason = state.selectedReason.shortTag
+                triggerReason = state.selectedReason.shortTag,
+                outcomeType = InterceptOutcomeType.LEFT_WITHOUT_CHOOSING,
+                stopReason = stopReasonFor(state),
+                triggerReasonType = state.selectedReason
             )
         }
     }
@@ -4086,7 +4109,14 @@ class MonolithViewModel(
                 sessionIntention = state.sessionIntention,
                 outcome = if (uninstallAttempt) "Uninstall Attempt — Returned" else "Stayed Focused",
                 triggerReason = state.selectedReason.shortTag,
-                countAsReach = !uninstallAttempt
+                countAsReach = !uninstallAttempt,
+                outcomeType = if (uninstallAttempt) {
+                    InterceptOutcomeType.UNINSTALL_ATTEMPT_RETURNED
+                } else {
+                    InterceptOutcomeType.STAYED_FOCUSED
+                },
+                stopReason = stopReasonFor(state),
+                triggerReasonType = state.selectedReason
             )
         }
     }
@@ -4107,7 +4137,10 @@ class MonolithViewModel(
                 appName = state.interceptedAppName.ifBlank { "Blocked App" },
                 sessionIntention = state.sessionIntention.ifBlank { _intentionText.value },
                 outcome = "Opened Launcher",
-                triggerReason = state.selectedReason.shortTag
+                triggerReason = state.selectedReason.shortTag,
+                outcomeType = InterceptOutcomeType.OPENED_LAUNCHER,
+                stopReason = stopReasonFor(state),
+                triggerReasonType = state.selectedReason
             )
         }
     }

@@ -193,9 +193,16 @@ object InterceptOutcome {
 
 /** True iff this intercept row's outcome was a block (see
  *  [InterceptOutcome]). Case-insensitive: the writers' spelling
- *  and the test suites' spelling differ in case only. */
+ *  and the test suites' spelling differ in case only.
+ *
+ *  Issue #324 (typed log, v16): this now delegates to the typed
+ *  taxonomy — [InterceptOutcomeType.fromLegacy] classifies the
+ *  string and [InterceptOutcomeType.isBlocked] carries the same
+ *  allowlist [InterceptOutcome.BLOCKED_OUTCOMES] enumerated, so
+ *  the string path and the stored-column path can never drift
+ *  apart. The parity is pinned by InterceptEventTypesTest. */
 fun isBlockedInterceptOutcome(outcome: String): Boolean =
-    InterceptOutcome.BLOCKED_OUTCOMES.any { it.equals(outcome.trim(), ignoreCase = true) }
+    InterceptOutcomeType.fromLegacy(outcome).isBlocked
 
 
 /** One row of the Vault's receipts index (issue #157): the facts
