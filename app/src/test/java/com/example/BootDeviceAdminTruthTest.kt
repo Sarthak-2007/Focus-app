@@ -190,6 +190,21 @@ class BootDeviceAdminTruthTest {
     }
 
     @Test
+    fun guardedBootAction_aFailureIsReportedByName_neverSwallowed() = runBlocking {
+        // PR CHECK (Tyler's review of the #44 landing): containment
+        // must not be silence. The failing group is reported, by
+        // name, exactly once; the healthy groups report nothing.
+        val reports = mutableListOf<Pair<String, String>>()
+        val reporter: (String, Exception) -> Unit = { name, failure ->
+            reports += name to (failure.message ?: "")
+        }
+        runGuardedBootAction("first", reporter) { }
+        runGuardedBootAction("boom-group", reporter) { throw IllegalStateException("boom") }
+        runGuardedBootAction("after", reporter) { }
+        assertEquals(listOf("boom-group" to "boom"), reports)
+    }
+
+    @Test
     fun guardedBootAction_cancellationIsRethrown() = runBlocking {
         try {
             runGuardedBootAction { throw CancellationException("cancelled") }

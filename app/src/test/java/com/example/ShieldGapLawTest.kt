@@ -1,6 +1,7 @@
 package com.example
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.FocusSessionEntity
 import com.example.data.MonolithDatabase
@@ -41,13 +42,13 @@ class ShieldGapLawTest {
         return MonolithRepository(context, db.monolithDao())
     }
 
-    private fun activeRow(startWall: Long, beat: Long) = FocusSessionEntity(
+    private fun activeRow(startWall: Long, beat: Long, startElapsed: Long = 0L) = FocusSessionEntity(
         intention = "Deep Study",
         profileName = "Default",
         targetDurationSeconds = 3000,
         elapsedSeconds = 0,
         startWallTimeMillis = startWall,
-        startElapsedRealtimeMillis = 0L,
+        startElapsedRealtimeMillis = startElapsed,
         isActive = true,
         completedSuccessfully = false,
         isStopwatchMode = false,
@@ -61,30 +62,39 @@ class ShieldGapLawTest {
         val repo = repository()
         val dao = MonolithDatabase.getInstance(context).monolithDao()
         val now = System.currentTimeMillis()
+        // Issue #82 merge adaptation: latchShieldGapIfStale's
+        // argument is the monotonic clock (elapsedRealtime), and
+        // rows carry monotonic start anchors — the story below is
+        // unchanged, only the clocks it is told on are honest ones.
+        val mono = SystemClock.elapsedRealtime()
 
         // 1. Pre-v10 row: started an hour ago, no beat ever recorded.
-        val aId = dao.insertSession(activeRow(startWall = now - 3_600_000L, beat = 0L)).toInt()
-        assertFalse(repo.latchShieldGapIfStale(now))
+        val aId = dao.insertSession(
+            activeRow(startWall = now - 3_600_000L, beat = 0L, startElapsed = mono - 3_600_000L)
+        ).toInt()
+        assertFalse(repo.latchShieldGapIfStale(mono))
         val a = dao.getSessionById(aId)!!
-        assertEquals(now, a.shieldLastBeatWallMillis)
+        assertTrue(a.shieldLastBeatWallMillis >= now)
         assertFalse(a.shieldGapSeen)
 
-        // 2. Twenty seconds on with no further beat: the law bites.
-        assertTrue(repo.latchShieldGapIfStale(now + 20_000L))
+        // 2. Twenty monotonic seconds on with no further beat: the law bites.
+        assertTrue(repo.latchShieldGapIfStale(mono + 20_000L))
         assertTrue(dao.getSessionById(aId)!!.shieldGapSeen)
         dao.updateSession(dao.getSessionById(aId)!!.copy(isActive = false))
 
         // 3a. A beating row whose beat went stale a minute ago latches.
         val bId = dao.insertSession(
-            activeRow(startWall = now - 3_600_000L, beat = now - 60_000L)
+            activeRow(startWall = now - 3_600_000L, beat = now - 60_000L, startElapsed = mono - 3_600_000L)
         ).toInt()
-        assertTrue(repo.latchShieldGapIfStale(now))
+        assertTrue(repo.latchShieldGapIfStale(mono))
         assertTrue(dao.getSessionById(bId)!!.shieldGapSeen)
         dao.updateSession(dao.getSessionById(bId)!!.copy(isActive = false))
 
         // 3b. A row with a fresh beat does not latch.
-        val cId = dao.insertSession(activeRow(startWall = now - 60_000L, beat = now)).toInt()
-        assertFalse(repo.latchShieldGapIfStale(now + 5_000L))
+        val cId = dao.insertSession(
+            activeRow(startWall = now - 60_000L, beat = now, startElapsed = mono - 60_000L)
+        ).toInt()
+        assertFalse(repo.latchShieldGapIfStale(mono + 5_000L))
         assertFalse(dao.getSessionById(cId)!!.shieldGapSeen)
     }
 }

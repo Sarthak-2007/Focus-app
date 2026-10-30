@@ -101,10 +101,20 @@ enum class WatchItemId(val boardName: String, val counted: Boolean) {
     NOTIFICATIONS("NOTIFICATIONS", false);
 
     companion object {
-        /** The six permission-family items, board order. */
+        /** The six permission-family items, board order.
+         *  Issue #313 F4 (Audit R5 · Opal second pass): the board
+         *  used to lead with ACCESSIBILITY — the scariest grant,
+         *  asked cold. Board order is now value order: USAGE ACCESS
+         *  first (the benefit the user can see — their own app/time
+         *  picture), ACCESSIBILITY second (the blocking engine,
+         *  asked once the point is proven), then the listener, the
+         *  device-admin uninstall guard, overlay and battery. This
+         *  list IS the render order (GuardLine prints, PARK board)
+         *  and the next-fix suggestion order in ParkDrawer, so the
+         *  FIX trips now fire in this order too. */
         val PERMISSIONS: List<WatchItemId> = listOf(
-            ACCESSIBILITY, USAGE_ACCESS, DEVICE_ADMIN,
-            NOTIFICATION_LISTENER, OVERLAY, BATTERY
+            USAGE_ACCESS, ACCESSIBILITY, NOTIFICATION_LISTENER,
+            DEVICE_ADMIN, OVERLAY, BATTERY
         )
         /** The counted four, board order. */
         val COUNTED: List<WatchItemId> = listOf(
@@ -159,10 +169,39 @@ data class WatchSnapshot(
 }
 
 /** What a permission line prints at a given instant (spec §4.2):
- *  never-measured, the measured value, or its stale derivative. */
-enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE, MISSING_STALE }
+ *  never-measured, the measured value, or its stale derivative.
+ *  UNPROVED (issue #94): a measurement exists and reads granted, but
+ *  a fact the app cannot measure stands behind it — the BATTERY line
+ *  on an OEM-autostart-gated skin, where the AOSP exemption is only
+ *  half the survival fact and the autostart half is unreadable. */
+enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE, MISSING_STALE, UNPROVED }
 
 object WatchStore {
+
+    /**
+     * Issue #280 (R5 supplement): the one-line rationale the PARK
+     * board prints under the FIX key for the grant it targets —
+     * what the grant does, and what it never does — BEFORE the
+     * Settings trip fires. The original explains each grant before
+     * asking; Monolith's board fired a bare FIX key. Pure and
+     * total over the six PERMISSIONS; interceptor items and
+     * unknown items carry no rationale (null).
+     */
+    fun boardRationale(item: WatchItemId): String? = when (item) {
+        WatchItemId.ACCESSIBILITY ->
+            "ACCESSIBILITY — brings you back when a blocked app opens. It never reads what is on your screen."
+        WatchItemId.USAGE_ACCESS ->
+            "USAGE ACCESS — tells Monolith which app is in front, so the seal knows what to hold. It never leaves this phone."
+        WatchItemId.DEVICE_ADMIN ->
+            "DEVICE ADMIN — adds friction if the seal is switched off mid-session. It cannot stop you uninstalling, ever."
+        WatchItemId.NOTIFICATION_LISTENER ->
+            "NOTIFICATIONS ACCESS — holds a blocked app's notifications during a session and shows them to you after. Calls and alarms are never held."
+        WatchItemId.OVERLAY ->
+            "OVERLAY — lets the block surface stand over a blocked app. It draws nothing outside a session."
+        WatchItemId.BATTERY ->
+            "BATTERY EXEMPTION — keeps Android from sleeping the shield mid-session. Nothing else changes."
+        else -> null
+    }
 
     /** A PASS measurement older than this (monotonic) is stale. */
     const val STALE_AFTER_MS: Long = 45_000L
@@ -327,8 +366,17 @@ object WatchStore {
      * advances to the set's completion instant.
      */
     fun runSweep(query: (WatchItemId) -> Boolean) {
-        val gen = ++sweepGen
-        pendingSweepStartWall = System.currentTimeMillis()
+        // Issue #77: sweepGen and pendingSweepStartWall are read and
+        // cleared by publish() under its @Synchronized monitor; they
+        // were written here OUTSIDE that monitor, so overlapping
+        // sweeps (Deck entry + ON_RESUME) could mix generations and
+        // complete each other's sets with stale stamps. The dispatch
+        // state now takes the same monitor publish() holds.
+        val gen: Int
+        synchronized(this) {
+            gen = ++sweepGen
+            pendingSweepStartWall = System.currentTimeMillis()
+        }
         for (item in WatchItemId.PERMISSIONS) {
             sweepScope.launch {
                 // Truth (issue #76): a query that THREW is not a
@@ -451,6 +499,15 @@ object WatchStore {
         val perm = m.perm ?: return PermPrint.UNMEASURED
         val stale = nowMono - m.measuredMono > STALE_AFTER_MS
         return when {
+            // Issue #94 (F1): on a skin whose OEM autostart toggle gates
+            // receiver restarts, a granted AOSP battery read never
+            // prints GRANTED — the toggle cannot be read back, so the
+            // honest word is UNPROVED. A missing AOSP read stays
+            // MISSING below: that half is known, not proved-absent.
+            item == WatchItemId.BATTERY && perm == PermState.GRANTED &&
+                !com.example.data.OemPolicy.batteryGrantedIsProved(
+                    com.example.data.OemPolicy.currentGate()
+                ) -> PermPrint.UNPROVED
             perm == PermState.GRANTED && stale -> PermPrint.STALE
             perm == PermState.GRANTED -> PermPrint.GRANTED
             stale -> PermPrint.MISSING_STALE

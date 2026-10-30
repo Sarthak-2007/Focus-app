@@ -95,13 +95,13 @@ class SafeBreakTruthTest {
 
     @Test
     fun deckBreakEyebrow_isSecondPreciseNeverRoundedUp() {
-        assertEquals("BREAK · 10:00 LEFT", breakEyebrowText(600))
-        assertEquals("BREAK · 1:01 LEFT", breakEyebrowText(61))
-        assertEquals("BREAK · 1:00 LEFT", breakEyebrowText(60))
-        assertEquals("BREAK · 0:59 LEFT", breakEyebrowText(59))
-        assertEquals("BREAK · 0:09 LEFT", breakEyebrowText(9))
-        assertEquals("BREAK · 0:00 LEFT", breakEyebrowText(0))
-        assertEquals("BREAK · 0:00 LEFT", breakEyebrowText(-5))
+        assertEquals("SAFE BREAK · 10:00 LEFT", breakEyebrowText(600))
+        assertEquals("SAFE BREAK · 1:01 LEFT", breakEyebrowText(61))
+        assertEquals("SAFE BREAK · 1:00 LEFT", breakEyebrowText(60))
+        assertEquals("SAFE BREAK · 0:59 LEFT", breakEyebrowText(59))
+        assertEquals("SAFE BREAK · 0:09 LEFT", breakEyebrowText(9))
+        assertEquals("SAFE BREAK · 0:00 LEFT", breakEyebrowText(0))
+        assertEquals("SAFE BREAK · 0:00 LEFT", breakEyebrowText(-5))
     }
 
     // ---- #5: the desk clock names the break ----
