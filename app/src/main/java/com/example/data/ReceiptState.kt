@@ -43,6 +43,11 @@ object SessionOutcome {
     /** The free grace cancel inside the opening window. */
     const val GRACE_CANCEL = "GRACE_CANCEL"
 
+    /** Audit R6 #341 F30: a session that was still active when its
+     *  successor was born — closed at the birth transaction with its
+     *  true end stamp, never left unclassified. */
+    const val SUPERSEDED = "SUPERSEDED"
+
     /** Ended early by his hand (the disarm challenge). */
     const val ENDED_EARLY = "ENDED_EARLY"
 
@@ -57,10 +62,6 @@ object SessionOutcome {
  *  routine receipt publishes with completedSuccessfully = false). */
 object FinishKind {
     const val MANUAL_FINISH = "MANUAL_FINISH"
-    /** Audit R6 #341 F30: a session that was still active when its
-     *  successor was born — closed at the birth transaction with its
-     *  true end stamp, never left unclassified. */
-    const val SUPERSEDED = "SUPERSEDED"
     const val FLOW_FINISH = "FLOW_FINISH"
     const val ROUTINE_ATTENDED = "ROUTINE_ATTENDED"
     const val ROUTINE_PARTIAL = "ROUTINE_PARTIAL"
