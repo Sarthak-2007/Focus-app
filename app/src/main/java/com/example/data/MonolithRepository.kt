@@ -150,6 +150,14 @@ class MonolithRepository(
         const val CHROME_PREFS_NAME = "monolith_chrome"
         const val PARK_INTRO_DONE_KEY = "park_intro_done"
 
+        /** Audit R1 #41: the shared WallAccrual anchor's disk
+         *  home (see seedAccrualFromDisk / persistAccrualAnchor). */
+        const val ACCRUAL_PREFS_NAME = "monolith_wall_accrual"
+        const val ACCRUAL_KEY_SESSION = "session_id"
+        const val ACCRUAL_KEY_TASK = "task_id"
+        const val ACCRUAL_KEY_MONO = "last_mono_millis"
+        const val ACCRUAL_KEY_BOOT = "boot_count"
+
         /** The closed declared-word list (DayWordStore.WORDS).
          *  Never TEST: the drain refuses any other word, so no
          *  test-day row can ever reach `day_notes`. */
@@ -2025,7 +2033,12 @@ class MonolithRepository(
         // two tickers drive this function, and a per-call decrement
         // drained a 600s break in ~400 wall seconds (Bus, 09:30 IST).
         if (session.isInSafeBreak) {
-            val nextBreakRemaining = breakRemainingAfter(
+            // Audit R1 #41: the tick computes the (remaining,
+            // anchor) PAIR and the pair is what persists — the
+            // old code stored the truncated remaining beside the
+            // FULL current instant, discarding the sub-second
+            // remainder every tick (breaks overran by ~30 s).
+            val (nextBreakRemaining, nextBreakAnchor) = breakTickAfter(
                 storedRemaining = session.safeBreakSecondsRemaining,
                 lastTickMonoMillis = session.lastTickElapsedRealtimeMillis,
                 nowMonoMillis = nowMono
@@ -2047,7 +2060,7 @@ class MonolithRepository(
             } else {
                 val updatedBreak = session.copy(
                     safeBreakSecondsRemaining = nextBreakRemaining,
-                    lastTickElapsedRealtimeMillis = nowMono,
+                    lastTickElapsedRealtimeMillis = nextBreakAnchor,
                     shieldLastBeatWallMillis = beatWall
                 )
                 dao.updateSession(updatedBreak)
@@ -2443,7 +2456,48 @@ class MonolithRepository(
     // TIMEBOXED TASK QUEUE (SOLAR QUEUE) OPERATIONS
     // =========================================================================
 
-    private val taskAccrual = WallAccrual()
+    // Audit R1 #41: the accrual is the process-wide shared
+    // instance. A per-repository instance here silently undid
+    // WallAccrual's dedup — MainActivity, the Shield service,
+    // the routine heartbeat and the seal transition each build
+    // their own repository, and every instance credited the
+    // full delta independently.
+    private val taskAccrual = WallAccrual.shared
+
+    // The shared anchor, persisted (Audit R1 #41): the anchor
+    // used to be volatile and consumed BEFORE the credit was
+    // durably written — a process death between observe() and
+    // the task write lost the interval twice over (anchor gone,
+    // credit unwritten). The anchor now lives on disk too:
+    // seeded into the shared instance before each observe,
+    // rewritten after it. Same-boot only: the stored boot count
+    // and a monotonic sanity check reject anchors from a
+    // previous boot, whose elapsedRealtime base differs.
+    private val accrualPrefs by lazy {
+        context.getSharedPreferences(ACCRUAL_PREFS_NAME, android.content.Context.MODE_PRIVATE)
+    }
+
+    private fun seedAccrualFromDisk(nowMono: Long) {
+        if (!accrualPrefs.contains(ACCRUAL_KEY_MONO)) return
+        val boot = accrualPrefs.getInt(ACCRUAL_KEY_BOOT, -1)
+        val mono = accrualPrefs.getLong(ACCRUAL_KEY_MONO, 0L)
+        if (boot != querySystemBootCount() || mono > nowMono) return
+        taskAccrual.seed(
+            sessionId = accrualPrefs.getInt(ACCRUAL_KEY_SESSION, -1),
+            taskId = accrualPrefs.getInt(ACCRUAL_KEY_TASK, -1),
+            lastMonoMillis = mono
+        )
+    }
+
+    private fun persistAccrualAnchor() {
+        val (sessionId, taskId, mono) = taskAccrual.anchorSnapshot() ?: return
+        accrualPrefs.edit()
+            .putInt(ACCRUAL_KEY_SESSION, sessionId)
+            .putInt(ACCRUAL_KEY_TASK, taskId)
+            .putLong(ACCRUAL_KEY_MONO, mono)
+            .putInt(ACCRUAL_KEY_BOOT, querySystemBootCount())
+            .apply()
+    }
 
     /**
      * Credits the active task with WALL time, never with tick calls.
@@ -2457,6 +2511,7 @@ class MonolithRepository(
      * break minutes never land in a task's stored seconds.
      */
     private suspend fun accrueActiveTaskSeconds(session: FocusSessionEntity, nowMono: Long) {
+        seedAccrualFromDisk(nowMono)
         val tasks = dao.getAllTasksSnapshot()
         val activeTask = tasks.firstOrNull { it.resolvedStatus == TaskQueueStatus.ACTIVE }
             ?: tasks.firstOrNull { it.resolvedStatus == TaskQueueStatus.QUEUED }
@@ -2465,6 +2520,7 @@ class MonolithRepository(
             accruingTaskId = if (session.isInSafeBreak) null else activeTask?.id,
             nowMonoMillis = nowMono
         )
+        persistAccrualAnchor()
         if (activeTask != null && !session.isInSafeBreak &&
             (credit > 0 || activeTask.resolvedStatus != TaskQueueStatus.ACTIVE)
         ) {
