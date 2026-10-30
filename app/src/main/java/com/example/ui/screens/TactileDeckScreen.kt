@@ -3,6 +3,9 @@ package com.example.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,7 +40,11 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
@@ -323,6 +330,15 @@ fun TactileDeckScreen(
     // The hero and the finish line both price from this and nowhere else;
     // the naive product understated a 3 x 50 morning by 20 minutes.
     val totalSpanMinutes = dialMinutes * studyBlocksCount + (studyBlocksCount - 1) * 10
+
+    // Issue #123 (dial-precision): the seat the wheel's physics has
+    // committed to, previewed while it travels ("LANDS 47"); the
+    // precise-entry row's open state and its typed text. Session
+    // length is set by his hand on this instrument — the wheel, the
+    // steppers and the typed entry are three grips on the same value.
+    var wheelSeatPreview by remember { mutableStateOf<Int?>(null) }
+    var preciseEntryOpen by remember { mutableStateOf(false) }
+    var preciseEntryText by remember { mutableStateOf("") }
 
     val progressFraction = if (finishState != null) {
         if (finishState.frozenIsStopwatch) {
@@ -694,6 +710,7 @@ fun TactileDeckScreen(
                         view.studyBlocksCount = studyBlocksCount
                         view.isLockedSession = shotActive
                         view.onMinutesChanged = { mins -> onDialMinutesChanged(mins) }
+                        view.onSeatTargetChanged = { seat -> wheelSeatPreview = seat }
                         view.onCycleBlocksCount = {
                             val nextBlocks = if (studyBlocksCount >= 8) 1 else studyBlocksCount + 1
                             onSetStudyBlocksCount(nextBlocks)
@@ -736,6 +753,198 @@ fun TactileDeckScreen(
                     // Pia: the FINISHES line dies here — TIME's only
                     // home is the strip's TIME cell (a pure function;
                     // this row's copy slid with every recomposition).
+                }
+                // Issue #123 (dial-precision), the printed truth under
+                // the wheel. Three facts the instrument used to leave
+                // to inference, now stated in words on the Deck:
+                // (a) the dial's number is PER BLOCK and the hero's is
+                // the TOTAL — the breakdown line prints both, plus the
+                // breaks between blocks, so 50 x 2 can never again
+                // read as 50 while meaning 110;
+                // (b) the block count is a numeral + word here, not
+                // hub geometry alone — a hub tap that changes it
+                // changes THIS line in the same frame, nothing silent;
+                // (c) while the wheel coasts, the seat it has committed
+                // to prints as LANDS — where you let go is shown
+                // before you land there.
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = when {
+                            isStopwatchMode -> "FLOW · OPEN SESSION · NO TOTAL"
+                            studyBlocksCount <= 1 -> "$dialMinutes MIN × 1 BLOCK = $totalSpanMinutes MIN TOTAL"
+                            else -> "$dialMinutes MIN × $studyBlocksCount BLOCKS + ${(studyBlocksCount - 1) * 10} MIN BREAKS = " +
+                                if (totalSpanMinutes < 60) "$totalSpanMinutes MIN TOTAL"
+                                else "${totalSpanMinutes / 60}H ${String.format(Locale.US, "%02d", totalSpanMinutes % 60)}M TOTAL"
+                        },
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        letterSpacing = 1.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("dial_breakdown_line")
+                    )
+                    wheelSeatPreview?.let { seat ->
+                        Text(
+                            text = if (seat < 10) "LANDS FLOW" else "LANDS $seat",
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onBackground,
+                            modifier = Modifier.testTag("dial_seat_preview")
+                        )
+                    }
+                    // Precise entry, the wheel's second grip: −/+ step
+                    // exactly one minute per tap (long, deliberate
+                    // steps for the 47 the rim used to refuse), and
+                    // TYPE opens a numeric field for the exact value.
+                    // The wheel stays the instrument; these are its
+                    // fine adjustment, not a replacement.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(scheme.surfaceVariant)
+                                .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                .clickable {
+                                    if (dialMinutes > 10) onDialMinutesChanged(dialMinutes - 1)
+                                }
+                                .padding(horizontal = 14.dp, vertical = 5.dp)
+                                .testTag("dial_step_down")
+                        ) {
+                            Text(
+                                text = "−1",
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onBackground
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (preciseEntryOpen) inkControlFill() else scheme.surfaceVariant)
+                                .border(1.dp, if (preciseEntryOpen) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                .clickable {
+                                    preciseEntryText = if (dialMinutes >= 10) dialMinutes.toString() else ""
+                                    preciseEntryOpen = !preciseEntryOpen
+                                }
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                                .testTag("dial_precise_entry_toggle")
+                        ) {
+                            Text(
+                                text = "TYPE MINUTES",
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = if (preciseEntryOpen) onInkControlFill() else scheme.onBackground
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(scheme.surfaceVariant)
+                                .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                .clickable {
+                                    if (dialMinutes < 10) onDialMinutesChanged(10)
+                                    else if (dialMinutes < 180) onDialMinutesChanged(dialMinutes + 1)
+                                }
+                                .padding(horizontal = 14.dp, vertical = 5.dp)
+                                .testTag("dial_step_up")
+                        ) {
+                            Text(
+                                text = "+1",
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onBackground
+                            )
+                        }
+                    }
+                    if (preciseEntryOpen) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(scheme.surfaceVariant)
+                                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 10.dp, vertical = 7.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                if (preciseEntryText.isEmpty()) {
+                                    Text(
+                                        text = "10–180",
+                                        fontFamily = AnonymousProFamily,
+                                        fontSize = 13.sp,
+                                        color = scheme.onSurfaceVariant
+                                    )
+                                }
+                                BasicTextField(
+                                    value = preciseEntryText,
+                                    onValueChange = { raw ->
+                                        preciseEntryText = raw.filter { it.isDigit() }.take(3)
+                                    },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Number,
+                                        imeAction = ImeAction.Done
+                                    ),
+                                    keyboardActions = KeyboardActions(onDone = {
+                                        preciseEntryText.toIntOrNull()?.let { entered ->
+                                            onDialMinutesChanged(entered.coerceIn(10, 180))
+                                        }
+                                        preciseEntryOpen = false
+                                    }),
+                                    textStyle = TextStyle(
+                                        fontFamily = AnonymousProFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = scheme.onBackground
+                                    ),
+                                    cursorBrush = SolidColor(scheme.onBackground),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("dial_precise_entry_input")
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(inkControlFill())
+                                    .clickable {
+                                        preciseEntryText.toIntOrNull()?.let { entered ->
+                                            onDialMinutesChanged(entered.coerceIn(10, 180))
+                                        }
+                                        preciseEntryOpen = false
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 7.dp)
+                                    .testTag("dial_precise_entry_set")
+                            ) {
+                                Text(
+                                    text = "SET",
+                                    fontFamily = AnonymousProFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    letterSpacing = 1.sp,
+                                    color = onInkControlFill()
+                                )
+                            }
+                        }
+                    }
                 }
                 }
             } else {
