@@ -39,6 +39,20 @@ class MonolithBootReceiver : BroadcastReceiver() {
                         ) {
                             dao.stampLastBoot(System.currentTimeMillis())
                         }
+                        // Issue #87 (process-death F1): a REAL boot resets
+                        // SystemClock.elapsedRealtime() to ~0, so every
+                        // persisted peek lease/cooldown anchor — written
+                        // against the PREVIOUS boot's monotonic clock —
+                        // would otherwise read as a far-future expiry and
+                        // resurrect a 2-minute peek for hours-to-days.
+                        // Zero both fields on every row. A package replace
+                        // is NOT a boot: the monotonic clock survives it,
+                        // so leases stay valid and are left alone there.
+                        // LOCKED_BOOT and BOOT both fire for one boot;
+                        // the clear is idempotent.
+                        if (action != Intent.ACTION_MY_PACKAGE_REPLACED) {
+                            dao.clearAllPeekLeases()
+                        }
                         val source = if (action == Intent.ACTION_MY_PACKAGE_REPLACED) {
                             RoutineHeartbeat.Source.PACKAGE_REPLACED
                         } else {

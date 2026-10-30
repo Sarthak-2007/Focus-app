@@ -31,6 +31,16 @@ interface MonolithDao {
     @Query("UPDATE blocked_apps SET activePeekUntilElapsedRealtime = :activeUntilMono, lastPeekEndElapsedRealtime = :peekEndMono WHERE packageName = :packageName")
     suspend fun updatePeekLeaseAndCooldown(packageName: String, activeUntilMono: Long, peekEndMono: Long)
 
+    // Issue #87 (process-death F1): both peek anchors are monotonic
+    // (SystemClock.elapsedRealtime) values. A reboot resets that clock
+    // to ~0, so every stored anchor becomes a far-future instant in
+    // the new boot — a live lease would resurrect for up to the whole
+    // previous uptime, and a spent lease's cooldown would never end.
+    // Zeroing BOTH fields on every row at real boot kills the lease
+    // and the cooldown together; neither means anything across a boot.
+    @Query("UPDATE blocked_apps SET activePeekUntilElapsedRealtime = 0, lastPeekEndElapsedRealtime = 0")
+    suspend fun clearAllPeekLeases()
+
     /** The prune (Ordner lane): rows for packages the phone no longer
      *  has leave the table at sync — the catalog is the phone's truth,
      *  not an archive of everything it once held. */
