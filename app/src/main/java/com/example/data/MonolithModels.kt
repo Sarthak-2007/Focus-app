@@ -857,6 +857,15 @@ object RoutineSchedule {
         )
     }
 
+    /** #153 F2/F3 — the pause horizon for "skip today": the end of
+     *  the window containing [nowMillis], or of the next window if
+     *  none contains it. Pausing until this instant forgives exactly
+     *  that one window (judgement J6: a pause-covered window is
+     *  never a miss) and no other day — the weekly mask is untouched. */
+    fun skipWindowEndMillis(routine: RoutineEntity, nowMillis: Long): Long? =
+        windowContaining(routine, nowMillis)?.endMillis
+            ?: nextWindow(routine, nowMillis)?.endMillis
+
     /**
      * The most recent window whose end is at or before [nowMillis],
      * searching back up to 8 start-days. One routine's windows never
