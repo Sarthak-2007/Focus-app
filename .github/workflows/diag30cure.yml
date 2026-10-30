@@ -1,0 +1,43 @@
+name: diag30cure
+
+on:
+  push:
+    branches: [arzt/diag-30-cure]
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install SDK platform 36.1
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36.1" "build-tools;36.1.0"
+      - name: Generate debug keystore
+        run: |
+          if [ -f debug.keystore ]; then
+            echo "debug.keystore already present"
+          else
+            keytool -genkeypair -v -keystore debug.keystore -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+      - name: Cure proof — ReceiptClaimRepositoryTest only, XML preserved
+        id: diagtest
+        run: |
+          chmod +x gradlew
+          ./gradlew --console=plain testDebugUnitTest --tests "com.example.ReceiptClaimRepositoryTest"
+      - name: Upload test results XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diag30cure-test-results
+          path: |
+            app/build/test-results/**
+            app/build/reports/tests/**
+          retention-days: 7
