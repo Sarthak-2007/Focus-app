@@ -8,6 +8,7 @@ import android.media.AudioManager
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import com.example.MainActivity
 import com.example.data.AppBlockTier
 import com.example.data.GuardSettingsEntity
@@ -314,6 +315,65 @@ class MonolithAccessibilityService : AccessibilityService() {
                 }
             }
 
+            // 4b. Interactive-window sweep (#92): the checks above read
+            // only the ACTIVE window's tree, so a blocked app sitting in
+            // the non-active split-screen pane or a Shorts/Reels
+            // picture-in-picture window was never scanned at all. The
+            // config now grants flagRetrieveInteractiveWindows, so every
+            // other application window gets the same three content
+            // checks — tamper, sniper, site — under the SAME rules as
+            // the active window's: tamper is unconditional, the sniper
+            // is NOT silenced by a peek lease (#131's amended lease
+            // agreement — a lease is an app-access door, never a feed
+            // licence, in any window), and the site blocker alone is
+            // silenced by that window package's own live lease.
+            for (winRoot in interactiveWindowRoots()) {
+                val winPkg = winRoot.packageName?.toString() ?: continue
+                if (winPkg == pkgName) continue
+                if (winPkg == applicationContext.packageName || winPkg.startsWith("com.android.systemui")) continue
+
+                if (isPackageInstallerOrTamperSettings(winPkg, winRoot)) {
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                    launchInterceptScreen(
+                        packageName = winPkg,
+                        appName = "System Settings Guard",
+                        reasonBadge = "Uninstall Guard",
+                        path = InterceptPath.UNINSTALL_GUARD
+                    )
+                    return@launch
+                }
+
+                if (shortsSniperArmed(guardSettings, winPkg) && detectShortsOrReelsFeed(winRoot)) {
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                    launchInterceptScreen(
+                        packageName = winPkg,
+                        appName = if (winPkg.contains("youtube")) "YouTube Shorts" else "Instagram Reels",
+                        reasonBadge = if (winPkg.contains("youtube")) "Shorts Blocked" else "Reels Blocked",
+                        path = InterceptPath.SNIPER
+                    )
+                    return@launch
+                }
+
+                val winLeaseRow = dao.getAllAppsSnapshot().find { it.packageName == winPkg }
+                val winLeaseLive = winLeaseRow != null &&
+                    winLeaseRow.resolvedTier == AppBlockTier.PEEK_2M &&
+                    SystemClock.elapsedRealtime() < winLeaseRow.activePeekUntilElapsedRealtime
+                if (!winLeaseLive && (guardSettings?.browserBlockerEnabled ?: true) && isSupportedBrowser(winPkg)) {
+                    val winDomains = dao.getAllSitesSnapshot().map { it.domain }
+                    val winMatched = detectBlockedBrowserUrl(winRoot, winDomains)
+                    if (winMatched != null) {
+                        performGlobalAction(GLOBAL_ACTION_BACK)
+                        launchInterceptScreen(
+                            packageName = winPkg,
+                            appName = winMatched,
+                            reasonBadge = "Site Blocked",
+                            path = InterceptPath.SITE
+                        )
+                        return@launch
+                    }
+                }
+            }
+
             // 5. 3-Tier Per-App & Safe Break Blocking
             val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkgName } ?: return@launch
             val tier = appRule.resolvedTier
@@ -336,6 +396,26 @@ class MonolithAccessibilityService : AccessibilityService() {
                 reasonBadge = tier.badge,
                 path = InterceptPath.APP_TIER
             )
+        }
+    }
+
+    /**
+     * Roots of every TYPE_APPLICATION window the system exposes to
+     * this service — requires flagRetrieveInteractiveWindows in the
+     * service config (#92). Split-screen panes and picture-in-picture
+     * windows are application windows, so they arrive here even when
+     * they are not the active window. Any failure reads as an empty
+     * list: the sweep simply does not run, never a crash on the
+     * event path.
+     */
+    private fun interactiveWindowRoots(): List<AccessibilityNodeInfo> {
+        return try {
+            windows?.mapNotNull { window ->
+                if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) null
+                else try { window.root } catch (_: Exception) { null }
+            } ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
         }
     }
 
