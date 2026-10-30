@@ -569,6 +569,33 @@ data class EmergencyBreakSpendEntity(
     val heldSeconds: Int
 )
 
+enum class DistractionTriggerReason(
+    val shortTag: String,
+    val label: String,
+    val coachingTip: String
+) {
+    MUSCLE_MEMORY(
+        shortTag = "Habit",
+        label = "Opened by Habit",
+        coachingTip = "Your thumb tapped this on autopilot. Take one slow breath and return to your next micro-step."
+    ),
+    STUCK_ON_PROBLEM(
+        shortTag = "Stuck",
+        label = "Stuck on a Hard Step",
+        coachingTip = "When a task feels heavy, your brain seeks quick novelty. Break the current task into a 10-minute micro-step."
+    ),
+    BORED_OR_TIRED(
+        shortTag = "Tired",
+        label = "Low Energy / Brain Fog",
+        coachingTip = "Doomscrolling drains working memory faster than resting. Stand up, drink water, or finish this short block."
+    ),
+    NEED_INFO(
+        shortTag = "Message",
+        label = "Checking Urgent Message / Code",
+        coachingTip = "If this app allows a 2m Peek, start the 2-minute pass below—the floating timer will keep you anchored."
+    )
+}
+
 @Entity(tableName = "intercept_logs")
 data class InterceptLogEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,

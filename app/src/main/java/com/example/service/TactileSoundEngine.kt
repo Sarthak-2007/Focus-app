@@ -903,22 +903,6 @@ class TactileSoundEngine(private val context: Context) {
             fundamentalHz = 300f,
             durationMs = 28,
             gain = 0.48f,
-    /** Break-end summons (Audit R3b #146): the voice that calls the
-     *  user BACK from a Safe Break. The single latch was functionally
-     *  silence in a pocket — this is three full strikes with a low
-     *  body tone, unmistakably a summons and not a boundary tick. It
-     *  fires once, at the expiry flip; repetition lives in the
-     *  summons notification, not in nagging the buzzer. */
-    fun playBreakEndSummons() {
-        triggerWaveform(
-            timingsMs = longArrayOf(0, 32, 80, 32, 80, 32),
-            amplitudes = intArrayOf(0, 255, 0, 255, 0, 230),
-            fallbackMs = HAPTIC_SESSION_LOCK_8MS
-        )
-        enqueueTransient(
-            fundamentalHz = 320f,
-            durationMs = 64,
-            gain = 0.7f,
             chordRatio = 0.9f
         )
     }
@@ -968,6 +952,30 @@ class TactileSoundEngine(private val context: Context) {
             fundamentalHz = 240f,
             durationMs = 40,
             gain = 0.42f,
+            chordRatio = 0.9f
+        )
+    }
+
+    /** Break-end summons (Audit R3b #146): the voice that calls the
+     *  user BACK from a Safe Break. The single latch was functionally
+     *  silence in a pocket — this is three full strikes with a low
+     *  body tone, unmistakably a summons and not a boundary tick. It
+     *  fires once, at the expiry flip; repetition lives in the
+     *  summons notification, not in nagging the buzzer. */
+    fun playBreakEndSummons() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 32, 80, 32, 80, 32),
+            amplitudes = intArrayOf(0, 255, 0, 255, 0, 230),
+            fallbackMs = HAPTIC_SESSION_LOCK_8MS
+        )
+        enqueueTransient(
+            fundamentalHz = 320f,
+            durationMs = 64,
+            gain = 0.7f,
+            chordRatio = 0.9f
+        )
+    }
+
     /** T-minus warning knock (Audit R3b #146/#148): two soft strikes,
      *  felt in a pocket, clearly a warning and not an ending — fired
      *  once when a countdown (break or block) crosses 60 seconds

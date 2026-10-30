@@ -3683,6 +3683,26 @@ class MonolithRepository(
         return committed
     }
 
+    /**
+     * Used from the Airlock "Stuck on a Problem" coaching flow:
+     * Breaks the current intimidating task into a 10-minute micro-step and promotes it to #1 ACTIVE immediately.
+     */
+    suspend fun splitActiveTaskIntoMicroStep(microStepTitle: String): FocusTaskEntity = withContext(Dispatchers.IO) {
+        val cleanStep = microStepTitle.trim().ifEmpty { "Outline first 3 bullet points (10m micro-step)" }
+        addTaskToQueue(
+            title = cleanStep,
+            estimatedMinutes = 10,
+            categoryTag = "Micro-Step",
+            notesOrSubsteps = FocusTaskEntity.serializeSubSteps(
+                listOf(
+                    TaskSubStep(0, "Open notes & clear workspace (2m)", false),
+                    TaskSubStep(1, cleanStep, false)
+                )
+            ),
+            promoteToActive = true
+        )
+    }
+
     suspend fun toggleTaskSubStep(taskId: Int, stepIndex: Int): FocusTaskEntity? = withContext(Dispatchers.IO) {
         val target = dao.getTaskById(taskId)
             ?: dao.getAllTasksSnapshot().firstOrNull { it.id == taskId }

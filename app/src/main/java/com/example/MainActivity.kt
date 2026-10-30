@@ -1101,7 +1101,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onEndSessionInstead = viewModel::requestDisarmChallengeFromDoor,
                 // FIX-7: the overlay reports the arm instant; the
                 // VM sounds the arm beat under its nonce guard.
-                onOfferArmed = viewModel::onAirlockOfferArmed
+                onOfferArmed = viewModel::onAirlockOfferArmed,
                 allowedAppsCount = allApps.count {
                     it.resolvedTier == com.example.data.AppBlockTier.OPEN
                 },
