@@ -1000,12 +1000,12 @@ fun DrawerScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             if (olderMonth != null) {
-                                Text(
-                                    text = "‹",
-                                    fontFamily = AtkinsonHyperlegibleFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp,
-                                    color = scheme.onBackground,
+                                // #336: month paging glyphs are ICONS
+                                // from the one system, not text chars.
+                                androidx.compose.material3.Icon(
+                                    imageVector = com.example.ui.theme.MonolithIcons.ChevronLeft,
+                                    contentDescription = "Previous month",
+                                    tint = scheme.onBackground,
                                     modifier = Modifier
                                         .clickable(
                                             role = androidx.compose.ui.semantics.Role.Button
@@ -1013,15 +1013,14 @@ fun DrawerScreen(
                                         .sizeIn(minHeight = 48.dp, minWidth = 48.dp)
                                         .padding(vertical = 14.dp)
                                         .testTag("drawer_month_prev")
+                                        .androidx.compose.foundation.layout.size(16.dp)
                                 )
                             }
                             if (newerMonth != null) {
-                                Text(
-                                    text = "›",
-                                    fontFamily = AtkinsonHyperlegibleFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp,
-                                    color = scheme.onBackground,
+                                androidx.compose.material3.Icon(
+                                    imageVector = com.example.ui.theme.MonolithIcons.ChevronRight,
+                                    contentDescription = "Next month",
+                                    tint = scheme.onBackground,
                                     modifier = Modifier
                                         .clickable(
                                             role = androidx.compose.ui.semantics.Role.Button
@@ -1029,6 +1028,7 @@ fun DrawerScreen(
                                         .sizeIn(minHeight = 48.dp, minWidth = 48.dp)
                                         .padding(vertical = 14.dp)
                                         .testTag("drawer_month_next")
+                                        .androidx.compose.foundation.layout.size(16.dp)
                                 )
                             }
                             Text(
@@ -1216,11 +1216,11 @@ fun DrawerScreen(
                                 letterSpacing = 1.sp,
                                 color = scheme.onBackground
                             )
-                            Text(
-                                text = "›",
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontSize = 14.sp,
-                                color = scheme.onSurfaceVariant
+                            androidx.compose.material3.Icon(
+                                imageVector = com.example.ui.theme.MonolithIcons.ChevronRight,
+                                contentDescription = null,
+                                tint = scheme.onSurfaceVariant,
+                                modifier = Modifier.androidx.compose.foundation.layout.size(14.dp)
                             )
                         }
                         HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)

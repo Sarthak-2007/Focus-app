@@ -1191,16 +1191,17 @@ fun PeekCountdownPill(
                 color = NightColorPrimary,
                 modifier = Modifier.testTag("peek_pill_countdown")
             )
-            Text(
-                text = "✕",
-                fontFamily = AtkinsonHyperlegibleFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
-                color = NightColorPrimary,
+            // #336: the close glyph is an ICON from the one system
+            // (MonolithIcons), not a text character.
+            androidx.compose.material3.Icon(
+                imageVector = com.example.ui.theme.MonolithIcons.Close,
+                contentDescription = "End peek early",
+                tint = NightColorPrimary,
                 modifier = Modifier
                     .clickable { onEndEarly() }
                     .testTag("peek_pill_end_button")
                     .padding(horizontal = 4.dp)
+                    .androidx.compose.foundation.layout.size(16.dp)
             )
         }
     }

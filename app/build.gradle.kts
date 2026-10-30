@@ -82,6 +82,8 @@ dependencies {
   // implementation(libs.androidx.camera.lifecycle)
   // implementation(libs.androidx.camera.view)
   implementation(libs.androidx.compose.material3)
+  // Issue #336: the one icon system (MonolithIcons) — core set only.
+  implementation(libs.androidx.compose.material.icons.core)
   implementation(libs.androidx.compose.ui)
   implementation(libs.androidx.compose.ui.graphics)
   implementation(libs.androidx.core.ktx)
