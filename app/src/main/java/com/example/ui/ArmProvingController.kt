@@ -498,6 +498,14 @@ class ArmProvingController(
                     if (snap == sessionId) {
                         applyMark(attemptId, ArmLink.SESSION_ROW, clock())
                         flushHeldMarks(attemptId)
+                        // The port's contract is "fired once L1
+                        // lands" — a heal landing IS a landing
+                        // (issue #29 finding 3: the edge belongs
+                        // to the proof, whichever read completes
+                        // it; this block runs only on the
+                        // Pending→Confirmed flip, so it fires
+                        // exactly once).
+                        port.onSessionStartedEdge()
                     }
                 }
                 val shieldMono = witnesses.shieldProtectingMono(sessionId)

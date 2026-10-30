@@ -546,19 +546,27 @@ class ArmProvingControllerTest {
     }
 
     @Test
-    fun sessionEdgeFiresOnlyOnAProvedSnapshot() = runTest {
+    fun sessionEdgeFiresOnlyWhenL1ActuallyLands() = runTest {
         // Issue #29 finding 3: SESSION_EDGE previously fired
         // unconditionally after the insert — even when the
-        // snapshot read that proves L1 missed entirely.
+        // snapshot read that proves L1 missed entirely. Now the
+        // edge belongs to the proof: while every snapshot read
+        // misses, no edge; when a read finally lands L1 (here
+        // the sampler's self-heal re-read), the edge fires —
+        // exactly once.
         val controller = newController()
         val l = 10_000L
-        port.snapshotMisses = 1
+        port.snapshotMisses = 2
         now = l
         controller.latch()
         runCurrent()
         assertTrue(!events.contains("edge"))
-        val links = (controller.phase.value as ArmPhase.Proving).links
+        var links = (controller.phase.value as ArmPhase.Proving).links
         assertTrue(links[ArmLink.SESSION_ROW] is LinkMark.Pending)
+        tick(l + 50)
+        links = (controller.phase.value as ArmPhase.Proving).links
+        assertTrue(links[ArmLink.SESSION_ROW] is LinkMark.Confirmed)
+        assertEquals(1, events.count { it == "edge" })
     }
 
     @Test
