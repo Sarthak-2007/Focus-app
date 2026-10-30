@@ -702,6 +702,44 @@ class TactileSoundEngine(private val context: Context) {
         )
     }
 
+    /** Break-end summons (Audit R3b #146): the voice that calls the
+     *  user BACK from a Safe Break. The single latch was functionally
+     *  silence in a pocket — this is three full strikes with a low
+     *  body tone, unmistakably a summons and not a boundary tick. It
+     *  fires once, at the expiry flip; repetition lives in the
+     *  summons notification, not in nagging the buzzer. */
+    fun playBreakEndSummons() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 32, 80, 32, 80, 32),
+            amplitudes = intArrayOf(0, 255, 0, 255, 0, 230),
+            fallbackMs = HAPTIC_SESSION_LOCK_8MS
+        )
+        enqueueTransient(
+            fundamentalHz = 320f,
+            durationMs = 64,
+            gain = 0.7f,
+            chordRatio = 0.9f
+        )
+    }
+
+    /** T-minus warning knock (Audit R3b #146/#148): two soft strikes,
+     *  felt in a pocket, clearly a warning and not an ending — fired
+     *  once when a countdown (break or block) crosses 60 seconds
+     *  remaining. */
+    fun playBreakWarningKnock() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 14, 44, 14),
+            amplitudes = intArrayOf(0, 200, 0, 170),
+            fallbackMs = HAPTIC_SWITCH_FLIP_4MS
+        )
+        enqueueTransient(
+            fundamentalHz = 520f,
+            durationMs = 16,
+            gain = 0.4f,
+            chordRatio = 0.9f
+        )
+    }
+
     /** Session seal clunk: full-force thunk, a settling shoulder,
      *  then the lock seating. Disarming is the same shape, lighter. */
     fun playHarmonicSeal(arming: Boolean) {
