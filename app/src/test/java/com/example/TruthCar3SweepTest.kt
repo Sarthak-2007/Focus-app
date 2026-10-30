@@ -317,7 +317,7 @@ class TruthCar3SweepRoboTest {
     @Test
     fun una08_platePrintsStudyHoursNotStudyRecord() {
         composeRule.setContent {
-            MyApplicationTheme {
+            MyApplicationTheme(darkTheme = false) {
                 ParkDrawer(
                     visible = true,
                     snapshot = null,
@@ -355,7 +355,7 @@ class TruthCar3SweepRoboTest {
     @Test
     fun una05_plateDoesNotClaimFiredAsSet() {
         composeRule.setContent {
-            MyApplicationTheme {
+            MyApplicationTheme(darkTheme = false) {
                 ParkDrawer(
                     visible = true,
                     snapshot = null,

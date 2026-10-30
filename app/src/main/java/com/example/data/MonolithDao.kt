@@ -137,6 +137,13 @@ interface MonolithDao {
     @Query("UPDATE focus_sessions SET shieldGapSeen = 1 WHERE id = :id")
     suspend fun latchShieldGap(id: Int)
 
+    // The beat adoption (Audit R2 #95): a pre-v10 row's first
+    // post-upgrade judgement stamps the beat instead of convicting
+    // the row from its session start. Guarded on the beat still
+    // being 0 so a racing tick's real beat is never overwritten.
+    @Query("UPDATE focus_sessions SET shieldLastBeatWallMillis = :millis WHERE id = :id AND shieldLastBeatWallMillis = 0")
+    suspend fun adoptShieldBeat(id: Int, millis: Long)
+
     // The release-fault record (Draht): written once per fault by
     // the finish machine; the retry cadence increments its own
     // counter through the same targeted shape.
