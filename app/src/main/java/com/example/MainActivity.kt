@@ -1,12 +1,19 @@
 package com.example
 
+import android.Manifest
+import android.app.AlarmManager
 import android.app.admin.DevicePolicyManager
+import android.content.pm.PackageManager
 import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -459,6 +466,27 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         }
     }
 
+    // Issue #280 (R5 supplement): POST_NOTIFICATIONS was declared
+    // in the manifest but never asked, so the seal's own
+    // notifications could be silently unpostable. It is asked
+    // once, as a runtime permission, when the first-run board is
+    // delivered — not as a Settings trip and never as a gate: the
+    // board and the seal work the same whether it is granted.
+    val notifPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+    var notifAsked by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(parkIntroForOpen) {
+        if (parkIntroForOpen && !notifAsked &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notifAsked = true
+            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
     // PARK's on-open diagnostic (§3.3): opening PARK fires the old
     // refreshSystemGuard() sweep. Its result renders NOWHERE — the
     // board renders the Watch Store — unless a diagnostic line is
@@ -814,7 +842,35 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     showUpdateNote = updateNoteVisible,
                                     onDismissFreshStartNote = viewModel::dismissFreshStartNote,
                                     onDismissUpdateNote = viewModel::dismissUpdateNote,
-                                    onToggleRoutine = viewModel::toggleRoutine,
+                                    onToggleRoutine = { routine ->
+                                        // Issue #280: enabling a
+                                        // routine is the moment the
+                                        // exact-alarm grant is asked
+                                        // (the original gates its
+                                        // routine sheet the same
+                                        // way) — once, as an offer,
+                                        // never a block: the chain
+                                        // alarm and the heartbeat
+                                        // run without it.
+                                        if (!routine.enabled &&
+                                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                                        ) {
+                                            val am = context.getSystemService(
+                                                android.content.Context.ALARM_SERVICE
+                                            ) as? AlarmManager
+                                            if (am != null && !am.canScheduleExactAlarms()) {
+                                                runCatching {
+                                                    context.startActivity(
+                                                        Intent(
+                                                            Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                                                            Uri.parse("package:" + context.packageName)
+                                                        )
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        viewModel.toggleRoutine(routine)
+                                    },
                                     onCycleRoutineLoadout = viewModel::cycleRoutineLoadout,
                                     onAdjustRoutineTime = viewModel::adjustRoutineTime,
                                     onToggleRoutineDay = viewModel::toggleRoutineDay,

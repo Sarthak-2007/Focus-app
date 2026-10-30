@@ -481,7 +481,11 @@ fun ParkDrawer(
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "Every line names a guard and whether it is SET or MISSING. " +
-                            "FIX takes you to the first one that is missing.",
+                            "FIX takes you to the first one that is missing. " +
+                            "Monolith asks for six system grants, one at a time; " +
+                            "each FIX trip first says what the grant does and what it never does. " +
+                            "THE WAY OUT, BEFORE ANY GRANT: every session carries an emergency " +
+                            "break — a 60-second hold, once a week. You are never sealed in without an exit.",
                         style = BodyTextStyle,
                         color = scheme.onSurfaceVariant
                     )
@@ -772,6 +776,21 @@ fun ParkDrawer(
                                 color = scheme.onSurfaceVariant
                             )
                         }
+                    }
+                }
+
+                // Issue #280: the rationale for the grant the FIX
+                // key targets — printed under the key, before any
+                // Settings trip, in the board's body type.
+                if (firstMissing != null && !isSealed) {
+                    WatchStore.boardRationale(firstMissing!!)?.let { rationale ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = rationale,
+                            style = BodyTextStyle,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("park_fix_rationale")
+                        )
                     }
                 }
 
