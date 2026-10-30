@@ -31,6 +31,7 @@ import com.example.data.SystemGuardStatus
 import com.example.data.TaskQueueStatus
 import com.example.service.InterceptPath
 import com.example.service.MonolithShieldService
+import com.example.service.PeekPillOverlay
 import com.example.service.SoundEffectsSetting
 import com.example.service.TactileSoundEngine
 import com.example.service.Warrant
@@ -1363,6 +1364,24 @@ class MonolithViewModel(
                     held.any { item -> holder.items.none { it.id == item.id } }
                 if (visible && session != null && session.isActive && owesMint) {
                     mintFrozenDigest(session.id)
+                }
+            }
+        }
+        // Issue #114 finding 1: the peek pill finally gets a face.
+        // The overlay window (over the peeked app) and the in-app
+        // Compose pill both render THIS state; the overlay's END
+        // button routes back to the one hand-back verb, so state,
+        // lease row and faces retire together. Before this wiring
+        // the state was collected nowhere and the pill never drew.
+        PeekPillOverlay.onEndPeekRequest = { end2MinutePeekEarly() }
+        viewModelScope.launch {
+            _floatingPeekPill.collect { pill ->
+                if (pill.isActive) {
+                    PeekPillOverlay.showOrUpdate(
+                        appContext, pill.appName, pill.secondsRemaining
+                    )
+                } else {
+                    PeekPillOverlay.hide(appContext)
                 }
             }
         }
@@ -3417,8 +3436,20 @@ class MonolithViewModel(
     }
 
     /**
-     * Grants a 2-Minute Peek lease with the Draggable Edge-Snapping Countdown Pill
-     * and arms the mandatory 20-minute cooldown in Room storage immediately.
+     * Grants a 2-Minute Peek lease with its countdown pill — the
+     * floating overlay face (PeekPillOverlay, over the peeked app)
+     * plus the in-app PeekCountdownPill, both rendering
+     * [floatingPeekPill] — and arms the mandatory 20-minute
+     * cooldown in Room storage immediately.
+     *
+     * Issue #114 finding 1, second half: the grant now TAKES the
+     * user to the peeked app. Before, the lease anchored at
+     * tap-time while the user stood on the Deck and burned lease
+     * seconds navigating home and relaunching by hand. The launch
+     * fires inside the lease coroutine, after the lease row is
+     * written — never before it; the accessibility door honours
+     * the lease by its stored end, and a failed launch simply
+     * leaves the user on the Deck with the in-app pill standing.
      */
     fun start2MinutePeek() {
         val state = _airlockState.value
@@ -3453,21 +3484,12 @@ class MonolithViewModel(
         val name = state.interceptedAppName.ifBlank { "2m Peek App" }
         soundEngine.playMechanicalLatch(true)
         _airlockState.value = state.copy(isVisible = false)
-        // Issue #99 F4 (HAND-MERGE: Konto batch-10 flag on this
-        // function — keep this block minimal): taking the peek takes
-        // you to the app. The lease no longer burns while the user
-        // navigates home and relaunches by hand.
-        runCatching {
-            appContext.packageManager.getLaunchIntentForPackage(pkg)?.let { launch ->
-                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                appContext.startActivity(launch)
-            }
-        }.onFailure {
-            // Issue #75 F1 wiring: the peek was granted and the
-            // pill armed, but the app launch itself failed —
-            // silently until now.
-            MLog.w("peek launch intent failed for $pkg", it)
-        }
+        // Issue #99 F4 + Issue #114 F1 (merge de-duplication by
+        // STURM3-11): the launch itself lives below, after
+        // startPeekLease writes the lease row — see the comment
+        // there. Main's synchronous copy of the same launch is
+        // removed so the app is launched exactly once, and never
+        // before the lease exists.
         _floatingPeekPill.value = FloatingPeekPillState(
             isActive = true,
             packageName = pkg,
@@ -3483,6 +3505,26 @@ class MonolithViewModel(
                 outcome = "Used 2m Peek",
                 triggerReason = state.selectedReason.shortTag
             )
+            // Take him to the app the lease is for (issue #114,
+            // merging issue #99 F4's identical cure): fired HERE,
+            // after startPeekLease has written the lease row —
+            // never synchronously before it — so the lease cannot
+            // burn on hand navigation and the door honours the
+            // stored lease from the first moment. A missing or
+            // dead launch intent is not an error — he stays on
+            // the Deck, where the in-app pill still shows the clock.
+            runCatching {
+                val launch = appContext.packageManager.getLaunchIntentForPackage(pkg)
+                if (launch != null) {
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    appContext.startActivity(launch)
+                }
+            }.onFailure {
+                // Issue #75 F1 wiring (preserved from main's removed
+                // duplicate block): a granted peek whose launch
+                // throws must not pass silently.
+                MLog.w("peek launch intent failed for $pkg", it)
+            }
         }
     }
 
@@ -3576,6 +3618,16 @@ class MonolithViewModel(
         requestDisarmChallenge()
     }
 
+
+    /**
+     * The airlock's honest door (issue #114, finding 2): closes
+     * the sheet and books the stayed-focused intercept. The
+     * RETURN itself is the host's half — MainActivity calls
+     * moveTaskToBack(true) on this same tap, sending Monolith's
+     * task behind the task the intercept interrupted. This verb
+     * alone never claimed to move the user; the pair together
+     * are the return the chip's name promises.
+     */
     fun transmuteImpulseAndReturn() {
         val state = _airlockState.value
         soundEngine.playHarmonicSeal(arming = true)

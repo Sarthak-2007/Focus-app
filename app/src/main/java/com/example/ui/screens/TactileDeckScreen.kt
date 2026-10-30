@@ -107,6 +107,21 @@ import java.util.Locale
  * - Pinned `SlideToStartView` commit bar below the scroll.
  * - When armed, transforms into the dark Armed Lockdown state with One-Way Ratchet enforcement.
  */
+/**
+ * The emergency break's price, printed under its Deck chip
+ * (issue #114, finding 5): the door ends the session and spends
+ * the week's only break — or, when the break is spent, it says
+ * so before the tap instead of after it. [tokensRemaining] is
+ * the live ledger-derived count the chip's badge already reads.
+ * Pure, tested.
+ */
+internal fun emergencyBreakPriceText(tokensRemaining: Int): String =
+    if (tokensRemaining > 0) {
+        "ENDS THIS SESSION · USES THIS WEEK'S ONLY EMERGENCY BREAK"
+    } else {
+        "THIS WEEK'S EMERGENCY BREAK IS ALREADY SPENT"
+    }
+
 @Composable
 fun TactileDeckScreen(
     activeSession: FocusSessionEntity?,
@@ -1490,7 +1505,10 @@ fun TactileDeckScreen(
                             wordLabel = if (stopwatchFloorMet) {
                                 "FINISH SESSION"
                             } else {
-                                "EMERGENCY BREAK VALVE (60S HOLD)"
+                                // Issue #114, finding 5: the door's
+                                // one name — EMERGENCY BREAK, the
+                                // same words its own overlay carries.
+                                "EMERGENCY BREAK (60S HOLD)"
                             },
                             // R3b #163 F4: a spent valve used to wear
                             // the same badge as a live one ("0/1 WEEK"
@@ -1509,6 +1527,13 @@ fun TactileDeckScreen(
                                 .fillMaxWidth()
                                 .height(72.dp), // Issue #6 F6: the chair fills its 72dp zone in every state
                             testTag = "request_disarm_button"
+                        )
+                        Text(
+                            text = emergencyBreakPriceText(weeklyEmergencyTokensRemaining),
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+                            modifier = Modifier.testTag("emergency_break_price")
                         )
                     }
                 }
