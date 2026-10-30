@@ -1646,6 +1646,22 @@ class MonolithRepository(
     private fun hhmm(wallMillis: Long): String =
         java.text.SimpleDateFormat("HH:mm", java.util.Locale.US).format(java.util.Date(wallMillis))
 
+    /** Issue #152: [hhmm] in an explicit zone — the WITHIN line's
+     *  frozen window was lived in the arm zone, not in whatever
+     *  zone the phone sits in when the slip is assembled. */
+    private fun hhmm(wallMillis: Long, zone: java.time.ZoneId): String {
+        val format = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+        format.timeZone = java.util.TimeZone.getTimeZone(zone)
+        return format.format(java.util.Date(wallMillis))
+    }
+
+    /** Issue #152: the UTC offset in force for [zone] at
+     *  [wallMillis], as printed ("+05:30"; UTC is "+00:00"). */
+    private fun zoneOffsetLabel(wallMillis: Long, zone: java.time.ZoneId): String {
+        val offset = zone.rules.getOffset(java.time.Instant.ofEpochMilli(wallMillis))
+        return if (offset == java.time.ZoneOffset.UTC) "+00:00" else offset.id
+    }
+
     private fun hhmm(minutesOfDay: Int): String =
         String.format(java.util.Locale.US, "%02d:%02d", minutesOfDay / 60, minutesOfDay % 60)
 
@@ -1683,9 +1699,25 @@ class MonolithRepository(
         // instant lends its line; the BY… form never prints.
         val routineLabel: String? = if (row.routineId != null) {
             val name = row.profileName.removePrefix(ROUTINE_PROFILE_PREFIX).trim()
+            // Issue #152: the frozen window was lived in the arm
+            // zone (witnessed at the session's birth — ArmZoneStore).
+            // When the phone has since landed in another zone, the
+            // WITHIN line prints the lived window in that zone with
+            // its offset named, instead of silently re-rendering
+            // the instants in the arrival zone. Same zone (the
+            // overwhelming case) the print is exactly as before.
+            val armZone = armZoneStore.zoneFor(row.startWallTimeMillis)
+                ?.let { id -> runCatching { java.time.ZoneId.of(id) }.getOrNull() }
+            val crossedZones = armZone != null && armZone != java.time.ZoneId.systemDefault()
             if (name.isNotEmpty() && row.windowEndMillis > row.windowStartMillis) {
-                "WITHIN ${name.uppercase(java.util.Locale.US)} · " +
-                    "${hhmm(row.windowStartMillis)}–${hhmm(row.windowEndMillis)}"
+                if (crossedZones) {
+                    "WITHIN ${name.uppercase(java.util.Locale.US)} · " +
+                        "${hhmm(row.windowStartMillis, armZone!!)}–${hhmm(row.windowEndMillis, armZone)} " +
+                        "(${zoneOffsetLabel(row.windowStartMillis, armZone)})"
+                } else {
+                    "WITHIN ${name.uppercase(java.util.Locale.US)} · " +
+                        "${hhmm(row.windowStartMillis)}–${hhmm(row.windowEndMillis)}"
+                }
             } else {
                 null
             }
@@ -3012,6 +3044,27 @@ class MonolithRepository(
      *  prefs removal committed — if that failed, nothing about the
      *  clear is presented as done. */
     suspend fun declareDayWord(dateIso: String, word: String?): Boolean {
+        // Issue #152 (honest-travel-day F1): never rewrite a past
+        // day across a landing. Filing dates are local, so after a
+        // westbound landing "today" can BE a date that already
+        // carries a word declared in the departure zone — that
+        // date was a lived past day, and the Drawer's law is that
+        // it files words, it does not rewrite past days. A change
+        // to a DIFFERENT word for such a date, made from a
+        // different zone than the standing declaration's witnessed
+        // zone, is refused (false — the caller must not present it
+        // as declared). Same-zone changes stay free all day, and
+        // words with no zone witness (declared before the witness
+        // existed) are not refused on a guess.
+        if (word != null) {
+            val existing = allDayWords()[dateIso]
+            val witnessedZone = dayWordStore.declaredZone(dateIso)
+            if (existing != null && existing != word && witnessedZone != null &&
+                witnessedZone != java.time.ZoneId.systemDefault().id
+            ) {
+                return false
+            }
+        }
         val committed = dayWordStore.put(dateIso, word)
         if (committed && word == null) {
             dao.deleteDayNote(dateIso)
