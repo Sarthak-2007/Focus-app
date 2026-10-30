@@ -30,3 +30,11 @@ keystore.properties
 *.tmp
 *.flag
 *.note
+
+# Any keystore material, any name (audit #25: patterns, not single names).
+# The ONE exception is the standard debug keystore: it is committed on
+# purpose (Sarthak 05:22 order — CI and local builds sign with the same
+# key so APKs install over his installed Monolith).
+*.keystore
+!debug.keystore
+*.p12
