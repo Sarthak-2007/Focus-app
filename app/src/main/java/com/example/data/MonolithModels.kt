@@ -380,6 +380,17 @@ data class FocusSessionEntity(
     // counted whole by the span — break time that never ran,
     // claimed on the desk clock and the receipt alike.
     val breakTakenSeconds: Int = 0,
+    // W3 #134 (phone-call-mid-session, 12→13): the seconds of THIS
+    // block the call bypass was active — AudioManager in a call
+    // mode (ringing / in-call / VoIP) while the progress machine
+    // ticked. Those seconds are excluded from the block's booked
+    // elapsed at every tick: call time is not focus time, and a
+    // session may not finish, flip into its Safe Break, or stamp
+    // ELAPSED_CLEAN on the strength of minutes spent talking.
+    // Booked per block: the break-exit write (advancePastBreak)
+    // resets it to 0 alongside the anchors it re-bases, so one
+    // block's call never taxes the next block's clock.
+    val callExcludedSeconds: Int = 0,
     val penaltySecondsAdded: Int = 0,
     val isActive: Boolean,
     val completedSuccessfully: Boolean,

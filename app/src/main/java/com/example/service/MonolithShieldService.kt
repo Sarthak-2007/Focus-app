@@ -208,6 +208,14 @@ class MonolithShieldService : Service() {
                 val nowMono = SystemClock.elapsedRealtime()
                 val blockedPackages = dao.getAllAppsSnapshot()
                     .filter { app ->
+                        // W3 #134: the dialer is never in the
+                        // blocked set — this door's usage-stats
+                        // sweep would otherwise intercept the
+                        // Phone app mid-dial (MODE_NORMAL, before
+                        // any call mode exists), locking the user
+                        // out of placing a call exactly as the
+                        // accessibility door did.
+                        if (repository.isDialerPackage(app.packageName)) return@filter false
                         val tier = app.resolvedTier
                         when {
                             tier == AppBlockTier.OPEN -> false
