@@ -5,7 +5,11 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.os.Bundle
+import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import com.example.ui.theme.MonolithCurves
 import com.example.ui.theme.MonolithKin
 import kotlin.math.abs
@@ -31,18 +35,37 @@ object RailGeometry {
     const val CAP_HEIGHT_DP = 44f
     const val PARK_INDEX = 4
 
+    /** stopForX result when the x is outside the track: no stop lives
+     *  there — the margins fabricate nothing (issue #62 finding 4). */
+    const val NO_STOP = -1
+
+    /** Intrinsic width the rail asks for under UNSPECIFIED / AT_MOST:
+     *  the spec's reference width (§6.1 geometry is priced at 390dp). */
+    const val REFERENCE_WIDTH_DP = 390f
+
     val WORDS = listOf("DECK", "SHIELD", "TASKS", "LEDGER")
 
-    fun recessWidthDp(screenWidthDp: Float): Float = screenWidthDp - 2 * MARGIN_DP
+    fun recessWidthDp(screenWidthDp: Float): Float =
+        (screenWidthDp - 2 * MARGIN_DP).coerceAtLeast(0f)
 
     fun segmentDp(recessWidthDp: Float): Float =
-        (recessWidthDp - 2 * INSET_DP - PARK_ZONE_DP) / 4f
+        ((recessWidthDp - 2 * INSET_DP - PARK_ZONE_DP) / 4f).coerceAtLeast(0f)
 
     fun trackRightDp(recessWidthDp: Float): Float = recessWidthDp - INSET_DP
 
     fun parkStartDp(recessWidthDp: Float): Float = trackRightDp(recessWidthDp) - PARK_ZONE_DP
 
-    fun capWidthDp(recessWidthDp: Float): Float = segmentDp(recessWidthDp) - 8f
+    fun capWidthDp(recessWidthDp: Float): Float =
+        (segmentDp(recessWidthDp) - 8f).coerceAtLeast(0f)
+
+    /** MeasureSpec honouring, pure int math (issue #62 finding 5):
+     *  EXACTLY takes the spec size, AT_MOST caps the desired size at
+     *  the spec size, UNSPECIFIED takes the desired size. */
+    fun resolveMeasure(specMode: Int, specSize: Int, desiredPx: Int): Int = when (specMode) {
+        android.view.View.MeasureSpec.EXACTLY -> specSize
+        android.view.View.MeasureSpec.AT_MOST -> minOf(specSize, desiredPx)
+        else -> desiredPx
+    }
 
     /** Cap left edge (dp, recess-relative) at travel position [pos]
      *  in stop units: stops centre the cap in their segment; past
@@ -60,10 +83,14 @@ object RailGeometry {
         }
     }
 
-    /** The stop (or PARK zone, 4) under a recess-relative x. */
+    /** The stop (or PARK zone, 4) under a recess-relative x.
+     *  X outside the track (the margins, the inset strips) is
+     *  NO_STOP — hit-testing fabricates nothing (issue #62). */
     fun stopForX(xDp: Float, recessWidthDp: Float): Int {
+        if (xDp < INSET_DP || xDp > trackRightDp(recessWidthDp)) return NO_STOP
         if (xDp >= parkStartDp(recessWidthDp)) return PARK_INDEX
         val seg = segmentDp(recessWidthDp)
+        if (seg <= 0f) return NO_STOP
         return floor((xDp - INSET_DP) / seg).toInt().coerceIn(0, 3)
     }
 
@@ -103,6 +130,8 @@ class MonolithRailView(context: Context) : BlockitCanvasView(context) {
             val v = value.coerceIn(0, 3)
             if (field != v) {
                 field = v
+                focusStop = v
+                updateA11yDescription()
                 if (!dragging && !parkOpen) animateCapTo(v.toFloat(), null)
                 invalidate()
             }
@@ -114,6 +143,7 @@ class MonolithRailView(context: Context) : BlockitCanvasView(context) {
         set(value) {
             if (field != value) {
                 field = value
+                updateA11yDescription()
                 if (!dragging) {
                     animateCapTo(
                         if (value) RailGeometry.PARK_INDEX.toFloat()
@@ -150,17 +180,158 @@ class MonolithRailView(context: Context) : BlockitCanvasView(context) {
     private var pressedStop = -1
     private var lastDetent = 0
 
+    /** Destination the keyboard / accessibility focus rests on;
+     *  arrows move it, ENTER / performClick commits it. Follows the
+     *  committed selection whenever the host moves it. */
+    private var focusStop: Int = 0
+
     init {
         capPos = selectedTabIndex.toFloat()
         lastDetent = selectedTabIndex
+        // Accessibility (issue #62 finding 2): the rail is primary
+        // navigation — it must be discoverable, focusable and
+        // operable without touch. Per-destination actions are added
+        // in onInitializeAccessibilityNodeInfo.
+        isFocusable = true
+        isClickable = true
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
+        updateA11yDescription()
     }
 
     private fun recessWidthDp(): Float =
         RailGeometry.recessWidthDp(width / density)
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val w = MeasureSpec.getSize(widthMeasureSpec)
-        setMeasuredDimension(w, dp(RailGeometry.HEIGHT_DP).toInt())
+        // Honour both specs' modes (issue #62 finding 5): EXACTLY
+        // takes the offered size, AT_MOST caps at the rail's desired
+        // size, UNSPECIFIED takes the desired size.
+        setMeasuredDimension(
+            RailGeometry.resolveMeasure(
+                MeasureSpec.getMode(widthMeasureSpec),
+                MeasureSpec.getSize(widthMeasureSpec),
+                dp(RailGeometry.REFERENCE_WIDTH_DP).toInt()
+            ),
+            RailGeometry.resolveMeasure(
+                MeasureSpec.getMode(heightMeasureSpec),
+                MeasureSpec.getSize(heightMeasureSpec),
+                dp(RailGeometry.HEIGHT_DP).toInt()
+            )
+        )
+    }
+
+    /** The animator dies with the window (issue #62 finding 3):
+     *  a detached rail never animates, never invalidates, and —
+     *  because cancel suppresses the seat callback — never reports
+     *  a navigation after it has left the screen. */
+    override fun onDetachedFromWindow() {
+        animator?.cancel()
+        animator = null
+        dragging = false
+        pressedStop = -1
+        super.onDetachedFromWindow()
+    }
+
+    // ----------------------------------------------------------------
+    // Accessibility: per-destination actions, click, keyboard.
+    // ----------------------------------------------------------------
+
+    private fun updateA11yDescription() {
+        contentDescription = if (parkOpen) {
+            "Navigation rail. Park is open. Current destination: ${A11Y_NAMES[selectedTabIndex]}."
+        } else {
+            "Navigation rail. ${A11Y_NAMES[selectedTabIndex]} selected."
+        }
+    }
+
+    private fun announceA11y(text: String) {
+        val event = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_ANNOUNCEMENT)
+        event.text.add(text)
+        sendAccessibilityEventUnchecked(event)
+    }
+
+    override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
+        super.onInitializeAccessibilityNodeInfo(info)
+        info.className = MonolithRailView::class.java.name
+        info.isClickable = true
+        info.isFocusable = true
+        for (i in 0..3) {
+            info.addAction(
+                AccessibilityNodeInfo.AccessibilityAction(
+                    A11Y_ACTION_BASE + i, "Go to ${A11Y_NAMES[i]}"
+                )
+            )
+        }
+        info.addAction(
+            AccessibilityNodeInfo.AccessibilityAction(
+                A11Y_ACTION_BASE + RailGeometry.PARK_INDEX,
+                if (parkOpen) "Close Park" else "Open Park"
+            )
+        )
+    }
+
+    override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
+        val stop = action - A11Y_ACTION_BASE
+        if (stop in 0..RailGeometry.PARK_INDEX) {
+            activateStop(stop)
+            return true
+        }
+        if (action == AccessibilityNodeInfo.ACTION_CLICK) {
+            performClick()
+            return true
+        }
+        return super.performAccessibilityAction(action, arguments)
+    }
+
+    /** TalkBack double-tap / generic click: commit the destination
+     *  the accessibility focus rests on. */
+    override fun performClick(): Boolean {
+        super.performClick()
+        activateStop(focusStop)
+        return true
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> {
+                moveA11yFocus(-1)
+                return true
+            }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                moveA11yFocus(1)
+                return true
+            }
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
+            KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_SPACE -> {
+                performClick()
+                return true
+            }
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    private fun moveA11yFocus(delta: Int) {
+        val next = (focusStop + delta).coerceIn(0, RailGeometry.PARK_INDEX)
+        if (next != focusStop) {
+            focusStop = next
+            announceA11y(
+                if (next == RailGeometry.PARK_INDEX) "Park focused"
+                else "${A11Y_NAMES[next]} focused"
+            )
+            invalidate()
+        }
+    }
+
+    /** One activation path for touch taps, accessibility actions,
+     *  keyboard and performClick — same travel, same seat callback. */
+    private fun activateStop(stop: Int) {
+        if (stop in 0..RailGeometry.PARK_INDEX) tapStop(stop)
+    }
+
+    companion object {
+        /** Custom accessibility action ids for the five destinations
+         *  (stops 0..3 + PARK at +4). Private range, no R.id needed. */
+        private const val A11Y_ACTION_BASE = 0x62000
+        private val A11Y_NAMES = listOf("Deck", "Shield", "Tasks", "Ledger")
     }
 
     private fun animateCapTo(target: Float, onSeat: (() -> Unit)?) {
@@ -173,6 +344,13 @@ class MonolithRailView(context: Context) : BlockitCanvasView(context) {
             return
         }
         val stops = ceil(abs(target - from)).toInt().coerceAtLeast(1)
+        // Issue #62 finding 1: Android delivers onAnimationEnd AFTER
+        // onAnimationCancel when cancel() interrupts a travel. Without
+        // this flag, an interrupted travel snapped the cap to the old
+        // target, buzzed, and fired the old seat callback — reporting
+        // a navigation the user had just cancelled. A cancelled
+        // animation now ends silently: no teleport, no feel, no seat.
+        var cancelled = false
         animator = ValueAnimator.ofFloat(from, target).apply {
             duration = MonolithKin.navDurationMs(stops).toLong()
             interpolator = MonolithCurves.CurveA
@@ -182,7 +360,13 @@ class MonolithRailView(context: Context) : BlockitCanvasView(context) {
                 invalidate()
             }
             addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationCancel(animation: android.animation.Animator) {
+                    cancelled = true
+                }
+
                 override fun onAnimationEnd(animation: android.animation.Animator) {
+                    if (animator === animation) animator = null
+                    if (cancelled) return
                     capPos = target
                     fireFeel(4L)
                     invalidate()
@@ -341,7 +525,6 @@ class MonolithRailView(context: Context) : BlockitCanvasView(context) {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 val wasDragging = dragging
                 dragging = false
-                val stop = pressedStop
                 pressedStop = -1
                 if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
                     animateCapTo(if (parkOpen) RailGeometry.PARK_INDEX.toFloat() else selectedTabIndex.toFloat(), null)
@@ -349,8 +532,22 @@ class MonolithRailView(context: Context) : BlockitCanvasView(context) {
                 }
                 if (wasDragging) {
                     commitStop(RailGeometry.nearestStop(capPos))
-                } else if (stop >= 0) {
-                    tapStop(stop)
+                } else {
+                    // Issue #62 finding 4: a tap commits the stop under
+                    // the RELEASE point, recomputed here from this
+                    // event's x — never the DOWN stop. A release
+                    // outside the track commits nothing and the cap
+                    // settles back to the committed stop.
+                    val upStop = RailGeometry.stopForX(relX, recessW)
+                    if (upStop >= 0) {
+                        tapStop(upStop)
+                    } else {
+                        animateCapTo(
+                            if (parkOpen) RailGeometry.PARK_INDEX.toFloat()
+                            else selectedTabIndex.toFloat(),
+                            null
+                        )
+                    }
                 }
                 invalidate()
                 return true
