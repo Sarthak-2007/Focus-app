@@ -1,5 +1,7 @@
 package com.example.service
 
+import android.util.Log
+import android.content.Context
 import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,11 +42,19 @@ import kotlinx.coroutines.launch
  * from (setting, parent items, suspension) — never written directly,
  * and its value words never cross into the permission family.
  *
- * Persistence: NONE this wave. The store is in-memory behind this
- * writer interface; the Readiness Log implementation (an append-only
- * measurement table, Migration 9→10) is Slice E's, and swaps in
- * behind these same writers. The no-op is named, not hidden: nothing
- * in this file touches Room.
+ * Persistence (issue #48, audit R1 seal-watchstore): exactly ONE
+ * fact is durable — LAST PROVED, a wall-clock historical fact ("a
+ * complete set was proved at T") that stays true forever once
+ * landed. It is written to SharedPreferences the instant it
+ * advances (forward only — it never regresses) and restored by
+ * [bind] in the next process. The measurements themselves are
+ * deliberately NOT persisted: every writer re-measures from the
+ * living services (BIND hooks on connect, the shield loop every
+ * iteration, the sweep on Deck entry/resume), so the store
+ * converges to current truth within one pass — while a restored
+ * measurement would print old proof as fresh, the exact lie this
+ * store exists to prevent. Residency stays process-scoped by
+ * definition: a new process is a new residency.
  * ============================================================================
  */
 
@@ -75,8 +85,10 @@ data class Warrant(
     val readMono: Long = 0L
 )
 
-/** The nine watch items, in board order (spec §4.1). Items 1–4 are
- *  the counted four of the header's Guard line. */
+/** The nine watch items, in board order (spec §4.1). The header's
+ *  Guard line counts all six PERMISSIONS (issue #109, F4);
+ *  [WatchItemId.COUNTED] survives as the original four the warrant
+ *  story was built on, no longer the header's denominator. */
 enum class WatchItemId(val boardName: String, val counted: Boolean) {
     ACCESSIBILITY("ACCESSIBILITY", true),
     USAGE_ACCESS("USAGE ACCESS", true),
@@ -89,10 +101,20 @@ enum class WatchItemId(val boardName: String, val counted: Boolean) {
     NOTIFICATIONS("NOTIFICATIONS", false);
 
     companion object {
-        /** The six permission-family items, board order. */
+        /** The six permission-family items, board order.
+         *  Issue #313 F4 (Audit R5 · Opal second pass): the board
+         *  used to lead with ACCESSIBILITY — the scariest grant,
+         *  asked cold. Board order is now value order: USAGE ACCESS
+         *  first (the benefit the user can see — their own app/time
+         *  picture), ACCESSIBILITY second (the blocking engine,
+         *  asked once the point is proven), then the listener, the
+         *  device-admin uninstall guard, overlay and battery. This
+         *  list IS the render order (GuardLine prints, PARK board)
+         *  and the next-fix suggestion order in ParkDrawer, so the
+         *  FIX trips now fire in this order too. */
         val PERMISSIONS: List<WatchItemId> = listOf(
-            ACCESSIBILITY, USAGE_ACCESS, DEVICE_ADMIN,
-            NOTIFICATION_LISTENER, OVERLAY, BATTERY
+            USAGE_ACCESS, ACCESSIBILITY, NOTIFICATION_LISTENER,
+            DEVICE_ADMIN, OVERLAY, BATTERY
         )
         /** The counted four, board order. */
         val COUNTED: List<WatchItemId> = listOf(
@@ -131,7 +153,13 @@ data class WatchSnapshot(
     val engineHeartbeatMono: Long,
     val engineHeartbeatWall: Long,
     val engineProtecting: Boolean,
-    val lastProvedWallMillis: Long?
+    val lastProvedWallMillis: Long?,
+    /** Emission generation (issue #48): bumped by [WatchStore.poke]
+     *  so a poke is a REAL emission — StateFlow suppresses equal
+     *  values, and a bare copy() of a data class is equal to the
+     *  value it copies, so the old poke could never notify a
+     *  collector. */
+    val pokeGen: Long = 0L
 ) {
     fun measurement(item: WatchItemId): WatchMeasurement? = items[item]
 
@@ -141,13 +169,61 @@ data class WatchSnapshot(
 }
 
 /** What a permission line prints at a given instant (spec §4.2):
- *  never-measured, the measured value, or its stale derivative. */
-enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE }
+ *  never-measured, the measured value, or its stale derivative.
+ *  UNPROVED (issue #94): a measurement exists and reads granted, but
+ *  a fact the app cannot measure stands behind it — the BATTERY line
+ *  on an OEM-autostart-gated skin, where the AOSP exemption is only
+ *  half the survival fact and the autostart half is unreadable. */
+enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE, MISSING_STALE, UNPROVED }
 
 object WatchStore {
 
     /** A PASS measurement older than this (monotonic) is stale. */
     const val STALE_AFTER_MS: Long = 45_000L
+
+    // Issue #48: LAST PROVED's durable home — a tiny wall-clock
+    // fact needs no table (the seal marker's SharedPreferences
+    // precedent, MonolithRepository SEAL_PREFS).
+    private const val PREFS_NAME = "monolith_watch"
+    private const val KEY_LAST_PROVED_WALL = "last_proved_wall_ms"
+
+    @Volatile private var boundContext: Context? = null
+
+    /**
+     * Bind the store to this process (idempotent): restores the
+     * persisted LAST PROVED, so a fresh process opens with the
+     * historical fact intact instead of "never proved". Called by
+     * the store's own writers' homes — the two BIND services, the
+     * shield service — and by MainActivity.
+     */
+    fun bind(context: Context) {
+        val app = context.applicationContext
+        if (boundContext === app) return
+        boundContext = app
+        val persisted = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getLong(KEY_LAST_PROVED_WALL, 0L)
+        if (persisted > 0L) {
+            publish { current ->
+                if ((current.lastProvedWallMillis ?: 0L) < persisted) {
+                    current.copy(lastProvedWallMillis = persisted)
+                } else {
+                    current
+                }
+            }
+        }
+    }
+
+    private fun persistLastProved(wallMillis: Long) {
+        val app = boundContext ?: return
+        // commit(), not apply() (verifier pass, issue #48): the
+        // fact must be on disk when this returns — the seal
+        // marker's own standard. Advances are rare (one per
+        // completed sweep), so the synchronous write is cheap.
+        app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(KEY_LAST_PROVED_WALL, wallMillis)
+            .commit()
+    }
 
     private val _snapshots = MutableStateFlow(WatchSnapshot.EMPTY)
     val snapshots: StateFlow<WatchSnapshot> = _snapshots.asStateFlow()
@@ -164,12 +240,19 @@ object WatchStore {
     // Interceptor inputs: the settings and the suspension, pushed by
     // the ViewModel (the settings live in guard_settings; the
     // suspension is the session's Safe Break). The notification
-    // capture has no setting — it is on by design — and no suspension
-    // input exists for it in the shipped app, so its PAUSED is
-    // unreachable by construction, not by omission.
+    // capture has no setting — it is on by design — but it has one
+    // hard precondition the board used to ignore (issue #109, F1):
+    // the listener captures ONLY while a session is active
+    // (MonolithNotificationListener returns early otherwise), so a
+    // bound listener at rest holds nothing. [sessionCapturing] is
+    // that precondition, pushed from the same active-session flow
+    // that feeds the Safe Break input. NOTIFICATIONS may print
+    // RUNNING only when it is true; its PAUSED stays unreachable —
+    // the listener does not suspend during a Safe Break.
     @Volatile private var shortsSettingOn = true
     @Volatile private var sitesSettingOn = true
     @Volatile private var safeBreakActive = false
+    @Volatile private var sessionCapturing = false
 
     // The wire's residency machinery (moved whole from LiveWire):
     // a Deck residency starts when the Deck is entered; the wire can
@@ -188,9 +271,15 @@ object WatchStore {
             MonolithAccessibilityService.lastRootMono >= residencyStartMono
 
     /** A nudge with no data: forces a snapshot re-emission so derived
-     *  readers (the Deck warrant) re-read the living facts. */
+     *  readers (the Deck warrant) re-read the living facts. Routed
+     *  through [publish] (issue #48): the generation bump makes the
+     *  emission real — StateFlow suppresses equal values, and the
+     *  old bare copy() was equal by construction, so collectors were
+     *  never notified — and the @Synchronized publish lock ends the
+     *  old poke's second sin: it wrote the flow directly, outside
+     *  the lock, where it could clobber a concurrent publication. */
     fun poke() {
-        _snapshots.value = _snapshots.value.copy()
+        publish { current -> current.copy(pokeGen = current.pokeGen + 1) }
     }
 
     // ------------------------------------------------------------------
@@ -252,12 +341,31 @@ object WatchStore {
      * advances to the set's completion instant.
      */
     fun runSweep(query: (WatchItemId) -> Boolean) {
-        val gen = ++sweepGen
-        pendingSweepStartWall = System.currentTimeMillis()
+        // Issue #77: sweepGen and pendingSweepStartWall are read and
+        // cleared by publish() under its @Synchronized monitor; they
+        // were written here OUTSIDE that monitor, so overlapping
+        // sweeps (Deck entry + ON_RESUME) could mix generations and
+        // complete each other's sets with stale stamps. The dispatch
+        // state now takes the same monitor publish() holds.
+        val gen: Int
+        synchronized(this) {
+            gen = ++sweepGen
+            pendingSweepStartWall = System.currentTimeMillis()
+        }
         for (item in WatchItemId.PERMISSIONS) {
             sweepScope.launch {
-                val granted = runCatching { query(item) }.getOrDefault(false)
-                stampPermission(item, granted, gen)
+                // Truth (issue #76): a query that THREW is not a
+                // measurement. The old getOrDefault(false) stamped a
+                // fresh MISSING with now-timestamps, so a sweep whose
+                // every query failed still completed the set and
+                // advanced LAST PROVED — a fabricated proof. A thrown
+                // query now writes NO stamp: the item keeps its older
+                // measurement and ages to STALE honestly.
+                runCatching { query(item) }
+                    .onSuccess { granted -> stampPermission(item, granted, gen) }
+                    .onFailure {
+                        Log.w("WatchStore", "sweep query threw for $item; no stamp written", it)
+                    }
             }
         }
     }
@@ -268,12 +376,14 @@ object WatchStore {
     fun updateInterceptorInputs(
         shortsOn: Boolean? = null,
         sitesOn: Boolean? = null,
-        safeBreak: Boolean? = null
+        safeBreak: Boolean? = null,
+        sessionActive: Boolean? = null
     ) {
         var changed = false
         if (shortsOn != null && shortsOn != shortsSettingOn) { shortsSettingOn = shortsOn; changed = true }
         if (sitesOn != null && sitesOn != sitesSettingOn) { sitesSettingOn = sitesOn; changed = true }
         if (safeBreak != null && safeBreak != safeBreakActive) { safeBreakActive = safeBreak; changed = true }
+        if (sessionActive != null && sessionActive != sessionCapturing) { sessionCapturing = sessionActive; changed = true }
         if (changed) publish { it }
     }
 
@@ -350,23 +460,43 @@ object WatchStore {
     }
 
     /** The permission print at [nowMono]: staleness derived here,
-     *  never stored. A PASS older than [STALE_AFTER_MS] is STALE;
-     *  MISSING never stales. */
+     *  never stored. ANY measurement older than [STALE_AFTER_MS]
+     *  is stale — a PASS prints STALE and a denial prints
+     *  MISSING_STALE (issue #58 F1). The old asymmetry — GRANTED
+     *  expired after 45s while a MISSING measured hours ago printed
+     *  bare and current forever — presented an ancient denial as
+     *  current fact on the Guard line. MISSING_STALE stays a
+     *  distinct print, not a collapse into STALE, so consumers
+     *  that act on a lack (PARK's FIX key) still know the item is
+     *  missing, not merely old. */
     fun permPrintAt(snapshot: WatchSnapshot, item: WatchItemId, nowMono: Long): PermPrint {
         val m = snapshot.items[item] ?: return PermPrint.UNMEASURED
         val perm = m.perm ?: return PermPrint.UNMEASURED
+        val stale = nowMono - m.measuredMono > STALE_AFTER_MS
         return when {
-            perm == PermState.GRANTED && nowMono - m.measuredMono > STALE_AFTER_MS ->
-                PermPrint.STALE
+            // Issue #94 (F1): on a skin whose OEM autostart toggle gates
+            // receiver restarts, a granted AOSP battery read never
+            // prints GRANTED — the toggle cannot be read back, so the
+            // honest word is UNPROVED. A missing AOSP read stays
+            // MISSING below: that half is known, not proved-absent.
+            item == WatchItemId.BATTERY && perm == PermState.GRANTED &&
+                !com.example.data.OemPolicy.batteryGrantedIsProved(
+                    com.example.data.OemPolicy.currentGate()
+                ) -> PermPrint.UNPROVED
+            perm == PermState.GRANTED && stale -> PermPrint.STALE
             perm == PermState.GRANTED -> PermPrint.GRANTED
+            stale -> PermPrint.MISSING_STALE
             else -> PermPrint.MISSING
         }
     }
 
     /** "Currently warranted GRANTED" for the Guard line's count:
-     *  GRANTED and not stale (spec §2.3). */
+     *  GRANTED and not stale, over ALL SIX permission lines the
+     *  board prints (issue #109, F4 — the header used to count only
+     *  the four COUNTED and could print wholeness over a board
+     *  showing OVERLAY / BATTERY MISSING). */
     fun countedWarranted(snapshot: WatchSnapshot, nowMono: Long): Int =
-        WatchItemId.COUNTED.count { permPrintAt(snapshot, it, nowMono) == PermPrint.GRANTED }
+        WatchItemId.PERMISSIONS.count { permPrintAt(snapshot, it, nowMono) == PermPrint.GRANTED }
 
     // ------------------------------------------------------------------
     // Internals
@@ -425,8 +555,14 @@ object WatchStore {
                 perms.all { it.measuredWall >= sweepStart }
             ) {
                 val completedAt = perms.maxOf { it.measuredWall }
-                if (completedAt != next.lastProvedWallMillis) {
+                // Forward only (issue #48): LAST PROVED is a
+                // historical fact — a late-completing set from an
+                // older era never regresses it. On a real advance
+                // the fact is persisted in the same breath, so it
+                // survives the process that proved it.
+                if (completedAt > (next.lastProvedWallMillis ?: 0L)) {
                     next = next.copy(lastProvedWallMillis = completedAt)
+                    persistLastProved(completedAt)
                 }
                 pendingSweepStartWall = 0L
             }
@@ -446,7 +582,9 @@ object WatchStore {
      * Parents: SHORTS + REELS rides the accessibility binding (the
      * sniper is the a11y pipeline); SOCIAL SITES rides accessibility
      * + usage access (the browser watch reads the foreground through
-     * both); NOTIFICATIONS rides the listener binding alone.
+     * both); NOTIFICATIONS rides the listener binding AND an active
+     * capturing session — the listener holds nothing without one
+     * (issue #109, F1).
      */
     private fun deriveInterceptor(
         item: WatchItemId,
@@ -466,6 +604,14 @@ object WatchStore {
         val parentPrints = parents.map { permPrintAt(snapshot, it, nowMono) }
         if (parentPrints.any { it == PermPrint.UNMEASURED }) return null
         if (parentPrints.any { it != PermPrint.GRANTED }) return InterceptorState.OFF
+        // Issue #109, F1: the listener binding alone proves nothing
+        // is being held — the listener captures only inside an
+        // active session. Bound but no session capturing: the
+        // capture is OFF, and printing RUNNING here was the false
+        // print Sarthak caught on his own phone.
+        if (item == WatchItemId.NOTIFICATIONS && !sessionCapturing) {
+            return InterceptorState.OFF
+        }
         val suspended = when (item) {
             WatchItemId.NOTIFICATIONS -> false
             else -> safeBreakActive
@@ -483,11 +629,13 @@ object WatchStore {
      *  it between cases. Production code never calls this. */
     fun resetForTest() {
         _snapshots.value = WatchSnapshot.EMPTY
+        boundContext = null
         sweepGen = 0
         pendingSweepStartWall = 0L
         shortsSettingOn = true
         sitesSettingOn = true
         safeBreakActive = false
+        sessionCapturing = false
         residencyStartMono = 0L
     }
 }
