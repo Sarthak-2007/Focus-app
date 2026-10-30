@@ -3042,7 +3042,6 @@ class MonolithRepository(
     internal var blockWarningKnock: () -> Unit = {
         servicePort.playBreakLatch(context, true)
     }
-    }
 
     /** The Safe Break length in force for [session]. Today the one
      *  named constant; when Truth Car 3's stamp lands (Rurik —
