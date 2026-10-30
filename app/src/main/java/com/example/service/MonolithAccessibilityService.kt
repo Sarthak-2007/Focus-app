@@ -1281,7 +1281,6 @@ class MonolithAccessibilityService : AccessibilityService() {
                 nowMono = SystemClock.elapsedRealtime()
             )
             if (matchedDomain != null && !sitePeeked) {
-                performGlobalAction(GLOBAL_ACTION_BACK)
                 launchInterceptScreen(
                     packageName = pkgName,
                     appName = matchedDomain,
@@ -1289,6 +1288,44 @@ class MonolithAccessibilityService : AccessibilityService() {
                     path = InterceptPath.SITE
                 )
                 return
+            }
+            // Issue #339 (Second-pass F1): the Web Gate — with
+            // block-all armed, the web is closed except the user's
+            // allowed hosts. The stored list above keeps its force
+            // in both modes (it fired first, as the listed leg);
+            // a domain under a live site-peek lease for this
+            // browser stays exempt here exactly as there (#130).
+            // The ejection (BACK, escalating) is owned by
+            // launchInterceptScreen for every door (#339 F2) —
+            // this door no longer fires its own.
+            val webGate = com.example.data.WebGateStore(applicationContext)
+            if (webGate.blockAll()) {
+                val gateHit = snapshot.facts.browserUrlTexts.firstNotNullOfOrNull { urlText ->
+                    when (com.example.data.webGateVerdict(
+                        urlText, true, webGate.allowedHosts(), userDomains
+                    )) {
+                        com.example.data.WebGateVerdict.BLOCK_ALL ->
+                            extractUrlHost(urlText) ?: urlText
+                        else -> null
+                    }
+                }
+                val gatePeeked = gateHit != null && sitePeekExempts(
+                    peekedDomain = SitePeekStore.domain,
+                    peekedPackage = SitePeekStore.packageName,
+                    domain = gateHit,
+                    packageName = pkgName,
+                    leaseUntilMono = leaseRow?.activePeekUntilElapsedRealtime ?: 0L,
+                    nowMono = SystemClock.elapsedRealtime()
+                )
+                if (gateHit != null && !gatePeeked) {
+                    launchInterceptScreen(
+                        packageName = pkgName,
+                        appName = gateHit,
+                        reasonBadge = "Web Blocked — Allowlist",
+                        path = InterceptPath.SITE
+                    )
+                    return
+                }
             }
         }
 
@@ -1376,6 +1413,18 @@ class MonolithAccessibilityService : AccessibilityService() {
         }
 
         // 5. 3-Tier Per-App & Safe Break Blocking
+        // W3 #134: the dialer never takes this door. The call
+        // bypass above (step 1) covers calls that already
+        // exist; placing one starts in MODE_NORMAL, so a
+        // LOCKED Phone app was intercepted like any
+        // distraction and the user could not dial out
+        // mid-session. Telephony is a safety surface: the
+        // dialer package is exempt whatever its tier says.
+        // (Composed onto main's processEvent pipeline; main's
+        // #129 unlisted-app branch below exempts the dialer in
+        // its own right — this line keeps the listed-row path
+        // equally exempt, as the lane's finding requires.)
+        if (MonolithRepository.isDialerPackage(applicationContext, pkgName)) return
         val appRule = appsSnapshot.find { it.packageName == pkgName }
         if (appRule == null) {
             // Issue #129 (unlisted-distraction, CRITICAL): no row
@@ -1814,6 +1863,14 @@ class MonolithAccessibilityService : AccessibilityService() {
         // Issue #94 (F2): never a bare background launch — a
         // dropped launch stamps itself and falls back to a
         // tappable notification (InterceptLaunch).
+        // Issue #339 (Second-pass F2): EJECT FIRST. The intercept
+        // activity is the explanation, not the enforcement — the
+        // enforcement is leaving the blocked app: BACK on a first
+        // offence, escalating to HOME on a repeat offence against
+        // the same package inside the tracker's window (Freedom's
+        // escalation, which Monolith's doors previously never did
+        // at all on the app-tier path).
+        ejectForShield(packageName)
         InterceptLaunch.launch(
             applicationContext,
             InterceptIntents.interceptIntent(applicationContext, packageName, appName, reasonBadge, path),
@@ -1822,6 +1879,34 @@ class MonolithAccessibilityService : AccessibilityService() {
         // #335 F5: every intercept is a detector block — recorded
         // (last block + last successful block) in the health record.
         DetectorHealth.recordBlock(SystemClock.elapsedRealtime(), success = true)
+        val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            putExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE, packageName)
+            putExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME, appName)
+            putExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE, reasonBadge)
+            putExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH, path.name)
+            putExtra(
+                MonolithShieldService.EXTRA_INTERCEPT_NONCE,
+                InterceptNonce.mint(applicationContext)
+            )
+        }
+        // Issue #94 (F2): never a bare background launch — a dropped
+        // launch stamps itself and falls back to a tappable
+        // notification (InterceptLaunch).
+        InterceptLaunch.launch(applicationContext, interceptIntent, appName)
+    }
+
+    /** Issue #339 (Second-pass F2): the ejection itself, shared
+     *  with the shield door — GLOBAL_ACTION_* exists only on an
+     *  accessibility service, so the shield service (a plain
+     *  foreground service) delegates here when this service is
+     *  bound; unbound, it cannot eject and its intercept launch
+     *  stands alone, exactly as before. */
+    fun ejectForShield(packageName: String) {
+        when (EjectionTracker.recordAndDecide(packageName, SystemClock.elapsedRealtime())) {
+            EjectionAction.BACK -> performGlobalAction(GLOBAL_ACTION_BACK)
+            EjectionAction.HOME -> performGlobalAction(GLOBAL_ACTION_HOME)
+        }
     }
 
     override fun onInterrupt() {}
@@ -1838,5 +1923,42 @@ class MonolithAccessibilityService : AccessibilityService() {
         }
         scope.cancel()
         super.onDestroy()
+    }
+}
+
+/** Issue #339 (Second-pass F2): the ejection escalation. */
+enum class EjectionAction { BACK, HOME }
+
+/**
+ * Tracks the last ejected package so a REPEAT offence escalates:
+ * BACK on a first offence, HOME when the same package offends
+ * again inside [REPEAT_WINDOW_MS]. A different package, or a
+ * repeat after the window, starts the ladder over. In-memory
+ * only — escalation is a within-session pressure, not a record.
+ */
+object EjectionTracker {
+
+    const val REPEAT_WINDOW_MS: Long = 10 * 60 * 1000L
+
+    @Volatile
+    private var lastPackage: String? = null
+
+    @Volatile
+    private var lastMono: Long = 0L
+
+    @Synchronized
+    fun recordAndDecide(packageName: String, nowMono: Long): EjectionAction {
+        val repeat = packageName == lastPackage &&
+            lastMono > 0L &&
+            nowMono - lastMono < REPEAT_WINDOW_MS
+        lastPackage = packageName
+        lastMono = nowMono
+        return if (repeat) EjectionAction.HOME else EjectionAction.BACK
+    }
+
+    @Synchronized
+    fun reset() {
+        lastPackage = null
+        lastMono = 0L
     }
 }

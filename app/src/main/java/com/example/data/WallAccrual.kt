@@ -78,6 +78,34 @@ internal fun breakTickAfter(
     return remaining to anchor
 }
 
+/**
+ * The call-exclusion ledger, wall-derived (W3 #134,
+ * phone-call-mid-session) — the mirror image of
+ * [breakRemainingAfter]'s countdown. While the call bypass
+ * signal (AudioManager in a call mode) is active, the progress
+ * machine adds the whole wall seconds since the session's last
+ * stored tick to the block's persisted callExcludedSeconds, and
+ * books elapsed as verified-minus-excluded: call time never
+ * accrues as focus time. The derivation needs no new state —
+ * every progress write already persists the (excluded, lastTick)
+ * pair, so two tickers reading the same stored pair agree, a
+ * process-death gap counts (the shield-gap latch judges that
+ * absence separately), and a reboot tick (nowMono behind the
+ * stored tick) excludes nothing and re-anchors. The first
+ * call-active tick can over-exclude by at most one tick cadence
+ * (the interval since the previous tick may partly predate the
+ * ring) — bounded, and it errs toward LESS claimed focus, never
+ * more.
+ */
+internal fun callExcludedAfter(
+    storedExcludedSeconds: Int,
+    lastTickMonoMillis: Long,
+    nowMonoMillis: Long
+): Int {
+    val deltaSeconds = ((nowMonoMillis - lastTickMonoMillis) / 1000L).coerceAtLeast(0L)
+    return storedExcludedSeconds + deltaSeconds.toInt()
+}
+
 class WallAccrual {
 
     private var sessionId: Int = -1
