@@ -719,7 +719,14 @@ internal fun deskClockBreakLine(
     nowWallMillis: Long
 ): String? {
     if (!isInSafeBreak) return null
-    val breakEndWall = nowWallMillis + safeBreakSecondsRemaining.coerceAtLeast(0) * 1000L
+    val rawEndWall = nowWallMillis + safeBreakSecondsRemaining.coerceAtLeast(0) * 1000L
+    // Salz C-18's cured sentence, kept truthful (batch-10 fix):
+    // UNTIL names the first minute mark AT OR AFTER the true end.
+    // A truncating HH:mm would print the minute BEFORE the end
+    // whenever seconds remain — the clock claiming the door
+    // shuts earlier than it does. Exact marks print as-is.
+    val rem = rawEndWall % 60_000L
+    val breakEndWall = if (rem == 0L) rawEndWall else rawEndWall + (60_000L - rem)
     return "BREAK — PEEK APPS OPEN · UNTIL " + wallClockTimeText(breakEndWall)
 }
 

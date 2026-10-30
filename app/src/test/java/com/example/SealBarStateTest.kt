@@ -1,5 +1,6 @@
 package com.example
 
+import androidx.compose.ui.graphics.toArgb
 import com.example.ui.components.SealBarParams
 import com.example.ui.components.SealBarState
 import com.example.ui.components.endsAtNumeralsFor
@@ -111,7 +112,12 @@ class SealBarStateTest {
     @Test
     fun warningOrangeIsTheOneModeInvariantHue() {
         // THE BOLT §5: #D63E06 in both modes; #FF8A5C never returns.
-        assertEquals(0xFFD63E06, SealBarParams.warningOrange.value.toLong())
+        // Batch-10 test cure: the assertion compared Compose's
+        // packed Color.value ULong (ARGB shifted into the top
+        // bits) against the raw hex — it could never pass against
+        // ANY Color. toArgb() is the accessor the claim means;
+        // the hue itself was always #D63E06 (TokenAlert).
+        assertEquals(0xFFD63E06.toInt(), SealBarParams.warningOrange.toArgb())
     }
 
     @Test

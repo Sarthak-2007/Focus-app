@@ -69,9 +69,22 @@ class GuardLinePrintTest {
 
     @Test
     fun staleDoor_printsCountAndStaleName() {
-        // Measured at mono 10_000; read at 10_000 + 46_000 — past
-        // the 45s stale threshold, so the grant no longer counts.
-        val snap = snapshot(wholeSet())
+        // The ACCESSIBILITY door was measured at mono 10_000; the
+        // other three at 50_000. Read at 56_000: accessibility's
+        // measurement is 46s old — past the 45s stale threshold,
+        // so ITS grant no longer counts — while the others (6s
+        // old) still stand.
+        // Batch-10 fixture cure: the original shaped ALL FOUR
+        // doors at 10_000, which makes all four stale at the read
+        // (GUARD 0/4) — the expectation below was mis-modelled in
+        // the cell (the file header records it was DECLARED,
+        // uncompiled). The semantics pinned here are unchanged.
+        val base = snapshot(wholeSet(), mono = 50_000L)
+        val accessibility = base.items.getValue(WatchItemId.ACCESSIBILITY)
+        val snap = base.copy(
+            items = base.items + (WatchItemId.ACCESSIBILITY to
+                accessibility.copy(measuredMono = 10_000L))
+        )
         assertEquals(
             "GUARD 3/4 — ACCESSIBILITY STALE",
             guardLineFor(snap, 56_000L).text

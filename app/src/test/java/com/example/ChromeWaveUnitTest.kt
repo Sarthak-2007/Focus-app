@@ -49,7 +49,13 @@ class ChromeWaveUnitTest {
             for (stamped in listOf(false, true)) {
                 for (usage in UsageAccess.entries) {
                     for (protecting in listOf(false, true)) {
-                        val w = WatchStore.deriveWarrant(bound, stamped, usage, protecting)
+                        // Batch-10 cure: readMono passed explicitly —
+                        // the default reads SystemClock, whose stub
+                        // throws in a plain JVM unit test (this class
+                        // is not Robolectric). 0 = age-unknown, which
+                        // warrantAgeMs already treats as proving
+                        // nothing; the state table is unaffected.
+                        val w = WatchStore.deriveWarrant(bound, stamped, usage, protecting, readMono = 0L)
                         assertEquals(
                             "bound=$bound stamped=$stamped usage=$usage",
                             referenceWarrantState(bound, stamped, usage),

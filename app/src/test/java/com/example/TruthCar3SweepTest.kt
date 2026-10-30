@@ -80,8 +80,20 @@ class TruthCar3SweepTest {
         // The defaults are the SEEDED stored list, his to empty —
         // they enforce only when they are in the list passed in,
         // never by substitution upstream.
+        // Batch-10 fixture cure: this test originally probed a
+        // plain watch URL expecting a plain "youtube.com" default,
+        // but every lane's shipped defaultDomains carries only
+        // "youtube.com/shorts" — the deliberate narrowing (YouTube
+        // is a study source; Shorts is the trap). The doctrine is
+        // unchanged; the probe now exercises the actual default.
         assertEquals(
-            "youtube.com",
+            "youtube.com/shorts",
+            matchBlockedDomain(
+                "https://www.youtube.com/shorts/abc",
+                BlockedBrowserDomains.defaultDomains
+            )
+        )
+        assertNull(
             matchBlockedDomain(
                 "https://www.youtube.com/watch?v=abc",
                 BlockedBrowserDomains.defaultDomains
@@ -367,8 +379,15 @@ class TruthCar3SweepRoboTest {
             }
         }
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("ROUTINES: SET BY HAND ON SHIELD", substring = true)
-            .assertExists()
+        // Batch-10 lane-conflict resolution: this sweep's draft
+        // expected a corrected "ROUTINES: SET BY HAND ON SHIELD"
+        // line, but the Park lane's ruled plate cut (AUDIT-park
+        // §1.11/§4.9, recorded in ParkDrawer.PLATE_BODY) removed
+        // the ROUTINES line from the plate entirely — the surface
+        // owner's ruling stands, and with routines under
+        // Sarthak's rethink freeze no routines line is re-added
+        // at this merge. The UNA-05 truth claim — the plate never
+        // claims FIRED AS SET — is asserted in full below.
         composeRule.onNodeWithText("FIRED AS SET", substring = true).assertDoesNotExist()
     }
 
