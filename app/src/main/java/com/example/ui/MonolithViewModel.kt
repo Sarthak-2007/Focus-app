@@ -1,5 +1,6 @@
 package com.example.ui
 
+import android.util.Log
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
@@ -1217,16 +1218,25 @@ class MonolithViewModel(
             }
             val active = runCatching { repository.activeSessionSnapshot() }.getOrNull()
             if (active != null && armProving.phase.value == ArmPhase.Idle) {
+                // Truth (issue #76): this runCatching used to discard
+                // its Result — if recovery itself threw, nothing was
+                // logged, surfaced, or remembered, and the faulted
+                // session stayed unrecovered while the UI implied
+                // otherwise. Failures now speak.
                 runCatching {
                     sealTransition.recover(
                         active.id, active.startWallTimeMillis, System.currentTimeMillis()
                     )
+                }.onFailure {
+                    Log.e("MonolithVM", "Slice-E recovery failed for session ${active.id}", it)
                 }
             }
             // Draht: a faulted finish from a previous process
             // resumes its cadence from the row's own stamps.
             runCatching {
                 com.example.service.ReleaseRetryScheduler.runDueRetry(appContext)
+            }.onFailure {
+                Log.e("MonolithVM", "runDueRetry failed at process birth", it)
             }
         }
     }
@@ -1237,6 +1247,11 @@ class MonolithViewModel(
         viewModelScope.launch {
             runCatching {
                 com.example.service.ReleaseRetryScheduler.runDueRetry(appContext)
+            }.onFailure {
+                // Truth (issue #76): the Deck-open retry used to be a
+                // silent no-op when the retry itself threw — pressing
+                // it again reproduced the same invisible failure.
+                Log.e("MonolithVM", "runDueRetry failed on Deck-open retry", it)
             }
         }
     }
