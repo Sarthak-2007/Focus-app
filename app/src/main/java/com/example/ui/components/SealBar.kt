@@ -26,9 +26,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -38,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.theme.MonolithCurves
+import com.example.ui.theme.NightColorSurfaceSheet
 import com.example.ui.theme.TokenAlert
 
 // ============================================================================
@@ -56,9 +60,11 @@ import com.example.ui.theme.TokenAlert
 // block). No new state plumbing: [sealBarStateFor] is a pure
 // re-encoding of the strip's word into position + light.
 //
-// The bar keeps the strip's 53dp address in the pinned stack, so
-// the zone under the wheel does not change height by a pixel
-// across the seal (the pinned stack's standing Δy = 0 law).
+// The bar takes a 60dp address in the pinned stack (THE BOLT
+// §8.1: housing 53→60dp, FEILE's grid — see SealBarParams), and
+// the pinned stack's comment in TactileDeckScreen carries the
+// same figure; the zone under the wheel does not change height
+// by a pixel across the seal (the standing Δy = 0 law).
 //
 // The bar is NOT a control: the old strip's area had no tap action
 // (the tappable sentence lives in RefusalSentenceSlot directly
@@ -128,9 +134,10 @@ object SealBarParams {
     const val numeralsSizeSp: Float = 20f
 
     /** Travel (THE BOLT §7.1): the throw runs inside the existing
-     *  Throw sound's ≤85ms window — 50ms keyframed seat, then
-     *  stillness. The v0 260ms glide is retired. Verdict (lamp)
-     *  changes are never animated at all. */
+     *  Throw sound's ≤85ms window — a 50ms tween today; the
+     *  keyframed seat (0/24/62/94) is merge-pass, not yet landed.
+     *  The v0 260ms glide is retired. Verdict (lamp) changes are
+     *  never animated at all. */
     const val travelAnimMs: Int = 50
 
     /** ENDING SOON begins at this many seconds remaining (span
@@ -169,8 +176,9 @@ enum class SealBarState {
      *  lamp unlit. Unmistakable: nothing is shut, nothing is lit. */
     OFF,
 
-    /** Seal HALF-SET (plate at mid-travel), lamp unlit: the wire
-     *  has proven nothing either way (the strip's UNKNOWN). */
+    /** Seal CAUGHT (plate at ⅓ travel, never half — §3), lamp
+     *  unlit: the wire has proven nothing either way (the strip's
+     *  UNKNOWN). */
     UNPROVEN,
 
     /** Seal SHUT, lamp lit: blocking proven live, no session
@@ -188,10 +196,11 @@ enum class SealBarState {
      *  lamp refuses to claim the bind. */
     RUNNING_UNPROVEN,
 
-    /** Seal SHUT, pose unchanged (no back-off — pose is truth),
-     *  lamp in the alert tone inside a halo ring, alert stripe on
-     *  the plate's leading edge, numerals in alert ink. Driven by
-     *  remaining span time at/below the threshold. */
+    /** Seal SHUT, pose unchanged (no back-off — pose is truth).
+     *  The jewel steps DOWN to brass and carries no halo; the
+     *  alarm is the window inverting as one block (brass glass,
+     *  dark numerals). Driven by remaining span time at/below
+     *  the threshold. */
     ENDING_SOON
 }
 
@@ -288,7 +297,7 @@ fun SealBar(
     val lampColor = when (state) {
         SealBarState.BLOCKING, SealBarState.ENDING_SOON -> SealBarParams.jewelBrass
         SealBarState.RUNNING -> SealBarParams.jewelMagenta(night)
-        else -> scheme.background
+        else -> SealBarParams.windowGlass(night)
     }
     val plateFill = if (targetFraction >= SealBarParams.plateShutFraction) {
         inkControlFill()
@@ -320,19 +329,33 @@ fun SealBar(
             else "Session ending soon."
     }
 
+    val hairline = scheme.outlineVariant
     Row(
         modifier
             .fillMaxWidth()
             .height(SealBarParams.barHeight)
             .background(scheme.surfaceVariant)
+            .drawBehind {
+                // §1/§5: the housing is a band with 1dp hairlines
+                // at both edges, inside the 60dp.
+                val sw = 1.dp.toPx()
+                drawLine(hairline, Offset(0f, sw / 2), Offset(size.width, sw / 2), sw)
+                drawLine(hairline, Offset(0f, size.height - sw / 2), Offset(size.width, size.height - sw / 2), sw)
+            }
             .padding(horizontal = SealBarParams.barPaddingHorizontal)
-            .semantics { contentDescription = description }
+            .semantics(mergeDescendants = true) { contentDescription = description }
             .testTag("seal_bar"),
         verticalAlignment = Alignment.CenterVertically
     ) {
         BoxWithConstraints(Modifier.weight(1f)) {
             val travel = (maxWidth - SealBarParams.plateWidth).coerceAtLeast(0.dp)
             val thrown = targetFraction >= SealBarParams.plateShutFraction
+            // The pin may only drop once the bolt has ARRIVED
+            // (finisher pass): derived from the animated travel,
+            // never the target — a pin dropped on the target
+            // claims "seated and held" while the bolt is still
+            // in transit, and lifts while it is still seated.
+            val pinDropped = travelFraction >= 0.99f
             // The track: a recess slot the plate rides in.
             Box(
                 Modifier
@@ -351,7 +374,7 @@ fun SealBar(
             // interruptiveness is exposed area, never light.
             Box(
                 Modifier
-                    .size(width = SealBarParams.plateWidth, height = SealBarParams.trackHeight)
+                    .size(width = SealBarParams.plateWidth, height = SealBarParams.plateHeight)
                     .align(Alignment.CenterEnd)
                     .background(SealBarParams.warningOrange)
             )
@@ -392,10 +415,10 @@ fun SealBar(
             // geometry enforces the law, no state flag can fake it.
             Box(
                 Modifier
-                    .size(width = 4.dp, height = if (thrown) 12.dp else 7.dp)
+                    .size(width = 4.dp, height = if (pinDropped) 12.dp else 7.dp)
                     .align(Alignment.TopEnd)
                     .offset(x = (-(SealBarParams.plateWidth.value / 2).toInt()).dp)
-                    .background(if (thrown) plateFill else scheme.outline)
+                    .background(if (pinDropped) plateFill else scheme.outline)
             )
             // The bolt: grip ribs on its face. No stripe, no
             // back-off — pose is truth in every state.
@@ -406,7 +429,11 @@ fun SealBar(
                     .size(width = SealBarParams.plateWidth, height = SealBarParams.plateHeight)
                     .clip(RoundedCornerShape(SealBarParams.plateCorner))
                     .background(plateFill)
-                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(SealBarParams.plateCorner))
+                    .border(
+                        1.dp,
+                        if (night && lampLit) scheme.outline else scheme.outlineVariant,
+                        RoundedCornerShape(SealBarParams.plateCorner)
+                    )
             ) {
                 Row(
                     Modifier
@@ -419,7 +446,7 @@ fun SealBar(
                             Modifier
                                 .width(2.dp)
                                 .fillMaxHeight()
-                                .background(plateGripInk.copy(alpha = 0.55f))
+                                .background(plateGripInk.copy(alpha = if (night && thrown) 1f else 0.55f))
                         )
                         if (it < 2) Spacer(Modifier.width(3.dp))
                     }
@@ -449,7 +476,7 @@ fun SealBar(
                 Modifier
                     .size(SealBarParams.lampBezelDiameter)
                     .clip(CircleShape)
-                    .background(if (night) scheme.surfaceVariant else scheme.onSurface)
+                    .background(if (night) NightColorSurfaceSheet else scheme.onSurface)
                     .border(1.dp, scheme.outlineVariant, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
@@ -465,6 +492,8 @@ fun SealBar(
                 )
             }
         }
+
+        Spacer(Modifier.width(SealBarParams.numeralsGap))
 
         // The time window (THE BOLT §1/§4): glass in both modes,
         // Anonymous Pro Bold 20sp numerals and nothing else inside;
@@ -491,6 +520,7 @@ fun SealBar(
                 if (showNumerals) {
                     Text(
                         text = endsAtNumerals.orEmpty(),
+                        modifier = Modifier.clearAndSetSemantics {},
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = SealBarParams.numeralsSizeSp.sp,
@@ -503,9 +533,14 @@ fun SealBar(
                 }
             }
             Text(
-                text = if (showNumerals) "END" else "",
+                // Engraved once on the bezel (§4): an engraving
+                // does not vanish in OFF/BLOCKING — it is always
+                // "END", with LETTER's −0.8 tracking compensation.
+                text = "END",
+                modifier = Modifier.clearAndSetSemantics {},
                 fontFamily = AtkinsonHyperlegibleFamily,
                 fontSize = 9.sp,
+                letterSpacing = (-0.8).sp,
                 color = scheme.onSurfaceVariant
             )
         }
