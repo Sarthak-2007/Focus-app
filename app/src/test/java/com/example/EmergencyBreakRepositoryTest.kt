@@ -183,6 +183,56 @@ class EmergencyBreakRepositoryTest {
     }
 
     // -----------------------------------------------------------------
+    // Issue #82 tightening (STURM3-16) — the default argument of
+    // emergencyBreaksRemaining must resolve to the HONEST now (the
+    // week completeEmergencyBreak books against), never the raw
+    // wall clock: a no-argument caller reads this week's spend as
+    // spent, while an explicit instant a week later still reads a
+    // fresh token — explicit instants are honoured exactly.
+    // -----------------------------------------------------------------
+
+    @Test
+    fun emergencyBreaksRemaining_defaultArgumentReadsTheHonestWeek() = runBlocking {
+        val database = MonolithDatabase.getInstance(context)
+        val dao = database.monolithDao()
+        val repo = MonolithRepository(context, dao)
+        var sessionId: Int? = null
+        try {
+            // Deterministic reset (the issue #66 pattern, as in the
+            // timezone tests below): clear anything counting against
+            // this week before asserting on it.
+            val now = System.currentTimeMillis()
+            val anchor = MonolithWeek.weekAnchorMillis(now)
+            val nextAnchor = MonolithWeek.nextWeekAnchorMillis(now)
+            val tol = MonolithWeek.WEEK_ANCHOR_ZONE_TOLERANCE_MILLIS
+            database.openHelper.writableDatabase.execSQL(
+                "DELETE FROM emergency_break_spends WHERE " +
+                    "(weekAnchorMillis BETWEEN ${anchor - tol} AND ${anchor + tol}) " +
+                    "OR (spentAtWallMillis >= $anchor AND spentAtWallMillis < $nextAnchor)"
+            )
+            assertEquals(1, repo.emergencyBreaksRemaining())
+            assertEquals(1, repo.emergencyBreaksRemaining(Long.MIN_VALUE))
+
+            sessionId = insertActiveSession(dao, "Manual Focus")
+            assertEquals(BreakResult.Completed, repo.completeEmergencyBreak())
+
+            // No argument (and the explicit sentinel) read the honest
+            // week the spend booked against: the token is spent.
+            assertEquals(0, repo.emergencyBreaksRemaining())
+            assertEquals(0, repo.emergencyBreaksRemaining(Long.MIN_VALUE))
+            // An explicit instant is still honoured exactly: next
+            // week has a fresh token.
+            assertEquals(1, repo.emergencyBreaksRemaining(repo.honestNowMillis() + 7 * 24 * 3600_000L))
+        } finally {
+            if (sessionId != null) {
+                database.openHelper.writableDatabase.execSQL(
+                    "DELETE FROM emergency_break_spends WHERE sessionId = $sessionId"
+                )
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------
     // Issue #39 F1 — the timezone hole, end to end. A break spent
     // under one default zone must STILL count after the device zone
     // changes: remaining stays 0 and a second completion is refused.
