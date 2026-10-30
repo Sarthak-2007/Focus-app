@@ -10,6 +10,7 @@ import com.example.ui.AirlockInterceptState
 import com.example.ui.PeekWithheld
 import com.example.ui.components.AirlockInterceptOverlay
 import com.example.ui.theme.MyApplicationTheme
+import androidx.compose.foundation.layout.height
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import org.junit.Rule

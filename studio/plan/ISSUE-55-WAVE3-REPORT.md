@@ -246,6 +246,37 @@ re-trigger; the withheld line vanishes the same frame the offer replaces it
 with the existing detent via `selectDistractionReason`'s sound, so the tap
 feels mechanical, in keeping with the machine aesthetic.
 
+## What changes for the user (plain words — Sarthak's 04:58 flag rule)
+
+- **Modal/Back behaviour:** taps outside the Airlock and Emergency
+  Break cards no longer reach the app underneath. The Back button no
+  longer escapes the block — on the Airlock it does nothing; on the
+  Emergency Break screen it acts exactly like KEEP FOCUSING.
+- **Reason chips — a NEW tappable surface:** the Airlock now asks
+  "WHY DID YOU OPEN IT?" with four chips (Habit / Stuck / Tired /
+  Message). The card is taller because of them; the card scrolls so
+  nothing is ever clipped off a short screen. The chosen reason is
+  what gets recorded — before, every open was recorded as "Habit"
+  whether true or not.
+- **Transmute:** an early draft of this fix removed the dead
+  transmute wiring; that was **reversed** under the no-downgrade
+  rule. Final behaviour: transmute is WIRED — tapping the big
+  countdown number during the wait makes a pitch-rising click and
+  counts the tap. Nothing was removed; peek length (2 min) and
+  cooldown (20 min) are untouched.
+- **The 5s wall:** now exactly 5.0 seconds (previously 5 slow ticks
+  plus drift), and opening the same blocked app again restarts the
+  full 5 seconds instead of inheriting a finished countdown.
+- **Cooldown/peek:** when a peek cooldown ends while the Airlock is
+  open, the EMERGENCY PEEK button appears on the spot (previously
+  never, plus a nonsensical "AGAIN IN 0 MIN" line). The peek button
+  only appears when tapping it will actually work; a refused tap
+  now shows the real reason instead of silently doing nothing.
+- **Emergency Break text:** the hold instructions print the real
+  required seconds (still 60) instead of a hardcoded number.
+- RETURN TO FOCUS still works from the first second — the wall only
+  ever gated the peek (unchanged, recorded per fresh-eyes).
+
 ## Remaining blockers
 
 None for the five findings. Merge note (not a blocker): compose over
