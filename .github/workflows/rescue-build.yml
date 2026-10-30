@@ -73,6 +73,17 @@ jobs:
         id: tests
         run: ./gradlew --console=plain testDebugUnitTest
 
+      # TEMP DIAGNOSTIC (issue-82 lane only — reverted before merge):
+      # publish the JUnit XML so failing test names are readable
+      # without the run log.
+      - name: Upload unit-test results (temp diagnostic)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results-82
+          path: app/build/test-results/testDebugUnitTest
+          retention-days: 3
+
       # Wave-2 (Feel/Finisher pass): the run page must tell the truth
       # in plain words without anyone opening a log. This APK is
       # uploaded BEFORE the test step, so while tests are red the
