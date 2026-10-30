@@ -236,11 +236,40 @@ internal fun refusalSentenceFor(warrant: Warrant?, nowMono: Long): RefusalSenten
  * below since issue #98; the annulment's past-tense sentence is
  * the controller's own armSentence, not this function's).
  */
-internal fun jamSentenceFor(phase: ArmPhase): RefusalSentence? {
+internal fun jamSentenceFor(phase: ArmPhase): RefusalSentence? =
+    jamSentenceFor(phase, nowMono = null)
+
+/**
+ * Issue #126 F4 (ported onto the MonolithComponentLogic extraction
+ * at the main merge): the jam sentence judges the LIVE pending set,
+ * carries the machine's verb, and counts down to the annulment. The
+ * frozen form read phase.jamSet — the set sampled at the L+500
+ * deadline — so a link that answered during the retry window kept
+ * being accused for the attempt's remaining life. The phase's links
+ * map is updated by every mark (the controller's applyMark), so the
+ * first STILL-pending link is the truthful name; jamSet survives
+ * only as the fallback for a phase whose links carry no pending
+ * mark. With [nowMono] the sentence also prints the retry verb and
+ * the seconds left before the L+1500 annulment
+ * (ArmProvingController.ANNUL_MS) — the deadline the old sentence
+ * hid until it fired. The no-clock form keeps the original wording
+ * for pure callers and tests.
+ */
+internal fun jamSentenceFor(phase: ArmPhase, nowMono: Long?): RefusalSentence? {
     if (phase !is ArmPhase.Jammed) return null
-    val first = phase.jamSet.minByOrNull { it.ordinal } ?: return null
+    val pending = phase.links.filterValues { it is com.example.ui.LinkMark.Pending }.keys
+    val first = (pending.ifEmpty { phase.jamSet }).minByOrNull { it.ordinal } ?: return null
+    if (nowMono == null) {
+        return RefusalSentence(
+            text = "${first.displayName} DIDN'T ANSWER — STILL PROVING.",
+            action = null
+        )
+    }
+    val remainingMs = (phase.latchMono + com.example.ui.ArmProvingController.ANNUL_MS - nowMono)
+        .coerceAtLeast(0L)
+    val secs = ((remainingMs + 999L) / 1000L).coerceAtLeast(1L)
     return RefusalSentence(
-        text = "${first.displayName} DIDN'T ANSWER — STILL PROVING.",
+        text = "${first.displayName} STILL HASN'T ANSWERED — RETRYING · ANNULS IN ${secs}S.",
         action = null
     )
 }

@@ -14,7 +14,6 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.view.Choreographer
 import android.view.MotionEvent
-import android.view.VelocityTracker
 import android.view.View
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -384,6 +383,66 @@ abstract class BlockitCanvasView(context: Context) : View(context) {
 }
 
 /**
+ * Issue #123 (dial-precision): the wheel's pure angle/value arithmetic,
+ * extracted so the precision law is unit-testable without a View.
+ *
+ * The scale is 1.8 degrees per minute from the strait's far shore
+ * (126 degrees = 10 minutes) to 432 degrees (= 180). FLOW seats at
+ * 108, across the strait whose centreline is 117.
+ *
+ * PRECISION LAW: every whole minute 10..180 is a real stop — 47 is
+ * as lawful as 45. The printed 5-minute ticks remain the scale's
+ * majors/minors (with 1-minute micro-ticks between them); they are
+ * print, not the limit of travel.
+ *
+ * HYSTERESIS LAW: under the finger a value changes only when the
+ * angle has crossed the midpoint toward the neighbour by
+ * [HYSTERESIS_MIN] minutes past it — a finger trembling on a
+ * boundary holds its value instead of toggling it (and re-firing
+ * its tick) on every crossing. Free motion and seating use the
+ * plain nearest-minute read: where the wheel lands is exact.
+ *
+ * DETENT PITCH LAW: ONE ladder speaks for a detent, here and only
+ * here — 340Hz at 5 minutes rising linearly to 880Hz at 180. Any
+ * other caller that reports a dial value must stay silent, or the
+ * user hears two pitches for one stop and the ladder lies.
+ */
+internal object DialPrecision {
+    const val FLOW_ANGLE = 108f
+    const val STRAIT_CENTRE = 117f
+    const val SCALE_ORIGIN = 126f
+    const val DEG_PER_MIN = 1.8f
+    const val HYSTERESIS_MIN = 0.22f
+
+    fun angleForMinutes(mins: Int): Float =
+        if (mins < 10) FLOW_ANGLE else SCALE_ORIGIN + (mins - 10) * DEG_PER_MIN
+
+    /** Plain nearest-minute read of an angle (FLOW north of the strait). */
+    fun valueForAngle(angle: Float): Int {
+        if (angle < STRAIT_CENTRE) return 5
+        return (10 + ((angle - SCALE_ORIGIN) / DEG_PER_MIN).roundToInt()).coerceIn(10, 180)
+    }
+
+    /** Drag read with boundary hysteresis around [current]. */
+    fun valueForAngle(angle: Float, current: Int): Int {
+        if (angle < STRAIT_CENTRE) return 5
+        if (current < 10) return valueForAngle(angle)
+        val raw = 10f + (angle - SCALE_ORIGIN) / DEG_PER_MIN
+        val nearest = raw.roundToInt().coerceIn(10, 180)
+        if (nearest == current) return current
+        return if (nearest > current) {
+            if (raw >= current + 0.5f + HYSTERESIS_MIN) (raw - HYSTERESIS_MIN).roundToInt().coerceIn(10, 180) else current
+        } else {
+            if (raw <= current - 0.5f - HYSTERESIS_MIN) (raw + HYSTERESIS_MIN).roundToInt().coerceIn(10, 180) else current
+        }
+    }
+
+    /** The single detent pitch ladder (see law above). */
+    fun detentPitchHz(minutes: Int): Float =
+        340f + ((minutes - 5).coerceIn(0, 175) / 175f) * 540f
+}
+
+/**
  * ============================================================================
  * 2. ROTARY WHEEL VIEW (DEVELOPER-GUIDE.pdf §4.1 & §4.2 #1 RotaryWheel.java)
  * ============================================================================
@@ -449,6 +508,11 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         }
 
     var onMinutesChanged: ((Int) -> Unit)? = null
+    /** Issue #123: the seat the current physics run will land on,
+     *  reported the moment the spring takes the wheel — the host
+     *  previews it ("LANDS 47") so where you let go is never a
+     *  surprise. Null when no seat is committed (coasting free). */
+    var onSeatTargetChanged: ((Int?) -> Unit)? = null
     var onCycleBlocksCount: (() -> Unit)? = null
     var onSetBlocksCount: ((Int) -> Unit)? = null
 
@@ -514,16 +578,15 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
     }
 
     private var wheelAngleDeg: Float = minutesToAngle(50)
-    private var lastTouchAngleDeg: Float = 0f
+    private var lastTouchAngleDeg: Float? = null // issue #117: last raw touch angle for relative-delta turning
     private var isDragging: Boolean = false
-    private var velocityTracker: VelocityTracker? = null
 
     // ------------------------------------------------------------------
     // BEYOND W2 frame + physics (Vega's Strait and Loaded Wheel; Dario's
     // one (theta, omega) integrator). The wheel's angle is UNWRAPPED:
     // FLOW seats at 108, the strait runs 108..126 (FLOW's landing step
     // 108..117, the smooth channel 117..126, centreline 117), numeric
-    // stops 10..180 sit at 9 degrees per 5 minutes from 126 to 432
+    // stops 10..180 sit at 1.8 degrees per minute from 126 to 432
     // (=72 on the canvas), and the 6-o'clock dead sector is the 36
     // degrees between 72 and 108. Total travel FLOW->180 is 324.
     // ------------------------------------------------------------------
@@ -533,24 +596,26 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
     private var physLastNanos: Long = 0L
     private var physStartNanos: Long = 0L
     private var physTravelDeg: Float = 0f // travel this run, for the seat knock's honesty
+    private var lastSeatPreview: Int? = null // last seat preview reported to the host
     private val choreographer: Choreographer = Choreographer.getInstance()
     private val physCallback = Choreographer.FrameCallback { nanos -> stepPhysics(nanos) }
 
     private fun minutesToAngle(mins: Int): Float {
         // ONE angle frame: FLOW is a seat, not the bottom of a ramp -
         // below 10 the value is the mode, and the mode sits across the
-        // strait at 108. Numeric stops keep the filed scale, 9 deg
-        // per 5 min, from the strait's far shore.
-        return if (mins < 10) 108f else 126f + (mins - 10) * 1.8f
+        // strait at 108. Numeric stops keep the filed scale, 1.8 deg
+        // per minute, from the strait's far shore. Issue #123: the
+        // scale is per-minute — a task-seeded 47 sits at its own true
+        // angle and reads back 47, never a rounded neighbour.
+        return DialPrecision.angleForMinutes(mins)
     }
 
     private fun valueForAngle(angle: Float): Int {
         // The strait's centreline is the value boundary: north of it
         // the wheel reads FLOW, south of it the numeric scale. Inside
         // the channel there are no values at all - the nearest shore
-        // speaks.
-        if (angle < 117f) return 5
-        return (10 + ((angle - 126f) / 9f).roundToInt() * 5).coerceIn(10, 180)
+        // speaks. Issue #123: nearest WHOLE minute, not nearest 5.
+        return DialPrecision.valueForAngle(angle)
     }
 
     /** Relative inertia of the loaded wheel: the block count has mass.
@@ -762,12 +827,29 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
             canvas.drawArc(boundsRect, 108f, 324f * sweepNormalized, false, paintStroke)
         }
 
-        // 3. True detent scale (Round 0 fix, W2 frame): ticks exist ONLY
-        // where the wheel can actually stop — every 5 minutes from 10
-        // to 180, 35 stops at 9 degrees each; majors every 30 min, mids
-        // every 15. Inside the strait there is no tick at all: the
+        // 3. True detent scale (Round 0 fix, W2 frame; issue #123
+        // precision pass): ticks exist ONLY where the wheel can
+        // actually stop. The wheel now stops on EVERY whole minute,
+        // so the print gains 1-minute micro-ticks — short, faint,
+        // engraved — between the 5-minute stops; the 5-minute ticks
+        // below keep their filed voices (majors every 30 min, mids
+        // every 15). Inside the strait there is no tick at all: the
         // break in the scale is a break in the print too. FLOW prints
         // as a word in the hero, never as a tick or a number here.
+        paintStroke.strokeWidth = dp(0.7f)
+        paintStroke.color = (0x59 shl 24) or (tokTextSecondary() and 0x00FFFFFF)
+        for (m in 10..180) {
+            if (m % 5 == 0) continue
+            val deg = minutesToAngle(m)
+            val rad = deg * (PI.toFloat() / 180f)
+            canvas.drawLine(
+                cx + cos(rad) * (outerR - dp(13.5f)),
+                cy + sin(rad) * (outerR - dp(13.5f)),
+                cx + cos(rad) * (outerR - dp(11f)),
+                cy + sin(rad) * (outerR - dp(11f)),
+                paintStroke
+            )
+        }
         for (m in 10..180 step 5) {
             val deg = minutesToAngle(m)
             val rad = deg * (PI.toFloat() / 180f)
@@ -814,7 +896,10 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         }
 
         // Rim numerals at the majors only (Anonymous Pro 15): the scale
-        // states the block length; the hero states the total.
+        // states the block length; the hero states the total — and
+        // since issue #123 the Deck ALSO prints both, in words, under
+        // the wheel ("47 MIN × 2 BLOCKS + BREAK = 1H 44M TOTAL"), so
+        // the split read is stated, never left to inference.
         paintMono.color = tokTextSecondary()
         paintMono.textSize = sp(15f)
         paintMono.textAlign = Paint.Align.CENTER
@@ -935,8 +1020,11 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
             canvas.restore()
         }
 
-        // Hub = TETRAD CLOSURE (Vega, BEYOND W2): the count lives only
-        // as hub geometry - no numeral, no word. Eight wells (O10dp) on
+        // Hub = TETRAD CLOSURE (Vega, BEYOND W2): the hub itself stays
+        // pure geometry (the ritual object) — but since issue #123 the
+        // count ALSO lives as a printed numeral + word under the wheel
+        // on the Deck, because geometry alone let a stray hub tap add
+        // ~60 silent minutes. Eight wells (O10dp) on
         // the R40 ring in two tetrads: wells 1-4 on the upper arc
         // centred at 12 o'clock, wells 5-8 on the lower. At count 4
         // (and again at 8) the filled wells join into a solid bar on
@@ -1069,9 +1157,13 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
                     return true
                 }
                 isDragging = true
-                velocityTracker?.recycle()
-                velocityTracker = VelocityTracker.obtain().apply { addMovement(event) }
-                updateMinutesFromTouch(dx, dy)
+                // Issue #117 (one-hand-commute): the dial is
+                // RELATIVE now. DOWN only records where the finger
+                // landed — it never rewrites the value. The old
+                // absolute call teleported the wheel to the touched
+                // point's atan2 angle on first contact, so one
+                // jolted touch on a bus rewrote the session length.
+                lastTouchAngleDeg = rawCanvasDeg(dx, dy)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -1088,8 +1180,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
                     }
                 }
                 if (isDragging) {
-                    velocityTracker?.addMovement(event)
-                    updateMinutesFromTouch(dx, dy)
+                    updateMinutesFromDelta(dx, dy)
                 }
                 return true
             }
@@ -1124,25 +1215,17 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
                 }
                 if (isDragging) {
                     isDragging = false
-                    // Release hands the wheel to the integrator (Dario's
-                    // one (theta, omega) state): whatever angular
-                    // velocity the finger leaves in the wheel is the
-                    // coast's opening condition. The old projection
-                    // (omega x 0.18s, then a canned animator) is gone -
-                    // a wheel that is thrown now travels, pays the
-                    // strait's toll if it crosses, and is caught by the
-                    // wells or falls back from the gate, in the open.
-                    var omegaDeg = 0f
-                    val vt = velocityTracker
-                    if (vt != null && event.actionMasked == MotionEvent.ACTION_UP) {
-                        vt.computeCurrentVelocity(1000)
-                        val r2 = (dx * dx + dy * dy).coerceAtLeast(1f)
-                        omegaDeg = (((dx * vt.yVelocity - dy * vt.xVelocity) / r2) * (180.0 / PI).toFloat())
-                            .coerceIn(-1200f, 1200f)
-                    }
-                    velocityTracker?.recycle()
-                    velocityTracker = null
-                    startPhysics(omegaDeg)
+                    lastTouchAngleDeg = null
+                    // Issue #117: NO FLING. The old release read the
+                    // VelocityTracker omega (up to ±1200 deg/s) and
+                    // coasted the wheel for up to 1,400ms — a bus
+                    // jolt at release was indistinguishable from a
+                    // deliberate throw and rewrote the session length
+                    // after the finger left. Release now hands the
+                    // wheel to the well spring at ZERO velocity: it
+                    // seats at the nearest stop to where the finger
+                    // actually left it, and nowhere else.
+                    startPhysics(0f)
                 }
                 parent?.requestDisallowInterceptTouchEvent(false)
                 return true
@@ -1151,23 +1234,32 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         return super.onTouchEvent(event)
     }
 
-    private fun updateMinutesFromTouch(dx: Float, dy: Float) {
+    /** The touched point's raw canvas angle, 0..360. */
+    private fun rawCanvasDeg(dx: Float, dy: Float): Float {
         var deg = (atan2(dy, dx) * (180.0 / PI)).toFloat()
         if (deg < 0f) deg += 360f
-        // Unwrap into the travel frame: canvas 72..360 stays as is,
-        // canvas 0..72 wraps to 360..432, and touches inside the
-        // 36-degree dead sector (72..108 at 6 o'clock) clamp to the
-        // nearer shore - the sector's upper half belongs to the 180
-        // end, its lower half to FLOW.
-        val unwrapped = when {
-            deg < 72f -> deg + 360f
-            deg < 90f -> 432f
-            deg < 108f -> 108f
-            else -> deg
-        }
-        // Under the finger the wheel is 1:1 at every load - mass
-        // never fakes position; it speaks only in free motion.
-        wheelAngleDeg = unwrapped.coerceIn(108f, 432f)
+        return deg
+    }
+
+    /**
+     * Issue #117: relative-delta turning. The wheel moves by the
+     * finger's angular DELTA since the last frame — never to the
+     * finger's absolute angle — so where a jolted thumb first lands
+     * (or lurches to) cannot teleport the value; only actual turning
+     * motion turns it. The signed delta is normalised to [-180, 180]
+     * so the 0/360 wrap costs nothing, and the travel clamp is the
+     * same 108..432 frame as before: a delta that would push past
+     * either end simply lands on the end, exactly as the absolute
+     * wheel did. Under the finger the wheel stays 1:1 at every load.
+     */
+    private fun updateMinutesFromDelta(dx: Float, dy: Float) {
+        val raw = rawCanvasDeg(dx, dy)
+        val last = lastTouchAngleDeg
+        lastTouchAngleDeg = raw
+        if (last == null) return
+        val delta = ((raw - last + 540f) % 360f) - 180f
+        if (delta == 0f) return
+        wheelAngleDeg = (wheelAngleDeg + delta).coerceIn(108f, 432f)
         applyValueFromAngle(fromDrag = true)
         invalidate()
     }
@@ -1182,7 +1274,16 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
      *  gate has landed nowhere, and the seat knock at the spring's
      *  end is the coast's only report of arrival. */
     private fun applyValueFromAngle(fromDrag: Boolean) {
-        val newValue = valueForAngle(wheelAngleDeg)
+        // Issue #123: under the finger the read carries boundary
+        // hysteresis (DialPrecision) — trembling on a midpoint holds
+        // the value instead of toggling it and re-firing its tick on
+        // every crossing. In free motion the read is plain, so the
+        // coast reports the exact minute it passes.
+        val newValue = if (fromDrag) {
+            DialPrecision.valueForAngle(wheelAngleDeg, minutesValue)
+        } else {
+            valueForAngle(wheelAngleDeg)
+        }
         if (newValue == minutesValue) return
         val oldValue = minutesValue
         minutesValue = newValue
@@ -1192,7 +1293,14 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
             oldValue >= 10 && newValue < 10 ->
                 if (fromDrag) fireWeightedKnock(14, 0.8f, 300f) else fireFeel(1L, 340f)
             else -> {
-                val freq = 340f + ((newValue - 5) / 175f) * 540f
+                // ONE sound per detent, on the ONE ladder
+                // (DialPrecision.detentPitchHz): the ViewModel's
+                // setDialMinutes no longer sounds a second detent at
+                // an unrelated pitch for wheel-originated changes
+                // (issue #123, finding 4). The sound IS paired with
+                // a real haptic — playRotaryDetent/playMechanicalLatch
+                // each fire their calibrated waveform in the engine.
+                val freq = DialPrecision.detentPitchHz(newValue)
                 fireFeel(if (newValue % 15 == 0) 4L else 1L, freq)
             }
         }
@@ -1208,6 +1316,18 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         }
         physSpringTarget = null
         physOmega = 0f
+        reportSeatPreview(null)
+    }
+
+    /** Issue #123: report the committed seat to the host, once per
+     *  change — the Deck prints it under the wheel while the wheel
+     *  travels, so the landing is known before it happens. */
+    private fun reportSeatPreview(targetAngle: Float?) {
+        val value = targetAngle?.let { valueForAngle(it) }
+        if (value != lastSeatPreview) {
+            lastSeatPreview = value
+            onSeatTargetChanged?.invoke(value)
+        }
     }
 
     /** Hands the wheel to the integrator at release. A slow release
@@ -1228,6 +1348,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         ) {
             physSpringTarget = target
             physOmega = releaseOmega
+            reportSeatPreview(target)
         } else {
             physSpringTarget = null
             physOmega = releaseOmega.coerceIn(-1200f, 1200f)
@@ -1243,13 +1364,18 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
         val springTarget = physSpringTarget
         if (springTarget != null) {
             // The well spring. Written per unit mass - stiffness and
-            // damping both scale with the load - so zeta holds 0.38
-            // (exactly two overshoots) and the seat lands inside
-            // 520ms at every count. FLOW's well is the deeper one:
-            // the filed 260 vs 210 survives as the ratio of rates.
+            // damping both scale with the load. Issue #123: zeta
+            // rises 0.38 -> 0.72 — the old spring overshot TWICE past
+            // the seat and re-seated the value elsewhere on every
+            // fumbled release, so where you let go was not where you
+            // landed. At 0.72 the wheel keeps ONE soft, living
+            // overshoot (the analog settle Sarthak's ritual runs on)
+            // and then seats, inside ~520ms at every count. FLOW's
+            // well is the deeper one: the filed 260 vs 210 survives
+            // as the ratio of rates.
             val omega0 = if (springTarget == 108f) 23.5f else 21f
             val accel = omega0 * omega0 * (springTarget - wheelAngleDeg) -
-                2f * 0.38f * omega0 * physOmega
+                2f * 0.72f * omega0 * physOmega
             physOmega += accel * dt
             wheelAngleDeg += physOmega * dt
             physTravelDeg += abs(wheelAngleDeg - prevAngle)
@@ -1288,6 +1414,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
             if ((prevAngle - 117f) * (wheelAngleDeg - 117f) < 0f) {
                 if (abs(physOmega) < 180f) {
                     physSpringTarget = if (prevAngle < 117f) 108f else 126f
+                    reportSeatPreview(physSpringTarget)
                 } else {
                     physOmega -= sign(physOmega) * 90f
                     fireWeightedKnock(10, 0.5f, 280f)
@@ -1306,6 +1433,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
                     frameNanos - physStartNanos > 1_400_000_000L
                 ) {
                     physSpringTarget = nearest
+                    reportSeatPreview(nearest)
                 }
             }
         }
@@ -1444,18 +1572,18 @@ internal object SlideGestureMath {
  *   ζ=0.40); a hard-stop clamp at x ≥ 1.00 in a ≤5ms substep IS
  *   onLatch; the 14ms @ 0.85 latch knock fires by travel predicate
  *   at 0.97, in-step, before the latch.
- * - The tap is a first-class order (Rhea): hit-tested on the cap
- *   (drawn rect inflated 8dp in x, full track height in y); a press
- *   ≥90ms released on a live wire runs the driven mesh (140ms bezier
- *   to 0.92, exit velocity exactly 0) + the shared seat spring; a
- *   second touch during the mesh or the seat (any time before the
- *   latch frame) aborts it on the same integrator;
- *   an aborted mesh/seat has dispatched nothing, provably (enforcement
- *   dispatches only at the latch; the verdict is a read-only value).
+ * - A tap is NOT an order (issue #117, superseding Rhea's tap law):
+ *   hit-tested on the cap (drawn rect inflated 8dp in x, full track
+ *   height in y), but a press of ANY duration released without travel
+ *   dispatches nothing — a ≥90ms pocket/bag press physically cannot
+ *   seal a session. The ONLY commit is the cap dragged under contact
+ *   to the catch (position, never pointer-up/velocity/fling). A tap
+ *   on a dead wire earns the refusal sequence; on a live wire it is
+ *   answered like a brush: 1dp sink, one dull knock, zero travel.
  *   A press <90ms is a brush: 1dp sink, one dull knock, zero travel.
  * - Print (Aldo): the badge is DEAD (the hero owns the total). The cap
  *   words print on the track face in the shipped label's home, at
- *   plate: SLIDE OR TAP TO START at rest and frozen through every
+ *   plate: SLIDE TO START at rest and frozen through every
  *   drag state; TAP AGAIN TO UNDO through the whole pre-latch travel
  *   (mesh + seat — issue #98; it printed only inside the 140ms mesh
  *   before, a window no human could use).
@@ -1554,6 +1682,9 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
     private var retreatTouched: Boolean = false
 
     private var latchKnockFired: Boolean = false
+
+    // Issue #126 F3: the seated cap's refusal-knock throttle.
+    private var lastSeatedKnockMs: Long = 0L
 
     // The commutator floor (Vega, review V-1): the displayed value
     // at which this SEAT run began — the catch crossing for a drag,
@@ -1810,7 +1941,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         }
 
         // 2. The cap words, on the track face at plate (Aldo/F16): a
-        // compile-time constant per machine state — SLIDE OR TAP TO
+        // compile-time constant per machine state — SLIDE TO
         // START at rest and frozen through every drag state; TAP AGAIN
         // TO UNDO through the whole pre-latch travel (MESH and SEAT).
         // Issue #98: the undo words once printed only inside the
@@ -1890,6 +2021,24 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                 // where the grace abort owns the escape.
                 if (mode == Mode.MESH || mode == Mode.SEAT) {
                     startAbortReturn()
+                    return true
+                }
+                // Issue #126 F3: a DOWN on the SEATED cap is a
+                // re-slide against an attempt already in flight
+                // (the proving wait — the sealed ghost carries
+                // sealedGate and never reaches here). It still
+                // dispatches nothing, but it is no longer swallowed
+                // in silence: one dull knock in the brush's
+                // vocabulary (the sound engine's own gate decides
+                // audibility) says the attempt exists and this
+                // touch changed nothing. Throttled, so hammering
+                // the cap cannot machine-gun the knock.
+                if (mode == Mode.SEATED) {
+                    val nowMs = System.currentTimeMillis()
+                    if (nowMs - lastSeatedKnockMs >= 250L) {
+                        lastSeatedKnockMs = nowMs
+                        fireWeightedKnock(10, 0.55f, 220f)
+                    }
                     return true
                 }
                 // A DOWN inside a running machine or a live drag is not
@@ -2125,8 +2274,18 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                 postDelayed({ invalidate() }, 150L)
                 return
             }
-            // A classified tap: the wire at UP owns the outcome (Joss:
-            // the tap path's F0 is the UP frame).
+            // Issue #117 (one-hand-commute, CRITICAL): a tap is NOT
+            // an order any more. The old tap path ran the driven mesh
+            // to 0.92 on pointer-up alone, so a ≥90ms pocket/bag press
+            // on the cap sealed a session the user never chose.
+            // Completion is now by cap POSITION only: the cap must be
+            // dragged under contact to the catch (SlideGestureMath
+            // .commits in applyDragPosition) — never by pointer-up
+            // inference, velocity, or fling. A classified tap on a
+            // dead wire still earns the full refusal (Joss J-3, as
+            // the brush branch above); on a live wire it is a
+            // non-order contact, answered exactly like a brush:
+            // 1dp sink, one dull knock, zero travel, nothing seated.
             val upRead = readWarrant()
             attemptWarrant = upRead
             if (upRead == WarrantState.OFF) {
@@ -2135,17 +2294,12 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                 startRefusal(knockFirst = true)
                 return
             }
-            // Rosa's catch-pin governs taps too (review F3): on an
-            // UNPROVEN wire the mesh drives only to the catch, and
-            // the refusal runs FROM the catch — travel past 0.84 on
-            // an unproven wire is the breach, whatever the entry.
-            startMesh(
-                target = if (upRead == WarrantState.UNPROVEN) {
-                    SlideGestureMath.CATCH
-                } else {
-                    0.92f
-                }
-            )
+            sinkUntilMs = System.currentTimeMillis() + 140L
+            fireWeightedKnock(10, 0.55f, 220f)
+            mode = Mode.REST
+            onPressEnd?.invoke()
+            invalidate()
+            postDelayed({ invalidate() }, 150L)
             return
         }
 
@@ -2449,7 +2603,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         // Aldo: the cap words are compile-time constants (Teo: no
         // state input at all). The badge that once printed the block
         // length here is dead — the hero owns the total.
-        private const val WORDS_START = "SLIDE OR TAP TO START"
+        private const val WORDS_START = "SLIDE TO START"
         private const val WORDS_UNDO = "TAP AGAIN TO UNDO"
 
         // The latch knock's pitch (Cato §1.3, via Vega review V-2):
