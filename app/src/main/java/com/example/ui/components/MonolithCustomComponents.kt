@@ -1,4 +1,6 @@
 package com.example.ui.components
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -300,7 +302,7 @@ fun MonolithPullDownHeader(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "MONOLITH",
+                text = stringResource(R.string.brand_word),
                 fontFamily = AnonymousProFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 10.sp,
@@ -596,7 +598,7 @@ fun RefusalSentenceSlot(
         val current = displayed
         if (current != null) {
             Text(
-                text = current.text,
+                text = stringResource(current.textRes, *current.args.toTypedArray()),
                 style = StripStateWordStyle,
                 color = tones.glyphInk.copy(alpha = alpha),
                 modifier = Modifier

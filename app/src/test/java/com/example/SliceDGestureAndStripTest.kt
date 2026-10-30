@@ -177,8 +177,8 @@ class StripDerivationsTest {
     fun causeTablePicksOneSentenceByCausalPriority() {
         // A11y death outranks everything.
         assertEquals(
-            "BLOCKING IS OFF — TAP TO FIX",
-            refusalSentenceFor(warrant(WarrantState.OFF, bound = false, stamped = false, usage = UsageAccess.DENIED))?.text
+            R.string.sentence_blocking_off,
+            refusalSentenceFor(warrant(WarrantState.OFF, bound = false, stamped = false, usage = UsageAccess.DENIED))?.textRes
         )
         // Bound but unstamped: can't check.
         assertEquals(
@@ -187,18 +187,18 @@ class StripDerivationsTest {
         )
         // Usage positively denied names its own pane.
         val usageSentence = refusalSentenceFor(warrant(WarrantState.OFF, usage = UsageAccess.DENIED))
-        assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", usageSentence?.text)
+        assertEquals(R.string.sentence_usage_off, usageSentence?.textRes)
         assertEquals(RefusalAction.FIX_USAGE, usageSentence?.action)
         // Usage never granted (issue #6 C3): the sentence names
         // the Usage pane — the door its tap has always opened.
         val unsetSentence = refusalSentenceFor(warrant(WarrantState.UNPROVEN, usage = UsageAccess.UNSET))
-        assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", unsetSentence?.text)
+        assertEquals(R.string.sentence_usage_off, unsetSentence?.textRes)
         assertEquals(RefusalAction.FIX_USAGE, unsetSentence?.action)
         // UNSET + unstamped + UNPROVEN (the C3 lie's other door): the
         // RETRY row must not claim this warrant — its tap opens the
         // Usage pane, so the Usage sentence is the only honest print.
         val unsetUnstamped = refusalSentenceFor(warrant(WarrantState.UNPROVEN, stamped = false, usage = UsageAccess.UNSET))
-        assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", unsetUnstamped?.text)
+        assertEquals(R.string.sentence_usage_off, unsetUnstamped?.textRes)
         assertEquals(RefusalAction.FIX_USAGE, unsetUnstamped?.action)
         // Healthy wire: the slot stands empty.
         assertNull(refusalSentenceFor(warrant(WarrantState.LIVE)))

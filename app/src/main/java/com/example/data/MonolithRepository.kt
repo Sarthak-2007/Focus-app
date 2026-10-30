@@ -997,16 +997,14 @@ class MonolithRepository(
                     dao.deleteTaskById(task.id)
                 }
             }
-            val allSessions = dao.getSessionHistorySnapshot()
-            val seenSessionKeys = mutableSetOf<String>()
-            for (sess in allSessions.sortedBy { it.id }) {
-                if (!sess.isActive) {
-                    val key = "${sess.intention}|${sess.targetDurationSeconds}|${sess.completedTasksSummary}"
-                    if (!seenSessionKeys.add(key)) {
-                        dao.deleteSessionById(sess.id)
-                    }
-                }
-            }
+            // Audit R6 #341 F04: the session dedup pass that used to
+            // live here is DELETED. Sessions are events, not catalogue
+            // rows: two sessions sharing intention + duration + task
+            // summary are two sessions (the normal shape of a daily
+            // practice), and keying deletion on user-visible content
+            // silently collapsed a history of daily sessions to one
+            // row on every cold start. No pass may delete a session
+            // for resembling another.
         }
         drainDayWordsLocked()
         }
@@ -2730,6 +2728,23 @@ class MonolithRepository(
                 dao.getAllSitesSnapshot().size,
                 dao.getGuardSettingsSnapshot()?.browserBlockerEnabled ?: true
             )
+            // Audit R6 #341 F30: the predecessor is CLOSED, not just
+            // flagged off. Before this, deactivateAllSessions() left
+            // the previous active row with outcome='' and
+            // endWallMillis=0 forever — no path could ever classify
+            // it, earn it a receipt, or count it in history. Stamp
+            // its terminal verdict (SUPERSEDED) and true end in the
+            // same transaction that births its successor.
+            val predecessor = dao.getActiveSessionSnapshot()
+            if (predecessor != null && predecessor.isActive) {
+                dao.updateSession(
+                    predecessor.copy(
+                        isActive = false,
+                        outcome = SessionOutcome.SUPERSEDED,
+                        endWallMillis = System.currentTimeMillis()
+                    )
+                )
+            }
             dao.deactivateAllSessions()
             val id = dao.insertSession(
                 session.copy(
@@ -4619,7 +4634,13 @@ class MonolithRepository(
                 set(Calendar.MILLISECOND, 0)
             }
             val startOfDay = cal.timeInMillis
-            val endOfDay = startOfDay + 86_400_000L
+            // Audit R6 #341 F66: the bucket end is the NEXT LOCAL
+            // MIDNIGHT, never startOfDay + 86_400_000 — on the 23h
+            // spring-forward day the fixed length double-counted the
+            // first hour of the next day, and on the 25h fall-back
+            // day it dropped 23:00-24:00 sessions from every bucket.
+            val endCal = (cal.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
+            val endOfDay = endCal.timeInMillis
             val daySessions = sessions.filter { it.startWallTimeMillis in startOfDay until endOfDay }
             val totalSecs = daySessions.sumOf { it.elapsedSeconds }
             val totalMins = totalSecs / 60
