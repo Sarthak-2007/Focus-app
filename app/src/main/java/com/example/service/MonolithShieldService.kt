@@ -447,6 +447,9 @@ class MonolithShieldService : Service() {
                 }
                 wasInSafeBreak = updated.isInSafeBreak
 
+                // Issue #274: every live iteration marks the mirror
+                // active; the countdown branch below adds the end wall.
+                SessionMirror.publish(this@MonolithShieldService, 0L)
                 val timeFormatted = when {
                     updated.isInSafeBreak -> {
                         val bMin = updated.safeBreakSecondsRemaining / 60
@@ -463,6 +466,12 @@ class MonolithShieldService : Service() {
                         val remainingSec = (effectiveTarget - updated.elapsedSeconds).coerceAtLeast(0)
                         val mins = remainingSec / 60
                         val secs = remainingSec % 60
+                        // Issue #274: publish the mirror the QS tile
+                        // and the notification chronometer read.
+                        SessionMirror.publish(
+                            this@MonolithShieldService,
+                            System.currentTimeMillis() + remainingSec * 1000L
+                        )
                         String.format("%02d:%02d left • Block %d/%d", mins, secs, updated.currentBlockIndex, updated.totalStudyBlocks)
                     }
                 }
@@ -729,6 +738,7 @@ class MonolithShieldService : Service() {
         protecting = false
         protectingSessionId = -1
         protectingMono = 0L
+        SessionMirror.clear(this)
         WatchStore.onShieldIteration(protecting = false)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -939,6 +949,25 @@ class MonolithShieldService : Service() {
                 builder.addAction(0, action.label, repairPendingIntent(action))
             }
         }
+        // Issue #274: the standing notification was a dead label -
+        // no actions at all. One explicit action: open Monolith.
+        builder.addAction(0, "Open Monolith", pendingIntent)
+        // Issue #274: a live countdown must be a system chronometer,
+        // not hand-rendered static text re-posted every second. When
+        // the caller passed no explicit end (#155 seam above), fall
+        // back to the mirror: when it knows the session's end
+        // wall-clock, the system itself ticks the countdown -
+        // accurate on the lock screen and AOD even between
+        // shield-loop iterations.
+        if (chronometerEndMillis == null) {
+            val endWallMs = SessionMirror.read(this).endWallMs
+            if (endWallMs > System.currentTimeMillis()) {
+                builder.setWhen(endWallMs)
+                builder.setUsesChronometer(true)
+                builder.setChronometerCountDown(true)
+                builder.setShowWhen(true)
+            }
+        }
         return builder.build()
     }
 
@@ -1042,6 +1071,7 @@ class MonolithShieldService : Service() {
         protecting = false
         protectingSessionId = -1
         protectingMono = 0L
+        SessionMirror.clear(this)
         WatchStore.onShieldIteration(protecting = false)
         monitorJob?.cancel()
         serviceScope.cancel()

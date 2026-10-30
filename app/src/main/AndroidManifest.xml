@@ -96,7 +96,23 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
+
+        <!-- Issue #274: Quick Settings tile — in-session glance +
+             one-tap entry without a full launcher trip. -->
+        <service
+            android:name=".service.MonolithTileService"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
 
         <!-- Direct-Boot Aware Foreground Service for active focus session & call-aware usage polling -->
         <!-- Issue #328 (Audit R5, Zario): stopWithTask=false — a

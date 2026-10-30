@@ -13,6 +13,9 @@
          tab_web_studio (no such destination; sites live on Shield)
          are deleted with the names they carried. -->
     <string name="tab_deck">Deck</string>
+    <string name="shortcut_open_short">Open Monolith</string>
+    <string name="shortcut_open_long">Open Monolith</string>
+    <string name="tile_label">Monolith</string>
     <string name="tab_tasks">Tasks</string>
     <string name="tab_shield">Shield</string>
     <string name="tab_vault">Ledger</string>
