@@ -802,6 +802,23 @@ object RoutineSchedule {
     private fun bitFor(calendar: java.util.Calendar): Int =
         (calendar.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
 
+    /** Audit R5 #259 (R5-0266): a window's end is a WALL-CLOCK time,
+     *  never start + elapsed duration. A routine stores wall-clock
+     *  start/end minutes; pricing the end as startMillis + durMs
+     *  made overnight windows end an hour late on spring-forward
+     *  nights and an hour early on fall-back nights. The end is the
+     *  start's local date-time plus the duration on the LOCAL
+     *  timeline, resolved in the system zone — identical to the old
+     *  arithmetic on every non-transition day. */
+    private fun wallEndMillis(startMillis: Long, durationMinutes: Int): Long {
+        val zone = java.time.ZoneId.systemDefault()
+        val startLocal = java.time.LocalDateTime.ofInstant(
+            java.time.Instant.ofEpochMilli(startMillis), zone
+        )
+        return startLocal.plusMinutes(durationMinutes.toLong())
+            .atZone(zone).toInstant().toEpochMilli()
+    }
+
     private fun atMinutes(day: java.util.Calendar, minutes: Int): Long {
         val c = day.clone() as java.util.Calendar
         c.set(java.util.Calendar.HOUR_OF_DAY, minutes / 60)
@@ -830,14 +847,14 @@ object RoutineSchedule {
     fun nextEndMillis(routine: RoutineEntity, nowMillis: Long): Long? {
         val r = routine.sanitized()
         if (r.daysMask == 0) return null
-        val durMs = durationMinutes(r) * 60_000L
+        val durMin = durationMinutes(r)
         val day = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
         // A window that started yesterday may still be running (overnight).
         day.add(java.util.Calendar.DAY_OF_YEAR, -1)
         repeat(9) {
             if (r.daysMask and (1 shl bitFor(day)) != 0) {
                 val start = atMinutes(day, r.startMinutes)
-                val end = start + durMs
+                val end = wallEndMillis(start, durMin)
                 if (nowMillis < end && end > nowMillis && start <= nowMillis) return end
                 if (start > nowMillis) return end
             }
@@ -856,13 +873,13 @@ object RoutineSchedule {
     fun windowContaining(routine: RoutineEntity, nowMillis: Long): WindowInstance? {
         val r = routine.sanitized()
         if (r.daysMask == 0) return null
-        val durMs = durationMinutes(r) * 60_000L
+        val durMin = durationMinutes(r)
         val day = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
         day.add(java.util.Calendar.DAY_OF_YEAR, -1)
         repeat(2) {
             if (r.daysMask and (1 shl bitFor(day)) != 0) {
                 val start = atMinutes(day, r.startMinutes)
-                val end = start + durMs
+                val end = wallEndMillis(start, durMin)
                 if (nowMillis in start until end) {
                     return WindowInstance(
                         startMillis = start,
@@ -898,7 +915,7 @@ object RoutineSchedule {
     /** The next window to start strictly after [nowMillis], as an instance. */
     fun nextWindow(routine: RoutineEntity, nowMillis: Long): WindowInstance? {
         val start = nextStartMillis(routine, nowMillis) ?: return null
-        val end = start + durationMinutes(routine) * 60_000L
+        val end = wallEndMillis(start, durationMinutes(routine))
         return WindowInstance(
             startMillis = start,
             endMillis = end,
@@ -925,12 +942,12 @@ object RoutineSchedule {
     fun latestClosedWindow(routine: RoutineEntity, nowMillis: Long): WindowInstance? {
         val r = routine.sanitized()
         if (r.daysMask == 0) return null
-        val durMs = durationMinutes(r) * 60_000L
+        val durMin = durationMinutes(r)
         val day = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
         repeat(9) {
             if (r.daysMask and (1 shl bitFor(day)) != 0) {
                 val start = atMinutes(day, r.startMinutes)
-                val end = start + durMs
+                val end = wallEndMillis(start, durMin)
                 if (end <= nowMillis) {
                     return WindowInstance(
                         startMillis = start,
