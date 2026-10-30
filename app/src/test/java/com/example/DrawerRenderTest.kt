@@ -145,7 +145,6 @@ class DrawerRenderTest {
             FileOutputStream(out).use { fos -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos) }
             bitmap.recycle()
         }
-        println("DRAWER-RENDER captured $name size=${out.length()}")
     }
 
     private fun completed(
