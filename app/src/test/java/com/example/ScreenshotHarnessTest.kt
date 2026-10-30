@@ -189,7 +189,7 @@ class ScreenshotHarnessTest {
             // Mirror MainActivity exactly: the scheme's dark flag is
             // the ViewModel's derived darkTheme (the evaluation).
             val dark by viewModel.darkTheme.collectAsState()
-            MyApplicationTheme(darkTheme = dark, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = dark) {
                 MonolithRootApp(viewModel = viewModel)
             }
         }
@@ -347,7 +347,7 @@ class ScreenshotHarnessTest {
 
     private fun setPark(dark: Boolean) {
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = dark, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = dark) {
                 ParkDrawer(
                     visible = true,
                     snapshot = fabricatedSnapshot(),
@@ -637,7 +637,7 @@ class ScreenshotHarnessTest {
             receiptPublishedMonoMs = 0L
         )
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
