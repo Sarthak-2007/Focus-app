@@ -36,12 +36,29 @@ object RoutineScheduler {
         if (boundary == null) cancelChain(context) else rearmChain(context, boundary)
     }
 
-    /** Cancel-then-set: exactly one chain alarm exists at any time. */
+    /** Cancel-then-set: exactly one chain alarm exists at any time.
+     *  Issue #309 F2 (Audit R5, AppBlock second pass): the chain
+     *  used to arm with the inexact setAndAllowWhileIdle only, so
+     *  Doze could deliver a routine boundary minutes late. When the
+     *  exact-alarm permission is held (SCHEDULE_EXACT_ALARM declared
+     *  in the manifest; granted by the user in system settings on
+     *  Android 12+), the chain now arms EXACT; without it, the
+     *  inexact arm remains — alarms are still hints, never the
+     *  mechanism, and every other trigger reconciles regardless. */
     fun rearmChain(context: Context, boundaryMillis: Long) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         val intent = chainPendingIntent(context, PendingIntent.FLAG_UPDATE_CURRENT) ?: return
         alarmManager.cancel(intent)
-        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, boundaryMillis, intent)
+        val canExact = if (android.os.Build.VERSION.SDK_INT >= 31) {
+            alarmManager.canScheduleExactAlarms()
+        } else {
+            true
+        }
+        if (exactAlarmPermitted(android.os.Build.VERSION.SDK_INT, canExact)) {
+            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, boundaryMillis, intent)
+        } else {
+            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, boundaryMillis, intent)
+        }
     }
 
     fun cancelChain(context: Context) {
@@ -89,3 +106,12 @@ object RoutineScheduler {
             mode or PendingIntent.FLAG_IMMUTABLE
         )
 }
+
+/**
+ * Issue #309 F2: the exact-alarm decision, pure. Before Android 12
+ * (API 31) exact alarms needed no permission and are always
+ * permitted; from API 31 the SCHEDULE_EXACT_ALARM grant decides —
+ * [canScheduleExactAlarms] is its live answer.
+ */
+internal fun exactAlarmPermitted(sdkInt: Int, canScheduleExactAlarms: Boolean): Boolean =
+    sdkInt < 31 || canScheduleExactAlarms

@@ -11,6 +11,11 @@
     <!-- Declared so MainActivity can fire Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS directly (issue #26) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Issue #309 F2: lets the routine chain alarm fire exactly at
+         its boundary instead of Doze-late, when the user grants it
+         (Android 12+); RoutineScheduler falls back to the inexact
+         arm whenever the grant is absent. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
@@ -111,6 +116,25 @@
             android:name=".service.RoutineAlarmReceiver"
             android:directBootAware="true"
             android:exported="false" />
+
+        <!-- Issue #309 F7: package added/removed/replaced/changed —
+             reconcile the app catalogue at install time instead of
+             discovering installs on the next UI-driven sync. These
+             are protected system broadcasts; exported=false still
+             receives them. -->
+        <receiver
+            android:name=".service.MonolithPackageReceiver"
+            android:directBootAware="true"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_ADDED" />
+                <action android:name="android.intent.action.PACKAGE_REMOVED" />
+                <action android:name="android.intent.action.PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.PACKAGE_CHANGED" />
+                <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
 
         <!-- Slice E (Draht): the release-retry cadence's hint. -->
         <receiver

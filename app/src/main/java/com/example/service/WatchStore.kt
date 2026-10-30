@@ -101,14 +101,23 @@ enum class WatchItemId(val boardName: String, val counted: Boolean) {
     NOTIFICATIONS("NOTIFICATIONS", false);
 
     companion object {
-        /** The six permission-family items, board order. */
+        /** The six permission-family items, board order.
+         *  Issue #309 F5 (Audit R5, AppBlock second pass): the board
+         *  used to LEAD with its scariest grants (ACCESSIBILITY,
+         *  DEVICE ADMIN). The order is now cheapest-first — the
+         *  read-only USAGE ACCESS ask leads, the invasive grants
+         *  (ACCESSIBILITY, DEVICE ADMIN) close the board — so the
+         *  first thing a new user is asked for is the least
+         *  frightening one, and the "first missing" surfaces that
+         *  read this list meet the cheap asks before the dear ones. */
         val PERMISSIONS: List<WatchItemId> = listOf(
-            ACCESSIBILITY, USAGE_ACCESS, DEVICE_ADMIN,
-            NOTIFICATION_LISTENER, OVERLAY, BATTERY
+            USAGE_ACCESS, OVERLAY, NOTIFICATION_LISTENER,
+            ACCESSIBILITY, DEVICE_ADMIN, BATTERY
         )
-        /** The counted four, board order. */
+        /** The counted four, board order (same relative order as
+         *  [PERMISSIONS]). */
         val COUNTED: List<WatchItemId> = listOf(
-            ACCESSIBILITY, USAGE_ACCESS, DEVICE_ADMIN, NOTIFICATION_LISTENER
+            USAGE_ACCESS, NOTIFICATION_LISTENER, ACCESSIBILITY, DEVICE_ADMIN
         )
         /** The three derived interceptor items, board order. */
         val INTERCEPTORS: List<WatchItemId> = listOf(SHORTS_REELS, SOCIAL_SITES, NOTIFICATIONS)
