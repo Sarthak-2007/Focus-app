@@ -48,4 +48,38 @@ class TamperWitnessTest {
             TamperWitness.classifyProvenance(dbVirgin = false, keystoreKeyPreExisted = false)
         )
     }
+
+    // F3 — Safe Mode / unwitnessed intermediate boots.
+
+    @Test
+    fun unwitnessedBoot_sameBoot_isWitnessed() {
+        assertEquals(false, TamperWitness.unwitnessedBoot(anchoredBootCount = 7, currentBootCount = 7))
+    }
+
+    @Test
+    fun unwitnessedBoot_oneReboot_isTheNormalWitnessedReboot() {
+        assertEquals(false, TamperWitness.unwitnessedBoot(anchoredBootCount = 7, currentBootCount = 8))
+    }
+
+    @Test
+    fun unwitnessedBoot_twoBoots_isUnwitnessed() {
+        // Boot into Safe Mode (Monolith disabled, never re-anchors),
+        // boot back to normal: the row's anchor is two boots stale.
+        assertEquals(true, TamperWitness.unwitnessedBoot(anchoredBootCount = 7, currentBootCount = 9))
+    }
+
+    @Test
+    fun unwitnessedBoot_manyBoots_isUnwitnessed() {
+        assertEquals(true, TamperWitness.unwitnessedBoot(anchoredBootCount = 7, currentBootCount = 12))
+    }
+
+    @Test
+    fun unwitnessedBoot_unanchoredRow_neverConvicts() {
+        assertEquals(false, TamperWitness.unwitnessedBoot(anchoredBootCount = 0, currentBootCount = 9))
+    }
+
+    @Test
+    fun unwitnessedBoot_counterMovedBackwards_neverConvicts() {
+        assertEquals(false, TamperWitness.unwitnessedBoot(anchoredBootCount = 9, currentBootCount = 3))
+    }
 }

@@ -40,4 +40,25 @@ object TamperWitness {
         } else {
             InstallProvenance.FRESH
         }
+
+    /**
+     * The unwitnessed-boot law (issue #81 F3, Safe Mode): the
+     * session row is anchored to the boot it last ticked in
+     * ([anchoredBootCount], from Settings.Global.BOOT_COUNT, which
+     * increments on EVERY boot, Safe Mode included). A normal
+     * reboot is witnessed promptly — the boot receiver runs at
+     * LOCKED_BOOT_COMPLETED and the shield's first tick re-anchors
+     * the row — so the next measurement sees a delta of exactly 1.
+     * A delta of 2 or more means at least one whole boot came and
+     * went with no Monolith process ever re-anchoring: the Safe
+     * Mode signature (downloaded apps cannot run there, Monolith
+     * included, while preinstalled Chrome/YouTube still can), or a
+     * force-stop spanning a reboot — both are unproven time and
+     * neither may pass as a clean, clock-frozen pause.
+     * An unanchored row (0) and a counter that moved backwards
+     * (factory reset territory, where the DB is gone anyway) never
+     * convict.
+     */
+    fun unwitnessedBoot(anchoredBootCount: Int, currentBootCount: Int): Boolean =
+        anchoredBootCount > 0 && currentBootCount - anchoredBootCount >= 2
 }
