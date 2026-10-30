@@ -217,6 +217,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val drawerSearchHasEarlier by viewModel.drawerSearchHasEarlier.collectAsStateWithLifecycle()
     val dayWords by viewModel.dayWords.collectAsStateWithLifecycle()
     val forgedArtifactIds by viewModel.forgedArtifactIds.collectAsStateWithLifecycle()
+    val receiptIndex by viewModel.receiptIndex.collectAsStateWithLifecycle()
     val appsCellCount by viewModel.appsCellCount.collectAsStateWithLifecycle()
     val appsSplit by viewModel.appsSplit.collectAsStateWithLifecycle()
     val deckWarrant by viewModel.deckWarrant.collectAsStateWithLifecycle()
@@ -263,10 +264,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val groundNight = darkTheme ||
         shotGround == com.example.ui.MonolithViewModel.ShotGround.GROUNDED
     // The receipt sheet's dismissal is host state (F-B1): the
-    // slip stands until the next DOWN anywhere, a navigation, or
-    // PARK's invocation — it is never dismissed by a timer. (The
-    // nav/PARK effect itself sits below, beside the PARK state
-    // it reads.)
+    // slip stands until its own scrim takes the next DOWN — it
+    // is never dismissed by a timer, by navigation, or by PARK.
+    // Off the Deck it simply unmounts (its render gate below);
+    // the flag stays untouched, so it re-stands on return.
+    // (Issue #157: navigation/PARK dismissal deleted — the tap
+    // to "Receipts" was the shredder.)
     var dismissedReceiptSessionId by remember { mutableStateOf(-1) }
 
     // ------------------------------------------------------------------
@@ -307,14 +310,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         // val — a print, not a lock; hb4DetentionGuardTap caught
         // it on the gate build's first full test run.)
         if (!sealed && !viewModel.navigationLocked()) parkOpen = true
-    }
-
-    // F-B1: PARK's invocation dismisses the receipt sheet on the
-    // same input, and so does any navigation away from the Deck.
-    LaunchedEffect(currentDestination, parkOpen) {
-        if (currentDestination != MonolithDestination.DECK || parkOpen) {
-            receiptState?.let { dismissedReceiptSessionId = it.sessionId }
-        }
     }
 
     // First run (§5.7): the store has never measured — PARK opens
@@ -657,7 +652,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onLoadEarlierSearch = viewModel::loadEarlierDrawerSearch,
                                     onDeclareTodayWord = viewModel::declareTodayWord,
                                     artifacts = com.example.data.CurioCatalog.artifacts,
-                                    forgedArtifactIds = forgedArtifactIds
+                                    forgedArtifactIds = forgedArtifactIds,
+                                    receipts = receiptIndex,
+                                    onReceiptClick = viewModel::presentReceipt
                                 )
                             }
                         }
@@ -712,8 +709,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 // THE RAIL (chrome C1): the 52dp band. A stop press
                 // while PARK is open is dismissal path (a) — the
                 // sheet dismisses AND the cap departs on the same
-                // input, and the session receipt sheet goes with it
-                // (F-B1).
+                // input. The session receipt sheet is NOT dismissed
+                // by navigation (issue #157): it unmounts off the
+                // Deck and re-stands on return.
                 AndroidView(
                     factory = { ctx ->
                         MonolithRailView(ctx).apply {
@@ -786,11 +784,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             )
 
             // THE RECEIPT SLIP (Slice E, F-L1/F-B1): viewport-
-            // hosted over the Deck's room, dismissed by the next
-            // DOWN (its scrim), by navigation, or by PARK — the
-            // two sheets (this and the digest) never stack: PARK
-            // and the digest live in their own invocations, and
-            // opening either dismisses this one first.
+            // hosted over the Deck's room, dismissed ONLY by the
+            // next DOWN on its scrim (issue #157) — navigation and
+            // PARK merely unmount it via the DECK gate below, and
+            // it re-stands untouched on return. The two sheets
+            // (this and the digest) never stack: PARK and the
+            // digest live in their own invocations.
             val standingReceipt = receiptState
             if (standingReceipt != null &&
                 dismissedReceiptSessionId != standingReceipt.sessionId &&
@@ -799,6 +798,19 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 com.example.ui.components.ReceiptSheet(
                     receipt = standingReceipt,
                     onDismiss = { dismissedReceiptSessionId = standingReceipt.sessionId }
+                )
+            }
+
+            // A PAST SLIP, re-presented from the Vault's receipts
+            // index (issue #157): the SAME sheet composable,
+            // verbatim, over whatever screen invoked it. Its
+            // dismissal is its own — it never touches the standing
+            // receipt's flag above.
+            val presentedReceipt by viewModel.presentedReceipt.collectAsStateWithLifecycle()
+            presentedReceipt?.let { pastReceipt ->
+                com.example.ui.components.ReceiptSheet(
+                    receipt = pastReceipt,
+                    onDismiss = { viewModel.dismissPresentedReceipt() }
                 )
             }
 

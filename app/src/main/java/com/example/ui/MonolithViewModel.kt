@@ -723,6 +723,32 @@ class MonolithViewModel(
     private val _receiptState = MutableStateFlow<com.example.data.ReceiptState?>(null)
     val receiptState: StateFlow<com.example.data.ReceiptState?> = _receiptState.asStateFlow()
 
+    /** Issue #157: the Vault receipts index — every claimed
+     *  session's row-proven facts, re-read with the Drawer. */
+    private val _receiptIndex = MutableStateFlow<List<com.example.data.ReceiptIndexEntry>>(emptyList())
+    val receiptIndex: StateFlow<List<com.example.data.ReceiptIndexEntry>> = _receiptIndex.asStateFlow()
+
+    /** Issue #157: a past slip re-presented from the Vault index.
+     *  Independent of the standing receipt and its dismissal flag:
+     *  it lives until its own scrim dismisses it, and dismissing
+     *  it touches nothing else. */
+    private val _presentedReceipt = MutableStateFlow<com.example.data.ReceiptState?>(null)
+    val presentedReceipt: StateFlow<com.example.data.ReceiptState?> = _presentedReceipt.asStateFlow()
+
+    /** Re-derive the slip for [sessionId] from its stored row and
+     *  present it — the same ReceiptState the sheet always renders,
+     *  rebuilt by the repository's rehydration machinery. */
+    fun presentReceipt(sessionId: Int) {
+        viewModelScope.launch {
+            _presentedReceipt.value =
+                runCatching { repository.rehydrateReceipt(sessionId) }.getOrNull()
+        }
+    }
+
+    fun dismissPresentedReceipt() {
+        _presentedReceipt.value = null
+    }
+
     /** Schlitten's gate: the sled return's once-only law, pure
      *  and unit-tested. The VM owns its state law; the Deck host
      *  owns the firing. */
@@ -1879,6 +1905,7 @@ class MonolithViewModel(
             _storedMonths.value = repository.storedMonths()
             _dayWords.value = repository.allDayWords()
             _forgedArtifactIds.value = repository.forgedArtifactIds()
+            _receiptIndex.value = repository.claimedReceipts()
             selectDrawerMonth(_drawerMonth.value.first, _drawerMonth.value.second)
         }
     }
@@ -2195,9 +2222,12 @@ class MonolithViewModel(
      *  old body fired after startShield now fires inside the
      *  controller, once L1 lands. */
     fun armMonolithSession() {
-        // Schlitten §3.1: the standing receipt and its sled gate
-        // clear at the next arm — the slip stood until now.
-        _receiptState.value = null
+        // Issue #157 (F5a): the standing receipt STANDS at arm —
+        // it is replaced only when a new publish overwrites the
+        // flow (publishReceipt / emitReceipt), so a session that
+        // publishes nothing (grace cancel, valve break) costs the
+        // slip nothing. Schlitten §3.1's sled gate is a separate
+        // mechanism and still clears here.
         sledReturnGate.clear()
         armProving.onLatch(
             intention = _intentionText.value,

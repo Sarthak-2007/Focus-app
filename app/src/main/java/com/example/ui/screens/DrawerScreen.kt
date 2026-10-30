@@ -43,6 +43,7 @@ import com.example.data.DayWordStore
 import com.example.data.DrawerDay
 import com.example.data.FocusTaskEntity
 import com.example.data.KineticArtifact
+import com.example.data.ReceiptIndexEntry
 import com.example.data.StoredMonth
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
@@ -69,7 +70,7 @@ import java.util.Locale
  * beside its date heading as his authored word — never a number.
  */
 
-private enum class DrawerView { LANDING, INDEX, MONTH, CABINET }
+private enum class DrawerView { LANDING, INDEX, MONTH, CABINET, RECEIPTS }
 
 private data class DrawerDayGroup(
     val date: LocalDate,
@@ -158,7 +159,15 @@ fun DrawerScreen(
     // removed with DRW-01/06/07 — each printed a fact the app does
     // not hold.)
     artifacts: List<KineticArtifact> = CurioCatalog.artifacts,
-    forgedArtifactIds: Set<String> = emptySet()
+    forgedArtifactIds: Set<String> = emptySet(),
+    // Issue #157: the Vault IS the "Receipts" destination, so the
+    // receipts live here — an index of every claimed slip, each
+    // row carrying only what its session row proves. Tapping a
+    // row re-presents that session's slip (the host renders the
+    // same ReceiptSheet); the slip itself is never stored and
+    // nothing is printed on it from here.
+    receipts: List<ReceiptIndexEntry> = emptyList(),
+    onReceiptClick: (Int) -> Unit = {}
 ) {
     val scheme = MaterialTheme.colorScheme
     var view by remember { mutableStateOf(DrawerView.LANDING) }
@@ -506,6 +515,72 @@ fun DrawerScreen(
     }
 
     // ------------------------------------------------------------------
+    // RECEIPTS — the index of claimed slips (issue #157). Ruled
+    // rows like everything else in the Drawer. A row prints its
+    // №, its date, its outcome word — and, where the session's
+    // own record proves it, the warning the slip carried, in
+    // Drawer type: the warnings live in the furniture now, so
+    // they survive the slip. Tapping a row re-presents the slip.
+    // ------------------------------------------------------------------
+    if (view == DrawerView.RECEIPTS) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(scheme.background)
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .testTag("drawer_receipts"),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(bottom = 100.dp)
+        ) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "RECEIPTS",
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        letterSpacing = 2.sp,
+                        color = scheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "BACK",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = scheme.onBackground,
+                        modifier = Modifier
+                            .clickable { view = DrawerView.LANDING }
+                            .testTag("receipts_back")
+                    )
+                }
+            }
+            if (receipts.isEmpty()) {
+                item {
+                    Text(
+                        text = "NO RECEIPTS YET",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 13.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 24.dp)
+                    )
+                }
+            } else {
+                items(receipts, key = { "receipt-${it.sessionId}" }) { entry ->
+                    ReceiptIndexRow(
+                        entry = entry,
+                        onClick = { onReceiptClick(entry.sessionId) }
+                    )
+                }
+            }
+        }
+        return
+    }
+
+    // ------------------------------------------------------------------
     // LIST VIEWS — landing / month index / one month / search results.
     // ------------------------------------------------------------------
     LazyColumn(
@@ -612,9 +687,10 @@ fun DrawerScreen(
                 }
             }
         } else when (view) {
-            // Unreachable: the CABINET page returns early above,
-            // before this column exists. Present for exhaustiveness.
-            DrawerView.CABINET -> {
+            // Unreachable: the CABINET and RECEIPTS pages return
+            // early above, before this column exists. Present for
+            // exhaustiveness.
+            DrawerView.CABINET, DrawerView.RECEIPTS -> {
                 item { Spacer(Modifier.height(0.dp)) }
             }
             DrawerView.INDEX -> {
@@ -741,6 +817,14 @@ fun DrawerScreen(
                         )
                         HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
                     }
+                    item {
+                        DrawerNavRow(
+                            label = "RECEIPTS",
+                            onClick = { view = DrawerView.RECEIPTS },
+                            modifier = Modifier.testTag("drawer_receipts_row")
+                        )
+                        HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+                    }
                 } else {
                     item {
                         Row(
@@ -776,6 +860,17 @@ fun DrawerScreen(
                             label = "CURIOS",
                             onClick = { view = DrawerView.CABINET },
                             modifier = Modifier.testTag("drawer_curios_row")
+                        )
+                        HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+                    }
+                    // The receipts index's door: ONE furniture row
+                    // under CURIOS (issue #157) — this destination
+                    // is named "Receipts"; the receipts are here.
+                    item {
+                        DrawerNavRow(
+                            label = "RECEIPTS",
+                            onClick = { view = DrawerView.RECEIPTS },
+                            modifier = Modifier.testTag("drawer_receipts_row")
                         )
                         HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
                     }
@@ -920,6 +1015,59 @@ private fun StoredRow(task: FocusTaskEntity, onClick: () -> Unit) {
                 fontFamily = AnonymousProFamily,
                 fontSize = 10.5.sp,
                 color = scheme.onSurfaceVariant
+            )
+        }
+    }
+    HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant)
+}
+
+/** One receipts-index row (issue #157): № · date · outcome word,
+ *  in the Drawer's furniture. The warnings print here — in Drawer
+ *  type, on the furniture, never on the slip — only where the
+ *  session's own record proves them: the release-fault stamp
+ *  proves "SHIELD FAULT — SEE RECEIPT"; the re-derived slip's
+ *  shieldWasOff fact (the row's shield-gap outcome) proves "THE
+ *  SHIELD WAS OFF FOR PART OF THAT SESSION". */
+@Composable
+private fun ReceiptIndexRow(entry: ReceiptIndexEntry, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val date = java.time.Instant.ofEpochMilli(entry.endedAtWallMs)
+        .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(vertical = 6.dp)
+            .testTag("receipt_row_${entry.sessionId}"),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        Text(
+            text = "${entry.numberPrint} · ${headingLabel(date, withYear = true)} · ${entry.outcomeWord}",
+            fontFamily = AtkinsonHyperlegibleFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = 14.sp,
+            color = scheme.onBackground
+        )
+        if (entry.releaseFaultShield) {
+            Text(
+                text = "SHIELD FAULT — SEE RECEIPT",
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 10.5.sp,
+                letterSpacing = 1.sp,
+                color = scheme.onBackground,
+                modifier = Modifier.testTag("receipt_fault_${entry.sessionId}")
+            )
+        }
+        if (entry.shieldWasOff) {
+            Text(
+                text = "THE SHIELD WAS OFF FOR PART OF THAT SESSION",
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 10.5.sp,
+                letterSpacing = 1.sp,
+                color = scheme.onBackground,
+                modifier = Modifier.testTag("receipt_shield_off_${entry.sessionId}")
             )
         }
     }
