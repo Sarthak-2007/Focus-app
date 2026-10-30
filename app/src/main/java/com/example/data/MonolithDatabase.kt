@@ -226,6 +226,40 @@ abstract class MonolithDatabase : RoomDatabase() {
          * IllegalStateException in testing, never a silent wipe on his
          * phone.
          */
+        /**
+         * Issue #83 (storage-hygiene F4): space reclamation. Every
+         * erase in this app was a bare DELETE, so deleted rows' pages
+         * stayed in the file forever and monolith_tactile_db grew
+         * monotonically for the life of the install. This callback
+         * puts the file on INCREMENTAL auto-vacuum: the first open
+         * that finds the file not already incremental performs the
+         * one full VACUUM the mode change requires, and every open
+         * hands a bounded slice of free pages back to the device.
+         * Best-effort by construction — a pragma failure must never
+         * cost the app its database open.
+         */
+        private val RECLAIM_CALLBACK = object : RoomDatabase.Callback() {
+            override fun onOpen(db: SupportSQLiteDatabase) {
+                super.onOpen(db)
+                try {
+                    val cursor = db.query("PRAGMA auto_vacuum")
+                    val mode = try {
+                        if (cursor.moveToFirst()) cursor.getInt(0) else 0
+                    } finally {
+                        cursor.close()
+                    }
+                    // auto_vacuum: 0 = NONE, 1 = FULL, 2 = INCREMENTAL.
+                    if (mode != 2) {
+                        db.execSQL("PRAGMA auto_vacuum = INCREMENTAL")
+                        db.execSQL("VACUUM")
+                    }
+                    db.execSQL("PRAGMA incremental_vacuum(512)")
+                } catch (_: Exception) {
+                    // Contained: reclamation is hygiene, not function.
+                }
+            }
+        }
+
         fun getInstance(context: Context): MonolithDatabase {
             return INSTANCE ?: synchronized(this) {
                 val appCtx = context.applicationContext
@@ -240,6 +274,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     "monolith_tactile_db"
                 )
                     .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+                    .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance
                 instance

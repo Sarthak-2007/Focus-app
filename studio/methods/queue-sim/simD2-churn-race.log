@@ -1,2 +1,0 @@
-v2.0-baseline: 25 acquire attempts under churn -> 0 stat/integer error lines on stderr
-v2.1-work: 25 acquire attempts under churn -> 0 stat/integer error lines on stderr

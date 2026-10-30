@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.util.Log
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.SystemClock
@@ -134,8 +135,14 @@ class SessionSealTransitionImpl(
      *  by living in device-protected storage). Every seal-prefs
      *  read and write in this class goes through here. */
     private fun prefs(): SharedPreferences =
-        (appContext.createDeviceProtectedStorageContext() ?: appContext)
-            .getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+        // Issue #83 completion (STURM3-04): routed through the shared
+        // accessor so the legacy credential-protected seal file is
+        // migrated across on first access — this class's writer and
+        // MonolithRepository's readers now share the one migrated
+        // device-protected file, never two split files.
+        com.example.data.DeviceProtectedPrefs.get(
+            appContext, MonolithRepository.SEAL_PREFS_NAME
+        )
 
     /** The seal marker (F-K1): committed synchronously BEFORE
      *  the Throw sounds, so a process dying mid-seal leaves
@@ -151,8 +158,8 @@ class SessionSealTransitionImpl(
     private fun writeSealMarker(sessionId: Int) {
         synchronized(sealed) { sealed += sessionId }
         synchronized(markerLock) {
-            prefs()
-                .edit()
+            val prefs = prefs()
+            fun attemptCommit(): Boolean = prefs.edit()
                 .putInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, sessionId)
                 .putLong(MonolithRepository.SEAL_MARKER_WALL_KEY, System.currentTimeMillis())
                 .putStringSet(
@@ -160,6 +167,19 @@ class SessionSealTransitionImpl(
                     persistedSealedIds() + sessionId.toString()
                 )
                 .commit()
+            // Truth (issue #76): commit()'s Boolean is the only
+            // evidence the proof reached disk. The original code
+            // discarded it, so a failed commit left this process
+            // (and the in-memory claim above) believing a seal that
+            // recovery — which reads disk — would never find. Now:
+            // commit, retry once, and if disk still refuses, strike
+            // the in-memory claim and throw rather than let a Throw
+            // sound over a seal that was never proven.
+            if (!attemptCommit() && !attemptCommit()) {
+                synchronized(sealed) { sealed -= sessionId }
+                Log.e("SessionSealTransition", "seal marker commit() failed twice for session $sessionId")
+                throw IllegalStateException("seal marker not on disk for session $sessionId")
+            }
         }
     }
 

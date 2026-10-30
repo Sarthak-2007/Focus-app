@@ -1,6 +1,7 @@
 package com.example.data
 
 import android.content.Context
+import android.os.SystemClock
 
 /**
  * The undo window's restore copy, persisted (Truth Car 2, G-03).
@@ -13,13 +14,15 @@ import android.content.Context
  * This store keeps the copy on disk, written with commit() — the
  * G-02 standard — before the banner ever shows.
  *
- * The window itself stays wall-clock five seconds from the
- * delete: on relaunch the ViewModel rehydrates the banner only
- * if the window is still open; a snapshot whose window closed
- * while the process was dead is discarded, never resurrected —
- * the delete was booked, and an expired reversal is not revived
- * by a relaunch. The store holds exactly one snapshot (the undo
- * banner is a single slot, like the delete it serves).
+ * The window itself is five seconds from the delete, judged on
+ * the monotonic clock whenever its stamp survives (wall clock
+ * only across a reboot — Audit R1 #41): on relaunch the
+ * ViewModel rehydrates the banner only if the window is still
+ * open; a snapshot whose window closed while the process was
+ * dead is discarded, never resurrected — the delete was booked,
+ * and an expired reversal is not revived by a relaunch. The
+ * store holds exactly one snapshot (the undo banner is a single
+ * slot, like the delete it serves).
  *
  * Every entity column is stored (as primitives; the entity is
  * flat), so the restored row is the deleted row, field for field.
@@ -29,11 +32,21 @@ class UndoDeleteStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     /** Persist [task] as the undoable delete taken at
-     *  [deletedAtWallMillis]. Synchronous (commit()): the copy
+     *  [deletedAtWallMillis] (wall) / [deletedAtElapsedMillis]
+     *  (monotonic, same boot). Synchronous (commit()): the copy
      *  must be durable before the UI presents the delete as
-     *  reversible. */
-    fun save(task: FocusTaskEntity, deletedAtWallMillis: Long) {
-        prefs.edit()
+     *  reversible.
+     *
+     *  Audit R1 #41: returns commit()'s verdict. The caller
+     *  presents the undo banner ONLY on true — before this, a
+     *  failed write left the banner promising a reversal whose
+     *  only restore copy did not exist. */
+    fun save(
+        task: FocusTaskEntity,
+        deletedAtWallMillis: Long,
+        deletedAtElapsedMillis: Long
+    ): Boolean {
+        return prefs.edit()
             .putInt(KEY_ID, task.id)
             .putString(KEY_TITLE, task.title)
             .putString(KEY_NOTES_OR_SUBSTEPS, task.notesOrSubsteps)
@@ -47,11 +60,14 @@ class UndoDeleteStore(context: Context) {
             .putBoolean(KEY_HAS_STARTED_OFFSET, task.startedAtSessionElapsedSec != null)
             .putInt(KEY_STARTED_OFFSET, task.startedAtSessionElapsedSec ?: 0)
             .putLong(KEY_DELETED_AT, deletedAtWallMillis)
+            .putLong(KEY_DELETED_AT_ELAPSED, deletedAtElapsedMillis)
             .commit()
     }
 
-    /** The persisted copy + its deletion instant, or null. */
-    fun load(): Pair<FocusTaskEntity, Long>? {
+    /** The persisted copy + its deletion instants (wall,
+     *  monotonic), or null. The monotonic stamp is -1 for copies
+     *  written before it existed. */
+    fun load(): Triple<FocusTaskEntity, Long, Long>? {
         if (!prefs.contains(KEY_ID)) return null
         val task = FocusTaskEntity(
             id = prefs.getInt(KEY_ID, 0),
@@ -71,7 +87,11 @@ class UndoDeleteStore(context: Context) {
                 null
             }
         )
-        return task to prefs.getLong(KEY_DELETED_AT, 0L)
+        return Triple(
+            task,
+            prefs.getLong(KEY_DELETED_AT, 0L),
+            prefs.getLong(KEY_DELETED_AT_ELAPSED, -1L)
+        )
     }
 
     fun clear() {
@@ -96,6 +116,7 @@ class UndoDeleteStore(context: Context) {
         private const val KEY_HAS_STARTED_OFFSET = "hasStartedOffset"
         private const val KEY_STARTED_OFFSET = "startedOffset"
         private const val KEY_DELETED_AT = "deletedAt"
+        private const val KEY_DELETED_AT_ELAPSED = "deletedAtElapsed"
 
         /** The undo window's length — one value, shared by the
          *  delete path and the rehydration path. */
@@ -110,15 +131,48 @@ class UndoDeleteStore(context: Context) {
          * — ViewModel init, or a boot-started process via the
          * boot receiver — calls this so the copy dies with its
          * window regardless of which door started the process.
-         * Clears exactly when now − savedAt > [WINDOW_MILLIS].
+         * Staleness is judged by [remainingMillis] — the store's
+         * one window law (monotonic when usable, wall fallback).
          */
         fun expireIfStale(context: Context) {
             val store = UndoDeleteStore(context)
             if (!store.hasPending()) return
-            val savedAt = store.load()?.second ?: return
-            if (System.currentTimeMillis() - savedAt > WINDOW_MILLIS) {
+            val loaded = store.load() ?: return
+            val remaining = remainingMillis(
+                deletedAtWallMillis = loaded.second,
+                deletedAtElapsedMillis = loaded.third,
+                nowWallMillis = System.currentTimeMillis(),
+                nowElapsedMillis = SystemClock.elapsedRealtime()
+            )
+            if (remaining <= 0L) {
                 store.clear()
             }
+        }
+
+        /**
+         * The window's remaining milliseconds (Audit R1 #41),
+         * judged on the MONOTONIC clock whenever its stamp is
+         * usable — same boot, i.e. the stamp exists and does not
+         * lie ahead of now. The wall clock is the cross-reboot
+         * fallback only: judged by wall alone, a clock rollback
+         * resurrected expired undos and a forward jump stole
+         * live ones, against this store's own "never
+         * resurrected" law.
+         */
+        fun remainingMillis(
+            deletedAtWallMillis: Long,
+            deletedAtElapsedMillis: Long,
+            nowWallMillis: Long,
+            nowElapsedMillis: Long
+        ): Long {
+            val monoUsable = deletedAtElapsedMillis >= 0L &&
+                deletedAtElapsedMillis <= nowElapsedMillis
+            val elapsed = if (monoUsable) {
+                nowElapsedMillis - deletedAtElapsedMillis
+            } else {
+                nowWallMillis - deletedAtWallMillis
+            }
+            return WINDOW_MILLIS - elapsed
         }
     }
 }
