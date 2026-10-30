@@ -156,6 +156,18 @@ fun AlwaysOnDeskClockOverlay(
                 }
             }
         }
+        // WELLE-5 / #253-10: the clock also tells the time of day.
+        // The hero numeral stays the session span (the span law
+        // below is untouched); the wall time rides as a small
+        // secondary line under it, ticked once a second while the
+        // overlay is visible.
+        var nowWallMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        LaunchedEffect(visible) {
+            while (visible) {
+                nowWallMs = System.currentTimeMillis()
+                delay(1000)
+            }
+        }
         val keepScreenOn = batterySnap?.let { deskClockKeepsScreenOn(it) } ?: true
         DisposableEffect(visible, keepScreenOn) {
             var ctx: android.content.Context? = clockView.context
@@ -343,6 +355,17 @@ fun AlwaysOnDeskClockOverlay(
                     color = NightColorPrimary.copy(alpha = DESK_CLOCK_TIME_ALPHA)
                 )
 
+                // The time of day, small under the span (WELLE-5 / #253-10).
+                Text(
+                    text = "LOCAL TIME " + deskClockWallTimeText(nowWallMs),
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    letterSpacing = 2.sp,
+                    color = NightColorPrimary.copy(alpha = 0.75f),
+                    modifier = Modifier.testTag("desk_clock_wall_time")
+                )
+
                 // The Safe Break announcement (finding 3): while a
                 // break runs, this line stands where the task banner
                 // would — the user on the clock is told to step away
@@ -507,6 +530,17 @@ internal fun deskClockProgress(session: FocusSessionEntity?): Float = when {
         (session.elapsedSeconds % 1200).toFloat() / 1200f
     else -> 0f
 }
+
+/**
+ * The desk clock's time-of-day print (WELLE-5 / #253-10): the
+ * overlay's hero numeral is the session span, and until this
+ * helper the surface never told the time of day at all — a
+ * "desk clock" that could not answer "what time is it?".
+ * 24-hour HH:mm, the slip's own convention (ReceiptSheet.hhmm).
+ */
+internal fun deskClockWallTimeText(nowMillis: Long): String =
+    java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+        .format(java.util.Date(nowMillis))
 
 /**
  * The withheld peek's cooldown print (Truth Car 3, SIL-3; Hale
