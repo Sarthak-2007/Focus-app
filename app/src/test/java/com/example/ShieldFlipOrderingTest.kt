@@ -22,6 +22,15 @@ import java.io.File
  * of the file (not the whole file), and every needle must occur
  * exactly once in the file — a duplicate in a comment or a second
  * function fails here instead of silently re-pointing the indices.
+ * Re-pointed once, Oct 30 (ZEUGE, PR #482): the lane's loop grew
+ * around the flip — the foreground query now rides a
+ * ForegroundSelection lambda with an expiredPeeks argument, the
+ * intercept launches through InterceptLaunch (issue #94), and the
+ * exception path added a second cadence delay. The N-3 order
+ * itself was verified unchanged in the merged source before the
+ * needles moved; the delay needle is now pinned as exactly two
+ * occurrences in the loop, both after the flip, with the witness
+ * cleared before the retry sleep.
  * What this test still cannot see, stated plainly: iteration
  * identity and exception paths. It pins text order in the one
  * loop; execution is CI's and the phone's to prove.
@@ -53,10 +62,9 @@ class ShieldFlipOrderingTest {
 
         val needles = listOf(
             "val blockedPackages",
-            "queryForegroundBlockedApp(blockedPackages)",
-            "startActivity(interceptIntent)",
-            "protecting = true",
-            "delay(2000L)"
+            "queryForegroundBlockedApp(blockedPackages, expiredPeeks)",
+            "InterceptLaunch.launch(",
+            "protecting = true"
         )
         for (needle in needles) {
             assertEquals(
@@ -66,10 +74,18 @@ class ShieldFlipOrderingTest {
             )
             assertTrue("'$needle' must occur inside the loop", loop.contains(needle))
         }
+        // The cadence delay is the one needle allowed to repeat:
+        // the loop sleeps 2s per pass AND 2s before retrying a
+        // failed pass (the exception path). Both sleeps must sit
+        // after the flip — see the ordering assertions below.
+        assertEquals(
+            "'delay(2000L)' must occur exactly twice in the loop — cadence + exception retry",
+            2, occurrences(loop, "delay(2000L)")
+        )
 
         val setIdx = loop.indexOf("val blockedPackages")
         val queryIdx = loop.indexOf("queryForegroundBlockedApp(blockedPackages)")
-        val interceptIdx = loop.indexOf("startActivity(interceptIntent)")
+        val interceptIdx = loop.indexOf("InterceptLaunch.launch(")
         val guardIdx = loop.indexOf("if (!protecting || protectingSessionId != updated.id)")
         val flipIdx = loop.indexOf("protecting = true")
         val delayIdx = loop.indexOf("delay(2000L)")
@@ -89,6 +105,15 @@ class ShieldFlipOrderingTest {
             "the flip must land BEFORE the 2s cadence delay — " +
                 "the seal cascade's annul deadline cannot wait it out",
             flipIdx < delayIdx
+        )
+        // The exception path's retry delay: the witness is cleared
+        // before that sleep, so a failed pass never leaves
+        // `protecting` standing while the loop backs off.
+        val retryDelayIdx = loop.indexOf("delay(2000L)", delayIdx + 1)
+        val clearIdx = loop.indexOf("protecting = false", flipIdx)
+        assertTrue(
+            "the exception path clears the witness before its retry delay",
+            clearIdx > flipIdx && clearIdx < retryDelayIdx
         )
         // The flip's companions are stamped at the same flip,
         // inside the same guarded block, before the delay.
