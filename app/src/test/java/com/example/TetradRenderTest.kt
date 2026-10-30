@@ -41,7 +41,7 @@ class TetradRenderTest {
         val canvas = Canvas(bmp)
         canvas.drawColor(if (night) 0xFF171412.toInt() else 0xFFEDE8E2.toInt())
         view.draw(canvas)
-        val dir = File("/home/hatch/workspace/clone-inspect/shots/tetrad")
+        val dir = File(System.getProperty("java.io.tmpdir") + "/monolith-shots/tetrad") // batch-10 CI cure: was a hardcoded lane-box path
         dir.mkdirs()
         FileOutputStream(File(dir, name)).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
