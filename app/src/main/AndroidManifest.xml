@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Issue #280: exact-alarm grant, asked only when the user
+         first enables a routine (MainActivity) — never a first-run
+         gate. The chain alarm falls back to inexact without it. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Declared so MainActivity can fire Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS directly (issue #26) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -29,6 +33,7 @@
          exclude every domain for cloud backup AND device transfer, so
          the sentence stays true even if this flag is ever revisited. -->
     <application
+        android:name=".MonolithApp"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -43,7 +48,7 @@
             android:exported="true"
             android:launchMode="singleTop"
             android:label="@string/app_name"
-            android:theme="@style/Theme.MyApplication">
+            android:theme="@style/Theme.MyApplication.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -56,11 +61,19 @@
             android:directBootAware="true"
             android:enabled="true"
             android:exported="false"
+            android:stopWithTask="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Active app-blocking focus session timer and usage monitor" />
         </service>
+
+        <!-- Issue #308: polls the grant during a permission FIX trip
+             and returns the user to the app the moment it lands. -->
+        <service
+            android:name=".service.PermissionReturnService"
+            android:enabled="true"
+            android:exported="false" />
 
         <!-- Direct-Boot Aware Window, Shorts/Reels Sniper, Settings Blocker & URL Bar Interceptor -->
         <service
@@ -107,9 +120,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- Issue #281 (R5 supplement): directBootAware is kept ONLY on
+             the four components with a real pre-unlock job — the boot
+             receiver and the three services it raises before first
+             unlock so an active session stays sealed across a reboot
+             (MonolithBootReceiver's filed design). The three receivers
+             below have no pre-unlock job (alarm hints for a
+             credential-protected store, a retry hint, admin events)
+             and no longer declare it. -->
         <receiver
             android:name=".service.RoutineAlarmReceiver"
-            android:directBootAware="true"
             android:exported="false" />
 
         <!-- Issue #129: a newly installed app is born into the
@@ -126,7 +146,6 @@
         <!-- Slice E (Draht): the release-retry cadence's hint. -->
         <receiver
             android:name=".service.ReleaseRetryReceiver"
-            android:directBootAware="true"
             android:exported="false" />
 
         <!-- Device Admin (DeviceAdminReceiver): friction + a warning
@@ -135,7 +154,6 @@
         <receiver
             android:name=".service.MonolithDeviceAdminReceiver"
             android:description="@string/device_admin_description"
-            android:directBootAware="true"
             android:exported="false"
             android:label="@string/device_admin_label"
             android:permission="android.permission.BIND_DEVICE_ADMIN">
