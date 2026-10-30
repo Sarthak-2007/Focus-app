@@ -1459,7 +1459,6 @@ private fun SlipLineRow(
             // Audit R6 #341 F62: drawn leader, not typed text — a
             // screen reader stepping the rules hit a meaningless
             // 90-dot string on every row before the ruling.
-            modifier = Modifier.clearAndSetSemantics { },
             text = " .".repeat(90),
             fontFamily = AnonymousProFamily,
             fontSize = 11.sp,
@@ -1470,6 +1469,7 @@ private fun SlipLineRow(
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 6.dp)
+                .clearAndSetSemantics { }
         )
         // The re-strike: the word lifts and lands whole, 260ms
         // Curve A — never a roll (M4's governor rides the tally;
