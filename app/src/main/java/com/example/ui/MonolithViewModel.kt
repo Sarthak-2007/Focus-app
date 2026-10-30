@@ -2203,7 +2203,13 @@ class MonolithViewModel(
                 AppBlockTier.OPEN -> setAppBlockTier(app, AppBlockTier.PEEK_2M)
                 AppBlockTier.PEEK_2M -> setAppBlockTier(app, AppBlockTier.LOCKED)
                 AppBlockTier.LOCKED -> {
-                    triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT UNLOCK '${app.appName.uppercase()}' UNTIL 00:00")
+                    // Issue #154: the old line said "UNTIL 00:00" —
+                    // false in both directions (the ratchet checks
+                    // only the active session: ending the session
+                    // frees the tier, and midnight inside a session
+                    // does not). The line now names the real bound,
+                    // as its sibling warnings already do.
+                    triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • CANNOT UNLOCK '${app.appName.uppercase()}' DURING ACTIVE VAULT")
                 }
             }
             return
