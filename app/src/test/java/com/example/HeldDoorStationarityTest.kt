@@ -97,7 +97,10 @@ class HeldDoorStationarityTest {
 
     private fun render(state: AirlockInterceptState) {
         heldState = state
-        if (mounted) return
+        if (mounted) {
+            composeRule.waitForIdle()
+            return
+        }
         mounted = true
         composeRule.setContent {
             MyApplicationTheme(darkTheme = true, isFocusSessionActive = true) {
@@ -113,6 +116,7 @@ class HeldDoorStationarityTest {
                 }
             }
         }
+        composeRule.waitForIdle()
     }
 
     // The overlay's wall reads the real monotonic clock, which
