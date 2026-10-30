@@ -61,6 +61,17 @@ object NotificationCapturePolicy {
             Notification.CATEGORY_SERVICE,
             Notification.CATEGORY_TRANSPORT,
             Notification.CATEGORY_CALL,
+            // Issue #121: calendar reminders and events stand with
+            // calls and alarms in the time-critical class — a
+            // reminder captured and cancelled here is an alert the
+            // user never sees, and calendar apps do not post
+            // reminders as CATEGORY_ALARM. Spared HERE, at the
+            // capture decision, so they never enter storage and are
+            // never cancelled; this composes with any later removal
+            // of the content-storage path (#100) because the
+            // exemption sits strictly upstream of it.
+            Notification.CATEGORY_REMINDER,
+            Notification.CATEGORY_EVENT,
             Notification.CATEGORY_ALARM -> false
             else -> true
         }
@@ -180,6 +191,29 @@ class MonolithNotificationListener : NotificationListenerService() {
         @Volatile
         var instance: MonolithNotificationListener? = null
             internal set
+
+        /**
+         * Issue #121: the categories of [packageName]'s currently
+         * active notifications, read from the bound listener — the
+         * notification proof the screen doors consult through
+         * [TimeCriticalAlertGate] before covering a ringing alarm
+         * or a tapped calendar reminder. Reads only the LIVE shade
+         * (never the stored digest), so it is independent of the
+         * captured-content storage path. Empty when no listener is
+         * bound (no proof, never a guess).
+         */
+        fun activeAlertCategoriesFor(packageName: String): Set<String> {
+            val live = instance ?: return emptySet()
+            return try {
+                live.activeNotifications
+                    ?.filter { it.packageName == packageName }
+                    ?.mapNotNull { it.notification?.category }
+                    ?.toSet()
+                    ?: emptySet()
+            } catch (_: Exception) {
+                emptySet()
+            }
+        }
     }
 
     override fun onListenerConnected() {

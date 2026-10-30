@@ -20,6 +20,7 @@ import com.example.service.MonolithBootReceiver
 import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithNotificationListener
 import com.example.service.MonolithShieldService
+import com.example.service.TimeCriticalAlertGate
 import com.example.service.UsageAccess
 import com.example.service.Warrant
 import com.example.service.WatchItemId
@@ -1277,7 +1278,14 @@ class MonolithRepository(
                             !SafetyFloor.isFloorPackage(it.packageName)
                     }
                     ?.maxByOrNull { it.lastTimeUsed }
-                if (expiredHit != null) return expiredHit.packageName
+                // Issue #121: the time-critical gate binds this
+                // return too — an expired peek never re-covers a
+                // screen whose alarm is ringing right now.
+                if (expiredHit != null &&
+                    !TimeCriticalAlertGate.isAlertLiveFor(context, expiredHit.packageName)
+                ) {
+                    return expiredHit.packageName
+                }
             }
 
             // Issue #332 F1: the door now reads the real UsageEvents
@@ -1306,7 +1314,20 @@ class MonolithRepository(
             // the safety floor covers dialer / incallui / telecom —
             // and every other blocked app stays blocked mid-call,
             // which is exactly Flipd's per-package construction.
-            ForegroundDoor.foregroundBlocked(events, blockedPackages)
+            val foreground = ForegroundDoor.foregroundBlocked(events, blockedPackages)
+                ?: return null
+            // Issue #121: this is the shield door's half of the
+            // time-critical alert gate (the call bypass above can
+            // never fire for an alarm — it plays on the ALARM
+            // stream, not a call mode). A foreground package whose
+            // alarm is ringing, or whose calendar reminder is live,
+            // is NOT reported blocked, so the shield never covers
+            // the ringing screen it cannot dismiss. The exemption
+            // lasts exactly as long as the alert; the package is
+            // reported again the moment it ends. The seal itself is
+            // untouched: the package's tier never changes, and no
+            // other package passes.
+            if (TimeCriticalAlertGate.isAlertLiveFor(context, foreground)) null else foreground
         } catch (e: Exception) {
             swallow("queryForegroundBlockedApp", e)
             null
@@ -2108,6 +2129,19 @@ class MonolithRepository(
         // routine materialisation (which applies the loadout BEFORE
         // its session starts), the preset lands whole, as before.
         val sealed = dao.getActiveSessionSnapshot()?.isActive == true
+        // Issue #121: the SLEEP loadout's structural time-critical
+        // set (alarm / calendar class by capability and exact
+        // identity — TimeCriticalApps), resolved once per
+        // application and shared with the Shield preview and the
+        // ratchet warning, so preview and commit cannot diverge.
+        val timeCriticalPackages =
+            if (loadout == SmartLoadout.SLEEP) {
+                TimeCriticalApps.resolveTimeCriticalPackages(
+                    context, allApps.map { it.packageName }
+                )
+            } else {
+                emptySet()
+            }
         val updated = allApps.map { app ->
             // Issue #107: the tier rule is LoadoutRules.tierFor —
             // the same pure function the Shield preview prints its
@@ -2121,7 +2155,7 @@ class MonolithRepository(
             // F4: tierFor also takes the current tier, so a loadout
             // never loosens LOCKED->OPEN on a category guess; the
             // sealed-session gate then clamps whatever remains.
-            val desired = LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category, app.resolvedTier)
+            val desired = LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category, app.resolvedTier, timeCriticalPackages)
             val tier = SessionTierGate.clampWhileSealed(app.resolvedTier, desired, sealed)
             app.copy(blockTier = tier.name).normalized()
         }
