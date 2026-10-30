@@ -1125,70 +1125,92 @@ fun AirlockInterceptOverlay(
                     )
                 }
 
-                if (countdownSecs == 0 && peekReady) {
-                    BlockitActionChip(
-                        wordLabel = "PEEK",
-                        // SIL-2 / W-29: the badge is the SET value,
-                        // read from the lease machinery's own
-                        // constant — no hardcoded minutes here.
-                        monoBadge = peekBadgeText(MonolithRepository.PEEK_DURATION_SECONDS),
-                        onClick = onTake2MinutePeek,
-                        modifier = Modifier.fillMaxWidth(),
-                        testTag = "airlock_peek_button"
-                    )
-                    // SIL-2 / W-29: the price stands on the offer,
-                    // before the peek is taken — the cooldown the
-                    // repository will arm, named in full.
-                    Text(
-                        text = peekPriceText(MonolithRepository.PEEK_COOLDOWN_MILLIS),
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 12.5.sp,
-                        color = NightColorPrimary.copy(alpha = 0.8f)
-                    )
-                }
+                // Issue #11 (Q-5's substitute cure, restored on
+                // the merged face): THE UNIFIED ZONE — everything
+                // the door may print under the honest exit lives
+                // in ONE fixed-height slot, so the card's height,
+                // and RETURN's place in the centred card, never
+                // changes between the counting, offer and held
+                // frames. The branch proved this invariant with a
+                // reserved 110dp zone; main's centred, content-
+                // sized card lost it — the card grew when the
+                // offer appeared and RETURN rode up by half the
+                // growth (measured in HeldDoorStationarityTest).
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(110.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    if (countdownSecs == 0 && peekReady) {
+                        BlockitActionChip(
+                            wordLabel = "PEEK",
+                            // SIL-2 / W-29: the badge is the SET
+                            // value, read from the lease
+                            // machinery's own constant — no
+                            // hardcoded minutes here.
+                            monoBadge = peekBadgeText(MonolithRepository.PEEK_DURATION_SECONDS),
+                            onClick = onTake2MinutePeek,
+                            modifier = Modifier.fillMaxWidth(),
+                            testTag = "airlock_peek_button"
+                        )
+                        // SIL-2 / W-29: the price stands on the
+                        // offer, before the peek is taken — the
+                        // cooldown the repository will arm, named
+                        // in full.
+                        Text(
+                            text = peekPriceText(MonolithRepository.PEEK_COOLDOWN_MILLIS),
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 12.5.sp,
+                            color = NightColorPrimary.copy(alpha = 0.8f)
+                        )
+                    }
 
-                // The withheld peek prints its state AND its reason
-                // (Held Door Truth Baseline): cooldown with its
-                // live remaining time, or the running pill named.
-                // Doors that never owed a peek carry withheld ==
-                // null and print nothing here.
-                if (countdownSecs == 0 && !peekReady) {
-                    when (state.peekWithheld) {
-                        PeekWithheld.COOLDOWN -> {
-                            if (cooldownSecs > 0) {
-                                Text(
-                                    text = peekCooldownPrint(cooldownSecs),
-                                    fontFamily = AtkinsonHyperlegibleFamily,
-                                    fontSize = 12.5.sp,
-                                    color = NightColorPrimary.copy(alpha = 0.8f)
-                                )
+                    // The withheld peek prints its state AND its
+                    // reason (Held Door Truth Baseline): cooldown
+                    // with its live remaining time, or the
+                    // running pill named. Doors that never owed
+                    // a peek carry withheld == null and print
+                    // nothing here.
+                    if (countdownSecs == 0 && !peekReady) {
+                        when (state.peekWithheld) {
+                            PeekWithheld.COOLDOWN -> {
+                                if (cooldownSecs > 0) {
+                                    Text(
+                                        text = peekCooldownPrint(cooldownSecs),
+                                        fontFamily = AtkinsonHyperlegibleFamily,
+                                        fontSize = 12.5.sp,
+                                        color = NightColorPrimary.copy(alpha = 0.8f)
+                                    )
+                                }
+                                // Issue #11 (FIX-8, the Errand's
+                                // kernel): when the schedule
+                                // already guarantees a break that
+                                // opens this app, the door prints
+                                // the appointment.
+                                state.nextBreakAtMillis?.let { instant ->
+                                    Text(
+                                        text = breakAppointmentText(instant),
+                                        fontFamily = AtkinsonHyperlegibleFamily,
+                                        fontSize = 12.5.sp,
+                                        color = NightColorPrimary.copy(alpha = 0.8f)
+                                    )
+                                }
                             }
-                            // Issue #11 (FIX-8, the Errand's
-                            // kernel): when the schedule already
-                            // guarantees a break that opens this
-                            // app, the door prints the appointment.
-                            state.nextBreakAtMillis?.let { instant ->
-                                Text(
-                                    text = breakAppointmentText(instant),
-                                    fontFamily = AtkinsonHyperlegibleFamily,
-                                    fontSize = 12.5.sp,
-                                    color = NightColorPrimary.copy(alpha = 0.8f)
-                                )
-                            }
+                            PeekWithheld.ALREADY_ACTIVE -> Text(
+                                text = "A PEEK IS ALREADY RUNNING",
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 12.5.sp,
+                                color = NightColorPrimary.copy(alpha = 0.8f)
+                            )
+                            PeekWithheld.PEEK_OFF -> Text(
+                                text = "PEEK IS OFF",
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 12.5.sp,
+                                color = NightColorPrimary.copy(alpha = 0.8f)
+                            )
+                            null -> Unit
                         }
-                        PeekWithheld.ALREADY_ACTIVE -> Text(
-                            text = "A PEEK IS ALREADY RUNNING",
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 12.5.sp,
-                            color = NightColorPrimary.copy(alpha = 0.8f)
-                        )
-                        PeekWithheld.PEEK_OFF -> Text(
-                            text = "PEEK IS OFF",
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 12.5.sp,
-                            color = NightColorPrimary.copy(alpha = 0.8f)
-                        )
-                        null -> Unit
                     }
                 }
 

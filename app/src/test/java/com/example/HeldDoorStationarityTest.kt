@@ -45,6 +45,12 @@ import org.robolectric.annotation.GraphicsMode
  *  - RETURN's bounds are equal across separate renders of the
  *    counting, offer and held frames of the same visit class
  *    (cross-visit equality — the honest residue of the claim).
+ *    On main's centred, content-sized card this equality did
+ *    NOT hold at first assembly (the card grew when the offer
+ *    appeared and RETURN rode up); the branch's Q-5 cure — one
+ *    unified fixed-height zone under the honest exit — was
+ *    restored to the overlay at the merge to make it true,
+ *    and this test is its guard.
  *  - The offer frame prints PEEK (never "EMERGENCY PEEK"), the
  *    honest m+s badge, and the re-timed price sentence.
  *  - The honest exit stands on the door and routes its tap.
