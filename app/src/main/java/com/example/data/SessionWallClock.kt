@@ -42,9 +42,9 @@ object SessionWallClock {
      */
     fun anchorWallMillis(session: FocusSessionEntity): Long {
         val inBlockSeconds = if (session.isInSafeBreak) {
-            val breakElapsed = (MonolithRepository.SAFE_BREAK_DURATION_SECONDS -
+            val breakElapsed = (session.effectiveBreakSeconds -
                 session.safeBreakSecondsRemaining)
-                .coerceIn(0, MonolithRepository.SAFE_BREAK_DURATION_SECONDS)
+                .coerceIn(0, session.effectiveBreakSeconds)
             session.effectiveTargetSeconds + breakElapsed
         } else {
             session.elapsedSeconds

@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         EmergencyBreakSpendEntity::class,
         DayNoteEntity::class
     ],
-    version = 15,
+    version = 16,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -261,6 +261,25 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
+         * Issue #264 B-264-18 (15→16): schema only, zero data
+         * writes, no backfill — the default IS the truthful
+         * pre-v16 value (0 = unstamped; the row's reader falls
+         * back to the named 10-minute constant, which is the
+         * length every pre-stamp break actually ran).
+         *
+         * focus_sessions +1: breakSeconds — the Safe Break length
+         * chosen for the session, stamped at birth from the
+         * arming preset's breakMinutes so the printed preset
+         * promise (5m / 10m / 15m Break) is the length the
+         * mechanism delivers.
+         */
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN breakSeconds INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
          * TOKEN-SPEC §6: the spend ledger arrives as an explicit
          * migration. There is NO backfill — today's in-memory spends
          * were never recorded, so v8 truthfully starts with an empty
@@ -348,7 +367,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance

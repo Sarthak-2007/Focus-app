@@ -205,7 +205,8 @@ class ShortsSniperTruthTest {
                 MonolithDatabase.MIGRATION_11_12,
                 MonolithDatabase.MIGRATION_12_13,
                 MonolithDatabase.MIGRATION_13_14,
-                MonolithDatabase.MIGRATION_14_15
+                MonolithDatabase.MIGRATION_14_15,
+                MonolithDatabase.MIGRATION_15_16
             )
             .build()
         runBlocking {

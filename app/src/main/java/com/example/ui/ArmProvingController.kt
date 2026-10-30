@@ -193,7 +193,14 @@ class RepositoryArmSessionPort(
         intention = intention,
         profileName = profileName,
         durationMinutes = durationMinutes,
-        studyBlocksCount = studyBlocksCount
+        studyBlocksCount = studyBlocksCount,
+        // Issue #264 B-264-18: the hand arm's break choice is the
+        // preset the user last picked — the same stored fact the
+        // Deck's preset badge ("5m Break" / "10m Break") prints.
+        // Reading it here, at the one hand-arm door, stamps the
+        // choice on the row so the mechanism delivers the length
+        // the badge promised.
+        breakMinutes = com.example.data.PreArmStore(appContext).studyPreset().breakMinutes
     ).id
 
     override suspend fun activeSnapshotId(): Int? =
