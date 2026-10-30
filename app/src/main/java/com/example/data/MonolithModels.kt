@@ -826,6 +826,34 @@ object RoutineSchedule {
         return null
     }
 
+    /**
+     * The next start at which this routine will actually SEAL:
+     * the first scheduled start strictly after [nowMillis] whose
+     * window the routine's pause does not fully cover. A window
+     * the pause runs through (pausedUntilMillis at or past its
+     * end — the #153 skip horizon) will never fire, so printing
+     * its start as the "next seal" would be a false claim; the
+     * search steps over it to the following window. With no
+     * pause in force this is exactly [nextStartMillis].
+     *
+     * Written for the home-screen widget's NEXT SEAL line
+     * (MonolithWidgetProvider) — the merge train landed that
+     * call without its callee, leaving main uncompilable
+     * (CI run 41061807113); restored here on the #152 branch so
+     * the branch — and main on merge — compiles again.
+     */
+    fun effectiveNextStartMillis(routine: RoutineEntity, nowMillis: Long): Long? {
+        val r = routine.sanitized()
+        var cursor = nowMillis
+        repeat(16) {
+            val start = nextStartMillis(r, cursor) ?: return null
+            val end = start + durationMinutes(r) * 60_000L
+            if (r.pausedUntilMillis < end) return start
+            cursor = start
+        }
+        return null
+    }
+
     /** End of the window containing [nowMillis], or of the next window if none contains it. */
     fun nextEndMillis(routine: RoutineEntity, nowMillis: Long): Long? {
         val r = routine.sanitized()
