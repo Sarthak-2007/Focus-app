@@ -229,7 +229,7 @@ class DrawerRenderTest {
 
     private fun setRoot(dark: Boolean) {
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = dark, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = dark) {
                 MonolithRootApp(viewModel = viewModel)
             }
         }
@@ -317,7 +317,7 @@ class DrawerRenderTest {
         val captures = sampleCaptures()
         val frozenAt = at(LocalDate.now(), 9, 26)
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = dark, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = dark) {
                 CapturedNotificationsDigestSheet(
                     visible = true,
                     notifications = captures,
