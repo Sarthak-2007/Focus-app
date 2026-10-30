@@ -191,6 +191,51 @@ class ChromeWaveUnitTest {
     }
 
     // ------------------------------------------------------------------
+    // Rail hit-testing + geometry floors (issue #62 findings 4 & 5):
+    // the margins fabricate no stops, and narrow widths degrade to
+    // zero-size segments instead of negative geometry / NaN travel.
+    // ------------------------------------------------------------------
+    @Test
+    fun railGeometry_hitTestingBoundsAndNarrowFloors() {
+        val recess = RailGeometry.recessWidthDp(390f) // 350, track 4..346
+        // Left margin / inset strip (relX < INSET) selects nothing.
+        assertEquals(RailGeometry.NO_STOP, RailGeometry.stopForX(-20f, recess))
+        assertEquals(RailGeometry.NO_STOP, RailGeometry.stopForX(0f, recess))
+        assertEquals(RailGeometry.NO_STOP, RailGeometry.stopForX(3.9f, recess))
+        // Right of the track's end wall selects nothing.
+        assertEquals(RailGeometry.NO_STOP, RailGeometry.stopForX(346.1f, recess))
+        assertEquals(RailGeometry.NO_STOP, RailGeometry.stopForX(370f, recess))
+        // The end wall itself is still PARK.
+        assertEquals(RailGeometry.PARK_INDEX, RailGeometry.stopForX(346f, recess))
+
+        // Narrow host: recess 20dp — segment and cap floor at zero,
+        // never negative, and no position math produces NaN.
+        val narrow = RailGeometry.recessWidthDp(60f)
+        assertEquals(20f, narrow, 0.001f)
+        assertEquals(0f, RailGeometry.segmentDp(narrow), 0.001f)
+        assertEquals(0f, RailGeometry.capWidthDp(narrow), 0.001f)
+        assertTrue(RailGeometry.capLeftDp(2f, narrow).isFinite())
+        assertTrue(RailGeometry.stopForX(10f, narrow) in -1..4)
+        // Zero-width host: recess floors at zero too.
+        assertEquals(0f, RailGeometry.recessWidthDp(30f), 0.001f)
+    }
+
+    @Test
+    fun railGeometry_resolveMeasureHonoursModes() {
+        val exactly = android.view.View.MeasureSpec.EXACTLY
+        val atMost = android.view.View.MeasureSpec.AT_MOST
+        val unspecified = android.view.View.MeasureSpec.UNSPECIFIED
+        // EXACTLY: the spec size wins, both ways.
+        assertEquals(500, RailGeometry.resolveMeasure(exactly, 500, 390))
+        assertEquals(200, RailGeometry.resolveMeasure(exactly, 200, 390))
+        // AT_MOST: desired size, capped by the offer.
+        assertEquals(390, RailGeometry.resolveMeasure(atMost, 500, 390))
+        assertEquals(300, RailGeometry.resolveMeasure(atMost, 300, 390))
+        // UNSPECIFIED: the desired size.
+        assertEquals(390, RailGeometry.resolveMeasure(unspecified, 0, 390))
+    }
+
+    // ------------------------------------------------------------------
     // Theme evaluation: session > SLEEP window > nothing (§8.10).
     // ------------------------------------------------------------------
     private fun sleepRoutine(start: Int, end: Int, enabled: Boolean = true, pausedUntil: Long = 0L) =

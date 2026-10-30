@@ -4,9 +4,12 @@ import com.example.service.InterceptorState
 import com.example.service.PermPrint
 import com.example.service.WatchItemId
 import com.example.service.WatchStore
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -155,5 +158,49 @@ class WatchStoreRobolectricTest {
         snap = WatchStore.snapshots.value
         assertEquals(InterceptorState.OFF, snap.measurement(WatchItemId.SHORTS_REELS)?.interceptor)
         assertEquals(InterceptorState.OFF, snap.measurement(WatchItemId.SOCIAL_SITES)?.interceptor)
+    }
+
+    /** Issue #48: poke() must actually emit. StateFlow suppresses
+     *  equal values, and the old poke assigned a bare copy() —
+     *  equal by construction — so no collector was ever notified.
+     *  The generation bump makes consecutive snapshots unequal. */
+    @Test
+    fun poke_actuallyEmits() {
+        val before = WatchStore.snapshots.value
+        WatchStore.poke()
+        val after = WatchStore.snapshots.value
+        assertEquals(before.pokeGen + 1, after.pokeGen)
+        assertTrue("a poked snapshot must differ from its predecessor", before != after)
+        WatchStore.poke()
+        assertEquals(after.pokeGen + 1, WatchStore.snapshots.value.pokeGen)
+    }
+
+    /** Issue #48: LAST PROVED is the store's one durable fact.
+     *  A sweep advances it in this process; process death (the
+     *  in-memory reset) must not wipe it back to "never proved" —
+     *  the next process's bind restores it from prefs. */
+    @Test
+    fun lastProved_survivesProcessDeath_viaBind() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences("monolith_watch", Context.MODE_PRIVATE)
+            .edit().clear().commit()
+        try {
+            WatchStore.bind(context)
+            WatchStore.runSweep { true }
+            awaitSnapshot { it.lastProvedWallMillis != null }
+            val proved = WatchStore.snapshots.value.lastProvedWallMillis
+
+            // Process death: the in-memory store resets to EMPTY…
+            WatchStore.resetForTest()
+            assertNull(WatchStore.snapshots.value.lastProvedWallMillis)
+
+            // …and the next process's bind restores the fact.
+            WatchStore.bind(context)
+            assertEquals(proved, WatchStore.snapshots.value.lastProvedWallMillis)
+        } finally {
+            WatchStore.resetForTest()
+            context.getSharedPreferences("monolith_watch", Context.MODE_PRIVATE)
+                .edit().clear().commit()
+        }
     }
 }
