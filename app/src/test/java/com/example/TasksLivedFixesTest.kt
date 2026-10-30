@@ -108,7 +108,12 @@ class TasksLivedFixesTest {
     fun sealedAdvance_doesNotRewriteSessionIntention() = runBlocking {
         repository.ensureSeededAndSyncPackages()
         val dao = db.monolithDao()
-        val active = dao.getAllTasksSnapshot().first { it.resolvedStatus == TaskQueueStatus.ACTIVE }
+        // Main's Audit R2 #96 seed is all-QUEUED now (no fabricated
+        // ACTIVE first task), so the test crowns the queue head
+        // itself instead of reading a seeded ACTIVE row.
+        val head = dao.getAllTasksSnapshot().minByOrNull { it.queueOrder }!!
+        val active = head.copy(status = TaskQueueStatus.ACTIVE.name)
+        dao.updateTask(active)
         val session = repository.startSession(
             intention = active.title, profileName = "Study Loadout",
             durationMinutes = 25, studyBlocksCount = 1
@@ -136,7 +141,11 @@ class TasksLivedFixesTest {
         // standing law so the weaker behaviour can never return.
         repository.ensureSeededAndSyncPackages()
         val dao = db.monolithDao()
-        val active = dao.getAllTasksSnapshot().first { it.resolvedStatus == TaskQueueStatus.ACTIVE }
+        // Same #96 seed change as the sealed twin above: crown the
+        // queue head explicitly; the seed no longer ships an ACTIVE.
+        val head = dao.getAllTasksSnapshot().minByOrNull { it.queueOrder }!!
+        val active = head.copy(status = TaskQueueStatus.ACTIVE.name)
+        dao.updateTask(active)
         repository.startSession(
             intention = active.title, profileName = "Study Loadout",
             durationMinutes = 25, studyBlocksCount = 1
