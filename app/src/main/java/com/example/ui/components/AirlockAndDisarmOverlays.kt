@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -7,6 +8,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -593,6 +596,7 @@ fun ShieldPermissionPrimerModal(
 fun AirlockInterceptOverlay(
     state: AirlockInterceptState,
     onSelectReason: (DistractionTriggerReason) -> Unit,
+    onTransmuteParticleTap: () -> Unit,
     onReturnToFocus: () -> Unit,
     onTake2MinutePeek: () -> Unit
 ) {
@@ -610,36 +614,42 @@ fun AirlockInterceptOverlay(
         // a same-package re-intercept left unchanged) and are
         // deadline-derived, so a fresh intercept always restarts the
         // full 5 seconds and drift can never stretch the wall.
-        val wallStartMillis = remember(state.interceptInstanceId) {
-            state.interceptedAtMillis.takeIf { it > 0L } ?: System.currentTimeMillis()
+        val wallStartMono = remember(state.interceptInstanceId) {
+            state.interceptedAtMonoMillis.takeIf { it > 0L } ?: SystemClock.elapsedRealtime()
         }
         var countdownSecs by remember(state.interceptInstanceId) {
-            mutableIntStateOf(airlockCountdownRemaining(wallStartMillis, System.currentTimeMillis()))
+            mutableIntStateOf(airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime()))
         }
         LaunchedEffect(state.interceptInstanceId, state.isVisible) {
-            countdownSecs = airlockCountdownRemaining(wallStartMillis, System.currentTimeMillis())
+            countdownSecs = airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime())
             while (countdownSecs > 0) {
                 delay(200L)
-                countdownSecs = airlockCountdownRemaining(wallStartMillis, System.currentTimeMillis())
+                countdownSecs = airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime())
             }
         }
 
         // The withheld peek's cooldown, ticking live while the
-        // airlock stands (Truth Car 3, UNA2-01) — now deadline-derived
-        // from the snapshot (Issue #55, HIGH): when it reaches zero the
-        // peek genuinely unlocks below (see peekUnlocked), instead of
-        // stranding the user on a frozen canUse flag at "0 MIN".
-        val cooldownDeadlineMillis = remember(state.interceptInstanceId) {
-            System.currentTimeMillis() + state.peekCooldownRemainingSeconds * 1000L
+        // airlock stands (Truth Car 3, UNA2-01) — now derived from
+        // the state's absolute MONOTONIC deadline (Issue #55,
+        // verifier: the repository's own anchor + 20 min, ceiling
+        // math mirroring peekSecondsRemaining), so the on-screen
+        // unlock instant is never before the repository's grant
+        // instant. When it reaches zero the peek genuinely unlocks
+        // below (see peekUnlocked), instead of stranding the user
+        // on a frozen canUse flag at "0 MIN". States built without
+        // a deadline (tests, previews) fall back to the snapshot.
+        val cooldownDeadlineMono = remember(state.interceptInstanceId) {
+            state.peekCooldownEndsAtMonoMillis.takeIf { it > 0L }
+                ?: (SystemClock.elapsedRealtime() + state.peekCooldownRemainingSeconds * 1000L)
         }
         var cooldownSecs by remember(state.interceptInstanceId) {
             mutableIntStateOf(state.peekCooldownRemainingSeconds)
         }
         LaunchedEffect(state.interceptInstanceId, state.isVisible) {
-            cooldownSecs = cooldownRemainingSeconds(cooldownDeadlineMillis, System.currentTimeMillis())
+            cooldownSecs = cooldownRemainingSeconds(cooldownDeadlineMono, SystemClock.elapsedRealtime())
             while (cooldownSecs > 0) {
                 delay(200L)
-                cooldownSecs = cooldownRemainingSeconds(cooldownDeadlineMillis, System.currentTimeMillis())
+                cooldownSecs = cooldownRemainingSeconds(cooldownDeadlineMono, SystemClock.elapsedRealtime())
             }
         }
         val peekReady = peekUnlocked(state.canUse2MinutePeek, state.peekWithheld, cooldownSecs)
@@ -664,6 +674,12 @@ fun AirlockInterceptOverlay(
                     .background(NightColorSurfaceBright)
                     .border(1.dp, NightColorPrimary.copy(alpha = 0.2f), RoundedCornerShape(24.dp))
                     .clickable(enabled = false) {}
+                    // Issue #55 (fresh-eyes): the card SCROLLS — with
+                    // the reason rows the content can outgrow short /
+                    // landscape / large-font screens, and Back is
+                    // deliberately swallowed, so an unscrollable card
+                    // would trap its own exits off-screen.
+                    .verticalScroll(rememberScrollState())
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -697,12 +713,20 @@ fun AirlockInterceptOverlay(
                 }
 
                 // Hero Architectural Countdown Numeral (Space Mono)
+                // Issue #55: the transmute pulse is WIRED, not dead —
+                // tapping the numeral during the wall fires it (the
+                // ViewModel answers with a pitch-rising detent and
+                // counts the pulse). It grants nothing and shortens
+                // nothing; it is the wall's one permitted fidget.
                 Text(
                     text = if (countdownSecs > 0) String.format(Locale.US, "0%d", countdownSecs) else "00",
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 88.sp,
-                    color = NightColorPrimary // a readout numeral, not an accent (Round 1c)
+                    color = NightColorPrimary, // a readout numeral, not an accent (Round 1c)
+                    modifier = Modifier
+                        .clickable { onTransmuteParticleTap() }
+                        .testTag("airlock_countdown_numeral")
                 )
 
                 // UNA2-07: the label prints only over a declared
@@ -864,6 +888,7 @@ fun DisarmChallengeOverlay(
                     .background(NightColorSurfaceBright)
                     .border(1.dp, NightColorPrimary.copy(alpha = 0.2f), RoundedCornerShape(24.dp))
                     .clickable(enabled = false) {}
+                    .verticalScroll(rememberScrollState())
                     .padding(22.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
@@ -906,7 +931,10 @@ fun DisarmChallengeOverlay(
                     )
 
                     Text(
-                        text = "Hold to fill 60 seconds. Every 15 seconds banks. If your hand slips, what isn't banked drains away. The banked part stays.",
+                        // Issue #55 (fresh-eyes): the seconds are the
+                        // valve's own requiredHoldSeconds, not a
+                        // hardcoded 60 that only agreed by accident.
+                        text = "Hold to fill ${state.requiredHoldSeconds} seconds. Every 15 seconds banks. If your hand slips, what isn't banked drains away. The banked part stays.",
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 11.sp,
                         color = NightColorPrimary.copy(alpha = 0.75f)

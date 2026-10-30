@@ -1,6 +1,7 @@
 package com.example
 
 import com.example.ui.PeekWithheld
+import com.example.ui.peekSecondsRemaining
 import com.example.ui.components.airlockCountdownRemaining
 import com.example.ui.components.cooldownRemainingSeconds
 import com.example.ui.components.peekCooldownPrint
@@ -57,6 +58,30 @@ class AirlockOverlayIssue55Test {
         assertEquals(1, cooldownRemainingSeconds(deadline, deadline - 1_000L))
         assertEquals(2, cooldownRemainingSeconds(deadline, deadline - 1_001L))
         assertEquals(900, cooldownRemainingSeconds(deadline, deadline - 900_000L))
+    }
+
+    // Verifier boundary: 1500 ms remaining exposes floor-truncation.
+    // The overlay's ceiling math (mirroring peekSecondsRemaining)
+    // reads 2, so its unlock instant is the deadline itself — never
+    // before the repository's grant instant.
+    @Test
+    fun cooldownBoundaryUsesCeilingNotFloor() {
+        val deadline = 2_000_000L
+        assertEquals(2, cooldownRemainingSeconds(deadline, deadline - 1_500L))
+        assertEquals(2, peekSecondsRemaining(deadline, deadline - 1_500L))
+        assertEquals(1, cooldownRemainingSeconds(deadline, deadline - 1_000L))
+        assertEquals(0, cooldownRemainingSeconds(deadline, deadline))
+    }
+
+    // Verifier clock test: the wall's math takes only monotonic
+    // stamps, so a wall-clock jump cannot change the remaining —
+    // there is no wall-clock input to jump.
+    @Test
+    fun wallRemainingDependsOnlyOnMonotonicStamps() {
+        val monoStart = 10_000L
+        assertEquals(3, airlockCountdownRemaining(monoStart, monoStart + 2_500L))
+        assertEquals(3, airlockCountdownRemaining(monoStart, monoStart + 2_999L))
+        assertEquals(2, airlockCountdownRemaining(monoStart, monoStart + 3_000L))
     }
 
     // Finding 5 (MEDIUM): the 5s wall is per-intercept and

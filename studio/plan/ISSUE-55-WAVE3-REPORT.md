@@ -25,7 +25,7 @@ cooldown tick, no BackHandler, no modal consumption, same dead parameters; its
 | 1 | CRITICAL | Neither overlay is modal; touches pass through to UI underneath | Airlock root Box/Column and Disarm root Box/Column carried no consuming modifier; digest `:326` and primer `:500` in the same file already used `.clickable(enabled=false){}` | Identical — stands | **FIXED-IN-CODE** |
 | 2 | HIGH | System Back bypasses both overlays (no BackHandler) | `grep BackHandler` = 0 hits in overlay file; MainActivity BackHandlers at 348/350 keyed only on park/destination | Identical (MainActivity-13: only 400/402, same conditions) | **FIXED-IN-CODE** |
 | 3 | HIGH | Cooldown trap: locally-ticked snapshot never unlocks peek; prints "AGAIN IN 0 MIN" | Cooldown at 577–586 local tick; offer gated on frozen `state.canUse2MinutePeek` (663); withheld branch (690–693) prints `peekCooldownPrint(0)` = `(0+59)/60 = 0` MIN | Identical — stands | **FIXED-IN-CODE** |
-| 4 | MEDIUM | Reason-selection + transmute are dead wiring | `onSelectReason`/`onTransmuteParticleTap` declared 552–553, never invoked; `state.selectedReason`/`transmutedParticles` never read in the overlay; every intercept recorded with the MUSCLE_MEMORY default | Identical — stands | **FIXED-IN-CODE** (reason wired for real; transmute cut) |
+| 4 | MEDIUM | Reason-selection + transmute are dead wiring | `onSelectReason`/`onTransmuteParticleTap` declared 552–553, never invoked; `state.selectedReason`/`transmutedParticles` never read in the overlay; every intercept recorded with the MUSCLE_MEMORY default | Identical — stands | **FIXED-IN-CODE** (both wired for real — see Addendum A; an earlier draft cut transmute, reversed under Sarthak's no-downgrade rule) |
 | 5 | MEDIUM | 5 s wall not per-intercept; same-package re-intercept inherits expired countdown | Countdown `remember(package, isVisible)` (562), effect keyed `(isVisible, package)` (565); `AirlockInterceptState` carried no instance id/timestamp | Identical state class (no instance field) — stands | **FIXED-IN-CODE** |
 
 Counts: **5 verified · 5 fixed-in-code · 0 verified-false · 0 fixed-elsewhere · 0 stands-blocked.**
@@ -57,14 +57,16 @@ Counts: **5 verified · 5 fixed-in-code · 0 verified-false · 0 fixed-elsewhere
    rendered selected (`isPrimaryInk`), taps calling `onSelectReason`, which is the
    value `recordIntercept` actually stores on both return and peek. The fabricated-
    analytics path is gone: MUSCLE_MEMORY remains only as the visibly pre-selected
-   first chip the user can change. The transmute-particle feature had no surface,
-   no consumer and no meaning beyond a detent sound: parameter, MainActivity
-   wiring, `incrementAirlockParticlePulse()` and the `transmutedParticles` state
-   field are **cut** (the real transmute act already exists —
-   `transmuteImpulseAndReturn`, bound to RETURN TO FOCUS).
+   first chip the user can change. The transmute-particle pulse is likewise
+   wired, not cut (reversed under Sarthak's no-downgrade rule — see Addendum):
+   tapping the countdown numeral fires `onTransmuteParticleTap` →
+   `incrementAirlockParticlePulse()` (pitch-rising detent + counted pulse);
+   it grants nothing and shortens nothing.
 5. **Per-intercept wall (MEDIUM):** `AirlockInterceptState` gains
    `interceptInstanceId` (monotonic VM sequence, incremented on every
-   `triggerAirlockIntercept`) and `interceptedAtMillis`. Both overlay timers are
+   `triggerAirlockIntercept`) and `interceptedAtMonoMillis` (monotonic stamp;
+   the addendum's deadline/cooldown refinements supersede the first draft's
+   wall-clock version). Both overlay timers are
    keyed on the instance and deadline-derived (`airlockCountdownRemaining(start,
    now)`), ticking at 200 ms against the deadline — a same-package re-intercept
    restarts the full 5 s, and scheduling drift can neither stretch nor shrink it.
