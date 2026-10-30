@@ -112,6 +112,33 @@ interface MonolithDao {
     @Query("UPDATE focus_sessions SET releaseRetriesDone = :done WHERE id = :id")
     suspend fun stampReleaseRetries(id: Int, done: Int)
 
+    // Issue #47 (heartbeat-retry F1/F5): the retry scheduler's own
+    // read — the newest still-faulted row ONLY, targeted + LIMIT 1,
+    // never a full-history scan. The heal write: clearing the fault
+    // flag ends the cadence for that row; faultedAt/retriesDone stay
+    // on the row as its history (the receipt's truth is untouched).
+    @Query(
+        "SELECT * FROM focus_sessions WHERE releaseFaultShield = 1 " +
+            "AND releaseFaultedAtWallMillis > 0 ORDER BY startWallTimeMillis DESC LIMIT 1"
+    )
+    suspend fun getFaultedReleaseSession(): FocusSessionEntity?
+
+    @Query("UPDATE focus_sessions SET releaseFaultShield = 0 WHERE id = :id")
+    suspend fun clearReleaseFault(id: Int)
+
+    // Issue #47 (heartbeat-retry F5): the heartbeat's cheap
+    // 'nothing due' probe — COUNT over exactly the union of the two
+    // derive() session reads below. Zero (with no active session)
+    // PROVES both reads would return empty, so the pass may derive
+    // over an empty list instead of materialising both.
+    @Query(
+        "SELECT COUNT(*) FROM focus_sessions WHERE " +
+            "(routineId IS NOT NULL AND (windowEndMillis >= :sinceMillis " +
+            "OR (isActive = 0 AND routineOutcome IS NULL))) " +
+            "OR startWallTimeMillis >= :sinceMillis"
+    )
+    suspend fun countDeriveSessionInputs(sinceMillis: Long): Int
+
     // The receipt's deflection read (Zettel): intercept instants in
     // the session's own wall window, oldest first — the reduction
     // (30s-per-package dedupe, break-window exclusion) is assembly
@@ -144,16 +171,18 @@ interface MonolithDao {
     suspend fun insertInterceptLog(log: InterceptLogEntity)
 
     // Captured Notifications (Silent Notification Catcher & Persistent Digest)
-    @Query("SELECT * FROM captured_notifications ORDER BY timestampMillis DESC LIMIT 100")
+    // NO LIMIT (issue #138): the live header prints this list's size
+    // as the held total, so a capped flow would report the cap as
+    // the count and hide the oldest held items. A held item past
+    // any cap is still held.
+    @Query("SELECT * FROM captured_notifications ORDER BY timestampMillis DESC")
     fun getCapturedNotificationsFlow(): Flow<List<CapturedNotificationEntity>>
 
     /**
      * One-shot snapshot for the FROZEN digest: the same rows the
      * flow would print, taken once, at the freeze. Deliberately NO
      * LIMIT — a held item past any cap is still held, and a frozen
-     * read that silently dropped it would lie by omission. (The
-     * live flow keeps its shipped cap; only the snapshot — the
-     * sealed truth surface — is unbounded.)
+     * read that silently dropped it would lie by omission.
      */
     @Query("SELECT * FROM captured_notifications ORDER BY timestampMillis DESC")
     suspend fun getCapturedNotificationsSnapshot(): List<CapturedNotificationEntity>
@@ -195,8 +224,8 @@ interface MonolithDao {
     // retention is permanent. Every read is paged (LIMIT + OFFSET,
     // newest first, id tiebreak for a total order) — no read may
     // silently cap the record. Filing day/month follow the 03:30
-    // rule (DrawerDay): the months index subtracts the same 210
-    // minutes inside SQLite that DrawerDay subtracts in Kotlin.
+    // rule (DrawerDay) — computed in Kotlin only; the old SQLite
+    // twin disagreed with it on DST days and is dead (Audit R1 #37).
     // =========================================================================
 
     // The page size is the CALLER's (Truth Car 2, DRW-04): the
@@ -206,8 +235,18 @@ interface MonolithDao {
     @Query("SELECT * FROM focus_tasks WHERE status = 'COMPLETED' AND completedAtMillis >= :fromMillis AND completedAtMillis < :toMillis ORDER BY completedAtMillis DESC, id DESC LIMIT :limit OFFSET :offset")
     suspend fun getStoredPage(fromMillis: Long, toMillis: Long, limit: Int, offset: Int): List<FocusTaskEntity>
 
-    @Query("SELECT CAST(strftime('%Y', (completedAtMillis / 1000) - 12600, 'unixepoch', 'localtime') AS INTEGER) AS year, CAST(strftime('%m', (completedAtMillis / 1000) - 12600, 'unixepoch', 'localtime') AS INTEGER) AS month FROM focus_tasks WHERE status = 'COMPLETED' AND completedAtMillis > 0 GROUP BY year, month ORDER BY year DESC, month DESC")
-    suspend fun getStoredMonths(): List<StoredMonth>
+    // Audit R1 #37: the months index used to be computed in SQL by
+    // subtracting 12,600 ELAPSED seconds from the epoch and taking
+    // SQLite 'localtime' — a different function from DrawerDay's
+    // wall-clock filing rule on DST days (verified divergence at
+    // the 2026-11-01 America/New_York fall-back month boundary:
+    // the same completion filed under October in Kotlin and
+    // November in SQL). There is now ONE filing function: the DAO
+    // returns raw completion instants and the repository groups
+    // them through DrawerDay.filingYearMonth. No SQL date math
+    // remains to disagree with it.
+    @Query("SELECT completedAtMillis FROM focus_tasks WHERE status = 'COMPLETED' AND completedAtMillis > 0")
+    suspend fun getStoredCompletionInstants(): List<Long>
 
     @Query("SELECT * FROM focus_tasks WHERE status = 'COMPLETED' AND completedAtMillis > 0 AND (title LIKE '%' || :q || '%' OR categoryTag LIKE '%' || :q || '%' OR notesOrSubsteps LIKE '%' || :q || '%') ORDER BY completedAtMillis DESC, id DESC LIMIT :limit OFFSET :offset")
     suspend fun searchStoredTasks(q: String, limit: Int, offset: Int): List<FocusTaskEntity>
@@ -338,4 +377,12 @@ interface MonolithDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDayNotes(notes: List<DayNoteEntity>)
+
+    /** Audit R1 #37: clearing a declared word must reach the
+     *  drained table too — before this, no DELETE for day_notes
+     *  existed anywhere, so a word that had drained from prefs to
+     *  Room could never be undeclared (the clear removed only the
+     *  already-absent prefs key and the union read resurrected it). */
+    @Query("DELETE FROM day_notes WHERE dateIso = :dateIso")
+    suspend fun deleteDayNote(dateIso: String)
 }
