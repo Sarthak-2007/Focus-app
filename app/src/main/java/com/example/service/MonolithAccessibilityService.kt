@@ -564,6 +564,31 @@ class MonolithAccessibilityService : AccessibilityService() {
             Log.w("MonolithA11y", "detection query failed at $where (total $detectionFailures)", e)
         }
 
+        /** Issue #296 (Audit R5, ScreenZen second-pass F2): the
+         *  system clock is a bypass route — every routine window and
+         *  usage window in Monolith is wall-clock based, so the
+         *  Date & time settings page is a tamper surface during a
+         *  session even though it never mentions Monolith (the
+         *  app-info gate in isPackageInstallerOrTamperSettings can
+         *  therefore never see it). Evidence is the page's own
+         *  controls, not its Settings-index row: the index lists
+         *  "Date & time" as a title but carries none of these
+         *  markers, so opening Settings itself stays unblocked and
+         *  only the clock page itself intercepts. English text by
+         *  necessity — the page exposes no stable resource IDs for
+         *  these rows across OEM skins. */
+        private val DATE_TIME_SURFACE_MARKERS = listOf(
+            "set date",
+            "set time",
+            "select time zone",
+            "automatic date & time",
+            "automatic time zone",
+            "network-provided time"
+        )
+
+        internal fun isDateTimeSettingsSurface(windowTextLowercase: String): Boolean =
+            DATE_TIME_SURFACE_MARKERS.any { windowTextLowercase.contains(it) }
+
         /** Monotonic stamp of the last event whose root window was
          *  successfully acquired. Pipeline proof (the service is
          *  bound and processing this foreground), not session proof. */
@@ -1369,6 +1394,12 @@ class MonolithAccessibilityService : AccessibilityService() {
 
         if (pkgName in SETTINGS_PACKAGES) {
             val dump = collectWindowTextLowercase(rootNode)
+            // Issue #296 F2: the clock page is a tamper surface in
+            // its own right — checked BEFORE the Monolith gate,
+            // because the Date & time page never mentions Monolith.
+            // This door only runs inside processEvent's active-
+            // session gate, so the intercept is session-scoped.
+            if (isDateTimeSettingsSurface(dump)) return true
             val mentionsMonolith = dump.contains("monolith")
             if (!mentionsMonolith) return false
             // R3b #162 F3 supersedes the #42 static-page test for
