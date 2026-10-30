@@ -995,6 +995,121 @@ fun CapturedNotificationsDigestSheet(
 }
 
 /**
+ * 4. SHIELD PERMISSION PRIMER MODAL (issue #324, finding 4 — REBUILT)
+ *
+ * The original primer was deleted with the dead-code layer (issue
+ * #74): two grants only, and a commit-and-arm-anyway path that armed
+ * a session with no interception behind it (register LR2-S1-18).
+ * This
+ * rebuild is the BUILD half of finding 4's cure, and it is NOT the
+ * old body restored:
+ *
+ *  - It presents ONE step of the six-grant sequence — the flow's
+ *    current (or resumed) step, derived by PermissionFlow from the
+ *    Watch snapshot's own prints — with its position in the sequence
+ *    and the board's own explainer for that grant
+ *    (WatchStore.boardRationale, issue #280): what the grant does
+ *    and what it never does, BEFORE the Settings trip fires.
+ *  - Its only action is that step's FIX trip (the host records the
+ *    presentation in PermissionFlowStore BEFORE the pane opens, so
+ *    the sequence resumes at this step after any interruption) and
+ *    NOT NOW, which dismisses for this process. The standing paths
+ *    remain: PARK's board and the arm slide's refusal FIX routes.
+ *  - There is NO arm-anyway path, by construction: no callback for
+ *    one exists. Arming reads the warrant itself, in the slide,
+ *    and refuses in the open — that law is not re-litigated here.
+ *
+ * The DESIGN half of finding 4 (the flow's final presentation) is
+ * owned by the guard/warrant programme on issue #58; this surface
+ * is the truthful machinery it stands on.
+ */
+@Composable
+fun ShieldPermissionPrimerModal(
+    visible: Boolean,
+    step: com.example.service.WatchItemId?,
+    stepLine: String?,
+    countLine: String?,
+    explainer: String?,
+    fixLabel: String?,
+    onFixStep: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AnimatedVisibility(
+        visible = visible && step != null,
+        enter = fadeIn(MonolithCurves.specC()),
+        exit = fadeOut(MonolithCurves.specA())
+    ) {
+        val scheme = MaterialTheme.colorScheme
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.7f))
+                .clickable(onClick = onDismiss)
+                .padding(12.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(scheme.surfaceBright)
+                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(24.dp))
+                    .clickable(enabled = false) {}
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "SYSTEM GUARD PRE-FLIGHT",
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    color = scheme.onBackground
+                )
+                if (stepLine != null) {
+                    Text(
+                        text = stepLine,
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 12.5.sp,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
+                if (explainer != null) {
+                    Text(
+                        text = explainer,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
+                if (countLine != null) {
+                    Text(
+                        text = countLine,
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 12.5.sp,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
+                if (fixLabel != null) {
+                    BlockitActionChip(
+                        wordLabel = fixLabel,
+                        isAccentArmed = true,
+                        onClick = onFixStep,
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "permission_primer_fix_button"
+                    )
+                }
+                BlockitActionChip(
+                    wordLabel = "NOT NOW",
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "permission_primer_dismiss_button"
+                )
+            }
+        }
+    }
+}
+
+/**
  * 5. AIRLOCK INTERCEPTION OVERLAY (Decision #16: 5s Breathing Delay Wall)
  */
 @Composable

@@ -61,6 +61,8 @@ import com.example.service.InterceptNonce
 import com.example.service.InterceptPath
 import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithShieldService
+import com.example.service.PermissionFlow
+import com.example.service.PermissionFlowStore
 import com.example.service.PermissionReturnService
 import com.example.service.WatchStore
 import com.example.ui.MonolithDestination
@@ -125,6 +127,12 @@ class MainActivity : ComponentActivity() {
         // Watch Store bind (issue #48): LAST PROVED restored before
         // any surface reads the store.
         WatchStore.bind(applicationContext)
+
+        // Permission Flow bind (issue #324, finding 4 build half):
+        // the persisted step state restored before the primer's
+        // host reads it, so an interrupted grant sequence resumes
+        // in this process at the step it stopped at.
+        PermissionFlowStore.bind(applicationContext)
 
         // ISSUE-67: the repository comes from the single
         // construction point (AppContainer: DAO + live service
@@ -1399,6 +1407,73 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             // register's LR2-S1-18 — the slide reads the warrant
             // itself now and refuses in the open, with the FIX
             // routes on the sentence itself.
+            //
+            // Issue #324 (finding 4, BUILD half): the primer is
+            // REBOUND below — rebuilt, not restored. The new modal
+            // has no arm-anyway path at all (no callback for one
+            // exists); it presents the grant sequence's current
+            // step — or, after an interruption, the persisted
+            // resume step (PermissionFlowStore) — explains it in
+            // the board's own rationale words, and fires that
+            // step's FIX trip through openFixPane, which arms the
+            // return service as always. The presentation is
+            // recorded BEFORE the pane opens, so the sequence
+            // resumes at this step after Settings, Home, or
+            // process death. Gates, in the house discipline: the
+            // Deck only, no live session, PARK closed (the board
+            // is the standing full surface; the primer never
+            // covers it), a measured actionable lack (the step is
+            // derived from the Watch snapshot's own prints, never
+            // from the record), and a per-process dismissal —
+            // a cold start with an unfinished flow re-presents at
+            // the resume step, which is what resumable means.
+            val permissionFlowRecord by PermissionFlowStore.records
+                .collectAsStateWithLifecycle()
+            var permissionPrimerDismissed by rememberSaveable {
+                mutableStateOf(false)
+            }
+            val permissionFlowNowMono = android.os.SystemClock.elapsedRealtime()
+            val permissionFlowProgress = PermissionFlow.progressAt(
+                watchSnapshot,
+                permissionFlowNowMono
+            )
+            val permissionPrimerStep = PermissionFlow.resumeStep(
+                permissionFlowRecord,
+                watchSnapshot,
+                permissionFlowNowMono
+            )
+            val permissionPrimerVisible = permissionPrimerStep != null &&
+                currentDestination == MonolithDestination.DECK &&
+                activeSession?.isActive != true &&
+                !parkOpen &&
+                !permissionPrimerDismissed
+            LaunchedEffect(permissionFlowProgress.complete) {
+                PermissionFlowStore.noteProgress(permissionFlowProgress)
+            }
+            LaunchedEffect(permissionPrimerVisible) {
+                if (permissionPrimerVisible) {
+                    PermissionFlowStore.notePrimerShown()
+                }
+            }
+            com.example.ui.components.ShieldPermissionPrimerModal(
+                visible = permissionPrimerVisible,
+                step = permissionPrimerStep,
+                stepLine = PermissionFlow.primerStepLine(
+                    permissionPrimerStep,
+                    permissionFlowProgress
+                ),
+                countLine = PermissionFlow.primerCountLine(permissionFlowProgress),
+                explainer = PermissionFlow.primerExplainer(permissionPrimerStep),
+                fixLabel = PermissionFlow.primerFixLabel(permissionPrimerStep),
+                onFixStep = {
+                    val step = permissionPrimerStep
+                    if (step != null) {
+                        PermissionFlowStore.recordStepPresented(step)
+                        openFixPane(step)
+                    }
+                },
+                onDismiss = { permissionPrimerDismissed = true }
+            )
 
             // THE LAUNCHER BLOCK SURFACE: hosted under the Airlock,
             // so a fresh intercept's door always stands above it.
