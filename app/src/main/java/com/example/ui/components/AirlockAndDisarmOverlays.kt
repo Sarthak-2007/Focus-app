@@ -372,6 +372,7 @@ internal fun deskClockBreakLine(
     return "SAFE BREAK · BLOCK $next RESUMES AT 00:00"
 }
 
+/**
  * Issue #111 finding 2 — the burn-in wander, as a pure function.
  * A lemniscate (figure-8): x = 26·sin θ, y = 13·sin 2θ, θ advancing
  * 2π per 60 steps; the VM steps once a minute, so the face traces
