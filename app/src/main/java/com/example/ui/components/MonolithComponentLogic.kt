@@ -191,7 +191,11 @@ data class RefusalSentence(val text: String, val action: RefusalAction?)
  *
  * The cured table:
  *  - not bound → BLOCKING IS OFF (the guard is dead; observed, not
- *    inferred).
+ *    inferred) — except inside the cold-open grace: while the
+ *    residency the warrant carries is still within
+ *    [WatchStore.RESIDENCY_GRACE_MS] of its start, the row reads
+ *    silent, because at a cold open the service may simply not
+ *    have bound yet (see the timed overload).
  *  - usage DENIED or UNSET → USAGE ACCESS IS OFF (issue #6 C3/F9:
  *    UNSET is a known lack with a known owner — the sentence names
  *    the door the hand opens). These rows stand ABOVE the
@@ -243,8 +247,28 @@ internal fun refusalSentenceFor(warrant: Warrant?, nowMono: Long): RefusalSenten
     if (warrant == null) return null
     if (WatchStore.warrantStaleForPrint(warrant, nowMono)) return null
     return when {
-        !warrant.a11yBound ->
-            RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
+        !warrant.a11yBound -> {
+            // Cold-open grace (issue #7, chair ruling): at a cold
+            // open the Deck shows before the accessibility service
+            // binds, and bind latency has no platform bound —
+            // instance == null inside the first moments of a
+            // residency is the expected first-frame state, not
+            // observed death. While the residency the warrant
+            // carries is inside [WatchStore.RESIDENCY_GRACE_MS] the
+            // slot holds its reserved silence, exactly as the
+            // bound-unstamped row below does. Past the grace, or
+            // with no residency carried at all (residencyStartMono
+            // 0: age unknown, never fresh), the print stands:
+            // BLOCKING IS OFF, and its FIX door rebinds the service,
+            // the one act that can change the fact.
+            val start = warrant.residencyStartMono
+            val ageMs = if (start > 0L) (nowMono - start).coerceAtLeast(0L) else null
+            if (ageMs != null && ageMs <= WatchStore.RESIDENCY_GRACE_MS) {
+                null
+            } else {
+                RefusalSentence("BLOCKING IS OFF — TAP TO FIX", RefusalAction.FIX_ACCESSIBILITY)
+            }
+        }
         warrant.usage == UsageAccess.DENIED ->
             RefusalSentence("USAGE ACCESS IS OFF — TAP TO FIX", RefusalAction.FIX_USAGE)
         warrant.usage == UsageAccess.UNSET ->

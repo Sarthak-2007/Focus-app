@@ -253,14 +253,37 @@ class ColdStartWarrantTest {
     }
 
     @Test
-    fun unboundReadsBlockingOffAtEveryAge() {
-        // Requirement 6 — behaviour pinned unchanged by the cure:
-        // not bound is observed death, not inference. The a11y row
-        // outranks every other row (even a DENIED usage) and no age
-        // — in-grace, past grace, no residency — softens it.
+    fun unboundIsSilentInsideTheColdOpenGraceThenReadsBlockingOff() {
+        // Requirement 6 (as re-ruled — issue #7 cold-open grace,
+        // chair ruling): an unbound warrant whose carried residency
+        // is still inside RESIDENCY_GRACE_MS is the cold open itself
+        // — the Deck is up, the system has not finished binding
+        // the service, and bind latency has no platform bound, so
+        // the slot holds its reserved silence instead of printing a
+        // death that may be one frame old. Past the grace the print
+        // stands at every age, and a warrant carrying no residency
+        // (age unknown, never fresh) reads BLOCKING IS OFF at once.
+        // The a11y row keeps its priority throughout: even a DENIED
+        // or UNSET usage is silent in-grace (the a11y row fires
+        // first), and past the grace the a11y sentence — not the
+        // usage sentence — is what stands.
         for (state in listOf(WarrantState.OFF, WarrantState.UNPROVEN)) {
             for (usage in listOf(UsageAccess.ALLOWED, UsageAccess.DENIED, UsageAccess.UNSET)) {
-                for (delta in listOf(0L, 2_000L, 3_999L, 4_001L, 44_999L)) {
+                for (delta in listOf(0L, 2_000L, 3_999L, 4_000L)) {
+                    val now = t + delta
+                    assertNull(
+                        "unbound in-grace (state=$state, usage=$usage, delta=$delta)",
+                        refusalSentenceFor(
+                            warrant(
+                                state, bound = false, stamped = false,
+                                usage = usage,
+                                readMono = now, residencyStartMono = t
+                            ),
+                            now
+                        )
+                    )
+                }
+                for (delta in listOf(4_001L, 10_000L, 44_999L)) {
                     val now = t + delta
                     val s = refusalSentenceFor(
                         warrant(
@@ -271,7 +294,24 @@ class ColdStartWarrantTest {
                         now
                     )
                     assertEquals(
-                        "unbound (state=$state, usage=$usage, delta=$delta)",
+                        "unbound past-grace (state=$state, usage=$usage, delta=$delta)",
+                        "BLOCKING IS OFF — TAP TO FIX", s?.text
+                    )
+                    assertEquals(RefusalAction.FIX_ACCESSIBILITY, s?.action)
+                }
+                // No residency carried: no grace is owed at any age.
+                for (delta in listOf(0L, 2_000L, 44_999L)) {
+                    val now = 500_000L + delta
+                    val s = refusalSentenceFor(
+                        warrant(
+                            state, bound = false, stamped = false,
+                            usage = usage,
+                            readMono = now, residencyStartMono = 0L
+                        ),
+                        now
+                    )
+                    assertEquals(
+                        "unbound no-residency (state=$state, usage=$usage, delta=$delta)",
                         "BLOCKING IS OFF — TAP TO FIX", s?.text
                     )
                     assertEquals(RefusalAction.FIX_ACCESSIBILITY, s?.action)
