@@ -95,7 +95,15 @@ class ScreenshotHarnessTest {
             File("app/shots-redirect.txt")
         ).firstOrNull { it.isFile }
         val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        File(target ?: "/home/hatch/workspace/clone-inspect/shots")
+        if (target != null) return@run File(target)
+        // Test-floor cure: the studio default below only exists on the
+        // studio box; on CI runners /home/hatch cannot be created and
+        // every capture died with FileNotFoundException at the write.
+        // Keep the studio path when it is creatable, else fall back to
+        // a writable temp dir — the render, not the folder, is the point.
+        val studio = File("/home/hatch/workspace/clone-inspect/shots")
+        if (studio.mkdirs() || studio.isDirectory) studio
+        else File(System.getProperty("java.io.tmpdir"), "monolith-shots").apply { mkdirs() }
     }
 
     @Before

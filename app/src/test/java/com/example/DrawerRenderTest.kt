@@ -64,12 +64,16 @@ class DrawerRenderTest {
     // shots-redirect.txt — never the shared shots folder.
     private val shotsDir: File = run {
         val redirect = File("/home/hatch/workspace/clone-inspect/builds/drawer/Focus-app/shots-redirect.txt")
-        val target = if (redirect.exists()) {
-            redirect.readText().trim()
-        } else {
-            "/home/hatch/workspace/clone-inspect/builds/drawer/shots-own"
+        if (redirect.exists()) {
+            return@run File(redirect.readText().trim()).apply { mkdirs() }
         }
-        File(target).apply { mkdirs() }
+        // Test-floor cure: the lane default below is a studio-box path;
+        // on CI runners it cannot be created and every capture died
+        // with FileNotFoundException. Keep it when creatable, else use
+        // a writable temp dir.
+        val studio = File("/home/hatch/workspace/clone-inspect/builds/drawer/shots-own")
+        if (studio.mkdirs() || studio.isDirectory) studio
+        else File(System.getProperty("java.io.tmpdir"), "monolith-shots-drawer").apply { mkdirs() }
     }
 
     @Before

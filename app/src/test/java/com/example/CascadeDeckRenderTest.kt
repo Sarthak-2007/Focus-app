@@ -60,7 +60,13 @@ class CascadeDeckRenderTest {
             File("app/shots-redirect.txt")
         ).firstOrNull { it.isFile }
         val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        File(target ?: "/home/hatch/workspace/clone-inspect/shots")
+        if (target != null) return@run File(target)
+        // Test-floor cure: see ScreenshotHarnessTest — the studio path
+        // cannot be created on CI runners; fall back to a writable
+        // temp dir there instead of dying at the capture write.
+        val studio = File("/home/hatch/workspace/clone-inspect/shots")
+        if (studio.mkdirs() || studio.isDirectory) studio
+        else File(System.getProperty("java.io.tmpdir"), "monolith-shots").apply { mkdirs() }
     }
 
     @Before

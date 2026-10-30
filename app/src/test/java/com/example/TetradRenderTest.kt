@@ -41,8 +41,12 @@ class TetradRenderTest {
         val canvas = Canvas(bmp)
         canvas.drawColor(if (night) 0xFF171412.toInt() else 0xFFEDE8E2.toInt())
         view.draw(canvas)
-        val dir = File("/home/hatch/workspace/clone-inspect/shots/tetrad")
-        dir.mkdirs()
+        // Test-floor cure: the studio path cannot be created on CI
+        // runners (FileNotFoundException at the write); keep it when
+        // creatable, else fall back to a writable temp dir.
+        val studio = File("/home/hatch/workspace/clone-inspect/shots/tetrad")
+        val dir = if (studio.mkdirs() || studio.isDirectory) studio
+            else File(System.getProperty("java.io.tmpdir"), "monolith-shots/tetrad").apply { mkdirs() }
         FileOutputStream(File(dir, name)).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 

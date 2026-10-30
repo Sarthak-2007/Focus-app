@@ -73,6 +73,20 @@ jobs:
         id: tests
         run: ./gradlew --console=plain testDebugUnitTest
 
+      # Test-floor: the raw test XMLs/reports are the census. Upload
+      # them on EVERY run (green or red) so a failure count never has
+      # to be reconstructed from log archaeology again.
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results-${{ github.run_id }}
+          path: |
+            app/build/test-results/testDebugUnitTest
+            app/build/reports/tests/testDebugUnitTest
+          retention-days: 7
+          if-no-files-found: ignore
+
       # Wave-2 (Feel/Finisher pass): the run page must tell the truth
       # in plain words without anyone opening a log. This APK is
       # uploaded BEFORE the test step, so while tests are red the

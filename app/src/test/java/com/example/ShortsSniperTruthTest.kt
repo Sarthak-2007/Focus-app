@@ -108,6 +108,17 @@ class ShortsSniperTruthTest {
                             "receiptSequence, lastReceiptSessionId) " +
                             "VALUES (1, 1, 1, 0, 123, 456, 7, 'KEPT', 41, 9)"
                     )
+                    // Test-floor cure: MIGRATION_11_12 also alters
+                    // focus_sessions; a v11 file without that table made
+                    // the migration die with SQLiteException at open.
+                    // A real v11 file always carries focus_sessions —
+                    // the fixture now does too (shape mirrored from
+                    // BreakMigrationTest's v11).
+                    db.execSQL(
+                        "CREATE TABLE IF NOT EXISTS `focus_sessions` (" +
+                            "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "`intention` TEXT NOT NULL)"
+                    )
                 }
 
                 override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
