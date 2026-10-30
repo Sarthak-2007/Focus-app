@@ -15,7 +15,14 @@ pluginManagement {
 dependencyResolutionManagement {
   repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
   repositories {
-    google()
+    exclusiveContent {
+      forRepository { google() }
+      filter {
+        includeGroupByRegex("com\\.android.*")
+        includeGroupByRegex("com\\.google.*")
+        includeGroupByRegex("androidx.*")
+      }
+    }
     mavenCentral()
   }
 }
