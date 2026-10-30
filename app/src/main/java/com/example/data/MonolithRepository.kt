@@ -3661,7 +3661,7 @@ class MonolithRepository(
             session = session,
             allBlocksCompleted = allBlocksCompleted,
             isRoutineSession = isRoutineSession,
-            verifiedElapsedSeconds = verifiedElapsed,
+            verifiedElapsedSeconds = verifiedElapsed.toLong(),
             appLastUpdateMillis = appLastUpdateMillis(),
             usageStatsPermissionHeld = hasUsageStatsPermission(),
             openExposureSeen = exposedAtEnd.isNotEmpty()
