@@ -1,5 +1,7 @@
 package com.example.data
 
+import java.util.Locale
+
 /**
  * Essential apps, defined once by PACKAGE — never by substring luck
  * (issue #119, findings 4 + 5).
@@ -77,7 +79,7 @@ object EssentialApps {
     )
 
     fun isDialerPackage(packageName: String): Boolean {
-        val pkg = packageName.trim().lowercase()
+        val pkg = packageName.trim().lowercase(Locale.ROOT)
         return pkg in DIALER_PACKAGES ||
             pkg.endsWith(".dialer") ||
             pkg.endsWith(".incallui") ||
@@ -88,18 +90,18 @@ object EssentialApps {
     fun isCameraPackage(packageName: String): Boolean {
         val pkg = packageName.trim()
         return pkg in CAMERA_PACKAGES ||
-            pkg.lowercase().endsWith(".camera") ||
-            pkg.lowercase().endsWith(".camera2") ||
-            pkg.lowercase().endsWith(".googlecamera")
+            pkg.lowercase(Locale.ROOT).endsWith(".camera") ||
+            pkg.lowercase(Locale.ROOT).endsWith(".camera2") ||
+            pkg.lowercase(Locale.ROOT).endsWith(".googlecamera")
     }
 
     fun isNavigationPackage(packageName: String): Boolean {
-        val pkg = packageName.trim().lowercase()
+        val pkg = packageName.trim().lowercase(Locale.ROOT)
         return pkg in NAVIGATION_PACKAGES || pkg == "com.waze"
     }
 
     fun isClockPackage(packageName: String): Boolean {
-        val pkg = packageName.trim().lowercase()
+        val pkg = packageName.trim().lowercase(Locale.ROOT)
         return pkg in CLOCK_PACKAGES || pkg.endsWith(".deskclock")
     }
 
@@ -131,7 +133,7 @@ object EssentialApps {
      */
     fun sleepLoadoutTierFor(packageName: String, appName: String): AppBlockTier {
         if (isEssentialPackage(packageName)) return AppBlockTier.OPEN
-        val lower = "$packageName $appName".lowercase()
+        val lower = "$packageName $appName".lowercase(Locale.ROOT)
         return if (
             lower.contains("dialer") || lower.contains("phone") ||
             lower.contains("clock") || lower.contains("alarm") ||

@@ -10,7 +10,12 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface MonolithDao {
     // Blocked Apps (3-Tier: LOCKED, PEEK_2M, OPEN)
-    @Query("SELECT * FROM blocked_apps ORDER BY isBlocked DESC, interceptCount DESC, appName ASC")
+    // Issue #142: the catalogue is a place to FIND an app, so it
+    // sorts A-Z by name (package as the stable tiebreak). The old
+    // enforcement-priority order (isBlocked, interceptCount) moved
+    // an app's row every time it was intercepted - a list that
+    // rearranges itself while the user is scanning it.
+    @Query("SELECT * FROM blocked_apps ORDER BY appName ASC, packageName ASC")
     fun getAllApps(): Flow<List<BlockedAppEntity>>
 
     @Query("SELECT * FROM blocked_apps")
@@ -120,6 +125,13 @@ interface MonolithDao {
     @Query("SELECT * FROM focus_sessions ORDER BY startWallTimeMillis DESC")
     suspend fun getSessionHistorySnapshot(): List<FocusSessionEntity>
 
+    /** Issue #157: the Vault's receipts index — every session row
+     *  that claimed a № (stamped inside the claim transaction,
+     *  RC-04), newest № first. Rows with receiptNumber = 0 claimed
+     *  nothing and never appear. */
+    @Query("SELECT * FROM focus_sessions WHERE receiptNumber > 0 ORDER BY receiptNumber DESC")
+    suspend fun getClaimedReceiptSessions(): List<FocusSessionEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSession(session: FocusSessionEntity): Long
 
@@ -135,8 +147,6 @@ interface MonolithDao {
     @Query("SELECT * FROM focus_sessions WHERE id = :id LIMIT 1")
     suspend fun getSessionById(id: Int): FocusSessionEntity?
 
-    @Query("SELECT * FROM focus_sessions WHERE id = :id LIMIT 1")
-    fun getSessionByIdFlow(id: Int): Flow<FocusSessionEntity?>
 
     // The gap latch (Nocke §2.2): a targeted single-column UPDATE —
     // a latch write can never clobber a tick's row copy landing in
@@ -241,6 +251,14 @@ interface MonolithDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertInterceptLog(log: InterceptLogEntity)
+
+    // Issue #83: the erasure path — intercept_logs was append-only
+    // forever with no production delete at all. The digest clear
+    // (MonolithViewModel.clearAllCapturedNotifications) calls this
+    // through the repository so a user clear actually erases the
+    // behaviour log too.
+    @Query("DELETE FROM intercept_logs")
+    suspend fun deleteAllInterceptLogs()
 
     // Captured Notifications (Silent Notification Catcher & Persistent Digest)
     // NO LIMIT (issue #138): the live header prints this list's size
@@ -469,6 +487,10 @@ interface MonolithDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertRoutines(routines: List<RoutineEntity>)
 
+    // #153 F4: routines are his to remove as well as add.
+    @Query("DELETE FROM routines WHERE id = :id")
+    suspend fun deleteRoutineById(id: Int)
+
     @Update
     suspend fun updateRoutine(routine: RoutineEntity)
 
@@ -496,12 +518,6 @@ interface MonolithDao {
     @Query("SELECT * FROM focus_tasks WHERE completedInSessionId = :sessionId")
     suspend fun getTasksCompletedInSession(sessionId: Int): List<FocusTaskEntity>
 
-    // Day notes (F-SCH-1): declared day words (REST / ILL /
-    // FAMILY — never TEST), drained from the prefs capture into
-    // Room at the 8→9 window. One row per date, ever: the date
-    // is the primary key and a re-declaration replaces the word.
-    @Query("SELECT * FROM day_notes ORDER BY dateIso ASC")
-    fun getAllDayNotesFlow(): Flow<List<DayNoteEntity>>
 
     @Query("SELECT * FROM day_notes ORDER BY dateIso ASC")
     suspend fun getAllDayNotesSnapshot(): List<DayNoteEntity>

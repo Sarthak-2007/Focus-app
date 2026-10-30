@@ -40,6 +40,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
+import com.example.data.ClockText
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -82,6 +84,7 @@ import com.example.ui.components.onInkControlFill
 import com.example.ui.components.FullBleedSectionHeader
 import com.example.ui.components.rememberMixedTypographyText
 import com.example.ui.theme.AnonymousProFamily
+import com.example.ui.theme.BodyTextStyle
 import com.example.ui.theme.DialClockTextStyle
 import com.example.ui.theme.DisplayUnitTextStyle
 import com.example.ui.theme.NightColorOnSurface
@@ -105,6 +108,21 @@ import java.util.Locale
  * - Pinned `SlideToStartView` commit bar below the scroll.
  * - When armed, transforms into the dark Armed Lockdown state with One-Way Ratchet enforcement.
  */
+/**
+ * The emergency break's price, printed under its Deck chip
+ * (issue #114, finding 5): the door ends the session and spends
+ * the week's only break — or, when the break is spent, it says
+ * so before the tap instead of after it. [tokensRemaining] is
+ * the live ledger-derived count the chip's badge already reads.
+ * Pure, tested.
+ */
+internal fun emergencyBreakPriceText(tokensRemaining: Int): String =
+    if (tokensRemaining > 0) {
+        "ENDS THIS SESSION · USES THIS WEEK'S ONLY EMERGENCY BREAK"
+    } else {
+        "THIS WEEK'S EMERGENCY BREAK IS ALREADY SPENT"
+    }
+
 @Composable
 fun TactileDeckScreen(
     activeSession: FocusSessionEntity?,
@@ -133,12 +151,19 @@ fun TactileDeckScreen(
     // render harnesses that seat the Deck without a live break
     // keep composing; MainActivity wires the VM's verb.
     onEndSafeBreak: () -> Unit = {},
+    // Issue #283: the in-session extend verb — defaulted like
+    // onEndSafeBreak so render harnesses keep composing.
+    onExtendSession: () -> Unit = {},
     weeklyEmergencyTokensRemaining: Int = 1,
     // Slice D (the proof strip, the sentence slot, the imprint): the
     // host owns the wire; the screen renders its word.
     appsCellCount: Int? = null,
     appsSplit: com.example.ui.MonolithViewModel.AppsSplit? = null,
     deckWarrant: Warrant? = null,
+    // Issue #70 F3: the first-run primer's gate (host-owned
+    // one-bit flag, mirroring the PARK intro) — true only until
+    // the first session has ever run.
+    deckPrimerPending: Boolean = false,
     sealFreeze: com.example.ui.MonolithViewModel.SealFreeze? = null,
     warrantProvider: () -> Warrant = {
         Warrant(
@@ -175,6 +200,13 @@ fun TactileDeckScreen(
     // receipt, with the sled gate's host seams (Schlitten §3).
     finishState: com.example.ui.MonolithViewModel.FinishState? = null,
     receiptState: com.example.data.ReceiptState? = null,
+    // Issue #135 F2: the LAST RECEIPT door — the most recent session
+    // that claimed a №, offered only while no receipt stands and no
+    // session runs (the standing slip and the running frame are
+    // their own surfaces; this door is for the slip the next arm
+    // cleared from memory).
+    lastReceiptSessionId: Int? = null,
+    onShowLastReceipt: (Int) -> Unit = {},
     onWitnessSledReturn: (Int) -> Unit = {},
     onTryStartSledReturn: (Int) -> Boolean = { false },
     sledInitialFraction: () -> Float = { 0f },
@@ -221,7 +253,11 @@ fun TactileDeckScreen(
             if (sealShot?.sessionId != session.id) {
                 val t0 = sealT0MonoMs
                 sealShot = if (t0 != null) {
-                    SealShotState(session.id, t0, preExisting = false)
+                    SealShotState(
+                        session.id, t0, preExisting = false,
+                        nightCalm = com.example.service.NightSignal
+                            .isNightAt(System.currentTimeMillis())
+                    )
                 } else {
                     exitPhase = 3
                     SealShotState(session.id, 0L, preExisting = true)
@@ -240,12 +276,18 @@ fun TactileDeckScreen(
         while (!shot.heroLanded) {
             withFrameMillis { }
             val e = SystemClock.elapsedRealtime() - shot.t0Mono
-            shot.vertigoT = MonolithCurves.VertigoTransformEasing.transform(
-                (e / 1050f).coerceIn(0f, 1f)
-            )
-            shot.blurT = MonolithCurves.VertigoBlurEasing.transform(
-                (e / 1050f).coerceIn(0f, 1f)
-            )
+            // Night calm (#116 finding 4): at night the easings are
+            // never driven — vertigoT/blurT stay at rest (0), so the
+            // hero neither recedes nor blurs. The phase latches
+            // below still advance on the same 1050ms clock.
+            if (!shot.nightCalm) {
+                shot.vertigoT = MonolithCurves.VertigoTransformEasing.transform(
+                    (e / 1050f).coerceIn(0f, 1f)
+                )
+                shot.blurT = MonolithCurves.VertigoBlurEasing.transform(
+                    (e / 1050f).coerceIn(0f, 1f)
+                )
+            }
             if (e >= 180L) shot.departed = true
             if (e >= 400L) shot.groundStepped = true
             val phase = (e / 50L).toInt().coerceIn(0, 3)
@@ -437,7 +479,7 @@ fun TactileDeckScreen(
         // its PASS tone is a claim the wire stands behind — beside
         // a warrant that is not freshly LIVE the end prints at
         // UNKNOWN density, never PASS beside BLOCK OFF.
-        else -> endsAtText(nowFrame + totalSpanMinutes * 60_000L) to
+        else -> endsAtText(ClockText.is24Hour(LocalContext.current), nowFrame + totalSpanMinutes * 60_000L) to
             if (warrantPrintState == WarrantState.LIVE) StripDensity.PASS
             else StripDensity.UNKNOWN
     }
@@ -625,7 +667,7 @@ fun TactileDeckScreen(
             if (activeSession.isStopwatchMode) {
                 "NO END" to StripDensity.PASS
             } else {
-                endsAtText(nowFrame + activeSession.spanRemainingSeconds * 1000L) to StripDensity.PASS
+                endsAtText(ClockText.is24Hour(LocalContext.current), nowFrame + activeSession.spanRemainingSeconds * 1000L) to StripDensity.PASS
             }
         }
         pressLatchLive != null -> pressLatchLive.timeText to pressLatchLive.timeDensity
@@ -675,6 +717,33 @@ fun TactileDeckScreen(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // Issue #70 F3 — the first-run primer (Session-Zero order):
+        // three lines on the FIRST screen, in plain words, shown
+        // only while the warrant is OFF and no session has ever
+        // run; gone forever after the first session. No modal, no
+        // gate — arming works exactly as before; this only answers
+        // the three questions a first morning asks.
+        if (deckPrimerPending && activeSession == null &&
+            deckWarrant?.state == WarrantState.OFF
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Monolith shuts the apps you name while a study session runs.",
+                    style = BodyTextStyle,
+                    color = scheme.onBackground
+                )
+                Text(
+                    text = "Two switches make it work. Both live in PARK, at the far end of the rail.",
+                    style = BodyTextStyle,
+                    color = scheme.onBackground
+                )
+                Text(
+                    text = "Nothing leaves this phone.",
+                    style = BodyTextStyle,
+                    color = scheme.onSurfaceVariant
+                )
+            }
+        }
         // =====================================================================
         // SECTION 1: THE INSTRUMENT (Ren — hero card and dial are ONE object:
         // the readout lives in the same panel as the wheel that sets it.
@@ -696,7 +765,11 @@ fun TactileDeckScreen(
                 // the blur on its own re-ease, peaking mid-shot and
                 // gone at Settle. At rest every term is identity.
                 .then(
-                    if (shotActive && shot != null) {
+                        // #116 finding 4 rides the same gate: at
+                        // night the shot is CALM (nightCalm) — the
+                        // vertigo/blur branch is skipped entirely and
+                        // the seal lands without the room receding.
+                    if (shotActive && shot != null && !shot.nightCalm) {
                         // Issue #50 F3 cure: vertigoT/blurT are read
                         // inside the graphicsLayer block (draw phase),
                         // so the 1050ms shot no longer recomposes the
@@ -769,7 +842,7 @@ fun TactileDeckScreen(
                         // far in he is. No more silent fait accompli.
                         isSessionRunning && activeSession.currentBlockIndex > 1 ->
                             "BLOCK ${activeSession.currentBlockIndex} · SINCE " +
-                                SimpleDateFormat("HH:mm", Locale.US).format(Date(activeSession.startWallTimeMillis))
+                                ClockText.timeOfDay(ClockText.is24Hour(LocalContext.current), activeSession.startWallTimeMillis)
                         // Issue #6 F4: SESSION RUNNING / TOTAL were
                         // wallpaper and die. A routine-born session
                         // prints its name; a hand-armed running
@@ -804,6 +877,28 @@ fun TactileDeckScreen(
                 // count's only homes are the strip's APPS cell and
                 // the imprint — one number, LOCKED+PEEK, one rendering
                 // per fact.
+            }
+
+            // Issue #135 F2: the LAST RECEIPT door, on the eyebrow's
+            // own line of the room — a quiet mono affordance, shown
+            // only when no receipt is standing and no session runs.
+            if (!isSessionRunning && receiptState == null && lastReceiptSessionId != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Text(
+                        text = "LAST RECEIPT",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 10.sp,
+                        letterSpacing = 2.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clickable { onShowLastReceipt(lastReceiptSessionId) }
+                            .testTag("last_receipt_button")
+                            .padding(vertical = 4.dp)
+                    )
+                }
             }
 
             // The hero states the TOTAL, once (one fact, one rendering).
@@ -940,10 +1035,17 @@ fun TactileDeckScreen(
                                 onSelectStudyPreset(StudyModePreset.STOPWATCH_FLOW)
                                 onDialMinutesChanged(5)
                             }
-                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                            .padding(horizontal = 10.dp)
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
+                                // Issue #70 F5: the target measure
+                                // lives on the text block itself —
+                                // the strip the thumb sees IS the
+                                // target it hits (was: 5dp vertical
+                                // padding on the box, an under-48dp
+                                // target under an 11sp label).
+                                modifier = Modifier.padding(vertical = 13.dp),
                                 text = "FLOW",
                                 fontFamily = AnonymousProFamily,
                                 fontWeight = FontWeight.Bold,
@@ -1260,6 +1362,27 @@ fun TactileDeckScreen(
             }
         }
 
+        // Audit R3 #113, finding 1: the HELD door outlives the
+        // session. The chip above is seated only while a session
+        // runs, so the moment a session ended — watched or not —
+        // the captured notifications became unreachable: no screen
+        // could open the digest again, and even its clear/delete
+        // verbs live inside that sheet. On the idle Deck, when
+        // anything stands captured, the same chip stands here
+        // alone: the count is the fact, the tap opens the same
+        // digest (unsealed opens are live mode — the VM clears
+        // any latched freeze — and the repository's sealed gate
+        // no longer refuses the verbs). An empty capture earns no
+        // chip: a door to nothing would be its own small lie.
+        if (!isSessionRunning && capturedNotificationsCount > 0) {
+            BlockitActionChip(
+                wordLabel = "HELD",
+                monoBadge = capturedNotificationsCount.toString(),
+                onClick = onOpenNotificationDigest,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
     }
         // =====================================================================
         // SECTION 4: THE PINNED STACK (Slice D) — outside the scroll:
@@ -1421,7 +1544,10 @@ fun TactileDeckScreen(
                             wordLabel = if (stopwatchFloorMet) {
                                 "FINISH SESSION"
                             } else {
-                                "EMERGENCY BREAK VALVE (60S HOLD)"
+                                // Issue #114, finding 5: the door's
+                                // one name — EMERGENCY BREAK, the
+                                // same words its own overlay carries.
+                                "EMERGENCY BREAK (60S HOLD)"
                             },
                             // R3b #163 F4: a spent valve used to wear
                             // the same badge as a live one ("0/1 WEEK"
@@ -1441,6 +1567,13 @@ fun TactileDeckScreen(
                                 .height(72.dp), // Issue #6 F6: the chair fills its 72dp zone in every state
                             testTag = "request_disarm_button"
                         )
+                        Text(
+                            text = emergencyBreakPriceText(weeklyEmergencyTokensRemaining),
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+                            modifier = Modifier.testTag("emergency_break_price")
+                        )
                     }
                 }
             }
@@ -1458,14 +1591,42 @@ fun TactileDeckScreen(
                             "GRACE ${graceLeft}S — ABORT IS BOOKED BY THE ROUTINE · AFTER: VALVE, 60S HOLD"
                         graceLeft > 0 ->
                             "GRACE ${graceLeft}S — CANCEL FREE, NOTHING BOOKED · AFTER: VALVE, 60S HOLD"
+                        // R3b #163 F4 (fix-forward): the spent state
+                        // names its wait here too, exactly as the
+                        // valve chip's badge does — the week turns
+                        // on Monday (MonolithWeek).
                         else ->
-                            "GRACE SPENT · VALVE: 60S HOLD · $weeklyEmergencyTokensRemaining/1 WEEK"
+                            "GRACE SPENT · VALVE: 60S HOLD · " +
+                                if (weeklyEmergencyTokensRemaining > 0) {
+                                    "$weeklyEmergencyTokensRemaining/1 WEEK"
+                                } else {
+                                    "0/1 WEEK · BACK MONDAY"
+                                }
                     },
                     fontFamily = AnonymousProFamily,
                     fontSize = 9.5.sp,
                     letterSpacing = 0.8.sp,
                     color = scheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+            // Issue #283 (R5 supplement): the extend verb. A running
+            // session used to offer only endings (grace abort, the
+            // valve); the original's +15 lives here, under the
+            // standing grace/valve line, at the same 72dp chair
+            // height as the other session verbs. The repository
+            // caps it (no sale at 60+ minutes remaining).
+            if (activeSession != null && !activeSession.isStopwatchMode) {
+                Spacer(Modifier.height(8.dp))
+                BlockitActionChip(
+                    wordLabel = "EXTEND SESSION",
+                    monoBadge = "+15 MIN",
+                    isPrimaryInk = false,
+                    onClick = onExtendSession,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(72.dp),
+                    testTag = "extend_session_button"
                 )
             }
             Spacer(Modifier.height(8.dp))
@@ -1478,12 +1639,21 @@ fun TactileDeckScreen(
                 // must say the machine is checking, never render the
                 // idle form as if nothing had happened); an
                 // annulment's past-tense sentence stands until the
-                // controller clears it; a running session is
-                // silent; otherwise the wire's standing sentence.
+                // controller clears it; otherwise the wire's
+                // standing sentence. A RUNNING session used to be
+                // forced silent here (Audit R3 #113, finding 2) —
+                // exactly the case where the sentence matters most:
+                // refusalSentenceFor reads the LIVE warrant and
+                // returns null while the wire is whole, so the
+                // running Deck stays silent until a permission it
+                // depends on actually dies, then names it with its
+                // FIX verb. The stale guard inside
+                // refusalSentenceFor(warrant, nowMono) still owns
+                // the present tense: a stale read prints nothing.
                 sentence = when {
                     armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase, nowMono)
                     armPhase is ArmPhase.Proving -> provingSentenceFor(armPhase)
-                    isSessionRunning -> null
+                    isSessionRunning -> refusalSentenceFor(deckWarrant, nowMono)
                     armSentence != null -> armSentence
                     else -> refusalSentenceFor(deckWarrant, nowMono)
                 },
@@ -1677,7 +1847,16 @@ private fun DeckTaskSection(
 class SealShotState(
     val sessionId: Int,
     val t0Mono: Long,
-    val preExisting: Boolean
+    val preExisting: Boolean,
+    /**
+     * Night calm (Audit R3b #116, finding 4): true when the seal
+     * was armed inside clock night (the one NightSignal). A night
+     * seal runs the shot's TIMING — departure, ground step, settle
+     * — but never its vertigo or blur: a half-asleep user in bed
+     * gets a still room, not a receding, blurring one. Daytime
+     * seals keep the full shot, exactly as shipped.
+     */
+    val nightCalm: Boolean = false
 ) {
     var vertigoT: Float by mutableStateOf(if (preExisting) 1f else 0f)
     var blurT: Float by mutableStateOf(if (preExisting) 1f else 0f)
