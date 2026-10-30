@@ -1,6 +1,8 @@
 package com.example
 
 import android.content.Context
+import android.view.MotionEvent
+import android.view.View
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.collectAsState
@@ -57,7 +59,7 @@ import org.robolectric.shadows.ShadowLooper
  * notwithstanding). These tests observe behaviour only.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [36], qualifiers = "w412dp-h915dp-xhdpi")
 class SoundAndSocialTruthTest {
 
     @get:Rule
@@ -274,6 +276,51 @@ class SoundAndSocialTruthTest {
         }
     }
 
+    // KONTO-2 round 6 (diagnosed): the social sled is an AndroidView
+    // canvas switch — it fires only on a real ACTION_UP delivered to
+    // the View. The compose-injected performTouchInput click lands
+    // nowhere: the sled sits ~600dp down the PARK scroll column,
+    // outside the default Robolectric window (the class carried no
+    // qualifiers), and the injected click dispatches to nothing, so
+    // the stored fact never moved and both sled tests burned their
+    // full awaits — the identical chain driven by
+    // vm.toggleBrowserUrlBlocker() passes in 0.131s. Deliver the
+    // tap the harness-proven way (ScreenshotHarnessTest.wheelMidDrag
+    // idiom): scroll the tagged node into view, walk the decorView
+    // to the tagged SledSwitchView, dispatch DOWN+UP at its centre.
+    private fun sledTap() {
+        composeRule.onNodeWithTag("park_social_sled").performScrollTo().assertIsDisplayed()
+        val activity = composeRule.activity
+        var target: View? = null
+        fun walk(v: View): Boolean {
+            if (v.tag == "park_social_sled") {
+                target = v
+                return true
+            }
+            if (v is android.view.ViewGroup) {
+                for (i in 0 until v.childCount) if (walk(v.getChildAt(i))) return true
+            }
+            return false
+        }
+        composeRule.runOnUiThread { walk(activity.window.decorView) }
+        val view = target ?: error("sled view not found in the decor tree")
+        val loc = IntArray(2)
+        view.getLocationOnScreen(loc)
+        val cx = loc[0] + view.width / 2f
+        val cy = loc[1] + view.height / 2f
+        val now = SystemClock.uptimeMillis()
+        val root = activity.window.decorView
+        composeRule.runOnUiThread {
+            listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP).forEach { action ->
+                val ev = MotionEvent.obtain(now, now, action, cx, cy, 0)
+                root.dispatchTouchEvent(ev)
+                ev.recycle()
+            }
+        }
+        composeRule.waitForIdle()
+        ShadowLooper.idleMainLooper()
+    }
+
     /** Pruefer 02-1: the toggle physically RENDERED in PARK —
      *  touching it changes the stored Room value, both ways.
      *  There is no such node on trunk: the parameter rendered
@@ -295,14 +342,12 @@ class SoundAndSocialTruthTest {
             composeRule.onNodeWithTag("park_social_sled").assertExists()
             settlePark()
 
-            composeRule.onNodeWithTag("park_social_sled")
-                .performTouchInput { click(center) }
+            sledTap()
             awaitTrue("touching the rendered sled writes the stored fact OFF") {
                 !runBlocking { repository.isBrowserBlockerEnabled() }
             }
 
-            composeRule.onNodeWithTag("park_social_sled")
-                .performTouchInput { click(center) }
+            sledTap()
             awaitTrue("and a second touch writes it back ON") {
                 runBlocking { repository.isBrowserBlockerEnabled() }
             }
@@ -352,8 +397,7 @@ class SoundAndSocialTruthTest {
             composeRule.onNodeWithTag("park_social_sled").assertExists()
             composeRule.onNodeWithText("OFF").assertDoesNotExist()
 
-            composeRule.onNodeWithTag("park_social_sled")
-                .performTouchInput { click(center) }
+            sledTap()
 
             awaitTrue("the derived board word moves to OFF") {
                 WatchStore.snapshots.value

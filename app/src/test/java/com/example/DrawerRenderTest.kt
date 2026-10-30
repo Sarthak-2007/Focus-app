@@ -64,8 +64,15 @@ class DrawerRenderTest {
     // shots-redirect.txt — never the shared shots folder.
     private val shotsDir: File = run {
         val redirect = File("/home/hatch/workspace/clone-inspect/builds/drawer/Focus-app/shots-redirect.txt")
-        val target = if (redirect.exists()) {
-            redirect.readText().trim()
+        val redirected = if (redirect.exists()) redirect.readText().trim() else null
+        // Same writability guard as the round-5 harnesses: an
+        // unwritable absolute lane path must never strand captures
+        // (latent FileNotFound — the pattern that cost the round-4
+        // run 20 screenshotsDir failures elsewhere).
+        val target = if (redirected != null &&
+            File(redirected).apply { mkdirs() }.canWrite()
+        ) {
+            redirected
         } else {
             System.getProperty("java.io.tmpdir") + "/monolith-shots-drawer"
         }
