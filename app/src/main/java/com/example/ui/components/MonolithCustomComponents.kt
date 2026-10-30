@@ -41,6 +41,7 @@ import com.example.data.SystemGuardStatus
 import com.example.service.UsageAccess
 import com.example.service.WatchStore
 import com.example.ui.ArmPhase
+import com.example.ui.provenCount
 import com.example.service.Warrant
 import com.example.service.WarrantState
 import com.example.ui.theme.AnonymousProFamily
@@ -48,6 +49,9 @@ import com.example.ui.theme.MonolithCurves
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.theme.NightColorSurfaceBright
 import com.example.ui.theme.NightColorSurfaceSheet
+import com.example.ui.theme.NightColorPrimary
+import com.example.ui.theme.NightTextColorSecondary
+import com.example.ui.theme.TokenColorOnPrimary
 import com.example.ui.theme.PillBadgeTextStyle
 import com.example.ui.theme.TokenColorSurfaceBright
 import com.example.ui.theme.TokenColorSurfaceSheet
@@ -190,7 +194,7 @@ fun BlockitActionChip(
     }
     val fg = when {
         isUndoStyle -> scheme.primaryContainer
-        isAccentArmed -> Color(0xFFFBF1EC)
+        isAccentArmed -> TokenColorOnPrimary
         isPrimaryInk -> onInkControlFill()
         else -> scheme.onBackground
     }
@@ -324,7 +328,7 @@ fun inkControlFill(): Color {
 @Composable
 fun onInkControlFill(): Color {
     val scheme = MaterialTheme.colorScheme
-    return if (scheme.background.luminance() < 0.5f) Color(0xFFFFE4CF) else Color(0xFFFBF1EC)
+    return if (scheme.background.luminance() < 0.5f) NightColorPrimary else TokenColorOnPrimary
 }
 
 // ============================================================================
@@ -485,7 +489,13 @@ private fun splitTenantText(shut: Int, peek: Int, sealed: Boolean): String? {
     }
     val peekPart = if (peek > 0) "$peek PEEK" else null
     val parts = listOfNotNull(shutPart, peekPart)
-    return if (parts.isEmpty()) null else parts.joinToString(" · ")
+    if (parts.isEmpty()) return null
+    val split = parts.joinToString(" · ")
+    // R3b #160 (two-phones-tablet): the seal certifies THIS handset only.
+    // The sealed imprint says so at the moment of certification — the
+    // hold never reaches a second phone, a tablet or a laptop, and the
+    // words now carry that boundary instead of implying the person.
+    return if (sealed) "$split · THIS PHONE ONLY" else split
 }
 
 /** What the sentence slot's tap does (Suki): FIX goes to the pane
@@ -550,15 +560,38 @@ internal fun refusalSentenceFor(warrant: Warrant?, nowMono: Long): RefusalSenten
  * never a count — in the present tense of a machine still
  * working. It carries no action: the retry fires on the
  * machine's own clock and offers him no verb. Non-jammed phases
- * print nothing here (PROVING's silence is the machine working;
- * the annulment's past-tense sentence is the controller's own
- * armSentence, not this function's).
+ * print nothing here (PROVING speaks through provingSentenceFor
+ * below since issue #98; the annulment's past-tense sentence is
+ * the controller's own armSentence, not this function's).
  */
 internal fun jamSentenceFor(phase: ArmPhase): RefusalSentence? {
     if (phase !is ArmPhase.Jammed) return null
     val first = phase.jamSet.minByOrNull { it.ordinal } ?: return null
     return RefusalSentence(
         text = "${first.displayName} DIDN'T ANSWER — STILL PROVING.",
+        action = null
+    )
+}
+
+/**
+ * The cascade's proving sentence (issue #98, R3 arming journey):
+ * while an attempt is PROVING, the slot names the work and counts
+ * it — "CHECKING THE SEAL — 1 OF 3 PROVED" — derived from the
+ * controller's own link marks via provenCount(), so the print can
+ * never disagree with the machine it describes. Before this the
+ * slot was explicitly null for Proving and the Deck rendered its
+ * idle form for up to the 1500ms annulment deadline while real
+ * blocking already ran: a silent black box indistinguishable from
+ * a hang. It carries no action, on the jam's own law: proving
+ * resolves by seal or annulment on the machine's clock (≤1500ms),
+ * and the human's cancel door for this span is the slide's own
+ * pre-latch undo (BlockitCoreViews) before the latch, and the
+ * grace abort after the seal.
+ */
+internal fun provingSentenceFor(phase: ArmPhase): RefusalSentence? {
+    if (phase !is ArmPhase.Proving) return null
+    return RefusalSentence(
+        text = "CHECKING THE SEAL — ${phase.provenCount()} OF 3 PROVED",
         action = null
     )
 }
@@ -573,9 +606,9 @@ private fun stripToneColors(): StripTones {
         cap = if (night) NightColorSurfaceSheet else TokenColorSurfaceSheet,
         divider = scheme.outlineVariant,
         faultEdge = scheme.outline,
-        ordinaryInk = if (night) Color(0xFF9C8E84) else scheme.onSurfaceVariant,
+        ordinaryInk = if (night) NightTextColorSecondary else scheme.onSurfaceVariant,
         glyphInk = scheme.onSurface,
-        secondaryInk = if (night) Color(0xFF9C8E84) else scheme.onSurfaceVariant
+        secondaryInk = if (night) NightTextColorSecondary else scheme.onSurfaceVariant
     )
 }
 

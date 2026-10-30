@@ -91,7 +91,7 @@ fun ReceiptSheet(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.12f))
+                .background(scheme.scrim.copy(alpha = 0.12f))
                 // #57: dismissal lands on the DOWN. `clickable`
                 // fires on release (UP); `onPress` is the press
                 // itself, as the header's spec has always said.
@@ -186,7 +186,7 @@ fun ReceiptSheet(
                 }
                 if (receipt.heldAppsAtSeal >= 0 && receipt.heldSitesAtSeal >= 0) {
                     ReceiptMonoLine(
-                        text = "HELD ${receipt.heldAppsAtSeal} APPS · ${receipt.heldSitesAtSeal} SITES"
+                        text = "HELD ${receipt.heldAppsAtSeal} APPS · ${receipt.heldSitesAtSeal} SITES ON THIS PHONE"
                     )
                 }
                 if (receipt.bankedBreakSeconds > 0) {

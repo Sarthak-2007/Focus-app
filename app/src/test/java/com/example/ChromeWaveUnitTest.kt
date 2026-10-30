@@ -63,8 +63,9 @@ class ChromeWaveUnitTest {
     }
 
     // ------------------------------------------------------------------
-    // Staleness: derived at render, never stored. A PASS older than
-    // 45s of monotonic time is STALE; MISSING never stales.
+    // Staleness: derived at render, never stored. ANY measurement
+    // older than 45s of monotonic time is stale (#58 F1): a PASS
+    // prints STALE, a denial prints MISSING_STALE.
     // ------------------------------------------------------------------
     private fun snapshotOf(vararg ms: WatchMeasurement): WatchSnapshot =
         WatchSnapshot(
@@ -79,7 +80,7 @@ class ChromeWaveUnitTest {
         WatchMeasurement(item, perm = state, measuredMono = mono, measuredWall = 1_000L)
 
     @Test
-    fun permPrint_staleOnlyForPassMeasurementsPast45s() {
+    fun permPrint_staleForAnyMeasurementPast45s() {
         val snap = snapshotOf(
             perm(WatchItemId.ACCESSIBILITY, PermState.GRANTED, mono = 10_000L),
             perm(WatchItemId.USAGE_ACCESS, PermState.MISSING, mono = 10_000L)
@@ -92,8 +93,15 @@ class ChromeWaveUnitTest {
             com.example.service.PermPrint.STALE,
             WatchStore.permPrintAt(snap, WatchItemId.ACCESSIBILITY, nowMono = 55_001L)
         )
+        // #58 F1: a denial stales too — at the same 45s boundary a
+        // PASS crosses, a MISSING crosses to MISSING_STALE, never
+        // printing bare-and-current forever.
         assertEquals(
             com.example.service.PermPrint.MISSING,
+            WatchStore.permPrintAt(snap, WatchItemId.USAGE_ACCESS, nowMono = 55_000L)
+        )
+        assertEquals(
+            com.example.service.PermPrint.MISSING_STALE,
             WatchStore.permPrintAt(snap, WatchItemId.USAGE_ACCESS, nowMono = 9_999_999L)
         )
         assertEquals(

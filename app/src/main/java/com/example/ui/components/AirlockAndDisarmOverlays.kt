@@ -36,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -57,6 +58,7 @@ import com.example.ui.PeekWithheld
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.MonolithCurves
 import com.example.ui.theme.NightBlockBarSurface
+import com.example.ui.theme.TokenTrueBlack
 import com.example.ui.theme.NightColorBackground
 import com.example.ui.theme.NightColorPrimary
 import com.example.ui.theme.NightColorPrimaryContainer
@@ -141,7 +143,7 @@ fun AlwaysOnDeskClockOverlay(
                 .fillMaxSize()
                 // AOD ground is true black (Round 1a) — OLED pixels off,
                 // not the block-bar tone.
-                .background(Color.Black)
+                .background(TokenTrueBlack)
                 .clickable(onClick = onDismiss)
                 .padding(24.dp)
                 .testTag("always_on_desk_clock_overlay"),
@@ -365,7 +367,7 @@ fun CapturedNotificationsDigestSheet(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.65f))
+                .background(scheme.scrim.copy(alpha = 0.65f))
                 .clickable(onClick = onDismiss)
                 .padding(12.dp),
             contentAlignment = Alignment.BottomCenter
@@ -434,7 +436,7 @@ fun CapturedNotificationsDigestSheet(
                 }
                 if (frozenMode && frozenAtMillis != null) {
                     Text(
-                        text = "Everything here is as of the time above. Nothing here opens. Anything newer waits until the session ends.",
+                        text = "Everything here is as of the time above. Nothing here opens. Anything newer waits here until the session ends — it does not wait on your other screens.",
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 13.sp,
                         color = scheme.onSurfaceVariant
@@ -546,7 +548,7 @@ fun ShieldPermissionPrimerModal(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.7f))
+                .background(scheme.scrim.copy(alpha = 0.7f))
                 .clickable(onClick = onDismiss)
                 .padding(12.dp),
             contentAlignment = Alignment.BottomCenter
@@ -793,11 +795,21 @@ fun AirlockInterceptOverlay(
                     }
                 }
 
+                // Issue #99 F5: for LOCKED-tier apps the wall now
+                // gates something real — RETURN TO FOCUS itself.
+                // Before this the chip was live from second 5 and
+                // the countdown opened nothing at 00 for LOCKED
+                // apps. The delay IS the wall for the locked tier;
+                // PEEK-tier behaviour is unchanged (RETURN was and
+                // stays live, the peek offer is what its wall gates).
+                val returnLive = returnToFocusLive(state.isLockedTier, countdownSecs)
                 BlockitActionChip(
                     wordLabel = "RETURN TO FOCUS",
                     isAccentArmed = true,
-                    onClick = onReturnToFocus,
-                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { if (returnLive) onReturnToFocus() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (returnLive) Modifier else Modifier.alpha(0.45f)),
                     testTag = "airlock_return_button"
                 )
 
@@ -876,6 +888,77 @@ fun AirlockInterceptOverlay(
                     testTag = "airlock_peek_apps_button"
                 )
             }
+        }
+    }
+}
+
+/** Issue #99 F5 (pure, unit-tested): RETURN TO FOCUS is live
+ *  immediately for non-LOCKED tiers, and only once the 5s wall has
+ *  run for LOCKED-tier apps — the wall gates the return itself. */
+internal fun returnToFocusLive(isLockedTier: Boolean, countdownSecs: Int): Boolean =
+    !isLockedTier || countdownSecs <= 0
+
+/** Issue #99 F2 (pure, unit-tested): the pill's countdown print. */
+internal fun peekPillCountdownText(secondsRemaining: Int): String {
+    val s = secondsRemaining.coerceAtLeast(0)
+    return String.format(Locale.US, "%d:%02d", s / 60, s % 60)
+}
+
+/**
+ * Issue #99 F2: THE PEEK COUNTDOWN PILL — the canonical rendering of
+ * [com.example.ui.FloatingPeekPillState] (this cures #101-F3 by
+ * cross-reference: one pill, rendered here, collected in
+ * MainActivity). App name, remaining time derived from the lease,
+ * and a ✕ that ends the peek early via end2MinutePeekEarly.
+ */
+@Composable
+fun PeekCountdownPill(
+    state: com.example.ui.FloatingPeekPillState,
+    onEndEarly: () -> Unit
+) {
+    if (!state.isActive) return
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = 48.dp),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(24.dp))
+                .background(NightColorSurfaceBright)
+                .border(1.dp, NightColorPrimary.copy(alpha = 0.35f), RoundedCornerShape(24.dp))
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .testTag("peek_countdown_pill"),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = state.appName.ifBlank { "Peek" },
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+                color = NightColorPrimary
+            )
+            Text(
+                text = peekPillCountdownText(state.secondsRemaining),
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+                color = NightColorPrimary,
+                modifier = Modifier.testTag("peek_pill_countdown")
+            )
+            Text(
+                text = "✕",
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+                color = NightColorPrimary,
+                modifier = Modifier
+                    .clickable { onEndEarly() }
+                    .testTag("peek_pill_end_button")
+                    .padding(horizontal = 4.dp)
+            )
         }
     }
 }
