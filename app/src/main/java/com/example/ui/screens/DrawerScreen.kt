@@ -200,7 +200,8 @@ fun DrawerScreen(
     onLoadEarlierSearch: () -> Unit,
     onDeclareTodayWord: (String?) -> Unit,
     // R3b #163 F1: yesterday's word stays declarable the morning
-    // after. (F2/F3 struck — see DrawerDayGroup.)
+    // after. Issue #137 F2 widens it: ANY past date's word is
+    // declarable (and changeable) through this same door.
     onDeclareDayWord: (LocalDate, String?) -> Unit = { _, _ -> },
     // The cabinet (chrome C10): the curios' new home. The Drawer is
     // storage; the cabinet is its furniture — the six artifacts as
@@ -331,7 +332,11 @@ fun DrawerScreen(
             rows = drawerRows,
             dayWords = dayWords,
             scopeMonth = drawerMonth,
-            includeTodayGroup = !isSealed && drawerMonth == currentYearMonth,
+            // Issue #137 F2: today's group is built sealed or not —
+            // a sealed Drawer still shows today's heading, because
+            // the day-word declaration on it is never seal-gated
+            // (declaring a word does not weaken blocking).
+            includeTodayGroup = drawerMonth == currentYearMonth,
             today = today
         )
     }
@@ -340,7 +345,7 @@ fun DrawerScreen(
             rows = drawerRows,
             dayWords = dayWords,
             scopeMonth = currentYearMonth,
-            includeTodayGroup = !isSealed,
+            includeTodayGroup = true,
             today = today
         )
     }
@@ -998,8 +1003,9 @@ fun DrawerScreen(
                         // other DayHeading site.)
                         DayHeading(
                             group = group,
-                            canDeclare = !isSealed && (group.date == today ||
-                                (group.date == today.minusDays(1) && group.word == null)),
+                            // Issue #137 F2: every date is declarable,
+                            // sealed or not, word already set or not.
+                            canDeclare = true,
                             onDeclareWord = { word ->
                                 if (group.date == today) onDeclareTodayWord(word)
                                 else onDeclareDayWord(group.date, word)
@@ -1189,8 +1195,9 @@ fun DrawerScreen(
                     item(key = "month-head-${group.date}") {
                         DayHeading(
                             group = group,
-                            canDeclare = !isSealed && (group.date == today ||
-                                (group.date == today.minusDays(1) && group.word == null)),
+                            // Issue #137 F2: every date is declarable,
+                            // sealed or not, word already set or not.
+                            canDeclare = true,
                             onDeclareWord = { word ->
                                 if (group.date == today) onDeclareTodayWord(word)
                                 else onDeclareDayWord(group.date, word)
@@ -1271,7 +1278,9 @@ fun DrawerScreen(
                                 rows = emptyList(),
                                 word = dayWords[DrawerDay.dateIso(today)]
                             ),
-                            canDeclare = !isSealed,
+                            // Issue #137 F2: today's declaration is
+                            // offered sealed or not.
+                            canDeclare = true,
                             onDeclareWord = onDeclareTodayWord
                         )
                     }
@@ -1350,8 +1359,10 @@ fun DrawerScreen(
                         item(key = "land-head-${group.date}") {
                             DayHeading(
                                 group = group,
-                                canDeclare = !isSealed && (group.date == today ||
-                                    (group.date == today.minusDays(1) && group.word == null)),
+                                // Issue #137 F2: every date is
+                                // declarable, sealed or not, word
+                                // already set or not.
+                                canDeclare = true,
                                 onDeclareWord = { word ->
                                     if (group.date == today) onDeclareTodayWord(word)
                                     else onDeclareDayWord(group.date, word)
@@ -1394,18 +1405,19 @@ private fun DrawerNavRow(
 
 /**
  * A date heading: a shelf label only — nothing follows it, no total,
- * no grade. A declared word rides beside it as print. On TODAY's
- * heading, while unsealed, the declaration itself lives here: the
- * three words, tappable, changeable all day — tapping the active
- * word clears it. While sealed the words are print and answer
- * nothing.
+ * no grade. A declared word rides beside it as print, and the
+ * declaration itself lives here on EVERY heading (issue #137 F2,
+ * widening R3b #163 F1's today/yesterday offer): today and past
+ * days alike, sealed or not — declaring a word does not weaken
+ * blocking, so no seal gates it, and a sick day can be declared
+ * after the fact. The three words are tappable and changeable;
+ * tapping the active word clears it.
  */
 @Composable
 private fun DayHeading(
     group: DrawerDayGroup,
-    // R3b #163 F1: the picker is offered for today, and for
-    // yesterday while yesterday still carries no word — the call
-    // sites compute that; the heading just renders the offer.
+    // Issue #137 F2: the call sites pass true for every date —
+    // the picker is part of the heading, not a seal privilege.
     canDeclare: Boolean,
     onDeclareWord: (String?) -> Unit
 ) {
