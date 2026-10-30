@@ -655,7 +655,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onLoadEarlier = viewModel::loadEarlierDrawer,
                                     onQueryChange = viewModel::setDrawerQuery,
                                     onLoadEarlierSearch = viewModel::loadEarlierDrawerSearch,
-                                    onDeclareTodayWord = viewModel::declareTodayWord,
+                                    onDeclareWord = viewModel::declareWord,
                                     artifacts = com.example.data.CurioCatalog.artifacts,
                                     forgedArtifactIds = forgedArtifactIds
                                 )

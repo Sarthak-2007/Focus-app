@@ -65,8 +65,11 @@ import java.util.Locale
  * fully, search input and every edit are inert.
  *
  * Days file by the 03:30 rule (DrawerDay); row finish times print
- * true clock. A declared day word (REST / ILL / FAMILY) prints
- * beside its date heading as his authored word — never a number.
+ * true clock. A declared day word prints beside its date heading
+ * as his authored word — never a number. Every date heading is a
+ * declaration door (issue #137, F2): the suggested words are
+ * tappable on today and past days alike, sealed or not, and a
+ * custom word can be entered on any heading (F4).
  */
 
 private enum class DrawerView { LANDING, INDEX, MONTH, CABINET }
@@ -146,7 +149,7 @@ fun DrawerScreen(
     onLoadEarlier: () -> Unit,
     onQueryChange: (String) -> Unit,
     onLoadEarlierSearch: () -> Unit,
-    onDeclareTodayWord: (String?) -> Unit,
+    onDeclareWord: (LocalDate, String?) -> Unit,
     // The cabinet (chrome C10): the curios' new home. The Drawer is
     // storage; the cabinet is its furniture — the six artifacts as
     // ruled rows, their forged state read from real sessions, their
@@ -518,14 +521,27 @@ fun DrawerScreen(
         contentPadding = PaddingValues(bottom = 100.dp)
     ) {
         item {
-            Text(
-                text = "STORED",
-                fontFamily = AnonymousProFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
-                letterSpacing = 2.sp,
-                color = scheme.onSurfaceVariant
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "STORED",
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    letterSpacing = 2.sp,
+                    color = scheme.onSurfaceVariant
+                )
+                // Issue #137, F3: the day word's signpost, printed
+                // where the Drawer opens — a lost day is excused by
+                // the word on its own date heading, not by a hunt.
+                Text(
+                    text = "A LOST DAY CAN CARRY A WORD — TAP A DATE'S WORD",
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 10.5.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("drawer_day_word_signpost")
+                )
+            }
         }
 
         // Search — one field. While sealed it is composed but
@@ -682,17 +698,14 @@ fun DrawerScreen(
                     rows = drawerRows,
                     dayWords = dayWords,
                     scopeMonth = drawerMonth,
-                    includeTodayGroup = !isSealed &&
-                        drawerMonth == currentYearMonth,
+                    includeTodayGroup = drawerMonth == currentYearMonth,
                     today = today
                 )
                 groups.forEach { group ->
                     item(key = "month-head-${group.date}") {
                         DayHeading(
                             group = group,
-                            isToday = group.date == today,
-                            isSealed = isSealed,
-                            onDeclareTodayWord = onDeclareTodayWord
+                            onDeclareWord = onDeclareWord
                         )
                     }
                     items(group.rows, key = { "month-${it.id}" }) { task ->
@@ -728,9 +741,7 @@ fun DrawerScreen(
                                 rows = emptyList(),
                                 word = dayWords[DrawerDay.dateIso(today)]
                             ),
-                            isToday = true,
-                            isSealed = isSealed,
-                            onDeclareTodayWord = onDeclareTodayWord
+                            onDeclareWord = onDeclareWord
                         )
                     }
                     item {
@@ -786,16 +797,14 @@ fun DrawerScreen(
                         rows = drawerRows,
                         dayWords = dayWords,
                         scopeMonth = currentYearMonth,
-                        includeTodayGroup = !isSealed,
+                        includeTodayGroup = true,
                         today = today
                     )
                     groups.forEach { group ->
                         item(key = "land-head-${group.date}") {
                             DayHeading(
                                 group = group,
-                                isToday = group.date == today,
-                                isSealed = isSealed,
-                                onDeclareTodayWord = onDeclareTodayWord
+                                onDeclareWord = onDeclareWord
                             )
                         }
                         items(group.rows, key = { "land-${it.id}" }) { task ->
@@ -831,21 +840,24 @@ private fun DrawerNavRow(
 }
 
 /**
- * A date heading: a shelf label only — nothing follows it, no total,
- * no grade. A declared word rides beside it as print. On TODAY's
- * heading, while unsealed, the declaration itself lives here: the
- * three words, tappable, changeable all day — tapping the active
- * word clears it. While sealed the words are print and answer
- * nothing.
+ * A date heading: a shelf label — no total, no grade. A declared
+ * word rides beside it as print, and the declaration itself lives
+ * here on EVERY heading (issue #137, F2): today and past days,
+ * sealed or not — declaring a word does not weaken blocking, so
+ * no seal gates it, and a sick day can be declared after the fact.
+ * The suggested words are tappable; tapping the active word clears
+ * it. A declared word outside the suggestions still prints as a
+ * chip so it can be cleared. CUSTOM opens a one-word entry for
+ * any word the store accepts (F4).
  */
 @Composable
 private fun DayHeading(
     group: DrawerDayGroup,
-    isToday: Boolean,
-    isSealed: Boolean,
-    onDeclareTodayWord: (String?) -> Unit
+    onDeclareWord: (LocalDate, String?) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
+    var customOpen by remember { mutableStateOf(false) }
+    var customText by remember { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
             text = if (group.word != null) {
@@ -860,21 +872,70 @@ private fun DayHeading(
             color = scheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 6.dp)
         )
-        if (isToday && !isSealed) {
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                DayWordStore.WORDS.forEach { word ->
-                    val active = group.word == word
-                    Text(
-                        text = word,
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            val chips = DayWordStore.WORDS +
+                listOfNotNull(group.word?.takeIf { it !in DayWordStore.WORDS })
+            chips.forEach { word ->
+                val active = group.word == word
+                Text(
+                    text = word,
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    color = if (active) scheme.onBackground else scheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .clickable { onDeclareWord(group.date, if (active) null else word) }
+                        .testTag("declare_word_${word.lowercase()}")
+                )
+            }
+            Text(
+                text = "CUSTOM",
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier
+                    .clickable { customOpen = !customOpen }
+                    .testTag("declare_word_custom")
+            )
+        }
+        if (customOpen) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                BasicTextField(
+                    value = customText,
+                    onValueChange = { customText = it.uppercase(Locale.US).take(12) },
+                    singleLine = true,
+                    textStyle = TextStyle(
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp,
-                        color = if (active) scheme.onBackground else scheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .clickable { onDeclareTodayWord(if (active) null else word) }
-                            .testTag("declare_word_${word.lowercase()}")
-                    )
-                }
+                        fontSize = 12.sp,
+                        color = scheme.onBackground
+                    ),
+                    cursorBrush = SolidColor(scheme.onSurfaceVariant),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("declare_word_custom_input")
+                )
+                Text(
+                    text = "SET",
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    color = scheme.onBackground,
+                    modifier = Modifier
+                        .clickable {
+                            val clean = DayWordStore.normalize(customText)
+                            if (clean != null) {
+                                onDeclareWord(group.date, clean)
+                                customText = ""
+                                customOpen = false
+                            }
+                        }
+                        .testTag("declare_word_custom_set")
+                )
             }
         }
     }

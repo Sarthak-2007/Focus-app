@@ -1948,19 +1948,26 @@ class MonolithViewModel(
         }
     }
 
-    /** Declare (or clear, with null) today's filing-day word. The
-     *  word is changeable all day; only today's filing date is
-     *  declarable from here — the Drawer files words, it does not
-     *  rewrite past days. */
-    fun declareTodayWord(word: String?) {
-        val iso = com.example.data.DrawerDay.dateIso(
-            com.example.data.DrawerDay.filingDate(System.currentTimeMillis())
-        )
+    /** Declare (or clear, with null) the word for [date] — any
+     *  filing date, today or a past day (issue #137, F2: a sick
+     *  day can be declared after the fact, and declaring a word
+     *  does not weaken blocking, so no seal gates it). */
+    fun declareWord(date: java.time.LocalDate, word: String?) {
+        val iso = com.example.data.DrawerDay.dateIso(date)
         viewModelScope.launch {
             repository.declareDayWord(iso, word)
             _dayWords.value = repository.allDayWords()
             _storedMonths.value = repository.storedMonths()
         }
+    }
+
+    /** Declare (or clear, with null) today's filing-day word —
+     *  kept as the today-shaped door onto [declareWord]. */
+    fun declareTodayWord(word: String?) {
+        declareWord(
+            com.example.data.DrawerDay.filingDate(System.currentTimeMillis()),
+            word
+        )
     }
 
     fun splitActiveTaskAndReturn(microStepTitle: String) {
