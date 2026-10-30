@@ -808,7 +808,11 @@ fun AirlockInterceptOverlay(
     // token), identical mechanism (the continuous 60s hold),
     // identical effect (the session ends). Placement only; the
     // valve's price and power are untouched.
-    onRequestEmergencyBreak: () -> Unit = {}
+    onRequestEmergencyBreak: () -> Unit = {},
+    // Issue #318 F4: the breathing wall's length is a stored,
+    // per-configuration value (AirlockBreathStore), no longer a
+    // composable-local literal. Default = Decision #16's 5 seconds.
+    breathSeconds: Int = com.example.data.AirlockBreathStore.DEFAULT_SECONDS
 ) {
     // Issue #55 (HIGH): System Back must never bypass the wall toward
     // the blocked app. While the airlock stands, Back is swallowed —
@@ -828,13 +832,17 @@ fun AirlockInterceptOverlay(
             state.interceptedAtMonoMillis.takeIf { it > 0L } ?: SystemClock.elapsedRealtime()
         }
         var countdownSecs by remember(state.interceptInstanceId) {
-            mutableIntStateOf(airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime()))
+            mutableIntStateOf(
+                airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), breathSeconds)
+            )
         }
         LaunchedEffect(state.interceptInstanceId, state.isVisible) {
-            countdownSecs = airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime())
+            countdownSecs =
+                airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), breathSeconds)
             while (countdownSecs > 0) {
                 delay(200L)
-                countdownSecs = airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime())
+                countdownSecs =
+                    airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), breathSeconds)
             }
         }
 
