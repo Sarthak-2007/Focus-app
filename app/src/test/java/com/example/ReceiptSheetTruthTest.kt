@@ -95,7 +95,9 @@ class ReceiptSheetTruthTest {
         heldSitesAtSeal: Int = -1,
         heldShutAtSeal: Int = -1,
         heldPeekAtSeal: Int = -1,
-        deflections: List<ReceiptDeflection> = emptyList()
+        deflections: List<ReceiptDeflection> = emptyList(),
+        completedTasks: List<String> = emptyList(),
+        safeBreakSeconds: Int = 0
     ) = ReceiptState(
         sessionId = 57,
         number = 57,
@@ -116,7 +118,9 @@ class ReceiptSheetTruthTest {
         restored = true,
         receiptPublishedMonoMs = 0L,
         heldShutAtSeal = heldShutAtSeal,
-        heldPeekAtSeal = heldPeekAtSeal
+        heldPeekAtSeal = heldPeekAtSeal,
+        completedTasks = completedTasks,
+        safeBreakSeconds = safeBreakSeconds
     )
 
     private fun show(state: ReceiptState, onDismiss: () -> Unit = {}) {
@@ -243,6 +247,64 @@ class ReceiptSheetTruthTest {
             .assertIsDisplayed()
         composeRule.onNodeWithText("BREAK BANKED 0 MIN", substring = true)
             .assertDoesNotExist()
+    }
+
+    @Test
+    fun issue105_doneLines_printFinishedTasksInBookingOrder() {
+        // F1: the slip names the work finished inside the session.
+        show(
+            receipt(
+                wall(9, 0), wall(10, 0),
+                completedTasks = listOf("Algebra (30m est)", "Physics (20m est)")
+            )
+        )
+        composeRule.onNodeWithText("DONE · Algebra (30m est)", substring = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("DONE · Physics (20m est)", substring = true)
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun issue105_breakTaken_printsTheLivedSpanExactly() {
+        // F4: the Safe Break actually lived prints, exact to the
+        // second — alongside (not instead of) the valve line.
+        show(receipt(wall(9, 0), wall(9, 50), safeBreakSeconds = 270))
+        composeRule.onNodeWithText("BREAK TAKEN 4 MIN 30 SEC", substring = true)
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun issue105_breakTaken_zeroLived_printsNothing() {
+        show(receipt(wall(9, 0), wall(9, 50), safeBreakSeconds = 0))
+        composeRule.onNodeWithText("BREAK TAKEN", substring = true)
+            .assertDoesNotExist()
+        composeRule.onNodeWithText("DONE ·", substring = true)
+            .assertDoesNotExist()
+    }
+
+    @Test
+    fun issue105_deflectionOutcomes_printDifferently() {
+        // F3 remainder: a turned-away attempt and a plain block
+        // are different events and print as different lines.
+        show(
+            receipt(
+                wall(9, 0), wall(10, 0),
+                deflections = listOf(
+                    ReceiptDeflection(
+                        "KnockApp", "com.knock", wall(9, 30),
+                        outcome = "Stayed Focused"
+                    ),
+                    ReceiptDeflection(
+                        "ShutApp", "com.shut", wall(9, 45),
+                        outcome = "Blocked"
+                    )
+                )
+            )
+        )
+        composeRule.onNodeWithText("· KnockApp · TURNED AWAY", substring = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("· ShutApp · BLOCKED", substring = true)
+            .assertIsDisplayed()
     }
 
     @Test
