@@ -276,7 +276,7 @@ class MonolithShieldService : Service() {
                 // the witness path does not go through the
                 // repository's UsageStats query that checked it
                 // before — a call must never be blocked on either
-                // path. The 2 s cadence is unchanged.
+                // path. The cadence is 1 s (issue #332 F1).
                 // Issue #99 F1 composes on the fallback path: a
                 // package whose peek lease just expired is evicted
                 // on this poll even though its lastTimeUsed is
@@ -293,15 +293,24 @@ class MonolithShieldService : Service() {
                 } else {
                     null
                 }
-                val foregroundBlockedPkg = if (repository.isPhoneOrVoipCallActive()) {
-                    null
-                } else {
-                    ForegroundSelection.selectBlockedForeground(
+                // Issue #332 F2: a live call no longer suspends
+                // this door wholesale (the pre-cure shape made
+                // every call a complete enforcement holiday on
+                // both paths, uninstall guard included). Selection
+                // always runs; the call's own surfaces are exempt
+                // per-package through the safety floor (dialer /
+                // incallui / telecom), and every other blocked app
+                // stays blocked mid-call — Flipd's construction.
+                // The VoIP-owner exemption lives in the
+                // accessibility door (shouldBypassForCall); this
+                // fallback door fails closed, as a fallback must.
+                val foregroundBlockedPkg = ForegroundSelection
+                    .selectBlockedForeground(
                         accessibilityForeground = a11yForeground,
                         blockedPackages = blockedPackages,
                         usageStatsFallback = { repository.queryForegroundBlockedApp(blockedPackages, expiredPeeks) }
                     )
-                }
+                    ?.takeUnless { com.example.data.SafetyFloor.isFloorPackage(it) }
                 if (foregroundBlockedPkg != null && foregroundBlockedPkg != applicationContext.packageName) {
                     val blockedApp = dao.getAllAppsSnapshot().find { it.packageName == foregroundBlockedPkg }
                     val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
@@ -323,7 +332,9 @@ class MonolithShieldService : Service() {
                     )
                 }
 
-                delay(2000L)
+                // Issue #332 F1: 1-second cadence, matching the
+                // UsageEvents window the fallback door now reads.
+                delay(1000L)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
