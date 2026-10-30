@@ -3,6 +3,18 @@ name: rescue-build
 on:
   workflow_dispatch:
   push:
+  pull_request:
+
+# Issue #24: least privilege — this workflow only reads the repo.
+permissions:
+  contents: read
+
+# Issue #24: per-PR/per-ref concurrency. PR syncs cancel their own stale
+# runs; a push to main is NEVER cancelled by another event (the group key
+# differs and cancel-in-progress is false outside pull_request).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -19,10 +31,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      # Issue #24: Gradle build cache (was: every run cold). Branch/PR
+      # runs read the cache but never write it — main owns cache writes.
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
       - name: Install SDK platform 36.1
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          yes | "$SDKMANAGER" --licenses > /tmp/sdk-licenses.log 2>&1 || { echo "::warning::sdkmanager license step failed — see log tail"; tail -20 /tmp/sdk-licenses.log; }
           "$SDKMANAGER" "platforms;android-36.1" "build-tools;36.1.0"
 
       # ISSUE-3 FIX (Wave-2, landed on agent/issue-3 by Fuge's cell;
@@ -42,10 +59,13 @@ jobs:
       # no binary in history. The guard keeps a locally committed
       # keystore (if Ren ever chooses that route) untouched.
       - name: Generate debug keystore (issue #3 fix)
+        id: keystore
         run: |
           if [ -f debug.keystore ]; then
             echo "debug.keystore already present — using it as-is"
+            echo "source=committed" >> "$GITHUB_OUTPUT"
           else
+            echo "source=generated" >> "$GITHUB_OUTPUT"
             keytool -genkeypair -v \
               -keystore debug.keystore \
               -storepass android \
@@ -57,21 +77,26 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-      - name: Assemble debug
-        id: assemble
+      # Issue #24 (finding 1): unit tests run BEFORE the artifact is
+      # built or uploaded. Single job on purpose: parallel jobs would
+      # split the run across two checkouts and two Gradle homes inside
+      # GitHub's included-minutes budget. If tests fail the job stops
+      # here — no APK is produced at all.
+      - name: Unit tests
+        id: tests
         run: |
           chmod +x gradlew
-          ./gradlew --console=plain assembleDebug
+          ./gradlew --console=plain testDebugUnitTest
+
+      - name: Assemble debug
+        id: assemble
+        run: ./gradlew --console=plain assembleDebug
 
       - uses: actions/upload-artifact@v4
         with:
           name: monolith-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 3
-
-      - name: Unit tests
-        id: tests
-        run: ./gradlew --console=plain testDebugUnitTest
 
       # Wave-2 (Feel/Finisher pass): the run page must tell the truth
       # in plain words without anyone opening a log. This APK is
@@ -86,6 +111,14 @@ jobs:
             echo "- Unit tests executed: ${{ steps.tests.outcome != 'skipped' }}"
             echo "- Unit test verdict: ${{ steps.tests.outcome }}"
             if [ "${{ steps.tests.outcome }}" != "success" ]; then
-              echo "- ⚠️ The uploaded APK is UNTESTED in this run — its unit tests did not pass. Do not treat it as proven."
+              echo "- ⚠️ NO APK was uploaded in this run — the artifact is only built after unit tests pass."
+            else
+              echo "- APK in this run was built and uploaded AFTER its unit tests passed."
+            fi
+            if [ "${{ steps.keystore.outputs.source }}" = "generated" ]; then
+              echo "- ⛔ SIGNING: this run generated a FRESH debug key on the runner. Its APK is NOT installable over the installed Monolith (different signing key) — proof only, do not install."
+            else
+              FP=$(keytool -list -v -keystore debug.keystore -storepass android -alias androiddebugkey 2>/dev/null | grep -m1 "SHA1:" | sed 's/.*SHA1: *//')
+              echo "- Signing: committed standard debug keystore (SHA1 $FP) — same key as local builds, installable over the installed Monolith."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
