@@ -183,11 +183,15 @@ fun computeShieldBlockingStatus(
         if (accessProved) null else "ACCESSIBILITY",
         if (usageProved) null else "USAGE ACCESS"
     ).joinToString(" + ")
+    // activeRoutineId stays null on this and every other failure
+    // return: it feeds the routine row's RUNNING NOW marker, and
+    // that marker under a NOT BLOCKING headline would contradict
+    // the sentence (DIAGNOSE-1R census, Oct 30). Only the LIVE
+    // return at the bottom carries it.
     fun unproven(headline: String) = ShieldBlockingStatus(
         proof = ShieldBlockingProof.UNPROVEN,
         headline = headline,
-        missingProof = missing,
-        activeRoutineId = session.routineId
+        missingProof = missing
     )
     // Ranked USAGE → ACCESS → SHIELD (see the header): the grant
     // only the user can give leads; the app's own machinery last.
@@ -215,8 +219,7 @@ fun computeShieldBlockingStatus(
             missingProof = listOfNotNull(
                 if (shieldProved) null else "SHIELD",
                 "ACCESSIBILITY"
-            ).joinToString(" + "),
-            activeRoutineId = session.routineId
+            ).joinToString(" + ")
         )
     }
     if (!shieldProved) {
@@ -238,8 +241,7 @@ fun computeShieldBlockingStatus(
     if (beatAge < 0L || beatAge > MonolithRepository.SHIELD_GAP_THRESHOLD_MILLIS) {
         return ShieldBlockingStatus(
             proof = ShieldBlockingProof.STALE,
-            headline = "NOT BLOCKING — THE SHIELD'S OWN CHECKS HAVE STOPPED",
-            activeRoutineId = session.routineId
+            headline = "NOT BLOCKING — THE SHIELD'S OWN CHECKS HAVE STOPPED"
         )
     }
     val endsAt = shieldSessionEndsAtMillis(session, nowWallMillis)
@@ -281,7 +283,10 @@ fun routineCapWord(enabled: Boolean, daysMask: Int): String = when {
  * The truthful source is the session row itself: the marker
  * prints only when the ACTIVE session's frozen routineId names
  * this routine. A WON'T FIRE row never carries it (no session is
- * ever materialised for a daysMask == 0 routine).
+ * ever materialised for a daysMask == 0 routine). The derivation
+ * carries activeRoutineId ONLY on its LIVE return — every failure
+ * branch leaves it null — so this marker can never print under a
+ * NOT BLOCKING headline.
  */
 fun routineRunningNowSuffix(routine: RoutineEntity, activeRoutineId: Int?): String =
     if (activeRoutineId != null && activeRoutineId == routine.id) " · RUNNING NOW" else ""

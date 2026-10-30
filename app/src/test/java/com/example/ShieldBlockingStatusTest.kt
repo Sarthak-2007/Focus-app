@@ -668,7 +668,7 @@ class ShieldBlockingStatusTest {
     }
 
     @Test
-    fun liveRoutine_missingProofIsEmpty_failureBranchesCarryRoutineId() {
+    fun liveRoutine_missingProofIsEmpty_failureBranchesCarryNoRoutineId() {
         val s = session(
             profileName = "Routine: SLEEP", routineId = 3,
             windowStart = at(0, 20, 0), windowEnd = at(1, 3, 30),
@@ -681,10 +681,55 @@ class ShieldBlockingStatusTest {
             a11yBound = true, a11yArmedSessionId = s.id,
             usage = UsageAccess.DENIED
         )
-        assertEquals(3, denied.activeRoutineId)
+        assertEquals(null, denied.activeRoutineId)
         val stale = proved(s, at(0, 21, 0) + 60_000L)
         assertEquals(ShieldBlockingProof.STALE, stale.proof)
-        assertEquals(3, stale.activeRoutineId)
+        assertEquals(null, stale.activeRoutineId)
+    }
+
+    @Test
+    fun runningNowMarker_neverPrintsOnAFailureBranch() {
+        // DIAGNOSE-1R census (Oct 30): the routine row printed
+        // RUNNING NOW under NOT BLOCKING headlines because the
+        // failure branches carried the routine id into the screen.
+        // The derivation now carries it only on LIVE, so the marker
+        // has nothing to print from on any failure branch — proven
+        // here end-to-end through routineRunningNowSuffix itself.
+        val s = session(
+            profileName = "Routine: SLEEP", routineId = 3,
+            windowStart = at(0, 20, 0), windowEnd = at(1, 3, 30),
+            startWall = at(0, 20, 0), beatWall = at(0, 21, 0)
+        )
+        val routine3 = RoutineEntity(
+            id = 3, name = "SLEEP", startMinutes = 1200, endMinutes = 210,
+            daysMask = RoutineSchedule.MON_FRI,
+            loadoutName = SmartLoadout.STUDY.name, enabled = true
+        )
+        val denied = status(
+            s, at(0, 21, 0),
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            a11yBound = true, a11yArmedSessionId = s.id,
+            usage = UsageAccess.DENIED
+        )
+        val accessStale = status(
+            s, at(0, 21, 0),
+            shieldRunning = true, shieldProtecting = true, shieldSessionId = s.id,
+            a11yBound = true, a11yArmedSessionId = s.id,
+            a11yRootMono = 1_000L, nowMono = 91_001L
+        )
+        val beatStale = proved(s, at(0, 21, 0) + 60_000L)
+        assertEquals(ShieldBlockingProof.UNPROVEN, denied.proof)
+        assertEquals(ShieldBlockingProof.ACCESS_STALE, accessStale.proof)
+        assertEquals(ShieldBlockingProof.STALE, beatStale.proof)
+        for (st in listOf(denied, accessStale, beatStale)) {
+            assertEquals(null, st.activeRoutineId)
+            assertEquals("", routineRunningNowSuffix(routine3, st.activeRoutineId))
+        }
+        // The marker is gated, not dead: LIVE still names it.
+        assertEquals(
+            " · RUNNING NOW",
+            routineRunningNowSuffix(routine3, proved(s, at(0, 21, 0)).activeRoutineId)
+        )
     }
 
     @Test

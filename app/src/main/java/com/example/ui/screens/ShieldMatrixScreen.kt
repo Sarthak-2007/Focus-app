@@ -364,10 +364,12 @@ fun ShieldMatrixScreen(
             // it names the cap's source as the hand pick it is.
             Text(
                 // Nagel N-4: the routine-governs claim is printed
-                // only under a LIVE headline — the derivation also
-                // carries activeRoutineId on its UNPROVEN/STALE
-                // returns, where this line would contradict the
-                // NOT BLOCKING sentence directly above it.
+                // only under a LIVE headline. The derivation carries
+                // activeRoutineId only on its LIVE return (every
+                // failure branch leaves it null), and this gate
+                // stays as the second lock — either one alone keeps
+                // the line from contradicting the NOT BLOCKING
+                // sentence directly above it.
                 text = if (blockingStatus?.proof == ShieldBlockingProof.LIVE &&
                     blockingStatus?.activeRoutineId != null
                 ) {
