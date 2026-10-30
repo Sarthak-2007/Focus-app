@@ -31,8 +31,10 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,8 +52,10 @@ import com.example.data.CapturedNotificationEntity
 import com.example.data.DistractionTriggerReason
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
+import com.example.service.InterceptPath
 import com.example.service.TactileSoundEngine
 import com.example.data.MonolithRepository
+import com.example.data.MonolithWeek
 import com.example.ui.AirlockInterceptState
 import com.example.ui.DisarmChallengeState
 import com.example.ui.PeekWithheld
@@ -67,6 +71,9 @@ import com.example.ui.theme.NightColorSurfaceVariant
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.views.Emergency60sValveView
 import kotlinx.coroutines.delay
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
@@ -622,7 +629,14 @@ fun AirlockInterceptOverlay(
     allowedAppsCount: Int = 0,
     peekAppsCount: Int = 0,
     onOpenAllowedApps: () -> Unit = {},
-    onOpenPeekApps: () -> Unit = {}
+    onOpenPeekApps: () -> Unit = {},
+    // Issue #119, finding 2: the emergency exit stands where the
+    // emergency happens. This chip opens the SAME DisarmChallenge
+    // overlay the Deck chip opens — identical cost (the week's one
+    // token), identical mechanism (the continuous 60s hold),
+    // identical effect (the session ends). Placement only; the
+    // valve's price and power are untouched.
+    onRequestEmergencyBreak: () -> Unit = {}
 ) {
     // Issue #55 (HIGH): System Back must never bypass the wall toward
     // the blocked app. While the airlock stands, Back is swallowed —
@@ -803,6 +817,21 @@ fun AirlockInterceptOverlay(
                 // PEEK-tier behaviour is unchanged (RETURN was and
                 // stays live, the peek offer is what its wall gates).
                 val returnLive = returnToFocusLive(state.isLockedTier, countdownSecs)
+                // R3b #162 F4: the Uninstall Guard door can honour no
+                // peek (InterceptPath.UNINSTALL_GUARD), so beside its
+                // single RETURN offer it prints the lawful road out —
+                // the same road the device-admin warning prescribes:
+                // end the block first; the emergency break is the door
+                // the app itself sanctions. A signpost to an existing
+                // valve, not a new exit.
+                if (state.interceptPath == InterceptPath.UNINSTALL_GUARD) {
+                    Text(
+                        text = "TO REMOVE MONOLITH: END THE BLOCK FIRST — THE EMERGENCY BREAK ON THE DECK IS THE LAWFUL DOOR.",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f)
+                    )
+                }
                 BlockitActionChip(
                     wordLabel = "RETURN TO FOCUS",
                     isAccentArmed = true,
@@ -878,6 +907,19 @@ fun AirlockInterceptOverlay(
                         null -> Unit
                     }
                 }
+
+                // THE VALVE, AT THE DOOR (issue #119, finding 2):
+                // one tap from the intercept to the same emergency
+                // break the Deck offers — no multi-screen detour
+                // through the Deck while the emergency is happening
+                // here. Always rendered: an emergency does not wait
+                // for the 5-second wall.
+                BlockitActionChip(
+                    wordLabel = "EMERGENCY BREAK VALVE (60S HOLD)",
+                    onClick = onRequestEmergencyBreak,
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "airlock_emergency_break_button"
+                )
 
                 // THE LAUNCHER DOORS: two plates, two screens —
                 // allowed apps on one, peek apps on the other.
@@ -983,10 +1025,24 @@ fun PeekCountdownPill(
  * valve = mechanics · chip KEEP FOCUSING. The count itself arrives as
  * [tokensRemaining], derived live from the repository's spend ledger
  * (Amendment A — never a snapshot written into the state at open).
- * Ledger-Direct (Freya, invention 1): the valve receives NO count —
- * at 0 remaining it is simply not composed, and this overlay renders
- * the SPENT face (buildspec point 8) in its place.
+ * Ledger-Direct (Freya, invention 1): the valve receives NO count.
+ * Issue #119, finding 1 (truth half): at 0 remaining the INTERACTIVE
+ * valve is not composed, but the valve's place is never left empty —
+ * an inert SPENT plate stands there, naming the state and the day
+ * the token returns (next Monday 00:00, MonolithWeek). The spent
+ * plate grants nothing: no hold, no tap, no exit. The one-token law
+ * itself is Sarthak's settled design and is not changed here.
  */
+
+/**
+ * The SPENT valve's return line: the Monday the week's token comes
+ * back, from the one week definition. Pure java.time.
+ */
+internal fun emergencyTokenReturnText(nowMillis: Long = System.currentTimeMillis()): String {
+    val next = MonolithWeek.nextWeekAnchorMillis(nowMillis)
+    val date = Instant.ofEpochMilli(next).atZone(ZoneId.systemDefault())
+    return "Returns " + date.format(DateTimeFormatter.ofPattern("EEE d MMM", Locale.US))
+}
 @Composable
 fun DisarmChallengeOverlay(
     state: DisarmChallengeState,
@@ -996,6 +1052,11 @@ fun DisarmChallengeOverlay(
     onCompleteDisarm: () -> Unit,
     onHoldStarted: () -> Unit = {}
 ) {
+    // Issue-60 (finding 1): banked valve progress is HOISTED here in
+    // rememberSaveable — it survives this overlay being dismissed and
+    // recomposed, rotation, and process death, and is handed back to
+    // each fresh valve view in its factory. Completion consumes it.
+    var hoistedBankedMs by rememberSaveable { mutableLongStateOf(0L) }
     // Issue #55 (HIGH): Back must never exit toward the blocked app.
     // On the disarm challenge, Back means exactly what the composed
     // KEEP FOCUSING chip means — dismiss the challenge, stay in
@@ -1053,11 +1114,19 @@ fun DisarmChallengeOverlay(
                             Emergency60sValveView(ctx).apply {
                                 isNightMode = true
                                 this.soundEngine = soundEngine
+                                requiredSeconds = state.requiredHoldSeconds
+                                restoreBankedProgress(hoistedBankedMs)
                             }
                         },
                         update = { view ->
                             view.requiredSeconds = state.requiredHoldSeconds
-                            view.onEmergencyBreakCompleted = onCompleteDisarm
+                            view.onBankedProgressChanged = { banked ->
+                                hoistedBankedMs = banked
+                            }
+                            view.onEmergencyBreakCompleted = {
+                                hoistedBankedMs = 0L
+                                onCompleteDisarm()
+                            }
                             view.onHoldStarted = onHoldStarted
                         },
                         modifier = Modifier
@@ -1075,6 +1144,40 @@ fun DisarmChallengeOverlay(
                         fontSize = 11.sp,
                         color = NightColorPrimary.copy(alpha = 0.75f)
                     )
+                } else {
+                    // SPENT face (issue #119, finding 1): the valve's
+                    // place, rendered inert — visible, truthful, and
+                    // granting nothing. No AndroidView, no hold, no
+                    // click target: the week's break is used, and the
+                    // plate says when the token returns.
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(68.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(
+                                1.dp,
+                                NightColorPrimary.copy(alpha = 0.35f),
+                                RoundedCornerShape(12.dp)
+                            )
+                            .testTag("emergency_valve_spent"),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = "VALVE SPENT — THIS WEEK'S BREAK IS USED",
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = NightColorPrimary.copy(alpha = 0.8f)
+                        )
+                        Text(
+                            text = emergencyTokenReturnText(),
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 11.sp,
+                            color = NightColorPrimary.copy(alpha = 0.75f)
+                        )
+                    }
                 }
 
                 BlockitActionChip(

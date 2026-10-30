@@ -59,6 +59,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.AppBlockTier
 import com.example.data.AppCategory
 import com.example.data.BlockedAppEntity
+import com.example.data.BlockedBrowserDomains
 import com.example.data.FocusProfileEntity
 import com.example.data.LoadoutRules
 import com.example.data.MonolithRepository
@@ -120,6 +121,13 @@ fun ShieldMatrixScreen(
     onToggleBrowserUrlBlocker: () -> Unit,
     routines: List<com.example.data.RoutineEntity> = emptyList(),
     showResetNote: Boolean = false,
+    onDismissResetNote: () -> Unit = {},
+    // Install-day disclosures (R3b #161): one-time notes owed at a
+    // fresh start and after an update, in the Shield's note family.
+    showFreshStartNote: Boolean = false,
+    showUpdateNote: Boolean = false,
+    onDismissFreshStartNote: () -> Unit = {},
+    onDismissUpdateNote: () -> Unit = {},
     onToggleRoutine: (com.example.data.RoutineEntity) -> Unit = {},
     onCycleRoutineLoadout: (com.example.data.RoutineEntity) -> Unit = {},
     onAdjustRoutineTime: (com.example.data.RoutineEntity, Boolean, Int) -> Unit = { _, _, _ -> },
@@ -357,10 +365,10 @@ fun ShieldMatrixScreen(
                 onSelect = { level ->
                     // Stage, never apply (issue #107 #1) — resolved
                     // through the ONE index↔loadout mapping
-                    // (LoadoutStore, #58 F6): an index that seats
-                    // nothing stages nothing — the hand-written
-                    // `else -> SLEEP` silently meant SLEEP for any
-                    // garbage index and stays deleted.
+                    // (LoadoutStore, #58 F6 / Audit R1 #38): an
+                    // index that seats nothing stages nothing — the
+                    // hand-written `else -> SLEEP` silently meant
+                    // SLEEP for any garbage index and stays deleted.
                     com.example.data.LoadoutStore.loadoutAtCapIndex(level)?.let { loadout ->
                         pendingLoadout = loadout
                     }
@@ -399,17 +407,54 @@ fun ShieldMatrixScreen(
                 rightMonoNumber = com.example.data.RoutineSchedule.liveCount(routines).toString(),
                 rightWordSuffix = " ACTIVE"
             )
-            if (showResetNote) {
-                // One-time reseed strip (Freya §3.3): his schedule was
-                // reset to his real day; any row edit dismisses it.
+            if (showFreshStartNote) {
+                // R3b #161 (update-day): a fresh seed means this
+                // phone holds no Monolith past — said once, plainly,
+                // at first open, in the open instead of buried in
+                // the Drawer's PARK plate. Tap dismisses.
                 Text(
-                    text = "SCHEDULE RESET TO YOUR DAY — TAP ANY ROW TO CHANGE IT",
+                    text = "FRESH START ON THIS PHONE — NO PAST CAME WITH IT. IF YOU HAD MONOLITH BEFORE, ITS RECORD STAYED ON THAT PHONE: MONOLITH KEEPS EVERYTHING ON THE PHONE IT WAS MADE ON. TAP TO CLOSE.",
                     fontFamily = AnonymousProFamily,
                     fontSize = 11.sp,
                     color = scheme.primary,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 6.dp)
+                        .clickable { onDismissFreshStartNote() }
+                        .testTag("fresh_start_note")
+                )
+            }
+            if (showUpdateNote) {
+                // R3b #161: an update used to land in silence (the
+                // boot receiver swallowed MY_PACKAGE_REPLACED). Now
+                // the first open after an update says so, once.
+                Text(
+                    text = "MONOLITH UPDATED — THIS PHONE'S TASKS, HISTORY AND SHIELD CAME THROUGH THE UPDATE WITH IT. TAP TO CLOSE.",
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp)
+                        .clickable { onDismissUpdateNote() }
+                        .testTag("update_note")
+                )
+            }
+            if (showResetNote) {
+                // One-time reseed strip (Freya §3.3; R3b #161): his
+                // schedule was reset to his real day. The note now
+                // says what was NOT touched, and only his tap on
+                // the note itself dismisses it — obeying it (an
+                // edit) no longer erases the record.
+                Text(
+                    text = "AN UPDATE RESET YOUR ROUTINE TIMES TO YOUR DAY — YOUR TASKS, HISTORY AND SHIELD WERE NOT TOUCHED. TAP A ROW TO CHANGE A TIME. TAP THIS NOTE TO CLOSE IT.",
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp)
+                        .clickable { onDismissResetNote() }
                         .testTag("routine_reset_note")
                 )
             }
@@ -677,21 +722,107 @@ fun ShieldMatrixScreen(
         }
 
         // The first sentence the installed-only cure lets the app say
-        // honestly (Liv, adopted by Gust): a search with no match is
-        // answered in print, never with a void.
-        if (filteredApps.isEmpty() && searchQuery.isNotBlank()) {
+        // honestly (Liv, adopted by Gust): an empty list is answered
+        // in print, never with a void. Fresh-eyes L7: the filtered
+        // list is query AND category chip, so a search hit that
+        // lives under another category must say exactly that — the
+        // phone fact is only claimed when the name matches NOTHING
+        // in the full catalog. Issue #51 F5 widened the trigger:
+        // the non-search empties (a category void, a whole-list
+        // void) print their fact too. (Union merged by STOSS-34:
+        // L7's cross-category case first, #107's never-deny search
+        // line second, #51's two void facts last.)
+        if (filteredApps.isEmpty()) {
             item {
+                val existsOutsideFilter = allApps.any {
+                    it.appName.contains(searchQuery, ignoreCase = true)
+                }
                 Text(
-                    // Issue #107 (#5): never claim an installed app
-                    // is absent — a zero result means the SEARCH
-                    // matched nothing, and the app may live under
-                    // another name or its package name.
-                    text = "NO MATCH FOR THAT SEARCH — TRY THE APP'S NAME OR ITS PACKAGE NAME",
+                    text = when {
+                        searchQuery.isNotBlank() && existsOutsideFilter ->
+                            "THAT NAME IS ON THIS PHONE — NOT IN THIS CATEGORY"
+                        searchQuery.isNotBlank() ->
+                            "NO MATCH FOR THAT SEARCH — TRY THE APP'S NAME OR ITS PACKAGE NAME"
+                        selectedCategory != null ->
+                            "NO APPS IN THIS CATEGORY ON THIS PHONE"
+                        else -> "NO APPS ON THIS PHONE"
+                    },
                     fontFamily = AnonymousProFamily,
                     fontSize = 11.sp,
                     color = scheme.onSurfaceVariant,
                     modifier = Modifier.testTag("shield_no_match_line")
                 )
+            }
+        }
+
+        // =====================================================================
+        // SECTION 5B: THE GUARDS (issue #51 F1 cure) — the sniper,
+        // the browser blocker and the profiles were wired from
+        // MainActivity to real ViewModel functions and rendered
+        // NOWHERE; this section is their UI. The switches sit
+        // directly above BLOCKED WEBSITES, whose header claimed
+        // sites were blocked with no switch in reach.
+        // =====================================================================
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                FullBleedSectionHeader(
+                    titleWord = "GUARDS",
+                    rightWordPrefix = "",
+                    rightMonoNumber = "",
+                    rightWordSuffix = ""
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "SHORTS & REELS SNIPER",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground
+                    )
+                    BlockitActionChip(
+                        wordLabel = if (shortsReelsSniperEnabled) "ON" else "OFF",
+                        isPrimaryInk = shortsReelsSniperEnabled,
+                        onClick = onToggleShortsReelsSniper,
+                        testTag = "shield_sniper_toggle"
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "BROWSER URL BLOCKER",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground
+                    )
+                    BlockitActionChip(
+                        wordLabel = if (browserUrlBlockerEnabled) "ON" else "OFF",
+                        isPrimaryInk = browserUrlBlockerEnabled,
+                        onClick = onToggleBrowserUrlBlocker,
+                        testTag = "shield_browser_blocker_toggle"
+                    )
+                }
+                if (profiles.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        profiles.forEach { profile ->
+                            FilterWord(
+                                label = profile.name.uppercase(),
+                                selected = profile.name == selectedProfileName,
+                                onClick = { onSelectProfile(profile) }
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -731,7 +862,11 @@ fun ShieldMatrixScreen(
                     }
                 }
 
-                var newSiteText by remember { mutableStateOf("") }
+                // Issue #51 F3 cure: saveable — the draft is no
+                // longer destroyed when this LazyColumn item is
+                // disposed on scroll.
+                var newSiteText by rememberSaveable { mutableStateOf("") }
+                var siteError by rememberSaveable { mutableStateOf<String?>(null) }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -775,11 +910,41 @@ fun ShieldMatrixScreen(
                         wordLabel = "ADD",
                         isPrimaryInk = true,
                         onClick = {
-                            if (newSiteText.isNotBlank()) {
-                                onAddSite(newSiteText)
-                                newSiteText = ""
+                            // Issue #51 F2 cure (ported from agent/issue-7's
+                            // R-3 truth fix): a rejected ADD PRINTS WHY and
+                            // KEEPS the text. The old form cleared the field
+                            // unconditionally — MonolithRepository.addBlockedSite
+                            // rejects an unnormalisable domain (returns false)
+                            // and the ViewModel swallows that Boolean, so
+                            // garbage vanished as if saved. The screen judges
+                            // with the repository's own normaliser, so the
+                            // verdict it prints is the verdict the store gives.
+                            val normalised = BlockedBrowserDomains.normalizeDomain(newSiteText)
+                            when {
+                                newSiteText.isBlank() -> Unit
+                                normalised == null -> siteError =
+                                    "NOT A SITE — CHECK THE ADDRESS AND TRY AGAIN"
+                                blockedSites.contains(normalised) -> siteError =
+                                    "ALREADY ON THE LIST"
+                                else -> {
+                                    onAddSite(newSiteText)
+                                    newSiteText = ""
+                                    siteError = null
+                                }
                             }
                         }
+                    )
+                }
+                val err = siteError
+                if (err != null) {
+                    Text(
+                        text = err,
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("shield_site_error")
                     )
                 }
             }
@@ -972,7 +1137,11 @@ private fun RoutineRow(
             }
         }
         if (expanded) {
+        // Issue #51 F4 cure: the editor row scrolls horizontally
+        // (the category row's own pattern) instead of pushing the
+        // loadout chip off a phone-width screen.
         Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {

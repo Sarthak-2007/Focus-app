@@ -3,6 +3,9 @@ package com.example.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,7 +42,11 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
@@ -68,6 +75,7 @@ import com.example.ui.components.RefusalSentence
 import com.example.ui.components.endsAtText
 import com.example.ui.components.imprintTenantText
 import com.example.ui.components.jamSentenceFor
+import com.example.ui.components.provingSentenceFor
 import com.example.ui.components.refusalSentenceFor
 import com.example.ui.components.inkControlFill
 import com.example.ui.components.onInkControlFill
@@ -294,7 +302,18 @@ fun TactileDeckScreen(
         // re-derives from it.
         finishState.frozenDisplaySeconds
     } else if (isSessionRunning) {
-        if (activeSession.isStopwatchMode) activeSession.elapsedSeconds else activeSession.remainingSeconds
+        when {
+            activeSession.isStopwatchMode -> activeSession.elapsedSeconds
+            // Audit R3b #148: during a Safe Break the per-block
+            // remainder is 0 — that block HAS finished — so the
+            // hero read 00:00 for ten minutes, a break displayed
+            // as FINISH. In a break the hero counts the break
+            // itself down (the shield's own rendering of the same
+            // fact), under the BREAK eyebrow the strip already
+            // prints.
+            activeSession.isInSafeBreak -> activeSession.safeBreakSecondsRemaining
+            else -> activeSession.remainingSeconds
+        }
     } else {
         dialMinutes * 60
     }
@@ -308,6 +327,15 @@ fun TactileDeckScreen(
     // The hero and the finish line both price from this and nowhere else;
     // the naive product understated a 3 x 50 morning by 20 minutes.
     val totalSpanMinutes = dialMinutes * studyBlocksCount + (studyBlocksCount - 1) * 10
+
+    // Issue #123 (dial-precision): the seat the wheel's physics has
+    // committed to, previewed while it travels ("LANDS 47"); the
+    // precise-entry row's open state and its typed text. Session
+    // length is set by his hand on this instrument — the wheel, the
+    // steppers and the typed entry are three grips on the same value.
+    var wheelSeatPreview by remember { mutableStateOf<Int?>(null) }
+    var preciseEntryOpen by remember { mutableStateOf(false) }
+    var preciseEntryText by remember { mutableStateOf("") }
 
     // Issue #6 F3 (audit §3, Vega T-1/T-2/T-3 — the floored,
     // inverted, invented fraction dies): timed progress is
@@ -327,6 +355,15 @@ fun TactileDeckScreen(
     } else if (isSessionRunning) {
         if (activeSession.isStopwatchMode) {
             0f
+        } else if (activeSession.isInSafeBreak) {
+            // Audit R3b #148: in a break the bar prices the whole
+            // session span (the model's own span derivation — the
+            // break counts as session time), so it holds its
+            // ground and keeps moving instead of sitting at the
+            // finished block's empty remainder. Priced in the
+            // F3 form: elapsed/target, filling, no floors.
+            val spanTarget = activeSession.spanTargetSeconds.coerceAtLeast(1)
+            (activeSession.spanElapsedSeconds.toFloat() / spanTarget.toFloat()).coerceIn(0f, 1f)
         } else {
             val target = activeSession.effectiveTargetSeconds.coerceAtLeast(1)
             val elapsed = (target - activeSession.remainingSeconds).coerceAtLeast(0)
@@ -558,7 +595,16 @@ fun TactileDeckScreen(
             else "UNKNOWN" to StripDensity.UNKNOWN
         }
         pressLatchLive != null -> pressLatchLive.appsWord to pressLatchLive.appsDensity
-        appsCellCount != null -> appsCellCount.toString() to StripDensity.PASS
+        // Issue #98 (R3 arming journey): the count's PASS tone is a
+        // promise those apps WILL be blocked — it may only print at
+        // PASS beside a freshly LIVE warrant, exactly the law the
+        // TIME cell's rider (UNA2-03, above) already obeys. Beside
+        // BLOCK OFF/UNKNOWN the number still prints (it is a count,
+        // not a verdict) but at UNKNOWN density, so the strip's
+        // cells can no longer disagree in one frame.
+        appsCellCount != null -> appsCellCount.toString() to
+            if (warrantPrintState == WarrantState.LIVE) StripDensity.PASS
+            else StripDensity.UNKNOWN
         else -> "UNKNOWN" to StripDensity.UNKNOWN
     }
     val timeCell: Pair<String, StripDensity> = when {
@@ -687,7 +733,20 @@ fun TactileDeckScreen(
                     // left; the break is a fact, so it renders.
                     text = when {
                         isSessionRunning && activeSession.isInSafeBreak ->
-                            "BREAK · ${(activeSession.safeBreakSecondsRemaining + 59) / 60} MIN"
+                            // R3b #164 F3: the free automatic pause is
+                            // the SAFE BREAK — never the bare word
+                            // BREAK, which belongs to the once-a-week
+                            // emergency valve.
+                            "SAFE BREAK · ${(activeSession.safeBreakSecondsRemaining + 59) / 60} MIN"
+                        // Audit R3b #146: a user returning late to a
+                        // later block is told when that block began —
+                        // startWallTimeMillis is re-anchored at the
+                        // break flip, so it IS the block's start; the
+                        // hero's elapsed readout beside it says how
+                        // far in he is. No more silent fait accompli.
+                        isSessionRunning && activeSession.currentBlockIndex > 1 ->
+                            "BLOCK ${activeSession.currentBlockIndex} · SINCE " +
+                                SimpleDateFormat("HH:mm", Locale.US).format(Date(activeSession.startWallTimeMillis))
                         // Issue #6 F4: SESSION RUNNING / TOTAL were
                         // wallpaper and die. A routine-born session
                         // prints its name; a hand-armed running
@@ -768,6 +827,36 @@ fun TactileDeckScreen(
                 )
             }
 
+            if (!showRunningForm && !isStopwatchMode) {
+                // Issue #98 (R3 arming journey): the multiplier,
+                // printed as a reading — the hero above states only
+                // the total span, and the wheel's hub carries the
+                // count as geometry alone (1,2,3,1,2,3,4,2 — 5 blocks
+                // read like 1). This line is the count's numeral
+                // home: "2 BLOCKS × 50 MIN", plus the breaks priced
+                // between them, in the same frame as the total it
+                // multiplies into. It recomposes with every hub tap,
+                // so cycling the count can no longer change the
+                // session by ~60 minutes in silence.
+                Text(
+                    text = if (studyBlocksCount > 1) {
+                        "$studyBlocksCount BLOCKS × $dialMinutes MIN · " +
+                            "${studyBlocksCount - 1} × 10 MIN BREAK BETWEEN"
+                    } else {
+                        "1 BLOCK × $dialMinutes MIN"
+                    },
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("blocks_reading")
+                )
+            }
+
             if (!isSessionRunning || shotActive) {
                 // The wheel stays composed through the shot as a
                 // frozen ghost (Zug-II §4.1): same instance, physics
@@ -788,6 +877,7 @@ fun TactileDeckScreen(
                         view.studyBlocksCount = studyBlocksCount
                         view.isLockedSession = shotActive
                         view.onMinutesChanged = { mins -> onDialMinutesChanged(mins) }
+                        view.onSeatTargetChanged = { seat -> wheelSeatPreview = seat }
                         view.onCycleBlocksCount = {
                             val nextBlocks = if (studyBlocksCount >= 8) 1 else studyBlocksCount + 1
                             onSetStudyBlocksCount(nextBlocks)
@@ -830,6 +920,198 @@ fun TactileDeckScreen(
                     // Pia: the FINISHES line dies here — TIME's only
                     // home is the strip's TIME cell (a pure function;
                     // this row's copy slid with every recomposition).
+                }
+                // Issue #123 (dial-precision), the printed truth under
+                // the wheel. Three facts the instrument used to leave
+                // to inference, now stated in words on the Deck:
+                // (a) the dial's number is PER BLOCK and the hero's is
+                // the TOTAL — the breakdown line prints both, plus the
+                // breaks between blocks, so 50 x 2 can never again
+                // read as 50 while meaning 110;
+                // (b) the block count is a numeral + word here, not
+                // hub geometry alone — a hub tap that changes it
+                // changes THIS line in the same frame, nothing silent;
+                // (c) while the wheel coasts, the seat it has committed
+                // to prints as LANDS — where you let go is shown
+                // before you land there.
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = when {
+                            isStopwatchMode -> "FLOW · OPEN SESSION · NO TOTAL"
+                            studyBlocksCount <= 1 -> "$dialMinutes MIN × 1 BLOCK = $totalSpanMinutes MIN TOTAL"
+                            else -> "$dialMinutes MIN × $studyBlocksCount BLOCKS + ${(studyBlocksCount - 1) * 10} MIN BREAKS = " +
+                                if (totalSpanMinutes < 60) "$totalSpanMinutes MIN TOTAL"
+                                else "${totalSpanMinutes / 60}H ${String.format(Locale.US, "%02d", totalSpanMinutes % 60)}M TOTAL"
+                        },
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        letterSpacing = 1.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("dial_breakdown_line")
+                    )
+                    wheelSeatPreview?.let { seat ->
+                        Text(
+                            text = if (seat < 10) "LANDS FLOW" else "LANDS $seat",
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onBackground,
+                            modifier = Modifier.testTag("dial_seat_preview")
+                        )
+                    }
+                    // Precise entry, the wheel's second grip: −/+ step
+                    // exactly one minute per tap (long, deliberate
+                    // steps for the 47 the rim used to refuse), and
+                    // TYPE opens a numeric field for the exact value.
+                    // The wheel stays the instrument; these are its
+                    // fine adjustment, not a replacement.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(scheme.surfaceVariant)
+                                .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                .clickable {
+                                    if (dialMinutes > 10) onDialMinutesChanged(dialMinutes - 1)
+                                }
+                                .padding(horizontal = 14.dp, vertical = 5.dp)
+                                .testTag("dial_step_down")
+                        ) {
+                            Text(
+                                text = "−1",
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onBackground
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (preciseEntryOpen) inkControlFill() else scheme.surfaceVariant)
+                                .border(1.dp, if (preciseEntryOpen) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                .clickable {
+                                    preciseEntryText = if (dialMinutes >= 10) dialMinutes.toString() else ""
+                                    preciseEntryOpen = !preciseEntryOpen
+                                }
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                                .testTag("dial_precise_entry_toggle")
+                        ) {
+                            Text(
+                                text = "TYPE MINUTES",
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = if (preciseEntryOpen) onInkControlFill() else scheme.onBackground
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(scheme.surfaceVariant)
+                                .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                .clickable {
+                                    if (dialMinutes < 10) onDialMinutesChanged(10)
+                                    else if (dialMinutes < 180) onDialMinutesChanged(dialMinutes + 1)
+                                }
+                                .padding(horizontal = 14.dp, vertical = 5.dp)
+                                .testTag("dial_step_up")
+                        ) {
+                            Text(
+                                text = "+1",
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onBackground
+                            )
+                        }
+                    }
+                    if (preciseEntryOpen) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(scheme.surfaceVariant)
+                                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 10.dp, vertical = 7.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                if (preciseEntryText.isEmpty()) {
+                                    Text(
+                                        text = "10–180",
+                                        fontFamily = AnonymousProFamily,
+                                        fontSize = 13.sp,
+                                        color = scheme.onSurfaceVariant
+                                    )
+                                }
+                                BasicTextField(
+                                    value = preciseEntryText,
+                                    onValueChange = { raw ->
+                                        preciseEntryText = raw.filter { it.isDigit() }.take(3)
+                                    },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Number,
+                                        imeAction = ImeAction.Done
+                                    ),
+                                    keyboardActions = KeyboardActions(onDone = {
+                                        preciseEntryText.toIntOrNull()?.let { entered ->
+                                            onDialMinutesChanged(entered.coerceIn(10, 180))
+                                        }
+                                        preciseEntryOpen = false
+                                    }),
+                                    textStyle = TextStyle(
+                                        fontFamily = AnonymousProFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = scheme.onBackground
+                                    ),
+                                    cursorBrush = SolidColor(scheme.onBackground),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("dial_precise_entry_input")
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(inkControlFill())
+                                    .clickable {
+                                        preciseEntryText.toIntOrNull()?.let { entered ->
+                                            onDialMinutesChanged(entered.coerceIn(10, 180))
+                                        }
+                                        preciseEntryOpen = false
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 7.dp)
+                                    .testTag("dial_precise_entry_set")
+                            ) {
+                                Text(
+                                    text = "SET",
+                                    fontFamily = AnonymousProFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    letterSpacing = 1.sp,
+                                    color = onInkControlFill()
+                                )
+                            }
+                        }
+                    }
                 }
                 }
             } else {
@@ -1025,11 +1307,38 @@ fun TactileDeckScreen(
                             .testTag("slide_to_start_view")
                     )
                 } else {
+                    // Issue #98 (R3 arming journey): the 10-second
+                    // grace is measured from SETTLE, not from t=0.
+                    // The seal shot detains the pinned zone for its
+                    // 1050ms (the slide holds this address, no abort
+                    // surface exists), so a t=0-anchored window
+                    // handed the user ~9s under a "10s" print. The
+                    // chip's presence is the gate (the VM enforces
+                    // no second clock), so the window now spans
+                    // elapsed 0..10 whole seconds from t=0 — the
+                    // first of which the shot consumes — and the
+                    // badge counts the seconds the user can
+                    // actually still use: 10 at the settle frame,
+                    // 1 on the last.
                     val withinGraceWindow = activeSession != null && activeSession.elapsedSeconds <= 10
                     if (withinGraceWindow) {
+                        // Audit R3b #149: one chip, two bookings. A
+                        // manual session's grace cancel is free and
+                        // unrecorded; a routine-born session's abort
+                        // is funnel-booked with attendance
+                        // consequences (disarmActiveSession diverts
+                        // it before the grace classification). The
+                        // chip names which birth it serves — the
+                        // free promise is never printed over a
+                        // booking. (Copy only: the funnel's judgement
+                        // itself belongs to the routines rethink.)
                         BlockitActionChip(
-                            wordLabel = "GRACE WINDOW ABORT",
-                            monoBadge = "${10 - (activeSession?.elapsedSeconds ?: 0)}s",
+                            wordLabel = if (activeSession?.routineId != null) {
+                                "GRACE ABORT — BOOKED BY ROUTINE"
+                            } else {
+                                "GRACE WINDOW ABORT"
+                            },
+                            monoBadge = "${(11 - (activeSession?.elapsedSeconds ?: 0)).coerceIn(1, 10)}s",
                             // E5b B6 (Horiz §2): the grace chip
                             // exits the accent with the rest — it
                             // takes the primary-ink form, and its
@@ -1055,19 +1364,45 @@ fun TactileDeckScreen(
                     }
                 }
             }
+            // Audit R3b #149: the grace-to-valve cliff, named. The
+            // slot above swaps its chip at 10 seconds with nothing
+            // saying the door changed; this standing line states
+            // both states, in both states — in-window it counts the
+            // free cancel down, past it the valve's terms stand
+            // printed before they are ever needed.
+            if (activeSession != null) {
+                val graceLeft = 10 - activeSession.elapsedSeconds
+                Text(
+                    text = when {
+                        graceLeft > 0 && activeSession.routineId != null ->
+                            "GRACE ${graceLeft}S — ABORT IS BOOKED BY THE ROUTINE · AFTER: VALVE, 60S HOLD"
+                        graceLeft > 0 ->
+                            "GRACE ${graceLeft}S — CANCEL FREE, NOTHING BOOKED · AFTER: VALVE, 60S HOLD"
+                        else ->
+                            "GRACE SPENT · VALVE: 60S HOLD · $weeklyEmergencyTokensRemaining/1 WEEK"
+                    },
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 9.5.sp,
+                    letterSpacing = 0.8.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
             Spacer(Modifier.height(8.dp))
             RefusalSentenceSlot(
                 // The slot's tenant by phase (step 4): a JAMMED
-                // attempt names its unanswering link; PROVING is
-                // silent (the machine is working, and the wire's
-                // standing sentence would be a second rendering of
-                // a fact the cascade is already judging); an
+                // attempt names its unanswering link; PROVING names
+                // itself with its live proved count (issue #98 —
+                // the silent black box is closed: real blocking
+                // already runs during proving, so the frame must
+                // say the machine is checking, never render the
+                // idle form as if nothing had happened); an
                 // annulment's past-tense sentence stands until the
                 // controller clears it; a running session is
                 // silent; otherwise the wire's standing sentence.
                 sentence = when {
                     armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase)
-                    armPhase is ArmPhase.Proving -> null
+                    armPhase is ArmPhase.Proving -> provingSentenceFor(armPhase)
                     isSessionRunning -> null
                     armSentence != null -> armSentence
                     else -> refusalSentenceFor(deckWarrant, nowMono)
