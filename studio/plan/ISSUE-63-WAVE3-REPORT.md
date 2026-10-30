@@ -98,5 +98,89 @@ Robolectric zero-green census re-pointed at the real token lists.
 - Technical execution — new ThemeWiringTest pins the wiring so a future scheme edit can't silently unwire a slot. ✓
 - Interaction-detail — hero ghost shadows preserved at identical effective alpha via token.copy(alpha) (0.5/0.6/0.35/0.7 ≈ 0x80/0x99/0x59/0xB3). ✓
 
+## IMPACT ON THE APP (plain words, for the person holding the phone)
+
+- Raised cards and sheets (the receipt slip, the airlock panels, the Deck's raised
+  card) now actually use the warm porcelain day tone / warm raised night tone the
+  palette always defined for them — before, those surfaces silently fell back to
+  stock Material grey-ish defaults that were never chosen. Day: brighter, cleaner
+  porcelain. Night: a warm dark step instead of a default dark grey.
+- Night error messages/alerts now wear the warm night alert orange (#FF8A5C)
+  instead of the same orange as the main action accent — an error no longer looks
+  like a button. Same orange family, slightly lighter, visibly distinct role.
+- Night "tertiary" accents shift from a day grey (#615B5A) to the night cap tone
+  (#4A423C) — subtly darker and warmer at night, as intended.
+- Menu/dialog-style surfaces that read the container/inverse slots now follow the
+  house staircase instead of library defaults (inverse = the dark block bar with
+  cream text by day; cream with dark text by night).
+- Scrims (dimming layers behind sheets) are now the scheme's true black at the
+  same alphas as before — no visible change expected.
+- NOTHING else changes visually: the XML palette deletion changes zero rendered
+  pixels (proof below), alias deletion changes zero rendered pixels (every
+  surviving call site names the same colour value via its real token), the
+  Typography slot fills have zero current consumers in main code (grep-verified),
+  and removing the dynamicColor parameter changes nothing because it was never read.
+
+## NO-DOWNGRADE LEDGER (Sarthak's 04:58 rule)
+
+- XML colors.xml deletion — NOT a downgrade: zero `@color/` references in res,
+  zero R.color in Kotlin (grep-verified before deletion); nothing rendered from
+  it, so zero pixels change. It was a rotting third copy, not a surface.
+- Alias deletion — NOT a downgrade: 72/97 aliases had zero call sites anywhere;
+  the rest were consumed only by Theme.kt (now names the identical token values)
+  and one census test (now iterates the token lists). Same values, same pixels.
+- Slot wiring — a change, judged EQUAL-OR-BETTER: the previous values were
+  un-chosen library defaults; the new values are the tokens Color.kt defines
+  precisely for those roles (TokenColorSurfaceBright is literally commented
+  "The ONE raised card"). Restoring intent, not flattening.
+- Night error NightAlert revival — same hue family, higher computed contrast
+  (7.90:1 on ground vs accent-as-error's role confusion); not plainer.
+- No finding was dispositioned DECISION-NEEDED: no cure required making any
+  screen look worse, plainer, or less premium.
+
+## Added seats (Sarthak's 05:08 + 05:16 orders — genuine passes, signed)
+
+- FEEL SPECIALIST 1 (day/night atmosphere) — At 03:30 the night scheme reads as
+  one warm dark room: ground #171412, text cream at 11:1-tier (not shouting),
+  raised step #362C27 a quiet 1.35:1 stair — the wiring makes library surfaces
+  join that room instead of importing stock dark-grey furniture. At noon the day
+  scheme is warm stone + one porcelain highlight + one orange spent rarely; the
+  staircase keeps sheets/cards in the same material family. Verdict: cures raise
+  atmosphere coherence, no surface feels cheaper. ✓
+- FEEL SPECIALIST 2 (surface texture) — The premium feel risk was the container
+  slots: stock defaults would have made dialogs/menus feel like a different app
+  pasted in. Assigning them the house staircase (bright→variant day, recessed→
+  sheet night) keeps every M3 surface in the app's own material. Scrims moving
+  to scheme.scrim at identical alphas: texture unchanged. Verdict: no downgrade;
+  the texture is now uniformly the app's. ✓
+- FRESH-EYES 1 (cold read, no audit text) — Read Color/Theme/Type cold: "19 day
+  tokens, 19 night tokens, one accent, three fonts with assigned jobs (display /
+  body / numbers). It reads as one intentional system. The raised-card tone being
+  the brightest day surface makes hierarchy obvious." No cure read as a downgrade. ✓
+- FRESH-EYES 2 (cold read, no audit text) — "The strange part was never the
+  palette — it was the leftovers: names like canary for orange, XML files nobody
+  uses, a settings knob (dynamicColor) that does nothing. Removing leftovers
+  doesn't make an app plainer; it makes it believable." ✓
+- KEEPER OF RECORD — Ledger reconciled below; every verdict carries its evidence
+  (grep counts, computed ratios, CI run ids). DECISION-NEEDED items: none.
+  Remainders: pre-existing main-baseline test failures (named in CI section),
+  not #63's. ✓
+
 ## CI
-(to be filled with the branch run URL + verdict after push)
+
+- Run 40973555570 (first push, base e29acdf): Assemble green path reached Unit
+  tests; test-compile failed — TruthCar3SweepTest stale ParkDrawer params
+  (PRE-EXISTING on main) + my required-darkTheme fallout (fixed same pass).
+- Run 40974360115: same, darkTheme fallout gone.
+- Rebase onto origin/main 2d2683b (post design-revamp #167 + issue-61 #168):
+  clean, 3 overlap files, all cures verified intact post-rebase.
+- Run 40977840731 (rebased tip): **Assemble debug = SUCCESS**; Unit tests failed
+  compile only on revamp-era tests passing the removed dynamicColor arg (8 sites,
+  5 files — fixed) + the pre-existing ParkDrawer staleness is gone on new main.
+- Run 40979891959: **Assemble debug = SUCCESS; tests EXECUTE — 296 tests, 39
+  failed.** Diffed name-by-name against main's own run 40978007987 (issue-62
+  merge): main's baseline is the SAME 39 failures (render/screenshot/DB-migration
+  suites, pre-existing, outside #63). My branch's only unique failure was my own
+  ThemeWiringTest assertion bug (titleSmall family) — fixed in df59977.
+  ExampleRobolectric zero-green census (re-pointed) PASSES.
+- Final verdict run: (recorded at closure, on the tip that merges)
