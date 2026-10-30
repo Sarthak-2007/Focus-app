@@ -48,6 +48,30 @@ object DeviceProtectedPrefs {
                     runCatching {
                         deviceContext.moveSharedPreferencesFrom(appContext, name)
                     }
+                    // Rescue copy: if the move did not take (the
+                    // legacy file was already loaded in this process)
+                    // and the device-protected file is still empty,
+                    // copy the legacy values across entry by entry —
+                    // a seal landed by an older build must testify
+                    // after the move either way.
+                    val dePrefs = deviceContext.getSharedPreferences(name, Context.MODE_PRIVATE)
+                    val cePrefs = appContext.getSharedPreferences(name, Context.MODE_PRIVATE)
+                    if (dePrefs.all.isEmpty() && cePrefs.all.isNotEmpty()) {
+                        val editor = dePrefs.edit()
+                        for ((key, value) in cePrefs.all) {
+                            when (value) {
+                                is String -> editor.putString(key, value)
+                                is Int -> editor.putInt(key, value)
+                                is Long -> editor.putLong(key, value)
+                                is Boolean -> editor.putBoolean(key, value)
+                                is Float -> editor.putFloat(key, value)
+                                is Set<*> -> editor.putStringSet(
+                                    key, value.filterIsInstance<String>().toSet()
+                                )
+                            }
+                        }
+                        editor.commit()
+                    }
                 }
             }
         }
