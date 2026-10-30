@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import com.example.data.ClockText
 import com.example.data.SystemGuardStatus
 import com.example.service.UsageAccess
 import com.example.service.WatchStore
@@ -41,8 +42,16 @@ import java.util.Locale
  *    for an unbound warrant. Reachability is liveWarrant's
  *    fact to state; print truth is this function's.)
  *  - BIND ONLY: liveness proven, pipeline (or a grant) unproven.
- *  - POSITIVE: the OFF it accompanies rests on a directly observed
- *    dead signal, not on silence or timeout.
+ *  - OFF CONFIRMED (issue #115; was "POSITIVE"): the OFF it
+ *    accompanies rests on a directly observed dead signal, not on
+ *    silence or timeout. "POSITIVE" read as proof that blocking
+ *    WORKS next to "BIND NOT HELD" — the pair contradicted itself
+ *    to any reader who does not hold this table; the new grade
+ *    names what is actually proven: the OFF.
+ *  - NOT SEEN (issue #115; was "UNSEEN" in the left mark): the bind
+ *    is held, but no root-stamp was seen this residency — the left
+ *    mark now says so in the same plain words the right mark's
+ *    BIND ONLY grade already implies.
  *  - NONE: nothing has been proven yet either way.
  *  The grade is taken over the wire's legs only — the system's
  *  service list, a system-delivered root-stamp event, a live
@@ -73,12 +82,12 @@ internal fun seamMarksFor(warrant: Warrant?): Pair<String, String>? {
             // Held and stamped; a grant is what is unproven.
             warrant.a11yStampedThisResidency -> "BIND HELD · THIS VISIT" to "PROOF: BIND ONLY"
             // Room (i): held, unstamped this visit.
-            else -> "BIND HELD · UNSEEN" to "PROOF: BIND ONLY"
+            else -> "BIND HELD · NOT SEEN" to "PROOF: BIND ONLY"
         }
         WarrantState.OFF -> when {
-            !warrant.a11yBound -> "BIND NOT HELD" to "PROOF: POSITIVE"
-            warrant.a11yStampedThisResidency -> "BIND HELD · THIS VISIT" to "PROOF: POSITIVE"
-            else -> "BIND HELD · UNSEEN" to "PROOF: POSITIVE"
+            !warrant.a11yBound -> "BIND NOT HELD" to "PROOF: OFF CONFIRMED"
+            warrant.a11yStampedThisResidency -> "BIND HELD · THIS VISIT" to "PROOF: OFF CONFIRMED"
+            else -> "BIND HELD · NOT SEEN" to "PROOF: OFF CONFIRMED"
         }
     }
 }
@@ -97,7 +106,7 @@ internal fun seamMarksFor(warrant: Warrant?, nowMono: Long): Pair<String, String
     val left = when {
         !warrant.a11yBound -> "BIND NOT HELD"
         warrant.a11yStampedThisResidency -> "BIND HELD · THIS VISIT"
-        else -> "BIND HELD · UNSEEN"
+        else -> "BIND HELD · NOT SEEN"
     }
     return left to "PROOF: STALE"
 }
@@ -105,8 +114,8 @@ internal fun seamMarksFor(warrant: Warrant?, nowMono: Long): Pair<String, String
 /** TIME's print (Uma): a pure function of a stored end-milli — the
  *  shipped ever-sliding finish line dies here; nothing about this
  *  text is remembered, and nothing here ticks. */
-internal fun endsAtText(endMillis: Long): String =
-    "ENDS " + SimpleDateFormat("HH:mm", Locale.US).format(Date(endMillis))
+internal fun endsAtText(is24Hour: Boolean, endMillis: Long): String =
+    "ENDS " + ClockText.timeOfDay(is24Hour, endMillis)
 
 /** The imprint's tenant (Emil): the seal keeps its count in every
  *  tense. Idle prints the future ONLY on a LIVE wire — over a dead

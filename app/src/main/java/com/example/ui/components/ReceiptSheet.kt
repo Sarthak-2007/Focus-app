@@ -38,6 +38,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.ReceiptState
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.theme.MonolithCurves
@@ -80,7 +82,15 @@ import java.util.Locale
 @Composable
 fun ReceiptSheet(
     receipt: ReceiptState,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    // Issue #135 F3: the one door out of the gate that leads
+    // somewhere — dismisses the slip and returns to the Deck ready
+    // to arm the next session. Null = no door (previews/tests).
+    onNextSession: (() -> Unit)? = null,
+    // Issue #135 F4: completes the session's still-active task via
+    // the host's existing completion path, then dismisses. Null =
+    // the session's task is not still active, so no door prints.
+    onDoneWithTask: (() -> Unit)? = null
 ) {
     // #57: the enter fade actually runs — the state starts
     // false and targets true, where a hardcoded `visible = true`
@@ -153,6 +163,68 @@ fun ReceiptSheet(
                     )
                 }
 
+                // Issue #152: the slip's times say where they
+                // live. ARMED renders in the zone the arming was
+                // actually lived in (captured at the session's
+                // birth funnel — ReceiptState.armZoneId) whenever
+                // that zone differs from the zone in force at
+                // render, and both lines then carry their UTC
+                // offsets: a traveller reading the slip after
+                // landing sees the departure wall time he lived,
+                // labelled — not the same instant silently
+                // re-rendered in the arrival zone, which put the
+                // slip at war with his boarding pass and his own
+                // memory while DURATION arithmetic (monotonic)
+                // kept agreeing. Same zone — the overwhelming
+                // case — the print is exactly as before.
+                val receiptContext = LocalContext.current
+                val renderZone = java.time.ZoneId.systemDefault()
+                val armZone = receipt.armZoneId?.let { id ->
+                    runCatching { java.time.ZoneId.of(id) }.getOrNull()
+                }
+                val crossedZones = armZone != null && armZone != renderZone
+                // #57 composed with #152 below: crossesDay is
+                // computed with main's sameLocalDay; the ARMED
+                // day label, when one prints, is taken in the
+                // ARM zone so it names the same day the ARMED
+                // clock beside it is lived in.
+                val crossesDay = !sameLocalDay(
+                    receipt.armWallMs, receipt.endedAtWallMs
+                )
+                val armedPrint = buildString {
+                    append("ARMED ")
+                    if (crossesDay) {
+                        append(
+                            if (crossedZones) {
+                                dayLabel(receipt.armWallMs, armZone)
+                            } else {
+                                dayLabel(receipt.armWallMs)
+                            }
+                        )
+                        append(' ')
+                    }
+                    append(
+                        if (crossedZones) {
+                            hhmm(receiptContext, receipt.armWallMs, armZone!!)
+                        } else {
+                            hhmm(receiptContext, receipt.armWallMs)
+                        }
+                    )
+                    if (crossedZones) {
+                        append(" (${offsetLabel(receipt.armWallMs, armZone!!)})")
+                    }
+                }
+                val endedPrint = buildString {
+                    append("ENDED ")
+                    if (crossesDay) {
+                        append(dayLabel(receipt.endedAtWallMs))
+                        append(' ')
+                    }
+                    append(hhmm(receiptContext, receipt.endedAtWallMs))
+                    if (crossedZones) {
+                        append(" (${offsetLabel(receipt.endedAtWallMs, renderZone)})")
+                    }
+                }
                 // RC-02: a FLOW slip has no PLANNED segment —
                 // the line carries ARMED alone rather than a
                 // floor dressed as a plan.
@@ -161,19 +233,9 @@ fun ReceiptSheet(
                 // their own day — a bare `ENDED 00:10` after
                 // `ARMED 23:50` otherwise reads as ending before
                 // it started. Same-day slips print as before.
-                val crossesDay = !sameLocalDay(
-                    receipt.armWallMs, receipt.endedAtWallMs
-                )
-                val armedPrint = if (crossesDay) {
-                    "ARMED ${dayLabel(receipt.armWallMs)} ${hhmm(receipt.armWallMs)}"
-                } else {
-                    "ARMED ${hhmm(receipt.armWallMs)}"
-                }
-                val endedPrint = if (crossesDay) {
-                    "ENDED ${dayLabel(receipt.endedAtWallMs)} ${hhmm(receipt.endedAtWallMs)}"
-                } else {
-                    "ENDED ${hhmm(receipt.endedAtWallMs)}"
-                }
+                // (The prints themselves are composed above,
+                // #152's zone truth included, on main's
+                // context-based #88 clock helpers.)
                 val planned = receipt.plannedSeconds
                 ReceiptMonoLine(
                     text = if (planned != null) {
@@ -204,9 +266,22 @@ fun ReceiptSheet(
                     ReceiptMonoLine(text = label)
                 }
                 if (receipt.heldAppsAtSeal >= 0 && receipt.heldSitesAtSeal >= 0) {
-                    ReceiptMonoLine(
-                        text = "HELD ${receipt.heldAppsAtSeal} APPS · ${receipt.heldSitesAtSeal} SITES ON THIS PHONE"
-                    )
+                    // W-41: SHUT and PEEK are different promises —
+                    // the line prints them as two counts, never
+                    // flattened into one (the split is a stored
+                    // seal fact since DB v14). A pre-v14 row's
+                    // split was never recorded, so it prints the
+                    // stored total exactly as sealed — a split is
+                    // never invented for a row that predates it.
+                    if (receipt.heldShutAtSeal >= 0 && receipt.heldPeekAtSeal >= 0) {
+                        ReceiptMonoLine(
+                            text = "HELD ${receipt.heldShutAtSeal} SHUT · ${receipt.heldPeekAtSeal} PEEK (2 MIN) · ${receipt.heldSitesAtSeal} WEBSITES"
+                        )
+                    } else {
+                        ReceiptMonoLine(
+                            text = "HELD ${receipt.heldAppsAtSeal} APPS · ${receipt.heldSitesAtSeal} SITES ON THIS PHONE"
+                        )
+                    }
                 }
                 // Audit R3b #145: the completion moment names its
                 // reward — the curio this finish forged, on the slip
@@ -223,6 +298,25 @@ fun ReceiptSheet(
                     ReceiptMonoLine(
                         text = "BREAK BANKED ${longSpan(receipt.bankedBreakSeconds)}"
                     )
+                }
+                // Issue #105 (F4): the Safe Breaks actually lived
+                // in this session, from its own taken ledger
+                // (breakTakenSeconds, threaded as safeBreakSeconds)
+                // — the valve-fed BREAK BANKED line above reads 0
+                // on every publishable slip and was the only break
+                // line, so the breaks the user lived never printed.
+                // Exact span via longSpan, never rounded.
+                if (receipt.safeBreakSeconds > 0) {
+                    ReceiptMonoLine(
+                        text = "BREAK TAKEN ${longSpan(receipt.safeBreakSeconds)}"
+                    )
+                }
+                // Issue #105 (F1): the tasks finished inside this
+                // session, in the order the session's own row
+                // booked them (completedTasksSummary) — the work
+                // the slip attests, named on the slip.
+                receipt.completedTasks.forEach { entry ->
+                    ReceiptMonoLine(text = "DONE · $entry")
                 }
                 // Nachdruck R2/R3/R4 (Finisher 3 §2.2/§3/§4,
                 // landed via WELLE-6 recovery, adapted to main's
@@ -246,7 +340,7 @@ fun ReceiptSheet(
                     }
                     Row(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = hhmm(d.atWallMillis),
+                            text = hhmm(LocalContext.current, d.atWallMillis),
                             fontFamily = AnonymousProFamily,
                             fontSize = 11.sp,
                             letterSpacing = 1.sp,
@@ -255,7 +349,15 @@ fun ReceiptSheet(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "· " + d.appName + if (d.isSite) " · SITE" else "",
+                            // Issue #105 (F3, remainder): the
+                            // outcome word rides beside the attempt —
+                            // a turned-away attempt and a plain block
+                            // are different events and now print
+                            // differently. No outcome recorded, no
+                            // word printed (outcomePrint is empty).
+                            text = "· " + d.appName +
+                                (if (d.outcomePrint.isNotEmpty()) " · ${d.outcomePrint}" else "") +
+                                (if (d.isSite) " · SITE" else ""),
                             fontFamily = AnonymousProFamily,
                             fontSize = 11.sp,
                             letterSpacing = 1.sp,
@@ -275,6 +377,34 @@ fun ReceiptSheet(
                         // wrapped statement reads as ONE struck
                         // statement, never two ledger lines.
                         lineHeight = 18.sp,
+                        color = scheme.onBackground
+                    )
+                }
+                if (receipt.penaltySecondsAdded > 0) {
+                    // Audit R3 #113, finding 4: the penalty was
+                    // already inside the PLANNED figure above (the
+                    // span prices it in) — this line names what the
+                    // plan silently included, in the same bold
+                    // register as the shield-gap line.
+                    Text(
+                        text = "A ${receipt.penaltySecondsAdded / 60} MIN TAMPER PENALTY WAS ADDED TO THIS SESSION",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = scheme.onBackground
+                    )
+                }
+                if (receipt.openExposureApps.isNotEmpty()) {
+                    // Issue #129 F3: the slip names what was
+                    // actually used through the open door — a
+                    // session stamped OPEN APP USED never reads
+                    // as clean, and the names are the evidence.
+                    Text(
+                        text = "OPEN APPS USED IN THAT SESSION: " +
+                            receipt.openExposureApps.joinToString(", ") { it.uppercase() },
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
                         color = scheme.onBackground
                     )
                 }
@@ -301,16 +431,71 @@ fun ReceiptSheet(
                 // 0.25.sp at the same 9.sp measures ~326dp — the
                 // whole sentence lands on one line, still the
                 // same quiet mono footer. Do not "restore" the
-                // 1.sp without re-measuring.
+                // 1.sp without re-measuring. W-43 (BELEG): the
+                // sentence itself — an acronym ("YPT") and then a
+                // product name ("YEOLPUMTA") both failed the
+                // fresh-reader test; the line now says the thing
+                // in plain words. 61 visible chars — inside the
+                // 62-char budget the 0.25.sp measurement allows.
                 Text(
-                    text = "THE MACHINE KEEPS ITS OWN LOG · STUDY HOURS LIVE IN YEOLPUMTA",
+                    text = "THIS APP KEEPS ITS OWN LOG · STUDY TIME IS IN THE STUDY TIMER",
                     fontFamily = AnonymousProFamily,
                     fontSize = 9.sp,
                     letterSpacing = 0.25.sp,
                     color = scheme.onSurfaceVariant
                 )
+                // Issue #135 F3/F4 doors: the slip was a zero-action
+                // gate — the only way out was a scrim tap that led
+                // nowhere in particular, and the task the session was
+                // for never advanced. Two plain doors, nothing else:
+                // the ceremony (detention, sled) is untouched.
+                if (onDoneWithTask != null || onNextSession != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (onDoneWithTask != null) {
+                            ReceiptDoor(
+                                text = "DONE WITH THIS TASK",
+                                modifier = Modifier.weight(1f),
+                                onClick = onDoneWithTask
+                            )
+                        }
+                        if (onNextSession != null) {
+                            ReceiptDoor(
+                                text = "NEXT SESSION",
+                                modifier = Modifier.weight(1f),
+                                onClick = onNextSession
+                            )
+                        }
+                    }
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun ReceiptDoor(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            fontFamily = AtkinsonHyperlegibleFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp,
+            letterSpacing = 1.sp,
+            color = scheme.onBackground
+        )
     }
 }
 
@@ -333,6 +518,8 @@ private fun ReceiptMonoLine(text: String, bold: Boolean = false) {
     )
 }
 
+private fun hhmm(context: android.content.Context, wallMillis: Long): String =
+    ClockText.timeOfDay(context, wallMillis)
 /** Nachdruck R3 (Finisher 3 §3, Emil P5): the silence threshold
  *  — a gap of ≥20 minutes between two consecutive PRINTED
  *  deflections earns a QUIET span rule (boundary included,
@@ -342,6 +529,28 @@ private fun ReceiptMonoLine(text: String, bold: Boolean = false) {
  *  first entry (ARMED bounds that silence), never after the
  *  last (ENDED bounds it). */
 private const val QUIET_GAP_MS = 1_200_000L
+
+/**
+ * [hhmm] in an explicit zone (issue #152's ARMED line). Composed
+ * with #88 on merge: the pattern follows the device's own
+ * 12/24-hour setting and locale, only the zone is explicit. */
+private fun hhmm(
+    context: android.content.Context,
+    wallMillis: Long,
+    zone: java.time.ZoneId
+): String {
+    val pattern = if (android.text.format.DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a"
+    val format = SimpleDateFormat(pattern, Locale.getDefault())
+    format.timeZone = java.util.TimeZone.getTimeZone(zone)
+    return format.format(Date(wallMillis))
+}
+
+/** The UTC offset in force for [zone] at [wallMillis], as the
+ *  slip prints it ("+05:30"; UTC prints "+00:00", never "Z"). */
+private fun offsetLabel(wallMillis: Long, zone: java.time.ZoneId): String {
+    val offset = zone.rules.getOffset(java.time.Instant.ofEpochMilli(wallMillis))
+    return if (offset == java.time.ZoneOffset.UTC) "+00:00" else offset.id
+}
 
 /** The QUIET span rule: a Row in the list's own 8dp rhythm —
  *  hairline, 8dp, label in full body ink (never wraps), 8dp,
@@ -381,13 +590,20 @@ private fun ReceiptQuietRule(gapSeconds: Int) {
     }
 }
 
-private fun hhmm(wallMillis: Long): String =
-    SimpleDateFormat("HH:mm", Locale.US).format(Date(wallMillis))
 
-/** The printed day for a wall instant: `TUE 4 NOV`. */
-internal fun dayLabel(wallMillis: Long): String =
-    SimpleDateFormat("EEE d MMM", Locale.US)
-        .format(Date(wallMillis)).uppercase(Locale.US)
+/** The printed day for a wall instant: `TUE 4 NOV`. #88: the day
+ *  and month names follow the device locale, like every other
+ *  printed label — they were pinned to US English. Issue #152:
+ *  an explicit [zone] may be given so the label names the day in
+ *  the same zone the printed clock beside it lives in. */
+internal fun dayLabel(
+    wallMillis: Long,
+    zone: java.time.ZoneId? = null
+): String {
+    val format = SimpleDateFormat("EEE d MMM", Locale.getDefault())
+    if (zone != null) format.timeZone = java.util.TimeZone.getTimeZone(zone)
+    return format.format(Date(wallMillis)).uppercase(Locale.getDefault())
+}
 
 /** Whether two wall instants share one local calendar day. */
 internal fun sameLocalDay(aMillis: Long, bMillis: Long): Boolean {

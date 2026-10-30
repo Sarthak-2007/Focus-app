@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -29,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,12 +44,15 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.FocusTaskEntity
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
 import com.example.service.TactileSoundEngine
 import com.example.ui.components.BlockitActionChip
 import com.example.ui.components.inkControlFill
@@ -69,6 +74,12 @@ import com.example.ui.theme.TokenColorSecondaryContainer
 import com.example.ui.views.TaskHorizonBarView
 import kotlinx.coroutines.delay
 
+/** Issue #124 (typing-intention): the task-title box takes one
+ *  short line, capped like the intention — a pasted paragraph is
+ *  not a task title, and unbounded titles flooded every surface
+ *  that prints them. */
+private const val MAX_TASK_TITLE_CHARS = 80
+
 /**
  * TAB 2: HORIZON TASK QUEUE (DEVELOPER-GUIDE.pdf §1.1, §2, §3)
  * - Full-bleed stacked sections with 12dp universal spacing.
@@ -80,32 +91,28 @@ fun FocusSequencerScreen(
     activeTask: FocusTaskEntity?,
     queuedTasks: List<FocusTaskEntity>,
     completedTasks: List<FocusTaskEntity>,
-    deferredTasks: List<FocusTaskEntity>,
     deletedTaskForUndo: FocusTaskEntity?,
-    totalQueueMinutes: Int,
     isSessionActive: Boolean,
     soundEngine: TactileSoundEngine? = null,
     isDarkTheme: Boolean = false,
     onAddTask: (String, Int, String, String, Boolean) -> Unit,
-    onEditTask: (Int, String, Int, String, String) -> Unit,
-    onUpdateTaskDuration: (Int, Int) -> Unit,
     onCueTaskToFocus: (Int) -> Unit,
     onCompleteTask: (Int) -> Unit,
-    onPromoteTask: (Int) -> Unit,
-    onMoveTaskOrder: (Int, Boolean) -> Unit,
-    onDeferTask: (Int) -> Unit,
     onDeleteTask: (Int) -> Unit,
     onUndoDeleteTask: () -> Unit,
     onDismissUndoBanner: () -> Unit,
     onReopenTask: (Int) -> Unit,
     onToggleSubStep: (Int, Int) -> Unit,
-    onAddSubStep: (Int, String) -> Unit,
     onAutoSplitTask: (Int) -> Unit,
     onNavigateToDeck: () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
     val effectiveNight = isDarkTheme || isSessionActive
-    var newTaskTitle by remember { mutableStateOf("") }
+    // Issue #87 (process-death F5): the draft is rememberSaveable
+    // \u2014 a typed-but-unsubmitted task title now survives process
+    // death (and tab disposal) instead of evaporating with the
+    // composition. It is still cleared only on submit, as before.
+    var newTaskTitle by rememberSaveable { mutableStateOf("") }
 
     // Truth Car 2 (G-01): the tear's ghost. The booking now lands
     // AT THE TAP (see onTearLeaf); what remains on the pad for
@@ -146,7 +153,10 @@ fun FocusSequencerScreen(
             soundEngine?.playMechanicalLatch(true)
             // MINUTES DIE (Sarthak's order): the composer asks
             // NOTHING about duration — 0, no estimate given.
-            onAddTask(clean, 0, "Study", "", orderedQueue.isEmpty())
+            // Issue #53 F4: and it asks nothing about category —
+            // the tag is "" (uncategorised), never a fabricated
+            // "Study" the user never chose.
+            onAddTask(clean, 0, "", "", orderedQueue.isEmpty())
             newTaskTitle = ""
         }
     }
@@ -237,9 +247,15 @@ fun FocusSequencerScreen(
                     }
                     BasicTextField(
                         value = newTaskTitle,
-                        onValueChange = { newTaskTitle = it },
+                        // Issue #124: length cap at the keyboard
+                        // itself (submitTask already trims); the
+                        // keyboard opens sentences, not raw text.
+                        onValueChange = { newTaskTitle = it.take(MAX_TASK_TITLE_CHARS) },
                         singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardOptions = KeyboardOptions(
+                            imeAction = ImeAction.Done,
+                            capitalization = KeyboardCapitalization.Sentences
+                        ),
                         keyboardActions = KeyboardActions(onDone = { submitTask() }),
                         textStyle = TextStyle(
                             fontFamily = AtkinsonHyperlegibleFamily,
@@ -301,6 +317,24 @@ fun FocusSequencerScreen(
                         onClick = onUndoDeleteTask,
                         testTag = "undo_delete_task_button"
                     )
+                    // Issue #53 F2: the banner's dismiss control
+                    // exists now — onDismissUndoBanner was declared
+                    // for a full audit round with nothing wired to
+                    // it; the banner could only be waited out.
+                    Text(
+                        text = "DISMISS",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clickable(
+                                role = androidx.compose.ui.semantics.Role.Button
+                            ) { onDismissUndoBanner() }
+                            .sizeIn(minHeight = 48.dp)
+                            .padding(horizontal = 8.dp, vertical = 14.dp)
+                            .testTag("sequencer_undo_dismiss")
+                    )
                 }
             }
         }
@@ -350,8 +384,7 @@ fun FocusSequencerScreen(
                     )
                     Text(
                         text = "FINISHED ${
-                            java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
-                                .format(java.util.Date(lastFinished.completedAtMillis))
+                            ClockText.timeOfDay(LocalContext.current, lastFinished.completedAtMillis)
                         }",
                         fontFamily = AnonymousProFamily,
                         fontSize = 10.5.sp,
@@ -498,6 +531,8 @@ private fun TaskLeafItem(
     onNavigateToDeck: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // Issue #53 F5: two-tap DEL confirm, per leaf.
+    var delArmed by remember(task.id) { mutableStateOf(false) }
     val scheme = MaterialTheme.colorScheme
     // A ghost tears from its first frame; a live leaf never tears
     // in place (its tap books, and the ghost replaces it).
@@ -615,8 +650,12 @@ private fun TaskLeafItem(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable(enabled = !ghost) { onToggleSubStep(task.id, stepIdx) }
-                                .padding(start = 14.dp),
+                                .clickable(
+                                    enabled = !ghost && !isSessionActive,
+                                    role = androidx.compose.ui.semantics.Role.Button
+                                ) { onToggleSubStep(task.id, stepIdx) }
+                                .sizeIn(minHeight = 48.dp)
+                                .padding(start = 14.dp, top = 10.dp, bottom = 10.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -669,33 +708,46 @@ private fun TaskLeafItem(
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
                         color = scheme.onSurfaceVariant,
-                        modifier = Modifier.clickable(enabled = !ghost) { onAutoSplitTask(task.id) }
+                        modifier = Modifier
+                        .clickable(
+                            enabled = !ghost && !isSessionActive,
+                            role = androidx.compose.ui.semantics.Role.Button
+                        ) { onAutoSplitTask(task.id) }
+                        .sizeIn(minHeight = 48.dp)
+                        .padding(vertical = 14.dp)
                     )
                 }
                 if (isCued) {
-                    // START is the screen's one commit verb, and it
-                    // takes the commit's type (chrome C9 §10.4):
-                    // Anonymous Pro 700 on the 15sp step, tracked
-                    // +0.5, accent TEXT — the budget buys the verb,
-                    // never a fill.
+                    // Issue #53 F3: START and CUE were two verbs
+                    // hiding one identical action (cue + navigate).
+                    // One verb now, told truthfully: CUE. The cued
+                    // leaf keeps the commit's type (chrome C9
+                    // §10.4): Anonymous Pro 700 on the 15sp step,
+                    // tracked +0.5, accent TEXT.
                     Text(
-                        // MINUTES DIE: START carries the estimate
+                        // MINUTES DIE: CUE carries the estimate
                         // only where one was given; the verb stands
                         // alone on a name-only task.
                         text = if (task.estimatedMinutes > 0) {
-                            "START ${task.estimatedMinutes}m"
+                            "CUE ${task.estimatedMinutes}m"
                         } else {
-                            "START"
+                            "CUE"
                         },
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                         letterSpacing = 0.5.sp,
                         color = scheme.primaryContainer,
-                        modifier = Modifier.clickable(enabled = !ghost) {
-                            onCueTaskToFocus(task.id)
-                            onNavigateToDeck()
-                        }
+                        modifier = Modifier
+                            .clickable(
+                                enabled = !ghost && !isSessionActive,
+                                role = androidx.compose.ui.semantics.Role.Button
+                            ) {
+                                onCueTaskToFocus(task.id)
+                                onNavigateToDeck()
+                            }
+                            .sizeIn(minHeight = 48.dp)
+                            .padding(vertical = 14.dp)
                     )
                 } else {
                     Text(
@@ -704,19 +756,37 @@ private fun TaskLeafItem(
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
                         color = scheme.onSurfaceVariant,
-                        modifier = Modifier.clickable(enabled = !ghost) {
-                            onCueTaskToFocus(task.id)
-                            onNavigateToDeck()
-                        }
+                        modifier = Modifier
+                            .clickable(
+                                enabled = !ghost && !isSessionActive,
+                                role = androidx.compose.ui.semantics.Role.Button
+                            ) {
+                                onCueTaskToFocus(task.id)
+                                onNavigateToDeck()
+                            }
+                            .sizeIn(minHeight = 48.dp)
+                            .padding(vertical = 14.dp)
                     )
                 }
                 Text(
-                    text = "DEL",
+                    text = if (delArmed) "SURE?" else "DEL",
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
                     color = scheme.onSurfaceVariant,
-                    modifier = Modifier.clickable(enabled = !ghost) { onDeleteTask(task.id) }
+                    modifier = Modifier
+                        .clickable(
+                            enabled = !ghost && !isSessionActive,
+                            role = androidx.compose.ui.semantics.Role.Button
+                        ) {
+                            // Issue #53 F5: DEL no longer destroys
+                            // on one tap — the first tap arms the
+                            // word (DEL -> SURE?), the second fires.
+                            if (delArmed) onDeleteTask(task.id)
+                            else delArmed = true
+                        }
+                        .sizeIn(minHeight = 48.dp)
+                        .padding(vertical = 14.dp)
                 )
             }
         }

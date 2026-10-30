@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -36,7 +37,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -44,6 +48,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.PaddingValues
 import com.example.data.CurioCatalog
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
 import com.example.data.DayWordStore
 import com.example.data.DrawerDay
 import com.example.data.FocusSessionEntity
@@ -52,12 +58,12 @@ import com.example.data.ForgeStat
 import com.example.data.KineticArtifact
 import com.example.data.PARTIAL_STAMP_ARTIFACT
 import com.example.data.PARTIAL_STAMP_ID
+import com.example.data.ReceiptIndexEntry
 import com.example.data.SessionOutcome
 import com.example.data.StoredMonth
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import kotlinx.coroutines.delay
-import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Date
@@ -90,7 +96,41 @@ import java.util.Locale
  * migration, owned by the schema train, not this screen.
  */
 
-private enum class DrawerView { LANDING, INDEX, MONTH, CABINET }
+private enum class DrawerView { LANDING, INDEX, MONTH, CABINET, RECEIPTS }
+
+/** Audit R3b #145, reopened defect A: the cabinet's standing forge
+ *  rule, as ONE named print so a test can pin the exact sentence.
+ *  The sentence is scoped to what the forge gates actually do
+ *  (MonolithRepository): MANUAL — a routine-born span forges
+ *  nothing (the finalise gate is `allBlocksCompleted &&
+ *  !isRoutineSession`, and the disarm door fences routine rows
+ *  too); IN FULL — a timed span hand-ended before all its blocks
+ *  complete forges nothing (at most a Partial Stamp), and a FLOW
+ *  span forges only at its completed hand finish. The earlier
+ *  print ("A SPAN YOU FINISH YOURSELF FORGES ONE") claimed both
+ *  exceptions away. */
+internal val CABINET_FORGE_RULE: String =
+    "A MANUAL SPAN YOU FINISH IN FULL FORGES ONE — THE FORGE CHOOSES WHICH."
+
+/** Audit R3b #145, reopened defect B: the provenance shield-gap
+ *  mark for one forge record, derived from the shield-gap FACT —
+ *  never from outcome precedence alone. A timed forge's gap is
+ *  stamped as its outcome (ELAPSED_SHIELD_GAP), but a FLOW forge's
+ *  outcome is always STOPWATCH_ENDED (the disarm when-chain's
+ *  completed-stopwatch branch wins regardless of shield state, and
+ *  that stamp must stay: finishKindOf requires it for a FLOW
+ *  finish). The gap fact a FLOW row still carries is its
+ *  shieldGapSeen latch — set when any observer saw the shield's
+ *  beat stale past the law or its sight revoked, and never
+ *  cleared. Either witness earns the mark; neither, no mark. */
+internal fun curioForgeGapMark(record: FocusSessionEntity): String =
+    if (record.outcome == SessionOutcome.ELAPSED_SHIELD_GAP ||
+        record.shieldGapSeen
+    ) {
+        " · SHIELD GAP"
+    } else {
+        ""
+    }
 
 private data class DrawerDayGroup(
     val date: LocalDate,
@@ -149,15 +189,15 @@ private fun dayWordMatchesQuery(word: String, query: String): Boolean {
 
 private fun headingLabel(date: LocalDate, withYear: Boolean): String {
     val pattern = if (withYear) "EEE d MMM yyyy" else "EEE d MMM"
-    return DateTimeFormatter.ofPattern(pattern, Locale.US).format(date).uppercase(Locale.US)
+    return DateTimeFormatter.ofPattern(pattern, Locale.getDefault()).format(date).uppercase(Locale.getDefault())
 }
 
 private fun monthLabel(year: Int, month: Int): String =
-    DateTimeFormatter.ofPattern("MMMM yyyy", Locale.US)
-        .format(LocalDate.of(year, month, 1)).uppercase(Locale.US)
+    DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault())
+        .format(LocalDate.of(year, month, 1)).uppercase(Locale.getDefault())
 
-private fun clockTime(millis: Long): String =
-    SimpleDateFormat("HH:mm", Locale.US).format(Date(millis))
+private fun clockTime(context: android.content.Context, millis: Long): String =
+    ClockText.timeOfDay(context, millis)
 
 /** The app's duration voice for a stored "spent": 45 SEC · 24 MIN · 1H 05M. */
 private fun spentLabel(totalSeconds: Int): String {
@@ -220,6 +260,14 @@ fun DrawerScreen(
     // only standing there. The Partial Stamp row joins the list
     // whenever a session actually carries the stamp.
     forgeStats: Map<String, ForgeStat> = emptyMap(),
+    // Issue #157: the Vault IS the "Receipts" destination, so the
+    // receipts live here — an index of every claimed slip, each
+    // row carrying only what its session row proves. Tapping a
+    // row re-presents that session's slip (the host renders the
+    // same ReceiptSheet); the slip itself is never stored and
+    // nothing is printed on it from here.
+    receipts: List<ReceiptIndexEntry> = emptyList(),
+    onReceiptClick: (Int) -> Unit = {},
     // Issue #52 F3 cure: the month read's state, from the
     // ViewModel — loading while a page is in flight, an error
     // line when the read failed. An empty month, a loading
@@ -274,7 +322,20 @@ fun DrawerScreen(
     LaunchedEffect(Unit) {
         while (true) {
             val next = DrawerDay.nextBoundaryMillis(System.currentTimeMillis())
-            delay((next - System.currentTimeMillis()).coerceAtLeast(0L) + 250L)
+            // Issue #152: the sleep is capped at a minute.
+            // nextBoundaryMillis is computed under the zone in
+            // force at composition; a timezone change mid-sleep
+            // (a landing) does not interrupt a boundary-length
+            // delay, so the heading — and the declaration row's
+            // isToday — stayed on the departure filing day until
+            // the old zone's 03:30-equivalent passed, while the
+            // write path already stamped in the new zone. Waking
+            // at least once a minute re-derives the filing day
+            // under the zone actually in force.
+            delay(
+                ((next - System.currentTimeMillis()).coerceAtLeast(0L) + 250L)
+                    .coerceAtMost(60_000L)
+            )
             nowMillis = System.currentTimeMillis()
         }
     }
@@ -377,9 +438,9 @@ fun DrawerScreen(
         val finishDate = java.time.Instant.ofEpochMilli(detail.completedAtMillis)
             .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
         val dateLine = if (finishDate.year == LocalDate.now().year) {
-            "${headingLabel(finishDate, withYear = false)} · ${clockTime(detail.completedAtMillis)}"
+            "${headingLabel(finishDate, withYear = false)} · ${clockTime(LocalContext.current, detail.completedAtMillis)}"
         } else {
-            "${headingLabel(finishDate, withYear = true)} · ${clockTime(detail.completedAtMillis)}"
+            "${headingLabel(finishDate, withYear = true)} · ${clockTime(LocalContext.current, detail.completedAtMillis)}"
         }
         LazyColumn(
             modifier = Modifier
@@ -647,19 +708,19 @@ fun DrawerScreen(
                 }
                 // DRW-01: the true rule, printed once as the
                 // cabinet's standing line — exactly what the
-                // forge does (Repository: a finished span forges
-                // one artifact, chosen at random; routine arms
-                // never forge). No per-artifact prices, no
-                // thresholds nothing enforces.
+                // forge does (Repository: a manual span finished
+                // in full forges one artifact, the forge chooses
+                // which; routine-born spans forge nothing). No
+                // per-artifact prices, no thresholds nothing
+                // enforces.
                 item {
                     Text(
-                        // Audit R3b #145: the rule, scoped to what
-                        // the code now actually does on every hand
-                        // finish (timed and FLOW alike). Routine-born
-                        // spans forge nothing — the fence stands
-                        // while the routines rethink owns them — and
-                        // the print no longer claims otherwise.
-                        text = "A SPAN YOU FINISH YOURSELF FORGES ONE — THE FORGE CHOOSES WHICH.",
+                        // Audit R3b #145, reopened defect A: the
+                        // sentence lives in CABINET_FORGE_RULE so
+                        // its exact wording is test-pinned; its
+                        // MANUAL / IN FULL scoping is the truth the
+                        // earlier unscoped print denied.
+                        text = CABINET_FORGE_RULE,
                         fontFamily = AnonymousProFamily,
                         fontSize = 10.5.sp,
                         letterSpacing = 1.sp,
@@ -772,13 +833,13 @@ fun DrawerScreen(
                             val forgeDay = java.text.SimpleDateFormat(
                                 "d MMM yyyy", Locale.US
                             ).format(java.util.Date(record.startWallTimeMillis))
-                            val gapMark = if (
-                                record.outcome == SessionOutcome.ELAPSED_SHIELD_GAP
-                            ) {
-                                " · SHIELD GAP"
-                            } else {
-                                ""
-                            }
+                            // Reopened defect B: the mark derives
+                            // from the shield-gap fact via
+                            // curioForgeGapMark — a FLOW forge's
+                            // outcome is STOPWATCH_ENDED even when
+                            // its shieldGapSeen latch is set, so an
+                            // outcome-only test marked nothing.
+                            val gapMark = curioForgeGapMark(record)
                             Text(
                                 text = "$forgeDay · ${record.intention}$gapMark",
                                 fontFamily = AnonymousProFamily,
@@ -792,6 +853,72 @@ fun DrawerScreen(
                         // between toys that do not exist. The
                         // detail now ends at the record.
                     }
+                }
+            }
+        }
+        return
+    }
+
+    // ------------------------------------------------------------------
+    // RECEIPTS — the index of claimed slips (issue #157). Ruled
+    // rows like everything else in the Drawer. A row prints its
+    // №, its date, its outcome word — and, where the session's
+    // own record proves it, the warning the slip carried, in
+    // Drawer type: the warnings live in the furniture now, so
+    // they survive the slip. Tapping a row re-presents the slip.
+    // ------------------------------------------------------------------
+    if (view == DrawerView.RECEIPTS) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(scheme.background)
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .testTag("drawer_receipts"),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(bottom = 100.dp)
+        ) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "RECEIPTS",
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        letterSpacing = 2.sp,
+                        color = scheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "BACK",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = scheme.onBackground,
+                        modifier = Modifier
+                            .clickable { viewName = DrawerView.LANDING.name }
+                            .testTag("receipts_back")
+                    )
+                }
+            }
+            if (receipts.isEmpty()) {
+                item {
+                    Text(
+                        text = "NO RECEIPTS YET",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 13.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 24.dp)
+                    )
+                }
+            } else {
+                items(receipts, key = { "receipt-${it.sessionId}" }) { entry ->
+                    ReceiptIndexRow(
+                        entry = entry,
+                        onClick = { onReceiptClick(entry.sessionId) }
+                    )
                 }
             }
         }
@@ -822,8 +949,9 @@ fun DrawerScreen(
             )
         }
 
-        // Search — one field. While sealed it is composed but
-        // input-disabled: reading is free, typing is an edit.
+        // Search — one field. While
+        // sealed it is composed but input-disabled: reading is
+        // free, typing is an edit.
         item {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -937,9 +1065,10 @@ fun DrawerScreen(
                 }
             }
         } else when (view) {
-            // Unreachable: the CABINET page returns early above,
-            // before this column exists. Present for exhaustiveness.
-            DrawerView.CABINET -> {
+            // Unreachable: the CABINET and RECEIPTS pages return
+            // early above, before this column exists. Present for
+            // exhaustiveness.
+            DrawerView.CABINET, DrawerView.RECEIPTS -> {
                 item { Spacer(Modifier.height(0.dp)) }
             }
             DrawerView.INDEX -> {
@@ -1008,12 +1137,12 @@ fun DrawerScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             if (olderMonth != null) {
-                                Text(
-                                    text = "‹",
-                                    fontFamily = AtkinsonHyperlegibleFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp,
-                                    color = scheme.onBackground,
+                                // #336: month paging glyphs are ICONS
+                                // from the one system, not text chars.
+                                androidx.compose.material3.Icon(
+                                    imageVector = com.example.ui.theme.MonolithIcons.ChevronLeft,
+                                    contentDescription = "Previous month",
+                                    tint = scheme.onBackground,
                                     modifier = Modifier
                                         .clickable(
                                             role = androidx.compose.ui.semantics.Role.Button
@@ -1021,15 +1150,14 @@ fun DrawerScreen(
                                         .sizeIn(minHeight = 48.dp, minWidth = 48.dp)
                                         .padding(vertical = 14.dp)
                                         .testTag("drawer_month_prev")
+                                        .size(16.dp)
                                 )
                             }
                             if (newerMonth != null) {
-                                Text(
-                                    text = "›",
-                                    fontFamily = AtkinsonHyperlegibleFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp,
-                                    color = scheme.onBackground,
+                                androidx.compose.material3.Icon(
+                                    imageVector = com.example.ui.theme.MonolithIcons.ChevronRight,
+                                    contentDescription = "Next month",
+                                    tint = scheme.onBackground,
                                     modifier = Modifier
                                         .clickable(
                                             role = androidx.compose.ui.semantics.Role.Button
@@ -1037,6 +1165,7 @@ fun DrawerScreen(
                                         .sizeIn(minHeight = 48.dp, minWidth = 48.dp)
                                         .padding(vertical = 14.dp)
                                         .testTag("drawer_month_next")
+                                        .size(16.dp)
                                 )
                             }
                             Text(
@@ -1195,10 +1324,24 @@ fun DrawerScreen(
                         )
                     }
                     item {
+                        // Issue #115: the row prints the name of
+                        // the place it opens — CABINET, matching the
+                        // screen's own header. "CURIOS" (trinkets in
+                        // a shop) told a cold reader nothing about
+                        // earned records living behind it. The
+                        // testTag keeps its name (internal only).
                         DrawerNavRow(
-                            label = "CURIOS",
+                            label = "CABINET",
                             onClick = { viewName = DrawerView.CABINET.name },
                             modifier = Modifier.testTag("drawer_curios_row")
+                        )
+                        HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+                    }
+                    item {
+                        DrawerNavRow(
+                            label = "RECEIPTS",
+                            onClick = { viewName = DrawerView.RECEIPTS.name },
+                            modifier = Modifier.testTag("drawer_receipts_row")
                         )
                         HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
                     }
@@ -1224,11 +1367,11 @@ fun DrawerScreen(
                                 letterSpacing = 1.sp,
                                 color = scheme.onBackground
                             )
-                            Text(
-                                text = "›",
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontSize = 14.sp,
-                                color = scheme.onSurfaceVariant
+                            androidx.compose.material3.Icon(
+                                imageVector = com.example.ui.theme.MonolithIcons.ChevronRight,
+                                contentDescription = null,
+                                tint = scheme.onSurfaceVariant,
+                                modifier = Modifier.size(14.dp)
                             )
                         }
                         HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
@@ -1237,9 +1380,20 @@ fun DrawerScreen(
                     // ALL MONTHS (chrome C10).
                     item {
                         DrawerNavRow(
-                            label = "CURIOS",
+                            label = "CABINET",
                             onClick = { viewName = DrawerView.CABINET.name },
                             modifier = Modifier.testTag("drawer_curios_row")
+                        )
+                        HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+                    }
+                    // The receipts index's door: ONE furniture row
+                    // under CABINET (issue #157) — this destination
+                    // is named "Receipts"; the receipts are here.
+                    item {
+                        DrawerNavRow(
+                            label = "RECEIPTS",
+                            onClick = { viewName = DrawerView.RECEIPTS.name },
+                            modifier = Modifier.testTag("drawer_receipts_row")
                         )
                         HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
                     }
@@ -1270,6 +1424,7 @@ fun DrawerScreen(
         }
     }
 }
+
 
 @Composable
 private fun DrawerNavRow(
@@ -1339,7 +1494,7 @@ private fun DayHeading(
                             ) { onDeclareWord(if (active) null else word) }
                             .sizeIn(minHeight = 48.dp)
                             .padding(vertical = 12.dp)
-                            .testTag("declare_word_${word.lowercase()}")
+                            .testTag("declare_word_${word.lowercase(java.util.Locale.ROOT)}")
                     )
                 }
             }
@@ -1381,7 +1536,7 @@ private fun StoredRow(task: FocusTaskEntity, onClick: () -> Unit) {
                 color = scheme.onSurfaceVariant
             )
             Text(
-                text = clockTime(task.completedAtMillis),
+                text = clockTime(LocalContext.current, task.completedAtMillis),
                 fontFamily = AnonymousProFamily,
                 fontSize = 10.5.sp,
                 color = scheme.onSurfaceVariant
@@ -1394,6 +1549,67 @@ private fun StoredRow(task: FocusTaskEntity, onClick: () -> Unit) {
                 fontFamily = AnonymousProFamily,
                 fontSize = 10.5.sp,
                 color = scheme.onSurfaceVariant
+            )
+        }
+    }
+    HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant)
+}
+
+/** One receipts-index row (issue #157): № · date · outcome word,
+ *  in the Drawer's furniture. The warnings print here — in Drawer
+ *  type, on the furniture, never on the slip — only where the
+ *  session's own record proves them: the release-fault stamp
+ *  proves "SHIELD FAULT — SEE RECEIPT"; the re-derived slip's
+ *  shieldWasOff fact (the row's shield-gap outcome) proves "THE
+ *  SHIELD WAS OFF FOR PART OF THAT SESSION". */
+@Composable
+private fun ReceiptIndexRow(entry: ReceiptIndexEntry, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val date = java.time.Instant.ofEpochMilli(entry.endedAtWallMs)
+        .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(vertical = 6.dp)
+            .testTag("receipt_row_${entry.sessionId}"),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        // GESTALT receipts audit F7 (filed on PR #250): numerals are
+        // Anonymous Pro by law — the № segment carries its own span;
+        // date + outcome stay Atkinson.
+        Text(
+            text = buildAnnotatedString {
+                withStyle(SpanStyle(fontFamily = AnonymousProFamily)) {
+                    append(entry.numberPrint)
+                }
+                append(" · ${headingLabel(date, withYear = true)} · ${entry.outcomeWord}")
+            },
+            fontFamily = AtkinsonHyperlegibleFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = 14.sp,
+            color = scheme.onBackground
+        )
+        if (entry.releaseFaultShield) {
+            Text(
+                text = "SHIELD FAULT — SEE RECEIPT",
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 10.5.sp,
+                letterSpacing = 1.sp,
+                color = scheme.onBackground,
+                modifier = Modifier.testTag("receipt_fault_${entry.sessionId}")
+            )
+        }
+        if (entry.shieldWasOff) {
+            Text(
+                text = "THE SHIELD WAS OFF FOR PART OF THAT SESSION",
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 10.5.sp,
+                letterSpacing = 1.sp,
+                color = scheme.onBackground,
+                modifier = Modifier.testTag("receipt_shield_off_${entry.sessionId}")
             )
         }
     }
