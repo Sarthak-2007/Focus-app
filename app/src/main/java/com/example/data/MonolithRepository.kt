@@ -1103,25 +1103,32 @@ class MonolithRepository(
     suspend fun daoSnapshotRoutines(): List<RoutineEntity> = dao.getAllRoutinesSnapshot()
 
     suspend fun cycleAppBlockTier(app: BlockedAppEntity): AppBlockTier {
-        val nextTier = when (app.resolvedTier) {
+        val cycled = when (app.resolvedTier) {
             AppBlockTier.LOCKED -> AppBlockTier.PEEK_2M
             AppBlockTier.PEEK_2M -> AppBlockTier.OPEN
             AppBlockTier.OPEN -> AppBlockTier.LOCKED
         }
+        // Issue #119, finding 5: the dialler floor — cycling a dialler
+        // or telephony package can land on PEEK_2M, never on LOCKED,
+        // so placing a call is always reachable.
+        val nextTier = EssentialApps.floorTier(app.packageName, cycled)
         val isBlockedFlag = nextTier != AppBlockTier.OPEN
         dao.setAppTier(app.packageName, isBlockedFlag, nextTier.name)
         return nextTier
     }
 
     suspend fun setAppBlockTier(packageName: String, tier: AppBlockTier) {
-        val isBlockedFlag = tier != AppBlockTier.OPEN
-        dao.setAppTier(packageName, isBlockedFlag, tier.name)
+        // Issue #119, finding 5: the dialler floor — no caller may
+        // classify the default dialler / telephony stack LOCKED.
+        val effectiveTier = EssentialApps.floorTier(packageName, tier)
+        val isBlockedFlag = effectiveTier != AppBlockTier.OPEN
+        dao.setAppTier(packageName, isBlockedFlag, effectiveTier.name)
     }
 
     /**
      * 1-Tap Smart Loadouts:
      * - Study Loadout: Locks Social & Games, sets YouTube & Messaging to 2m Peek, leaves Utility/Docs Open.
-     * - Sleep Loadout: Locks everything except Phone, Clock, and Maps.
+     * - Sleep Loadout: Locks everything except Phone, Clock, Maps, Camera, and navigation (EssentialApps, by package).
      */
     suspend fun applySmartLoadout(loadout: SmartLoadout) = withContext(Dispatchers.IO) {
         val allApps = dao.getAllAppsSnapshot()
@@ -1150,15 +1157,18 @@ class MonolithRepository(
                     }
                 }
                 SmartLoadout.SLEEP -> {
-                    if (lower.contains("dialer") || lower.contains("phone") ||
-                        lower.contains("clock") || lower.contains("alarm") ||
-                        lower.contains("maps")
-                    ) {
-                        AppBlockTier.OPEN
-                    } else {
-                        AppBlockTier.LOCKED
-                    }
+                    // Issue #119, finding 4: essentials by PACKAGE,
+                    // not substring luck — a stock Camera
+                    // (com.android.camera2) and Waze (com.waze)
+                    // contain none of the old five substrings and
+                    // were LOCKED all night. EssentialApps keeps the
+                    // substring test only as a superset fallback.
+                    EssentialApps.sleepLoadoutTierFor(app.packageName, app.appName)
                 }
+            }.let { rawTier ->
+                // Issue #119, finding 5: the dialler floor binds
+                // every loadout, not just SLEEP.
+                EssentialApps.floorTier(app.packageName, rawTier)
             }
             app.copy(
                 isBlocked = tier != AppBlockTier.OPEN,
@@ -1250,12 +1260,16 @@ class MonolithRepository(
         val currentApps = dao.getAllAppsSnapshot()
         val updated = currentApps.map { app ->
             val shouldBlock = app.category in activeCategories
-            val tier = when {
+            val rawTier = when {
                 !shouldBlock -> AppBlockTier.OPEN
                 app.category == AppCategory.MESSAGING.name -> AppBlockTier.PEEK_2M
                 else -> AppBlockTier.LOCKED
             }
-            app.copy(isBlocked = shouldBlock, blockTier = tier.name)
+            // Issue #119, finding 5: the dialler floor binds bulk
+            // profile writes too — a profile can never lock the
+            // dialler, so isBlocked follows the floored tier.
+            val tier = EssentialApps.floorTier(app.packageName, rawTier)
+            app.copy(isBlocked = tier != AppBlockTier.OPEN, blockTier = tier.name)
         }
         dao.insertApps(updated)
     }
