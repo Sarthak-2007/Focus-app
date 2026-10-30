@@ -48,7 +48,8 @@ data class AppCatalogPlan(
 )
 
 /**
- * The one package classifier (Issue #132, music-during-focus).
+ * The one package classifier (Issue #132, music-during-focus;
+ * merged with Issue #107's shield-setup-lived #3 cures).
  * Pure and total: every package+label lands in exactly one
  * [AppCategory]. Extracted from MonolithRepository so the
  * classification is unit-testable and the repository delegates.
@@ -60,6 +61,14 @@ data class AppCatalogPlan(
  * Token matching (split on non-alphanumerics) is what keeps
  * the check honest: "musically" (TikTok's package) contains
  * the substring "music" but is not the token "music".
+ *
+ * Issue #107: the GAMES branch no longer carries the bare
+ * substring "play" — it filed the Play Store itself (and any
+ * label containing "display") under GAMES. Game tokens are
+ * specific now, "musically" files SHORT_VIDEO, and the guess
+ * is printed on every catalogue row and correctable there, so
+ * a wrong guess is a fact the user can see and fix, not a
+ * secret that prices his apps.
  */
 object AppCategorizer {
 
@@ -75,11 +84,11 @@ object AppCategorizer {
         val tokens = lower.split(Regex("[^a-z0-9]+")).filter { it.isNotEmpty() }
         if (tokens.any { it in MUSIC_TOKENS }) return AppCategory.MUSIC
         return when {
-            lower.contains("tiktok") || lower.contains("youtube") || lower.contains("instagram") || lower.contains("reel") ->
+            lower.contains("tiktok") || lower.contains("musically") || lower.contains("youtube") || lower.contains("instagram") || lower.contains("reel") ->
                 AppCategory.SHORT_VIDEO
             lower.contains("twitter") || lower.contains("reddit") || lower.contains("snapchat") || lower.contains("facebook") ->
                 AppCategory.SOCIAL
-            lower.contains("game") || lower.contains("clash") || lower.contains("roblox") || lower.contains("play") ->
+            lower.contains("game") || lower.contains("clash") || lower.contains("roblox") || lower.contains("minecraft") || lower.contains("pubg") || lower.contains("candycrush") ->
                 AppCategory.GAMES
             lower.contains("whatsapp") || lower.contains("discord") || lower.contains("telegram") || lower.contains("message") ->
                 AppCategory.MESSAGING
@@ -89,6 +98,14 @@ object AppCategorizer {
         }
     }
 }
+
+/**
+ * Issue #107 test seam: the classifier under its audit name.
+ * Delegates to the ONE classifier ([AppCategorizer]) — there is
+ * no second implementation to drift from it.
+ */
+fun categorizePackage(pkg: String, label: String): AppCategory =
+    AppCategorizer.categorize(pkg, label)
 
 object AppCatalogReconcile {
 

@@ -572,6 +572,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                         }
                                     },
                                     onApplySmartLoadout = viewModel::applySmartLoadout,
+                                    onSetAppCategory = viewModel::setAppCategory,
                                     onSelectProfile = viewModel::selectAndApplyProfile,
                                     onToggleShortsReelsSniper = viewModel::toggleShortsReelsSniper,
                                     onToggleBrowserUrlBlocker = viewModel::toggleBrowserUrlBlocker,

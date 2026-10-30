@@ -534,7 +534,9 @@ class MonolithRepository(
 
     // Issue #132: classification lives in the pure AppCategorizer
     // (AppCatalogReconcile.kt) so it is unit-testable; this stays
-    // as the reconcile's categorize seam.
+    // as the reconcile's categorize seam. (Issue #107's top-level
+    // categorizePackage in the same file delegates to it too —
+    // one classifier, two seams, no drift.)
     private fun categorizePackage(pkg: String, label: String): AppCategory =
         AppCategorizer.categorize(pkg, label)
 
@@ -1142,46 +1144,33 @@ class MonolithRepository(
     suspend fun applySmartLoadout(loadout: SmartLoadout) = withContext(Dispatchers.IO) {
         val allApps = dao.getAllAppsSnapshot()
         val updated = allApps.map { app ->
-            val lower = "${app.packageName} ${app.appName}".lowercase()
-            val tier = when (loadout) {
-                SmartLoadout.STUDY -> {
-                    when {
-                        lower.contains("youtube") || lower.contains("chrome") || app.category == AppCategory.MESSAGING.name ->
-                            AppBlockTier.PEEK_2M
-                        app.category == AppCategory.SHORT_VIDEO.name ||
-                            app.category == AppCategory.SOCIAL.name ||
-                            app.category == AppCategory.GAMES.name ->
-                            AppBlockTier.LOCKED
-                        else -> AppBlockTier.OPEN
-                    }
-                }
-                SmartLoadout.WORK_SPRINT -> {
-                    when {
-                        app.category == AppCategory.SHORT_VIDEO.name ||
-                            app.category == AppCategory.GAMES.name ->
-                            AppBlockTier.LOCKED
-                        app.category == AppCategory.SOCIAL.name ->
-                            AppBlockTier.PEEK_2M
-                        else -> AppBlockTier.OPEN
-                    }
-                }
-                SmartLoadout.SLEEP -> {
-                    if (lower.contains("dialer") || lower.contains("phone") ||
-                        lower.contains("clock") || lower.contains("alarm") ||
-                        lower.contains("maps")
-                    ) {
-                        AppBlockTier.OPEN
-                    } else {
-                        AppBlockTier.LOCKED
-                    }
-                }
-            }
-            // Issue #32 F4: set the tier ONLY; normalized() derives
-            // isBlocked from it at the single derivation point.
+            // Issue #107: the tier rule is LoadoutRules.tierFor —
+            // the same pure function the Shield preview prints its
+            // counts from, so preview and commit can never diverge
+            // (its rules are the exact rules this function used to
+            // inline). Issue #32 F4: set the tier ONLY; normalized()
+            // derives isBlocked from it at the single derivation point.
+            val tier = LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category)
             app.copy(blockTier = tier.name).normalized()
         }
         dao.insertApps(updated)
     }
+
+    /**
+     * Issue #107 (shield-setup-lived #3): the user's correction of
+     * the category guess. The category is an existing column on the
+     * app row — correcting it is a plain row update, no schema
+     * change. The corrected category then drives birth tiers,
+     * filters and loadouts like any other fact.
+     */
+    suspend fun setAppCategory(packageName: String, category: AppCategory) =
+        withContext(Dispatchers.IO) {
+            val app = dao.getAllAppsSnapshot()
+                .firstOrNull { it.packageName == packageName } ?: return@withContext
+            if (app.category != category.name) {
+                dao.updateApp(app.copy(category = category.name))
+            }
+        }
 
     /**
      * Enforces the Mandatory 20-Minute Cooldown per package using `SystemClock.elapsedRealtime()`:
