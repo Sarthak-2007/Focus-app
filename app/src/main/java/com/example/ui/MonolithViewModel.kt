@@ -2453,6 +2453,15 @@ class MonolithViewModel(
     }
 
     fun applySmartLoadout(loadout: SmartLoadout) {
+        // Issue #304 F1: mid-session, the repository lands this
+        // loadout tightening-only (SessionTierGate) — say so with
+        // the ratchet's own warning instead of letting the tap
+        // pretend the whole preset applied.
+        if (activeSession.value?.isActive == true &&
+            com.example.data.LoadoutRules.anyLoosening(loadout, apps.value)
+        ) {
+            triggerRatchetWarning("ONE-WAY RATCHET ENGAGED • LOADOUT APPLIES TIGHTENING-ONLY DURING ACTIVE VAULT")
+        }
         soundEngine.playHarmonicSeal(true)
         _selectedProfileName.value = loadout.title
         if (loadout == SmartLoadout.STUDY) {

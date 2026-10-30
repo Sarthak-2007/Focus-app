@@ -1168,6 +1168,11 @@ class MonolithRepository(
     }
 
     suspend fun removeBlockedSite(domain: String) {
+        // Issue #304 F1: removing a blocked site loosens the seal —
+        // refused at the write boundary while a session is active
+        // (the ViewModel ratchet at #151 already warns on the hand
+        // path; this closes the verb itself for every caller).
+        if (dao.getActiveSessionSnapshot()?.isActive == true) return
         dao.deleteSite(domain)
     }
 
@@ -1509,12 +1514,33 @@ class MonolithRepository(
             AppBlockTier.PEEK_2M -> AppBlockTier.OPEN
             AppBlockTier.OPEN -> AppBlockTier.LOCKED
         }
+        // Issue #304 F1: the direction gate at the write boundary —
+        // while a session is sealed a cycle step that would loosen
+        // (LOCKED -> PEEK, PEEK -> OPEN) is refused here, not only
+        // in the ViewModel's ratchet, so no caller can weaken a
+        // sealed rule through this verb. OPEN -> LOCKED tightens
+        // and stays lawful mid-session.
+        if (dao.getActiveSessionSnapshot()?.isActive == true &&
+            SessionTierGate.loosens(app.resolvedTier, nextTier)
+        ) {
+            return app.resolvedTier
+        }
         val isBlockedFlag = nextTier != AppBlockTier.OPEN
         dao.setAppTier(app.packageName, isBlockedFlag, nextTier.name)
         return nextTier
     }
 
     suspend fun setAppBlockTier(packageName: String, tier: AppBlockTier) {
+        // Issue #304 F1: same gate — a direct tier write that would
+        // loosen a sealed app's rule is refused at the repository,
+        // whoever the caller is.
+        if (dao.getActiveSessionSnapshot()?.isActive == true) {
+            val current = dao.getAllAppsSnapshot()
+                .firstOrNull { it.packageName == packageName }
+            if (current != null && SessionTierGate.loosens(current.resolvedTier, tier)) {
+                return
+            }
+        }
         val isBlockedFlag = tier != AppBlockTier.OPEN
         dao.setAppTier(packageName, isBlockedFlag, tier.name)
     }
@@ -1526,6 +1552,14 @@ class MonolithRepository(
      */
     suspend fun applySmartLoadout(loadout: SmartLoadout) = withContext(Dispatchers.IO) {
         val allApps = dao.getAllAppsSnapshot()
+        // Issue #304 F1: while a session is sealed the loadout lands
+        // tightening-only — each app keeps the stricter of its
+        // current tier and the preset's tier, so a mid-session
+        // loadout tap can never loosen every app at once (the exact
+        // hole the AppBlock head-to-head named). Unsealed, and at
+        // routine materialisation (which applies the loadout BEFORE
+        // its session starts), the preset lands whole, as before.
+        val sealed = dao.getActiveSessionSnapshot()?.isActive == true
         val updated = allApps.map { app ->
             // Issue #107: the tier rule is LoadoutRules.tierFor —
             // the same pure function the Shield preview prints its
@@ -1533,7 +1567,8 @@ class MonolithRepository(
             // (its rules are the exact rules this function used to
             // inline). Issue #32 F4: set the tier ONLY; normalized()
             // derives isBlocked from it at the single derivation point.
-            val tier = LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category)
+            val desired = LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category)
+            val tier = SessionTierGate.clampWhileSealed(app.resolvedTier, desired, sealed)
             app.copy(blockTier = tier.name).normalized()
         }
         dao.insertApps(updated)
