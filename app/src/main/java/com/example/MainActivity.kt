@@ -230,6 +230,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val shotGround by viewModel.shotGround.collectAsStateWithLifecycle()
     val finishState by viewModel.finishState.collectAsStateWithLifecycle()
     val receiptState by viewModel.receiptState.collectAsStateWithLifecycle()
+    val lastReceiptSessionId by viewModel.lastReceiptSessionId.collectAsStateWithLifecycle()
     val isAlwaysOnDeskClockVisible by viewModel.isAlwaysOnDeskClockVisible.collectAsStateWithLifecycle()
     val burnInFigure8MinuteStep by viewModel.burnInFigure8MinuteStep.collectAsStateWithLifecycle()
     val showNotificationDigestSheet by viewModel.showNotificationDigestSheet.collectAsStateWithLifecycle()
@@ -548,6 +549,16 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     sealT0MonoMs = (armPhase as? ArmPhase.SealedRunning)?.t0Mono,
                                     finishState = finishState,
                                     receiptState = receiptState,
+                                    lastReceiptSessionId = lastReceiptSessionId,
+                                    onShowLastReceipt = { sessionId ->
+                                        // Un-dismiss first: this slip may
+                                        // have been dismissed before the arm
+                                        // that cleared it, and the host's
+                                        // dismissed id would otherwise hide
+                                        // the re-issued slip forever.
+                                        dismissedReceiptSessionId = -1
+                                        viewModel.publishReceipt(sessionId)
+                                    },
                                     onWitnessSledReturn = viewModel::witnessSledReturn,
                                     onTryStartSledReturn = viewModel::tryStartSledReturn,
                                     sledInitialFraction = {
@@ -798,7 +809,26 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             ) {
                 com.example.ui.components.ReceiptSheet(
                     receipt = standingReceipt,
-                    onDismiss = { dismissedReceiptSessionId = standingReceipt.sessionId }
+                    onDismiss = { dismissedReceiptSessionId = standingReceipt.sessionId },
+                    // Issue #135 F3: NEXT SESSION — dismiss the slip;
+                    // the Deck underneath is already idle and ready
+                    // to arm. The detention/sled ceremony is untouched.
+                    onNextSession = { dismissedReceiptSessionId = standingReceipt.sessionId },
+                    // Issue #135 F4: DONE WITH THIS TASK — only while
+                    // the session's task is still open (the host's
+                    // active task, not yet COMPLETED); completes it
+                    // through the same path the Deck/Tasks use, then
+                    // dismisses the slip.
+                    onDoneWithTask = activeTask
+                        ?.takeIf {
+                            it.resolvedStatus != com.example.data.TaskQueueStatus.COMPLETED
+                        }
+                        ?.let { task ->
+                            {
+                                viewModel.completeTaskAndAdvance(task.id)
+                                dismissedReceiptSessionId = standingReceipt.sessionId
+                            }
+                        }
                 )
             }
 

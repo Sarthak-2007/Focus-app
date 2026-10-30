@@ -179,6 +179,13 @@ fun TactileDeckScreen(
     // receipt, with the sled gate's host seams (Schlitten §3).
     finishState: com.example.ui.MonolithViewModel.FinishState? = null,
     receiptState: com.example.data.ReceiptState? = null,
+    // Issue #135 F2: the LAST RECEIPT door — the most recent session
+    // that claimed a №, offered only while no receipt stands and no
+    // session runs (the standing slip and the running frame are
+    // their own surfaces; this door is for the slip the next arm
+    // cleared from memory).
+    lastReceiptSessionId: Int? = null,
+    onShowLastReceipt: (Int) -> Unit = {},
     onWitnessSledReturn: (Int) -> Unit = {},
     onTryStartSledReturn: (Int) -> Boolean = { false },
     sledInitialFraction: () -> Float = { 0f },
@@ -627,6 +634,28 @@ fun TactileDeckScreen(
                 // count's only homes are the strip's APPS cell and
                 // the imprint — one number, LOCKED+PEEK, one rendering
                 // per fact.
+            }
+
+            // Issue #135 F2: the LAST RECEIPT door, on the eyebrow's
+            // own line of the room — a quiet mono affordance, shown
+            // only when no receipt is standing and no session runs.
+            if (!isSessionRunning && receiptState == null && lastReceiptSessionId != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Text(
+                        text = "LAST RECEIPT",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 10.sp,
+                        letterSpacing = 2.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clickable { onShowLastReceipt(lastReceiptSessionId) }
+                            .testTag("last_receipt_button")
+                            .padding(vertical = 4.dp)
+                    )
+                }
             }
 
             // The hero states the TOTAL, once (one fact, one rendering).
