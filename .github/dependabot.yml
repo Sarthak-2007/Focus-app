@@ -1,0 +1,18 @@
+# Issue #73 (audit R2, dep-vulnerabilities): the repo's first update
+# automation. Dependabot watches the Gradle catalog/build files and the
+# GitHub Actions workflows, and opens PRs when a pin moves — so a
+# known-vulnerable or end-of-life pin can no longer sit silently forever.
+version: 2
+updates:
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
