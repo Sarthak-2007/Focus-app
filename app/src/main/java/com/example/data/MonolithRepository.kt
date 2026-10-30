@@ -2708,6 +2708,48 @@ class MonolithRepository(
         }
     }
 
+    /** Issue #135 F2: rebuild the slip for ANY session that already
+     *  claimed its № — the re-issue door behind the Deck's LAST
+     *  RECEIPT. Settled form only (restored = true, no mono stamp):
+     *  it never re-claims, never re-mints, and the row's own
+     *  receiptNumber is the № it prints. Null when the row is gone,
+     *  still active, never claimed a №, or no longer a finish. */
+    suspend fun receiptForSession(sessionId: Int): ReceiptState? {
+        val row = dao.getSessionById(sessionId) ?: return null
+        if (row.isActive || row.receiptNumber <= 0) return null
+        val isSleep = row.routineId?.let { dao.getRoutineById(it)?.loadoutName } ==
+            SmartLoadout.SLEEP.name
+        val kind = finishKindOf(row, isSleep, System.currentTimeMillis()) ?: return null
+        val endedAt = if (row.routineId != null && row.windowEndMillis > 0L) {
+            row.windowEndMillis
+        } else {
+            row.startWallTimeMillis +
+                (row.lastTickElapsedRealtimeMillis - row.startElapsedRealtimeMillis)
+                    .coerceAtLeast(0L)
+        }
+        val pending = assemblePendingReceipt(sessionId, kind, endedAt) ?: return null
+        return ReceiptState(
+            sessionId = sessionId,
+            number = row.receiptNumber,
+            kind = pending.kind,
+            outcomeWord = pending.outcomeWord,
+            title = pending.title,
+            armWallMs = pending.armWallMs,
+            endedAtWallMs = pending.endedAtWallMs,
+            plannedSeconds = pending.plannedSeconds,
+            sealedElapsedSeconds = pending.sealedElapsedSeconds,
+            heldAppsAtSeal = pending.heldAppsAtSeal,
+            heldSitesAtSeal = pending.heldSitesAtSeal,
+            routineLabelWithin = pending.routineLabelWithin,
+            bankedBreakSeconds = pending.bankedBreakSeconds,
+            shieldWasOff = pending.shieldWasOff,
+            faulted = row.releaseFaultShield,
+            deflections = pending.deflections,
+            restored = true,
+            receiptPublishedMonoMs = 0L
+        )
+    }
+
     /** The standing receipt's identity, for rehydration (Z6 case
      *  b): (№, sessionId, outcomeWord) when a receipt stands. */
     suspend fun standingReceipt(): Triple<Int, Int, String>? {
