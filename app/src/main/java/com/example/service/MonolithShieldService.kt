@@ -64,6 +64,41 @@ internal fun shieldDispatchFor(
     else -> if (monitorRunning) ShieldDispatch.KEEP_RUNNING else ShieldDispatch.STOP_SELF
 }
 
+/**
+ * Issue #69 F1: the standing shield notification's identity for
+ * change-guarding. Everything the user can read on the card —
+ * title, subtitle, expanded text and badge number — is in the
+ * key; the chronometer end is NOT: it names a fixed wall instant
+ * (the session/break end), so re-posting only ever shifted it by
+ * sub-second jitter, and the first post's value stays the truth.
+ */
+internal fun shieldNotificationKey(
+    title: String,
+    subtitle: String,
+    bigText: String?,
+    badgeNumber: Int?
+): String = listOf(
+    title, subtitle, bigText ?: "", badgeNumber?.toString() ?: ""
+).joinToString("\u0001")
+
+/**
+ * Issue #69 F1: re-post guard for the standing notification.
+ * The shield loop iterates every second (#332's cadence), but
+ * the card's text changes at most once a minute (the countdown)
+ * or when a reach is stopped / a notification is held. The old
+ * loop rebuilt and re-posted the notification on EVERY
+ * iteration. [shouldPost] returns true exactly when the key
+ * differs from the last posted key, and records it.
+ */
+internal class ShieldNotificationGuard {
+    private var lastPostedKey: String? = null
+    fun shouldPost(key: String): Boolean {
+        if (key == lastPostedKey) return false
+        lastPostedKey = key
+        return true
+    }
+}
+
 class MonolithShieldService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -239,6 +274,9 @@ class MonolithShieldService : Service() {
             // summons — the loop remembers the last tick's break
             // state so the flip out of a break posts exactly once.
             var wasInSafeBreak = false
+            // Issue #69 F1: the standing notification is re-posted
+            // only when its readable text actually changes.
+            val notificationGuard = ShieldNotificationGuard()
             while (isActive) {
                 iteration++
                 // Per-iteration guard (issue #43, finding 1): one
@@ -430,22 +468,31 @@ class MonolithShieldService : Service() {
                 // Merge resolution (WELLE-4, #155 × #149): the grace
                 // subtitle rides on the #155 card — bigText,
                 // chronometer and badge number apply in both branches.
-                if (updated.elapsedSeconds <= 10 && !updated.isInSafeBreak) {
-                    updateNotification(
-                        title = "Monolith • ${updated.intention}",
-                        subtitle = if (updated.routineId != null) {
-                            "GRACE ${10 - updated.elapsedSeconds}S — ABORT BOOKED BY ROUTINE · TAP TO OPEN"
-                        } else {
-                            "GRACE ${10 - updated.elapsedSeconds}S — CANCEL FREE · TAP TO OPEN"
-                        },
-                        bigText = bigText,
-                        chronometerEndMillis = chronometerEndMillis,
-                        badgeNumber = badgeNumber
-                    )
+                // Issue #69 F1: ONE guarded post for both branches.
+                // The grace subtitle counts down per second, so it
+                // re-posts through the window exactly as before;
+                // the standing subtitle changes at most once a
+                // minute. Everything readable is in the guard key,
+                // so a stopped reach (count change) or a held
+                // notification (badge change) still re-prints on
+                // the very iteration it happens.
+                val standingSubtitle = if (updated.elapsedSeconds <= 10 && !updated.isInSafeBreak) {
+                    if (updated.routineId != null) {
+                        "GRACE ${10 - updated.elapsedSeconds}S — ABORT BOOKED BY ROUTINE · TAP TO OPEN"
+                    } else {
+                        "GRACE ${10 - updated.elapsedSeconds}S — CANCEL FREE · TAP TO OPEN"
+                    }
                 } else {
+                    "$timeFormatted • ${updated.phantomReachesBlocked} reaches blocked"
+                }
+                val standingTitle = "Monolith • ${updated.intention}"
+                if (notificationGuard.shouldPost(
+                        shieldNotificationKey(standingTitle, standingSubtitle, bigText, badgeNumber)
+                    )
+                ) {
                     updateNotification(
-                        title = "Monolith • ${updated.intention}",
-                        subtitle = "$timeFormatted • ${updated.phantomReachesBlocked} reaches blocked",
+                        title = standingTitle,
+                        subtitle = standingSubtitle,
                         bigText = bigText,
                         chronometerEndMillis = chronometerEndMillis,
                         badgeNumber = badgeNumber
@@ -480,7 +527,18 @@ class MonolithShieldService : Service() {
                 WatchStore.onShieldIteration(protecting, usageGranted)
 
                 val nowMono = SystemClock.elapsedRealtime()
-                val blockedPackages = repository.allAppsSnapshot() /* ISSUE-67(d): via repository */
+                // Issue #69 F1: ONE apps snapshot per iteration,
+                // shared by every consumer below — the blocked-set
+                // derivation, the expired-peek eviction and the
+                // intercepted app's row. The old loop read the full
+                // table THREE times per second (repository + DAO +
+                // repository). The rows are still read fresh every
+                // iteration — never cached across iterations — so
+                // a peek lease granted mid-session is honoured on
+                // the very next pass (the rejected 30 s cache would
+                // have broken exactly that peek-lease truth).
+                val appsSnapshot = repository.allAppsSnapshot() /* ISSUE-67(d): via repository */
+                val blockedPackages = appsSnapshot
                     .filter { app ->
                         val tier = app.resolvedTier
                         // Issue #140: the daily limit is real. An app
@@ -535,8 +593,11 @@ class MonolithShieldService : Service() {
                 // On the witness path the same eviction is natural:
                 // an expired lease puts the package back in
                 // blockedPackages and the witness IS that package.
+                // Issue #69 F1: the eviction reads the SAME single
+                // snapshot as the blocked set above — same rows,
+                // same nowMono, identical eviction set.
                 val expiredPeeks = com.example.data.expiredPeekPackages(
-                    dao.getAllAppsSnapshot(), nowMono
+                    appsSnapshot, nowMono
                 )
                 val a11yForeground = if (MonolithAccessibilityService.instance != null) {
                     MonolithAccessibilityService.foregroundPackage
@@ -565,7 +626,7 @@ class MonolithShieldService : Service() {
                 // verdict (see screenInteractive above).
                 val foregroundBlockedPkg = if (screenInteractive) selectedForeground else null
                 if (foregroundBlockedPkg != null && foregroundBlockedPkg != applicationContext.packageName) {
-                    val blockedApp = repository.allAppsSnapshot() /* ISSUE-67(d): via repository */.find { it.packageName == foregroundBlockedPkg }
+                    val blockedApp = appsSnapshot.find { it.packageName == foregroundBlockedPkg }
                     // ISSUE-67: intercept intent via the seam (no
                     // MainActivity import; the seam mints the #68
                     // nonce and the #78 firing id). This door's
