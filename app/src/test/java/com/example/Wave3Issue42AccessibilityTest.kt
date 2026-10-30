@@ -427,6 +427,38 @@ class Wave3Issue42AccessibilityTest {
         )
     }
 
+    // ---------------------------------------------------------------
+    // 4. ADVANCED-PROTECTION HONESTY (Scout-2 Find 11, surge round):
+    // Android 17 Advanced Protection revokes Accessibility from
+    // apps not declared as genuine accessibility tools. Monolith
+    // is a blocker, NOT an accessibility tool — the config must
+    // never claim isAccessibilityTool="true" to dodge revocation.
+    // The pin is explicit false; absence would also default false,
+    // but explicit is checkable, and this test is the check.
+    // ---------------------------------------------------------------
+
+    @Test
+    fun accessibilityConfig_neverClaimsToBeAnAccessibilityTool() {
+        val candidates = listOf(
+            java.io.File("src/main/res/xml/accessibility_service_config.xml"),
+            java.io.File("app/src/main/res/xml/accessibility_service_config.xml")
+        )
+        val config = candidates.firstOrNull { it.isFile }
+        org.junit.Assume.assumeTrue(
+            "accessibility_service_config.xml not found from test working dir",
+            config != null
+        )
+        val text = config!!.readText()
+        assertTrue(
+            "config must pin isAccessibilityTool explicitly",
+            text.contains("android:isAccessibilityTool=\"false\"")
+        )
+        assertFalse(
+            "config must never falsely declare isAccessibilityTool=true",
+            text.contains("isAccessibilityTool=\"true\"")
+        )
+    }
+
     @Test
     fun shouldBypassForCall_unrelatedDialerNamedApp_staysBlocked() {
         // A blocked third-party dialer that neither owns the call

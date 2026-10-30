@@ -35,6 +35,18 @@ import kotlinx.coroutines.launch
  *    Gated by the persisted Guard switch `shortsReelsSniperEnabled` (Truth Car 3, UNA-01) — OFF leaves feeds alone.
  * 4. In-Browser URL Bar Blocker: Ignores the address bar while the user is actively typing (`node.isFocused == true`),
  *    and blocks distracting domains once committed/loaded—even during Safe Breaks.
+ * 6. Least-privilege exercise + honest degradation (Wave-3 #42,
+ *    Scout-2 Finds 11/18): the config grant stays content-capable
+ *    because the sniper, site and tamper doors genuinely need node
+ *    content — splitting it away would trade HOLD strength, which
+ *    is never traded. What is least-privilege is the EXERCISE: no
+ *    content is read with no session armed, and root traversal
+ *    happens only for packages whose door needs node evidence
+ *    (captureEventFacts). isAccessibilityTool is pinned false in
+ *    the config — Monolith is not an accessibility tool, and under
+ *    Android 17 Advanced Protection this service may be revoked;
+ *    blocking then honestly degrades to the UsageStats/shield
+ *    layer instead of claiming a status it does not hold.
  * 5. 3-Tier Per-App & Safe Break Enforcement:
  *    - During a 10-minute Safe Break (`activeSession.isInSafeBreak`), `2m Peek` apps (e.g., WhatsApp) unlock freely
  *      while `Locked` apps, Shorts, Reels, and blocked browser domains stay strictly locked.
