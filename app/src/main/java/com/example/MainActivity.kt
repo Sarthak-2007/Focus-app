@@ -272,7 +272,13 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // PARK's invocation — it is never dismissed by a timer. (The
     // nav/PARK effect itself sits below, beside the PARK state
     // it reads.)
-    var dismissedReceiptSessionId by remember { mutableStateOf(-1) }
+    // Audit R1 #40: seeded from the persisted dismissal — a
+    // receipt put away by hand stays put away across process
+    // death; every dismissal below also writes through to the
+    // store (viewModel.persistReceiptDismissal).
+    var dismissedReceiptSessionId by remember {
+        mutableStateOf(viewModel.dismissedReceiptSessionId())
+    }
 
     // ------------------------------------------------------------------
     // PARK state (chrome C4). The drawer is invoked by arrival (the
@@ -318,7 +324,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // same input, and so does any navigation away from the Deck.
     LaunchedEffect(currentDestination, parkOpen) {
         if (currentDestination != MonolithDestination.DECK || parkOpen) {
-            receiptState?.let { dismissedReceiptSessionId = it.sessionId }
+            receiptState?.let {
+                dismissedReceiptSessionId = it.sessionId
+                viewModel.persistReceiptDismissal(it.sessionId)
+            }
         }
     }
 
@@ -803,7 +812,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             ) {
                 com.example.ui.components.ReceiptSheet(
                     receipt = standingReceipt,
-                    onDismiss = { dismissedReceiptSessionId = standingReceipt.sessionId }
+                    onDismiss = {
+                        dismissedReceiptSessionId = standingReceipt.sessionId
+                        viewModel.persistReceiptDismissal(standingReceipt.sessionId)
+                    }
                 )
             }
 

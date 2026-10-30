@@ -1514,7 +1514,12 @@ class MonolithRepository(
      * prints. Valve / grace / early endings never call this —
      * they publish nothing and leave no gap in the sequence.
      */
-    suspend fun claimReceiptNumber(sessionId: Int, outcomeWord: String): Int {
+    suspend fun claimReceiptNumber(
+        sessionId: Int,
+        outcomeWord: String,
+        faulted: Boolean = false,
+        faultWallMillis: Long = 0L
+    ): Int {
         val database = MonolithDatabase.getInstance(context)
         return database.withTransaction {
             // Seed-if-absent INSIDE the transaction: the claim's
@@ -1537,9 +1542,21 @@ class MonolithRepository(
             // files. The row ends the coincidence.)
             val row = dao.getSessionById(sessionId)
             if (row != null && row.receiptNumber > 0) {
+                // Audit R1 #40: the release-fault stamp rides the
+                // claim transaction even on the latch path — a
+                // faulted publish must never leave a claimed
+                // receipt whose fault record a crash could strand
+                // (rehydration reads releaseFaultShield as the
+                // receipt's faulted flag, forever).
+                if (faulted && !row.releaseFaultShield) {
+                    dao.stampReleaseFault(sessionId, faultWallMillis)
+                }
                 return@withTransaction row.receiptNumber
             }
             if (settings.lastReceiptSessionId == sessionId && settings.receiptSequence > 0) {
+                if (faulted && row != null && !row.releaseFaultShield) {
+                    dao.stampReleaseFault(sessionId, faultWallMillis)
+                }
                 return@withTransaction settings.receiptSequence
             }
             val next = settings.receiptSequence + 1
@@ -1557,6 +1574,15 @@ class MonolithRepository(
             // back together, so a № can never exist without its
             // row wearing it.
             dao.stampReceiptNumber(sessionId, next)
+            // Audit R1 #40: the fault stamp joins the same
+            // transaction — claim, № stamp and fault record now
+            // commit or roll back as ONE act. (publishReceipt used
+            // to stamp the fault in a separate write after the
+            // claim; a crash in the gap left a claimed receipt
+            // whose faulted flag rehydrated as false forever.)
+            if (faulted) {
+                dao.stampReleaseFault(sessionId, faultWallMillis)
+            }
             next
         }
     }
@@ -1745,10 +1771,13 @@ class MonolithRepository(
         // latch alone would hand back the standing № and let a
         // second slip be built over it.
         if (standingReceipt()?.second == pending.sessionId) return null
-        val number = claimReceiptNumber(pending.sessionId, pending.outcomeWord)
-        if (faulted) {
-            dao.stampReleaseFault(pending.sessionId, System.currentTimeMillis())
-        }
+        // Audit R1 #40: the fault stamp is part of the claim
+        // transaction now (see claimReceiptNumber) — no separate
+        // post-claim write exists for a crash to strand.
+        val number = claimReceiptNumber(
+            pending.sessionId, pending.outcomeWord,
+            faulted = faulted, faultWallMillis = System.currentTimeMillis()
+        )
         return ReceiptState(
             sessionId = pending.sessionId,
             number = number,
@@ -1792,7 +1821,19 @@ class MonolithRepository(
         if (row.isActive) return null
         val isSleep = row.routineId?.let { dao.getRoutineById(it)?.loadoutName } ==
             SmartLoadout.SLEEP.name
-        val kind = finishKindOf(row, isSleep, System.currentTimeMillis()) ?: return null
+        // Audit R1 #40: a CLAIMED receipt (the row wears its №)
+        // is durable proof the finish fired — a wall-clock
+        // rollback must not un-finish it. For claimed rows the
+        // predicate's clock is floored at the row's own window
+        // end, so the SLEEP stand-down's `windowEndMillis <= now`
+        // gate can never swing shut behind a rollback. Unclaimed
+        // rows keep the raw wall clock: nothing is owed them.
+        val judgeNow = if (row.receiptNumber > 0) {
+            maxOf(System.currentTimeMillis(), row.windowEndMillis)
+        } else {
+            System.currentTimeMillis()
+        }
+        val kind = finishKindOf(row, isSleep, judgeNow) ?: return null
         val endedAt = if (row.routineId != null && row.windowEndMillis > 0L) {
             row.windowEndMillis
         } else {
