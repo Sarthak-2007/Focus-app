@@ -280,7 +280,6 @@ class MonolithRepository(
         const val PRUNE_NOTE_COUNT_KEY = "prune_note_count"
         const val PRUNE_NOTE_RULES_KEY = "prune_note_rules_removed"
 
-<<<<<<< ours
         /** Issue #129 F1: the unreviewed-auto-OPEN record — the
          *  packages the category guess birthed OPEN with no preset
          *  and no ruling from the man. Prefs, not Room (same
@@ -300,8 +299,6 @@ class MonolithRepository(
         const val EXPOSURE_LOG_PACKAGE = "com.monolith.exposure"
         const val EXPOSURE_LOG_OUTCOME = "Open exposure"
 
-||||||| base
-=======
 
         /** Issue #81 F1: the resurrection witness's prefs home.
          *  Written once, at seed time, when a virgin database meets
@@ -313,7 +310,6 @@ class MonolithRepository(
         const val PROVENANCE_UNPROVEN_KEY = "resurrected_unproven"
         const val PROVENANCE_DETECTED_WALL_KEY = "resurrected_detected_wall_ms"
 
->>>>>>> theirs
         /** The catalog memory (Wave 3, issue #34): the two-strike
          *  strike set and the pruned-rule tombstones, in the same
          *  prefs file — the schema stays frozen at v12, and a
