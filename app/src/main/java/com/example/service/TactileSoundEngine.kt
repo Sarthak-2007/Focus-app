@@ -66,6 +66,22 @@ class TactileSoundEngine(private val context: Context) {
             }
         }
 
+        /** Issue #49: a torn-down engine leaves the registry, so a
+         *  later fact push can never resurrect it and the WeakHashMap
+         *  is not the only removal path. */
+        internal fun unregisterLiveEngine(engine: TactileSoundEngine) {
+            synchronized(liveEngines) { liveEngines.remove(engine) }
+        }
+
+        /** Push a freshly-written haptics fact to every live engine.
+         *  Called ONLY by [SoundEffectsSetting.setHapticsEnabled],
+         *  after the commit has landed. */
+        fun pushHapticsEnabledToLiveEngines(enabled: Boolean) {
+            synchronized(liveEngines) {
+                liveEngines.forEach { it.hapticsEnabled = enabled }
+            }
+        }
+
         /** Test seam: how many engines this process currently holds. */
         internal fun liveEngineCountForTest(): Int =
             synchronized(liveEngines) { liveEngines.size }
@@ -289,8 +305,28 @@ class TactileSoundEngine(private val context: Context) {
      *  engine when the fact changes. Before this, the initializer
      *  was the literal `true`: a heartbeat-born engine carried ON
      *  while PARK printed OFF. */
+    // Issue #49: @Volatile — the synth thread reads this gate with
+    // no lock; without the modifier there was no happens-before
+    // guarantee a toggle was ever seen. `internal set` — the only
+    // writers are the fact store's live push (companion, above)
+    // and [resyncSoundEnabledFromFact]; no call site may write the
+    // cache directly and bypass the persisted fact again.
+    @Volatile
     var soundEnabled: Boolean = SoundEffectsSetting.isEnabled(context)
-    var hapticsEnabled: Boolean = true
+        internal set
+
+    /** Issue #49: haptics is a persisted fact too (born from
+     *  [SoundEffectsSetting.isHapticsEnabled], pushed like sound),
+     *  not the unpersisted always-true stub this used to be. */
+    @Volatile
+    var hapticsEnabled: Boolean = SoundEffectsSetting.isHapticsEnabled(context)
+        internal set
+
+    /** Re-read the persisted sound fact into this engine — the
+     *  only sanctioned per-engine refresh (bind-time second lock). */
+    fun resyncSoundEnabledFromFact() {
+        soundEnabled = SoundEffectsSetting.isEnabled(context)
+    }
 
     // =====================================================================
     // THE ROOM'S TWO WORDS (issue #150 — sound-in-quiet-places).
@@ -350,7 +386,47 @@ class TactileSoundEngine(private val context: Context) {
     private var running = true
 
     private var audioFocusRequest: AudioFocusRequest? = null
-    private val synthThread: Thread
+
+    @Volatile
+    private var audioFocusHeld = false
+
+    private val focusChangeListener = AudioManager.OnAudioFocusChangeListener { change ->
+        when (change) {
+            AudioManager.AUDIOFOCUS_GAIN -> audioFocusHeld = true
+            AudioManager.AUDIOFOCUS_LOSS,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> audioFocusHeld = false
+        }
+    }
+
+    // Issue #49: threads are LAZY — construction alone starts
+    // nothing and opens no AudioTrack. The first cue that actually
+    // needs a lane starts it; an engine that is never played (the
+    // repository's lazy break engine in a process that never
+    // crosses a break) costs no threads and no track, ever.
+    @Volatile
+    private var synthThread: Thread? = null
+    private val threadStartLock = Any()
+
+    private fun ensureThreadsStarted() {
+        if (synthThread != null && sealRenderThread != null) return
+        synchronized(threadStartLock) {
+            if (!running) return
+            if (synthThread == null) {
+                synthThread = Thread({ runFloatPcmSynthLoop() }, "MonolithFloatPcmSynth").apply {
+                    isDaemon = true
+                    priority = Thread.MAX_PRIORITY
+                    start()
+                }
+            }
+            if (sealRenderThread == null) {
+                sealRenderThread = Thread({ runSealRenderLoop() }, "MonolithSealRender").apply {
+                    isDaemon = true
+                    start()
+                }
+            }
+        }
+    }
 
     // =====================================================================
     // THE SEAL LANE (Riegel §1): the Throw never enters the serial
@@ -376,23 +452,20 @@ class TactileSoundEngine(private val context: Context) {
     private var sealBarrierSeq: Long = -1L
 
     private val sealPrimeSignal = LinkedBlockingQueue<Unit>(1)
-    private val sealRenderThread: Thread
+
+    @Volatile
+    private var sealRenderThread: Thread? = null
 
     init {
-        // Truth Car 3 (UNA-03): join the live registry before any
-        // playback thread starts, so a fact written at any moment
-        // after construction reaches this engine.
+        // Truth Car 3 (UNA-03): join the live registry at
+        // construction, so a fact written at any moment after
+        // construction reaches this engine. Issue #49: threads are
+        // NOT started here — see ensureThreadsStarted().
         registerLiveEngine(this)
-        synthThread = Thread({ runFloatPcmSynthLoop() }, "MonolithFloatPcmSynth").apply {
-            isDaemon = true
-            priority = Thread.MAX_PRIORITY
-            start()
-        }
-        sealRenderThread = Thread({ runSealRenderLoop() }, "MonolithSealRender").apply {
-            isDaemon = true
-            start()
-        }
     }
+
+    /** Test seam (issue #49): have this engine's lanes started? */
+    internal fun threadsStartedForTest(): Boolean = synthThread != null
 
     /** The prime worker: renders the Throw into the retained
      *  buffer and writes it whole into the seal track (stopped),
@@ -473,27 +546,6 @@ class TactileSoundEngine(private val context: Context) {
                 AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_FLOAT
             ).coerceAtLeast(maxSamples * 4)
-
-            track = AudioTrack.Builder()
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                        .setSampleRate(SAMPLE_RATE)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                        .build()
-                )
-                .setBufferSizeInBytes(minBufBytes)
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .build()
-
-            track.play()
-            legacyTrack = track
             val floatBuffer = FloatArray(maxSamples)
             val weights = PARTIAL_WEIGHTS
             val weightNorm = weights.sum()
@@ -512,7 +564,37 @@ class TactileSoundEngine(private val context: Context) {
                 // still does not speak (issue #150).
                 if (!soundEnabled || ringerSilencesAudio()) continue
 
-                requestTransientAudioFocus()
+                // Issue #49: focus is a real gate, not theatre —
+                // a denied request drops this incidental cue, and
+                // the AudioTrack is built only now, for a command
+                // that will actually sound (never at thread start).
+                if (!requestTransientAudioFocus()) continue
+                if (track == null) {
+                    track = try {
+                        AudioTrack.Builder()
+                            .setAudioAttributes(
+                                AudioAttributes.Builder()
+                                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                    .build()
+                            )
+                            .setAudioFormat(
+                                AudioFormat.Builder()
+                                    .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+                                    .setSampleRate(SAMPLE_RATE)
+                                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                                    .build()
+                            )
+                            .setBufferSizeInBytes(minBufBytes)
+                            .setTransferMode(AudioTrack.MODE_STREAM)
+                            .build()
+                            .also { it.play(); legacyTrack = it }
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (track == null) continue
+                }
+                val liveTrack = track ?: continue
 
                 val count = cmd.durationSamples.coerceIn(64, maxSamples)
                 var envBody = 1.0f
@@ -545,8 +627,8 @@ class TactileSoundEngine(private val context: Context) {
                 val epochAtStart = laneEpoch.get()
                 if (epochAtStart != lastSeenEpoch) {
                     try {
-                        track.flush()
-                        track.play()
+                        liveTrack.flush()
+                        liveTrack.play()
                     } catch (_: Exception) {}
                     lastSeenEpoch = epochAtStart
                 }
@@ -554,7 +636,7 @@ class TactileSoundEngine(private val context: Context) {
                 while (off < count) {
                     if (laneEpoch.get() != epochAtStart) break
                     val n = try {
-                        track.write(
+                        liveTrack.write(
                             floatBuffer, off, minOf(1024, count - off),
                             AudioTrack.WRITE_BLOCKING
                         )
@@ -572,13 +654,25 @@ class TactileSoundEngine(private val context: Context) {
                 track?.stop()
                 track?.release()
             } catch (_: Exception) {}
+            if (legacyTrack === track) legacyTrack = null
         }
     }
 
-    private fun requestTransientAudioFocus() {
-        try {
-            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+    /**
+     * Issue #49: audio focus, honestly held. Returns whether focus
+     * is granted; the result is honoured by callers (a denied
+     * incidental cue is dropped), a change listener tracks loss,
+     * the pre-O path (minSdk 24–25) uses the legacy overload, and
+     * [abandonAudioFocus] is called at teardown. Before this, the
+     * result was discarded, no listener existed, API 24–25 got
+     * nothing, and focus was never abandoned.
+     */
+    private fun requestTransientAudioFocus(): Boolean {
+        if (audioFocusHeld) return true
+        return try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                ?: return false
+            val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val req = audioFocusRequest ?: AudioFocusRequest.Builder(
                     AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
                 ).setAudioAttributes(
@@ -586,10 +680,35 @@ class TactileSoundEngine(private val context: Context) {
                         .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                         .build()
-                ).build().also { audioFocusRequest = it }
+                ).setOnAudioFocusChangeListener(focusChangeListener).build()
+                    .also { audioFocusRequest = it }
                 am.requestAudioFocus(req)
+            } else {
+                @Suppress("DEPRECATION")
+                am.requestAudioFocus(
+                    focusChangeListener,
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+                )
+            }
+            audioFocusHeld = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            audioFocusHeld
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun abandonAudioFocus() {
+        try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                am.abandonAudioFocus(focusChangeListener)
             }
         } catch (_: Exception) {}
+        audioFocusHeld = false
     }
 
     private fun resolveVibrator(): Vibrator? = try {
@@ -611,6 +730,7 @@ class TactileSoundEngine(private val context: Context) {
      * one-shot of [fallbackMs] before API 26.
      */
     private fun triggerWaveform(timingsMs: LongArray, amplitudes: IntArray, fallbackMs: Long) {
+        if (!running) return // issue #49: a torn-down engine is silent, haptics included
         if (!hapticsEnabled) return
         try {
             val vibrator = resolveVibrator()
@@ -630,6 +750,7 @@ class TactileSoundEngine(private val context: Context) {
      * the named waveform patterns below.
      */
     fun triggerOneShotHaptic(durationMs: Long) {
+        if (!running) return // issue #49: dead engines stay dead
         if (!hapticsEnabled) return
         val calibratedMs = when {
             durationMs <= 1L -> HAPTIC_ROTARY_TICK_1MS
@@ -662,7 +783,11 @@ class TactileSoundEngine(private val context: Context) {
         chordRatio: Float = 1.0f,
         unattended: Boolean = false
     ) {
+        if (!running) return // issue #49: no queuing onto a dead engine
+        // Issue #150: audioPermitted carries the soundEnabled fact
+        // plus the ringer's word (and DND's, for unattended voices).
         if (!audioPermitted(unattended)) return
+        ensureThreadsStarted()
         val samples = ((SAMPLE_RATE * durationMs) / 1000).coerceIn(96, 6000)
         commandQueue.offer(
             SynthCommand(
@@ -836,6 +961,8 @@ class TactileSoundEngine(private val context: Context) {
      * signalled to pre-render + pre-write the Throw.
      */
     fun primeForSeal() {
+        if (!running) return // issue #49: no priming a dead engine
+        ensureThreadsStarted()
         requestTransientAudioFocus()
         val barrier = seqCounter.get()
         sealBarrierSeq = barrier
@@ -865,6 +992,7 @@ class TactileSoundEngine(private val context: Context) {
      * off: haptic only (S0 — muting loses timbre, never the event).
      */
     fun playSealThrow() {
+        if (!running) return // issue #49: a stopped engine cannot be resurrected by the Throw
         triggerWaveform(
             timingsMs = SEAL_THROW_TIMINGS,
             amplitudes = SEAL_THROW_AMPLITUDES,
@@ -891,6 +1019,12 @@ class TactileSoundEngine(private val context: Context) {
         } catch (_: Exception) {}
         val track = ensureSealTrack()
         if (track != null) {
+            // Issue #49: the un-primed fallback previously played
+            // with NO focus request at all. The Throw is the seal
+            // act itself (Q6: one voice, settled), so focus is
+            // requested here and the act proceeds — requested,
+            // tracked, and abandoned at teardown like every cue.
+            if (!audioFocusHeld) requestTransientAudioFocus()
             if (sealReady) {
                 try {
                     track.play()
@@ -953,14 +1087,42 @@ class TactileSoundEngine(private val context: Context) {
         )
     }
 
+    /**
+     * Issue #49: stop ALL audio — and haptics, focus, threads and
+     * registry membership with it. Before this, the legacy track,
+     * the audio focus, both threads and the live-engine registry
+     * all escaped, and the "stopped" engine could still vibrate
+     * and resurrect a seal track. Now: [running] gates every
+     * public entry point, both tracks are stopped/released, focus
+     * is abandoned, vibration is cancelled, both threads are
+     * interrupted (their 500 ms polls wake at once), and the
+     * engine leaves the live registry. Idempotent; teardown is
+     * final — a stopped engine is never restarted.
+     */
     fun stopAllAudio() {
         running = false
         commandQueue.clear()
+        sealPrimeSignal.clear()
+        sealBarrierSeq = -1L
+        sealReady = false
+        abandonAudioFocus()
+        try {
+            legacyTrack?.pause()
+            legacyTrack?.flush()
+            legacyTrack?.stop()
+            legacyTrack?.release()
+        } catch (_: Exception) {}
+        legacyTrack = null
         try {
             sealTrack?.stop()
             sealTrack?.release()
         } catch (_: Exception) {}
         sealTrack = null
-        sealReady = false
+        try {
+            resolveVibrator()?.cancel()
+        } catch (_: Exception) {}
+        synthThread?.interrupt()
+        sealRenderThread?.interrupt()
+        unregisterLiveEngine(this)
     }
 }
