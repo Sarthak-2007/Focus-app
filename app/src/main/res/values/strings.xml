@@ -1,7 +1,8 @@
 <resources>
     <string name="app_name">Monolith</string>
     <string name="accessibility_service_label">Monolith Distraction Airlock</string>
-    <string name="accessibility_service_description">Works only while a Monolith focus session is running: it enforces nothing, and keeps nothing, when no session is running. During a session it detects launches of apps you blocked and presents the Intention Airlock screen. To enforce your own rules it also reads limited on-screen content in three places: YouTube Shorts and Instagram Reels screens, your browser\'s address bar (never while you are typing in it), and system Settings, installer, or app-store screens showing Monolith, so the app cannot be force-stopped or uninstalled mid-session. Nothing is collected outside a session and nothing ever leaves your device.</string>
+    <string name="accessibility_service_description">During an active Monolith focus session only, Monolith reads the content of the foreground window on this device to detect blocked app launches, Shorts and Reels feeds, blocked website addresses in the browser, and tampering in Settings or the installer, and presents the Intention Airlock screen. Everything is processed on this device; nothing is sent anywhere.</string>
+    <string name="device_admin_description">Prevents Monolith being uninstalled or deactivated while a focus session is active, so an armed block cannot be removed mid-session.</string>
     <string name="notification_channel_name">Monolith Active Shield</string>
     <string name="notification_channel_desc">Displays real-time monotonic focus timer and active app shield telemetry.</string>
     <string name="tab_deck">Focus</string>
