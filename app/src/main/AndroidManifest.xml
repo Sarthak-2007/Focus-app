@@ -27,6 +27,7 @@
          exclude every domain for cloud backup AND device transfer, so
          the sentence stays true even if this flag is ever revisited. -->
     <application
+        android:name=".MonolithApp"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"

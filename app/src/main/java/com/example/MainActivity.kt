@@ -326,15 +326,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         }
     }
 
-    // PARK's on-open diagnostic (§3.3): opening PARK fires the old
-    // refreshSystemGuard() sweep. Its result renders NOWHERE — the
-    // board renders the Watch Store — unless a diagnostic line is
-    // invoked; the sweep itself is the point (clock/HMAC/boot facts
-    // stay warm for the day a diagnostic needs them).
-    LaunchedEffect(parkOpen) {
-        if (parkOpen) {
-            viewModel.refreshSystemGuard()
-        }
     }
 
     DisposableEffect(lifecycleOwner) {

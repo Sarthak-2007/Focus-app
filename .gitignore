@@ -21,3 +21,6 @@ debug.keystore
 *.jks
 my-upload-key.jks
 keystore.properties
+
+# Raw run logs are machine-local evidence, never source (issue #75)
+*.log

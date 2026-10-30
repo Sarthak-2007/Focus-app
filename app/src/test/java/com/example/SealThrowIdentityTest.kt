@@ -61,7 +61,6 @@ class SealThrowIdentityTest {
         }
         val hash = MessageDigest.getInstance("SHA-256").digest(bytes)
             .joinToString("") { "%02x".format(it) }
-        println("SEAL_BUFFER_SHA256=$hash")
         assertEquals(TactileSoundEngine.SEAL_BUFFER_GOLDEN_SHA256, hash)
     }
 
@@ -83,7 +82,6 @@ class SealThrowIdentityTest {
         val roomRef = rms(4_860, 7_260)
         val tailWindow = rms(39_690, 40_690)
         val db = 20.0 * kotlin.math.log10(tailWindow / roomRef)
-        println("SEAL_TAIL_DB_AT_900MS=$db (room ref rms $roomRef, tail rms $tailWindow)")
         assertTrue("room tail at 900ms must sit in −55…−35 dB (was $db)", db in -55.0..-35.0)
     }
 
