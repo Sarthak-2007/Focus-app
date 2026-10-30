@@ -2,16 +2,86 @@ import re
 import subprocess
 import sys
 
-# STURM3-11 mergebot resolver for agent/issue-113.
-# The ONLY known conflict between agent/issue-113 and main is the
-# sentence `when` in TactileDeckScreen.kt:
-#   our  (issue #113 F2b): Proving -> null;
-#        isSessionRunning -> refusalSentenceFor(deckWarrant, nowMono)
-#   their (main, issue #98): Proving -> provingSentenceFor(armPhase);
-#        isSessionRunning -> null
-# Resolution keeps BOTH cures: Proving speaks main's proving sentence;
-# a running session speaks #113's refusal sentence. Any other conflict
-# segment or file aborts the merge (exit 1) — nothing is guessed.
+# STURM3-11 mergebot resolver v2 for agent/issue-113 vs current main.
+# Every rule below is pattern-matched to a conflict segment STURM3-11
+# read and decided by hand (see mergebot/status-113.txt history and
+# issue #113). Any segment that matches NO rule aborts the merge —
+# nothing is guessed.
+#
+# Rules:
+#  R1 both-added (MonolithRepository receipt assembly x3,
+#     ReceiptState x2): our block adds penaltySecondsAdded, their
+#     block adds forgedArtifactName at the same anchor. Both are
+#     independent named args / defaulted fields — keep BOTH, comma
+#     after our block's last line.
+#  R2 anchor declaration (MonolithRepository): our declares nowWall
+#     (needed by #113 F4's newStartWall) + old boot call; their has
+#     only the nullable boot call main's merged surroundings expect
+#     (Int?). Keep nowWall + their declaration.
+#  R3 finish controller (MonolithViewModel): our single arm
+#     `else -> onFinishE0(row, kind, witnessed = false)` retires the
+#     >10-min discard per Audit R3 #113 F3; their arms keep the
+#     discard for manual finishes (Audit R1 #40). R3 is the later,
+#     specific judgment and subsumes #40's sleep exemption (sleep
+#     stand-downs issue unwitnessed through the same arm). Take OUR.
+#  R4 sentence when (TactileDeckScreen): Jammed line from THEIR
+#     (main's newer jamSentenceFor(armPhase, nowMono) signature),
+#     Proving line from THEIR (main #98 provingSentenceFor), running
+#     line from OUR (#113 F2b refusalSentenceFor while running).
+
+SEG = re.compile(r"<<<<<<< [^\n]*\n(.*?)\n=======\n(.*?)\n>>>>>>> [^\n]*\n", re.S)
+
+
+def lines(block):
+    return block.split("\n")
+
+
+def rule_r1(our, their):
+    if "penaltySecondsAdded" in our and "forgedArtifactName" in their:
+        ol = lines(our)
+        if not ol[-1].rstrip().endswith(","):
+            ol[-1] = ol[-1] + ","
+        return "\n".join(ol + lines(their)) + "\n"
+    return None
+
+
+def rule_r2(our, their):
+    if (
+        "val nowWall = System.currentTimeMillis()" in our
+        and "querySystemBootCount()" in our
+        and "querySystemBootCountOrNull()" in their
+    ):
+        now_wall = [l for l in lines(our) if "val nowWall" in l][0]
+        return now_wall + "\n" + their + "\n"
+    return None
+
+
+def rule_r3(our, their):
+    if (
+        "else -> onFinishE0(row, kind, witnessed = false)" in our
+        and "handledFinishIds += row.id" in their
+    ):
+        return our + "\n"
+    return None
+
+
+def rule_r4(our, their):
+    if "ArmPhase.Proving -> null" in our and "provingSentenceFor(armPhase)" in their:
+        def pick(block, needle):
+            for l in lines(block):
+                if needle in l:
+                    return l
+            return None
+
+        jammed = pick(their, "ArmPhase.Jammed") or pick(our, "ArmPhase.Jammed")
+        proving = pick(their, "ArmPhase.Proving")
+        running = pick(our, "isSessionRunning")
+        if jammed and proving and running:
+            return "\n".join([jammed, proving, running]) + "\n"
+    return None
+
+
+RULES = [rule_r1, rule_r2, rule_r3, rule_r4]
 
 files = subprocess.check_output(
     ["git", "diff", "--name-only", "--diff-filter=U"], text=True
@@ -21,41 +91,30 @@ if not files:
     sys.exit(1)
 
 for path in files:
-    if not path.endswith("TactileDeckScreen.kt"):
-        print("unknown conflicted file:", path)
-        sys.exit(1)
     src = open(path).read()
-    pat = re.compile(
-        r"<<<<<<< [^\n]*\n(.*?)\n=======\n(.*?)\n>>>>>>> [^\n]*\n", re.S
-    )
+    state = {"n": 0}
 
     def repl(m):
         our, their = m.group(1), m.group(2)
-        if (
-            "ArmPhase.Proving -> null" in our
-            and "provingSentenceFor(armPhase)" in their
-            and "isSessionRunning -> refusalSentenceFor(deckWarrant, nowMono)" in our
-            and re.search(r"isSessionRunning -> null", their)
-        ):
-            indent_m = re.search(r"(\s*)armPhase is ArmPhase\.Proving", our)
-            indent = indent_m.group(1) if indent_m else "                    "
-            return (
-                f"{indent}armPhase is ArmPhase.Proving -> provingSentenceFor(armPhase)\n"
-                f"{indent}isSessionRunning -> refusalSentenceFor(deckWarrant, nowMono)\n"
-            )
-        raise ValueError("unknown conflict segment in " + path)
+        for rule in RULES:
+            out = rule(our, their)
+            if out is not None:
+                state["n"] += 1
+                return out
+        raise ValueError("unknown conflict segment in " + path + ":\nOUR:\n" + our + "\nTHEIR:\n" + their)
 
     try:
-        out = pat.sub(repl, src)
+        out = SEG.sub(repl, src)
     except ValueError as e:
         print(e)
+        sys.exit(1)
+    if state["n"] == 0:
+        print("no segments matched in", path)
         sys.exit(1)
     if "<<<<<<<" in out or ">>>>>>>" in out:
         print("conflict markers remain in", path)
         sys.exit(1)
-    if out == src:
-        print("no segment matched in", path)
-        sys.exit(1)
     open(path, "w").write(out)
+    print(f"resolved {path}: {state['n']} segment(s)")
 
-print("resolved:", files)
+print("all resolved:", files)
