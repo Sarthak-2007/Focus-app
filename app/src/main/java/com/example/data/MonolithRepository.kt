@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Process
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
 import android.os.PowerManager
 import com.example.service.MonolithAccessibilityService
 import com.example.service.MonolithDeviceAdminReceiver
@@ -21,6 +22,7 @@ import com.example.service.UsageAccess
 import com.example.service.Warrant
 import com.example.service.WatchItemId
 import com.example.service.WatchStore
+import androidx.annotation.WorkerThread
 import androidx.room.withTransaction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -114,9 +116,26 @@ internal fun expiredPeekPackages(
     .map { it.packageName }
     .toSet()
 
+/**
+ * The repository. THREADING CONTRACT (issue #33, audit R1): every
+ * `suspend` function in this class does its Room / SharedPreferences /
+ * Settings / signing work on [Dispatchers.IO] or inside a Room
+ * transaction (which runs on Room's own executor) — a caller may use
+ * any dispatcher. Every NON-suspend function that touches the system
+ * (usage stats, AppOps, Settings, SharedPreferences) is annotated
+ * [WorkerThread]: it blocks on IPC and must never run on the main
+ * thread. Pure in-memory reads are the only un-annotated sync calls.
+ *
+ * The Room database is reached ONLY through [databaseProvider]
+ * (issue #33, audit R1): no function in this class calls
+ * `MonolithDatabase.getInstance` directly, so a test can inject an
+ * in-memory database and every transactional path follows the DAO
+ * it was given.
+ */
 class MonolithRepository(
     private val context: Context,
-    private val dao: MonolithDao
+    private val dao: MonolithDao,
+    private val databaseProvider: () -> MonolithDatabase = { MonolithDatabase.getInstance(context) }
 ) {
     val allAppsFlow: Flow<List<BlockedAppEntity>> = dao.getAllApps()
     val allProfilesFlow: Flow<List<FocusProfileEntity>> = dao.getAllProfiles()
@@ -129,6 +148,7 @@ class MonolithRepository(
     val allRoutinesFlow: Flow<List<RoutineEntity>> = dao.getAllRoutinesFlow()
 
     companion object {
+        private const val TAG = "MonolithRepository"
         private val seedMutex = Mutex()
         const val PEEK_DURATION_SECONDS = 120 // 2-Minute Peek
         const val PEEK_DURATION_MILLIS = 120 * 1000L // 2-Minute Peek lease in ms
@@ -256,6 +276,7 @@ class MonolithRepository(
      *  the persisted id set, unioned with the legacy single-slot
      *  int, so a seal landed by an older build — which wrote only
      *  the int — still testifies. */
+    @WorkerThread
     fun sealedSessionIdsFromMarker(): Set<Int> {
         val prefs = context.getSharedPreferences(SEAL_PREFS_NAME, Context.MODE_PRIVATE)
         val fromSet = prefs.getStringSet(SEAL_MARKER_SESSIONS_KEY, emptySet())
@@ -407,8 +428,9 @@ class MonolithRepository(
                 // above is a failed look and starts no window.
                 saveLastCatalogSyncMillis(System.currentTimeMillis())
             }
-        } catch (_: Exception) {
-            // Safe fallback if package querying is restricted
+        } catch (e: Exception) {
+            // Safe fallback if package querying is restricted — logged, not silent (#33).
+            swallow("ensureSeededAndSyncPackages catalog sync", e)
         }
 
         val existingProfiles = dao.getAllProfilesSnapshot()
@@ -611,6 +633,7 @@ class MonolithRepository(
 
     /** The pending prune record, or null when nothing was taken off
      *  the list since the last dismissal. */
+    @WorkerThread
     fun pendingPruneNote(): PruneNote? {
         val prefs = context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
         val count = prefs.getInt(PRUNE_NOTE_COUNT_KEY, 0)
@@ -724,6 +747,15 @@ class MonolithRepository(
     private fun categorizePackage(pkg: String, label: String): AppCategory =
         AppCategorizer.categorize(pkg, label)
 
+    /** Issue #33 (audit R1): a swallowed failure is LOGGED, never
+     *  silent — the caller still gets its safe negative answer, but
+     *  'the read failed' is now distinguishable from 'the answer is
+     *  no' in logcat instead of being conflated with it. */
+    private fun swallow(where: String, e: Exception) {
+        Log.w(TAG, "$where failed; answering with the safe negative", e)
+    }
+
+    @WorkerThread
     fun queryRealTodayUsageMinutes(): Map<String, Int> {
         if (!hasUsageStatsPermission()) return emptyMap()
         return try {
@@ -744,7 +776,8 @@ class MonolithRepository(
                     }
                 )
             } ?: emptyMap()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            swallow("queryRealTodayUsageMinutes", e)
             emptyMap()
         }
     }
@@ -754,6 +787,7 @@ class MonolithRepository(
      * Monitors AudioManager call states (MODE_RINGTONE, MODE_IN_CALL, MODE_IN_COMMUNICATION)
      * so incoming cellular, WhatsApp, or Telegram voice and video calls are never blocked mid-ring.
      */
+    @WorkerThread
     fun isPhoneOrVoipCallActive(): Boolean {
         return try {
             val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return false
@@ -761,11 +795,13 @@ class MonolithRepository(
             mode == AudioManager.MODE_RINGTONE ||
                 mode == AudioManager.MODE_IN_CALL ||
                 mode == AudioManager.MODE_IN_COMMUNICATION
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            swallow("isPhoneOrVoipCallActive", e)
             false
         }
     }
 
+    @WorkerThread
     fun queryForegroundBlockedApp(blockedPackages: Set<String>): String? =
         queryForegroundBlockedApp(blockedPackages, emptySet())
 
@@ -779,6 +815,7 @@ class MonolithRepository(
      * usage window widened: the package is treated as
      * foreground-blocked on this poll regardless of lastTimeUsed age.
      */
+    @WorkerThread
     fun queryForegroundBlockedApp(
         blockedPackages: Set<String>,
         expiredPeekPackages: Set<String>
@@ -800,7 +837,8 @@ class MonolithRepository(
                 .filter { it.packageName in blockedPackages && it.lastTimeUsed >= (end - 8_000L) }
                 .maxByOrNull { it.lastTimeUsed }
             recent?.packageName
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            swallow("queryForegroundBlockedApp", e)
             null
         }
     }
@@ -808,6 +846,7 @@ class MonolithRepository(
     /** Usage access as AppOps actually reports it: three-valued.
      *  The old Boolean collapsed UNSET (never asked, fresh device)
      *  into DENIED, which lied on first runs. */
+    @WorkerThread
     fun usageAccess(): UsageAccess {
         return try {
             val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
@@ -831,11 +870,13 @@ class MonolithRepository(
                 AppOpsManager.MODE_DEFAULT -> UsageAccess.UNSET
                 else -> UsageAccess.DENIED
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            swallow("usageAccess", e)
             UsageAccess.UNSET
         }
     }
 
+    @WorkerThread
     fun hasUsageStatsPermission(): Boolean = usageAccess() == UsageAccess.ALLOWED
 
     /**
@@ -849,6 +890,7 @@ class MonolithRepository(
      * DOWN and again at the gate crossing, and the verdict is never
      * older than the gesture.
      */
+    @WorkerThread
     fun standingWarrant(): Warrant {
         val a11yBound = MonolithAccessibilityService.instance != null
         val stamped = a11yBound && WatchStore.stampedThisResidency()
@@ -868,6 +910,7 @@ class MonolithRepository(
      * query lands independently — this function is called once per
      * item, in parallel, by WatchStore.runSweep.
      */
+    @WorkerThread
     fun watchGrantQuery(item: WatchItemId): Boolean = when (item) {
         WatchItemId.ACCESSIBILITY -> MonolithAccessibilityService.instance != null
         WatchItemId.USAGE_ACCESS -> usageAccess() == UsageAccess.ALLOWED
@@ -882,12 +925,14 @@ class MonolithRepository(
     /** Battery: whether the OS is told to leave Monolith alone.
      *  The read the dissolved Guard screen never had — its BATTERY &
      *  ADMIN row answered with the admin bit for both. */
+    @WorkerThread
     fun isBatteryOptimizationIgnored(): Boolean {
         return try {
             val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
                 ?: return false
             pm.isIgnoringBatteryOptimizations(context.packageName)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            swallow("permission probe", e)
             false
         }
     }
@@ -926,14 +971,17 @@ class MonolithRepository(
         return stats
     }
 
+    @WorkerThread
     fun hasOverlayPermission(): Boolean {
         return try {
             Settings.canDrawOverlays(context)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            swallow("permission probe", e)
             false
         }
     }
 
+    @WorkerThread
     fun isAccessibilityEnabled(): Boolean {
         return try {
             val enabledServices = Settings.Secure.getString(
@@ -941,11 +989,13 @@ class MonolithRepository(
                 Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
             ) ?: return false
             enabledServices.contains(context.packageName, ignoreCase = true)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            swallow("permission probe", e)
             false
         }
     }
 
+    @WorkerThread
     fun isNotificationListenerEnabled(): Boolean {
         return try {
             val enabledListeners = Settings.Secure.getString(
@@ -953,29 +1003,45 @@ class MonolithRepository(
                 "enabled_notification_listeners"
             ) ?: return false
             enabledListeners.contains(context.packageName, ignoreCase = true)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            swallow("permission probe", e)
             false
         }
     }
 
+    @WorkerThread
     fun isDeviceAdminActive(): Boolean {
         return try {
             val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
                 ?: return false
             val adminComponent = ComponentName(context, MonolithDeviceAdminReceiver::class.java)
             dpm.isAdminActive(adminComponent)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            swallow("permission probe", e)
             false
         }
     }
 
-    fun querySystemBootCount(): Int {
+    /** The system boot count, or null when the Settings read fails
+     *  or the value does not exist (issue #33, audit R1). Every
+     *  internal decision path uses THIS read: the old code fell back
+     *  to a fabricated `1` on failure, and that invented value fed
+     *  reboot/tamper detection — a failed read could manufacture a
+     *  reboot verdict. Unknown now stays unknown. */
+    @WorkerThread
+    fun querySystemBootCountOrNull(): Int? {
         return try {
-            Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, 1)
-        } catch (_: Exception) {
-            1
+            Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT)
+        } catch (e: Exception) {
+            swallow("querySystemBootCount", e)
+            null
         }
     }
+
+    /** Legacy Int surface for display/test callers that need a
+     *  number; decision logic must use [querySystemBootCountOrNull]. */
+    @WorkerThread
+    fun querySystemBootCount(): Int = querySystemBootCountOrNull() ?: 1
 
     /**
      * Tamper-Proof Monotonic Clock + Boot Count + Keystore HMAC Verification
@@ -991,15 +1057,16 @@ class MonolithRepository(
      *    and adds `(nowMono / 1000L).toInt()`, so a reboot never resets or skips the timer.
      * 3. Verifies the AndroidKeyStore `HmacSHA256` signature via `CryptoIntegrityManager.verifySessionState`.
      */
+    @WorkerThread
     fun computeVerifiedSessionElapsed(session: FocusSessionEntity): Pair<Int, Boolean> {
         val nowWall = System.currentTimeMillis()
         val nowMono = SystemClock.elapsedRealtime()
-        val currentBoot = querySystemBootCount()
+        val currentBoot = querySystemBootCountOrNull()
 
         val wallElapsedSec = ((nowWall - session.startWallTimeMillis) / 1000L).coerceAtLeast(0L)
         val hmacValid = CryptoIntegrityManager.verifySessionState(session)
 
-        val rebootOccurred = (session.bootCount > 0 && currentBoot != session.bootCount) ||
+        val rebootOccurred = (currentBoot != null && session.bootCount > 0 && currentBoot != session.bootCount) ||
             (session.lastTickElapsedRealtimeMillis > 0L && nowMono < session.lastTickElapsedRealtimeMillis)
 
         return if (!rebootOccurred && session.startElapsedRealtimeMillis > 0L && nowMono >= session.startElapsedRealtimeMillis) {
@@ -1045,7 +1112,7 @@ class MonolithRepository(
             isMonotonicClockIntact = clockIntact,
             isHmacSignatureValid = hmacIntact,
             clockDriftSeconds = driftSeconds,
-            systemBootCount = querySystemBootCount(),
+            systemBootCount = querySystemBootCountOrNull() ?: 0,
             installedLauncherAppsCount = appsCount
         )
     }
@@ -1216,21 +1283,27 @@ class MonolithRepository(
      * manual sessions and when nothing is active.
      */
     suspend fun recordAttendanceEvidence(kindBit: Int, atMillis: Long = System.currentTimeMillis()) {
-        val active = dao.getActiveSessionSnapshot() ?: return
-        if (active.routineId == null) return
-        val first = if (active.firstEvidenceMillis == 0L) atMillis
-            else minOf(active.firstEvidenceMillis, atMillis)
-        val last = maxOf(active.lastEvidenceMillis, atMillis)
-        if ((active.evidenceMask and kindBit) != 0 &&
-            first == active.firstEvidenceMillis && last == active.lastEvidenceMillis
-        ) return
-        dao.updateSession(
-            active.copy(
-                evidenceMask = active.evidenceMask or kindBit,
-                firstEvidenceMillis = first,
-                lastEvidenceMillis = last
+        // Issue #33 (audit R1): the read-modify-write runs inside ONE
+        // transaction and re-reads the row there — two evidence
+        // stamps landing together can no longer lose each other's
+        // bits to a stale whole-row write.
+        databaseProvider().withTransaction {
+            val active = dao.getActiveSessionSnapshot() ?: return@withTransaction
+            if (active.routineId == null) return@withTransaction
+            val first = if (active.firstEvidenceMillis == 0L) atMillis
+                else minOf(active.firstEvidenceMillis, atMillis)
+            val last = maxOf(active.lastEvidenceMillis, atMillis)
+            if ((active.evidenceMask and kindBit) != 0 &&
+                first == active.firstEvidenceMillis && last == active.lastEvidenceMillis
+            ) return@withTransaction
+            dao.updateSession(
+                active.copy(
+                    evidenceMask = active.evidenceMask or kindBit,
+                    firstEvidenceMillis = first,
+                    lastEvidenceMillis = last
+                )
             )
-        )
+        }
     }
 
     /**
@@ -1285,9 +1358,10 @@ class MonolithRepository(
      * outcome name, or null for SLEEP / non-routine / already handled
      * without a stamp.
      */
-    suspend fun finaliseRoutineSession(session: FocusSessionEntity, nowMillis: Long): String? {
-        if (session.routineId == null) return null
-        if (session.routineOutcome != null) return session.routineOutcome
+    suspend fun finaliseRoutineSession(session: FocusSessionEntity, nowMillis: Long): String? =
+        withContext(Dispatchers.IO) {
+        if (session.routineId == null) return@withContext null
+        if (session.routineOutcome != null) return@withContext session.routineOutcome
         val routine = dao.getRoutineById(session.routineId)
         if (routine?.loadoutName == SmartLoadout.SLEEP.name) {
             if (session.isActive) {
@@ -1305,7 +1379,7 @@ class MonolithRepository(
                     )
                 )
             }
-            return null
+            return@withContext null
         }
         val (attended, usedIntercepts) = computeAttendedSeconds(session)
         val windowSec = ((session.windowEndMillis - session.windowStartMillis) / 1000L).coerceAtLeast(0L)
@@ -1339,7 +1413,7 @@ class MonolithRepository(
                 }
             )
         )
-        return outcome.name
+        outcome.name
     }
 
     /**
@@ -1527,7 +1601,7 @@ class MonolithRepository(
         )
     }
 
-    suspend fun applyProfile(profile: FocusProfileEntity) {
+    suspend fun applyProfile(profile: FocusProfileEntity) = withContext(Dispatchers.IO) {
         val activeCategories = profile.blockedCategoriesCsv
             .split(",")
             .map { it.trim() }
@@ -1626,7 +1700,7 @@ class MonolithRepository(
         }
         val wallNow = System.currentTimeMillis()
         val monoNow = SystemClock.elapsedRealtime()
-        val bootCount = querySystemBootCount()
+        val bootCount = querySystemBootCountOrNull() ?: 0
         val hmac = CryptoIntegrityManager.signSessionState(
             startWallTimeMillis = wallNow,
             startElapsedRealtimeMillis = monoNow,
@@ -1670,8 +1744,7 @@ class MonolithRepository(
         // actually hold for this row, provable later from the row
         // itself. Exactly one writer exists for these columns
         // (this insert); no DAO update for them will ever exist.
-        val database = MonolithDatabase.getInstance(context)
-        return database.withTransaction {
+        return databaseProvider().withTransaction {
             val heldApps = countHeldApps(dao.getAllAppsSnapshot())
             val heldSites = dao.getAllSitesSnapshot().size
             dao.deactivateAllSessions()
@@ -1711,8 +1784,7 @@ class MonolithRepository(
         // Read+write run in one transaction (his R-K3 mitigation):
         // a shield tick landing between them can no longer be
         // clobbered by the stale copy.
-        val database = MonolithDatabase.getInstance(context)
-        return database.withTransaction {
+        return databaseProvider().withTransaction {
             val row = dao.getActiveSessionSnapshot() ?: return@withTransaction false
             if (row.id != sessionId || !row.isActive) return@withTransaction false
             val wallNow = System.currentTimeMillis()
@@ -1775,8 +1847,7 @@ class MonolithRepository(
         faulted: Boolean = false,
         faultWallMillis: Long = 0L
     ): Int {
-        val database = MonolithDatabase.getInstance(context)
-        return database.withTransaction {
+        return databaseProvider().withTransaction {
             // Seed-if-absent INSIDE the transaction: the claim's
             // targeted UPDATE matches zero rows on a settings row
             // that was never written, and the № would exist only
@@ -2309,7 +2380,7 @@ class MonolithRepository(
         val next = advancePastBreak(
             session = row,
             nowMono = nowMono,
-            currentBoot = querySystemBootCount(),
+            currentBoot = querySystemBootCountOrNull() ?: row.bootCount,
             beatWall = row.shieldLastBeatWallMillis,
             breakTakenSeconds = row.breakTakenSeconds + taken
         )
@@ -2326,9 +2397,30 @@ class MonolithRepository(
     suspend fun updateSessionProgress(
         session: FocusSessionEntity,
         stampShieldBeat: Boolean = false
+    ): FocusSessionEntity = databaseProvider().withTransaction {
+        // Issue #33 (audit R1): two tickers drive this function (the
+        // ViewModel loop and the Shield service) and each used to
+        // write a whole row computed from its caller's stale
+        // snapshot — clobbering phantom-reach counts and evidence
+        // stamps written since. The tick now runs in ONE transaction
+        // and computes from the row AS IT STANDS in the database;
+        // the caller's snapshot only names the session. A row that
+        // was disarmed/finalised since the snapshot is returned
+        // untouched — a tick never resurrects it.
+        val fresh = dao.getSessionById(session.id)
+        when {
+            fresh == null -> session
+            !fresh.isActive -> fresh
+            else -> updateSessionProgressLocked(fresh, stampShieldBeat)
+        }
+    }
+
+    private suspend fun updateSessionProgressLocked(
+        session: FocusSessionEntity,
+        stampShieldBeat: Boolean
     ): FocusSessionEntity {
         val nowMono = SystemClock.elapsedRealtime()
-        val currentBoot = querySystemBootCount()
+        val currentBoot = querySystemBootCountOrNull()
         // Slice E (Nocke §2.2): the shield's own tick stamps its
         // beat into every copy this function persists — the beat
         // is the finish machine's gap evidence. Other callers
@@ -2340,11 +2432,11 @@ class MonolithRepository(
         val effectiveTarget = session.targetDurationSeconds + penaltyAdd
 
         // Re-anchor if device rebooted so subsequent ticks on the new boot stay monotonic
-        val rebootDetected = (session.bootCount > 0 && currentBoot != session.bootCount) ||
+        val rebootDetected = (currentBoot != null && session.bootCount > 0 && currentBoot != session.bootCount) ||
             (session.lastTickElapsedRealtimeMillis > 0L && nowMono < session.lastTickElapsedRealtimeMillis)
         val newAccumulated = if (rebootDetected) verifiedElapsed else session.accumulatedBeforeRebootSeconds
         val newStartMono = if (rebootDetected) nowMono else session.startElapsedRealtimeMillis
-        val newBootCount = if (rebootDetected) currentBoot else session.bootCount
+        val newBootCount = if (rebootDetected) currentBoot ?: session.bootCount else session.bootCount
         val newHmac = if (rebootDetected) {
             CryptoIntegrityManager.signSessionState(
                 session.startWallTimeMillis,
@@ -2405,7 +2497,7 @@ class MonolithRepository(
                 val nextBlockSession = advancePastBreak(
                     session = session,
                     nowMono = nowMono,
-                    currentBoot = currentBoot,
+                    currentBoot = newBootCount,
                     beatWall = beatWall,
                     breakTakenSeconds = session.breakTakenSeconds +
                         breakLengthSeconds(session)
@@ -2541,19 +2633,26 @@ class MonolithRepository(
         outcome: String,
         triggerReason: String = "Habit"
     ) {
-        dao.incrementInterceptCount(packageName)
-        dao.insertInterceptLog(
-            InterceptLogEntity(
-                packageName = packageName,
-                appName = appName,
-                sessionIntention = sessionIntention,
-                outcome = outcome,
-                triggerReason = triggerReason
+        // Issue #33 (audit R1): count + log + phantom-reach increment
+        // are ONE transaction — a kill between them used to leave the
+        // three permanently disagreeing, and the session row is
+        // re-read inside the transaction so the +1 never lands on a
+        // stale whole-row copy.
+        databaseProvider().withTransaction {
+            dao.incrementInterceptCount(packageName)
+            dao.insertInterceptLog(
+                InterceptLogEntity(
+                    packageName = packageName,
+                    appName = appName,
+                    sessionIntention = sessionIntention,
+                    outcome = outcome,
+                    triggerReason = triggerReason
+                )
             )
-        )
-        val active = dao.getActiveSessionSnapshot()
-        if (active != null) {
-            dao.updateSession(active.copy(phantomReachesBlocked = active.phantomReachesBlocked + 1))
+            val active = dao.getActiveSessionSnapshot()
+            if (active != null) {
+                dao.updateSession(active.copy(phantomReachesBlocked = active.phantomReachesBlocked + 1))
+            }
         }
     }
 
@@ -2656,8 +2755,7 @@ class MonolithRepository(
      * passes through here (§4.4).
      */
     suspend fun completeEmergencyBreak(): BreakResult {
-        val database = MonolithDatabase.getInstance(context)
-        return database.withTransaction {
+        return databaseProvider().withTransaction {
             val active = dao.getActiveSessionSnapshot()
                 ?: return@withTransaction BreakResult.NoActiveSession
             val now = System.currentTimeMillis()
@@ -2769,33 +2867,38 @@ class MonolithRepository(
             isGraceCancel -> SessionOutcome.GRACE_CANCEL
             else -> SessionOutcome.ENDED_EARLY
         }
-        dao.updateSession(
-            active.copy(
-                elapsedSeconds = bankedElapsed,
-                isActive = false,
-                completedSuccessfully = completed,
-                tamperDetected = tamper,
-                forgedArtifactId = partialStampId,
-                outcome = outcomeStamp,
-                // RC-01: the disarm doors are ending writes too —
-                // the FLOW door's stamp is what its slip's ENDED
-                // reads (first stamp wins).
-                endWallMillis = if (active.endWallMillis == 0L) {
-                    System.currentTimeMillis()
-                } else {
-                    active.endWallMillis
-                }
-            )
+        // Issue #33 (audit R1): the ending write and its intercept
+        // log commit together or not at all — a kill between them
+        // used to leave a disarmed session with no log, or a log
+        // for a session still standing.
+        val disarmed = active.copy(
+            elapsedSeconds = bankedElapsed,
+            isActive = false,
+            completedSuccessfully = completed,
+            tamperDetected = tamper,
+            forgedArtifactId = partialStampId,
+            outcome = outcomeStamp,
+            // RC-01: the disarm doors are ending writes too —
+            // the FLOW door's stamp is what its slip's ENDED
+            // reads (first stamp wins).
+            endWallMillis = if (active.endWallMillis == 0L) {
+                System.currentTimeMillis()
+            } else {
+                active.endWallMillis
+            }
         )
-        if (!completed && !isGraceCancel) {
-            dao.insertInterceptLog(
-                InterceptLogEntity(
-                    packageName = "com.monolith.system",
-                    appName = if (bankedElapsed >= 60) "Partial Stamp (${bankedElapsed / 60}m)" else "Unlatched Early",
-                    sessionIntention = active.intention,
-                    outcome = outcomeReason
+        databaseProvider().withTransaction {
+            dao.updateSession(disarmed)
+            if (!completed && !isGraceCancel) {
+                dao.insertInterceptLog(
+                    InterceptLogEntity(
+                        packageName = "com.monolith.system",
+                        appName = if (bankedElapsed >= 60) "Partial Stamp (${bankedElapsed / 60}m)" else "Unlatched Early",
+                        sessionIntention = active.intention,
+                        outcome = outcomeReason
+                    )
                 )
-            )
+            }
         }
     }
 
