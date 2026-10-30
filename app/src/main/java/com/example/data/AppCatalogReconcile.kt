@@ -401,7 +401,18 @@ object AppCatalogReconcile {
                     // (5s wall, 2-minute lease) is exactly the
                     // ceremony an OTP or UPI approval needs.
                     AppCategory.MESSAGING, AppCategory.MUSIC, AppCategory.FINANCE -> AppBlockTier.PEEK_2M
-                    else -> AppBlockTier.OPEN
+                    // Shield Rethink 2, Step 2 — THE INVERSION: the
+                    // unruled remainder is born SHUT. Before this, an
+                    // app no remembered ruling, factory preset or
+                    // deliberate category policy had an opinion about
+                    // was born OPEN — on the shipped catalogue that
+                    // was the majority of the phone, reachable during
+                    // a hold until he happened to rule it. Now the
+                    // default is the seal: exceptions (PEEK / OPEN)
+                    // are named — by him from the Sheet, or by a
+                    // reasoned category policy like #120/#132 above —
+                    // never by the absence of a guess.
+                    else -> AppBlockTier.LOCKED
                 }
                 toInsert += BlockedAppEntity(
                     packageName = pkg,

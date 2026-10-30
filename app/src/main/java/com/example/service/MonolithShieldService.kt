@@ -20,6 +20,7 @@ import com.example.R
 import com.example.data.AppBlockTier
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
+import com.example.data.SightState
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -94,6 +95,9 @@ class MonolithShieldService : Service() {
                 protecting = false
                 protectingSessionId = -1
                 protectingMono = 0L
+                sightState = SightState.BLIND_NO_ACCESS
+                sightMono = 0L
+                lastVerifiedWallMillis = null
                 WatchStore.onShieldIteration(protecting = false)
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -124,6 +128,9 @@ class MonolithShieldService : Service() {
                     protecting = false
                     protectingSessionId = -1
                     protectingMono = 0L
+                    sightState = SightState.BLIND_NO_ACCESS
+                    sightMono = 0L
+                    lastVerifiedWallMillis = null
                     WatchStore.poke()
                 }
                 START_STICKY
@@ -184,7 +191,7 @@ class MonolithShieldService : Service() {
             ServiceCompat.startForeground(
                 this,
                 NOTIFICATION_ID,
-                buildNotification("Monolith Locked", "Protecting your focus session..."),
+                buildNotification("Monolith Shield", "Starting - not yet verified"),
                 fgsType
             )
         } catch (e: Exception) {
@@ -195,6 +202,9 @@ class MonolithShieldService : Service() {
             protecting = false
             protectingSessionId = -1
             protectingMono = 0L
+            sightState = SightState.BLIND_NO_ACCESS
+            sightMono = 0L
+            lastVerifiedWallMillis = null
             WatchStore.onShieldIteration(protecting = false)
             stopSelf()
             return false
@@ -332,28 +342,6 @@ class MonolithShieldService : Service() {
                     )
                 }
 
-                // Live Wire: the shield is PROTECTING only once a
-                // full monitor iteration has run under a live
-                // session - started is not protecting. The cascade
-                // witness (Opal L2) is stamped at the same flip:
-                // the session this iteration read, and the mono it
-                // flipped - CONFIRMED stamp for SHIELD-PROTECTING.
-                if (!protecting) {
-                    protecting = true
-                    protectingSessionId = updated.id
-                    protectingMono = SystemClock.elapsedRealtime()
-                    WatchStore.poke()
-                    // Issue #80 finding 4: the session just armed —
-                    // sweep notifications blocked apps posted BEFORE
-                    // this moment through the listener's capture path.
-                    try {
-                        MonolithNotificationListener.instance?.sweepActiveNotifications()
-                    } catch (_: Exception) {}
-                }
-                // Watch Store (chrome C3): ONE publication per
-                // iteration — the engine heartbeat plus a re-read of
-                // the two BIND items' present state.
-                WatchStore.onShieldIteration(protecting)
 
                 val nowMono = SystemClock.elapsedRealtime()
                 val blockedPackages = dao.getAllAppsSnapshot()
@@ -414,6 +402,35 @@ class MonolithShieldService : Service() {
                 val expiredPeeks = com.example.data.expiredPeekPackages(
                     dao.getAllAppsSnapshot(), nowMono
                 )
+                // Shield Rethink 2, Step 1 (Door A): the probe runs
+                // BEFORE any certification, and its sight verdict is
+                // stamped on the beat. The pre-Step-1 order flipped
+                // `protecting` first and queried afterwards over a
+                // collapsed null — a loop with its usage access
+                // revoked certified itself forever while seeing
+                // nothing. Now: no sight, no flip; and the sight of
+                // every beat is published with the heartbeat, so a
+                // receipt can tell a held shield from a blind one
+                // within one probe cycle. Sight has two lawful
+                // sources: this loop's own usage-stats probe, and
+                // the accessibility door's live foreground stamp —
+                // either one seeing is sight. A call no longer
+                // blinds either door (#332 F2): its surfaces are
+                // exempt per-package through the safety floor, and
+                // sight during a call is real sight.
+                val probe = repository.probeForegroundApp(blockedPackages, expiredPeeks)
+                val sight = when {
+                    probe.sight == SightState.IN_CALL -> SightState.IN_CALL
+                    probe.sight == SightState.SIGHTED ||
+                        MonolithAccessibilityService.foregroundPackage != null ->
+                        SightState.SIGHTED
+                    else -> probe.sight
+                }
+                sightState = sight
+                sightMono = nowMono
+                if (sight == SightState.SIGHTED) {
+                    lastVerifiedWallMillis = System.currentTimeMillis()
+                }
                 val a11yForeground = if (MonolithAccessibilityService.instance != null) {
                     MonolithAccessibilityService.foregroundPackage
                 } else {
@@ -434,9 +451,35 @@ class MonolithShieldService : Service() {
                     .selectBlockedForeground(
                         accessibilityForeground = a11yForeground,
                         blockedPackages = blockedPackages,
-                        usageStatsFallback = { repository.queryForegroundBlockedApp(blockedPackages, expiredPeeks) }
+                        usageStatsFallback = { probe.blockedPackage }
                     )
                     ?.takeUnless { com.example.data.SafetyFloor.isFloorPackage(it) }
+                // Live Wire: the shield is PROTECTING only once a
+                // full monitor iteration has run under a live
+                // session AND seen the foreground — started is not
+                // protecting, and blind is not protecting. The
+                // cascade witness (Opal L2) is stamped at the same
+                // flip: the session this iteration read, and the
+                // mono it flipped - CONFIRMED stamp for
+                // SHIELD-PROTECTING.
+                if (!protecting && sight == SightState.SIGHTED) {
+                    protecting = true
+                    protectingSessionId = updated.id
+                    protectingMono = SystemClock.elapsedRealtime()
+                    WatchStore.poke()
+                    // Issue #80 finding 4: the session just armed —
+                    // sweep notifications blocked apps posted BEFORE
+                    // this moment through the listener's capture path.
+                    try {
+                        MonolithNotificationListener.instance?.sweepActiveNotifications()
+                    } catch (_: Exception) {}
+                }
+                // Watch Store (chrome C3): ONE publication per
+                // iteration — the engine heartbeat plus a re-read of
+                // the two BIND items' present state; Step 1 adds the
+                // beat's sight and the last verified wall instant.
+                WatchStore.onShieldIteration(protecting, sight, lastVerifiedWallMillis)
+
                 // Issue #290 F5: a dark/locked screen vetoes the
                 // verdict (see screenInteractive above).
                 val foregroundBlockedPkg = if (screenInteractive) selectedForeground else null
@@ -479,6 +522,9 @@ class MonolithShieldService : Service() {
                     protecting = false
                     protectingSessionId = -1
                     protectingMono = 0L
+                    sightState = SightState.BLIND_NO_ACCESS
+                    sightMono = 0L
+                    lastVerifiedWallMillis = null
                     WatchStore.onShieldIteration(protecting = false)
                     // One cadence before the next attempt. If the
                     // scope was cancelled during this wait, the
@@ -500,6 +546,9 @@ class MonolithShieldService : Service() {
         protecting = false
         protectingSessionId = -1
         protectingMono = 0L
+        sightState = SightState.BLIND_NO_ACCESS
+        sightMono = 0L
+        lastVerifiedWallMillis = null
         WatchStore.onShieldIteration(protecting = false)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -654,6 +703,9 @@ class MonolithShieldService : Service() {
         protecting = false
         protectingSessionId = -1
         protectingMono = 0L
+        sightState = SightState.BLIND_NO_ACCESS
+        sightMono = 0L
+        lastVerifiedWallMillis = null
         WatchStore.onShieldIteration(protecting = false)
         monitorJob?.cancel()
         serviceScope.cancel()
@@ -695,6 +747,23 @@ class MonolithShieldService : Service() {
 
         @Volatile
         var protectingMono: Long = 0L
+            internal set
+
+        /** Shield Rethink 2, Step 1 (Door A): the sight verdict of
+         *  the loop's latest beat, the mono it was taken at, and the
+         *  wall instant of the latest SIGHTED beat under a live
+         *  session. Reset wherever `protecting` is reset: the stamp
+         *  may only ever attest the current start's own loop. */
+        @Volatile
+        var sightState: SightState = SightState.BLIND_NO_ACCESS
+            internal set
+
+        @Volatile
+        var sightMono: Long = 0L
+            internal set
+
+        @Volatile
+        var lastVerifiedWallMillis: Long? = null
             internal set
         const val TAG = "MonolithShield"
         const val RESTART_REQUEST_CODE = 0x5211

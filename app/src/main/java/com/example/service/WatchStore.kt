@@ -154,6 +154,14 @@ data class WatchSnapshot(
     val engineHeartbeatWall: Long,
     val engineProtecting: Boolean,
     val lastProvedWallMillis: Long?,
+    /** Shield Rethink 2, Step 1 — Door A: the shield loop's sight
+     *  on its latest beat, and the wall instant of the latest beat
+     *  that was SIGHTED under a live session (the receipt's
+     *  "verified [HH:MM]" / "last held [HH:MM]"). Sight defaults to
+     *  BLIND_NO_ACCESS: before the loop's first probe, nothing has
+     *  been seen, and the snapshot must not pretend otherwise. */
+    val engineSight: com.example.data.SightState = com.example.data.SightState.BLIND_NO_ACCESS,
+    val engineLastVerifiedWallMillis: Long? = null,
     /** Emission generation (issue #48): bumped by [WatchStore.poke]
      *  so a poke is a REAL emission — StateFlow suppresses equal
      *  values, and a bare copy() of a data class is equal to the
@@ -329,7 +337,11 @@ object WatchStore {
      * re-read of the two BIND items' present state, stamped as
      * measurements of this instant.
      */
-    fun onShieldIteration(protecting: Boolean) {
+    fun onShieldIteration(
+        protecting: Boolean,
+        sight: com.example.data.SightState = com.example.data.SightState.BLIND_NO_ACCESS,
+        lastVerifiedWallMillis: Long? = null
+    ) {
         val mono = SystemClock.elapsedRealtime()
         val wall = System.currentTimeMillis()
         val a11y = MonolithAccessibilityService.instance != null
@@ -338,7 +350,10 @@ object WatchStore {
             var next = current.copy(
                 engineHeartbeatMono = mono,
                 engineHeartbeatWall = wall,
-                engineProtecting = protecting
+                engineProtecting = protecting,
+                engineSight = sight,
+                engineLastVerifiedWallMillis = lastVerifiedWallMillis
+                    ?: current.engineLastVerifiedWallMillis
             )
             next = next.withMeasurement(
                 WatchMeasurement(

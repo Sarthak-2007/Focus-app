@@ -341,6 +341,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val shotGround by viewModel.shotGround.collectAsStateWithLifecycle()
     val finishState by viewModel.finishState.collectAsStateWithLifecycle()
     val receiptState by viewModel.receiptState.collectAsStateWithLifecycle()
+    val lastReceiptSessionId by viewModel.lastReceiptSessionId.collectAsStateWithLifecycle()
     val isAlwaysOnDeskClockVisible by viewModel.isAlwaysOnDeskClockVisible.collectAsStateWithLifecycle()
     val burnInFigure8MinuteStep by viewModel.burnInFigure8MinuteStep.collectAsStateWithLifecycle()
     val showNotificationDigestSheet by viewModel.showNotificationDigestSheet.collectAsStateWithLifecycle()
@@ -356,6 +357,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val tierChangeForUndo by viewModel.tierChangeForUndo.collectAsStateWithLifecycle()
 
     val sealed = activeSession?.isActive == true
+    // Shield Rethink 2, Step 1: the receipt line for the Shield's
+    // dated truth line, and the wedge's grace carve-out — the same
+    // <=10s window the Deck's grace abort reads (elapsedSeconds).
+    val shieldReceiptLine by viewModel.shieldReceiptLine.collectAsStateWithLifecycle()
+    val shieldIntention by viewModel.shieldIntention.collectAsStateWithLifecycle()
+    val shieldInGracePeriod = activeSession?.let { it.isActive && it.elapsedSeconds <= 10 } == true
     // HB-1 / HB-2 (Truth Car 2; Band's header-band audit): ONE
     // predicate for the door. Until this car, the header's isSealed
     // drank from `sealed` alone while the VM's navigation law also
@@ -837,6 +844,16 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     sealT0MonoMs = (armPhase as? ArmPhase.SealedRunning)?.t0Mono,
                                     finishState = finishState,
                                     receiptState = receiptState,
+                                    lastReceiptSessionId = lastReceiptSessionId,
+                                    onShowLastReceipt = { sessionId ->
+                                        // Un-dismiss first: this slip may
+                                        // have been dismissed before the arm
+                                        // that cleared it, and the host's
+                                        // dismissed id would otherwise hide
+                                        // the re-issued slip forever.
+                                        dismissedReceiptSessionId = -1
+                                        viewModel.publishReceipt(sessionId)
+                                    },
                                     onWitnessSledReturn = viewModel::witnessSledReturn,
                                     onTryStartSledReturn = viewModel::tryStartSledReturn,
                                     sledInitialFraction = {
@@ -869,10 +886,11 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     selectedCategory = selectedCategory,
                                     shortsReelsSniperEnabled = shortsReelsSniperEnabled,
                                     browserUrlBlockerEnabled = browserUrlBlockerEnabled,
-                                    profiles = profiles,
-                                    selectedProfileName = selectedProfileName,
-                                    loadoutCapIndex = loadoutCapIndex,
                                     isSessionActive = sealed,
+                                    receiptLine = shieldReceiptLine,
+                                    intention = shieldIntention,
+                                    onIntentionChanged = viewModel::setShieldIntention,
+                                    isGracePeriod = shieldInGracePeriod,
                                     ratchetWarningMessage = ratchetWarningMessage,
                                     tierChangeForUndo = tierChangeForUndo,
                                     onUndoTierChange = viewModel::undoLastTierChange,
@@ -887,11 +905,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                         }
                                     },
                                     onCycleDailyLimit = viewModel::cycleAppDailyLimit,
-                                    onApplySmartLoadout = viewModel::applySmartLoadout,
                                     onSetAppCategory = viewModel::setAppCategory,
-                                    onSelectProfile = viewModel::selectAndApplyProfile,
-                                    profileUndoAvailable = profileUndoAvailable,
-                                    onUndoProfileApply = viewModel::undoLastProfileApply,
                                     onToggleShortsReelsSniper = viewModel::toggleShortsReelsSniper,
                                     onToggleBrowserUrlBlocker = viewModel::toggleBrowserUrlBlocker,
                                     routines = routines,
@@ -1183,7 +1197,26 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     onDismiss = {
                         dismissedReceiptSessionId = standingReceipt.sessionId
                         viewModel.persistReceiptDismissal(standingReceipt.sessionId)
-                    }
+                    },
+                    // Issue #135 F3: NEXT SESSION — dismiss the slip;
+                    // the Deck underneath is already idle and ready
+                    // to arm. The detention/sled ceremony is untouched.
+                    onNextSession = { dismissedReceiptSessionId = standingReceipt.sessionId },
+                    // Issue #135 F4: DONE WITH THIS TASK — only while
+                    // the session's task is still open (the host's
+                    // active task, not yet COMPLETED); completes it
+                    // through the same path the Deck/Tasks use, then
+                    // dismisses the slip.
+                    onDoneWithTask = activeTask
+                        ?.takeIf {
+                            it.resolvedStatus != com.example.data.TaskQueueStatus.COMPLETED
+                        }
+                        ?.let { task ->
+                            {
+                                viewModel.completeTaskAndAdvance(task.id)
+                                dismissedReceiptSessionId = standingReceipt.sessionId
+                            }
+                        }
                 )
             }
 

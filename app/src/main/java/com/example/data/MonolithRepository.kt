@@ -117,13 +117,29 @@ internal fun expiredPeekPackages(
     .map { it.packageName }
     .toSet()
 
+/** Shield Rethink 2, Step 1 — Door A's sight states. The shield
+ *  loop stamps every beat with one of these; a receipt may claim
+ *  HELD only over a SIGHTED beat. IN_CALL is lawful non-sight (a
+ *  call owns the foreground and the query is not run); the two
+ *  BLIND states are the loop running without eyes. */
+enum class SightState { SIGHTED, BLIND_NO_ACCESS, BLIND_ERROR, IN_CALL }
+
+/** One foreground probe: what the query saw, and — when it saw a
+ *  blocked app in front — which one. [blockedPackage] is null both
+ *  for a sighted-clean foreground and for every blind outcome;
+ *  [sight] is what tells those apart. */
+data class ForegroundProbe(
+    val sight: SightState,
+    val blockedPackage: String?
+)
+
 /**
  * The repository. THREADING CONTRACT (issue #33, audit R1): every
  * `suspend` function in this class does its Room / SharedPreferences /
  * Settings / signing work on [Dispatchers.IO] or inside a Room
  * transaction (which runs on Room's own executor) — a caller may use
  * any dispatcher. Every NON-suspend function that touches the system
- * (usage stats, AppOps, Settings, SharedPreferences) is annotated
+ * (usage stats, AppOps, Settings / SharedPreferences) is annotated
  * [WorkerThread]: it blocks on IPC and must never run on the main
  * thread. Pure in-memory reads are the only un-annotated sync calls.
  *
@@ -987,16 +1003,47 @@ class MonolithRepository(
      * [expiredPeekPackages] the freshness filter is waived and the
      * usage window widened: the package is treated as
      * foreground-blocked on this poll regardless of lastTimeUsed age.
+     *
+     * This accessor keeps the historical collapsed contract (a
+     * package, or null for EVERY other outcome). Callers that print
+     * or certify anything must use [probeForegroundApp] instead —
+     * here null means four different things, and three of them are
+     * blindness, not emptiness.
      */
     @WorkerThread
     fun queryForegroundBlockedApp(
         blockedPackages: Set<String>,
         expiredPeekPackages: Set<String>
-    ): String? {
-        if (!hasUsageStatsPermission() || blockedPackages.isEmpty()) return null
+    ): String? = probeForegroundApp(blockedPackages, expiredPeekPackages).blockedPackage
+
+    /**
+     * Shield Rethink 2, Step 1 (Door A): the foreground query WITH
+     * its sight verdict attached. The old query returned null for a
+     * clean foreground, a revoked grant, a dead UsageStatsManager
+     * and a swallowed exception alike — and the shield loop flipped
+     * `protecting` over that null, certifying a shield that could
+     * be running blind. Here the outcomes are told apart:
+     * SIGHTED (the query answered; [ForegroundProbe.blockedPackage]
+     * may still be null — a clean foreground is a sighting),
+     * BLIND_NO_ACCESS (the usage grant is not ALLOWED — the door
+     * cannot see at all), BLIND_ERROR (the query itself failed).
+     * The door beneath is issue #332's event stream; a call no
+     * longer blinds it (#332 F2 exempts the call's own surfaces
+     * per-package via the safety floor), so sight during a call is
+     * real sight and IN_CALL survives only as a legacy verdict the
+     * loop no longer produces. An empty blocked set is SIGHTED:
+     * there is nothing to see, and the query's answer about it is
+     * complete.
+     */
+    fun probeForegroundApp(
+        blockedPackages: Set<String>,
+        expiredPeekPackages: Set<String>
+    ): ForegroundProbe {
+        if (blockedPackages.isEmpty()) return ForegroundProbe(SightState.SIGHTED, null)
+        if (!hasUsageStatsPermission()) return ForegroundProbe(SightState.BLIND_NO_ACCESS, null)
         return try {
             val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-                ?: return null
+                ?: return ForegroundProbe(SightState.BLIND_ERROR, null)
             val end = System.currentTimeMillis()
 
             // Issue #99 F1 (kept): the expired-peek waiver still
@@ -1013,16 +1060,16 @@ class MonolithRepository(
                             !SafetyFloor.isFloorPackage(it.packageName)
                     }
                     ?.maxByOrNull { it.lastTimeUsed }
-                if (expiredHit != null) return expiredHit.packageName
+                if (expiredHit != null) {
+                    return ForegroundProbe(SightState.SIGHTED, expiredHit.packageName)
+                }
             }
 
-            // Issue #332 F1: the door now reads the real UsageEvents
-            // stream on a 20-second window (the Flipd supplement's
-            // benchmark) instead of daily-aggregate lastTimeUsed
-            // with an 8-second cutoff, which went blind to a blocked
-            // app the moment it settled into use.
+            // Issue #332 F1: the door reads the real UsageEvents
+            // stream on a 20-second window instead of the daily
+            // aggregate's lastTimeUsed with an 8-second cutoff.
             val usageEvents = usm.queryEvents(end - ForegroundDoor.WINDOW_MS, end)
-                ?: return null
+                ?: return ForegroundProbe(SightState.BLIND_ERROR, null)
             // Issue #290 F4 disposition (merge-time truth): the
             // event-stream cure landed on main first via issue
             // #332 (ForegroundDoor, below) — this branch's own
@@ -1035,17 +1082,13 @@ class MonolithRepository(
                 val pkg = event.packageName ?: continue
                 events.add(ForegroundDoor.FgEvent(pkg, event.eventType, event.timeStamp))
             }
-            // Issue #332 F2: a live call no longer suspends this
-            // door wholesale (the pre-cure early return made every
-            // call a complete enforcement holiday, uninstall guard
-            // included). The call's own surfaces are exempt —
-            // the safety floor covers dialer / incallui / telecom —
-            // and every other blocked app stays blocked mid-call,
-            // which is exactly Flipd's per-package construction.
-            ForegroundDoor.foregroundBlocked(events, blockedPackages)
+            ForegroundProbe(
+                SightState.SIGHTED,
+                ForegroundDoor.foregroundBlocked(events, blockedPackages)
+            )
         } catch (e: Exception) {
-            swallow("queryForegroundBlockedApp", e)
-            null
+            swallow("probeForegroundApp", e)
+            ForegroundProbe(SightState.BLIND_ERROR, null)
         }
     }
 
