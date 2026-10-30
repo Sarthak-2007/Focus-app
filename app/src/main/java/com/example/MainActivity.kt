@@ -327,8 +327,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     LaunchedEffect(groundNight, hostActivity) {
         hostActivity?.enableEdgeToEdge(
             statusBarStyle = if (groundNight) {
+                // SystemBarStyle.dark takes ONE scrim arg (the
+                // two-arg form is light()'s) — the two-arg call
+                // was PR #359's CI compile failure, fixed here.
                 SystemBarStyle.dark(
-                    android.graphics.Color.TRANSPARENT,
                     android.graphics.Color.TRANSPARENT
                 )
             } else {

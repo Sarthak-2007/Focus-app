@@ -494,6 +494,9 @@ class MonolithViewModel(
 
     fun persistReceiptDismissal(sessionId: Int) {
         receiptDismissalStore.dismiss(sessionId)
+        // Issue #143: the slip has been read and put away — the
+        // finish's night hold retires with it.
+        _finishNightHold.value = false
     }
 
     private val _searchQuery = MutableStateFlow("")
@@ -581,6 +584,20 @@ class MonolithViewModel(
     private val _finishState = MutableStateFlow<FinishState?>(null)
     val finishState: StateFlow<FinishState?> = _finishState.asStateFlow()
 
+    // Issue #143 (closure pass, STURM-4): the night hold after a
+    // finish. Set ONLY at a witnessed E0 whose session was lived
+    // in night (latched below, while the session ran — by E0 the
+    // theme has already flipped, so the fact must be captured
+    // during the session, never re-derived after it). It holds
+    // the night through the detention AND the receipt's reading
+    // (the finish state itself retires at the rack's end, long
+    // before the slip is dismissed), and clears when the receipt
+    // is dismissed or the next session arms. A DAY session's
+    // finish never sets it — no night blast in reverse.
+    private val _finishNightHold = MutableStateFlow(false)
+    private var nightLatchedSessionId: Int? = null
+    private var nightLatchedForSession: Boolean = false
+
     /** F-Z1 (a) — the VM mirror of the shot's ground step, and
      *  F23's pin in the same state: SEALED_PRE_GROUND is the
      *  400ms where the scheme holds its day values while the
@@ -609,13 +626,13 @@ class MonolithViewModel(
         activeSession,
         _themeNow,
         _shotGround,
-        _finishState
-    ) { routineList, session, now, ground, finish ->
+        _finishNightHold
+    ) { routineList, session, now, ground, finishHold ->
         evaluateTheme(
             session?.isActive == true && ground == ShotGround.GROUNDED,
             routineList,
             now,
-            finishHeld = finish != null
+            finishHeld = finishHold
         )
     }.stateIn(
         viewModelScope, SharingStarted.Eagerly,
@@ -938,6 +955,22 @@ class MonolithViewModel(
                 }
             } else {
                 undoDeleteStore.clear()
+            }
+        }
+        // Issue #143: latch "this session is being lived in night"
+        // while it runs — E0 reads the latch, because by then the
+        // evaluation has already flipped back to day.
+        viewModelScope.launch {
+            combine(activeSession, themeEvaluation) { session, theme ->
+                session to theme
+            }.collect { (session, theme) ->
+                if (session?.isActive == true) {
+                    if (nightLatchedSessionId != session.id) {
+                        nightLatchedSessionId = session.id
+                        nightLatchedForSession = false
+                    }
+                    if (theme.isNight) nightLatchedForSession = true
+                }
             }
         }
         _freshStartNoteVisible.value = repository.freshStartNotePending()
@@ -1408,6 +1441,12 @@ class MonolithViewModel(
     ) {
         handledFinishIds += row.id
         val sessionId = row.id
+        // Issue #143: a witnessed finish of a night-lived session
+        // holds the night from this frame until the receipt is
+        // dismissed — detention and reading both stay in night.
+        if (witnessed && nightLatchedSessionId == sessionId && nightLatchedForSession) {
+            _finishNightHold.value = true
+        }
         val e0Mono = SystemClock.elapsedRealtime()
         val e0Wall = System.currentTimeMillis()
         if (activeSession.value?.id == sessionId) {
@@ -2641,6 +2680,7 @@ class MonolithViewModel(
         // Schlitten §3.1: the standing receipt and its sled gate
         // clear at the next arm — the slip stood until now.
         _receiptState.value = null
+        _finishNightHold.value = false
         sledReturnGate.clear()
         armProving.onLatch(
             intention = _intentionText.value,
