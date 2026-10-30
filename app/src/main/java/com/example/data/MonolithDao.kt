@@ -10,7 +10,12 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface MonolithDao {
     // Blocked Apps (3-Tier: LOCKED, PEEK_2M, OPEN)
-    @Query("SELECT * FROM blocked_apps ORDER BY isBlocked DESC, interceptCount DESC, appName ASC")
+    // Issue #142: the catalogue is a place to FIND an app, so it
+    // sorts A-Z by name (package as the stable tiebreak). The old
+    // enforcement-priority order (isBlocked, interceptCount) moved
+    // an app's row every time it was intercepted - a list that
+    // rearranges itself while the user is scanning it.
+    @Query("SELECT * FROM blocked_apps ORDER BY appName ASC, packageName ASC")
     fun getAllApps(): Flow<List<BlockedAppEntity>>
 
     @Query("SELECT * FROM blocked_apps")
@@ -30,6 +35,16 @@ interface MonolithDao {
 
     @Query("UPDATE blocked_apps SET activePeekUntilElapsedRealtime = :activeUntilMono, lastPeekEndElapsedRealtime = :peekEndMono WHERE packageName = :packageName")
     suspend fun updatePeekLeaseAndCooldown(packageName: String, activeUntilMono: Long, peekEndMono: Long): Int
+
+    // Issue #87 (process-death F1): both peek anchors are monotonic
+    // (SystemClock.elapsedRealtime) values. A reboot resets that clock
+    // to ~0, so every stored anchor becomes a far-future instant in
+    // the new boot — a live lease would resurrect for up to the whole
+    // previous uptime, and a spent lease's cooldown would never end.
+    // Zeroing BOTH fields on every row at real boot kills the lease
+    // and the cooldown together; neither means anything across a boot.
+    @Query("UPDATE blocked_apps SET activePeekUntilElapsedRealtime = 0, lastPeekEndElapsedRealtime = 0")
+    suspend fun clearAllPeekLeases()
 
     /** The prune (Ordner lane): rows for packages the phone no longer
      *  has leave the table at sync — the catalog is the phone's truth,

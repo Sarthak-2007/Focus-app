@@ -190,8 +190,25 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIncomingInterceptIntent(intent: Intent?, viewModel: MonolithViewModel) {
         if (intent == null) return
+        // Issue #155 (F5, re-homed at the STURM-4 merge): a tap on
+        // the shield notification is about the shield — land on
+        // SHIELD, not the default Deck. Intercept extras take
+        // precedence: when a firing's package rides the same intent,
+        // the intercept path below owns the delivery and this extra
+        // is simply consumed.
+        val fromShieldNotification = intent.getBooleanExtra(
+            MonolithShieldService.EXTRA_FROM_SHIELD_NOTIFICATION, false
+        )
+        if (fromShieldNotification) {
+            intent.removeExtra(MonolithShieldService.EXTRA_FROM_SHIELD_NOTIFICATION)
+        }
         val pkg = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
-        if (pkg.isNullOrBlank()) return
+        if (pkg.isNullOrBlank()) {
+            if (fromShieldNotification) {
+                viewModel.navigateTo(MonolithDestination.SHIELD)
+            }
+            return
+        }
         // Issue #68 F5, Tier 2 — provenance before trust: this
         // activity is exported (LAUNCHER), so any installed app
         // can send these extras. Honour them only with the
@@ -346,6 +363,15 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val profileUndoAvailable by viewModel.profileUndoAvailable.collectAsStateWithLifecycle()
     val intentionText by viewModel.intentionText.collectAsStateWithLifecycle()
     val activeSession by viewModel.activeSession.collectAsStateWithLifecycle()
+
+    // Issue #70 F3: the Deck primer's bit flips the moment the
+    // first session is live — the primer is a first-run-only
+    // surface and never returns.
+    LaunchedEffect(activeSession) {
+        if (activeSession?.isActive == true && viewModel.deckPrimerPending()) {
+            viewModel.markDeckPrimerDone()
+        }
+    }
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
     val allApps by viewModel.apps.collectAsStateWithLifecycle()
     val filteredApps by viewModel.filteredApps.collectAsStateWithLifecycle()
@@ -875,6 +901,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     appsCellCount = appsCellCount,
                                     appsSplit = appsSplit,
                                     deckWarrant = deckWarrant,
+                                    deckPrimerPending = viewModel.deckPrimerPending(),
                                     sealFreeze = sealFreeze,
                                     armPhase = armPhase,
                                     armSentence = armSentence,
@@ -1041,27 +1068,19 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     activeTask = activeTask,
                                     queuedTasks = queuedTasks,
                                     completedTasks = completedTasks,
-                                    deferredTasks = deferredTasks,
-                                    deletedTaskForUndo = deletedTaskForUndo,
-                                    totalQueueMinutes = totalQueueMinutes,
-                                    isSessionActive = sealed,
+                                                                        deletedTaskForUndo = deletedTaskForUndo,
+                                                                        isSessionActive = sealed,
                                     soundEngine = viewModel.soundEngine,
                                     isDarkTheme = effectiveNight,
                                     onAddTask = viewModel::addTaskToQueue,
-                                    onEditTask = viewModel::editTask,
-                                    onUpdateTaskDuration = viewModel::updateTaskDuration,
-                                    onCueTaskToFocus = viewModel::cueTaskAndNavigateToFocus,
+                                                                                                            onCueTaskToFocus = viewModel::cueTaskAndNavigateToFocus,
                                     onCompleteTask = viewModel::completeTaskAndAdvance,
-                                    onPromoteTask = viewModel::promoteTaskToActive,
-                                    onMoveTaskOrder = viewModel::moveTaskOrder,
-                                    onDeferTask = viewModel::deferTask,
-                                    onDeleteTask = viewModel::deleteTaskWithUndo,
+                                                                                                                                                onDeleteTask = viewModel::deleteTaskWithUndo,
                                     onUndoDeleteTask = viewModel::undoDeleteTask,
                                     onDismissUndoBanner = viewModel::dismissUndoDeleteBanner,
                                     onReopenTask = viewModel::reopenTask,
                                     onToggleSubStep = viewModel::toggleTaskSubStep,
-                                    onAddSubStep = viewModel::addTaskSubStep,
-                                    onAutoSplitTask = viewModel::autoSplitTaskIntoMicroSteps,
+                                                                        onAutoSplitTask = viewModel::autoSplitTaskIntoMicroSteps,
                                     onNavigateToDeck = { viewModel.navigateTo(MonolithDestination.DECK) }
                                 )
                             }

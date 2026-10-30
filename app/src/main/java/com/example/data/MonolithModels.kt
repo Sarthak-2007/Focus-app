@@ -394,6 +394,17 @@ data class FocusSessionEntity(
     // counted whole by the span — break time that never ran,
     // claimed on the desk clock and the receipt alike.
     val breakTakenSeconds: Int = 0,
+    // W3 #134 (phone-call-mid-session, DB 14→15): the seconds of THIS
+    // block the call bypass was active — AudioManager in a call
+    // mode (ringing / in-call / VoIP) while the progress machine
+    // ticked. Those seconds are excluded from the block's booked
+    // elapsed at every tick: call time is not focus time, and a
+    // session may not finish, flip into its Safe Break, or stamp
+    // ELAPSED_CLEAN on the strength of minutes spent talking.
+    // Booked per block: the break-exit write (advancePastBreak)
+    // resets it to 0 alongside the anchors it re-bases, so one
+    // block's call never taxes the next block's clock.
+    val callExcludedSeconds: Int = 0,
     val penaltySecondsAdded: Int = 0,
     val isActive: Boolean,
     val completedSuccessfully: Boolean,
@@ -693,7 +704,12 @@ object BlockedBrowserDomains {
         "twitter.com",
         "facebook.com",
         "snapchat.com",
-        "youtube.com/shorts"
+        "youtube.com/shorts",
+        // W3 #130 (browser-as-loophole): the whole YouTube host, not
+        // only its /shorts path — the home/watch feed was the biggest
+        // unlisted feed. Enforced by the same site blocker; a needed
+        // video is reachable through the domain-scoped site peek.
+        "youtube.com"
     )
     // Issue #133 (finding 4): an "allowed study sites" example
     // list used to live here as dead decoration — no study-site
@@ -824,6 +840,32 @@ object RoutineSchedule {
             day.add(java.util.Calendar.DAY_OF_YEAR, 1)
         }
         return null
+    }
+
+    /**
+     * The pause-aware next start (routines rebuild §3.6): the
+     * search origin is max(now, pausedUntilMillis), fed into
+     * [nextStartMillis] - whose strictly-after contract means the
+     * origin is passed as pausedUntilMillis - 1 when the pause is
+     * the binding origin, so a window starting exactly as the
+     * pause ends still counts. Windows the pause covers never
+     * fire, so they are never the next start. This one helper is
+     * what the scheduler and every "next seal" reader (Deck
+     * ribbon, widget) share, so they can never disagree.
+     *
+     * (Composed at the e1996c16 merge on the #152 branch: main's
+     * §3.6 helper supersedes the pause-stepping version this
+     * branch's fix-forward 2 added when no definition existed —
+     * same contract, one shared implementation.)
+     */
+    fun effectiveNextStartMillis(routine: RoutineEntity, nowMillis: Long): Long? {
+        val r = routine.sanitized()
+        val origin = maxOf(nowMillis, r.pausedUntilMillis)
+        return if (origin > nowMillis) {
+            nextStartMillis(r, origin - 1L)
+        } else {
+            nextStartMillis(r, nowMillis)
+        }
     }
 
     /** End of the window containing [nowMillis], or of the next window if none contains it. */
