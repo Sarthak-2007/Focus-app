@@ -166,6 +166,67 @@ data class FrozenDigest(
     val sessionId: Int
 )
 
+/**
+ * Issue #77 F2 (VERIFIER-77B concurrency census): the bounded,
+ * superseding reload. Before this cure, every external signal
+ * (a new held notification landing, a sealed sheet re-open)
+ * launched a NEW untracked coroutine in viewModelScope running a
+ * full, uncapped library snapshot read — no Job handle, no cap,
+ * no cancellation. A large held library plus a signal flap (an
+ * app spamming notifications mid-session) spawned unbounded
+ * concurrent full-library loads on the study face, and the mints
+ * raced: an earlier, slower mint could land AFTER a newer one
+ * and resurrect a stale held world.
+ *
+ * The cure mirrors this file's own bounded-reload precedent —
+ * the Drawer search (drawerSearchJob in setDrawerQuery): a Job
+ * handle the next signal cancels, plus a state guard checked
+ * before anything lands (there the query/month equality, here
+ * the generation). On top of the precedent, a Mutex windows the
+ * load itself, so the cap is hard, not eventual:
+ *
+ * CAP: [MAX_IN_FLIGHT] = 1 concurrent load. One mint is a whole-
+ * library snapshot; a later signal's snapshot is taken after the
+ * earlier one's signal, so concurrency above 1 buys nothing —
+ * the newer read always supersedes the older. WHAT loads is
+ * unchanged; only how much at once.
+ */
+internal class SupersedingReload<I, T>(
+    private val scope: kotlinx.coroutines.CoroutineScope,
+    private val load: suspend (I) -> T?,
+    private val publish: (T) -> Unit
+) {
+    private var job: Job? = null
+    private var generation = 0L
+    private val gate = kotlinx.coroutines.sync.Mutex()
+
+    /** Fire a reload for [input], superseding any in-flight one.
+     *  Returns the new reload's Job (the VM ignores it; tests
+     *  join on it). */
+    fun signal(input: I): Job {
+        job?.cancel()
+        val gen = ++generation
+        val launched = scope.launch {
+            kotlinx.coroutines.sync.withLock(gate) {
+                // Superseded while queued behind the load window:
+                // never even read — the newer signal owns the face.
+                if (gen != generation) return@withLock
+                val result = load(input) ?: return@withLock
+                // The Drawer's state-guard precedent: land only
+                // if this reload is still the standing signal.
+                if (gen == generation && isActive) publish(result)
+            }
+        }
+        job = launched
+        return launched
+    }
+
+    companion object {
+        /** The stated cap: at most one load in flight, ever. */
+        const val MAX_IN_FLIGHT = 1
+    }
+}
+
 data class FloatingPeekPillState(
     val isActive: Boolean = false,
     val packageName: String = "",
@@ -496,6 +557,26 @@ class MonolithViewModel(
 
     private val _frozenDigest = MutableStateFlow<FrozenDigest?>(null)
     val frozenDigest: StateFlow<FrozenDigest?> = _frozenDigest.asStateFlow()
+
+    /** Issue #77 F2: every digest mint routes through the one
+     *  bounded, superseding reload (cap [SupersedingReload
+     *  .MAX_IN_FLIGHT] = 1 in flight) — see SupersedingReload. */
+    private val digestMintReload = SupersedingReload<Int, FrozenDigest>(
+        scope = viewModelScope,
+        load = { sessionId ->
+            val items = repository.capturedNotificationsSnapshot()
+            if (activeSession.value?.id == sessionId && activeSession.value?.isActive == true) {
+                FrozenDigest(
+                    items = items,
+                    frozenAtMillis = System.currentTimeMillis(),
+                    sessionId = sessionId
+                )
+            } else {
+                null
+            }
+        },
+        publish = { digest -> _frozenDigest.value = digest }
+    )
 
     private val _showNotificationDigestSheet = MutableStateFlow(false)
     val showNotificationDigestSheet: StateFlow<Boolean> = _showNotificationDigestSheet.asStateFlow()
@@ -1487,18 +1568,13 @@ class MonolithViewModel(
      *  mint for the session that is actually active. Reminting for
      *  the SAME session is the refresh path (issue #118, finding 3):
      *  it replaces the holder's rows and stamp with the held world
-     *  as it stands now. */
+     *  as it stands now. Issue #77 F2: the mint no longer launches
+     *  an untracked coroutine per signal — it fires the bounded
+     *  superseding reload (digestMintReload), so a signal flap
+     *  can never fan out into unbounded concurrent snapshot reads
+     *  and a superseded mint never lands. */
     private fun mintFrozenDigest(sessionId: Int) {
-        viewModelScope.launch {
-            val items = repository.capturedNotificationsSnapshot()
-            if (activeSession.value?.id == sessionId && activeSession.value?.isActive == true) {
-                _frozenDigest.value = FrozenDigest(
-                    items = items,
-                    frozenAtMillis = System.currentTimeMillis(),
-                    sessionId = sessionId
-                )
-            }
-        }
+        digestMintReload.signal(sessionId)
     }
 
     private fun startTickerLoop() {
