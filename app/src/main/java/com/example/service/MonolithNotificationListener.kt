@@ -6,6 +6,7 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import com.example.data.AppBlockTier
+import com.example.data.AppCategory
 import com.example.data.CapturedNotificationEntity
 import com.example.data.MonolithDatabase
 import java.util.concurrent.ConcurrentHashMap
@@ -64,6 +65,31 @@ object NotificationCapturePolicy {
             Notification.CATEGORY_ALARM -> false
             else -> true
         }
+    }
+
+    /** Issue #120 (otp-banking-mid-session): one-time-code
+     *  recognition, deliberately narrow — code-words only, never
+     *  digits alone (a chat full of numbers is still a chat). A
+     *  notification matching this is copied to the digest but
+     *  NEVER cancelled: the original stays in the shade with its
+     *  actions, because the code dies in minutes while the digest
+     *  copy carries no Approve button and the session runs far
+     *  longer than the code does. Pure, unit-tested. */
+    private val ONE_TIME_CODE_PATTERNS = listOf(
+        Regex("""\botp\b""", RegexOption.IGNORE_CASE),
+        Regex("""one[- ]time""", RegexOption.IGNORE_CASE),
+        Regex("""verification code""", RegexOption.IGNORE_CASE),
+        Regex("""security code""", RegexOption.IGNORE_CASE),
+        Regex("""login code""", RegexOption.IGNORE_CASE),
+        Regex("""sign[- ]?in code""", RegexOption.IGNORE_CASE),
+        Regex("""auth code""", RegexOption.IGNORE_CASE),
+        Regex("""\bpasscode\b""", RegexOption.IGNORE_CASE),
+        Regex("""\b2fa\b""", RegexOption.IGNORE_CASE)
+    )
+
+    fun looksLikeOneTimeCode(title: String, text: String): Boolean {
+        val haystack = "$title $text"
+        return ONE_TIME_CODE_PATTERNS.any { it.containsMatchIn(haystack) }
     }
 
     /** The content fingerprint an update is compared by: title and
@@ -230,6 +256,11 @@ class MonolithNotificationListener : NotificationListenerService() {
         val fingerprint = NotificationCapturePolicy.contentFingerprint(title, text)
         if (key != null && dedupe.isUnchanged(key, fingerprint)) return
 
+        // Issue #120: judged here, on the binder thread, from the
+        // same snapshot as everything else — the coroutine below
+        // never re-reads the (mutable, pooled) notification.
+        val otpLike = NotificationCapturePolicy.looksLikeOneTimeCode(title, text)
+
         scope.launch {
             val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
             // Issue #45 (C5): the session question is asked about
@@ -239,6 +270,17 @@ class MonolithNotificationListener : NotificationListenerService() {
             dao.getSessionCoveringInstant(postTimeMillis) ?: return@launch
 
             val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
+            // Issue #120: FINANCE is never captured and never
+            // cancelled. A bank/UPI/authenticator notification is
+            // time-critical infrastructure: holding a title/text
+            // copy while cancelling the original destroyed the
+            // Approve action and raced a 30-second code against a
+            // session-length hold. The original stays live in the
+            // shade, actions intact — the same never-suppress class
+            // as calls and alarms.
+            if (appRule != null && appRule.category == AppCategory.FINANCE.name) {
+                return@launch
+            }
             if (appRule != null && appRule.resolvedTier != AppBlockTier.OPEN) {
                 val storedTitle = title.ifEmpty { appRule.appName }
                 if (key != null) {
@@ -293,10 +335,17 @@ class MonolithNotificationListener : NotificationListenerService() {
                         )
                     )
                 }
-                try {
-                    cancelNotification(key)
-                } catch (error: Exception) {
-                    Log.w(TAG, "cancelNotification failed for $pkg", error)
+                // Issue #120: a one-time code is copied, never
+                // cancelled — the original keeps its shade entry
+                // (and any action it carries) because the code
+                // expires in minutes while the session runs far
+                // longer.
+                if (!otpLike) {
+                    try {
+                        cancelNotification(key)
+                    } catch (error: Exception) {
+                        Log.w(TAG, "cancelNotification failed for $pkg", error)
+                    }
                 }
             }
         }

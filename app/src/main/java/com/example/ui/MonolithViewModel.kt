@@ -180,12 +180,22 @@ internal fun peekOfferFor(
     entity: BlockedAppEntity?,
     cooldownLeftSeconds: Int,
     pillActive: Boolean
-): Boolean =
-    path.canHonourPeekLease &&
-        entity != null &&
-        entity.resolvedTier == AppBlockTier.PEEK_2M &&
-        cooldownLeftSeconds == 0 &&
-        !pillActive
+): Boolean {
+    if (!path.canHonourPeekLease || entity == null || pillActive) return false
+    // Issue #120 (otp-banking-mid-session): FINANCE is essential
+    // infrastructure. A LOCKED bank/UPI/authenticator still offers
+    // the peek — the alternative was ending the session through
+    // the once-a-week emergency valve to approve one payment —
+    // and the 20-minute cooldown never rations a finance peek: a
+    // second OTP inside the window (login, then payment) is the
+    // normal case, not abuse. The 5s wall and the 2-minute lease
+    // still gate every finance peek exactly as before.
+    if (entity.category == AppCategory.FINANCE.name) {
+        return entity.resolvedTier != AppBlockTier.OPEN
+    }
+    return entity.resolvedTier == AppBlockTier.PEEK_2M &&
+        cooldownLeftSeconds == 0
+}
 
 /**
  * Issue #78 (Audit R2, ipc-intents): may an Airlock raised from an
@@ -242,7 +252,10 @@ internal fun peekWithheldFor(
 ): PeekWithheld? = when {
     canPeek -> null
     !path.canHonourPeekLease -> null
-    appEntity?.resolvedTier != AppBlockTier.PEEK_2M -> null
+    // Issue #120: a finance row owes the withheld reason too —
+    // its tier may be LOCKED while the peek is still on the table.
+    appEntity?.resolvedTier != AppBlockTier.PEEK_2M &&
+        appEntity?.category != AppCategory.FINANCE.name -> null
     // Hale W-30: a peek length of zero is its own reason — the peek
     // is OFF, not cooling down.
     MonolithRepository.PEEK_DURATION_SECONDS <= 0 -> PeekWithheld.PEEK_OFF

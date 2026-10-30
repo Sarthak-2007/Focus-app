@@ -125,7 +125,18 @@ object AppCategorizer {
     private val DETERMINISTIC_HOMES: Map<String, AppCategory> = mapOf(
         // Anki — the spaced-repetition app (audit R3b, angle
         // study-on-phone-itself, names this exact package).
-        "com.ichi2.anki" to AppCategory.EDUCATION
+        "com.ichi2.anki" to AppCategory.EDUCATION,
+        // Finance (issue #120): the payment/authenticator packages
+        // whose identity is a fact, filed deterministically like
+        // Anki above — Google Pay (India), PhonePe, Paytm, BHIM,
+        // and the three authenticators.
+        "com.google.android.apps.nbu.paisa.user" to AppCategory.FINANCE,
+        "com.phonepe.app" to AppCategory.FINANCE,
+        "net.one97.paytm" to AppCategory.FINANCE,
+        "in.org.npci.upiapp" to AppCategory.FINANCE,
+        "com.google.android.apps.authenticator2" to AppCategory.FINANCE,
+        "com.microsoft.authenticator" to AppCategory.FINANCE,
+        "com.authy.authy" to AppCategory.FINANCE
     )
 
     private val MUSIC_TOKENS = setOf(
@@ -168,6 +179,17 @@ object AppCategorizer {
                 "education", "study"
             )
         ) return AppCategory.EDUCATION
+        // Finance (issue #120), in the same whole-token discipline,
+        // filed before the entertainment branches so a bank's name
+        // can never file it as a game or a shop. Bare "pay" is NOT
+        // a key — it fires inside too many unrelated names; the
+        // payment brands are stated whole.
+        if (matches(
+                "bank", "banking", "upi", "authenticator", "authy",
+                "gpay", "phonepe", "paytm", "bhim", "yono", "paypal",
+                "wallet", "google pay", "mobile banking"
+            )
+        ) return AppCategory.FINANCE
         return when {
             matches("tiktok", "musically", "youtube", "instagram", "reel", "reels") ->
                 AppCategory.SHORT_VIDEO
@@ -336,7 +358,12 @@ object AppCatalogReconcile {
                     // background playback was never blocked, so a
                     // 2-minute start window is all a player needs.
                     // Born LOCKED, a player got no peek at all.
-                    AppCategory.MESSAGING, AppCategory.MUSIC -> AppBlockTier.PEEK_2M
+                    // Issue #120: FINANCE is born PEEK_2M too —
+                    // a bank or authenticator born LOCKED has no
+                    // lawful mid-session door at all, and the peek
+                    // (5s wall, 2-minute lease) is exactly the
+                    // ceremony an OTP or UPI approval needs.
+                    AppCategory.MESSAGING, AppCategory.MUSIC, AppCategory.FINANCE -> AppBlockTier.PEEK_2M
                     else -> AppBlockTier.OPEN
                 }
                 toInsert += BlockedAppEntity(
