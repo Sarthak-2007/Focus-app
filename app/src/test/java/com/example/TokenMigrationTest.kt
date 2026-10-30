@@ -117,7 +117,7 @@ class TokenMigrationTest {
                 heldSeconds = 60
             )
         )
-        val rows = dao.getSpendsForWeek(4_000L)
+        val rows = dao.getSpendsForWeek(4_000L, 4_000L + 7 * 24 * 3_600_000L)
         assertEquals(1, rows.size)
         assertEquals(42, rows.single().sessionId)
         db.close()
