@@ -1,1 +1,258 @@
-status=aborted rc_merge=1 utc=2026-10-30T09:25:49Z
+status=aborted rc_merge=1 utc=2026-10-30T09:30:57Z
+== unmerged files ==
+app/src/main/java/com/example/data/MonolithRepository.kt
+app/src/main/java/com/example/data/ReceiptState.kt
+app/src/main/java/com/example/ui/MonolithViewModel.kt
+app/src/main/java/com/example/ui/screens/TactileDeckScreen.kt
+== conflict segments ==
+--- app/src/main/java/com/example/data/MonolithRepository.kt
+2263:<<<<<<< HEAD
+2264-            penaltySecondsAdded = row.penaltySecondsAdded
+2265-=======
+2266-            // Audit R3b #145: the forged curio's name rides the
+2267-            // slip — read off the row's own stamp, never re-drawn.
+2268-            forgedArtifactName = row.forgedArtifactId?.let { forgedId ->
+2269-                CurioCatalog.artifacts.firstOrNull { it.id == forgedId }?.name
+2270-            }
+2271->>>>>>> origin/main
+2272-        )
+2273-    }
+2274-
+2275-    /** F-Z5's assembly evaluation for a hand-armed row: the line
+2276-     *  of an enabled routine whose window contains the arm
+2277-     *  instant (today's or yesterday's instance, for windows that
+2278-     *  cross midnight). Null when no window contains it. */
+2279-    private suspend fun routineWindowLabelAt(armWallMs: Long): String? {
+2280-        val routines = dao.getAllRoutinesSnapshot().filter { it.enabled }
+2281-        if (routines.isEmpty()) return null
+2282-        val cal = java.util.Calendar.getInstance().apply { timeInMillis = armWallMs }
+2283-        val minutesOfDay = cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 +
+2284-            cal.get(java.util.Calendar.MINUTE)
+2285-        val dayBit = (cal.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
+2286-        val prevDayBit = (dayBit + 6) % 7
+2287-        for (routine in routines) {
+2288-            val wraps = routine.endMinutes <= routine.startMinutes
+2289-            val contains = when {
+2290-                wraps ->
+2291-                    (routine.daysMask and (1 shl dayBit) != 0 && minutesOfDay >= routine.startMinutes) ||
+2292-                        (routine.daysMask and (1 shl prevDayBit) != 0 && minutesOfDay < routine.endMinutes)
+2293-                else ->
+--
+2373:<<<<<<< HEAD
+2374-            penaltySecondsAdded = pending.penaltySecondsAdded
+2375-=======
+2376-            forgedArtifactName = pending.forgedArtifactName
+2377->>>>>>> origin/main
+2378-        )
+2379-    }
+2380-
+2381-    /**
+2382-     * Rehydration (Z6 case b): rebuild the standing slip from the
+2383-     * stored № + the row, marked restored. Ended-at for routine
+2384-     * rows is the row's windowEndMillis exactly (Reihe §3 rule
+2385-     * 2 — never the observation time); for manual rows it is the
+2386-     * same-boot derivation startWall + (lastTickMono −
+2387-     * startMono), named here as the rehydration approximation.
+2388-     *
+2389-     * Truth Car 2 (RC-01): the derivation below is now only the
+2390-     * FALLBACK for rows whose ending write predates the stamp.
+2391-     * Where the row carries endWallMillis, assemblePendingReceipt
+2392-     * reads the stamp over any derived value — the true E0 wall
+2393-     * IS persisted now, and a restored slip prints the witnessed
+2394-     * end, not the approximation.
+2395-     */
+2396-    suspend fun rehydrateReceipt(): ReceiptState? {
+2397-        val (number, sessionId, _) = standingReceipt() ?: return null
+2398-        val row = dao.getSessionById(sessionId) ?: return null
+2399-        if (row.isActive) return null
+2400-        val isSleep = row.routineId?.let { dao.getRoutineById(it)?.loadoutName } ==
+2401-            SmartLoadout.SLEEP.name
+2402-        // Audit R1 #40: a CLAIMED receipt (the row wears its №)
+2403-        // is durable proof the finish fired — a wall-clock
+--
+2442:<<<<<<< HEAD
+2443-            penaltySecondsAdded = pending.penaltySecondsAdded
+2444-=======
+2445-            forgedArtifactName = pending.forgedArtifactName
+2446->>>>>>> origin/main
+2447-        )
+2448-    }
+2449-
+2450-    /** The gap latch's repository door (Nocke §2.2): set the
+2451-     *  latch when the active row's beat is stale past the law.
+2452-     *  Called from the VM ticker and the relaunch path; the
+2453-     *  latch, once set, is never cleared.
+2454-     *
+2455-     *  Issue #82 (clock-attacks F1): the staleness test runs on the
+2456-     *  monotonic-implied now ([ClockHonesty.impliedNowMillis]),
+2457-     *  never on the raw wall clock. An 11-second forward jump of
+2458-     *  the device clock can no longer forge a gap that never
+2459-     *  happened, and a rollback can no longer launder a real one:
+2460-     *  monotonic time moves neither way at the user's hand. */
+2461-    suspend fun latchShieldGapIfStale(nowElapsedRealtimeMillis: Long): Boolean {
+2462-        val active = dao.getActiveSessionSnapshot() ?: return false
+2463-        if (active.shieldGapSeen || active.outcome.isNotEmpty()) return false
+2464-        // Composed at the #82/#95 merge: #95's adoption + update
+2465-        // exemption survive, judged on #82's honest clock. A row
+2466-        // whose beat is 0 predates the beat column (pre-v10) —
+2467-        // there is no beat evidence to judge from. Adopt it: stamp
+2468-        // the beat now (a wall stamp of the current instant, not a
+2469-        // verdict) and judge from here.
+2470-        if (active.shieldLastBeatWallMillis == 0L) {
+2471-            dao.adoptShieldBeat(active.id, System.currentTimeMillis())
+2472-            return false
+--
+2701:<<<<<<< HEAD
+2702-        val nowWall = System.currentTimeMillis()
+2703-        val currentBoot = querySystemBootCount()
+2704-=======
+2705-        val currentBoot = querySystemBootCountOrNull()
+2706->>>>>>> origin/main
+2707-        // Slice E (Nocke §2.2): the shield's own tick stamps its
+2708-        // beat into every copy this function persists — the beat
+2709-        // is the finish machine's gap evidence. Other callers
+2710-        // (the VM ticker) never stamp it: a beat written by
+2711-        // anyone but the shield would be a forged witness.
+2712-        val beatWall = if (stampShieldBeat) System.currentTimeMillis() else session.shieldLastBeatWallMillis
+2713-        val (verifiedElapsed, tamper) = computeVerifiedSessionElapsed(session)
+2714-        // Issue #82 (clock-attacks F5): the tamper penalty is no
+2715-        // longer a one-way ratchet for CLOCK drift. Session elapsed
+2716-        // is monotonic-anchored, so clock travel alone gains the
+2717-        // user nothing; a 91-second blip (or an honest manual time
+2718-        // correction) must not permanently extend the lock. The
+2719-        // drift penalty therefore applies only WHILE the drift
+2720-        // persists and unwinds on the first clean tick. Forged
+2721-        // state (HMAC failure) is the real conviction: that penalty
+2722-        // is set once and never unwinds.
+2723-        val hmacValid = CryptoIntegrityManager.verifySessionState(session)
+2724-        val penaltyAdd = when {
+--- app/src/main/java/com/example/data/ReceiptState.kt
+223:<<<<<<< HEAD
+224-    // Audit R3 #113, finding 4: the tamper penalty the row carries,
+225-    // threaded so the slip can NAME it — before this the penalty
+226-    // silently stretched the plan (it is inside spanTargetSeconds)
+227-    // and no surface ever mentioned it.
+228-    val penaltySecondsAdded: Int = 0
+229-=======
+230-    // Audit R3b #145: the curio this finish forged, by name — the
+231-    // completion moment must not be silent about its own reward.
+232-    // Null when the span forged nothing (routine-born rows, valve
+233-    // breaks publish nothing at all); the sheet omits the line.
+234-    val forgedArtifactName: String? = null
+235->>>>>>> origin/main
+236-)
+237-
+238-/**
+239- * The issued receipt — the slip's whole content (Zettel §1, 18
+240- * fields). [number] is the № (prints `№ 048`, zero-padded to 3,
+241- * never truncated). [restored] marks a rehydrated slip (Z6 case
+242- * b): it renders settled, never re-Strikes, and never arms E6.
+243- * [receiptPublishedMonoMs] is sampled by the VM inside
+244- * publishReceipt (Schlitten C2) and lives in VM memory only —
+245- * never persisted, never restored (C3); a restored slip carries
+246- * 0 and no clock reads it.
+247- */
+248-data class ReceiptState(
+249-    val sessionId: Int,
+250-    val number: Int,
+251-    val kind: String,
+252-    val outcomeWord: String,
+253-    val title: String,
+--
+268:<<<<<<< HEAD
+269-    // Audit R3 #113, finding 4: see PendingReceipt — the slip
+270-    // prints the penalty its plan silently included.
+271-    val penaltySecondsAdded: Int = 0
+272-=======
+273-    // Audit R3b #145: see PendingReceipt.forgedArtifactName.
+274-    val forgedArtifactName: String? = null
+275->>>>>>> origin/main
+276-) {
+277-    /** The printed №: zero-padded to a minimum of 3, never
+278-     *  truncated (№ 048 … № 1048). */
+279-    val numberPrint: String get() = "№ " + number.toString().padStart(3, '0')
+280-}
+281-
+282-/**
+283- * Nocke §4's detention arithmetic — pure, table-tested (T3):
+284- *   R0 (rack start)  = max(E1200, P)
+285- *   receipt t=0      = min(max(E1480, R0 + 280), E1800)
+286- *   faulted          ⇔ no P by E1520, or the chain halted
+287- * All values are offsets from E0 in milliseconds; P is the
+288- * pawl-lift offset (the frame the one commanded link — the
+289- * shield's stop — confirmed open), or null while unconfirmed.
+290- */
+291-object Detention {
+292-    const val HELD_FRAME_MS = 1200L
+293-    const val RACK_AFTER_PAWL_MS = 280L
+294-    const val RECEIPT_FLOOR_MS = 1480L
+295-    const val RECEIPT_CEILING_MS = 1800L
+296-    const val FAULT_DEADLINE_MS = 1520L
+297-
+298-    fun rackStartMs(pawlLiftMs: Long?): Long =
+--- app/src/main/java/com/example/ui/MonolithViewModel.kt
+1483:<<<<<<< HEAD
+1484-                            else -> onFinishE0(row, kind, witnessed = false)
+1485-=======
+1486-                            ageMs <= 600_000L -> onFinishE0(row, kind, witnessed = false)
+1487-                            // Audit R1 #40: a SLEEP stand-down is
+1488-                            // DISCOVERED, never witnessed — the
+1489-                            // phone slept through the window's end
+1490-                            // and the finish exists only when the
+1491-                            // app next looks. The 10-minute discard
+1492-                            // made exactly that booking vanish,
+1493-                            // forever. Stand-downs are exempt from
+1494-                            // the discard; every other kind keeps
+1495-                            // it (a stale manual finish discovered
+1496-                            // days late still books nothing).
+1497-                            kind == com.example.data.FinishKind.ROUTINE_SLEEP_STANDDOWN ->
+1498-                                onFinishE0(row, kind, witnessed = false)
+1499-                            else -> handledFinishIds += row.id
+1500->>>>>>> origin/main
+1501-                        }
+1502-                    } else {
+1503-                        onFinishE0(row, kind, witnessed = true)
+1504-                    }
+1505-                }
+1506-            }
+1507-        }
+1508-    }
+1509-
+1510-    /** E0, the finish's zero: the collector's handling frame.
+1511-     *  The claim comes FIRST (Nocke §3 — before any animation);
+1512-     *  then the one commanded link (the shield's stop) is
+1513-     *  commanded; P is the frame MonolithShieldService.instance
+--- app/src/main/java/com/example/ui/screens/TactileDeckScreen.kt
+1523:<<<<<<< HEAD
+1524-                    armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase)
+1525-                    armPhase is ArmPhase.Proving -> null
+1526-                    isSessionRunning -> refusalSentenceFor(deckWarrant, nowMono)
+1527-=======
+1528-                    armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase, nowMono)
+1529-                    armPhase is ArmPhase.Proving -> provingSentenceFor(armPhase)
+1530-                    isSessionRunning -> null
+1531->>>>>>> origin/main
+1532-                    armSentence != null -> armSentence
+1533-                    else -> refusalSentenceFor(deckWarrant, nowMono)
+1534-                },
+1535-                onAction = { action ->
+1536-                    when (action) {
+1537-                        RefusalAction.FIX_ACCESSIBILITY -> onFixBlockingAccess()
+1538-                        RefusalAction.FIX_USAGE -> onFixUsageAccess()
+1539-                        RefusalAction.RETRY_CHECK -> {
+1540-                            // Suki: an UNSET usage grant makes "retry"
+1541-                            // a lie — the tap routes to the pane that
+1542-                            // owns the fact instead.
+1543-                            if (deckWarrant?.usage == UsageAccess.UNSET) {
+1544-                                onFixUsageAccess()
+1545-                            } else {
+1546-                                onRetryBlockingCheck()
+1547-                            }
+1548-                        }
+1549-                    }
+1550-                },
+1551-                onHandBackTick = onHandBackTick
+1552-            )
+1553-            ImprintSlot(
+== resolver rc=1 ==
+unknown conflicted file: app/src/main/java/com/example/data/MonolithRepository.kt
