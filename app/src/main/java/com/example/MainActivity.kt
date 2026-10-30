@@ -53,8 +53,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.data.MonolithDatabase
-import com.example.data.MonolithRepository
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.service.InterceptConsumptionStore
 import com.example.service.InterceptNonce
 import com.example.service.InterceptPath
@@ -125,8 +124,10 @@ class MainActivity : ComponentActivity() {
         // any surface reads the store.
         WatchStore.bind(applicationContext)
 
-        val database = MonolithDatabase.getInstance(applicationContext)
-        val repository = MonolithRepository(applicationContext, database.monolithDao())
+        // ISSUE-67: the repository comes from the single
+        // construction point (AppContainer: DAO + live service
+        // port + the same database instance).
+        val repository = AppContainer.repository(applicationContext)
         // Issue #27 (finding 2): the ViewModel is obtained through
         // the provider BEFORE any engine exists. On recreation the
         // provider returns the retained instance and the Factory's

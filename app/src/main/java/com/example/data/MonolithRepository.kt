@@ -20,14 +20,13 @@ import com.example.service.MonolithBootReceiver
 import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithNotificationListener
 import com.example.service.MonolithShieldService
-import com.example.service.RoutineScheduler
-import com.example.service.TactileSoundEngine
 import com.example.service.UsageAccess
 import com.example.service.Warrant
 import com.example.service.WatchItemId
 import com.example.service.WatchStore
 import androidx.annotation.WorkerThread
 import androidx.room.withTransaction
+import com.example.domain.FocusDomain
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -144,8 +143,25 @@ internal fun expiredPeekPackages(
 class MonolithRepository(
     private val context: Context,
     private val dao: MonolithDao,
-    private val databaseProvider: () -> MonolithDatabase = { MonolithDatabase.getInstance(context) }
+    // ISSUE-67: everything this class needs from the living
+    // services arrives through this port (data layer, this
+    // package) — never through concrete service imports. The
+    // default is the unbound port (service-less test processes);
+    // production is wired live by AppContainer, the single
+    // construction point.
+    private val servicePort: RepositoryServicePort = UnboundRepositoryServicePort,
+    // ISSUE-67: the database is INJECTED (AppContainer passes the
+    // same instance the DAO came from) — the transaction sites
+    // below used to re-fetch it via getInstance behind the DAO's
+    // back. Null keeps direct test constructions working.
+    private val database: MonolithDatabase? = null,
+    // Main's provider seam, composed with the injection above:
+    // the provider resolves the injected database when present,
+    // else the singleton — one resolution path either way.
+    private val databaseProvider: () -> MonolithDatabase = { database ?: MonolithDatabase.getInstance(context) }
 ) {
+    private fun db(): MonolithDatabase = databaseProvider()
+
     val allAppsFlow: Flow<List<BlockedAppEntity>> = dao.getAllApps()
     val allProfilesFlow: Flow<List<FocusProfileEntity>> = dao.getAllProfiles()
     val activeSessionFlow: Flow<FocusSessionEntity?> = dao.getActiveSessionFlow()
@@ -1043,6 +1059,10 @@ class MonolithRepository(
     // this category (plus label and usage) onto an existing row;
     // a survivor's tier and limit are never re-priced by a sync,
     // so a corrected category can never move an existing ruling.
+    // ISSUE-67 NOTE: this branch originally extracted the same
+    // function into FocusDomain; main's #132 extraction landed
+    // first and is a superset (MUSIC token category), so the
+    // domain slice defers to it — one classifier, never two.
     private fun categorizePackage(pkg: String, label: String): AppCategory =
         AppCategorizer.categorize(pkg, label)
 
@@ -1270,13 +1290,14 @@ class MonolithRepository(
      */
     @WorkerThread
     fun standingWarrant(): Warrant {
-        val a11yBound = MonolithAccessibilityService.instance != null
+        // ISSUE-67: the living-service facts arrive via the port.
+        val a11yBound = servicePort.accessibilityBound
         val stamped = a11yBound && WatchStore.stampedThisResidency()
         return WatchStore.deriveWarrant(
             a11yBound = a11yBound,
             stamped = stamped,
             usage = usageAccess(),
-            shieldProtecting = MonolithShieldService.protecting
+            shieldProtecting = servicePort.shieldProtecting
         )
     }
 
@@ -1290,11 +1311,11 @@ class MonolithRepository(
      */
     @WorkerThread
     fun watchGrantQuery(item: WatchItemId): Boolean = when (item) {
-        WatchItemId.ACCESSIBILITY -> MonolithAccessibilityService.instance != null
+        // ISSUE-67: BIND items answer via the service port.
+        WatchItemId.ACCESSIBILITY -> servicePort.accessibilityBound
         WatchItemId.USAGE_ACCESS -> usageAccess() == UsageAccess.ALLOWED
         WatchItemId.DEVICE_ADMIN -> isDeviceAdminActive()
-        WatchItemId.NOTIFICATION_LISTENER ->
-            com.example.service.MonolithNotificationListener.instance != null
+        WatchItemId.NOTIFICATION_LISTENER -> servicePort.notificationListenerBound
         WatchItemId.OVERLAY -> hasOverlayPermission()
         WatchItemId.BATTERY -> isBatteryOptimizationIgnored()
         else -> false
@@ -1705,9 +1726,10 @@ class MonolithRepository(
         // Legacy per-routine alarms die here; the chain rearms against
         // the post-transform snapshot.
         val post = dao.getAllRoutinesSnapshot()
-        RoutineScheduler.cancelLegacyRoutineAlarms(context, post.map { it.id })
-        RoutineScheduler.cancelChain(context)
-        RoutineScheduler.rearmChain(context, post, now)
+        // ISSUE-67: the chain is driven via the service port.
+        servicePort.cancelLegacyRoutineAlarms(context, post.map { it.id })
+        servicePort.cancelRoutineChain(context)
+        servicePort.rearmRoutineChain(context, post, now)
         // Flag last — targeted (§7.5), never a whole-row write.
         dao.markRoutineReseedV1Done()
     }
@@ -1922,10 +1944,15 @@ class MonolithRepository(
             windowStartMillis = desired.windowStartMillis,
             windowEndMillis = desired.windowEndMillis
         )
-        MonolithShieldService.startShield(context)
+        servicePort.startShield(context) // ISSUE-67: via the port
         return session
     }
 
+
+    /** ISSUE-67: the apps snapshot as a repository read, so the
+     *  shield loop (which already holds a repository) stops
+     *  bypassing this layer for its per-iteration app reads. */
+    suspend fun allAppsSnapshot(): List<BlockedAppEntity> = dao.getAllAppsSnapshot()
 
     suspend fun cycleAppBlockTier(app: BlockedAppEntity): AppBlockTier {
         val cycled = when (app.resolvedTier) {
@@ -2052,13 +2079,16 @@ class MonolithRepository(
      * fail-safe for a lease that lapses unrecorded, so the window can
      * never be shortened by killing the app mid-peek.
      */
-    fun getPeekCooldownRemainingSeconds(app: BlockedAppEntity): Int {
-        val nowMono = SystemClock.elapsedRealtime()
-        val anchorEndMono = max(app.lastPeekEndElapsedRealtime, app.activePeekUntilElapsedRealtime)
-        if (anchorEndMono <= 0L) return 0
-        val remainingMs = (anchorEndMono + PEEK_COOLDOWN_MILLIS - nowMono).coerceAtMost(PEEK_COOLDOWN_MILLIS)
-        return if (remainingMs > 0L) (remainingMs / 1000L).toInt() else 0
-    }
+    fun getPeekCooldownRemainingSeconds(app: BlockedAppEntity): Int =
+        // ISSUE-67: the cooldown arithmetic is domain logic
+        // (FocusDomain, pure + JVM-tested); only the clock read
+        // stays here, where Android belongs.
+        FocusDomain.peekCooldownRemainingSeconds(
+            lastPeekEndMono = app.lastPeekEndElapsedRealtime,
+            activePeekUntilMono = app.activePeekUntilElapsedRealtime,
+            nowMono = SystemClock.elapsedRealtime(),
+            cooldownMillis = PEEK_COOLDOWN_MILLIS
+        )
 
     /**
      * Issue #55: the cooldown's absolute deadline in the SAME
@@ -2324,7 +2354,8 @@ class MonolithRepository(
      *  tier is not OPEN. One derivation, shared by the birth
      *  capture and every surface that ever prints the figure. */
     fun countHeldApps(apps: List<BlockedAppEntity>): Int =
-        apps.count { it.resolvedTier != AppBlockTier.OPEN }
+        // ISSUE-67: domain derivation (FocusDomain), fed tier names.
+        FocusDomain.countHeldApps(apps.map { it.resolvedTier.name })
 
     suspend fun startSession(
         intention: String,
@@ -2396,7 +2427,8 @@ class MonolithRepository(
         // actually hold for this row, provable later from the row
         // itself. Exactly one writer exists for these columns
         // (this insert); no DAO update for them will ever exist.
-        return databaseProvider().withTransaction {
+        val database = db() // ISSUE-67: injected database, no re-fetch
+        return database.withTransaction {
             val heldApps = countHeldApps(dao.getAllAppsSnapshot())
             val heldSites = dao.getAllSitesSnapshot().size
             dao.deactivateAllSessions()
@@ -2448,7 +2480,8 @@ class MonolithRepository(
         // Read+write run in one transaction (his R-K3 mitigation):
         // a shield tick landing between them can no longer be
         // clobbered by the stale copy.
-        return databaseProvider().withTransaction {
+        val database = db() // ISSUE-67: injected database, no re-fetch
+        return database.withTransaction {
             val row = dao.getActiveSessionSnapshot() ?: return@withTransaction false
             if (row.id != sessionId || !row.isActive) return@withTransaction false
             val wallNow = System.currentTimeMillis()
@@ -2521,7 +2554,8 @@ class MonolithRepository(
         faulted: Boolean = false,
         faultWallMillis: Long = 0L
     ): Int {
-        return databaseProvider().withTransaction {
+        val database = db() // ISSUE-67: injected database, no re-fetch
+        return database.withTransaction {
             // Seed-if-absent INSIDE the transaction: the claim's
             // targeted UPDATE matches zero rows on a settings row
             // that was never written, and the № would exist only
@@ -3145,32 +3179,37 @@ class MonolithRepository(
         // them in the engine (#150 F1/F2 — the summons and the
         // warning knock pass unattended = true inside the engine).
         // The entry (engaged = false) keeps the latch, unattended.
+        // ISSUE-67: both voices live behind the service port — the
+        // data layer no longer constructs a sound engine; the live
+        // port's lazy engine keeps the born-at-first-crossing
+        // semantics verbatim, and the port carries the unattended
+        // flag through so #150's binding is preserved exactly.
         if (engaged) {
-            breakSoundEngine.playBreakEndSummons()
+            servicePort.playBreakEndSummons(context)
         } else {
-            breakSoundEngine.playMechanicalLatch(engaged = false, unattended = true)
+            servicePort.playBreakLatch(context, false, unattended = true)
         }
     }
 
     /** T-minus-60 warning seam (Audit R3b #146): fired once when the
      *  Safe Break countdown crosses 60 seconds remaining, so the
      *  walking user feels the deadline coming instead of meeting it
-     *  as a fait accompli. Default is the engine's warning knock. */
+     *  as a fait accompli. Default is the engine's warning knock,
+     *  via the ISSUE-67 service port. */
     internal var breakWarningKnock: () -> Unit = {
-        breakSoundEngine.playBreakWarningKnock()
+        servicePort.playBreakWarningKnock(context)
     }
 
     /** Audit R3b #148: the T-60 block warning — one latch knock,
      *  fired by the countdown branch at the 60-seconds-left
      *  crossing. Its own seam (tests and the summons work on the
      *  #146 branch can re-voice it without touching the boundary
-     *  knock's contract). */
+     *  knock's contract). ISSUE-67 REBASE NOTE: the seam is kept
+     *  verbatim; its default is routed through the service port
+     *  (playBreakLatch engaged=true is the same mechanical latch)
+     *  so the Repository holds no sound engine of its own. */
     internal var blockWarningKnock: () -> Unit = {
-        breakSoundEngine.playMechanicalLatch(true)
-    }
-
-    private val breakSoundEngine: TactileSoundEngine by lazy {
-        TactileSoundEngine(context)
+        servicePort.playBreakLatch(context, true)
     }
 
     /** The Safe Break length in force for [session]. Today the one
@@ -3800,7 +3839,8 @@ class MonolithRepository(
      * passes through here (§4.4).
      */
     suspend fun completeEmergencyBreak(): BreakResult {
-        return databaseProvider().withTransaction {
+        val database = db() // ISSUE-67: injected database, no re-fetch
+        return database.withTransaction {
             val active = dao.getActiveSessionSnapshot()
                 ?: return@withTransaction BreakResult.NoActiveSession
             // Issue #82 (clock-attacks F3): the week's anchor is
@@ -4093,7 +4133,7 @@ class MonolithRepository(
             val daySessions = sessions.filter { it.startWallTimeMillis in startOfDay until endOfDay }
             val totalSecs = daySessions.sumOf { it.elapsedSeconds }
             val totalMins = totalSecs / 60
-            val blocks25 = (totalMins / 25).coerceAtLeast(if (totalMins >= 15) 1 else 0)
+            val blocks25 = FocusDomain.blocks25For(totalMins) // ISSUE-67: domain derivation
             val intercepts = daySessions.sumOf { it.phantomReachesBlocked }
 
             result.add(
@@ -4349,27 +4389,11 @@ class MonolithRepository(
      * no estimate segment — "(0m est …)" would book a figure the
      * man never gave.
      */
-    private fun completedTaskSummaryEntry(task: FocusTaskEntity): String {
-        // Issue #110 (vault-history-lived, finding 3): the actual
-        // segment prints the task's REAL accrued time. The old
-        // coerceAtLeast(1) inflated every sub-minute completion —
-        // including tasks ticked done with no session ever run
-        // (0 accrued seconds) — to "1m actual": a printed minute
-        // that never happened, on the receipt of the very session
-        // that proves it didn't. Zero accrued seconds says so;
-        // a real sub-minute accrual says "<1m", never a whole
-        // minute it did not reach.
-        val actualSegment = when {
-            task.actualSecondsSpent <= 0 -> "no session time"
-            task.actualSecondsSpent < 60 -> "<1m actual"
-            else -> "${task.actualSecondsSpent / 60}m actual"
-        }
-        return if (task.estimatedMinutes > 0) {
-            "${task.title} (${task.estimatedMinutes}m est / $actualSegment)"
-        } else {
-            "${task.title} ($actualSegment)"
-        }
-    }
+    private fun completedTaskSummaryEntry(task: FocusTaskEntity): String =
+        // ISSUE-67: the one formatter lives in the domain slice —
+        // the reopen repair strips by this exact string, so booking
+        // and repair must share ONE implementation (FocusDomain).
+        FocusDomain.completedTaskSummaryEntry(task.title, task.estimatedMinutes, task.actualSecondsSpent)
 
     /**
      * REOPEN — the Last-Finished Line's own verb (Register 3,

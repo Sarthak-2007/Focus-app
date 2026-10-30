@@ -4,7 +4,6 @@ import android.util.Log
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.SystemClock
-import com.example.data.MonolithDatabase
 import com.example.MLog
 import com.example.data.MonolithRepository
 import kotlinx.coroutines.delay
@@ -497,9 +496,8 @@ object SessionSealTransitions {
         synchronized(this) {
             instance?.let { it.resyncSoundFromPersistedFact(); return it }
             val appContext = context.applicationContext
-            val repo = repository ?: MonolithRepository(
-                appContext, MonolithDatabase.getInstance(appContext).monolithDao()
-            )
+            // ISSUE-67: construction via the single point.
+            val repo = repository ?: com.example.AppContainer.repository(appContext)
             val eng = engine ?: TactileSoundEngine(appContext)
             val built = SessionSealTransitionImpl(appContext, eng, repo)
             built.resyncSoundFromPersistedFact()

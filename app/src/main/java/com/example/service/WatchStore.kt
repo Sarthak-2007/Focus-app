@@ -103,23 +103,22 @@ enum class WatchItemId(val boardName: String, val counted: Boolean) {
 
     companion object {
         /** The six permission-family items, board order.
-         *  Issue #313 F4 (Audit R5 · Opal second pass): the board
-         *  used to lead with ACCESSIBILITY — the scariest grant,
-         *  asked cold. Board order is now value order: USAGE ACCESS
-         *  first (the benefit the user can see — their own app/time
-         *  picture), ACCESSIBILITY second (the blocking engine,
-         *  asked once the point is proven), then the listener, the
-         *  device-admin uninstall guard, overlay and battery. This
-         *  list IS the render order (GuardLine prints, PARK board)
-         *  and the next-fix suggestion order in ParkDrawer, so the
-         *  FIX trips now fire in this order too. */
+         *  Issue #309 F5 (Audit R5, AppBlock second pass): the board
+         *  used to LEAD with its scariest grants (ACCESSIBILITY,
+         *  DEVICE ADMIN). The order is now cheapest-first — the
+         *  read-only USAGE ACCESS ask leads, the invasive grants
+         *  (ACCESSIBILITY, DEVICE ADMIN) close the board — so the
+         *  first thing a new user is asked for is the least
+         *  frightening one, and the "first missing" surfaces that
+         *  read this list meet the cheap asks before the dear ones. */
         val PERMISSIONS: List<WatchItemId> = listOf(
-            USAGE_ACCESS, ACCESSIBILITY, NOTIFICATION_LISTENER,
-            DEVICE_ADMIN, OVERLAY, BATTERY
+            USAGE_ACCESS, OVERLAY, NOTIFICATION_LISTENER,
+            ACCESSIBILITY, DEVICE_ADMIN, BATTERY
         )
-        /** The counted four, board order. */
+        /** The counted four, board order (same relative order as
+         *  [PERMISSIONS]). */
         val COUNTED: List<WatchItemId> = listOf(
-            ACCESSIBILITY, USAGE_ACCESS, DEVICE_ADMIN, NOTIFICATION_LISTENER
+            USAGE_ACCESS, NOTIFICATION_LISTENER, ACCESSIBILITY, DEVICE_ADMIN
         )
         /** The three derived interceptor items, board order. */
         val INTERCEPTORS: List<WatchItemId> = listOf(SHORTS_REELS, SOCIAL_SITES, NOTIFICATIONS)
