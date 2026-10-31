@@ -63,6 +63,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.AppBlockTier
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
+import com.example.data.MonolithRepository
+import com.example.data.StudyChecklistItem
 import com.example.data.StudyModePreset
 import com.example.service.TactileSoundEngine
 import com.example.service.UsageAccess
@@ -77,6 +79,7 @@ import com.example.ui.components.RefusalSentenceSlot
 import com.example.ui.components.StripDensity
 import com.example.ui.components.RefusalSentence
 import com.example.ui.components.endsAtText
+import com.example.ui.components.isReducedMotion
 import com.example.ui.components.sessionEndsAtMillis
 import com.example.ui.components.imprintTenantText
 import com.example.ui.components.jamSentenceFor
@@ -154,10 +157,25 @@ fun TactileDeckScreen(
     // render harnesses that seat the Deck without a live break
     // keep composing; MainActivity wires the VM's verb.
     onEndSafeBreak: () -> Unit = {},
+    // Issue #261: the mid-block Safe Break entry — defaulted like
+    // onEndSafeBreak so render harnesses keep composing.
+    onStartSafeBreak: () -> Unit = {},
     // Issue #283: the in-session extend verb — defaulted like
     // onEndSafeBreak so render harnesses keep composing.
     onExtendSession: () -> Unit = {},
+    // Issue #143 F4: the DND gate's line (armed at the arm, sealed
+    // truth during the session) — defaulted null so harnesses and
+    // previews compose the standing Deck unchanged.
+    dndLine: String? = null,
     weeklyEmergencyTokensRemaining: Int = 1,
+    // Issue #103 F1: true when the active session is a non-SLEEP
+    // routine session — those never take the generic grace path;
+    // ending one is judged by the routine funnel (MISSED / PARTIAL
+    // / ATTENDED). The host computes it from the live routine row;
+    // defaulted false so render harnesses keep the manual-session
+    // rendering. When true the grace chip must not promise a free,
+    // unrecorded cancel it cannot deliver.
+    isActiveRoutineJudged: Boolean = false,
     // Slice D (the proof strip, the sentence slot, the imprint): the
     // host owns the wire; the screen renders its word.
     appsCellCount: Int? = null,
@@ -282,6 +300,12 @@ fun TactileDeckScreen(
         (deckContext.getSystemService(android.content.Context.ACTIVITY_SERVICE)
             as? android.app.ActivityManager)?.isLowRamDevice == true
     }
+    // Issue #256: reduced motion — with the system animator scale
+    // at 0 the seal shot's vertigo/blur easings are never driven
+    // (same treatment as night calm below): the hero neither
+    // recedes nor blurs, while the phase latches still advance on
+    // the same 1050ms clock, so the seal's timing is unchanged.
+    val reducedMotion = remember { isReducedMotion(deckContext) }
     LaunchedEffect(shot) {
         if (shot == null || shot.preExisting) return@LaunchedEffect
         // The ghosts take their posts before the first shot frame.
@@ -293,7 +317,8 @@ fun TactileDeckScreen(
             // never driven — vertigoT/blurT stay at rest (0), so the
             // hero neither recedes nor blurs. The phase latches
             // below still advance on the same 1050ms clock.
-            if (!shot.nightCalm) {
+            // Issue #256: reduced motion earns the same calm.
+            if (!shot.nightCalm && !reducedMotion) {
                 shot.vertigoT = MonolithCurves.VertigoTransformEasing.transform(
                     (e / 1050f).coerceIn(0f, 1f)
                 )
@@ -1332,6 +1357,25 @@ fun TactileDeckScreen(
             }
         }
 
+        // Issue #143 F4: the DND gate's line stands under the
+        // instrument — set at the arm (what the seal will do
+        // about the phone's voice), replaced at the seal (what
+        // it did), gone at the finish. Absent when the gate has
+        // nothing truthful to print.
+        if (dndLine != null) {
+            Text(
+                text = dndLine,
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp)
+                    .testTag("dnd_gate_line")
+            )
+        }
+
         // =====================================================================
         // SECTION 2: THE TASK — one quiet line (Ren). Sub-steps behind a tap.
         // =====================================================================
@@ -1516,48 +1560,63 @@ fun TactileDeckScreen(
                             .testTag("slide_to_start_view")
                     )
                 } else {
-                    // Issue #98 (R3 arming journey): the 10-second
-                    // grace is measured from SETTLE, not from t=0.
-                    // The seal shot detains the pinned zone for its
-                    // 1050ms (the slide holds this address, no abort
-                    // surface exists), so a t=0-anchored window
-                    // handed the user ~9s under a "10s" print. The
-                    // chip's presence is the gate (the VM enforces
-                    // no second clock), so the window now spans
-                    // elapsed 0..10 whole seconds from t=0 — the
-                    // first of which the shot consumes — and the
-                    // badge counts the seconds the user can
-                    // actually still use: 10 at the settle frame,
-                    // 1 on the last.
-                    val withinGraceWindow = activeSession != null && activeSession.elapsedSeconds <= 10
+                    val withinGraceWindow = activeSession != null &&
+                        activeSession.elapsedSeconds <= MonolithRepository.GRACE_WINDOW_SECONDS
+                    // Issue #103 F3: past the stopwatch 20-minute
+                    // floor, this same tap is a FREE, instant,
+                    // successful finish — no hold, no token spent.
+                    // The chip must say so; it may not keep wearing
+                    // the valve's label and price.
+                    val stopwatchFloorMet = activeSession?.isStopwatchMode == true &&
+                        activeSession.elapsedSeconds >= MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
+                    // Issue #98 (merged): the badge counts the
+                    // seconds the user can actually still use — 10
+                    // at the settle frame, 1 on the last — derived
+                    // from the one constant the repository write
+                    // enforces (issue #103 F2).
+                    val graceBadge = "${(MonolithRepository.GRACE_WINDOW_SECONDS + 1 - (activeSession?.elapsedSeconds ?: 0)).coerceIn(1, MonolithRepository.GRACE_WINDOW_SECONDS)}s"
                     if (withinGraceWindow) {
-                        // Audit R3b #149: one chip, two bookings. A
-                        // manual session's grace cancel is free and
-                        // unrecorded; a routine-born session's abort
-                        // is funnel-booked with attendance
-                        // consequences (disarmActiveSession diverts
-                        // it before the grace classification). The
-                        // chip names which birth it serves — the
-                        // free promise is never printed over a
-                        // booking. (Copy only: the funnel's judgement
-                        // itself belongs to the routines rethink.)
+                        if (isActiveRoutineJudged) {
+                            // Issue #103 F1 / R3b #149: a non-SLEEP
+                            // routine session never takes the free
+                            // grace path — the repository diverts it
+                            // to its judging funnel (MISSED / PARTIAL
+                            // / ATTENDED). Same tap, same funnel (no
+                            // redesign under the routines freeze) —
+                            // the chip names the real cost instead of
+                            // promising a free grace cancel.
+                            BlockitActionChip(
+                                wordLabel = "END ROUTINE · WILL BE JUDGED",
+                                monoBadge = graceBadge,
+                                isPrimaryInk = true,
+                                onClick = onCancelWithinGraceWindow,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(72.dp),
+                                testTag = "routine_judged_end_button"
+                            )
+                        } else {
+                            BlockitActionChip(
+                                wordLabel = "GRACE WINDOW ABORT",
+                                monoBadge = graceBadge,
+                                isPrimaryInk = true,
+                                onClick = onCancelWithinGraceWindow,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(72.dp),
+                                testTag = "grace_abort_button"
+                            )
+                        }
+                    } else if (stopwatchFloorMet) {
                         BlockitActionChip(
-                            wordLabel = if (activeSession?.routineId != null) {
-                                "GRACE ABORT — BOOKED BY ROUTINE"
-                            } else {
-                                "GRACE WINDOW ABORT"
-                            },
-                            monoBadge = "${(11 - (activeSession?.elapsedSeconds ?: 0)).coerceIn(1, 10)}s",
-                            // E5b B6 (Horiz §2): the grace chip
-                            // exits the accent with the rest — it
-                            // takes the primary-ink form, and its
-                            // badge follows the app-wide badge rule.
+                            wordLabel = "FINISH STOPWATCH · NO BREAK SPENT",
+                            monoBadge = "PAST 20M FLOOR",
                             isPrimaryInk = true,
-                            onClick = onCancelWithinGraceWindow,
+                            onClick = onRequestDisarm,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(72.dp), // Issue #6 F6: the chair fills its 72dp zone in every state
-                            testTag = "grace_abort_button"
+                                .height(72.dp),
+                            testTag = "stopwatch_finish_button"
                         )
                     } else {
                         // Audit R3b #147: past the stopwatch floor
@@ -1659,6 +1718,33 @@ fun TactileDeckScreen(
                         .fillMaxWidth()
                         .height(72.dp),
                     testTag = "extend_session_button"
+                )
+            }
+            // Issue #261: the Safe Break's missing door. Until this
+            // chip a break could only BEGIN at a block flip — the
+            // man inside a long block had no verb for the pause he
+            // needed mid-block. The chip stands for exactly the
+            // in-block life (active, timed, not already in a
+            // break) beside the extend verb; the tap freezes the
+            // block and enters the break, and the break's own
+            // END BREAK chip (utilities room) plus its timer bring
+            // him back to the SAME block — see
+            // startSafeBreakMidBlock in the repository. The badge
+            // prints the length in force today, no more: choosing
+            // the length is the parked doctrine half of #261.
+            if (activeSession != null && activeSession.isActive &&
+                !activeSession.isInSafeBreak && !activeSession.isStopwatchMode
+            ) {
+                Spacer(Modifier.height(8.dp))
+                BlockitActionChip(
+                    wordLabel = "TAKE SAFE BREAK",
+                    monoBadge = "${com.example.data.MonolithRepository.SAFE_BREAK_DURATION_SECONDS / 60} MIN",
+                    isPrimaryInk = false,
+                    onClick = onStartSafeBreak,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(72.dp),
+                    testTag = "take_safe_break_button"
                 )
             }
             Spacer(Modifier.height(8.dp))

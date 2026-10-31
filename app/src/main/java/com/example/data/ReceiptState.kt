@@ -366,7 +366,17 @@ data class ReceiptState(
     // Issue #105 (F1/F4): see PendingReceipt.completedTasks /
     // safeBreakSeconds — carried through publish + rehydrate.
     val completedTasks: List<String> = emptyList(),
-    val safeBreakSeconds: Int = 0
+    val safeBreakSeconds: Int = 0,
+    // Issue #152 residue (reopened): the IANA zone the session
+    // ENDED in, captured at the session-ending write into the
+    // same store's end slot (ArmZoneStore, keyed by the end
+    // instant). Null when unknown (a session that ended before
+    // the capture existed). The slip renders ENDED in this zone
+    // — with its offset printed — whenever it differs from the
+    // zone in force at render, exactly as ARMED renders in its
+    // own witness. Before this field existed ENDED was the one
+    // line on the slip still derived at print time.
+    val endZoneId: String? = null
 ) {
     /** The printed №: zero-padded to a minimum of 3, never
      *  truncated (№ 048 … № 1048). */

@@ -21,6 +21,57 @@ concurrency:
 # pinned to ubuntu-24.04 — no floating tags, no floating image.
 
 jobs:
+  # Compile gate (issue #166; compile-is-binary ruling, Oct 31):
+  # the build job below runs unit tests BEFORE assemble (issue #24
+  # finding 1), so on a floor-red head its assemble step is skipped
+  # and no compile-green read exists — the merge gate was
+  # unsatisfiable by construction. This job is the gate's read:
+  # assemble debug + unit-test compile as their own job, first-class
+  # and independent — it executes no tests, and no other job's
+  # verdict can skip, poison, or be poisoned by it (the issue-#382
+  # screenshots precedent: a parallel job with its own budget whose
+  # verdict stands alone). The gate reads THIS job's conclusion on
+  # the PR head: green here means app + test code compile on that
+  # head, whatever the unit-test floor says.
+  compile:
+    name: Compile (assemble + test-compile)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Issue #85 F3: checkout credentials must not persist into
+          # the git config while build code executes.
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'  # issue #66 cluster-priority: same cure as agent/issue-2 f789cef — Robolectric 4.16 refuses SDK 36 on JDK 17
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Install SDK platform 36.1
+        run: |
+          SDKMANAGER="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
+          yes | "$SDKMANAGER" --licenses > /tmp/sdk-licenses.log 2>&1 || { echo "::warning::sdkmanager license step failed — see log tail"; tail -20 /tmp/sdk-licenses.log; }
+          "$SDKMANAGER" "platforms;android-36.1" "build-tools;36.1.0"
+
+      - name: Compile — assemble debug + unit-test compile
+        id: compile
+        run: |
+          chmod +x gradlew
+          ./gradlew --console=plain assembleDebug compileDebugUnitTestKotlin
+
+      - name: Compile summary
+        if: always()
+        run: |
+          {
+            echo "## Compile verdict — ${{ github.ref_name }} · ${{ github.sha }}"
+            echo "- Assemble debug + unit-test compile: ${{ steps.compile.outcome }}"
+            echo "- This job executes NO tests. Its conclusion is the compile-is-binary gate's read on this head: green = app + test code compile here, independent of the unit-test floor (issue #166)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   build:
     runs-on: ubuntu-24.04
     # Wave-2 (issue #3): the 360-minute platform default meant one
