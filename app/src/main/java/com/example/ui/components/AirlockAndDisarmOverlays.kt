@@ -1793,7 +1793,13 @@ fun AirlockInterceptOverlay(
             wallStartMono,
             graceNowMono
         )
-        LaunchedEffect(state.interceptInstanceId, state.isVisible) {
+        // Issue #254 line 14: the effect also re-keys on the
+        // escalated length itself — the ladder's count can land a
+        // beat after the door stands (the ViewModel reads it back
+        // after booking the arrival), and the reprice must restart
+        // the countdown derivation from the same anchored start
+        // rather than run out the un-escalated capture.
+        LaunchedEffect(state.interceptInstanceId, state.isVisible, effectiveWallSeconds) {
             countdownSecs =
                 airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), effectiveWallSeconds)
             while (countdownSecs > 0) {

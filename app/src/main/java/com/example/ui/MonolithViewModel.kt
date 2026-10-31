@@ -2198,6 +2198,10 @@ class MonolithViewModel(
             // attempt mirror a live door would — the day's ledger
             // count for this package, which already includes the
             // booked arrival this re-derive restores.
+            // Issue #254 line 14: the ladder's prior count rides
+            // the same number minus that restored arrival, so a
+            // restored door prices its wall exactly as the live
+            // door it restores would have.
             val attempts = runCatching {
                 repository.interceptAttemptsToday(newest.packageName, System.currentTimeMillis())
             }.getOrDefault(0)
@@ -2209,7 +2213,8 @@ class MonolithViewModel(
                 path = InterceptPath.UNKNOWN,
                 active = session,
                 appEntity = entity,
-                todayAttempts = attempts
+                todayAttempts = attempts,
+                priorReachesToday = (attempts - 1).coerceAtLeast(0)
             )
         }
         _freshStartNoteVisible.value = repository.freshStartNotePending()
@@ -5288,6 +5293,12 @@ class MonolithViewModel(
             // is booked, so the number the door prints includes
             // this reach and is exactly the ledger's own. It lands
             // only if this same visit (same nonce) still stands.
+            // Issue #254 line 14 (R6 #340 F17 wiring): the same
+            // read-back also lands the escalation ladder's count —
+            // prior reaches today are the ledger count minus the
+            // arrival just booked, and the overlay prices this
+            // visit's wall from it. Without this landing the ladder
+            // priced every visit at zero priors (built, never wired).
             val attempts = runCatching {
                 repository.interceptAttemptsToday(packageName, nowWall)
             }.getOrNull()
@@ -5296,7 +5307,10 @@ class MonolithViewModel(
                 if (current.interceptNonce == nonce &&
                     current.todayAttempts != attempts
                 ) {
-                    _airlockState.value = current.copy(todayAttempts = attempts)
+                    _airlockState.value = current.copy(
+                        todayAttempts = attempts,
+                        priorReachesToday = (attempts - 1).coerceAtLeast(0)
+                    )
                 }
             }
         }
@@ -5327,7 +5341,12 @@ class MonolithViewModel(
         // caller from the intercept ledger (a live trigger reads it
         // back after booking the arrival; a re-derive reads the
         // day's rows directly). The mint itself counts nothing.
-        todayAttempts: Int = 0
+        todayAttempts: Int = 0,
+        // Issue #254 line 14 (R6 #340 F17 wiring): the escalation
+        // ladder's prior-reach count for today, derived by the
+        // caller from the same ledger count as todayAttempts
+        // (which includes the restored arrival; priors exclude it).
+        priorReachesToday: Int = 0
     ): AirlockInterceptState {
         val nowMono = SystemClock.elapsedRealtime()
         val nowWall = System.currentTimeMillis()
@@ -5483,6 +5502,7 @@ class MonolithViewModel(
                             .coerceAtLeast(0) * 1000L
                 },
             todayAttempts = todayAttempts,
+            priorReachesToday = priorReachesToday,
             // Issue #125 (F5 remainder): the grace facts ride onto
             // the door from the same live row, on the re-derive too —
             // a restored door carries the same abort a live door does.
