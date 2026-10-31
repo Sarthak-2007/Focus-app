@@ -268,37 +268,17 @@ class MainActivity : ComponentActivity() {
             intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_NONCE)
             intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_ID)
             return
-        if (!pkg.isNullOrBlank()) {
-            val name = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
-                // Wave-2 cure (critic N-4): the old "Short-Form Feed"
-                // fallback fabricated a hero name for a door whose
-                // app was never identified. The name slot holds a
-                // fact or the package verbatim — never an invention.
-                ?: pkg
-            // FIX-6 (C-10): the fallback badge word is "Blocked" —
-            // this is the fourth of the four sites.
-            val badge = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
-                ?: "Blocked"
-            // WHICH door fired (Truth Car 3, UNA2-01): the peek
-            // offer is computed per-path — an extra that is missing
-            // or names no known door parses to UNKNOWN, and UNKNOWN
-            // never offers a peek.
-            val path = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
-                ?.let { runCatching { InterceptPath.valueOf(it) }.getOrNull() }
-                ?: InterceptPath.UNKNOWN
-            // The site door's sub-line (FIX-6 name slot): the
-            // browser holds the name; the matched domain rides
-            // here. Absent on every other door.
-            val subLine = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_SUBLINE)
-            viewModel.triggerAirlockIntercept(pkg, name, badge, path, subLine)
-            intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
-            intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
-            intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_SUBLINE)
         }
         val name = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
-            ?: "Short-Form Feed"
+            // Wave-2 cure (critic N-4): the old "Short-Form Feed"
+            // fallback fabricated a hero name for a door whose
+            // app was never identified. The name slot holds a
+            // fact or the package verbatim — never an invention.
+            ?: pkg
+        // FIX-6 (C-10): the fallback badge word is "Blocked" —
+        // this is the fourth of the four sites.
         val badge = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
-            ?: "Locked"
+            ?: "Blocked"
         // WHICH door fired (Truth Car 3, UNA2-01): the peek
         // offer is computed per-path — an extra that is missing
         // or names no known door parses to UNKNOWN, and UNKNOWN
@@ -306,6 +286,10 @@ class MainActivity : ComponentActivity() {
         val path = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
             ?.let { runCatching { InterceptPath.valueOf(it) }.getOrNull() }
             ?: InterceptPath.UNKNOWN
+        // The site door's sub-line (FIX-6 name slot): the
+        // browser holds the name; the matched domain rides
+        // here. Absent on every other door.
+        val subLine = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_SUBLINE)
         // Issue #78: consumption is PERSISTED, not just in-memory.
         // The platform retains the launching intent and redelivers
         // it intact after process death, so removeExtra on this
@@ -328,6 +312,7 @@ class MainActivity : ComponentActivity() {
         intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
         intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
         intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_SUBLINE)
         intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_ID)
         intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_NONCE)
         if (InterceptConsumptionStore.isConsumed(this, interceptId)) return
@@ -336,7 +321,7 @@ class MainActivity : ComponentActivity() {
         // live session and the package's live tier/lease — a
         // first-delivered but long-delayed intent does not resurrect
         // an Airlock its facts no longer support.
-        viewModel.triggerAirlockInterceptFromIntent(pkg, name, badge, path)
+        viewModel.triggerAirlockInterceptFromIntent(pkg, name, badge, path, subLine)
     }
 
     // Issue #27 (finding 2): there is deliberately NO onDestroy
@@ -514,12 +499,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val shotGround by viewModel.shotGround.collectAsStateWithLifecycle()
     val finishState by viewModel.finishState.collectAsStateWithLifecycle()
     val receiptState by viewModel.receiptState.collectAsStateWithLifecycle()
-    // The receipt sheet's dismissal is host state (F-B1): the
-    // slip stands until the next DOWN anywhere, a navigation, or
-    // PARK's invocation — it is never dismissed by a timer. (The
-    // nav/PARK effect itself sits below, beside the PARK state
-    // it reads.)
-    var dismissedReceiptSessionId by remember { mutableStateOf(-1) }
     val isAlwaysOnDeskClockVisible by viewModel.isAlwaysOnDeskClockVisible.collectAsStateWithLifecycle()
     // Issue #13: A-4's cause table, A-10(v)'s keep-awake +
     // surrender fade, E-1's veil + Landing — all VM-owned state.
@@ -587,7 +566,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // flipped to day by the time the return begins.
     val nightReturnArmed = nightReturnPhase != com.example.ui.NightReturnPhase.OPEN
     val lastReceiptSessionId by viewModel.lastReceiptSessionId.collectAsStateWithLifecycle()
-    val isAlwaysOnDeskClockVisible by viewModel.isAlwaysOnDeskClockVisible.collectAsStateWithLifecycle()
     // Issue #143 F4: the DND gate's line for the Deck.
     val dndLine by viewModel.dndLine.collectAsStateWithLifecycle()
     // Issue #143 F1/F5/F6: the shield loop's published break-dim
@@ -896,13 +874,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         if (sealed) shieldExcursion = false
     }
 
-    fun closePark(dismissReceipt: Boolean) {
-        parkOpen = false
-        if (dismissReceipt && showNotificationDigestSheet) {
-            viewModel.toggleNotificationDigestSheet(false)
-        }
-        if (viewModel.parkIntroPending()) {
-            viewModel.markParkIntroDone()
     // THE LAUNCHER (Sarthak's ruling, Oct 30 04:29 IST): while the
     // phone is sealed, the block surface is a launcher. It opens
     // from the Guard line's tap (a dead tap while sealed until now —
@@ -1002,6 +973,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         if (parkOpen) {
             viewModel.refreshSystemGuard()
             viewModel.runWatchSweep()
+        }
+    }
+
     // The intro is spent on DELIVERY, not on dismissal (issue-156,
     // F3): once PARK stands open over a measured board, the intro
     // has been delivered — mark it done. Declared after the latch
@@ -1100,6 +1074,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // PARK — leaving is never a trap and never a finish.
     if (receptionOpen) {
         BackHandler { receptionOpen = false }
+    }
     // Issue #27 (finding 3): full-screen overlays own Back. Before
     // this handler, Back on the DECK fell through to the default
     // dispatcher and FINISHED the Activity — including from the
@@ -1694,7 +1669,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         socialSitesEnabled = browserUrlBlockerEnabled,
                         onToggleSocialSites = { viewModel.toggleBrowserUrlBlocker() },
                         onOpenReception = {
-                            closePark(dismissReceipt = false)
+                            closePark(
+                                parkOpenState, showNotificationDigestSheet, viewModel,
+                                dismissReceipt = false
+                            )
                             receptionOpen = true
                         },
                         setupStampMask = if (setupStamped) {

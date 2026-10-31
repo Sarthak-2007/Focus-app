@@ -724,7 +724,7 @@ fun ParkDrawer(
                             color = scheme.onBackground
                         )
                     }
-                )
+                }
 
                 Spacer(modifier = Modifier.height(16.dp))
 

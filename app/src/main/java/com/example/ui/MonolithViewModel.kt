@@ -462,11 +462,8 @@ data class AirlockInterceptState(
      *  echo of a lease this door granted — greeted "THE PEEK
      *  ENDED", never counted as a new reach. */
     val justExpiredLease: Boolean = false,
-    val interceptReasonBadge: String = "Shut",
-    val sessionIntention: String = "",
     val selectedReason: DistractionTriggerReason = DistractionTriggerReason.MUSCLE_MEMORY,
     val transmutedParticles: Int = 0,
-    val canUse2MinutePeek: Boolean = true,
     /** Issue #55: a fresh identity for EVERY intercept — even a
      *  same-package re-intercept while the overlay already stands.
      *  The overlay keys its 5s wall and cooldown on this, never on
@@ -4754,7 +4751,7 @@ class MonolithViewModel(
                     peekLeaseLive = leaseLive
                 )
             ) return@launch
-            triggerAirlockIntercept(packageName, appName, reasonBadge, path)
+            triggerAirlockIntercept(packageName, appName, reasonBadge, path, subLine)
         }
     }
 
@@ -4765,7 +4762,7 @@ class MonolithViewModel(
         reasonBadge: String = "Blocked",
         path: InterceptPath = InterceptPath.UNKNOWN,
         subLine: String? = null
-    ') {
+    ) {
         // Issue #68 F5, Tier 1 — revalidation (main's gate, grafted
         // ahead of train's body per M-A2 VM-18): an airlock is a
         // claim about a live session. With no active session there
@@ -4927,16 +4924,18 @@ class MonolithViewModel(
     }
 
     /**
-     * FIX-5c: the cooldown's expiry resolution. The overlay calls
-     * this when its derived cooldown reaches 0; the offer
-     * derivation re-runs against the CURRENT row, cooldown and
-     * pill, and the state updates in place — the peek stands in
-     * Z1's slot, or the withheld line re-derives to its new true
-     * state. "AGAIN IN 0 MIN" is unrepresentable: at derived 0
-     * there is no cooldown line, by construction. A door whose
-     * withheld reason is not COOLDOWN is left untouched.
+     * The one Airlock mint (Issue #87 F4 re-derive): a fresh
+     * intercept and a re-derived one build their state through the
+     * same derivation, so the restored door can never disagree with
+     * the door a live intercept would have stood. The app entity is
+     * passed in, never re-read here — at init the apps StateFlow is
+     * still cold (WhileSubscribed), and a restored door minted from
+     * an empty snapshot would misprint its tier facts. The mint
+     * itself books nothing and sounds nothing: booking is the
+     * trigger's act (a re-derive must not double-book the arrival
+     * or re-increment the session's reaches counter), and the latch
+     * sound is the firing door's, not a restoration's.
      */
-
     private fun mintAirlockState(
         packageName: String,
         appName: String,
@@ -4944,12 +4943,15 @@ class MonolithViewModel(
         path: InterceptPath,
         active: FocusSessionEntity?,
         appEntity: BlockedAppEntity?,
+        subLine: String? = null,
         // Issue #254 F12: the attempt mirror's count, read by the
         // caller from the intercept ledger (a live trigger reads it
         // back after booking the arrival; a re-derive reads the
         // day's rows directly). The mint itself counts nothing.
         todayAttempts: Int = 0
     ): AirlockInterceptState {
+        val nowMono = SystemClock.elapsedRealtime()
+        val nowWall = System.currentTimeMillis()
         val cooldownLeft = if (appEntity != null) repository.getPeekCooldownRemainingSeconds(appEntity) else 0
         val pillActive = _floatingPeekPill.value.isActive
         // N-2: the offer derivation takes session liveness as an
@@ -5002,7 +5004,7 @@ class MonolithViewModel(
         // its id write on this visit still standing.
         val nonce = maxOf(nowMono, _airlockState.value.interceptNonce + 1L)
 
-        _airlockState.value = AirlockInterceptState(
+        return AirlockInterceptState(
             isVisible = true,
             interceptedPackageName = packageName,
             interceptedAppName = appName,
@@ -5094,29 +5096,6 @@ class MonolithViewModel(
                 },
             todayAttempts = todayAttempts
         )
-
-        // C-11 (Tor round 7, ruled in full): BOOK AT ARRIVAL. The
-        // row is written NOW, stamped with the arrival instant,
-        // outcome AT DOOR; RETURN/PEEK update this same row when
-        // their outcome is known. The taper and the memory line
-        // (both derived from the log) therefore count arrivals —
-        // priorCount above was read BEFORE this write, so this
-        // visit never counts itself. The id lands back into state
-        // only if this visit (same nonce) is still standing.
-        val arrivalIntention = active?.intention ?: ""
-        viewModelScope.launch {
-            val rowId = runCatching {
-                repository.bookInterceptArrival(
-                    packageName = packageName,
-                    appName = appName,
-                    sessionIntention = arrivalIntention,
-                    arrivedAtWallMillis = nowWall
-                )
-            }.getOrDefault(0L)
-            if (rowId > 0L && _airlockState.value.interceptNonce == nonce) {
-                _airlockState.value = _airlockState.value.copy(interceptLogId = rowId)
-            }
-        }
     }
 
     /**
