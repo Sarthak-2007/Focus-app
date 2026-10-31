@@ -456,14 +456,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // destination clears the flag — the Deck and the block
     // surfaces stay capturable as before. (Verified gap: the
     // tree carried zero FLAG_SECURE anywhere.)
-    val activityWindow = (context as? android.app.Activity)?.window
+    val archiveWindow = (context as? android.app.Activity)?.window
     LaunchedEffect(currentDestination) {
         if (archiveSurfaceSecure(currentDestination)) {
-            activityWindow?.addFlags(
+            archiveWindow?.addFlags(
                 android.view.WindowManager.LayoutParams.FLAG_SECURE
             )
         } else {
-            activityWindow?.clearFlags(
+            archiveWindow?.clearFlags(
                 android.view.WindowManager.LayoutParams.FLAG_SECURE
             )
         }
