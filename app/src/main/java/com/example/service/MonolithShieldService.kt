@@ -995,24 +995,12 @@ class MonolithShieldService : Service() {
     }
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            // Issue #155 (F4): channels are immutable on-device, so
-            // the badge fix cannot flip the legacy channel's
-            // setShowBadge(false) in place. Create the v2 channel
-            // with the badge ON and delete the legacy id — existing
-            // installs migrate on the shield's next start.
-            manager.deleteNotificationChannel(LEGACY_CHANNEL_ID)
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                getString(R.string.notification_channel_name),
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = getString(R.string.notification_channel_desc)
-                setShowBadge(true)
-            }
-            manager.createNotificationChannel(channel)
-        }
+        // Issue #155 C2 (SMALL-3 manifest audit, folded into PR
+        // #626): the channel spec lives in ONE place — the
+        // companion's ensureShieldChannel — because channels are
+        // first-writer-wins on-device and InterceptLaunch used to
+        // create this same id IMPORTANCE_HIGH with no badge call.
+        ensureShieldChannel(this)
     }
 
     private fun createBreakAlertChannel() {
@@ -1422,6 +1410,44 @@ class MonolithShieldService : Service() {
          *  launchers; required by MainActivity before any
          *  intercept extra is honoured. */
         const val EXTRA_INTERCEPT_NONCE = "extra_intercept_nonce"
+
+        /**
+         * The ONE creator of the standing shield channel (issue
+         * #155 C2, SMALL-3 manifest audit; folded into PR #626 by
+         * BUILDER-2). Notification channels are first-writer-wins
+         * for importance and badge: before this single source,
+         * InterceptLaunch's fallback path created
+         * [CHANNEL_ID] as IMPORTANCE_HIGH with no badge call, so
+         * whichever door fired first on a fresh install fixed the
+         * standing card's importance (HIGH = audible, the opposite
+         * of the silent LOW design) and badge behaviour for the
+         * life of the install. Every poster on this channel —
+         * the shield itself and the intercept fallback — ensures
+         * the channel HERE, with the shield's spec: IMPORTANCE_LOW,
+         * badge ON.
+         */
+        fun ensureShieldChannel(context: Context) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val manager = context.getSystemService(Context.NOTIFICATION_SERVICE)
+                    as? NotificationManager ?: return
+                // Issue #155 (F4): channels are immutable on-device,
+                // so the badge fix cannot flip the legacy channel's
+                // setShowBadge(false) in place. Create the v2 channel
+                // with the badge ON and delete the legacy id —
+                // existing installs migrate on the shield's next
+                // start.
+                manager.deleteNotificationChannel(LEGACY_CHANNEL_ID)
+                val channel = NotificationChannel(
+                    CHANNEL_ID,
+                    context.getString(R.string.notification_channel_name),
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description = context.getString(R.string.notification_channel_desc)
+                    setShowBadge(true)
+                }
+                manager.createNotificationChannel(channel)
+            }
+        }
 
         fun startShield(context: Context) {
             try {

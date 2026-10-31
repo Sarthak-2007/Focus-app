@@ -118,6 +118,45 @@ class InterceptFallbackExpiryTest {
     }
 
     @Test
+    fun fallbackEnsuresTheShieldChannelWithTheShieldsOwnSpec() {
+        // Issue #155 C2 (SMALL-3 manifest audit): the fallback path
+        // used to create monolith_shield_channel_v2 itself —
+        // IMPORTANCE_HIGH, no badge call — against the shield's
+        // IMPORTANCE_LOW + badge ON. First-writer-wins would fix
+        // the standing card wrong for the life of the install.
+        // After a dropped launch (the fallback path ran), the
+        // channel on record must carry the SHIELD's spec.
+        val base = ApplicationProvider.getApplicationContext<Context>()
+        InterceptLaunch.launch(throwingContext(base), interceptIntent(base), "Instagram")
+        val channel = manager(base).getNotificationChannel(MonolithShieldService.CHANNEL_ID)
+        assertEquals(
+            NotificationManager.IMPORTANCE_LOW,
+            channel.importance
+        )
+        assertTrue(
+            "the shield channel's badge stays ON (issue #155 F4)",
+            channel.canShowBadge()
+        )
+    }
+
+    @Test
+    fun interceptLaunchNeverCreatesAChannelItself() {
+        // Source pin: channel creation is single-sourced in the
+        // shield (ensureShieldChannel). Any NotificationChannel
+        // construction or IMPORTANCE_ constant creeping back into
+        // InterceptLaunch re-opens the C2 drift.
+        val source = listOf(
+            java.io.File("src/main/java/com/example/service/InterceptLaunch.kt"),
+            java.io.File("app/src/main/java/com/example/service/InterceptLaunch.kt"),
+            java.io.File("../app/src/main/java/com/example/service/InterceptLaunch.kt")
+        ).firstOrNull { it.exists() }?.readText()
+            ?: error("InterceptLaunch.kt not found")
+        assertTrue(source.contains("MonolithShieldService.ensureShieldChannel(context)"))
+        assertTrue(!source.contains("NotificationChannel("))
+        assertTrue(!source.contains("NotificationManager.IMPORTANCE"))
+    }
+
+    @Test
     fun successfulLaunchRetiresAStandingFallbackCard() {
         val base = ApplicationProvider.getApplicationContext<Context>()
         InterceptLaunch.launch(throwingContext(base), interceptIntent(base), "Instagram")

@@ -1,11 +1,9 @@
 package com.example.service
 
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.example.R
 
@@ -96,17 +94,17 @@ object InterceptLaunch {
         runCatching {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE)
                 as? NotificationManager ?: return
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                manager.createNotificationChannel(
-                    NotificationChannel(
-                        MonolithShieldService.CHANNEL_ID,
-                        context.getString(R.string.notification_channel_name),
-                        NotificationManager.IMPORTANCE_HIGH
-                    ).apply {
-                        description = context.getString(R.string.notification_channel_desc)
-                    }
-                )
-            }
+            // Issue #155 C2 (SMALL-3 manifest audit, folded into PR
+            // #626): this site used to create the shield's channel
+            // itself — IMPORTANCE_HIGH, no badge call — while the
+            // shield creates the same id IMPORTANCE_LOW + badge ON.
+            // Channels are first-writer-wins, so a fallback firing
+            // before the shield's first start fixed the standing
+            // card as HIGH (audible) and badgeless for the life of
+            // the install. The fallback's NOTIFICATION stays
+            // high-priority (PRIORITY_HIGH below is per-card); the
+            // CHANNEL now comes from the shield's single source.
+            MonolithShieldService.ensureShieldChannel(context)
             val pending = PendingIntent.getActivity(
                 context,
                 FALLBACK_NOTIFICATION_ID,
