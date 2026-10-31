@@ -974,6 +974,123 @@ class TactileSoundEngine(private val context: Context) {
         )
     }
 
+    /**
+     * The Held Door's arrival voice (FIX-7c): the seal's recipe at
+     * door pitch — 300Hz, 44ms, gain 0.60, chordRatio 1.5 — with
+     * the latch's haptics kept. Replaces the 16ms switch tick
+     * (playMechanicalLatch's transient) that used to announce the
+     * door while the goodbye carried the visit's heaviest sound.
+     */
+    fun playDoorArrival() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 11, 26, 9),
+            amplitudes = intArrayOf(0, 215, 0, 150),
+            fallbackMs = HAPTIC_SWITCH_FLIP_4MS
+        )
+        enqueueTransient(
+            fundamentalHz = 300f,
+            durationMs = 44,
+            gain = 0.60f,
+            chordRatio = 1.5f
+        )
+    }
+
+    /**
+     * The offer arms (FIX-7 / Ton's score §5.3, Tor round 9): the
+     * arrival's recipe at exactly half gain — 300Hz, 44ms, gain
+     * 0.30, chordRatio 1.5 — with a softened detent haptic
+     * ([0,150,60]: felt in a held hand, a tap on furniture, never
+     * a second latch). Fired ONCE at the VM state transition where
+     * the peek offer arms — the wall's expiry and FIX-5c's
+     * held→offer resolutions alike. Silence stands everywhere
+     * else on the wall: no per-second voice, no held-zero voice.
+     * Night law: gain ≤ 0.60, no 255-amplitude haptic — honoured.
+     */
+    fun playDoorArm() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 7, 5),
+            amplitudes = intArrayOf(0, 150, 60),
+            fallbackMs = HAPTIC_ROTARY_TICK_1MS
+        )
+        enqueueTransient(
+            fundamentalHz = 300f,
+            durationMs = 44,
+            gain = 0.30f,
+            chordRatio = 1.5f
+        )
+    }
+
+    /**
+     * RETURN's press (FIX-7d, Ton §5.4): 300Hz, 28ms, gain 0.48,
+     * chordRatio 0.9 — the engine's RELEASE interval — with the
+     * releasing latch's waveform verbatim. This REPLACES
+     * playHarmonicSeal(true) on the airlock return path: the
+     * seal's voice (0.62 / 48ms, the visit's heaviest sound) is
+     * never spent on a goodbye again.
+     */
+    fun playDoorReturn() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 9, 22, 10),
+            amplitudes = intArrayOf(0, 165, 0, 195),
+            fallbackMs = HAPTIC_SWITCH_FLIP_4MS
+        )
+        enqueueTransient(
+            fundamentalHz = 300f,
+            durationMs = 28,
+            gain = 0.48f,
+            chordRatio = 0.9f
+        )
+    }
+
+    /**
+     * The peek taken (FIX-7, Ton §5.5): 300Hz, 32ms, gain 0.50,
+     * chordRatio 1.5 — the BINDING interval, because taking the
+     * peek is the visit's second binding (a lease granted, a
+     * cooldown armed) — with the engaging latch's waveform
+     * verbatim, shared with arrival: the same hand-motion, a lock
+     * turning. Replaces the generic playMechanicalLatch(true) at
+     * the grant, which sounded like every switch in the app. A
+     * REFUSED grant stays silent — this fires only past the
+     * grant's re-derivation.
+     */
+    fun playDoorPeek() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 11, 26, 9),
+            amplitudes = intArrayOf(0, 215, 0, 150),
+            fallbackMs = HAPTIC_SWITCH_FLIP_4MS
+        )
+        enqueueTransient(
+            fundamentalHz = 300f,
+            durationMs = 32,
+            gain = 0.50f,
+            chordRatio = 1.5f
+        )
+    }
+
+    /**
+     * The exit to Disarm (FIX-7, Ton §5.6): 240Hz — the score's
+     * one pitch step down (300 × 0.8) — 40ms, gain 0.42 (the
+     * quietest press-beat: gravity is duration and seat, not
+     * volume), chordRatio 0.9, with the releasing latch's
+     * waveform verbatim. Fired on the CONFIRMED Disarm handoff
+     * from the door only, and it is that handoff's ONLY voice:
+     * the door route never also spends requestDisarmChallenge's
+     * latch. KEEP FOCUSING's peel-back stays silent.
+     */
+    fun playDoorExit() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 9, 22, 10),
+            amplitudes = intArrayOf(0, 165, 0, 195),
+            fallbackMs = HAPTIC_SWITCH_FLIP_4MS
+        )
+        enqueueTransient(
+            fundamentalHz = 240f,
+            durationMs = 40,
+            gain = 0.42f,
+            chordRatio = 0.9f
+        )
+    }
+
     /** Break-end summons (Audit R3b #146): the voice that calls the
      *  user BACK from a Safe Break. The single latch was functionally
      *  silence in a pocket — this is three full strikes with a low
