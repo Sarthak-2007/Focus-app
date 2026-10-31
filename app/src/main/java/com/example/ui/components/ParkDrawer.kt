@@ -235,6 +235,11 @@ fun ParkDrawer(
     // peek length from the same GuardSettings row the lease reads
     // — never the retired 2-minute constant. 0 prints PEEK: OFF.
     peekMinutes: Int = 2,
+    // Issue #517 (4-A): the verb that SETS the length the plate
+    // prints — the stepper row seated with the sleds writes the
+    // Guard row through the ViewModel. Default no-op keeps render
+    // harnesses whole.
+    onPeekMinutesChange: (Int) -> Unit = {},
     setupStampMask: Int? = null,
     handoverText: String? = null,
     modifier: Modifier = Modifier
@@ -1487,6 +1492,78 @@ fun ParkDrawer(
                                     ) {}
                             )
                         }
+                    }
+                }
+                // (5b) Peek length — the SETTING row for the value
+                // the spec plate (7) prints and the lease reads
+                // (issue #517, 4-A). Until this row, the peekMinutes
+                // column had readers everywhere and a writer
+                // nowhere: the length could never leave its
+                // migration default of 2, and his word that peek
+                // time should be editable stopped at a print. The
+                // steppers write the Guard row through the
+                // ViewModel; 0 is PEEK OFF; the bounds (0–30) are
+                // clamped again at the repository setter. An edit
+                // prices the NEXT grant only — a live lease keeps
+                // the end it was granted (PILL-AND-TIMES §3.4).
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "PEEK LENGTH — SETTING",
+                        style = PillBadgeTextStyle,
+                        color = scheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = if (peekMinutes == 0) "OFF" else "$peekMinutes MIN",
+                        style = AppTitleTextStyle,
+                        color = scheme.onBackground,
+                        modifier = Modifier.testTag("park_peek_value")
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Box(
+                        modifier = Modifier
+                            .width(48.dp)
+                            .height(48.dp)
+                            .clickable {
+                                if (interactiveState.value) {
+                                    onPeekMinutesChange((peekMinutes - 1).coerceAtLeast(0))
+                                }
+                            }
+                            .testTag("park_peek_stepper_minus"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "-",
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp,
+                            color = scheme.onBackground
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .width(48.dp)
+                            .height(48.dp)
+                            .clickable {
+                                if (interactiveState.value) {
+                                    onPeekMinutesChange((peekMinutes + 1).coerceAtMost(30))
+                                }
+                            }
+                            .testTag("park_peek_stepper_plus"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "+",
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp,
+                            color = scheme.onBackground
+                        )
                     }
                 }
                 ParkHairline()
