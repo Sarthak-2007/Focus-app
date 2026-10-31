@@ -23,6 +23,9 @@ import org.junit.Test
  *
  *  Ruling 2 — legacy OPEN rows reset once, announced with the
  *  count. LegacyOpenReset is the selection half of that reset.
+ *
+ * PIN SCOPE: SOURCE — pure derivation/selection truth table over
+ * LoadoutRules.tierFor and LegacyOpenReset; no Android runtime.
  */
 class ShieldRulingsOct31Test {
 
