@@ -14,6 +14,7 @@ import com.example.data.AppCategory
 import com.example.data.BreakResult
 import com.example.data.BlockedAppEntity
 import com.example.data.CurioCatalog
+import com.example.data.DisarmResult
 import com.example.data.DailyFocusStat
 import com.example.data.DistractionTriggerReason
 import com.example.data.FocusProfileEntity
@@ -648,6 +649,12 @@ internal fun stopwatchRemainingFloorSeconds(bankedElapsedSeconds: Int): Int =
 data class DisarmChallengeState(
     val isVisible: Boolean = false,
     val requiredHoldSeconds: Int = 60,
+    // Issue #523 (6-1): the session this challenge was opened for.
+    // The valve's banked hold is keyed by it in the overlay — banked
+    // chambers belong to the session that banked them and must never
+    // pre-load a later session's valve. -1 = no session named (the
+    // hidden default state; the overlay is not composed then).
+    val sessionId: Int = -1,
     /** Door-originated entry only (innovator P-2c): a stopwatch
      *  session past its floor may complete cleanly, and from the
      *  Held Door that completion is presented ON THIS FACE — a
@@ -4930,6 +4937,7 @@ class MonolithViewModel(
         _disarmChallenge.value = DisarmChallengeState(
             isVisible = true,
             requiredHoldSeconds = 60,
+            sessionId = current.id,
             sessionIsStopwatch = current.isStopwatchMode,
             remainingFloorSeconds = if (current.isStopwatchMode) remainingFloor else 0
         )
@@ -4947,7 +4955,15 @@ class MonolithViewModel(
         _isAlwaysOnDeskClockVisible.value = false
         _disarmChallenge.value = DisarmChallengeState(isVisible = false)
         viewModelScope.launch {
-            repository.disarmActiveSession(completed = false, outcomeReason = reason)
+            val result = repository.disarmActiveSession(completed = false, outcomeReason = reason)
+            // Issue #523 (6-3): a refused late grace-cancel means the
+            // repository disarmed NOTHING — the session stays sealed,
+            // so the shield stays up and no session-edge tick fires.
+            // Tearing down here would print a freedom the ledger
+            // never granted. The challenge sheet has already closed;
+            // the sealed session's own surfaces are what he returns
+            // to, and the valve is the only door left.
+            if (result == DisarmResult.RefusedLateGraceCancel) return@launch
             MonolithShieldService.stopShield(appContext)
             com.example.service.RoutineHeartbeat.tickAsync(
                 appContext, com.example.service.RoutineHeartbeat.Source.SESSION_EDGE
@@ -5848,6 +5864,7 @@ class MonolithViewModel(
         _disarmChallenge.value = DisarmChallengeState(
             isVisible = true,
             requiredHoldSeconds = 60,
+            sessionId = current.id,
             cleanCompletionAvailable = cleanCompletion
         )
     }

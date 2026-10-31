@@ -19,6 +19,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
+ * PIN scope: RENDER.
+ *
  * Issue-60 (Audit R1 · blockit-suitcase-views) — one test per finding.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -156,6 +158,36 @@ class SuitcaseViewsIssue60Test {
         restoreMethod.isAccessible = true
         restoreMethod.invoke(reborn, saved)
         assertEquals(30_000L, reborn.currentBankedMs)
+    }
+
+    // Issue #523 (6-1): a bank saved under one session's key does not
+    // restore into a valve serving another session; the same key does.
+    @Test
+    fun valve_bankedProgress_doesNotRestoreAcrossSessions() {
+        val first = Emergency60sValveView(context)
+        first.requiredSeconds = 60
+        first.bankSessionKey = 41
+        first.restoreBankedProgress(30_000L)
+        assertEquals(30_000L, first.currentBankedMs)
+
+        val saveMethod = Emergency60sValveView::class.java
+            .getDeclaredMethod("onSaveInstanceState")
+        saveMethod.isAccessible = true
+        val saved = saveMethod.invoke(first) as Bundle
+        val restoreMethod = Emergency60sValveView::class.java
+            .getDeclaredMethod("onRestoreInstanceState", android.os.Parcelable::class.java)
+        restoreMethod.isAccessible = true
+
+        val otherSession = Emergency60sValveView(context)
+        otherSession.bankSessionKey = 42
+        restoreMethod.invoke(otherSession, saved)
+        assertEquals(0L, otherSession.currentBankedMs)
+        assertEquals(0L, otherSession.currentHeldMs)
+
+        val sameSession = Emergency60sValveView(context)
+        sameSession.bankSessionKey = 41
+        restoreMethod.invoke(sameSession, saved)
+        assertEquals(30_000L, sameSession.currentBankedMs)
     }
 
     // Finding 4: requiredSeconds rescales held/banked proportionally.

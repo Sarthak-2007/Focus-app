@@ -2211,7 +2211,8 @@ fun PeekCountdownPill(
  * Issue #119, finding 1 (truth half): at 0 remaining the INTERACTIVE
  * valve is not composed, but the valve's place is never left empty —
  * an inert SPENT plate stands there, naming the state and the day
- * the token returns (next Monday 00:00, MonolithWeek). The spent
+ * the token returns (next Monday 03:30, MonolithWeek — his day
+ * seam). The spent
  * plate grants nothing: no hold, no tap, no exit. The one-token law
  * itself is Sarthak's settled design and is not changed here.
  */
@@ -2240,7 +2241,14 @@ fun DisarmChallengeOverlay(
     // rememberSaveable — it survives this overlay being dismissed and
     // recomposed, rotation, and process death, and is handed back to
     // each fresh valve view in its factory. Completion consumes it.
+    // Issue #523 (6-1): the hoist is KEYED by the session that banked
+    // it. The un-keyed hoist leaked — a bank left by one session was
+    // restored into the NEXT session's valve, pre-loading a hold the
+    // new session never paid. The key rides beside the bank through
+    // every save/restore below, and a bank only ever restores into a
+    // valve opened for the same session id.
     var hoistedBankedMs by rememberSaveable { mutableLongStateOf(0L) }
+    var hoistedBankSessionId by rememberSaveable { mutableIntStateOf(-1) }
     // Issue #55 (HIGH): Back must never exit toward the blocked app.
     // On the disarm challenge, Back means exactly what the composed
     // KEEP FOCUSING chip means — dismiss the challenge, stay in
@@ -2347,17 +2355,44 @@ fun DisarmChallengeOverlay(
                                 isNightMode = true
                                 this.soundEngine = soundEngine
                                 requiredSeconds = state.requiredHoldSeconds
-                                restoreBankedProgress(hoistedBankedMs)
+                                bankSessionKey = state.sessionId
+                                // Issue #523 (6-1): only the bank keyed
+                                // to THIS session restores; any other
+                                // session's bank is not this valve's
+                                // to spend.
+                                restoreBankedProgress(
+                                    if (hoistedBankSessionId == state.sessionId) {
+                                        hoistedBankedMs
+                                    } else {
+                                        0L
+                                    }
+                                )
                             }
                         },
                         update = { view ->
                             view.requiredSeconds = state.requiredHoldSeconds
+                            if (view.bankSessionKey != state.sessionId) {
+                                // The session changed under a live view:
+                                // re-key it and restore only the bank
+                                // that belongs to the new session (a
+                                // foreign bank zeroes out).
+                                view.bankSessionKey = state.sessionId
+                                view.restoreBankedProgress(
+                                    if (hoistedBankSessionId == state.sessionId) {
+                                        hoistedBankedMs
+                                    } else {
+                                        0L
+                                    }
+                                )
+                            }
                             view.onHoldBanked = onHoldBanked
                             view.onBankedProgressChanged = { banked ->
                                 hoistedBankedMs = banked
+                                hoistedBankSessionId = state.sessionId
                             }
                             view.onEmergencyBreakCompleted = {
                                 hoistedBankedMs = 0L
+                                hoistedBankSessionId = -1
                                 onCompleteDisarm()
                             }
                             view.onHoldStarted = onHoldStarted
