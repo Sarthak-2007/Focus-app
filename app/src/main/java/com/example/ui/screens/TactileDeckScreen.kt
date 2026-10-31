@@ -388,97 +388,18 @@ fun TactileDeckScreen(
         }
     }
 
-    val isStopwatchMode = if (finishState != null) {
-        finishState.frozenIsStopwatch
-    } else if (isSessionRunning) {
-        activeSession.isStopwatchMode
-    } else {
-        // The dial alone keys flow (ESR-08, truth patch at the
-        // drawer merge, re-applied over this lane at the slide
-        // merge): the engine arms on durationMinutes (< 10 =
-        // stopwatch) and never reads the preset, so a wheel drag
-        // to 90 after tapping FLOW must sell a timed 90.
-        dialMinutes < 10
-    }
-
-    val displaySeconds = if (finishState != null) {
-        // The held frame's frozen readout (F-L2: a FLOW finish
-        // freezes its count-up total; a timed finish its last
-        // remaining count) — the ticker has stopped; nothing here
-        // re-derives from it.
-        finishState.frozenDisplaySeconds
-    } else if (isSessionRunning) {
-        when {
-            activeSession.isStopwatchMode -> activeSession.elapsedSeconds
-            // Audit R3b #148: during a Safe Break the per-block
-            // remainder is 0 — that block HAS finished — so the
-            // hero read 00:00 for ten minutes, a break displayed
-            // as FINISH. In a break the hero counts the break
-            // itself down (the shield's own rendering of the same
-            // fact), under the BREAK eyebrow the strip already
-            // prints.
-            activeSession.isInSafeBreak -> activeSession.safeBreakSecondsRemaining
-            else -> activeSession.remainingSeconds
-        }
-    } else {
-        dialMinutes * 60
-    }
-
-    val minsPart = displaySeconds / 60
-    val secsPart = displaySeconds % 60
-    // Audit R3b #147: a running (or just-finished) stopwatch counts
-    // UP — the bare MM:SS read exactly like a countdown. The +
-    // prefix marks the direction on the hero readout; a timed
-    // session's countdown stays bare.
-    val countsUp = (finishState != null && finishState.frozenIsStopwatch) ||
-        (isSessionRunning && activeSession.isStopwatchMode)
-    val primaryReadout = if (countsUp) {
-        String.format(Locale.US, "+%02d:%02d", minsPart, secsPart)
-    } else {
-        String.format(Locale.US, "%02d:%02d", minsPart, secsPart)
-    }
-
-    // True session span (BEYOND W3, verified against the engine): blocks
-    // plus the 10-minute Safe Breaks BETWEEN them - n x block + (n-1) x 10.
-    // The hero and the finish line both price from this and nowhere else;
-    // the naive product understated a 3 x 50 morning by 20 minutes.
-    val totalSpanMinutes = dialMinutes * studyBlocksCount + (studyBlocksCount - 1) * 10
-
-    // Issue #6 F3 (audit §3, Vega T-1/T-2/T-3 — the floored,
-    // inverted, invented fraction dies): timed progress is
-    // ELAPSED / TARGET, filling, no floors — never remaining/target
-    // born full and draining, never a 3–5% that isn't true. FLOW
-    // (stopwatch) has NO bar and NO fraction: NO END means no bar,
-    // and the old /1200 denominator was invented by the mode that
-    // denies it. Idle: no session exists, so no progress exists.
-    val progressFraction = if (finishState != null) {
-        if (finishState.frozenIsStopwatch) {
-            0f
-        } else {
-            val target = finishState.frozenTargetSeconds.coerceAtLeast(1)
-            val elapsed = (target - finishState.frozenDisplaySeconds).coerceAtLeast(0)
-            (elapsed.toFloat() / target.toFloat()).coerceIn(0f, 1f)
-        }
-    } else if (isSessionRunning) {
-        if (activeSession.isStopwatchMode) {
-            0f
-        } else if (activeSession.isInSafeBreak) {
-            // Audit R3b #148: in a break the bar prices the whole
-            // session span (the model's own span derivation — the
-            // break counts as session time), so it holds its
-            // ground and keeps moving instead of sitting at the
-            // finished block's empty remainder. Priced in the
-            // F3 form: elapsed/target, filling, no floors.
-            val spanTarget = activeSession.spanTargetSeconds.coerceAtLeast(1)
-            (activeSession.spanElapsedSeconds.toFloat() / spanTarget.toFloat()).coerceIn(0f, 1f)
-        } else {
-            val target = activeSession.effectiveTargetSeconds.coerceAtLeast(1)
-            val elapsed = (target - activeSession.remainingSeconds).coerceAtLeast(0)
-            (elapsed.toFloat() / target.toFloat()).coerceIn(0f, 1f)
-        }
-    } else {
-        0f
-    }
+    val readout = deckReadoutFor(
+        finishState = finishState,
+        isSessionRunning = isSessionRunning,
+        activeSession = activeSession,
+        dialMinutes = dialMinutes,
+        studyBlocksCount = studyBlocksCount
+    )
+    val isStopwatchMode = readout.isStopwatchMode
+    val displaySeconds = readout.displaySeconds
+    val primaryReadout = readout.primaryReadout
+    val totalSpanMinutes = readout.totalSpanMinutes
+    val progressFraction = readout.progressFraction
 
     // =====================================================================
     // SLICE D — the strip's derivations (Uma/Rosa/Emil). TIME is a pure
@@ -622,32 +543,19 @@ fun TactileDeckScreen(
         }
     }
 
-    // The sealFreeze branches must test the freeze's presence, not
-    // only its key: at idle both sealFreeze and activeSession are
-    // null, null == null is true, and the !! below threw at
-    // composition — the idle Deck crashed in the harness before
-    // this guard (found by the lane's completion proof, Oct 29).
-    val frozenCount: Int? = when {
-        sealFreeze != null && sealFreeze.sessionId == activeSession?.id -> sealFreeze.count
-        fbFrozenKey == activeSession?.id -> fbFrozenCount
-        else -> null
-    }
-    val frozenState: WarrantState? = when {
-        sealFreeze != null && sealFreeze.sessionId == activeSession?.id -> sealFreeze.warrantState
-        fbFrozenKey == activeSession?.id ->
-            fbFrozenState?.let { runCatching { WarrantState.valueOf(it) }.getOrNull() }
-        else -> null
-    }
-    val frozenShut: Int? = when {
-        sealFreeze != null && sealFreeze.sessionId == activeSession?.id -> sealFreeze.shutCount
-        fbFrozenKey == activeSession?.id -> fbFrozenShut
-        else -> null
-    }
-    val frozenPeek: Int? = when {
-        sealFreeze != null && sealFreeze.sessionId == activeSession?.id -> sealFreeze.peekCount
-        fbFrozenKey == activeSession?.id -> fbFrozenPeek
-        else -> null
-    }
+    val frozenSeal = frozenSealFor(
+        sealFreeze = sealFreeze,
+        activeSessionId = activeSession?.id,
+        fbFrozenKey = fbFrozenKey,
+        fbFrozenCount = fbFrozenCount,
+        fbFrozenShut = fbFrozenShut,
+        fbFrozenPeek = fbFrozenPeek,
+        fbFrozenState = fbFrozenState
+    )
+    val frozenCount = frozenSeal.count
+    val frozenState = frozenSeal.state
+    val frozenShut = frozenSeal.shut
+    val frozenPeek = frozenSeal.peek
 
     // Annulment retires the press like the seal does (step 4):
     // Issue #50 F2 cure (reset door) — no composition writes any
@@ -2015,6 +1923,194 @@ private fun DeckPinnedStack(
             onStruck = { key -> onSessionStruck(key.toInt()) }
         )
     }
+}
+
+/**
+ * Issue #90 (complexity F1 slice): the Deck's readout derivations,
+ * extracted from TactileDeckScreen's body as a pure function. The
+ * mode, the displayed seconds, the hero readout, the true span and
+ * the progress fraction are arithmetic on the finish frame, the
+ * live session and the dial — nothing else. Behaviour-identical:
+ * the derivation bodies are the host's own, verbatim; the one
+ * mechanical change is that branches the host guarded with the
+ * isSessionRunning alias (which there implies a non-null session
+ * by construction) spell the null check out here, where the alias
+ * arrives as a plain Boolean — the added check never changes an
+ * outcome, for the same reason as the DeckInstrumentSection fix
+ * in PR #772.
+ */
+private data class DeckReadout(
+    val isStopwatchMode: Boolean,
+    val displaySeconds: Int,
+    val primaryReadout: String,
+    val totalSpanMinutes: Int,
+    val progressFraction: Float
+)
+
+private fun deckReadoutFor(
+    finishState: com.example.ui.MonolithViewModel.FinishState?,
+    isSessionRunning: Boolean,
+    activeSession: FocusSessionEntity?,
+    dialMinutes: Int,
+    studyBlocksCount: Int
+): DeckReadout {
+    val isStopwatchMode = if (finishState != null) {
+        finishState.frozenIsStopwatch
+    } else if (isSessionRunning && activeSession != null) {
+        activeSession.isStopwatchMode
+    } else {
+        // The dial alone keys flow (ESR-08, truth patch at the
+        // drawer merge, re-applied over this lane at the slide
+        // merge): the engine arms on durationMinutes (< 10 =
+        // stopwatch) and never reads the preset, so a wheel drag
+        // to 90 after tapping FLOW must sell a timed 90.
+        dialMinutes < 10
+    }
+
+    val displaySeconds = if (finishState != null) {
+        // The held frame's frozen readout (F-L2: a FLOW finish
+        // freezes its count-up total; a timed finish its last
+        // remaining count) — the ticker has stopped; nothing here
+        // re-derives from it.
+        finishState.frozenDisplaySeconds
+    } else if (isSessionRunning && activeSession != null) {
+        when {
+            activeSession.isStopwatchMode -> activeSession.elapsedSeconds
+            // Audit R3b #148: during a Safe Break the per-block
+            // remainder is 0 — that block HAS finished — so the
+            // hero read 00:00 for ten minutes, a break displayed
+            // as FINISH. In a break the hero counts the break
+            // itself down (the shield's own rendering of the same
+            // fact), under the BREAK eyebrow the strip already
+            // prints.
+            activeSession.isInSafeBreak -> activeSession.safeBreakSecondsRemaining
+            else -> activeSession.remainingSeconds
+        }
+    } else {
+        dialMinutes * 60
+    }
+
+    val minsPart = displaySeconds / 60
+    val secsPart = displaySeconds % 60
+    // Audit R3b #147: a running (or just-finished) stopwatch counts
+    // UP — the bare MM:SS read exactly like a countdown. The +
+    // prefix marks the direction on the hero readout; a timed
+    // session's countdown stays bare.
+    val countsUp = (finishState != null && finishState.frozenIsStopwatch) ||
+        (isSessionRunning && activeSession != null && activeSession.isStopwatchMode)
+    val primaryReadout = if (countsUp) {
+        String.format(Locale.US, "+%02d:%02d", minsPart, secsPart)
+    } else {
+        String.format(Locale.US, "%02d:%02d", minsPart, secsPart)
+    }
+
+    // True session span (BEYOND W3, verified against the engine): blocks
+    // plus the 10-minute Safe Breaks BETWEEN them - n x block + (n-1) x 10.
+    // The hero and the finish line both price from this and nowhere else;
+    // the naive product understated a 3 x 50 morning by 20 minutes.
+    val totalSpanMinutes = dialMinutes * studyBlocksCount + (studyBlocksCount - 1) * 10
+
+    // Issue #6 F3 (audit §3, Vega T-1/T-2/T-3 — the floored,
+    // inverted, invented fraction dies): timed progress is
+    // ELAPSED / TARGET, filling, no floors — never remaining/target
+    // born full and draining, never a 3–5% that isn't true. FLOW
+    // (stopwatch) has NO bar and NO fraction: NO END means no bar,
+    // and the old /1200 denominator was invented by the mode that
+    // denies it. Idle: no session exists, so no progress exists.
+    val progressFraction = if (finishState != null) {
+        if (finishState.frozenIsStopwatch) {
+            0f
+        } else {
+            val target = finishState.frozenTargetSeconds.coerceAtLeast(1)
+            val elapsed = (target - finishState.frozenDisplaySeconds).coerceAtLeast(0)
+            (elapsed.toFloat() / target.toFloat()).coerceIn(0f, 1f)
+        }
+    } else if (isSessionRunning && activeSession != null) {
+        if (activeSession.isStopwatchMode) {
+            0f
+        } else if (activeSession.isInSafeBreak) {
+            // Audit R3b #148: in a break the bar prices the whole
+            // session span (the model's own span derivation — the
+            // break counts as session time), so it holds its
+            // ground and keeps moving instead of sitting at the
+            // finished block's empty remainder. Priced in the
+            // F3 form: elapsed/target, filling, no floors.
+            val spanTarget = activeSession.spanTargetSeconds.coerceAtLeast(1)
+            (activeSession.spanElapsedSeconds.toFloat() / spanTarget.toFloat()).coerceIn(0f, 1f)
+        } else {
+            val target = activeSession.effectiveTargetSeconds.coerceAtLeast(1)
+            val elapsed = (target - activeSession.remainingSeconds).coerceAtLeast(0)
+            (elapsed.toFloat() / target.toFloat()).coerceIn(0f, 1f)
+        }
+    } else {
+        0f
+    }
+    return DeckReadout(
+        isStopwatchMode = isStopwatchMode,
+        displaySeconds = displaySeconds,
+        primaryReadout = primaryReadout,
+        totalSpanMinutes = totalSpanMinutes,
+        progressFraction = progressFraction
+    )
+}
+
+/**
+ * Issue #90 (complexity F1 slice): the frozen-seal derivations,
+ * extracted from TactileDeckScreen's body as a pure function. The
+ * ViewModel's seal freeze outranks the screen's saveable fallback
+ * capture; both are judged against the live session's id.
+ * Behaviour-identical: the four branch bodies are the host's own,
+ * verbatim — they only ever safe-call the session, so no guard
+ * needed spelling out.
+ */
+private data class FrozenSeal(
+    val count: Int?,
+    val state: WarrantState?,
+    val shut: Int?,
+    val peek: Int?
+)
+
+private fun frozenSealFor(
+    sealFreeze: com.example.ui.MonolithViewModel.SealFreeze?,
+    activeSessionId: Int?,
+    fbFrozenKey: Int?,
+    fbFrozenCount: Int?,
+    fbFrozenShut: Int?,
+    fbFrozenPeek: Int?,
+    fbFrozenState: String?
+): FrozenSeal {
+    // The sealFreeze branches must test the freeze's presence, not
+    // only its key: at idle both sealFreeze and activeSession are
+    // null, null == null is true, and the !! below threw at
+    // composition — the idle Deck crashed in the harness before
+    // this guard (found by the lane's completion proof, Oct 29).
+    val frozenCount: Int? = when {
+        sealFreeze != null && sealFreeze.sessionId == activeSessionId -> sealFreeze.count
+        fbFrozenKey == activeSessionId -> fbFrozenCount
+        else -> null
+    }
+    val frozenState: WarrantState? = when {
+        sealFreeze != null && sealFreeze.sessionId == activeSessionId -> sealFreeze.warrantState
+        fbFrozenKey == activeSessionId ->
+            fbFrozenState?.let { runCatching { WarrantState.valueOf(it) }.getOrNull() }
+        else -> null
+    }
+    val frozenShut: Int? = when {
+        sealFreeze != null && sealFreeze.sessionId == activeSessionId -> sealFreeze.shutCount
+        fbFrozenKey == activeSessionId -> fbFrozenShut
+        else -> null
+    }
+    val frozenPeek: Int? = when {
+        sealFreeze != null && sealFreeze.sessionId == activeSessionId -> sealFreeze.peekCount
+        fbFrozenKey == activeSessionId -> fbFrozenPeek
+        else -> null
+    }
+    return FrozenSeal(
+        count = frozenCount,
+        state = frozenState,
+        shut = frozenShut,
+        peek = frozenPeek
+    )
 }
 
 /**
