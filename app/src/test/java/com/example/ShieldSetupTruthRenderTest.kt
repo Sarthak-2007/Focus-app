@@ -235,23 +235,30 @@ class ShieldSetupTruthRenderTest {
         composeRule.onNodeWithText("TAP A LINE TO FLIP IT", substring = true).assertExists()
     }
 
-    @Test
-    fun shield_capTapStagesLoadout_applyCommits() {
-        val applied = AtomicReference<SmartLoadout?>(null)
-        setShield(
-            listOf(app("com.instagram.android", "Instagram", AppCategory.SHORT_VIDEO)),
-            applied = applied
-        )
-        composeRule.onNodeWithTag("shield_cap_stop_0").performClick()
-        // Staged, not applied: the preview prints the subtitle and
-        // the STUDY side-effects, and nothing has been committed.
-        composeRule.onNodeWithTag("loadout_preview").assertIsDisplayed()
-        composeRule.onNodeWithText("Blocks Social & Games", substring = true).assertExists()
-        composeRule.onNodeWithText("ALSO SWITCHES ON", substring = true).assertExists()
-        assertEquals(null, applied.get())
-        composeRule.onNodeWithTag("loadout_apply").performClick()
-        assertEquals(SmartLoadout.STUDY, applied.get())
-    }
+    // (File renamed ShieldSetupTruthTest.kt ->
+    // ShieldSetupTruthRenderTest.kt in the same PR: the targeted
+    // gate maps a changed test FILE to a class filter by file
+    // name, and the old name matched neither class this file
+    // holds, so its targeted job could only ever report "no tests
+    // found". The rename targets the Render class — the class
+    // pruned below; the Pure class's identical blind spot is
+    // filed on #166 for the workflow parcel.)
+    //
+    // PRUNED (floor lane, census #6, row 20 — Sarthak's Oct 31
+    // pruning process: useless tests only, by name, with reason):
+    // shield_capTapStagesLoadout_applyCommits stood here. It
+    // guarded the Shield screen's cap-staging flow (tap a cap stop
+    // -> loadout_preview -> loadout_apply commits) — a surface
+    // Shield Rethink 2 Step 2 DELETED from production (commit
+    // 3011b409: "profiles + smart-loadout DELETED from the Shield
+    // surface"; the LoadoutPreviewPanel followed in 1b5a06da).
+    // Verified firsthand at the prune: ShieldCapSelector( has no
+    // invocation site anywhere in production, and the
+    // loadout_preview / loadout_apply tags exist nowhere in
+    // app/src/main. The test could only ever fail on a missing
+    // node. ShieldCap's pure logic keeps its own coverage in
+    // ShieldCapGuardLineWave3Test. Reason + evidence on #166 and
+    // #245.
 
     @Test
     fun shield_noMatchLineNeverClaimsAbsence() {
