@@ -800,6 +800,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val totalFocusedMinutes by viewModel.totalFocusedMinutes.collectAsStateWithLifecycle()
     val totalInterceptions by viewModel.totalInterceptions.collectAsStateWithLifecycle()
     val soundEnabled by viewModel.soundEnabled.collectAsStateWithLifecycle()
+    val soundscapeEnabled by viewModel.soundscapeEnabled.collectAsStateWithLifecycle()
     val airlockState by viewModel.airlockState.collectAsStateWithLifecycle()
     val floatingPeekPill by viewModel.floatingPeekPill.collectAsStateWithLifecycle()
     val disarmChallenge by viewModel.disarmChallenge.collectAsStateWithLifecycle()
@@ -1883,6 +1884,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         onFixClick = { item -> openFixPane(context, permissionStepStore, viewModel, parkIntroDeliveredThisOpen, { parkIntroFixTripThisOpen = true }, item) },
                         onCheckClick = { viewModel.runWatchSweep() },
                         onToggleSound = { viewModel.toggleSound() },
+                        soundscapeEnabled = soundscapeEnabled,
+                        onToggleSoundscape = { viewModel.toggleSoundscape() },
                         onToggleShortsReelsSniper = { viewModel.toggleShortsReelsSniper() },
                         // Truth Car 3 (UNA-02): the SOCIAL SITES
                         // board line's sled — reads and writes the

@@ -1187,6 +1187,12 @@ class MonolithViewModel(
     private val _soundEnabled = MutableStateFlow(SoundEffectsSetting.isEnabled(appContext))
     val soundEnabled: StateFlow<Boolean> = _soundEnabled.asStateFlow()
 
+    // #253 line 1: the session soundscape's printed state is
+    // likewise born from its persisted fact (SoundscapeSetting).
+    private val _soundscapeEnabled =
+        MutableStateFlow(com.example.service.SoundscapeSetting.isEnabled(appContext))
+    val soundscapeEnabled: StateFlow<Boolean> = _soundscapeEnabled.asStateFlow()
+
     private val _deletedTaskForUndo = MutableStateFlow<FocusTaskEntity?>(null)
     val deletedTaskForUndo: StateFlow<FocusTaskEntity?> = _deletedTaskForUndo.asStateFlow()
     private var undoDismissJob: Job? = null
@@ -2312,6 +2318,17 @@ class MonolithViewModel(
                     com.example.service.DndGate.restoreAfterSession(appContext)
                     _dndLine.value = null
                 }
+                // #253 line 1: the session soundscape follows the
+                // same edges — it rises with the seal and dies
+                // with the session, however the session was born
+                // and however it ends. The engine itself reads
+                // the SoundscapeSetting fact at start, so this
+                // wiring carries no copy of the setting.
+                if (isActive && !wasActive) {
+                    soundEngine.startSoundscape()
+                } else if (!isActive && wasActive) {
+                    soundEngine.stopSoundscape()
+                }
                 wasActive = isActive
                 if (_airlockState.value.isVisible && !sessionIsLive(session)) {
                     _airlockState.value = _airlockState.value.copy(isVisible = false)
@@ -3373,6 +3390,25 @@ class MonolithViewModel(
         _soundEnabled.value = if (committed) next else SoundEffectsSetting.isEnabled(appContext)
         if (_soundEnabled.value) soundEngine.playRotaryDetent(720.0)
         return _soundEnabled.value
+    }
+
+    /** #253 line 1: the soundscape toggle — same law as
+     *  [toggleSound]: the write commits the FACT first
+     *  (SoundscapeSetting) and the print follows the disk. A live
+     *  session hears the change at the tap: ON starts the lane
+     *  (the engine re-reads the fact), OFF retracts it, and the
+     *  lane's own fade rule carries the edge. */
+    fun toggleSoundscape(): Boolean {
+        val next = !com.example.service.SoundscapeSetting.isEnabled(appContext)
+        val committed = com.example.service.SoundscapeSetting.setEnabled(appContext, next)
+        _soundscapeEnabled.value =
+            if (committed) next else com.example.service.SoundscapeSetting.isEnabled(appContext)
+        if (_soundscapeEnabled.value) {
+            if (activeSession.value?.isActive == true) soundEngine.startSoundscape()
+        } else {
+            soundEngine.stopSoundscape()
+        }
+        return _soundscapeEnabled.value
     }
 
     /** ST-02 (Truth Car 3): the Deck's END BREAK chip. Ends the
