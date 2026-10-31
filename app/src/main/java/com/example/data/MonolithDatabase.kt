@@ -24,7 +24,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SessionEventLogEntity::class,
         RuleChangeLogEntity::class
     ],
-    version = 24,
+    version = 25,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -523,6 +523,41 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
+         * Issue #785 (the #324 follow-on, sequenced after #341
+         * PR-B per ruling 6544758887): the intercept log's third
+         * typed column — stopReason, why the wall rose, stored as
+         * an InterceptStopReason NAME. PR #599 described this
+         * column as part of its typed delta; PR #594 landed its
+         * siblings (outcomeKind / triggerKind) at 18→19 and this
+         * one waited for its own lane, exactly as #324's closure
+         * priced it. The step takes 24→25 — the next free link,
+         * the train's renumbering etiquette (the pricing's 19→20
+         * was consumed by #138's step while the train moved).
+         *
+         * The backfill is evidence-only, deliberately narrower
+         * than the writers' new stamps: a pre-v25 row's door is
+         * GONE. Only three facts survive in the row itself — the
+         * two reserved packages and the uninstall outcome — so
+         * only those three are stamped; every other historical
+         * row stays UNKNOWN rather than inherit a reconstructed
+         * door. The CASE mirrors interceptStopReasonFromLegacy
+         * exactly, so a migrated row and a bare row read the
+         * same way.
+         */
+        val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE intercept_logs ADD COLUMN stopReason TEXT NOT NULL DEFAULT 'UNKNOWN'")
+                db.execSQL(
+                    "UPDATE intercept_logs SET stopReason = CASE " +
+                        "WHEN packageName = 'com.monolith.system' THEN 'SESSION_DISARM' " +
+                        "WHEN packageName = 'com.monolith.exposure' THEN 'OPEN_EXPOSURE' " +
+                        "WHEN UPPER(TRIM(outcome)) = 'UNINSTALL ATTEMPT — RETURNED' THEN 'UNINSTALL_GUARD' " +
+                        "ELSE 'UNKNOWN' END"
+                )
+            }
+        }
+
+        /**
          * TOKEN-SPEC §6: the spend ledger arrives as an explicit
          * migration. There is NO backfill — today's in-memory spends
          * were never recorded, so v8 truthfully starts with an empty
@@ -707,7 +742,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25)
                     // Issue #31, Sarthak's ruling (2026-10-31, issue
                     // comment 6544207912) — the only two destructive
                     // paths in this app, each scoped to its ruled case:

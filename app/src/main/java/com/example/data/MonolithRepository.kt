@@ -5861,7 +5861,8 @@ class MonolithRepository(
                         outcome = EXPOSURE_LOG_OUTCOME,
                         triggerReason = exposed.packageName,
                         outcomeKind = InterceptOutcomeKind.OPEN_EXPOSURE.name,
-                        triggerKind = InterceptTriggerKind.SYSTEM.name
+                        triggerKind = InterceptTriggerKind.SYSTEM.name,
+                        stopReason = InterceptStopReason.OPEN_EXPOSURE.name
                     )
                 )
             }
@@ -5887,7 +5888,14 @@ class MonolithRepository(
         // pass false: the intercept is still logged (with its
         // truthful outcome), but neither the per-app reach count nor
         // the session's phantom-reach count is inflated by it.
-        countAsReach: Boolean = true
+        countAsReach: Boolean = true,
+        // Issue #785 (the #324 follow-on): why the wall rose,
+        // stamped by callers that hold the firing door (the
+        // Airlock verbs pass interceptStopReasonFor's verdict).
+        // A caller that passes nothing stamps what the row's own
+        // facts prove (interceptStopReasonFromLegacy) — the same
+        // derive-at-the-write law the kinds above follow.
+        stopReason: InterceptStopReason = InterceptStopReason.UNKNOWN
     ) {
         // Issue #33 (audit R1): count + log + phantom-reach increment
         // are ONE transaction — a kill between them used to leave the
@@ -5904,6 +5912,14 @@ class MonolithRepository(
         // here at the write — the peek test below reads the kind,
         // and the row persists both kinds beside the legacy words.
         val outcomeKind = InterceptOutcomeKind.fromStoredWord(outcome)
+        // Issue #785: the stop reason is likewise settled ONCE,
+        // here at the write — the caller's door stamp when it
+        // passed one, else the row's own proven facts.
+        val stopReasonStamp = if (stopReason != InterceptStopReason.UNKNOWN) {
+            stopReason
+        } else {
+            interceptStopReasonFromLegacy(packageName, outcome)
+        }
         // Issue #7 charge N2 (DURCH-PRUEF2, verified LIVE on
         // current main): the launcher-door exit is the same
         // lie in a second verb — he was LET THROUGH (the doors
@@ -5933,7 +5949,8 @@ class MonolithRepository(
                     outcome = outcome,
                     triggerReason = triggerReason,
                     outcomeKind = outcomeKind.name,
-                    triggerKind = InterceptTriggerKind.derive(triggerReason, packageName).name
+                    triggerKind = InterceptTriggerKind.derive(triggerReason, packageName).name,
+                    stopReason = stopReasonStamp.name
                 )
             )
             if (countAsBlocked) {
@@ -5950,7 +5967,12 @@ class MonolithRepository(
         appName: String,
         sessionIntention: String,
         triggerReason: String = "UNSTATED",
-        arrivedAtWallMillis: Long
+        arrivedAtWallMillis: Long,
+        // Issue #785: the arrival is the one write that holds
+        // the firing door — the caller stamps why the wall rose,
+        // and the resolution verbs later update only this row's
+        // outcome, never its reason.
+        stopReason: InterceptStopReason = InterceptStopReason.UNKNOWN
     ): Long {
         dao.incrementInterceptCount(packageName)
         return dao.insertInterceptLog(
@@ -5960,7 +5982,8 @@ class MonolithRepository(
                 appName = appName,
                 sessionIntention = sessionIntention,
                 outcome = AT_DOOR_OUTCOME,
-                triggerReason = triggerReason
+                triggerReason = triggerReason,
+                stopReason = stopReason.name
             )
         )
     }
@@ -6404,7 +6427,8 @@ class MonolithRepository(
                         sessionIntention = active.intention,
                         outcome = outcomeReason,
                         outcomeKind = InterceptOutcomeKind.SESSION_END.name,
-                        triggerKind = InterceptTriggerKind.SYSTEM.name
+                        triggerKind = InterceptTriggerKind.SYSTEM.name,
+                        stopReason = InterceptStopReason.SESSION_DISARM.name
                     )
                 )
             }

@@ -914,7 +914,14 @@ data class InterceptLogEntity(
     // .fromStoredWord / InterceptTriggerKind.derive; rows that
     // predate the typing carry UNKNOWN and derive on read below.
     val outcomeKind: String = InterceptOutcomeKind.UNKNOWN.name,
-    val triggerKind: String = InterceptTriggerKind.UNKNOWN.name
+    val triggerKind: String = InterceptTriggerKind.UNKNOWN.name,
+    // Issue #785 (the #324 follow-on): WHY the wall rose, stored
+    // as an InterceptStopReason NAME beside the other kinds
+    // (migration 24→25). Writers stamp it at the write from the
+    // firing door (interceptStopReasonFor); rows that predate it
+    // carry UNKNOWN and derive on read below from exactly the
+    // facts the row itself proves.
+    val stopReason: String = InterceptStopReason.UNKNOWN.name
 ) {
     /** This row's typed outcome: the persisted kind, falling
      *  back to derivation from the legacy word for rows written
@@ -929,6 +936,15 @@ data class InterceptLogEntity(
         get() = InterceptTriggerKind.fromKindName(triggerKind)
             .takeIf { it != InterceptTriggerKind.UNKNOWN }
             ?: InterceptTriggerKind.derive(triggerReason, packageName)
+
+    /** Why this row's wall rose, typed — the column first, then
+     *  the narrow set of facts a bare row proves on its own (the
+     *  reserved packages, the uninstall outcome). Same fallback
+     *  shape as the kinds above. */
+    val stopReasonTyped: InterceptStopReason
+        get() = InterceptStopReason.fromKindName(stopReason)
+            .takeIf { it != InterceptStopReason.UNKNOWN }
+            ?: interceptStopReasonFromLegacy(packageName, outcome)
 }
 
 data class DailyFocusStat(
