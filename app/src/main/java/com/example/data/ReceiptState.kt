@@ -20,6 +20,16 @@ package com.example.data
  * end stamped at the ending write) and receiptNumber (RC-04,
  * the № this session claimed, stamped inside the claim
  * transaction; the claim latches on the row).
+ *
+ * Receipt audit (issue #10): two more persisted/carried facts.
+ * The DISMISSED № lives OUTSIDE Room, in the repository's
+ * `monolith_receipt` SharedPreferences (the audit's interim law,
+ * item 20: a dismissed slip stays dismissed across process
+ * death) — deliberately no guard_settings column, so this
+ * contract implies NO database version change. And the HELD
+ * line's future figures ride as [ReceiptHeldFigures]: today
+ * nothing fills them (see that type), so the line does not
+ * print at all.
  */
 
 /** Nocke §2.3's outcome vocabulary — the discriminator stamped
@@ -138,7 +148,16 @@ fun finishKindOf(row: FocusSessionEntity, isSleepLoadout: Boolean, nowWallMillis
 
 /** Whether this finish kind sounds the E700 completion pulse.
  *  Death-booked finishes (ELAPSED_SHIELD_GAP) never pulse (B-12);
- *  PARTIAL never pulses; the rest of the publishable kinds do. */
+ *  PARTIAL never pulses; the rest of the publishable kinds do.
+ *
+ *  Issue #13, A-10(i) — SILENCE FOR THE KIND: the stand-down
+ *  returns false. The machine does not applaud sleep. The gate
+ *  sits on the finish ceremony's CALLS in the VM (the E0 knock
+ *  and the E880 pair die with the pulse), so the haptic half —
+ *  triggerWaveform fires unconditionally inside the sound
+ *  engine, NOT gated by the sound toggle — dies with the audio.
+ *  The voices themselves are untouched for every witnessed
+ *  finish. */
 fun finishPulses(kind: String, row: FocusSessionEntity): Boolean = when (kind) {
     // An exposed finish is death-booked in the same sense as a
     // shield gap (#129 F3): the record stands, the pulse does not.
@@ -146,6 +165,19 @@ fun finishPulses(kind: String, row: FocusSessionEntity): Boolean = when (kind) {
         row.outcome != SessionOutcome.ELAPSED_OPEN_EXPOSURE
     FinishKind.FLOW_FINISH -> true
     FinishKind.ROUTINE_ATTENDED -> true
+    FinishKind.ROUTINE_SLEEP_STANDDOWN -> false
+    else -> false
+}
+
+/** Issue #13, A-10(ii): routine-born kinds. A receipt of one of
+ *  these kinds is BORN FILED — it never stands on the Deck; it
+ *  stays reachable as a record. One persisted filed-marker
+ *  (ReceiptFiledStore, beside the standing pointer's world)
+ *  carries the fact; rehydration and the standing composition
+ *  both refuse a filed slip. */
+fun isRoutineBornKind(kind: String): Boolean = when (kind) {
+    FinishKind.ROUTINE_ATTENDED,
+    FinishKind.ROUTINE_PARTIAL,
     FinishKind.ROUTINE_SLEEP_STANDDOWN -> true
     else -> false
 }
@@ -169,6 +201,11 @@ fun finishPulses(kind: String, row: FocusSessionEntity): Boolean = when (kind) {
  * - [USED_PEEK] — MonolithViewModel's peek grant: he was LET IN
  *   on a 2-minute lease. NOT a block, and the one value this
  *   enumeration exists to keep off the slip.
+ * - [OPENED_LAUNCHER] — MonolithViewModel
+ *   .leaveAirlockViaLauncherDoors: he left the intercept
+ *   through a launcher door. A let-through, never a block:
+ *   off the slip (not in the allowlist) and off the blocked
+ *   counters (issue #7 charge N2).
  *
  * (The repository's disarm path also writes intercept rows with
  * the disarm reason as outcome, but always under the system
@@ -183,6 +220,7 @@ object InterceptOutcome {
     const val STAYED_FOCUSED = "Stayed Focused"
     const val SPLIT_INTO_MICRO_STEP = "Split Into 10m Micro-Step"
     const val USED_PEEK = "Used 2m Peek"
+    const val OPENED_LAUNCHER = "Opened Launcher"
 
     /** The outcomes that were truly turned away. Anything else —
      *  a peek grant, or a value no writer above produces — is
@@ -197,6 +235,102 @@ object InterceptOutcome {
 fun isBlockedInterceptOutcome(outcome: String): Boolean =
     InterceptOutcome.BLOCKED_OUTCOMES.any { it.equals(outcome.trim(), ignoreCase = true) }
 
+/**
+ * Issue #324, finding 3 (build half): the intercept log's TYPED
+ * outcome. Until this type landed, every intercept row's outcome
+ * was a free-text String written from five ViewModel call sites
+ * and two repository inserts, and every reader re-derived meaning
+ * by string comparison. The kind is now computed ONCE, at the
+ * write, by [fromStoredWord] over the exact legacy word — and
+ * persisted beside it (intercept_logs.outcomeKind, migration
+ * 18→19). The legacy word column is NOT removed: the receipt
+ * assembly's allowlist ([isBlockedInterceptOutcome]) and every
+ * historical row keep reading it, and the kind's [storedWord]
+ * is that same word, so kind and word can never disagree on a
+ * row this code wrote.
+ *
+ * [SESSION_END] and [UNKNOWN] carry no single word: session-end
+ * rows ride the reserved system package with the disarm reason
+ * as their word (several spellings, one meaning — the session
+ * ended), and a word no writer above produces is UNKNOWN, never
+ * guessed into a class.
+ */
+enum class InterceptOutcomeKind(val storedWord: String?) {
+    BLOCKED(InterceptOutcome.BLOCKED),
+    STAYED_FOCUSED(InterceptOutcome.STAYED_FOCUSED),
+    SPLIT_INTO_MICRO_STEP(InterceptOutcome.SPLIT_INTO_MICRO_STEP),
+    USED_PEEK(InterceptOutcome.USED_PEEK),
+    INTERCEPTED("Intercepted"),
+    LEFT_WITHOUT_CHOOSING("Left Airlock Without Choosing"),
+    OPENED_LAUNCHER("Opened Launcher"),
+    UNINSTALL_ATTEMPT_RETURNED("Uninstall Attempt — Returned"),
+    OPEN_EXPOSURE("Open exposure"),
+    SESSION_END(null),
+    UNKNOWN(null);
+
+    /** The kinds that were truly turned away — the typed twin of
+     *  [InterceptOutcome.BLOCKED_OUTCOMES]. */
+    val isBlock: Boolean
+        get() = this == BLOCKED || this == STAYED_FOCUSED || this == SPLIT_INTO_MICRO_STEP
+
+    companion object {
+        /** The kind for a legacy outcome word. Case-insensitive
+         *  (the writers' and the test suites' spellings differ in
+         *  case only); an unrecognised word is [UNKNOWN]. */
+        fun fromStoredWord(word: String): InterceptOutcomeKind {
+            val trimmed = word.trim()
+            return entries.firstOrNull { kind ->
+                kind.storedWord?.equals(trimmed, ignoreCase = true) == true
+            } ?: UNKNOWN
+        }
+
+        /** The kind persisted under a kind NAME (the outcomeKind
+         *  column stores [Enum.name]); blank/garbled → [UNKNOWN],
+         *  and callers fall back to [fromStoredWord] on the row's
+         *  word when this yields UNKNOWN for a pre-typing row. */
+        fun fromKindName(name: String?): InterceptOutcomeKind =
+            entries.firstOrNull { it.name == name } ?: UNKNOWN
+    }
+}
+
+/**
+ * Issue #324, finding 3 (build half): the intercept log's TYPED
+ * trigger. The writers already choose a [DistractionTriggerReason]
+ * enum at the call site, but only its free-text shortTag reached
+ * the row. [derive] recovers the kind from the stored facts: the
+ * reserved system packages (session-end and exposure rows) are
+ * SYSTEM whatever their reason column carries (exposure rows
+ * carry the exposed package name there); every other row maps
+ * its shortTag back to the reason that minted it.
+ */
+enum class InterceptTriggerKind {
+    HABIT, STUCK, TIRED, MESSAGE, SYSTEM, UNKNOWN;
+
+    companion object {
+        fun derive(triggerReason: String, packageName: String): InterceptTriggerKind {
+            if (packageName == "com.monolith.system" ||
+                packageName == "com.monolith.exposure"
+            ) return SYSTEM
+            return when (triggerReason.trim()) {
+                DistractionTriggerReason.MUSCLE_MEMORY.shortTag -> HABIT
+                DistractionTriggerReason.STUCK_ON_PROBLEM.shortTag -> STUCK
+                DistractionTriggerReason.BORED_OR_TIRED.shortTag -> TIRED
+                DistractionTriggerReason.NEED_INFO.shortTag -> MESSAGE
+                else -> UNKNOWN
+            }
+        }
+
+        fun fromKindName(name: String?): InterceptTriggerKind =
+            entries.firstOrNull { it.name == name } ?: UNKNOWN
+    }
+}
+
+/** Issue #13, A-10(iv): kinds whose end is a STORED-END fact —
+ *  a routine row's end is its frozen windowEndMillis, so filing
+ *  at any age is truthful and branch U's 10-minute cliff (which
+ *  guards against fabricating a № for an unwitnessed finish)
+ *  does not apply. Witnessed manual finishes keep the cliff. */
+fun receiptCliffExempt(kind: String): Boolean = isRoutineBornKind(kind)
 
 /** One row of the Vault's receipts index (issue #157): the facts
  *  a claimed session's own row proves, nothing more — its №, its
@@ -219,7 +353,8 @@ data class ReceiptIndexEntry(
 
 /** One deflection on the slip: a blocked attempt the machine
  *  turned away during the session, reduced at assembly (window
- *  ∩ intention match ∩ 30s-per-package dedupe, first kept).
+ *  ∩ intention match ∩ BLOCKED outcome ∩ 30s-per-package
+ *  dedupe, first kept).
  *  There is deliberately NO total/count field anywhere in this
  *  contract (Zettel): the slip lists; it never sums.
  *
@@ -262,6 +397,42 @@ data class ReceiptDeflection(
         }
 }
 
+/**
+ * The HELD line's figures, in the only form the slip may print
+ * (receipt audit item 9 / W-41): apps split by what enforcement
+ * actually did — [shutApps] held shut, [peekApps] peek-tier,
+ * [heldSites] derived from the enforcer, never a list size.
+ *
+ * W-41 PREPARATION ONLY (issue #10): the persisted split columns
+ * (heldShutAtSeal / heldPeekAtSeal + an enforcer-derived sites
+ * figure) do NOT exist yet — they are Ren's batch-10 data work.
+ * Nothing in this codebase fills this type today: assembly
+ * leaves it null and the sheet prints no HELD line at all,
+ * under the slip's own omission law (an absent line over a
+ * false one). When the columns land, assembly fills this type
+ * from them at the one marked fill point in
+ * MonolithRepository.assemblePendingReceipt, and the line
+ * prints with no sheet change. The legacy summed columns
+ * (heldAppsAtSeal / heldSitesAtSeal) stay on the state as
+ * record, STATE-ONLY — the sheet never reads them again.
+ */
+data class ReceiptHeldFigures(
+    val shutApps: Int,
+    val peekApps: Int,
+    val heldSites: Int
+) {
+    /** The printed line, in the Shield header's split dialect
+     *  (MonolithCustomComponents' heldSplitText): zero parts are
+     *  omitted; null when nothing was held at all. */
+    fun printLine(): String? {
+        val parts = mutableListOf<String>()
+        if (shutApps > 0) parts += "$shutApps HELD"
+        if (peekApps > 0) parts += "$peekApps PEEK"
+        if (heldSites > 0) parts += "$heldSites SITES"
+        return if (parts.isEmpty()) null else parts.joinToString(" · ")
+    }
+}
+
 /** The facts gathered at E0 for a publish, before the claim
  *  transaction mints the №. Pure reads only (assembly, Reihe §3):
  *  the ended row's own stored fields, the frozen routine stamps,
@@ -291,6 +462,13 @@ data class PendingReceipt(
     // silently stretched the plan (it is inside spanTargetSeconds)
     // and no surface ever mentioned it.
     val penaltySecondsAdded: Int = 0,
+    // Issue #525: the boot-to-shield seconds this session's
+    // reboots left unshielded (the row's rebootGapSeconds),
+    // threaded so the slip can NAME them — the uptime before
+    // the shield's first raise was never credited, and the
+    // REBOOT line says so instead of letting the reboot pass
+    // silently. 0 prints nothing (the omission law).
+    val rebootGapSeconds: Int = 0,
     /** Issue #129 F3: the unguarded apps actually used inside
      *  this session's window (labels, longest-use first), read
      *  back from the ending write's exposure booking. Empty for
@@ -313,7 +491,11 @@ data class PendingReceipt(
     // this session (the row's breakTakenSeconds), NOT the
     // valve ledger [bankedBreakSeconds] reads.
     val completedTasks: List<String> = emptyList(),
-    val safeBreakSeconds: Int = 0
+    val safeBreakSeconds: Int = 0,
+    // W-41 seam (see ReceiptHeldFigures): null until the
+    // persisted SHUT/PEEK split columns land; assembly is the
+    // only fill point.
+    val heldFigures: ReceiptHeldFigures? = null
 )
 
 /**
@@ -349,6 +531,9 @@ data class ReceiptState(
     // Audit R3 #113, finding 4: see PendingReceipt — the slip
     // prints the penalty its plan silently included.
     val penaltySecondsAdded: Int = 0,
+    // Issue #525: see PendingReceipt.rebootGapSeconds — the
+    // slip prints the REBOOT line the reboot honestly cost.
+    val rebootGapSeconds: Int = 0,
     /** Issue #129 F3: see [PendingReceipt.openExposureApps]. */
     val openExposureApps: List<String> = emptyList(),
     // Audit R3b #145: see PendingReceipt.forgedArtifactName.
@@ -376,8 +561,17 @@ data class ReceiptState(
     // zone in force at render, exactly as ARMED renders in its
     // own witness. Before this field existed ENDED was the one
     // line on the slip still derived at print time.
-    val endZoneId: String? = null
+    val endZoneId: String? = null,
+    // W-41 seam (see ReceiptHeldFigures): null until the
+    // persisted SHUT/PEEK split columns land — while null, the
+    // sheet prints NO HELD line (the old summed line booked
+    // PEEK apps as held and counted sites blind; killed as
+    // printed, audit item 9).
+    val heldFigures: ReceiptHeldFigures? = null
 ) {
+    /** The HELD line this slip may print, or null when the line
+     *  is omitted whole (figures uncaptured, or nothing held). */
+    val heldLine: String? get() = heldFigures?.printLine()
     /** The printed №: zero-padded to a minimum of 3, never
      *  truncated (№ 048 … № 1048). */
     val numberPrint: String get() = "№ " + number.toString().padStart(3, '0')
