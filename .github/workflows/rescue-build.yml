@@ -1,27 +1,119 @@
 name: rescue-build
 
+# Venue model (Sarthak's new merge gate, Oct 31 10:39–10:41 IST;
+# issue #166 owns the change):
+#   - A pull request is judged on TWO reads only: the quick compile
+#     check (the `compile` job — binary, a red or unrun compile
+#     blocks) and the tests for the part that actually changed (the
+#     `targeted` job). No full suite, no screenshot gauntlet, no
+#     full lint per PR.
+#   - The FULL venue (build = full suite + APK, proof = lint +
+#     release, screenshots) runs on pushes to main — the post-batch
+#     main run is where the test floor is judged and the census
+#     counts — and on batch/train compositions. Composition
+#     branches are named `batch/*` or `train/*`: pushes to them get
+#     the full venue, and a PR whose head branch carries one of
+#     those names gets the full venue instead of the targeted job.
+#     workflow_dispatch is the manual full-venue run on any ref.
+#   - Paper-only changes (markdown, studio/ records, docs — no app
+#     code, no test code, no build or workflow files) skip every
+#     job via paths-ignore below and merge on read/review alone.
+#     paths-ignore skips a run only when EVERY changed file is
+#     paper, so a mixed PR still runs its venue in full.
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
+      - 'batch/**'
+      - 'train/**'
+    paths-ignore:
+      - '**.md'
+      - 'studio/**'
+      - 'docs/**'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'studio/**'
+      - 'docs/**'
 
 # Issue #24: least privilege — this workflow only reads the repo.
 permissions:
   contents: read
 
 # Issue #24: per-PR/per-ref concurrency. PR syncs cancel their own stale
-# runs; a push to main is NEVER cancelled by another event (the group key
-# differs and cancel-in-progress is false outside pull_request).
+# runs; a push to a batch/train branch cancels its own superseded run;
+# a push to main is NEVER cancelled by another event (the group key
+# differs and cancel-in-progress is false for main pushes).
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main') }}
 
 # Issue #24 (finding 5): every action is pinned to a commit SHA (the v4
 # tag each resolves to, verified via ls-remote) and the runner image is
 # pinned to ubuntu-24.04 — no floating tags, no floating image.
 
 jobs:
+  # Compile gate (issue #166; compile-is-binary ruling, Oct 31):
+  # the build job below runs unit tests BEFORE assemble (issue #24
+  # finding 1), so on a floor-red head its assemble step is skipped
+  # and no compile-green read exists — the merge gate was
+  # unsatisfiable by construction. This job is the gate's read:
+  # assemble debug + unit-test compile as their own job, first-class
+  # and independent — it executes no tests, and no other job's
+  # verdict can skip, poison, or be poisoned by it (the issue-#382
+  # screenshots precedent: a parallel job with its own budget whose
+  # verdict stands alone). The gate reads THIS job's conclusion on
+  # the PR head: green here means app + test code compile on that
+  # head, whatever the unit-test floor says.
+  compile:
+    name: Compile (assemble + test-compile)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Issue #85 F3: checkout credentials must not persist into
+          # the git config while build code executes.
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'  # issue #66 cluster-priority: same cure as agent/issue-2 f789cef — Robolectric 4.16 refuses SDK 36 on JDK 17
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Install SDK platform 36.1
+        run: |
+          SDKMANAGER="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
+          yes | "$SDKMANAGER" --licenses > /tmp/sdk-licenses.log 2>&1 || { echo "::warning::sdkmanager license step failed — see log tail"; tail -20 /tmp/sdk-licenses.log; }
+          "$SDKMANAGER" "platforms;android-36.1" "build-tools;36.1.0"
+
+      - name: Compile — assemble debug + unit-test compile
+        id: compile
+        run: |
+          chmod +x gradlew
+          ./gradlew --console=plain assembleDebug compileDebugUnitTestKotlin
+
+      - name: Compile summary
+        if: always()
+        run: |
+          {
+            echo "## Compile verdict — ${{ github.ref_name }} · ${{ github.sha }}"
+            echo "- Assemble debug + unit-test compile: ${{ steps.compile.outcome }}"
+            echo "- This job executes NO tests. Its conclusion is the compile-is-binary gate's read on this head: green = app + test code compile here, independent of the unit-test floor (issue #166)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Full venue (see the venue model at the top of this file): the
+  # full unit suite + the phone APK. Runs on main pushes, batch/
+  # train compositions, and manual dispatch — never on an ordinary
+  # PR, where the gate is compile + targeted tests only. Consequence
+  # stated plainly: phone-bound debug APKs now come from full-venue
+  # runs; a slim PR run uploads no APK.
   build:
+    name: Full suite + APK (batch/main venue)
+    if: ${{ github.event_name != 'pull_request' || startsWith(github.head_ref, 'batch/') || startsWith(github.head_ref, 'train/') }}
     runs-on: ubuntu-24.04
     # Wave-2 (issue #3): the 360-minute platform default meant one
     # hung daemon could eat a large share of the monthly minutes.
@@ -30,8 +122,12 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Issue #85 F3: checkout credentials must not persist into
+          # the git config while build code executes.
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '21'  # issue #66 cluster-priority: same cure as agent/issue-2 f789cef — Robolectric 4.16 refuses SDK 36 on JDK 17
@@ -89,16 +185,84 @@ jobs:
           chmod +x gradlew
           ./gradlew --console=plain testDebugUnitTest
 
+      # Issue #166: the JUnit XML is the floor's eyes. Until now the
+      # per-name test results existed only in this job's condensed
+      # log (exception + one frame per failure); the full stacks in
+      # app/build/test-results die with the runner. Upload them on
+      # EVERY run - pass or fail - through the same artifact channel
+      # the lint report already proved egress-robust (proof job), so
+      # a floor-red head's failures can be dispositioned name-by-name
+      # from the XML instead of reconstructed from a log tail.
+      - name: Upload unit-test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unit-test-results-${{ github.sha }}
+          path: |
+            app/build/test-results/testDebugUnitTest/**
+            app/build/reports/tests/testDebugUnitTest/**
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: Assemble debug
         id: assemble
         run: ./gradlew --console=plain assembleDebug
 
+      # Install-over proof on the APK itself (SCHLUESSEL, loops
+      # L1/L15/L16): the verify step above proves the keystore FILE.
+      # This gate proves the built APK. If the debugConfig wiring is
+      # ever dropped, AGP silently falls back to a machine-generated
+      # ~/.android/debug.keystore: the file check stays green while
+      # the APK becomes uninstallable over the phone build. The gate
+      # runs BEFORE upload, so a wrongly-signed APK never becomes an
+      # artifact, and it dies loudly.
+      - name: Verify APK signer (install-over proof)
+        id: apksigner
+        run: |
+          APKSIGNER="$(command -v apksigner || echo "$ANDROID_HOME/build-tools/36.1.0/apksigner")"
+          AAPT2="$(command -v aapt2 || echo "$ANDROID_HOME/build-tools/36.1.0/aapt2")"
+          FP=$("$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | grep -m1 -o "[0-9a-f]\{64\}")
+          VC=$("$AAPT2" dump badging app/build/outputs/apk/debug/app-debug.apk | grep -m1 -o "versionCode='[0-9]*'" | grep -o "[0-9]*")
+          echo "apk_fingerprint=$FP" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VC" >> "$GITHUB_OUTPUT"
+          if [ "$FP" != "bd15ad5fe9b6964464c0f867c7ae96f61ddd34093b3877f6032befa1d10f27ff" ]; then
+            echo "::error::app-debug.apk signer $FP is not the install-over key bd15ad5f...27ff - this APK would NOT install over the Monolith on the phone. Refusing to upload it."
+            exit 1
+          fi
+          echo "APK signer verified: $FP - versionCode $VC"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: monolith-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 3
 
+      # Issue #382: the screenshot gallery lives in its OWN job
+      # (below), not in this one. First attempt put it here as a
+      # step after Unit tests: the harness's minutes are then paid
+      # twice (once inside the suite, once filtered) and run
+      # 41029752820's build job hit the 25-minute timeout with the
+      # step cancelled. The separate job runs in parallel with its
+      # own budget — see the `screenshots` job at the end.
+
+      # Batch-10 Methods fix: a red run must carry its evidence.
+      # The JUnit XML + HTML reports are the lettered record of
+      # every failure (class, message, stack) — without this step
+      # the only route to a failure message is re-downloading the
+      # full run log. Always uploaded, green or red.
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: |
+            app/build/test-results/testDebugUnitTest
+            app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
+
+      # Wave-2 (Feel/Finisher pass): the run page must tell the truth
+      # in plain words without anyone opening a log. This APK is
+      # uploaded BEFORE the test step, so while tests are red the
+      # artifact is UNTESTED — the summary says so, every run.
       # Wave-2 (Feel/Finisher pass), corrected by issue #24: the run
       # page tells the truth in plain words without anyone opening a
       # log. Since finding 1 was fixed, the artifact is built and
@@ -118,6 +282,9 @@ jobs:
               echo "- APK in this run was built and uploaded AFTER its unit tests passed."
             fi
             echo "- Signing: committed debug keystore, SHA-256 ${{ steps.keystore.outputs.fingerprint }} — the key that signed the installed builds, so this APK installs over the Monolith on Sarthak's phone (versionCode permitting)."
+            echo "- APK signer gate (apksigner on the built APK): ${{ steps.apksigner.outcome }} - ${{ steps.apksigner.outputs.apk_fingerprint }}"
+            echo "- APK versionCode: ${{ steps.apksigner.outputs.version_code }} (epoch-minutes scheme, issue #25 ruling: computed in the build, never hand-set, never lower than any previous build)"
+            echo "- Screenshots: separate job in this same run — its artifact is screens-${{ github.sha }} when the harness passes (Robolectric renders of THIS tree; states the harness cannot render are named on issue #382, never faked)."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Issue #24 (finding 3): the debug job above proves the phone
@@ -140,12 +307,18 @@ jobs:
   # as STANDS-BLOCKED in issue #24's closing record.
   proof:
     name: Lint + release proof
+    # Full venue only (new merge gate): no full lint per PR.
+    if: ${{ github.event_name != 'pull_request' || startsWith(github.head_ref, 'batch/') || startsWith(github.head_ref, 'train/') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Issue #85 F3: checkout credentials must not persist into
+          # the git config while build code executes.
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '21'
@@ -210,4 +383,202 @@ jobs:
             echo "- Release assemble (release compile + proguard + signing path): ${{ steps.release.outcome }}"
             echo "- The release APK was signed with a throwaway key made inside this runner and DISCARDED — do not install it. Real release signing is issue #25."
             echo "- Instrumented tests are not run (template-only androidTest; emulator job priced as STANDS-BLOCKED in issue #24)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Issue #382 (Sarthak's ask, Oct 30 05:20 IST): screens with every
+  # build. A dedicated job, parallel to `build`, with its own time
+  # budget: the harness's minutes are paid exactly once, here, and
+  # neither the #166 shared floor (the build job's red suite) nor
+  # this job's verdict can block or poison the other. The upload is
+  # gated on THIS job's harness outcome — a red harness publishes
+  # nothing — and the output dir is a fresh build dir inside a
+  # fresh checkout, so no stale PNG can ride along; if no PNG
+  # lands, the upload errors instead of warning.
+  screenshots:
+    name: Screenshots (screens with every build)
+    # Full venue only (new merge gate): no screenshot gauntlet per PR.
+    if: ${{ github.event_name != 'pull_request' || startsWith(github.head_ref, 'batch/') || startsWith(github.head_ref, 'train/') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Install SDK platform 36.1
+        run: |
+          SDKMANAGER="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
+          yes | "$SDKMANAGER" --licenses > /tmp/sdk-licenses.log 2>&1 || { echo "::warning::sdkmanager license step failed — see log tail"; tail -20 /tmp/sdk-licenses.log; }
+          "$SDKMANAGER" "platforms;android-36.1" "build-tools;36.1.0"
+
+      - name: Screenshots (ScreenshotHarnessTest)
+        id: screens
+        env:
+          SCREENSHOTS_DIR: ${{ github.workspace }}/app/build/outputs/screenshots
+        run: |
+          chmod +x gradlew
+          ./gradlew --console=plain testDebugUnitTest --tests "com.example.ScreenshotHarnessTest"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.screens.outcome == 'success'
+        with:
+          name: screens-${{ github.sha }}
+          path: app/build/outputs/screenshots
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Screenshots summary
+        if: always()
+        run: |
+          {
+            echo "## Screenshots verdict — ${{ github.ref_name }} · ${{ github.sha }}"
+            echo "- Harness (ScreenshotHarnessTest): ${{ steps.screens.outcome }}"
+            if [ "${{ steps.screens.outcome }}" = "success" ]; then
+              echo "- Artifact: screens-${{ github.sha }} — Robolectric renders of THIS tree, one PNG per harness-captured screen (states the harness cannot render are named on issue #382, never faked)."
+            else
+              echo "- ⚠️ No screenshots artifact in this run — the harness did not pass."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # New merge gate (Sarthak's ruling, Oct 31 10:39–10:41 IST): an
+  # ordinary pull request is judged on the quick compile check (the
+  # `compile` job) plus the tests for the part that actually
+  # changed — never the full suite. This job is the second half of
+  # that read. The mapping is done by
+  # .github/scripts/map_targeted_tests.py, from file CONTENTS, and
+  # its rules are stated, not hidden:
+  #   - a test file changed in the diff contributes the test classes
+  #     it actually declares (top-level class/object bodies holding
+  #     @Test) — never a filter derived from the file's name, which
+  #     named nonexistent classes for multi-class files and silently
+  #     skipped the rest (issue #166, mapper incident 1);
+  #   - a main-source (.kt) file changed in the diff selects test
+  #     files whose name carries its stem OR whose contents reference
+  #     the stem as a whole word, and contributes THEIR declared test
+  #     classes — so a production-only change is routed to its
+  #     covering tests even when the test file itself is unmoved by
+  #     the diff (the PR #705 shape);
+  #   - a production CODE change (.kt under app/src/main/java/) that
+  #     still maps to no test makes this job FAIL as GATE UNMET —
+  #     no test failed, but no test ran either, and a skipped step
+  #     wearing SUCCESS is exactly the vacuous green of issue #166's
+  #     mapper incident 2. A workflow job cannot conclude "neutral"
+  #     (that conclusion exists only for external check runs), so
+  #     not-a-pass is spelled as a failure whose summary says UNMET
+  #     in plain words; the cures are named in the error (map a
+  #     covering test, or extend the mapper in the same PR);
+  #   - production RESOURCE files (strings, manifest, assets) map to
+  #     nothing mechanically and do NOT trip the unmet failure: no
+  #     unit-test filter can name their coverage. The summary names
+  #     them; the compile job and the batch/main venue judge them;
+  #   - a diff with no production change at all (docs, workflow,
+  #     build files) maps nothing and passes on the compile read, as
+  #     the venue law provides — the summary says so in plain words.
+  # Batch/train PRs skip this job — the full venue runs for them.
+  targeted:
+    name: Targeted tests (changed part)
+    if: ${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'batch/') && !startsWith(github.head_ref, 'train/') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Issue #85 F3: checkout credentials must not persist into
+          # the git config while build code executes. fetch-depth 0:
+          # the mapping step diffs base...head from git itself.
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Install SDK platform 36.1
+        run: |
+          SDKMANAGER="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
+          yes | "$SDKMANAGER" --licenses > /tmp/sdk-licenses.log 2>&1 || { echo "::warning::sdkmanager license step failed — see log tail"; tail -20 /tmp/sdk-licenses.log; }
+          "$SDKMANAGER" "platforms;android-36.1" "build-tools;36.1.0"
+
+      - name: Map the changed part to tests
+        id: map
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          git diff --name-only "$BASE...$HEAD" > changed.txt
+          echo "Changed files:"; cat changed.txt
+          # Issue #166 (mapper cure): the mapping reads file CONTENTS
+          # (declared test classes; whole-word references from test
+          # files to changed production stems) — never file names.
+          # The script reports facts (filters.txt, unmapped.txt, the
+          # step outputs below); the verdict steps act on them.
+          python3 .github/scripts/map_targeted_tests.py changed.txt
+          echo "Mapped test classes:"; cat filters.txt
+
+      - name: Targeted unit tests
+        id: tests
+        if: ${{ steps.map.outputs.count != '0' }}
+        run: |
+          chmod +x gradlew
+          ARGS=""
+          while IFS= read -r c; do ARGS="$ARGS --tests $c"; done < filters.txt
+          ./gradlew --console=plain testDebugUnitTest $ARGS
+
+      # Same artifact channel as the build job: the targeted run's
+      # per-name results are the gate reader's evidence.
+      - name: Upload unit-test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unit-test-results-${{ github.sha }}
+          path: |
+            app/build/test-results/testDebugUnitTest/**
+            app/build/reports/tests/testDebugUnitTest/**
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # Issue #166 (mapper incident 2): a production CODE change that
+      # mapped to no test must not let this job conclude SUCCESS on a
+      # skipped step. Placed after the tests + upload steps so any
+      # mapped tests still ran and their artifact stands as evidence;
+      # this step then fails the job as GATE UNMET. (Why failure and
+      # not "neutral": a workflow job has no neutral conclusion —
+      # see the job header comment.)
+      - name: Gate honesty — unmapped production code
+        if: ${{ always() && steps.map.outputs.unmapped_code != '' && steps.map.outputs.unmapped_code != '0' }}
+        run: |
+          echo "::error::GATE UNMET — production code changed with no mapped covering test. No test failed; no test ran for the file(s) below, so a green conclusion here would be vacuous. Cures: make the covering test findable (its file name carries the changed file's stem, or its contents reference the changed class), or extend .github/scripts/map_targeted_tests.py in this same PR."
+          grep '^code' unmapped.txt || true
+          exit 1
+
+      - name: Targeted summary
+        if: always()
+        run: |
+          {
+            echo "## Targeted verdict — ${{ github.ref_name }} · ${{ github.sha }}"
+            UC="${{ steps.map.outputs.unmapped_code }}"
+            if [ -n "$UC" ] && [ "$UC" != "0" ]; then
+              echo "- ⛔ GATE UNMET: production code changed with NO mapped covering test (named in the Map step's log and the Gate honesty step). No test failed — no test ran for that part. This job's failure is an unmet gate, not a test failure; do not cite it as a red test."
+            fi
+            if [ "${{ steps.map.outputs.count }}" = "0" ]; then
+              if [ "${{ steps.map.outputs.production_changed }}" = "true" ]; then
+                echo "- No test classes map to this diff's production files. The unmapped files are listed in the Map step's log (code files trip the unmet gate above; resource files are judged by the compile job and the batch/main venue)."
+              else
+                echo "- No test classes map to this diff (no production or test change under app/src). The compile job is this PR's gate read; the full suite judges this change at the batch/main venue."
+              fi
+            else
+              echo "- Mapped test classes: ${{ steps.map.outputs.count }} (listed in the Map step's log)"
+              echo "- Targeted verdict: ${{ steps.tests.outcome }}"
+            fi
+            if [ "${{ steps.map.outputs.unmapped_count }}" != "0" ] && { [ -z "$UC" ] || [ "$UC" = "0" ]; }; then
+              echo "- Production resource files changed with no mechanical test mapping (named in the Map step's log) — judged by the compile job and the batch/main venue, by design."
+            fi
+            echo "- Full suite, screenshots, and lint did NOT run on this PR — by design (new merge gate). They judge this change on the batch composition and on main after it lands."
           } >> "$GITHUB_STEP_SUMMARY"

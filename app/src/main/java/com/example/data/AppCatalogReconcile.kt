@@ -1,5 +1,7 @@
 package com.example.data
 
+import java.util.Locale
+
 /**
  * THE CATALOG RECONCILE (Ordner lane — Sarthak's complaint, Oct 29
  * 22:40 IST: "the list of apps is too long, it contains apps that I
@@ -38,9 +40,14 @@ package com.example.data
  *   preset or category default — a user's LOCKED never silently
  *   reopens because an app was transiently unlaunchable (disabled,
  *   launcher-less, in another profile).
- * - a stored row whose package is corroborated-gone is PRUNED (so
- *   no reader of this table can count a ghost forever: not the
- *   Shield list, not the Deck's held count, not PARK's census);
+ * - a stored row carrying NO ruling (OPEN) whose package is
+ *   corroborated-gone is PRUNED (so no reader of this table can
+ *   count an unruled ghost forever: not the Shield list, not the
+ *   Deck's held count, not PARK's census). A row carrying a ruling
+ *   is exempt — catalogue membership is the discovered set UNION
+ *   the rule rows (issue #142 F2, the union law at [reconcile]:
+ *   a ruled app always appears in the catalogue, even while it is
+ *   launcher-invisible on the phone that still holds it);
  * - an installed package with no row is DISCOVERED, uncapped, born
  *   with its remembered rule if it has one, else its factory
  *   preset, else its category default;
@@ -71,6 +78,21 @@ data class InstalledPackage(
     val isMainActivity: Boolean = false
 )
 
+/**
+ * Issue #80 finding 1 (partial): one install of a package in one
+ * user profile. [profileKey] is the profile's UserHandle string —
+ * the only profile identity a normal app may read; Android exposes
+ * no public numeric user id, and no door (AccessibilityEvent,
+ * UsageStats, notifications) carries a UserHandle at all, which is
+ * why per-profile RULES stay blocked (see ISSUE-80 report) while
+ * per-profile DISCOVERY is possible and implemented.
+ */
+data class ProfiledInstalledPackage(
+    val packageName: String,
+    val label: String,
+    val profileKey: String
+)
+
 /** A birth rule for a package: the tier and daily limit it is
  *  discovered with IF it is actually installed. */
 data class AppRulePreset(
@@ -87,6 +109,17 @@ data class AppCatalogPlan(
      *  stored ones — a sync never re-prices a ruling. */
     val usageUpdates: List<BlockedAppEntity>,
     val toPrune: List<String>,
+    /**
+     * Issue #129 (unlisted-distraction F1): the packages this sync
+     * is about to birth OPEN purely from the category guess — no
+     * factory preset, and the guessed category's default is OPEN.
+     * Nobody ruled on these apps; the guess did. The repository
+     * records them as UNREVIEWED so a surface can ask the man to
+     * rule on them, instead of the guess silently standing as his
+     * decision. A preset-born OPEN app (e.g. Chrome) is NOT in
+     * this list: a preset is a deliberate birth rule, not a guess.
+     */
+    val unreviewedOpenPackages: List<String> = emptyList(),
     /** Packages absent from THIS sync but not yet prunable (first
      *  absence). The caller persists this set and hands it back as
      *  `previouslyAbsent` on the next sync; only a package absent
@@ -119,6 +152,32 @@ data class AppCatalogPlan(
  */
 object AppCategorizer {
 
+    /** Deterministic homes (issue #133): a filing that is a fact
+     *  about the package, not a guess about its name — checked
+     *  before every token rule below. */
+    private val DETERMINISTIC_HOMES: Map<String, AppCategory> = mapOf(
+        // Anki — the spaced-repetition app (audit R3b, angle
+        // study-on-phone-itself, names this exact package).
+        "com.ichi2.anki" to AppCategory.EDUCATION,
+        // Finance (issue #120): the payment/authenticator packages
+        // whose identity is a fact, filed deterministically like
+        // Anki above — Google Pay (India), PhonePe, Paytm, BHIM,
+        // and the three authenticators.
+        "com.google.android.apps.nbu.paisa.user" to AppCategory.FINANCE,
+        "com.phonepe.app" to AppCategory.FINANCE,
+        "net.one97.paytm" to AppCategory.FINANCE,
+        "in.org.npci.upiapp" to AppCategory.FINANCE,
+        "com.google.android.apps.authenticator2" to AppCategory.FINANCE,
+        "com.microsoft.authenticator" to AppCategory.FINANCE,
+        "com.authy.authy" to AppCategory.FINANCE,
+        // Threads (issue #142): its package carries the token
+        // "instagram", which the token rules below file
+        // SHORT_VIDEO - the exact keyword-collision misfile the
+        // finding charges. The package is a fact: Threads is
+        // social, whatever its parent app is called.
+        "com.instagram.barcelona" to AppCategory.SOCIAL
+    )
+
     private val MUSIC_TOKENS = setOf(
         "music", "podcast", "podcasts", "audio", "audiobook", "audiobooks",
         "radio", "spotify", "soundcloud", "deezer", "tidal", "gaana",
@@ -127,6 +186,7 @@ object AppCategorizer {
     )
 
     fun categorize(pkg: String, label: String): AppCategory {
+        DETERMINISTIC_HOMES[pkg]?.let { return it }
         val pkgTokens = tokenize(pkg)
         val labelTokens = tokenize(label)
         fun matches(vararg keys: String): Boolean = keys.any { key ->
@@ -146,20 +206,70 @@ object AppCategorizer {
         // bare "reel" no longer fires inside "Freelance". Plurals
         // are stated as their own keys; "play" survives only in
         // "play games", where it means what it says.
+        // Issue #142 (finding-an-app-in-shield), the residue the
+        // #129/#130 widening ports did not carry: Signal/Viber file
+        // MESSAGING, and news apps file BROWSERS - the category is
+        // literally labelled "Web & News", yet a news app's tokens
+        // matched nothing and it dumped into SHOPPING ("Other
+        // Apps"). Threads files SOCIAL via its deterministic
+        // home above.
+        // Study signals (issue #133) sit before the entertainment
+        // branches, in the same whole-token discipline: a study
+        // app must never be filed as entertainment by name luck —
+        // Google Play Books ("play books") is a study app, while
+        // Play Store and Play Games keep their rulings below.
+        if (matches(
+                "anki", "flashcard", "flashcards", "classroom",
+                "play books", "textbook", "textbooks", "ebook", "ebooks",
+                "pdf reader", "lecture", "lectures", "dictionary",
+                "education", "study"
+            )
+        ) return AppCategory.EDUCATION
+        // Finance (issue #120), in the same whole-token discipline,
+        // filed before the entertainment branches so a bank's name
+        // can never file it as a game or a shop. Bare "pay" is NOT
+        // a key — it fires inside too many unrelated names; the
+        // payment brands are stated whole.
+        if (matches(
+                "bank", "banking", "upi", "authenticator", "authy",
+                "gpay", "phonepe", "paytm", "bhim", "yono", "paypal",
+                "wallet", "google pay", "mobile banking"
+            )
+        ) return AppCategory.FINANCE
         return when {
-            matches("tiktok", "musically", "youtube", "instagram", "reel", "reels") ->
+            matches("tiktok", "musically", "youtube", "instagram", "reel", "reels",
+                "takatak", "moj") ->
                 AppCategory.SHORT_VIDEO
-            matches("twitter", "reddit", "snapchat", "facebook") ->
+            matches("twitter", "reddit", "snapchat", "facebook",
+                "threads", "mastodon", "bluesky", "bsky") ->
                 AppCategory.SOCIAL
+            // Issue #129 (widening ported at the STURM-4 merge): the
+            // big games whose names carried none of the old magic
+            // words, stated as token sequences in L2's discipline.
             matches(
                 "game", "games", "clash", "roblox", "minecraft",
-                "pubg", "candycrush", "play games"
+                "pubg", "candycrush", "play games", "bgmi", "freefire",
+                "free fire", "fortnite", "genshin", "candy crush",
+                "subway surfers", "call of duty", "valorant", "pokemon go"
             ) -> AppCategory.GAMES
             matches(
                 "whatsapp", "discord", "telegram", "message",
-                "messages", "messaging", "messenger"
+                "messages", "messaging", "messenger", "signal", "viber"
             ) -> AppCategory.MESSAGING
-            matches("chrome", "browser", "browsers", "firefox", "brave") ->
+            // Issue #129/#130 (widening ported at the STURM-4 merge,
+            // union recomposed at the DURCH-D #130 landing): second
+            // browsers are browsers — Opera, DuckDuckGo, Samsung
+            // Internet, Edge, Kiwi, UC, Vivaldi, Yandex and Via
+            // ("mark via" — the mark.via.gp package tokenised) were
+            // filed SHOPPING before this, outside the site blocker's
+            // category world entirely. The composed set is the UNION
+            // of main's tokens and #130's ("kiwibrowser", "mark via"),
+            // so neither lane's browser loses its recognition.
+            matches("chrome", "browser", "browsers", "firefox", "brave",
+                "opera", "duckduckgo", "sbrowser", "samsung internet",
+                "microsoft edge", "emmx", "kiwi", "kiwibrowser",
+                "ucbrowser", "uc browser", "vivaldi", "yandex",
+                "mark via", "news") ->
                 AppCategory.BROWSERS
             else -> AppCategory.SHOPPING
         }
@@ -175,7 +285,7 @@ object AppCategorizer {
         val tokens = mutableListOf<String>()
         for (chunk in text.split(Regex("[^A-Za-z0-9]+"))) {
             if (chunk.isEmpty()) continue
-            tokens += chunk.lowercase()
+            tokens += chunk.lowercase(Locale.ROOT)
             val parts = chunk.split(
                 Regex(
                     "(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])" +
@@ -183,7 +293,7 @@ object AppCategorizer {
                 )
             )
             if (parts.size > 1) {
-                parts.forEach { tokens += it.lowercase() }
+                parts.forEach { tokens += it.lowercase(Locale.ROOT) }
             }
         }
         return tokens
@@ -235,7 +345,7 @@ object AppCatalogReconcile {
         installed.groupBy { it.packageName }.mapValues { (_, entries) ->
             entries.firstOrNull { it.isMainActivity }
                 ?: entries.minWithOrNull(
-                    compareBy({ it.label.lowercase() }, { it.label })
+                    compareBy({ it.label.lowercase(Locale.ROOT) }, { it.label })
                 )!!
         }
 
@@ -268,6 +378,41 @@ object AppCatalogReconcile {
         return elapsed >= 0L && elapsed < windowMillis
     }
 
+    /** Issue #69 F4: a non-forced sync inside the collapse
+     *  window skips the PackageManager enumeration ITSELF, not
+     *  only the reconcile after it — the repeat look cannot
+     *  change any data (the reconcile would be skipped anyway),
+     *  so enumerating the whole package table for it is pure
+     *  startup cost. A forced sync always enumerates. */
+    fun isEnumerationSkipped(
+        forceCatalogSync: Boolean,
+        lastSuccessfulSyncMillis: Long,
+        nowMillis: Long,
+        windowMillis: Long = SYNC_COLLAPSE_WINDOW_MILLIS
+    ): Boolean = !forceCatalogSync && isCollapseRepeat(
+        lastSuccessfulSyncMillis, nowMillis, windowMillis
+    )
+
+    /** Catalog view of profiled installs: one row per PACKAGE
+     *  (the table's primary key is still the bare package name),
+     *  first label seen wins. A package present in ANY profile is
+     *  installed for catalog purposes — it must not be pruned just
+     *  because the calling profile cannot launch it. */
+    fun mergeProfiledInstalls(
+        profiled: List<ProfiledInstalledPackage>
+    ): List<InstalledPackage> =
+        profiled.distinctBy { it.packageName }
+            .map { InstalledPackage(it.packageName, it.label) }
+
+    /** Which profiles each package is present in — the conflation
+     *  made visible: more than one key means one rule row is
+     *  standing for several installs. */
+    fun profilesByPackage(
+        profiled: List<ProfiledInstalledPackage>
+    ): Map<String, List<String>> =
+        profiled.groupBy({ it.packageName }, { it.profileKey })
+            .mapValues { it.value.distinct().sorted() }
+
     fun reconcile(
         existing: List<BlockedAppEntity>,
         installed: List<InstalledPackage>,
@@ -285,18 +430,50 @@ object AppCatalogReconcile {
             return AppCatalogPlan(emptyList(), emptyList(), emptyList(), emptyList())
         }
 
+        // THE UNION LAW (issue #142 F2, BUENDEL spot-check cure):
+        // catalogue membership is the reconcile's discovered set
+        // UNION the rule rows. A row carrying a ruling (its stored
+        // tier resolves to anything but OPEN) is membership by
+        // right: it is never counted absent, never earns a strike
+        // and is never pruned, however the discovery queries answered.
+        // Discovery only sees LAUNCHABLE packages (the PM launcher
+        // query and LauncherApps activity lists in the repository),
+        // so an app that is installed but launcher-invisible —
+        // launcher-less, its launcher entry disabled, ruled on by
+        // package while background-only — used to be pruned after
+        // two strikes while still on the phone: its catalogue entry
+        // vanished, its tier became invisible, and the ruling lived
+        // on only as a prefs tombstone, unfindable until the app
+        // happened to re-enter the launcher-visible set. A Package-
+        // Manager install probe cannot repair this instead: without
+        // QUERY_ALL_PACKAGES (not held, by design), Android 11+
+        // package visibility makes getApplicationInfo fail for
+        // exactly the launcher-invisible packages at stake. The
+        // union therefore lives here, in the membership derivation
+        // itself. Rows carrying NO ruling (OPEN) remain what the
+        // two-strike law below has always governed: pure cache
+        // entries for corroborated-gone packages, pruned as before.
+        val ruledPackages = existing
+            .filter { it.resolvedTier != AppBlockTier.OPEN }
+            .map { it.packageName }
+            .toSet()
+
         // Two consecutive absences or the row stays. The first
         // absence is only noted (pendingPrune) for the caller to
         // persist; a package present again clears its own note by
         // simply not being absent.
         val absent = existing
-            .filter { it.packageName !in installedByPackage }
+            .filter {
+                it.packageName !in installedByPackage &&
+                    it.packageName !in ruledPackages
+            }
             .map { it.packageName }
         val toPrune = absent.filter { it in previouslyAbsent }
         val pendingPrune = absent.filter { it !in previouslyAbsent }
 
         val toInsert = mutableListOf<BlockedAppEntity>()
         val usageUpdates = mutableListOf<BlockedAppEntity>()
+        val unreviewedOpen = mutableListOf<String>()
         for ((pkg, info) in installedByPackage) {
             val current = existingByPackage[pkg]
             if (current == null) {
@@ -314,8 +491,44 @@ object AppCatalogReconcile {
                     // background playback was never blocked, so a
                     // 2-minute start window is all a player needs.
                     // Born LOCKED, a player got no peek at all.
-                    AppCategory.MESSAGING, AppCategory.MUSIC -> AppBlockTier.PEEK_2M
-                    else -> AppBlockTier.OPEN
+                    // Issue #120: FINANCE is born PEEK_2M too —
+                    // a bank or authenticator born LOCKED has no
+                    // lawful mid-session door at all, and the peek
+                    // (5s wall, 2-minute lease) is exactly the
+                    // ceremony an OTP or UPI approval needs.
+                    AppCategory.MESSAGING, AppCategory.MUSIC, AppCategory.FINANCE -> AppBlockTier.PEEK_2M
+                    // Shield Rethink 2, Step 2 — THE INVERSION, in the
+                    // same fail-closed birth #129 settled: the unruled
+                    // remainder is born SHUT. Before this, an app no
+                    // remembered ruling, factory preset or deliberate
+                    // category policy had an opinion about was born
+                    // OPEN — the majority of the phone, reachable
+                    // during a hold until he happened to rule it. Now
+                    // exceptions (PEEK / OPEN) are named — by him from
+                    // the Sheet, or by a reasoned category policy like
+                    // #120/#132 above — never by absence of a guess.
+                    // Issue #129 (unlisted-distraction, CRITICAL),
+                    // settled at the STURM-4 fix-forward: the safe
+                    // default for a BLOCKER is fail-closed. Every
+                    // other category — SOCIAL, BROWSERS, and
+                    // SHOPPING, where every UNRECOGNISED app lands —
+                    // was born OPEN on a keyword guess; a blocker
+                    // that defaults unknown apps to open fails its
+                    // one job. Unlisted is now born LOCKED: shut
+                    // until HE lists it otherwise in the catalogue.
+                    // Existing rows are never re-priced by a sync,
+                    // so his own OPEN rulings stand untouched.
+                    else -> AppBlockTier.LOCKED
+                }
+                // #129 F1: a guess-born OPEN app is named as such at
+                // birth, in the plan itself, so no caller can insert
+                // it and forget the guess happened. Under the
+                // fail-closed birth above, no app is guess-born
+                // OPEN any more, so this list stays empty — the
+                // naming machinery remains for any future birth
+                // rule that ever opens by guess again.
+                if (preset == null && tier == AppBlockTier.OPEN) {
+                    unreviewedOpen += pkg
                 }
                 toInsert += BlockedAppEntity(
                     packageName = pkg,
@@ -344,7 +557,7 @@ object AppCatalogReconcile {
                 }
             }
         }
-        return AppCatalogPlan(toInsert, usageUpdates, toPrune, pendingPrune)
+        return AppCatalogPlan(toInsert, usageUpdates, toPrune, unreviewedOpen, pendingPrune)
     }
 
     /** THE BORN CATEGORY (fresh-eyes L2). A newly-seen app's
@@ -372,4 +585,14 @@ object AppCatalogReconcile {
      *  the map is the "measured" witness reconcile trusts. */
     fun aggregateUsageMinutes(buckets: List<Pair<String, Int>>): Map<String, Int> =
         buckets.groupingBy { it.first }.fold(0) { acc, (_, minutes) -> acc + minutes }
+
+    /**
+     * Issue #129 F1: was this row born OPEN by the category guess
+     * alone (no preset, category default OPEN)? Kept for API
+     * compatibility with the #129 lane; since the fail-closed
+     * birth landed, no category's default is OPEN any more, so
+     * this answers false for every category by construction.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun isGuessBornOpen(category: AppCategory, hasPreset: Boolean): Boolean = false
 }

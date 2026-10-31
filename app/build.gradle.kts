@@ -7,6 +7,20 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+// Ren's ruling, issue #25 (DURCH-VC, Oct 30 2026): versionCode is
+// EPOCH-MINUTES — minutes since the Unix epoch, computed here in the
+// build at build time, NEVER hand-set. It can never go lower than any
+// previous build (a later build is always a later minute), which kills
+// the L16 class permanently across parallel lanes/trains: no merged
+// tree can resurrect a lower hand-set value. Supersedes the hand-set
+// vc2 (and batch-9's vc1) upward. Scale: Oct 2026 ≈ 29.9 million;
+// Int.MAX_VALUE (2,147,483,647) is not reached for ≈ 4,026 years
+// (≈ year 6053), and Play's 2,100,000,000 cap is millennia away too.
+// This defaultConfig is the ONE definition point: every build route
+// (local assemble, CI debug, CI release proof, screenshots) inherits
+// it — no flavor, variant, or workflow override exists.
+val epochMinutesVersionCode: Int = (System.currentTimeMillis() / 60_000L).toInt()
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -15,7 +29,7 @@ android {
     applicationId = "com.aistudio.monolith.kxtpzr"
     minSdk = 24
     targetSdk = 36
-    versionCode = 2
+    versionCode = epochMinutesVersionCode
     versionName = "1.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -57,6 +71,11 @@ android {
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
+    // Audit R6 #341 F02: java.time (DrawerDay, MonolithWeek, the
+    // schedule layer) is API 26+; without desugaring, minSdk 24
+    // devices died with NoClassDefFoundError at ViewModel
+    // construction. Desugaring backfills java.time on API 24-25.
+    isCoreLibraryDesugaringEnabled = true
   }
   buildFeatures {
     compose = true
@@ -69,6 +88,38 @@ android {
   }
 }
 
+// Finisher (Klappe): JDK 21 strong encapsulation blocks Robolectric's
+// AndroidInterceptors reflection (IllegalAccessException at sandbox
+// start, every Robolectric test dead). Open the JDK modules Robolectric
+// documents for JDK 21 test workers.
+tasks.withType<Test>().configureEach {
+  jvmArgs(
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+    "--add-opens=java.base/java.io=ALL-UNNAMED",
+    "--add-opens=java.base/java.net=ALL-UNNAMED",
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/java.nio.charset=ALL-UNNAMED",
+    "--add-opens=java.base/java.security=ALL-UNNAMED",
+    "--add-opens=java.base/java.text=ALL-UNNAMED",
+    "--add-opens=java.base/java.time=ALL-UNNAMED",
+    "--add-opens=java.base/java.util=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.zip=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+    "--add-opens=java.base/sun.security.ssl=ALL-UNNAMED",
+    "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
+    "--add-opens=java.desktop/java.awt.font=ALL-UNNAMED",
+    // BUILDER-TRAIN-4 triage (PR #231, run 41105848855): add-opens does
+    // not substitute for add-exports - Robolectric's sandbox needs
+    // jdk.internal.access EXPORTED (SharedSecrets, at
+    // ApplicationSharedMemory.create). Without it every Robolectric
+    // suite dies in setup: 211 toolchain failures at head 7a0ba487.
+    "--add-exports=java.base/jdk.internal.access=ALL-UNNAMED"
+  )
+}
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
 // Some unused dependencies are commented out below instead of being removed.
@@ -82,6 +133,10 @@ dependencies {
   // implementation(libs.androidx.camera.lifecycle)
   // implementation(libs.androidx.camera.view)
   implementation(libs.androidx.compose.material3)
+  // Issue #336: the one icon system (MonolithIcons). Extended set:
+  // the current core artifact no longer carries Shield/Schedule/
+  // Visibility/VpnKey/Chevrons/DarkMode/FlashOn/Pause (CI-proven).
+  implementation(libs.androidx.compose.material.icons.extended)
   implementation(libs.androidx.compose.ui)
   implementation(libs.androidx.compose.ui.graphics)
   implementation(libs.androidx.core.ktx)
@@ -124,5 +179,12 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
+  coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
   // "ksp"(libs.moshi.kotlin.codegen)
+}
+
+// MOTOR #31 F3 (train inheritance): Room schema export location —
+// pairs with exportSchema = true on MonolithDatabase (DB v13).
+ksp {
+  arg("room.schemaLocation", "$projectDir/schemas")
 }

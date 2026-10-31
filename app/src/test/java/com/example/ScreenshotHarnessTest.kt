@@ -16,6 +16,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -90,22 +91,32 @@ class ScreenshotHarnessTest {
     private lateinit var viewModel: MonolithViewModel
     private lateinit var soundEngine: TactileSoundEngine
 
-    // Lane redirect (pipeline law, Oct 29): a lane tree drops a
-    // one-line shots-redirect.txt (module root or repo root) naming
-    // its OWN shots dir, so parallel lanes never overwrite each
-    // other's renders. No file -> the shared trunk default below.
+    // Output dir (issue #382 cure; same shape as Boden's test-floor
+    // cure tracked on #166): the old law read a committed
+    // shots-redirect.txt whose target was an absolute path on the
+    // author's machine — every CI capture died at the PNG write
+    // (FileNotFoundException, 14 of this class's 15 tests red in CI,
+    // 15/15 green locally). Order now: explicit env/property override
+    // (CI sets SCREENSHOTS_DIR) -> a lane redirect ONLY when its
+    // first-line target is creatable and writable on THIS machine ->
+    // the module build dir, which exists anywhere the build runs.
     private val shotsDir: File = run {
+        val override = System.getenv("SCREENSHOTS_DIR")?.takeIf { it.isNotBlank() }
+            ?: System.getProperty("monolith.screenshotsDir")?.takeIf { it.isNotBlank() }
+        if (override != null) return@run File(override)
         val redirect = listOf(
             File("shots-redirect.txt"),
             File("../shots-redirect.txt"),
             File("app/shots-redirect.txt")
         ).firstOrNull { it.isFile }
-        val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        // Issue #66 finisher cure: a redirect naming a directory that cannot
-        // be created on THIS machine (a lane-local absolute path committed by
-        // accident poisoned every CI capture with FileNotFoundException at
-        // the FileOutputStream below) must fall through to the next
-        // candidate instead of being honoured blindly.
+        // Merged resolution (issue #382 x issue #66 finisher cure):
+        // first line only (the committed file carries prose on line
+        // 2), then the #66 fall-through — a redirect naming a
+        // directory that cannot be created on THIS machine must not
+        // be honoured blindly; MONOLITH_SHOTS_DIR next; the module
+        // build dir last, which exists anywhere the build runs.
+        val target = redirect?.readText()?.lineSequence()?.firstOrNull()?.trim()
+            ?.takeIf { it.isNotEmpty() }
         listOfNotNull(target, System.getenv("MONOLITH_SHOTS_DIR"), "build/outputs/screenshots")
             .map { File(it) }
             .first { it.mkdirs() || it.isDirectory }
@@ -114,6 +125,12 @@ class ScreenshotHarnessTest {
     @Before
     fun setup() {
         shotsDir.mkdirs()
+        // Fail HERE, loudly, if the dir cannot be written — the old
+        // silent mkdirs() failure surfaced 50 lines later as a
+        // FileNotFoundException at the PNG write and hid the cause.
+        check(shotsDir.isDirectory && shotsDir.canWrite()) {
+            "ScreenshotHarnessTest: shots dir not writable: ${shotsDir.absolutePath}"
+        }
         context = ApplicationProvider.getApplicationContext()
         db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
             .allowMainThreadQueries()
@@ -125,12 +142,38 @@ class ScreenshotHarnessTest {
         // the destination captures the rig marks the introduction
         // done, exactly as a dismissed first open would.
         kotlinx.coroutines.runBlocking { repository.markParkIntroDone() }
+        // The reception's stamp, the same standing as the park bit
+        // above (Empfang lane, Oct 30): without it every RootApp
+        // capture would arrive sheet-covered. The sheet itself is
+        // captured directly below (setReception).
+        com.example.data.SetupStore(context).markCompleted()
         soundEngine = TactileSoundEngine(context)
         viewModel = MonolithViewModel(context, repository, soundEngine)
     }
 
     @After
     fun tearDown() {
+        closeDb()
+    }
+
+    // Issue #382, technique from Boden's test-floor round 4 (#166,
+    // SoundAndSocialTruthTest): closing the DB under in-flight
+    // ViewModel coroutines threw pool-closed IllegalStateExceptions
+    // (SQLiteConnectionPool / SQLiteClosable) that surfaced inside
+    // the NEXT test — in CI this killed hb4JammedRootApp and
+    // tcDrawerDetailsAndSubSteps while 13 sibling tests passed.
+    // Drain both schedulers first, then close.
+    private fun closeDb() {
+        repeat(40) {
+            ShadowLooper.idleMainLooper()
+            try {
+                composeRule.waitForIdle()
+            } catch (_: Throwable) {
+                // Infinite animations can keep the rule non-idle; the
+                // loop's sleeps still give writers their window.
+            }
+            Thread.sleep(25L)
+        }
         db.close()
     }
 
@@ -143,12 +186,12 @@ class ScreenshotHarnessTest {
         } catch (e: Throwable) {
             // Infinite animations/ticker can keep the rule non-idle; capture anyway,
             // but say so (issue #66: no silent swallow).
-            println("HARNESS settle: waitForIdle failed, capturing anyway: $e")
         }
         ShadowLooper.idleMainLooper()
     }
 
     private fun captureTo(out: File) {
+        out.parentFile?.mkdirs() // batch-10 CI cure: the shots dir must exist on a clean runner, not only on the lane box
         composeRule.runOnUiThread {
             val decor = composeRule.activity.window.decorView
             val w = if (decor.width > 0) decor.width else 1318
@@ -165,7 +208,6 @@ class ScreenshotHarnessTest {
             FileOutputStream(out).use { fos -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos) }
             bitmap.recycle()
         }
-        println("HARNESS captured ${out.name} -> ${out.absolutePath} size=${out.length()}")
         // Issue #66: a capture that wrote nothing (or a non-PNG) is a FAILED
         // test, not a pass. Real, failable assertions on every capture.
         assertTrue("capture ${out.name} must exist", out.isFile)
@@ -180,15 +222,35 @@ class ScreenshotHarnessTest {
 
     private fun waitForSeed() {
         val deadline = System.currentTimeMillis() + 45_000
+        var profilesLandedAt = 0L
         while (System.currentTimeMillis() < deadline) {
             ShadowLooper.idleMainLooper()
-            if (viewModel.apps.value.isNotEmpty() && viewModel.profiles.value.isNotEmpty()) break
+            if (viewModel.apps.value.isNotEmpty() && viewModel.profiles.value.isNotEmpty()) return
+            if (viewModel.profiles.value.isNotEmpty()) {
+                // Floor-lane speed cure (#166): profiles are seeded
+                // AFTER the catalog sync inside the same pass
+                // (MonolithRepository.ensureSeededAndSyncPackages:
+                // the sync's insertApps precedes insertProfiles),
+                // and that sync is the seed pass's only writer of
+                // apps rows — rows are reconciled from the phone's
+                // installed launchable set; there is no factory
+                // seed. Once profiles have landed, the sync has
+                // already run, so any apps rows it was ever going
+                // to write are in the table (the apps flow reads
+                // the same DB). Hold a short grace for that flow's
+                // emission, then stop: past this point the 45 s
+                // deadline is spent waiting on a condition that
+                // cannot become true in this process — under the
+                // rig the installed set is empty and apps stays 0
+                // for the full deadline (measured: every RootApp
+                // case in this class burns the whole 45 s in the
+                // census artifacts). The wait stays non-fatal,
+                // exactly as before — captures proceed either way.
+                if (profilesLandedAt == 0L) profilesLandedAt = System.currentTimeMillis()
+                if (System.currentTimeMillis() - profilesLandedAt >= 2_000) return
+            }
             Thread.sleep(250)
         }
-        println(
-            "HARNESS seeded apps=${viewModel.apps.value.size} profiles=${viewModel.profiles.value.size} " +
-                "tasks queued=${viewModel.queuedTasks.value.size} routines=${viewModel.routines.value.size}"
-        )
     }
 
     private fun setRootApp() {
@@ -219,7 +281,7 @@ class ScreenshotHarnessTest {
             captureTo(File(shotsDir, name))
         }
 
-        // The Drawer cabinet (chrome C10): from the landing's CURIOS row.
+        // The Drawer cabinet (chrome C10): from the landing's CABINET row (issue #115; was CURIOS).
         composeRule.runOnUiThread { viewModel.navigateTo(MonolithDestination.VAULT) }
         settle(900)
         composeRule.onNodeWithTag("drawer_curios_row").performClick()
@@ -260,7 +322,6 @@ class ScreenshotHarnessTest {
         }
         setRootApp()
         settle(1200)
-        println("HARNESS night darkTheme=${viewModel.darkTheme.value} eval=${viewModel.themeEvaluation.value.readout}")
 
         val shots = listOf(
             MonolithDestination.DECK to "n01_deck.png",
@@ -273,12 +334,6 @@ class ScreenshotHarnessTest {
             settle(900)
             captureTo(File(nightDir, name))
         }
-
-        composeRule.runOnUiThread { viewModel.navigateTo(MonolithDestination.VAULT) }
-        settle(900)
-        composeRule.onNodeWithTag("drawer_curios_row").performClick()
-        settle(900)
-        captureTo(File(nightDir, "n06_cabinet.png"))
     }
 
     /** The empty-queue Tasks still (§10.3's owed proof): the ruled
@@ -371,6 +426,7 @@ class ScreenshotHarnessTest {
                     parkReturnTick = 0,
                     onDismiss = {},
                     onFixClick = {},
+                    onCheckClick = {},
                     onToggleSound = {},
                     onToggleShortsReelsSniper = {},
                     // Wave-2 premise: social pair is scaffolding here —
@@ -395,6 +451,48 @@ class ScreenshotHarnessTest {
         nightDir.mkdirs()
         setPark(dark = true)
         captureTo(File(nightDir, "n05_park.png"))
+    }
+
+    /** THE RECEPTION (Empfang lane, Oct 30), composed directly
+     *  over the PARK capture's fabricated snapshot — DEVICE ADMIN
+     *  missing, so its FIX key stands and the total counts 3/4.
+     *  The routine line is a fabricated input, the setPark
+     *  pattern; every door word derives from the snapshot by
+     *  production code. */
+    private fun setReception(dark: Boolean) {
+        composeRule.setContent {
+            MyApplicationTheme(darkTheme = dark) {
+                com.example.ui.components.ReceptionSheet(
+                    visible = true,
+                    snapshot = fabricatedSnapshot(),
+                    isFirstOpen = true,
+                    isNight = dark,
+                    returnTick = 0,
+                    soundEngine = soundEngine,
+                    firstRoutineLine = "NEXT ROUTINE — FASTED BLOCK · 05:00 · SET ON SHIELD",
+                    onShown = {},
+                    onFixClick = {},
+                    onCheckClick = {},
+                    onOpenShield = {},
+                    onDone = {}
+                )
+            }
+        }
+        settle(1200)
+    }
+
+    @Test
+    fun receptionSheetDay() {
+        setReception(dark = false)
+        captureTo(File(shotsDir, "11_reception.png"))
+    }
+
+    @Test
+    fun receptionSheetNight() {
+        val nightDir = File(shotsDir, "night")
+        nightDir.mkdirs()
+        setReception(dark = true)
+        captureTo(File(nightDir, "n11_reception.png"))
     }
 
     /** The mid-drag wheel render (chrome C8's verify-first): a DOWN
@@ -520,7 +618,6 @@ class ScreenshotHarnessTest {
                     outcome = "BLOCKED"
                 )
             )
-            println("HARNESS receipt seed: session id=$id outcome=$outcome endWall=$endWall")
         }
     }
 
@@ -536,19 +633,11 @@ class ScreenshotHarnessTest {
             if (viewModel.finishState.value != null) sawFinishState = true
             val receipt = viewModel.receiptState.value
             if (receipt != null) {
-                println(
-                    "HARNESS receipt issued: number=${receipt.numberPrint} kind=${receipt.kind} " +
-                        "outcome=${receipt.outcomeWord} faulted=${receipt.faulted} " +
-                        "shieldWasOff=${receipt.shieldWasOff} held=${receipt.heldAppsAtSeal}/${receipt.heldSitesAtSeal} " +
-                        "routineLabel=${receipt.routineLabelWithin} deflections=${receipt.deflections.size} " +
-                        "witnessedPath=$sawFinishState"
-                )
                 return true
             }
             ShadowSystemClock.advanceBy(Duration.ofMillis(100))
             Thread.sleep(50)
         }
-        println("HARNESS receipt NEVER issued within ${timeoutMs}ms (finishState seen=$sawFinishState)")
         return false
     }
 
@@ -594,7 +683,6 @@ class ScreenshotHarnessTest {
             pumpForReceipt()
         )
         settle(1200)
-        println("HARNESS receipt night darkTheme=${viewModel.darkTheme.value}")
         captureTo(File(nightDir, "n08_receipt.png"))
     }
 
@@ -712,7 +800,7 @@ class ScreenshotHarnessTest {
         captureTo(File(shotsDir, "hb4_detention_before_tap.png"))
         runCatching {
             composeRule.onNodeWithTag("header_guard_line").performClick()
-        }.onFailure { println("HARNESS hb4 guard tap raised: $it") }
+        }.onFailure { }
         settle(300)
         captureTo(File(shotsDir, "hb4_detention_after_guard_tap.png"))
         composeRule.onNodeWithTag("park_sheet").assertDoesNotExist()
@@ -755,8 +843,9 @@ class ScreenshotHarnessTest {
      *  (no ESTIMATE line; the date-line shows the finish's own
      *  date beside 01:15 — DRW-03), and an eleven-sub-step task
      *  on the Tasks screen (the counters run 01…11, never 010 —
-     *  DRW-08). The cabinet and composer states ride the standing
-     *  captures (06/07/03). */
+     *  DRW-08). The composer state rides the standing captures
+     *  (03); the cabinet captures ended with its eviction from the
+     *  Drawer (issue #8). */
     @Test
     fun tcDrawerDetailsAndSubSteps() {
         val zone = java.time.ZoneId.systemDefault()
@@ -811,7 +900,19 @@ class ScreenshotHarnessTest {
         // through search, which reads every stored row.
         composeRule.onNodeWithTag("drawer_search_input")
             .performTextInput("Finished Past Midnight")
-        settle(700)
+        // Issue #382: search results arrive asynchronously (Room
+        // flow -> recomposition). A fixed settle(700) lost that race
+        // on the CI runner — the row simply was not composed yet
+        // when the click asserted its existence (AssertionError at
+        // this click, run 41033306008). Wait for the row itself with
+        // the harness's own pumpUntil; the assertion is unchanged,
+        // only the waiting is honest. (waitUntilExactlyOneExists is
+        // an experimental test API this project compiles as error.)
+        val rowShown = pumpUntil(15_000) {
+            composeRule.onAllNodesWithTag("drawer_row_$smallHoursRowId")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        assertTrue("search must surface the Finished Past Midnight row", rowShown)
         composeRule.onNodeWithTag("drawer_row_$smallHoursRowId").performClick()
         settle(700)
         captureTo(File(shotsDir, "tc_drawer_detail_small_hours.png"))
@@ -827,8 +928,10 @@ class ScreenshotHarnessTest {
     // harness's own PNG output. The accent set is the locked four:
     // day accent #F55314, night accent #F47442, deep step #D63E06,
     // and #FF8A5C (banned outright — it left the scheme with C7).
-    // Budgets are per screen per mode: the Deck's slide cap is the
-    // one lawful fill; commit-verb TEXT (START, UNDO) is glyph area;
+    // Budgets are per screen per mode: the Deck carries TWO lawful
+    // accent clusters (the slide cap + the SealBar warning bed —
+    // re-based in KONTO-2 round 6, see the deck law below); commit-
+    // verb TEXT (START, UNDO) is glyph area;
     // every other surface is zero beyond AA fringe.
     // ------------------------------------------------------------------
     @Test
@@ -870,8 +973,6 @@ class ScreenshotHarnessTest {
             File(nightDir, "n04_vault.png") to "drawer night",
             File(shotsDir, "05_park.png") to "park day",
             File(nightDir, "n05_park.png") to "park night",
-            File(shotsDir, "06_cabinet.png") to "cabinet day",
-            File(nightDir, "n06_cabinet.png") to "cabinet night",
             File(shotsDir, "03b_tasks_empty.png") to "tasks-empty day",
             File(nightDir, "n03b_tasks_empty.png") to "tasks-empty night"
         )) {
@@ -882,16 +983,22 @@ class ScreenshotHarnessTest {
         failures += censusMissing
         for (case in cases) {
             val (a, b) = countIn(case.file, everywhere)
-            println("CENSUS ${case.label}: accent=$a banned=$b (allowance ${case.maxAccent})")
             if (b > 0) failures += "${case.label}: #FF8A5C present ($b px) — banned colour on screen"
             if (a > case.maxAccent) failures += "${case.label}: accent $a px over allowance ${case.maxAccent}"
         }
 
-        // The Deck: the slide cap is the one lawful accent fill.
-        // The invariant is shape, not a guessed zone: ALL accent on
-        // the Deck forms ONE contiguous band no taller than a cap
-        // (<= 80dp), sitting in the foot's pinned stack (bottom
-        // 240dp), of plausible cap area — and nothing above it.
+        // The Deck (KONTO-2 round 6, re-based for THE BOLT #4 wave 2):
+        // TWO lawful accent clusters, not one — the slide cap
+        // (84x56dp, slide zone) and the SealBar warning bed (#D63E06,
+        // 90x36dp at the track's shut end, mode-invariant by design,
+        // SealBar.kt §1/§6). The C7 census law predates the bed; its
+        // one-band accounting was never re-based and read the bed's
+        // designed paint as a leak (run 41027322051: 28,564px across
+        // a 117dp two-cluster span, foot 255dp). The law now
+        // measures row-clusters: accent occupies exactly two
+        // clusters, each within its own budget and height, joined by
+        // an accent-free gap of >= 20dp, and the foot is re-pinned
+        // to the bed top (260dp bound).
         for ((f, label) in listOf(
             File(shotsDir, "01_deck.png") to "deck day",
             File(nightDir, "n01_deck.png") to "deck night"
@@ -899,33 +1006,65 @@ class ScreenshotHarnessTest {
             if (!f.isFile) { failures += "census input missing: ${f.path} ($label)"; continue }
             val img = ImageIO.read(f)
             val ppd = img.width / 412f
-            var minY = Int.MAX_VALUE
-            var maxY = -1
             var total = 0
             var bannedCount = 0
+            // Row-scan (2px sampling): maximal runs of accent-bearing
+            // rows, joining runs whose gap is <= 1 sampled row space.
+            data class Cluster(var top: Int, var bottom: Int, var px: Int)
+            val clusters = mutableListOf<Cluster>()
             var y = 0
             while (y < img.height) {
+                var rowPx = 0
                 var x = 0
                 while (x < img.width) {
                     val px = img.getRGB(x, y)
-                    if (px in accent) {
-                        total += 4
-                        if (y < minY) minY = y
-                        if (y > maxY) maxY = y
-                    }
+                    if (px in accent) rowPx += 4
                     if (px == banned) bannedCount += 4
                     x += 2
                 }
+                if (rowPx > 0) {
+                    total += rowPx
+                    val cur = clusters.lastOrNull()
+                    if (cur != null && y - cur.bottom <= 4) {
+                        cur.bottom = y
+                        cur.px += rowPx
+                    } else {
+                        clusters += Cluster(y, y, rowPx)
+                    }
+                }
                 y += 2
+            }
+            // Composed at the train merge (K8): the cluster census's
+            // derived measures — the band/foot span from the cluster
+            // extremes, each cluster's height in dp, and the seat
+            // gap between the two lawful clusters. The train's file
+            // referenced all four without defining them (its
+            // merged-head test-compile failure); the definitions
+            // below are the census's own arithmetic, nothing re-pinned.
+            val minY = clusters.firstOrNull()?.top ?: -1
+            val maxY = clusters.lastOrNull()?.bottom ?: -1
+            val heights = clusters.map { (it.bottom - it.top) / ppd }
+            val gapDp = if (clusters.size >= 2) {
+                (clusters[1].top - clusters[0].bottom) / ppd
+            } else {
+                0f
             }
             val bandDp = if (maxY >= 0) (maxY - minY) / ppd else 0f
             val footDp = if (maxY >= 0) (img.height - minY) / ppd else 0f
-            println("CENSUS $label: deck accent total=$total band=${bandDp}dp foot=${footDp}dp banned=$bannedCount")
             if (bannedCount > 0) failures += "$label: #FF8A5C present"
             if (total < 500) failures += "$label: the slide cap is missing (accent $total px)"
-            if (total > 26_000) failures += "$label: accent $total px — more than one cap"
-            if (bandDp > 80f) failures += "$label: accent band ${bandDp}dp tall — not one cap"
-            if (footDp > 240f) failures += "$label: accent reaches ${footDp}dp up — above the pinned stack"
+            if (clusters.size != 2) failures +=
+                "$label: ${clusters.size} accent clusters — the cap and the Bolt bed are the only two lawful"
+            if (clusters.any { it.px > 26_000 }) failures +=
+                "$label: a cluster over the 26k budget (cap ceiling): ${clusters.map { it.px }}"
+            if (clusters.size >= 2 && clusters[0].px > 12_100) failures +=
+                "$label: the warning bed cluster is ${clusters[0].px}px — over its ~12.1k budget"
+            if (heights.any { it > 80f }) failures +=
+                "$label: accent cluster ${heights.max()}dp tall — over the 80dp-cluster bound"
+            if (clusters.size >= 2 && gapDp < 20f) failures +=
+                "$label: cap and bed clusters are only ${gapDp}dp apart — the seat gap is gone"
+            if (footDp > 260f) failures +=
+                "$label: accent reaches ${footDp}dp up — above the pinned stack (bed top)"
         }
 
         // Tasks: START's text is the only accent (glyph area, small);
@@ -936,7 +1075,6 @@ class ScreenshotHarnessTest {
         )) {
             if (!f.isFile) { failures += "census input missing: ${f.path} ($label)"; continue }
             val (a, b) = countIn(f, everywhere)
-            println("CENSUS $label: accent=$a banned=$b (START text only)")
             if (b > 0) failures += "$label: #FF8A5C present ($b px)"
             if (a > 4000) failures += "$label: accent $a px — more than a verb's glyphs"
         }
