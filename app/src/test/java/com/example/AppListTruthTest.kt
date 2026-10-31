@@ -267,26 +267,38 @@ class AppListTruthTest {
             "the second run's installed set must be verifiably empty, was $postFilterInstalled",
             postFilterInstalled.isEmpty()
         )
-        // A post-catalog effect as the second run's pulse: the
-        // sync seeds default tasks AFTER the catalog block, so
-        // delete every seeded task — if the second run silently
-        // dies anywhere before its end, they stay deleted.
-        dao.getAllTasksSnapshot().forEach { dao.deleteTaskById(it.id) }
-        assertTrue(dao.getAllTasksSnapshot().isEmpty())
+        // A post-catalog effect as the second run's pulse. The
+        // original pulse deleted the seeded tasks and expected
+        // the run to re-seed them — an instrument the seed law
+        // itself repealed: tasks are seeded once-ever
+        // (SEED_TASKS_KEY; Audit R2 #96 — a store that carried
+        // content is never resurrected, an emptied store is the
+        // user's own emptying, honoured), so no later run can
+        // re-seed them and that pulse read dead on every run.
+        // The pulse now rides the function's LAST step instead:
+        // the day-word drain (F-SCH-1) runs at the tail of the
+        // same pass under no ever-flag. Stage a lawful word; if
+        // the second run dies anywhere before its end, the word
+        // never lands in day_notes.
+        val wordPrefs = context.getSharedPreferences(
+            MonolithRepository.DAY_WORDS_PREFS_NAME, Context.MODE_PRIVATE
+        )
+        wordPrefs.edit().putString("2099-01-01", "REST").commit()
+        assertTrue(dao.getAllDayNotesSnapshot().none { it.dateIso == "2099-01-01" })
 
         repository.ensureSeededAndSyncPackages()
 
-        // The run demonstrably ran to completion (tasks re-seeded
-        // past the catalog block)…
+        // The run demonstrably ran to completion (the staged word
+        // drained at the function's tail, past the catalog block)…
         assertTrue(
             "the empty-query run must execute past the catalog block",
-            dao.getAllTasksSnapshot().isNotEmpty()
+            dao.getAllDayNotesSnapshot().any { it.dateIso == "2099-01-01" && it.word == "REST" }
         )
         // …its input was verifiably empty (asserted above), and
         // still nothing was pruned: only a working empty-query
         // guard explains all three facts together. Remove the
         // guard and both rows are pruned; kill the run and the
-        // tasks never come back.
+        // staged word never drains.
         assertEquals(
             "empty-query run must prune nothing",
             setOf("com.only.app", "com.control.app"),
@@ -384,7 +396,20 @@ class AppListTruthTest {
 
         val rules = dao.getAllAppsSnapshot().groupedByRule()
         assertEquals(listOf("One"), rules.peek.map { it.appName })
-        assertEquals(listOf("Two"), rules.shut.map { it.appName })
+        // THE INVERSION (issue #129, Shield Rethink 2): an app no
+        // remembered ruling, factory preset or category policy
+        // claims is born LOCKED — shut until he lists it
+        // otherwise in the catalogue; a blocker that defaults
+        // unknown apps to open fails its one job. "Three" was
+        // never ruled, so the synced table carries it LOCKED by
+        // birth, and the grouping — which reads stored tiers
+        // only — seats it in shut beside his own LOCKED ruling
+        // on "Two" (ledger order is by display name, so Three
+        // precedes Two). This test's pre-inversion form expected
+        // Three in neither group, under the born-OPEN law the
+        // inversion repealed; the census read [Three, Two]
+        // because production obeys the current law.
+        assertEquals(listOf("Three", "Two"), rules.shut.map { it.appName })
         // Audit R1 tests-1 #5 (sibling site): the peekCount /
         // shutCount assertions are replaced, not merely dropped —
         // the counts are derived getters (`list.size`) over the
@@ -392,10 +417,20 @@ class AppListTruthTest {
         // carries the claim instead: packages, tiers, and the
         // untouched third app's exclusion from both groups.
         assertEquals(listOf("com.one.app"), rules.peek.map { it.packageName })
-        assertEquals(listOf("com.two.app"), rules.shut.map { it.packageName })
+        assertEquals(listOf("com.three.app", "com.two.app"), rules.shut.map { it.packageName })
         assertTrue(rules.peek.all { it.resolvedTier == AppBlockTier.PEEK_2M })
         assertTrue(rules.shut.all { it.resolvedTier == AppBlockTier.LOCKED })
         assertTrue(rules.peek.none { it.packageName == "com.three.app" })
-        assertTrue(rules.shut.none { it.packageName == "com.three.app" })
+        // Three's shut seat is a BIRTH, not a ruling: its stored
+        // tier stands LOCKED with no setAppBlockTier call ever
+        // made on it, while Two's LOCKED is the ruling above —
+        // the grouping reads both off the same synced table,
+        // which is the claim this test exists to guard. And a
+        // born-LOCKED app is no OPEN app under any reading.
+        assertEquals(
+            AppBlockTier.LOCKED,
+            dao.getAllAppsSnapshot().first { it.packageName == "com.three.app" }.resolvedTier
+        )
+        assertTrue(rules.open.none { it.packageName == "com.three.app" })
     }
 }
