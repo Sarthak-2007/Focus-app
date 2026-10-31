@@ -77,6 +77,20 @@ class SoundAndSocialTruthTest {
 
     private lateinit var context: Context
 
+    // Floor-lane speed cure (#166, round 6): whether THIS case has
+    // composed PARK via setParkContent. The two scheduler drivers
+    // below (awaitTrue, closeDb) call composeRule.waitForIdle() to
+    // advance the ViewModel's coroutines inside a composition —
+    // but in a case that never composes, waitForIdle has no
+    // composition to idle and stalls ~2 s per call (measured on
+    // the census artifacts: the two VM-only cases that close a DB
+    // cost exactly 81.1 s in consecutive censuses = 40 closeDb
+    // iterations x the stall, while composed cases with the same
+    // closeDb cost ~1 s). For VM-only cases the looper idle is
+    // already the driver (round 4's own finding, see awaitTrue);
+    // the compose call is skipped there, nothing else changes.
+    private var parkComposed = false
+
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
@@ -455,6 +469,7 @@ class SoundAndSocialTruthTest {
      *  social sled wired to the VM's existing toggle (the one
      *  write path to the fact), the board fed reactively. */
     private fun setParkContent(vm: MonolithViewModel) {
+        parkComposed = true
         composeRule.setContent {
             val socialOn by vm.browserUrlBlockerEnabled.collectAsState()
             val snapshot by WatchStore.snapshots.collectAsState()
@@ -525,11 +540,14 @@ class SoundAndSocialTruthTest {
         while (System.currentTimeMillis() < deadline) {
             if (condition()) return
             ShadowLooper.idleMainLooper()
-            try {
-                composeRule.waitForIdle()
-            } catch (t: Throwable) {
-                // VM-only cases have no composition to idle;
-                // the looper idle above is their driver.
+            if (parkComposed) {
+                try {
+                    composeRule.waitForIdle()
+                } catch (t: Throwable) {
+                    // A composition that never idles (infinite
+                    // animation) must not stall the poll; the
+                    // looper idle above still drove this round.
+                }
             }
             Thread.sleep(25L)
         }
@@ -598,10 +616,12 @@ class SoundAndSocialTruthTest {
     private fun closeDb(db: MonolithDatabase) {
         repeat(40) {
             ShadowLooper.idleMainLooper()
-            try {
-                composeRule.waitForIdle()
-            } catch (t: Throwable) {
-                // See awaitTrue.
+            if (parkComposed) {
+                try {
+                    composeRule.waitForIdle()
+                } catch (t: Throwable) {
+                    // See awaitTrue.
+                }
             }
             Thread.sleep(25L)
         }
