@@ -1,6 +1,9 @@
 package com.example
 
 import android.content.Context
+import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.pm.ResolveInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.activity.ComponentActivity
@@ -28,6 +31,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowLooper
@@ -89,7 +93,43 @@ class DrawerRenderTest {
         // §5.1) and would cover the Drawer under test. Mark the
         // introduction done, as a dismissed first open would.
         kotlinx.coroutines.runBlocking { repository.markParkIntroDone() }
+        // Rig contract (#166, floor lane): the catalog is the
+        // phone's truth — production reconciles `apps` ONLY from
+        // the installed launchable set, and this rig's set was
+        // empty, so no apps row could ever be written and
+        // waitForSeed's #91 assertion burned its full 45 s on a
+        // condition the environment made impossible (census
+        // evidence: apps=0, profiles=4 on all four RootApp cases).
+        // A phone always has launcher apps; the rig now says so,
+        // test-side only — the same shadow idiom the sibling
+        // catalog tests use (AppListTruthTest.fakeInstalled).
+        // waitForSeed itself is untouched: its deadline and its
+        // loud failure stand exactly as #91 built them.
+        fakeInstalledLauncherApps()
         viewModel = MonolithViewModel(context, repository, TactileSoundEngine(context))
+    }
+
+    /** The faked package source: these packages, and only these,
+     *  answer the launcher query on this "phone". */
+    private fun fakeInstalledLauncherApps() {
+        val shadow = Shadows.shadowOf(context.packageManager)
+        val query = Intent(Intent.ACTION_MAIN, null).addCategory(Intent.CATEGORY_LAUNCHER)
+        for ((pkg, label) in listOf(
+            "com.keep.notes" to "Keep Notes",
+            "com.android.chrome" to "Chrome",
+            "org.mozilla.firefox" to "Firefox",
+            "com.whatsapp" to "WhatsApp"
+        )) {
+            val info = ResolveInfo().apply {
+                activityInfo = ActivityInfo().apply {
+                    packageName = pkg
+                    name = "$pkg.MainActivity"
+                    nonLocalizedLabel = label
+                }
+                nonLocalizedLabel = label
+            }
+            shadow.addResolveInfoForIntent(query, info)
+        }
     }
 
     @After
