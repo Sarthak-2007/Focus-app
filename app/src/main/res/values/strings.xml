@@ -116,4 +116,10 @@
     <string name="permission_primer_this_step">" — THIS STEP"</string>
     <string name="permission_primer_fix">FIX — OPEN SETTINGS</string>
     <string name="permission_primer_later">LATER</string>
+    <string name="launcher_wordmark">M O N O L I T H</string>
+    <string name="launcher_safe_break_eyebrow">SAFE BREAK · %1$d MIN</string>
+    <string name="launcher_ends">ENDS %1$s</string>
+    <string name="launcher_shut_count">%1$d SHUT</string>
+    <string name="launcher_return_to_deck">RETURN TO THE DECK</string>
+    <string name="launcher_back">‹ LAUNCHER</string>
 </resources>
