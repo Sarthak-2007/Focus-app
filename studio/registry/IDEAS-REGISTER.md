@@ -154,6 +154,8 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | Glance-tap routing by state: SEALED/UNPROVEN/NO READ → Shield surface, OPEN → Deck (answers park item 3 on #155; notification F5 routing is the precedent) | DESIGNER-E-1 | #155/#18 | PANEL-QUEUED (design ruling for the revamp pass to ratify) |
 | Tier-B rendered-text plate (park's original "rendered-text" form) only if Tier-A @font verification fails on a target launcher; accessibility-gated on the spoken sentence | DESIGNER-E-1 | #155/#18 | PARKED-WITH-REASON (contingent on the Tier-A launcher check; L, 5–8 builder-days if triggered) |
 
+| GlanceInvalidator: one shared invalidation bus for every PUSHED glance surface — flip events + a beat-anchored one-shot self-invalidation alarm (fire at beatWall + 31s, re-arm only on a proven render, stop on first UNPROVEN render) + boot/package-replaced/clock-change refresh — built once for the widget (Step 1 of MAXIMPL-1's #155 ship order, comment 6537078341) and inherited by the dynamic-shortcut label and launcher-icon face instead of each inventing freshness; pull surfaces (QS tile) explicitly excluded, they read WidgetSealTruth at listen time. Generalises IMPROVER-4's widget-only alarm follow-up (6536071074) and INNOVATOR-5's P4 self-recheck (6536557343), with the fire time beat-anchored rather than render-anchored (strictly tighter bound) | MAXIMPL-1 (WING-A) | #155 | PANEL-QUEUED (Step 1 of the filed ship order; phase is dispute D5, captain's call) |
+
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
 
 ## Pill × receipt relation (WING-C DESIGN, Wave reseat)
