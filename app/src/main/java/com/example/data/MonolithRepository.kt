@@ -273,6 +273,184 @@ internal fun shieldBeatIsStale(
 }
 
 /**
+ * Issue #90 (complexity F5): one tick's frame — the values every
+ * branch of updateSessionProgressLocked writes from, extracted
+ * pure in the classifyElapsedOutcome pattern so the tick's
+ * judgement is characterisable without a database: the shield
+ * beat for this tick, the tamper penalty and the effective
+ * target it inflates, the reboot re-anchor (both anchors, the
+ * boot count, the re-sign over the new pair) and the #524
+ * update-absorb judgement (bank, anchors, latch verdict). The
+ * locked function keeps every write and both side effects (the
+ * gap latch, the accrual-anchor jump); this function only judges.
+ */
+internal data class TickFrame(
+    val beatWall: Long,
+    val penaltyAdd: Int,
+    val effectiveTarget: Int,
+    val rebootDetected: Boolean,
+    val updateDetected: Boolean,
+    val verifiedElapsed: Int,
+    val updateGapLatched: Boolean,
+    val newAccumulated: Int,
+    val newStartMono: Long,
+    val newStartWall: Long,
+    val newBootCount: Int,
+    val newHmac: String
+)
+
+internal fun tickFrameFor(
+    session: FocusSessionEntity,
+    stampShieldBeat: Boolean,
+    beatNowWall: Long,
+    nowMono: Long,
+    nowWall: Long,
+    currentBoot: Int?,
+    rawVerifiedElapsed: Int,
+    tamper: Boolean,
+    hmacValid: Boolean,
+    appLastUpdateMillis: Long
+): TickFrame {
+    // Slice E (Nocke §2.2): the shield's own tick stamps its
+    // beat into every copy this function persists — the beat
+    // is the finish machine's gap evidence. Other callers
+    // (the VM ticker) never stamp it: a beat written by
+    // anyone but the shield would be a forged witness.
+    // Issue #155 (CRITIC-3 Charge C): a row whose gap latch
+    // has already seen blindness never earns a fresh beat
+    // again — its beat freezes at the last seeing tick, so
+    // the stale-beat evidence the latch was booked on cannot
+    // be laundered away by later blind ticks.
+    val beatWall = if (stampShieldBeat && !session.shieldGapSeen) {
+        beatNowWall
+    } else {
+        session.shieldLastBeatWallMillis
+    }
+    // Issue #82 (clock-attacks F5): the tamper penalty is no
+    // longer a one-way ratchet for CLOCK drift. Session elapsed
+    // is monotonic-anchored, so clock travel alone gains the
+    // user nothing; a 91-second blip (or an honest manual time
+    // correction) must not permanently extend the lock. The
+    // drift penalty therefore applies only WHILE the drift
+    // persists and unwinds on the first clean tick. Forged
+    // state (HMAC failure) is the real conviction: that penalty
+    // is set once and never unwinds.
+    val penaltyAdd = when {
+        !hmacValid ->
+            if (session.penaltySecondsAdded == 0) MonolithRepository.HMAC_TAMPER_PENALTY_SECONDS
+            else session.penaltySecondsAdded
+        tamper -> MonolithRepository.HMAC_TAMPER_PENALTY_SECONDS
+        else -> 0
+    }
+    val effectiveTarget = session.targetDurationSeconds + penaltyAdd
+
+    // Re-anchor if device rebooted so subsequent ticks on the new boot stay monotonic.
+    // BOTH anchors move to this frame — the seal's own law (sealSession:
+    // "Both anchors move to the same frame so the mono/wall cross-check
+    // stays consistent"), which this path used to break: it moved the
+    // mono anchor and left the wall anchor at the session's start, so
+    // every later tick compared wall-since-start against
+    // mono-since-reboot, the drift read permanently > 90s, and an
+    // honest reboot branded the user a tamperer and drew the 15-minute
+    // penalty (Audit R3 #113, finding 4). The re-sign covers the NEW
+    // anchor pair, exactly as the seal's re-sign does.
+    val rebootDetected = (currentBoot != null && session.bootCount > 0 && currentBoot != session.bootCount) ||
+        (session.lastTickElapsedRealtimeMillis > 0L && nowMono < session.lastTickElapsedRealtimeMillis)
+
+    // Issue #524 (day-walk Step 9): an app update mid-session
+    // kills the process but NOT the boot — elapsedRealtime
+    // runs straight through the install, so the raw verified
+    // figure books the dead interval as held focus time, and
+    // #95's install-time term in the gap reference made the
+    // fabrication legally invisible. The first tick that sees
+    // the landing treats it like the reboot path above: bank
+    // the last PROVEN elapsed (the reboot law's own bank —
+    // max of the accumulated bank and the last persisted
+    // elapsed — never the through-gap figure), move BOTH
+    // anchors to this tick, re-sign. The unwitnessed install
+    // interval earns nothing, exactly as powered-off time
+    // earns nothing across a reboot. Detection is the landing
+    // instant itself: this build landed after the session's
+    // start wall. The absorb self-extinguishes — the moved
+    // start wall sits at/after the landing instant, so the
+    // test cannot fire twice for one update; a second update
+    // lands later than the new start wall and fires again.
+    // A reboot the same tick already banks by its own shape,
+    // so the absorb stands down there.
+    val updateDetected = !rebootDetected && updateLandedDuringSession(
+        appLastUpdateMillis = appLastUpdateMillis,
+        startWallTimeMillis = session.startWallTimeMillis,
+        startElapsedRealtimeMillis = session.startElapsedRealtimeMillis
+    )
+    val verifiedElapsed = if (updateDetected) {
+        updateAbsorbBankSeconds(
+            accumulatedBeforeRebootSeconds = session.accumulatedBeforeRebootSeconds,
+            elapsedSeconds = session.elapsedSeconds
+        )
+    } else {
+        rawVerifiedElapsed
+    }
+    // The branding half of the cure: judged on the PRE-absorb
+    // row by the same pure law (exemption struck), the dead
+    // interval past the 10 s threshold latches the gap, so
+    // the finish books ELAPSED_SHIELD_GAP, not ELAPSED_CLEAN.
+    // Under the threshold the latch stays open and only the
+    // banking applies — brief install time remains the
+    // rounding favour the day-walk allowed. Latched here, in
+    // the same transaction, so no caller order (latch-check
+    // before tick, tick before latch-check) can lose it; the
+    // anchor-threading copies below also carry it.
+    val updateGapLatched = updateDetected && !session.shieldGapSeen &&
+        shieldBeatIsStale(
+            shieldLastBeatWallMillis = session.shieldLastBeatWallMillis,
+            startWallTimeMillis = session.startWallTimeMillis,
+            impliedNowMillis = ClockHonesty.impliedNowMillis(
+                startWallMillis = session.startWallTimeMillis,
+                accumulatedBeforeRebootSeconds = session.accumulatedBeforeRebootSeconds,
+                startElapsedRealtimeMillis = session.startElapsedRealtimeMillis,
+                lastTickElapsedRealtimeMillis = session.lastTickElapsedRealtimeMillis,
+                elapsedSeconds = session.elapsedSeconds,
+                nowElapsedRealtimeMillis = nowMono
+            )
+        )
+    val newAccumulated = if (rebootDetected) {
+        rawVerifiedElapsed
+    } else if (updateDetected) {
+        verifiedElapsed
+    } else {
+        session.accumulatedBeforeRebootSeconds
+    }
+    val newStartMono = if (rebootDetected || updateDetected) nowMono else session.startElapsedRealtimeMillis
+    val newStartWall = if (rebootDetected || updateDetected) nowWall else session.startWallTimeMillis
+    val newBootCount = if (rebootDetected) currentBoot ?: session.bootCount else session.bootCount
+    val newHmac = if (rebootDetected || updateDetected) {
+        CryptoIntegrityManager.signSessionState(
+            newStartWall,
+            newStartMono,
+            newBootCount,
+            session.targetDurationSeconds,
+            session.isStopwatchMode
+        )
+    } else {
+        session.hmacSignature
+    }
+    return TickFrame(
+        beatWall = beatWall,
+        penaltyAdd = penaltyAdd,
+        effectiveTarget = effectiveTarget,
+        rebootDetected = rebootDetected,
+        updateDetected = updateDetected,
+        verifiedElapsed = verifiedElapsed,
+        updateGapLatched = updateGapLatched,
+        newAccumulated = newAccumulated,
+        newStartMono = newStartMono,
+        newStartWall = newStartWall,
+        newBootCount = newBootCount,
+        newHmac = newHmac
+    )
+}
+
+/**
  * Issue #524: did the running build land mid-session — after
  * the session's start wall, on a session with live monotonic
  * anchors? The landing instant is the install/update time of
@@ -4531,110 +4709,37 @@ class MonolithRepository(
         val nowMono = SystemClock.elapsedRealtime()
         val nowWall = System.currentTimeMillis()
         val currentBoot = querySystemBootCountOrNull()
-        // Slice E (Nocke §2.2): the shield's own tick stamps its
-        // beat into every copy this function persists — the beat
-        // is the finish machine's gap evidence. Other callers
-        // (the VM ticker) never stamp it: a beat written by
-        // anyone but the shield would be a forged witness.
-        // Issue #155 (CRITIC-3 Charge C): a row whose gap latch
-        // has already seen blindness never earns a fresh beat
-        // again — its beat freezes at the last seeing tick, so
-        // the stale-beat evidence the latch was booked on cannot
-        // be laundered away by later blind ticks.
-        val beatWall = if (stampShieldBeat && !session.shieldGapSeen) {
-            System.currentTimeMillis()
-        } else {
-            session.shieldLastBeatWallMillis
-        }
+        // Issue #90 F5 (slice): the tick's frame — beat, penalty,
+        // effective target, reboot re-anchor, update absorb — is
+        // judged by the pure tickFrameFor above (characterised in
+        // TickFrameTest); this function keeps every write below
+        // and both of the frame's side effects, in their standing
+        // order (the gap latch first, then the accrual jump).
         val (rawVerifiedElapsed, tamper) = computeVerifiedSessionElapsed(session)
-        // Issue #82 (clock-attacks F5): the tamper penalty is no
-        // longer a one-way ratchet for CLOCK drift. Session elapsed
-        // is monotonic-anchored, so clock travel alone gains the
-        // user nothing; a 91-second blip (or an honest manual time
-        // correction) must not permanently extend the lock. The
-        // drift penalty therefore applies only WHILE the drift
-        // persists and unwinds on the first clean tick. Forged
-        // state (HMAC failure) is the real conviction: that penalty
-        // is set once and never unwinds.
         val hmacValid = CryptoIntegrityManager.verifySessionState(session)
-        val penaltyAdd = when {
-            !hmacValid ->
-                if (session.penaltySecondsAdded == 0) HMAC_TAMPER_PENALTY_SECONDS
-                else session.penaltySecondsAdded
-            tamper -> HMAC_TAMPER_PENALTY_SECONDS
-            else -> 0
-        }
-        val effectiveTarget = session.targetDurationSeconds + penaltyAdd
-
-        // Re-anchor if device rebooted so subsequent ticks on the new boot stay monotonic.
-        // BOTH anchors move to this frame — the seal's own law (sealSession:
-        // "Both anchors move to the same frame so the mono/wall cross-check
-        // stays consistent"), which this path used to break: it moved the
-        // mono anchor and left the wall anchor at the session's start, so
-        // every later tick compared wall-since-start against
-        // mono-since-reboot, the drift read permanently > 90s, and an
-        // honest reboot branded the user a tamperer and drew the 15-minute
-        // penalty (Audit R3 #113, finding 4). The re-sign covers the NEW
-        // anchor pair, exactly as the seal's re-sign does.
-        val rebootDetected = (currentBoot != null && session.bootCount > 0 && currentBoot != session.bootCount) ||
-            (session.lastTickElapsedRealtimeMillis > 0L && nowMono < session.lastTickElapsedRealtimeMillis)
-
-        // Issue #524 (day-walk Step 9): an app update mid-session
-        // kills the process but NOT the boot — elapsedRealtime
-        // runs straight through the install, so the raw verified
-        // figure books the dead interval as held focus time, and
-        // #95's install-time term in the gap reference made the
-        // fabrication legally invisible. The first tick that sees
-        // the landing treats it like the reboot path above: bank
-        // the last PROVEN elapsed (the reboot law's own bank —
-        // max of the accumulated bank and the last persisted
-        // elapsed — never the through-gap figure), move BOTH
-        // anchors to this tick, re-sign. The unwitnessed install
-        // interval earns nothing, exactly as powered-off time
-        // earns nothing across a reboot. Detection is the landing
-        // instant itself: this build landed after the session's
-        // start wall. The absorb self-extinguishes — the moved
-        // start wall sits at/after the landing instant, so the
-        // test cannot fire twice for one update; a second update
-        // lands later than the new start wall and fires again.
-        // A reboot the same tick already banks by its own shape,
-        // so the absorb stands down there.
-        val updateDetected = !rebootDetected && updateLandedDuringSession(
-            appLastUpdateMillis = appLastUpdateMillis(),
-            startWallTimeMillis = session.startWallTimeMillis,
-            startElapsedRealtimeMillis = session.startElapsedRealtimeMillis
+        val frame = tickFrameFor(
+            session = session,
+            stampShieldBeat = stampShieldBeat,
+            beatNowWall = System.currentTimeMillis(),
+            nowMono = nowMono,
+            nowWall = nowWall,
+            currentBoot = currentBoot,
+            rawVerifiedElapsed = rawVerifiedElapsed,
+            tamper = tamper,
+            hmacValid = hmacValid,
+            appLastUpdateMillis = appLastUpdateMillis()
         )
-        val verifiedElapsed = if (updateDetected) {
-            updateAbsorbBankSeconds(
-                accumulatedBeforeRebootSeconds = session.accumulatedBeforeRebootSeconds,
-                elapsedSeconds = session.elapsedSeconds
-            )
-        } else {
-            rawVerifiedElapsed
-        }
-        // The branding half of the cure: judged on the PRE-absorb
-        // row by the same pure law (exemption struck), the dead
-        // interval past the 10 s threshold latches the gap, so
-        // the finish books ELAPSED_SHIELD_GAP, not ELAPSED_CLEAN.
-        // Under the threshold the latch stays open and only the
-        // banking applies — brief install time remains the
-        // rounding favour the day-walk allowed. Latched here, in
-        // the same transaction, so no caller order (latch-check
-        // before tick, tick before latch-check) can lose it; the
-        // anchor-threading copies below also carry it.
-        val updateGapLatched = updateDetected && !session.shieldGapSeen &&
-            shieldBeatIsStale(
-                shieldLastBeatWallMillis = session.shieldLastBeatWallMillis,
-                startWallTimeMillis = session.startWallTimeMillis,
-                impliedNowMillis = ClockHonesty.impliedNowMillis(
-                    startWallMillis = session.startWallTimeMillis,
-                    accumulatedBeforeRebootSeconds = session.accumulatedBeforeRebootSeconds,
-                    startElapsedRealtimeMillis = session.startElapsedRealtimeMillis,
-                    lastTickElapsedRealtimeMillis = session.lastTickElapsedRealtimeMillis,
-                    elapsedSeconds = session.elapsedSeconds,
-                    nowElapsedRealtimeMillis = nowMono
-                )
-            )
+        val beatWall = frame.beatWall
+        val penaltyAdd = frame.penaltyAdd
+        val effectiveTarget = frame.effectiveTarget
+        val rebootDetected = frame.rebootDetected
+        val verifiedElapsed = frame.verifiedElapsed
+        val updateGapLatched = frame.updateGapLatched
+        val newAccumulated = frame.newAccumulated
+        val newStartMono = frame.newStartMono
+        val newStartWall = frame.newStartWall
+        val newBootCount = frame.newBootCount
+        val newHmac = frame.newHmac
         if (updateGapLatched) {
             dao.latchShieldGap(session.id)
         }
@@ -4646,29 +4751,8 @@ class MonolithRepository(
         // downtime accrues to no task, as reboot downtime
         // accrues to none. (No stored anchor, nothing to jump —
         // the new process's in-memory anchor starts unset.)
-        if (updateDetected && accrualPrefs.contains(ACCRUAL_KEY_MONO)) {
+        if (frame.updateDetected && accrualPrefs.contains(ACCRUAL_KEY_MONO)) {
             accrualPrefs.edit().putLong(ACCRUAL_KEY_MONO, nowMono).apply()
-        }
-        val newAccumulated = if (rebootDetected) {
-            rawVerifiedElapsed
-        } else if (updateDetected) {
-            verifiedElapsed
-        } else {
-            session.accumulatedBeforeRebootSeconds
-        }
-        val newStartMono = if (rebootDetected || updateDetected) nowMono else session.startElapsedRealtimeMillis
-        val newStartWall = if (rebootDetected || updateDetected) nowWall else session.startWallTimeMillis
-        val newBootCount = if (rebootDetected) currentBoot ?: session.bootCount else session.bootCount
-        val newHmac = if (rebootDetected || updateDetected) {
-            CryptoIntegrityManager.signSessionState(
-                newStartWall,
-                newStartMono,
-                newBootCount,
-                session.targetDurationSeconds,
-                session.isStopwatchMode
-            )
-        } else {
-            session.hmacSignature
         }
 
         // Issue #122 (finding 4): battery death IS an ending. On
