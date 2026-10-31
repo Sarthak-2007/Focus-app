@@ -7,6 +7,10 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
+ * PIN-SCOPE: RENDER — pins the printed text of the pure
+ * routineChainLineFor derivation (GuardLine.kt); no Android,
+ * no posting, no source reads.
+ *
  * Issue #94 F4 (Audit R2, oem-battery-reality): the routine-chain
  * liveness line — the first reader of the heartbeat's
  * lastRoutineTickMillis stamp. Before this, the stamp was written

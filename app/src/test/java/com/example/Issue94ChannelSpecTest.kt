@@ -20,6 +20,12 @@ import org.robolectric.annotation.Config
 import java.io.File
 
 /**
+ * PIN-SCOPE: POST + SOURCE — the channel-state assertions are
+ * POST (they read the NotificationManager state a real post
+ * created, via Robolectric shadows); the summons-site assertions
+ * are SOURCE pins (they read MonolithShieldService.kt /
+ * BreakEndReceiver.kt text, per the repo's source-pin pattern).
+ *
  * Issue #94, routed strays ex #155 (WING-D, EXPERIENCE):
  *
  * Stray 2 — the channel-importance collision. The intercept
