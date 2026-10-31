@@ -1657,7 +1657,7 @@ private fun DeckPinnedStack(
     nowMono: Long,
     deckWarrant: Warrant?,
     armSentence: RefusalSentence?,
-    imprintTenant: String,
+    imprintTenant: String?,
     struckSessionId: Int?,
     sledInitialFraction: () -> Float,
     onSlideViewRef: (SlideToStartView?) -> Unit,
