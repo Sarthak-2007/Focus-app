@@ -132,3 +132,10 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | Launcher block screen: un-exitable launcher surface + separate allowed/peek screens | Sarthak's ruling 04:29 (not a seat idea — his order) | #22/#18 | BUILT-IN-PROGRESS (Umbau lane; first slice merged via PR #167) |
 
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
+
+## Glance composition — #155 capstone (WING-A design row)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| THE GLANCE PLATE: one rendered surface-of-record — every glance surface (widget, shield card public version, completion, QS tile, icon face, dream) takes its face and words from a single renderer in the receipt's printed character (Sora masthead, Atkinson Hyperlegible for his words, Anonymous Pro for state/time, house palette, never green; hand-built only, no AI images) | DESIGNER-W-5 | #155 | PANEL-QUEUED (design spec M — ~1–2 designer-days; build L — ~4–6 builder-days, END-PHASE with #18, after PR #540 merges; capstone on #155 comment 6536700922) |
+| GLANCE-1…GLANCE-5 composition rules: ONE WITNESS · ONE PLATE · STATE/HIS WORDS/BOUNDARY ONLY · OPEN IS A FACE, NOTHING OUTLIVES ITS BLOCK · A GLANCE NEVER WEAKENS THE HOLD — binding on every glance surface, cited by number on future issues | DESIGNER-W-5 | #155 / all glance | PANEL-QUEUED (as law; filed on #155 comment 6536700922) |
