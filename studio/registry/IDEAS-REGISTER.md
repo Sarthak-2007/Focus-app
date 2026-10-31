@@ -132,3 +132,12 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | Launcher block screen: un-exitable launcher surface + separate allowed/peek screens | Sarthak's ruling 04:29 (not a seat idea — his order) | #22/#18 | BUILT-IN-PROGRESS (Umbau lane; first slice merged via PR #167) |
 
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
+
+## Refresh truth — widget freshness architecture (MAXIMPL-3, WING-A)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| Refresh event funnel: every state-writing funnel ends with MonolithWidgetProvider.requestUpdate (heartbeat tick-end, boot receiver, disarm, emergency-break completion, routine reseed, day-word declaration) | MAXIMPL-3 | #155 | PANEL-QUEUED (first follow-up PR after #540 merges; R3 one-liners offered to #540 driver) |
+| Self-invalidation alarms: a SEALED widget render arms a one-shot re-render at lastBeat+30s; an OPEN/NEXT SEAL render arms one at the seal instant — every printed claim carries its own invalidation (SEALED half first proposed by IMPROVER-4, #155 comment 6536071074; boundary half new here) | MAXIMPL-3 + IMPROVER-4 | #155 | PANEL-QUEUED |
+| Staleness print option: OPEN widget line gains "AS OF HH:mm" (SEALED line exempt — witness-backed); stale-by-design surfaces print their staleness per the truth law | MAXIMPL-3 | #155 | PANEL-QUEUED (design ruling needed) |
+| WorkManager periodic widget refresh | MAXIMPL-3 | #155 | PARKED-WITH-REASON (rejected by proposer: 15-min floor less precise than claim-tied one-shots; standing periodic worker = background-engine silhouette against blocker identity; no work-runtime dep on main) |
