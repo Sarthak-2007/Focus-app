@@ -51,7 +51,13 @@ class Issue341BuildMultiUserEscapeTest {
 
     @Test
     fun userSwitchReceiver_isResolvableForBothSwitchActions() {
-        for (action in listOf(Intent.ACTION_USER_SWITCHED, Intent.ACTION_USER_BACKGROUND)) {
+        // USER_SWITCHED has no public Intent constant at this SDK
+        // (USER_BACKGROUND does); both are the manifest's literal
+        // action strings, which is what resolution actually keys on.
+        for (action in listOf(
+            "android.intent.action.USER_SWITCHED",
+            Intent.ACTION_USER_BACKGROUND
+        )) {
             val matches = context.packageManager.queryBroadcastReceivers(
                 Intent(action), 0
             )
