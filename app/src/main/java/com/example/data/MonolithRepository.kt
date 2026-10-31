@@ -534,14 +534,17 @@ class MonolithRepository(
     // Main's provider seam, composed with the injection above:
     // the provider resolves the injected database when present,
     // else the singleton — one resolution path either way.
-    private val databaseProvider: () -> MonolithDatabase = { database ?: MonolithDatabase.getInstance(context) },
     // Issue #515 F1: owns the fire-and-forget birth catalogue
     // sync fired by startSession (see launchBirthCatalogSync).
     // Injected so a test can hold the launch on a test
     // dispatcher and prove the sync is NOT on the seal's
-    // birth path; production uses the IO default.
+    // birth path; production uses the IO default. Placed
+    // before databaseProvider on purpose: the provider stays
+    // the LAST parameter, so existing trailing-lambda
+    // constructions (Issue33RepositoryTest) keep binding to it.
     private val birthSyncScope: CoroutineScope =
-        CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    private val databaseProvider: () -> MonolithDatabase = { database ?: MonolithDatabase.getInstance(context) }
 ) {
     private fun db(): MonolithDatabase = databaseProvider()
 
