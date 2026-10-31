@@ -1656,7 +1656,8 @@ class MonolithShieldService : Service() {
         timeoutAfterMs: Long = 0,
         bigText: String? = null,
         chronometerEndMillis: Long? = null,
-        badgeNumber: Int? = null
+        badgeNumber: Int? = null,
+        inSafeBreak: Boolean = false
     ) {
         // Issue #122: only the standing (ongoing) protection
         // promise is remembered for battery re-posts \u2014 a detached
@@ -1665,6 +1666,7 @@ class MonolithShieldService : Service() {
         if (ongoing) {
             lastBaseTitle = title
             lastBaseSubtitle = subtitle
+            lastBaseInSafeBreak = inSafeBreak
         }
         val warnedSubtitle = withBatteryWarning(subtitle)
         val warnedBigText = when {
