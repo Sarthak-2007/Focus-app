@@ -3,11 +3,13 @@ import androidx.compose.ui.res.stringResource
 import com.example.R
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
@@ -100,9 +103,21 @@ fun ReceiptSheet(
     // fade the host's unmount made impossible.
     val enterState = remember { MutableTransitionState(false) }
     enterState.targetState = true
+    // Lead ruling R2 (train A7): the slip FEEDS — a whole-document
+    // slide from the bottom edge, the printer's one motion; a
+    // crossfade is a UI card appearing, and this is a document.
+    // Main's MutableTransitionState machinery (#57) drives the
+    // train motion. Restored slips render settled (contract Z6).
     AnimatedVisibility(
         visibleState = enterState,
-        enter = fadeIn(MonolithCurves.specC()),
+        enter = if (receipt.restored) {
+            EnterTransition.None
+        } else {
+            slideInVertically(
+                animationSpec = MonolithCurves.specC(),
+                initialOffsetY = { it }
+            ) + fadeIn(MonolithCurves.specC())
+        },
         exit = ExitTransition.None
     ) {
         val scheme = MaterialTheme.colorScheme
@@ -120,8 +135,18 @@ fun ReceiptSheet(
                 // #57: dismissal lands on the DOWN. `clickable`
                 // fires on release (UP); `onPress` is the press
                 // itself, as the header's spec has always said.
-                .pointerInput(receipt.sessionId) {
-                    detectTapGestures(onPress = { onDismiss() })
+                .pointerInput(receipt.sessionId, receipt.faulted) {
+                    detectTapGestures(onPress = {
+                        // Train A8 guards ported: no dismissal
+                        // before a 2-second dwell from the publish
+                        // stamp, and a FAULTED slip does not
+                        // dismiss at the sheet at all (its exits
+                        // are the host's: navigation, PARK).
+                        val mono = receipt.receiptPublishedMonoMs
+                        val dwellOver = receipt.restored || mono <= 0L ||
+                            android.os.SystemClock.elapsedRealtime() - mono >= 2_000L
+                        if (!receipt.faulted && dwellOver) onDismiss()
+                    })
                 }
                 .testTag("receiptSheetScrim")
                 .padding(12.dp),
@@ -130,9 +155,14 @@ fun ReceiptSheet(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(24.dp))
+                    // Lead ruling R3 (train A5): thermal paper is
+                    // cut square — 3dp radius, NO border; the lift
+                    // is shadow alone. Main's animated slip
+                    // background composes with the square cut (it
+                    // needs no 24dp clip, no border), so it stays.
+                    .shadow(10.dp, RoundedCornerShape(3.dp))
+                    .clip(RoundedCornerShape(3.dp))
                     .background(animatedSlip)
-                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(24.dp))
                     .clickable(enabled = false) {}
                     .padding(20.dp)
                     .verticalScroll(rememberScrollState()),
@@ -156,7 +186,14 @@ fun ReceiptSheet(
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    // Train A9: on a faulted slip the row COLLAPSES
+                    // — no title-height void with the No floating
+                    // over it (F-W1 still holds: no title prints).
+                    horizontalArrangement = if (receipt.faulted) {
+                        Arrangement.End
+                    } else {
+                        Arrangement.SpaceBetween
+                    },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (!receipt.faulted) {
@@ -168,9 +205,6 @@ fun ReceiptSheet(
                             color = scheme.onBackground,
                             modifier = Modifier.weight(1f)
                         )
-                    } else {
-                        // F-W1: the faulted sheet has no title.
-                        Box(modifier = Modifier.weight(1f))
                     }
                     Text(
                         text = receipt.numberPrint,
@@ -195,12 +229,31 @@ fun ReceiptSheet(
                 // memory while DURATION arithmetic (monotonic)
                 // kept agreeing. Same zone — the overwhelming
                 // case — the print is exactly as before.
+                //
+                // Issue #152 residue (reopened): ENDED now has
+                // its own witness (ReceiptState.endZoneId —
+                // captured at the session-ending write into the
+                // same store's end slot). Before this, ENDED was
+                // derived at print: it rendered in the render
+                // zone and merely borrowed the ARMED line's
+                // crossed flag for its offset label, so a slip
+                // re-issued after landing in a THIRD zone printed
+                // an ENDED time in a zone the end was never lived
+                // in. ENDED renders in its witnessed zone — day
+                // label and offset included — whenever that zone
+                // differs from the render zone. A slip with no
+                // end witness (ended before the capture existed)
+                // keeps the previous print exactly.
                 val receiptContext = LocalContext.current
                 val renderZone = java.time.ZoneId.systemDefault()
                 val armZone = receipt.armZoneId?.let { id ->
                     runCatching { java.time.ZoneId.of(id) }.getOrNull()
                 }
                 val crossedZones = armZone != null && armZone != renderZone
+                val endZone = receipt.endZoneId?.let { id ->
+                    runCatching { java.time.ZoneId.of(id) }.getOrNull()
+                }
+                val endCrossed = endZone != null && endZone != renderZone
                 // #57 composed with #152 below: crossesDay is
                 // computed with main's sameLocalDay; the ARMED
                 // day label, when one prints, is taken in the
@@ -235,11 +288,29 @@ fun ReceiptSheet(
                 val endedPrint = buildString {
                     append("ENDED ")
                     if (crossesDay) {
-                        append(dayLabel(receipt.endedAtWallMs))
+                        append(
+                            if (endZone != null) {
+                                dayLabel(receipt.endedAtWallMs, endZone)
+                            } else {
+                                dayLabel(receipt.endedAtWallMs)
+                            }
+                        )
                         append(' ')
                     }
-                    append(hhmm(receiptContext, receipt.endedAtWallMs))
-                    if (crossedZones) {
+                    append(
+                        if (endCrossed) {
+                            hhmm(receiptContext, receipt.endedAtWallMs, endZone!!)
+                        } else {
+                            hhmm(receiptContext, receipt.endedAtWallMs)
+                        }
+                    )
+                    if (endCrossed) {
+                        append(" (${offsetLabel(receipt.endedAtWallMs, endZone!!)})")
+                    } else if (endZone == null && crossedZones) {
+                        // No end witness (a session that ended
+                        // before the capture existed): the legacy
+                        // print — render zone, labelled with the
+                        // render offset beside the ARMED witness.
                         append(" (${offsetLabel(receipt.endedAtWallMs, renderZone)})")
                     }
                 }

@@ -86,7 +86,13 @@ class HeldDoorRenderTest {
         // Existence in the tree is the finding's claim — the door
         // is composed on the idle Deck (it sits in the scroll
         // column, so displayed-ness is the scroller's business).
-        composeRule.onNodeWithText("HELD").assertExists()
+        // The chip prints its word and the held count as ONE text
+        // ("HELD 3" — BlockitActionChip joins wordLabel + mono
+        // badge), so the exact node text carries both facts: the
+        // door stands, and the count it prints is the captured
+        // count. (Floor lane, census #6 row 13: the bare "HELD"
+        // query could never match the joined text.)
+        composeRule.onNodeWithText("HELD 3").assertExists()
     }
 
     @Test

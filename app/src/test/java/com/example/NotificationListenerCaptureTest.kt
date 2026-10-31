@@ -10,10 +10,12 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.data.AppBlockTier
 import com.example.data.BlockedAppEntity
 import com.example.data.FocusSessionEntity
+import com.example.data.GuardSettingsEntity
 import com.example.data.MonolithDatabase
 import com.example.service.MonolithNotificationListener
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -92,8 +94,41 @@ class NotificationListenerCaptureTest {
         return Robolectric.buildService(MonolithNotificationListener::class.java).create().get()
     }
 
+    /** Audit R6 #340 F68: capturing a notification and STORING
+     *  ITS BODY are two different consents — unless the guard
+     *  settings stand GRANTED, the listener blanks every body at
+     *  the capture boundary. Tests in this class whose subject is
+     *  dedupe/replace semantics over real bodies grant the consent
+     *  exactly the way the settings verb does (row first, then the
+     *  targeted UPDATE). Floor lane (census #6, row 14): the
+     *  fixture never granted it, so the changed-update replace
+     *  read an empty body forever — expected "edited", was "". */
+    private suspend fun grantBodyConsent() {
+        if (dao.getGuardSettingsSnapshot() == null) {
+            dao.insertGuardSettings(GuardSettingsEntity())
+        }
+        dao.updateNotificationBodyConsent("GRANTED")
+    }
+
+    private suspend fun revokeBodyConsent() {
+        if (dao.getGuardSettingsSnapshot() == null) {
+            dao.insertGuardSettings(GuardSettingsEntity())
+        }
+        dao.updateNotificationBodyConsent("UNSET")
+    }
+
+    /** The consent is a row in the shared singleton file: leave it
+     *  UNSET, the state the fixture found, for the next class. */
+    @After
+    fun leaveBodyConsentUnset() = runBlocking {
+        if (dao.getGuardSettingsSnapshot() != null) {
+            dao.updateNotificationBodyConsent("UNSET")
+        }
+    }
+
     @Test
     fun unchangedUpdateInsertsNothingAndChangedUpdateReplaces() = runBlocking {
+        grantBodyConsent()
         val listener = armedListener()
         val postTime = System.currentTimeMillis()
 
@@ -119,6 +154,60 @@ class NotificationListenerCaptureTest {
         assertEquals(1, rows.size)
         assertEquals("edited", rows.single().messageBody)
         assertEquals(postTime, rows.single().timestampMillis)
+    }
+
+    /**
+     * Issue #155 WING-F (SMALL-2): the badge/Deck held count is this
+     * table's SIZE, so a duplicate row is a false glance claim. A
+     * fresh listener instance (empty in-memory dedupe — the state
+     * after a process restart, when the rebind sweep re-walks a
+     * still-live held notification) re-posting the identical
+     * capture must insert NOTHING: the table's own stored
+     * quadruple is the durable dedupe.
+     */
+    @Test
+    fun recaptureByFreshListenerInstanceDoesNotDuplicateHeldRow() = runBlocking {
+        val listener = armedListener()
+        val postTime = System.currentTimeMillis()
+
+        listener.onNotificationPosted(sbn("Mum", "hi", postTime))
+        val rows = awaitRows { it.isNotEmpty() }
+        assertTrue("the capture never landed", rows.isNotEmpty())
+        assertEquals(1, rows.size)
+        delay(300L)
+
+        // A NEW listener instance: its dedupe tracker starts empty,
+        // exactly as after a process death + rebind sweep.
+        val freshListener = Robolectric.buildService(
+            MonolithNotificationListener::class.java
+        ).create().get()
+        freshListener.onNotificationPosted(sbn("Mum", "hi", postTime))
+        delay(900L)
+        assertEquals(
+            "a re-capture of an already-held notification must not " +
+                "inflate the held count the badge prints",
+            1, dao.getCapturedNotificationsSnapshot().size
+        )
+    }
+
+    /** Audit R6 #340 F68, pinned: with body consent NOT granted,
+     *  a capture still lands — but the held copy keeps sender +
+     *  title only, its body blanked at the capture boundary,
+     *  never stored-then-hidden. (This gate had no test anywhere
+     *  in the suite; the row-14 failure above is what an unpinned
+     *  consent law does to a neighbouring fixture.) */
+    @Test
+    fun captureWithoutBodyConsentStoresTitleOnly() = runBlocking {
+        revokeBodyConsent()
+        val listener = armedListener()
+        val postTime = System.currentTimeMillis()
+
+        listener.onNotificationPosted(sbn("Mum", "hi", postTime))
+        val rows = awaitRows { it.isNotEmpty() }
+        assertTrue("the capture never landed", rows.isNotEmpty())
+        assertEquals(1, rows.size)
+        assertEquals("Mum", rows.single().senderTitle)
+        assertEquals("", rows.single().messageBody)
     }
 
     @Test

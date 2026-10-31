@@ -170,14 +170,37 @@ class ExampleRobolectricTest {
         val afterSleepLoadout = db.monolithDao().getAllAppsSnapshot().first { it.packageName == tiktok.packageName }
         assertEquals(AppBlockTier.LOCKED, afterSleepLoadout.resolvedTier)
 
-        // Apply Study Loadout: YouTube is OPEN for lectures (issue #133 —
-        // the old PEEK_2M ration made a 50-minute lecture unusable; the
-        // Shorts sniper stays the feed guard), WhatsApp becomes PEEK_2M
-        // while TikTok stays LOCKED
+        // Apply Study Loadout. WhatsApp becomes PEEK_2M and TikTok
+        // stays LOCKED — and YouTube stays LOCKED too, even though
+        // issue #133's rule makes lectures OPEN under STUDY: issue
+        // #129's clamp stands between them. SLEEP just locked
+        // YouTube, and a loadout NEVER loosens LOCKED -> OPEN on a
+        // category guess ("opening a shut app is HIS hand on the
+        // catalogue sled, never a guess" — LoadoutRules). The old
+        // assertion here expected OPEN and had been failing on the
+        // clamp since the two laws composed (floor lane, census
+        // #6, row 11: the verify-first tag discharges as KEEP —
+        // the behaviour is live and covered end-to-end only here;
+        // the expectation was stale, not the behaviour dead).
         repository.applySmartLoadout(SmartLoadout.STUDY)
         val studyApps = db.monolithDao().getAllAppsSnapshot()
         val youtube = studyApps.first { it.packageName == "com.google.android.youtube" }
-        assertEquals(AppBlockTier.OPEN, youtube.resolvedTier)
+        assertEquals(AppBlockTier.LOCKED, youtube.resolvedTier)
+        val whatsappAfterStudy = studyApps.first { it.packageName == "com.whatsapp" }
+        assertEquals(AppBlockTier.PEEK_2M, whatsappAfterStudy.resolvedTier)
+        val tiktokAfterStudy = studyApps.first { it.packageName == "com.zhiliaoapp.musically" }
+        assertEquals(AppBlockTier.LOCKED, tiktokAfterStudy.resolvedTier)
+
+        // His hand opens it (the sled verb), and only then does
+        // the STUDY tap seat issue #133's lecture rule: YouTube
+        // OPEN for lectures — the old PEEK_2M ration made a
+        // 50-minute lecture unusable; the Shorts sniper stays the
+        // feed guard.
+        repository.setAppBlockTier(youtube.packageName, AppBlockTier.PEEK_2M)
+        repository.applySmartLoadout(SmartLoadout.STUDY)
+        val restudied = db.monolithDao().getAllAppsSnapshot()
+            .first { it.packageName == "com.google.android.youtube" }
+        assertEquals(AppBlockTier.OPEN, restudied.resolvedTier)
 
         // Direct spatial gravity well drop: drag YouTube into the Inner Event Horizon (LOCKED)
         repository.setAppBlockTier(youtube.packageName, AppBlockTier.LOCKED)
@@ -348,8 +371,17 @@ class ExampleRobolectricTest {
         assertEquals("Re-seeding must be strictly idempotent for tasks", taskCountBeforeReSeed, db.monolithDao().getAllTasksSnapshot().size)
         assertEquals("Re-seeding must be strictly idempotent for sessions", sessionCountBeforeReSeed, db.monolithDao().getSessionHistorySnapshot().size)
 
-        // Verify interactive sub-step toggling and auto-splitting
-        repository.autoSplitTaskIntoMicroSteps(addedTask.id)
+        // Verify interactive sub-step toggling and HAND-SPLIT
+        // (F-6, issue #12: the auto-split generator is deleted —
+        // this segment previously called it, and the generator
+        // OVERWROTE the notes with its fabricated triple, which is
+        // what made the count below exactly 3. Hand-split APPENDS:
+        // the task's edited notes ("Include p99 latency chart")
+        // already parse as one step, so two hand-written steps
+        // bring the same total to the same 3 — by addition now,
+        // never by overwrite)
+        repository.addTaskSubStep(addedTask.id, "Draft results section")
+        repository.addTaskSubStep(addedTask.id, "Verify units & captions")
         val splitTask = db.monolithDao().getTaskById(addedTask.id)
         assertNotNull(splitTask)
         assertEquals(3, splitTask!!.subSteps.size)
