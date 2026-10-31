@@ -1,9 +1,12 @@
 package com.example
 
+import android.Manifest
 import android.app.AppOpsManager
+import android.app.Application
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
+import android.os.Binder
 import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
@@ -77,20 +80,43 @@ class PillControllerRenderTest {
 
     /** Grant the two AppOps doors render() and the foreground read
      *  stand behind, and witness a foreign app in front. Each grant is
-     *  proven by its own assertion before the controller starts. */
+     *  proven by its own assertion before the controller starts.
+     *
+     *  The overlay op is granted under every key the framework reads
+     *  it under (the process uid and the Binder calling uid — the
+     *  sandbox does not promise they are the same number), and the
+     *  legacy permission is granted alongside, because canDrawOverlays
+     *  falls back to it when the op reads MODE_DEFAULT. The raw mode
+     *  is asserted first so a shut door names its own reading. */
     private fun openTheDoors(repository: MonolithRepository) {
         val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-        shadowOf(appOps).setMode(
+        for (uid in setOf(Process.myUid(), Binder.getCallingUid())) {
+            shadowOf(appOps).setMode(
+                AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW,
+                uid,
+                context.packageName,
+                AppOpsManager.MODE_ALLOWED
+            )
+            shadowOf(appOps).setMode(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                uid,
+                context.packageName,
+                AppOpsManager.MODE_ALLOWED
+            )
+        }
+        @Suppress("DEPRECATION")
+        shadowOf(context as Application).grantPermissions(
+            Manifest.permission.SYSTEM_ALERT_WINDOW
+        )
+        val rawMode = appOps.unsafeCheckOpNoThrow(
             AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW,
             Process.myUid(),
-            context.packageName,
-            AppOpsManager.MODE_ALLOWED
+            context.packageName
         )
-        shadowOf(appOps).setMode(
-            AppOpsManager.OPSTR_GET_USAGE_STATS,
-            Process.myUid(),
-            context.packageName,
-            AppOpsManager.MODE_ALLOWED
+        assertEquals(
+            "overlay door: the SYSTEM_ALERT_WINDOW op must read MODE_ALLOWED once granted",
+            AppOpsManager.MODE_ALLOWED,
+            rawMode
         )
         assertTrue(
             "overlay door: Settings.canDrawOverlays must read true once the op is granted",
