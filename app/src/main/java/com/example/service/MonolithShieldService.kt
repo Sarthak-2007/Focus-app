@@ -903,8 +903,7 @@ class MonolithShieldService : Service() {
                 // certification on every beat; a beat that could
                 // not see (usage revoked, probe error) cannot
                 // certify, exactly as a closed door cannot.
-                if (!protecting && usageGranted && accessibilityStanding &&
-                    sightState == SightState.SIGHTED) {
+                if (!protecting && usageGranted && accessibilityStanding && sightState == SightState.SIGHTED) {
                     protecting = true
                     protectingSessionId = updated.id
                     protectingMono = SystemClock.elapsedRealtime()
