@@ -3,6 +3,7 @@ import androidx.compose.ui.res.stringResource
 import com.example.R
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.MutableTransitionState

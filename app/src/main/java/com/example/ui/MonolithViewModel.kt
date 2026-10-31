@@ -15,6 +15,7 @@ import com.example.data.BreakResult
 import com.example.data.BlockedAppEntity
 import com.example.data.CapturedNotificationEntity
 import com.example.data.DailyFocusStat
+import com.example.data.DistractionTriggerReason
 import com.example.data.FocusProfileEntity
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
@@ -354,6 +355,46 @@ internal fun peekWithheldFor(
 }
 
 /**
+ * Issue #87 (process-death F4, re-derive half): should a fresh
+ * process re-present an Airlock whose intercept was booked at
+ * trigger time (the F4 log half) but whose process died before any
+ * verb was chosen? Pure, so the matrix is unit-tested fact by fact.
+ * EVERY fact must hold — the re-derive may only ever restore a
+ * door that truthfully still stands, never invent one:
+ *  - the newest intercept row is the trigger-time arrival itself
+ *    (outcome "Intercepted"): every verb (peek, return, split) and
+ *    the abandon trace book a NEWER row, so a verb outcome on top
+ *    means the user already chose and there is nothing to restore;
+ *  - no Airlock is already standing in this process;
+ *  - a session is still active, the intercept fired DURING that
+ *    session (row timestamp at/after the session's own start), and
+ *    the row's recorded intention is that session's intention
+ *    (a blank recorded intention defers to the timestamp fact);
+ *  - the package's row still exists and its tier still blocks
+ *    (an app since set OPEN owes no door);
+ *  - no peek lease is live for the package (a live lease means
+ *    the peek verb WAS chosen; the F2 pill rehydration owns that
+ *    restoration, and standing an Airlock over a live lease would
+ *    contradict it).
+ */
+internal fun shouldRederiveAirlock(
+    newestOutcome: String?,
+    airlockAlreadyVisible: Boolean,
+    sessionActive: Boolean,
+    interceptDuringSession: Boolean,
+    intentionMatches: Boolean,
+    packageStillBlocked: Boolean,
+    peekLeaseLiveForPackage: Boolean
+): Boolean =
+    newestOutcome == "Intercepted" &&
+        !airlockAlreadyVisible &&
+        sessionActive &&
+        interceptDuringSession &&
+        intentionMatches &&
+        packageStillBlocked &&
+        !peekLeaseLiveForPackage
+
+/**
  * The taper (FIX-8, Funke P-1 as amended): the wall is 5 + this
  * session's booked intercepts of this package, capped at 10. It
  * gates only the peek offer's appearance — never RETURN, never
@@ -565,7 +606,7 @@ data class DisarmChallengeState(
      *  Held Door that completion is presented ON THIS FACE — a
      *  deliberate slab tap — never as requestDisarmChallenge's
      *  silent Deck shortcut. The Deck entry never sets this. */
-    val cleanCompletionAvailable: Boolean = false
+    val cleanCompletionAvailable: Boolean = false,
     // Issue #103 F5: when a completed 60s hold is REFUSED, the
     // refusal must announce itself — the valve view resets its own
     // progress the instant it fires completion, so without this
@@ -1091,6 +1132,8 @@ class MonolithViewModel(
     private val _showNotificationDigestSheet = MutableStateFlow(false)
     val showNotificationDigestSheet: StateFlow<Boolean> = _showNotificationDigestSheet.asStateFlow()
 
+    private val _sevenDayStats = MutableStateFlow<List<DailyFocusStat>>(emptyList())
+    val sevenDayStats: StateFlow<List<DailyFocusStat>> = _sevenDayStats.asStateFlow()
 
 
     // Truth Car 3 (UNA-03): the printed state is born from the
@@ -3939,7 +3982,6 @@ class MonolithViewModel(
             try {
                 _storedMonths.value = repository.storedMonths()
                 _dayWords.value = repository.allDayWords()
-                _forgedArtifactIds.value = repository.forgedArtifactIds()
                 _receiptIndex.value = repository.claimedReceipts()
                 _curioForgeRecords.value = repository.curioForgeRecords()
                 _forgeStats.value = repository.forgeStats()
@@ -4158,9 +4200,13 @@ class MonolithViewModel(
         }
     }
 
-    // F-6 (issue #12): autoSplitTaskIntoMicroSteps is DELETED with
-    // the generator it drove. HAND-SPLIT needs no new verb — it
-    // rides addTaskSubStep above, one hand-written step at a time.
+    fun autoSplitTaskIntoMicroSteps(taskId: Int) {
+        if (midSeal()) return
+        soundEngine.playHarmonicSeal(arming = true)
+        viewModelScope.launch {
+            repository.autoSplitTaskIntoMicroSteps(taskId)
+        }
+    }
 
     fun updateTaskDuration(taskId: Int, estimatedMinutes: Int) {
         val clamped = estimatedMinutes.coerceIn(5, 180)
@@ -5099,6 +5145,11 @@ class MonolithViewModel(
         )
     }
 
+    fun selectDistractionReason(reason: DistractionTriggerReason) {
+        soundEngine.playRotaryDetent(580.0)
+        _airlockState.value = _airlockState.value.copy(selectedReason = reason)
+    }
+
     /**
      * FIX-5c: the cooldown's expiry resolution. The overlay calls
      * this when its derived cooldown reaches 0; the offer
@@ -5519,6 +5570,12 @@ class MonolithViewModel(
                 triggerReason = state.selectedReason.shortTag
             )
         }
+    }
+
+    fun incrementAirlockParticlePulse() {
+        val current = _airlockState.value
+        soundEngine.playRotaryDetent(500.0 + (current.transmutedParticles * 35.0))
+        _airlockState.value = current.copy(transmutedParticles = current.transmutedParticles + 1)
     }
 
     fun refreshSystemGuard() {

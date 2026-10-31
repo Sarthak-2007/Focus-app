@@ -1368,7 +1368,8 @@ private fun RoutinesSection(
                 onResume = { onResumeRoutine(routine) },
                 onDelete = { onDeleteRoutine(routine) },
                 onRename = { name -> onRenameRoutine(routine, name) },
-                onSetTime = { start, end -> onSetRoutineTime(routine, start, end) }
+                onSetTime = { start, end -> onSetRoutineTime(routine, start, end) },
+                activeRoutineId = activeRoutineId
             )
         }
     }
@@ -1476,7 +1477,8 @@ private fun RoutineRow(
     onResume: () -> Unit = {},
     onDelete: () -> Unit = {},
     onRename: (String) -> Unit = {},
-    onSetTime: (Int, Int) -> Unit = { _, _ -> }
+    onSetTime: (Int, Int) -> Unit = { _, _ -> },
+    activeRoutineId: Int? = null
 ) {
     val scheme = MaterialTheme.colorScheme
     // Collapsed by default (Ren): a routine is one calm line — name, window,

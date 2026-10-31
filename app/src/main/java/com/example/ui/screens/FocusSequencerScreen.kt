@@ -114,6 +114,7 @@ fun FocusSequencerScreen(
     onDismissUndoBanner: () -> Unit,
     onReopenTask: (Int) -> Unit,
     onToggleSubStep: (Int, Int) -> Unit,
+    onAddSubStep: (Int, String) -> Unit,
     onAutoSplitTask: (Int) -> Unit,
     onNavigateToDeck: () -> Unit
 ) {
@@ -476,6 +477,7 @@ fun FocusSequencerScreen(
                 onTear = { onTearLeaf(slot.task, index) },
                 onToggleSubStep = onToggleSubStep,
                 onAddSubStep = onAddSubStep,
+                onAutoSplitTask = onAutoSplitTask,
                 onCueTaskToFocus = onCueTaskToFocus,
                 onDeleteTask = onDeleteTask,
                 onNavigateToDeck = onNavigateToDeck
@@ -535,6 +537,7 @@ private fun TaskLeafItem(
     onTear: () -> Unit,
     onToggleSubStep: (Int, Int) -> Unit,
     onAddSubStep: (Int, String) -> Unit,
+    onAutoSplitTask: (Int) -> Unit,
     onCueTaskToFocus: (Int) -> Unit,
     onDeleteTask: (Int) -> Unit,
     onNavigateToDeck: () -> Unit,

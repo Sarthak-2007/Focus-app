@@ -114,7 +114,6 @@ import com.example.ui.theme.NightTextColorPrimary
 import com.example.ui.theme.PillBadgeTextStyle
 import com.example.ui.theme.PrimaryButtonTextStyle
 import com.example.ui.theme.SoraFamily
-import com.example.ui.views.TowerStreakView
 import kotlinx.coroutines.launch
 
 /**
@@ -135,11 +134,72 @@ const val DESK_CLOCK_SCREEN_BRIGHTNESS = 0.05f
 const val DESK_CLOCK_TIME_ALPHA = 0.72f
 const val DESK_CLOCK_BAR_ALPHA = 0.50f
 
+// FLOW §2.4.4 — the light cure, in constants (Salz's desk,
+// plan/REFINE-salz-aod.md §§1–3). Nacht's ceiling for the night
+// face is 0.25 relative luminance; NightColorPrimary (#FFE4CF)
+// prints 0.8125 at full strength — a 3.3× breach on a face that
+// now raises ITSELF and may stand all night. Composited over
+// the overlay's true-black ground: the content prints at 0.55
+// land at ≈0.216, and the exit line at 0.61 lands at ≈0.259
+// (Finisher cure, Kante K-5: the exit ceiling was raised from
+// 0.58 so the door invariant holds at standing too — see the
+// A-2 note below; the one verb line runs ~4% over Nacht's 0.25
+// ceiling, the priced cost Samt's D-4 recommended paying).
+// The auto-raise ships only under this cure; these two numbers
+// are the cure.
+private const val DESK_CLOCK_PRINT_ALPHA = 0.55f
+private const val DESK_CLOCK_EXIT_ALPHA = 0.61f
+
+// Issue #13, A-2 — the descent (item 14 / V4), completed:
+// DIM BY AREA. The hero and the tear rule descend 0.55 → 0.36
+// across the span; every number-carrying small line (sub-line,
+// block line, banner incl. the break line) FLOORS at 0.50 — a
+// number too dim to read is a number withheld. The EXIT line is
+// excepted from that floor: it carries no figure, and keeps its
+// descended 0.40.
+// THE DOOR INVARIANT, pinned (Mond, ratio form): at every span
+// fraction, exit luminance ≥ 1.10 × hero-print luminance. Both
+// prints are the same ink, so the invariant is kept by
+// construction: exitAlpha = max(0.40, heroAlpha × 1.10).
+// Wave-2 honesty fix (Seat Overlay-Review): that sentence was
+// FALSE at the standing alphas under the old 0.58 ceiling —
+// 0.58 / 0.55 = 1.055 < 1.10, so the cap bound wherever the
+// hero stood above ≈ 0.527 (fraction ≲ 0.12, the 60 s
+// suspension, and the dawn's return).
+// Finisher cure (Kante K-5, Samt D-4's priced cure): the
+// ceiling is now DESK_CLOCK_EXIT_ALPHA = 0.61 = 0.55 × 1.10
+// rounded up, so the cap never binds below the ratio and the
+// invariant holds at EVERY fraction by construction, as the
+// audit's ruled form requires. Cost, named: the exit line
+// lands at ≈ 0.259 relative luminance, ~4% over Nacht's 0.25
+// night ceiling — the door outranks the ceiling (Samt D-4).
+private const val DESK_CLOCK_HERO_FLOOR_ALPHA = 0.36f
+private const val DESK_CLOCK_NUMBER_FLOOR_ALPHA = 0.50f
+private const val DESK_CLOCK_EXIT_FLOOR_ALPHA = 0.40f
+private const val DOOR_INVARIANT_RATIO = 1.10f
+
+/** A-4's entry causes: the arrival motion is keyed to WHY the
+ *  face rose, and the witness discriminator is the settle
+ *  machine's own lastInteraction stamp (carried by the VM). */
+enum class DeskClockEntryCause { UNWATCHED, WATCHED, HAND, SEEDED }
+
+/** The face's print alphas at one instant (A-2/A-3, pure). */
+internal data class DeskClockAlphas(
+    val hero: Float,
+    val exit: Float,
+    val numberLine: Float
+)
+
+// Wave-3 (Schliff F-4): the banner slot's measure is DERIVED,
+// never a magic height — two lines at this explicit line
+// height, plus the slot's 12 dp vertical padding each side
+// (the padding lives in the slot's modifier below).
+private val BANNER_LINE_HEIGHT = 19.sp
+
 /**
  * 1. ALWAYS-ON NIGHTSTAND DESK CLOCK OVERLAY (Decision #8)
  */
 @Composable
-f@Composable
 fun AlwaysOnDeskClockOverlay(
     visible: Boolean,
     activeSession: FocusSessionEntity?,
@@ -2006,7 +2066,8 @@ fun DisarmChallengeOverlay(
     onDismissKeepFocusing: () -> Unit,
     onCompleteDisarm: () -> Unit,
     onHoldBanked: () -> Unit = {},
-    onHoldStarted: () -> Unit = {}
+    onHoldStarted: () -> Unit = {},
+    onCompleteCleanSession: () -> Unit = {}
 ) {
     // Issue-60 (finding 1): banked valve progress is HOISTED here in
     // rememberSaveable — it survives this overlay being dismissed and
@@ -2054,10 +2115,16 @@ fun DisarmChallengeOverlay(
                 )
 
                 Text(
-                    text = if (tokensRemaining > 0) {
-                        "This ends the session early. It is the only break this week."
-                    } else {
-                        "This week's break is already spent."
+                    text = when {
+                        // P-2c: the door-originated face's lawful
+                        // second body — a stopwatch past its floor
+                        // completes, it does not break.
+                        state.cleanCompletionAvailable ->
+                            "This session has run its floor. Ending it now is a completion, not a break."
+                        tokensRemaining > 0 ->
+                            "This ends the session early. It is the only break this week."
+                        else ->
+                            "This week's break is already spent."
                     },
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontSize = 13.sp,
@@ -2099,7 +2166,20 @@ fun DisarmChallengeOverlay(
                     )
                 }
 
-                if (tokensRemaining > 0) {
+                if (state.cleanCompletionAvailable) {
+                    // The completion's verb is a deliberate slab
+                    // tap standing between the door's footer line
+                    // and the act — never the footer's own tap
+                    // (P-2c). No valve, no token: nothing is spent
+                    // by finishing what already ran its floor.
+                    BlockitActionChip(
+                        wordLabel = "END THE SESSION",
+                        isPrimaryInk = true,
+                        onClick = onCompleteCleanSession,
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "disarm_end_session_button"
+                    )
+                } else if (tokensRemaining > 0) {
                     AndroidView(
                         factory = { ctx ->
                             Emergency60sValveView(ctx).apply {
@@ -2189,7 +2269,7 @@ fun DisarmChallengeOverlay(
     }
 }
 
-nternal fun deskClockPrintAlphas(
+internal fun deskClockPrintAlphas(
     spanElapsedFraction: Float,
     descentSuspended: Boolean,
     spanRemainingSeconds: Int?,

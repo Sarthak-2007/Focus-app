@@ -169,7 +169,7 @@ data class WatchSnapshot(
      *  sweep it dispatched, never by the shield loop's gen-0
      *  re-stamps or an earlier sweep's late landings. 0 = no sweep
      *  has completed in this process. */
-    val lastCompletedSweepGen: Int = 0
+    val lastCompletedSweepGen: Int = 0,
     /** Emission generation (issue #48): bumped by [WatchStore.poke]
      *  so a poke is a REAL emission — StateFlow suppresses equal
      *  values, and a bare copy() of a data class is equal to the
@@ -293,11 +293,6 @@ object WatchStore {
      *  completion test — see [pendingSweepGen]. */
     @Volatile private var pendingSweepStartWall: Long = 0L
 
-    /** The in-flight sweep's generation, companion to
-     *  [pendingSweepStartWall]: when the set completes, the
-     *  snapshot's lastCompletedSweepGen takes this value — the
-     *  tie between a completed proof and the sweep that made it. */
-    @Volatile private var pendingSweepGen: Int = 0
 
     /** The latest dispatched sweep's generation. PARK's CHECK
      *  key reads this immediately after dispatching its sweep:
@@ -817,7 +812,6 @@ object WatchStore {
         sweepGen = 0
         pendingSweepGen = 0
         pendingSweepStartWall = 0L
-        pendingSweepGen = 0
         shortsSettingOn = true
         sitesSettingOn = true
         safeBreakActive = false

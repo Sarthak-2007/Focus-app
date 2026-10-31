@@ -2505,6 +2505,19 @@ class MonolithRepository(
         return anchorEndMono + PEEK_COOLDOWN_MILLIS
     }
 
+    /**
+     * The cooldown's monotonic END instant for [app] (FIX-5b):
+     * the anchor the Held Door's print derives from at each
+     * recomposition, instead of a snapshot seconds count ticked
+     * locally by the overlay. Null when no peek has ever anchored
+     * a cooldown on this row.
+     */
+    fun peekCooldownEndsAtElapsedRealtime(app: BlockedAppEntity): Long? {
+        val anchorEndMono = max(app.lastPeekEndElapsedRealtime, app.activePeekUntilElapsedRealtime)
+        if (anchorEndMono <= 0L) return null
+        return anchorEndMono + PEEK_COOLDOWN_MILLIS
+    }
+
     suspend fun getPeekCooldownRemainingSeconds(packageName: String): Int {
         val app = dao.getAllAppsSnapshot().firstOrNull { it.packageName == packageName } ?: return 0
         return getPeekCooldownRemainingSeconds(app)
@@ -5821,11 +5834,15 @@ class MonolithRepository(
         updated
     }
 
-    // F-6 (issue #12): autoSplitTaskIntoMicroSteps is DELETED —
-    // it was the generator's only caller (see the note at
-    // FocusTaskEntity's companion in MonolithModels). Splitting a
-    // task is now HAND-SPLIT on the Tasks screen: the man's own
-    // steps, written one by one through addTaskSubStep above.
+    suspend fun autoSplitTaskIntoMicroSteps(taskId: Int): FocusTaskEntity? = withContext(Dispatchers.IO) {
+        val target = dao.getTaskById(taskId)
+            ?: dao.getAllTasksSnapshot().firstOrNull { it.id == taskId }
+            ?: return@withContext null
+        val generated = FocusTaskEntity.defaultSubStepsForCategory(target.title, target.categoryTag)
+        val updated = target.copy(notesOrSubsteps = FocusTaskEntity.serializeSubSteps(generated))
+        dao.updateTask(updated)
+        updated
+    }
 
     suspend fun updateTaskDuration(taskId: Int, estimatedMinutes: Int): FocusTaskEntity? = withContext(Dispatchers.IO) {
         val target = dao.getTaskById(taskId)

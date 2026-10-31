@@ -290,20 +290,6 @@ fun ParkDrawer(
         }
     }
 
-    // Issue #109, F3: STALE was a dead end — styled and named as a
-    // lack, with no remedy on the board. The first stale line (only
-    // when nothing is MISSING — a missing grant outranks a stale
-    // reading) gets the RE-CHECK key below: a fresh Watch sweep
-    // re-measures it on the spot.
-    val firstStale = snapshot?.let { snap ->
-        if (firstMissing != null) {
-            null
-        } else {
-            WatchItemId.PERMISSIONS.firstOrNull {
-                WatchStore.permPrintAt(snap, it, nowMono) == PermPrint.STALE
-            }
-        }
-    }
     // The Healing Staircase's print half (P-5, wave-2): how many
     // doors lack, in board order — the FIX key names its place in
     // the walk (FIX 1 OF 3). The walk itself is sequential by
@@ -1138,74 +1124,6 @@ fun ParkDrawer(
                     }
                 }
 
-                // (3b) The RE-CHECK key (issue #109, F3): STALE's
-                // remedy. Present only while a permission line is
-                // STALE and nothing is MISSING; a press fires a fresh
-                // Watch sweep from the host and the lines re-measure
-                // where he stands — no leaving the app and coming
-                // back. Sealed, it is absent like the FIX key: the
-                // drawer is read-only and prints so at its head.
-                AnimatedVisibility(
-                    visible = firstStale != null && !isSealed,
-                    enter = expandVertically(tween(MonolithKin.DRAWER_CLOSE_MS, easing = MonolithKin.EasingSeat)) +
-                        fadeIn(tween(MonolithKin.DRAWER_CLOSE_MS)),
-                    exit = shrinkVertically(tween(MonolithKin.DRAWER_CLOSE_MS, easing = MonolithKin.EasingThrow)) +
-                        fadeOut(tween(MonolithKin.DRAWER_CLOSE_MS))
-                ) {
-                    val item = firstStale ?: return@AnimatedVisibility
-                    Column {
-                        Spacer(modifier = Modifier.height(14.dp))
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                                .offset(y = if (recheckPressed) 1.dp else 0.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(inkControlFill())
-                                .then(
-                                    if (interactive) {
-                                        Modifier.pointerInput(item) {
-                                            detectTapGestures(
-                                                onPress = {
-                                                    recheckPressed = true
-                                                    // Same quiet seat knock
-                                                    // as the FIX key.
-                                                    soundEngine?.playSeatKnock(
-                                                        durationMs = 10,
-                                                        amplitude01 = if (isNight) 0.06f else 0.1f,
-                                                        pitchHz = 300f
-                                                    )
-                                                    // Issue #9, Zahn Z-11
-                                                    // (RE-CHECK form): the
-                                                    // dispatch commits on
-                                                    // RELEASE, like FIX —
-                                                    // a scroll that merely
-                                                    // starts on this key
-                                                    // fires no sweep. The
-                                                    // knock stays on DOWN:
-                                                    // it is furniture, not
-                                                    // a commit.
-                                                    val released =
-                                                        tryAwaitRelease()
-                                                    if (released) onRecheck()
-                                                    recheckPressed = false
-                                                }
-                                            )
-                                        }
-                                    } else Modifier
-                                )
-                                .testTag("park_recheck_key"),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "RE-CHECK — ${item.boardName}",
-                                style = PrimaryButtonTextStyle,
-                                color = onInkControlFill(),
-                                maxLines = 1
-                            )
-                        }
-                    }
-                }
 
                 // The FIX return's printed verdict (P-5, wave-2):
                 // FIXED or STILL OPEN, naming the door — persists

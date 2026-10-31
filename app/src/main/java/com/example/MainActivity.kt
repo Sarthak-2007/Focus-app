@@ -1434,6 +1434,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     filteredApps = filteredApps,
                                     searchQuery = searchQuery,
                                     selectedCategory = selectedCategory,
+                                    shortsReelsSniperEnabled = shortsReelsSniperEnabled,
+                                    browserUrlBlockerEnabled = browserUrlBlockerEnabled,
                                     loadoutCapIndex = loadoutCapIndex,
                                     isSessionActive = sealed,
                                     blockingStatus = shieldBlockingStatus,
@@ -1596,7 +1598,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     drawerQuery = drawerQuery,
                                     drawerResults = drawerResults,
                                     drawerSearchHasEarlier = drawerSearchHasEarlier,
-                                    drawerSearchDayWords = drawerSearchDayWords,
                                     dayWords = dayWords,
                                     isSealed = sealed,
                                     isDarkTheme = effectiveNight,
@@ -1625,7 +1626,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         // §4.2: the same warrant the Deck prints.
                         warrant = deckWarrant,
                         introPending = parkIntroForOpen,
-                        isSealed = sealed,
                         isNight = effectiveNight,
                         soundEnabled = soundEnabled,
                         shortsReelsSniperEnabled = shortsReelsSniperEnabled,
@@ -1990,16 +1990,46 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
 
             AirlockInterceptOverlay(
                 state = airlockState,
-                onReturnToFocus = viewModel::transmuteImpulseAndReturn,
+                onSelectReason = viewModel::selectDistractionReason,
+                onTransmuteParticleTap = viewModel::incrementAirlockParticlePulse,
+                // Issue #114, finding 2: RETURN TO FOCUS now
+                // returns. The ViewModel closes the sheet and books
+                // the intercept; the host then sends Monolith's
+                // whole task to the back, so the user lands on
+                // whatever they were doing before the intercept
+                // yanked them in — not stranded on the Deck having
+                // to navigate back by hand for choosing the honest
+                // door. Blocking itself is untouched: the session
+                // stays sealed and the shield keeps enforcing.
+                onReturnToFocus = {
+                    viewModel.transmuteImpulseAndReturn()
+                    (context as? android.app.Activity)?.moveTaskToBack(true)
+                },
                 onTake2MinutePeek = viewModel::start2MinutePeek,
-                // FIX-8 / P-2: the honest exit routes to the
-                // door-originated Disarm entry — the face stands
-                // in front of the still-standing door.
-                onEndSessionInstead = viewModel::requestDisarmChallengeFromDoor,
-                onDoorStateRefresh = viewModel::refreshAirlockDoorState,
-                // FIX-7: the overlay reports the arm instant; the
-                // VM sounds the arm beat under its nonce guard.
-                onOfferArmed = viewModel::onAirlockOfferArmed
+                allowedAppsCount = allApps.count {
+                    it.resolvedTier == com.example.data.AppBlockTier.OPEN &&
+                        it.category != com.example.data.AppCategory.BROWSERS.name &&
+                        it.packageName != "com.android.vending"
+                },
+                peekAppsCount = allApps.count {
+                    it.resolvedTier == com.example.data.AppBlockTier.PEEK_2M
+                },
+                onOpenAllowedApps = {
+                    viewModel.leaveAirlockViaLauncherDoors()
+                    launcherPage = LauncherPage.ALLOWED
+                    launcherOpen = true
+                },
+                onOpenPeekApps = {
+                    viewModel.leaveAirlockViaLauncherDoors()
+                    launcherPage = LauncherPage.PEEK
+                    launcherOpen = true
+                },
+                onRequestEmergencyBreak = viewModel::requestDisarmFromAirlock,
+                // Issue #318 F4: the wall breathes for the stored,
+                // configured length — not a composable-local 5.
+                breathSeconds = remember {
+                    com.example.data.AirlockBreathStore(context).breathSeconds()
+                }
             )
 
             DisarmChallengeOverlay(
@@ -2008,7 +2038,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 soundEngine = viewModel.soundEngine,
                 onDismissKeepFocusing = viewModel::dismissDisarmChallenge,
                 onCompleteDisarm = { viewModel.completeEmergencyBreakFromValve() },
-                onHoldStarted = viewModel::recordValveHoldStarted,
+                onHoldBanked = viewModel::recordValveHoldBanked,
                 onCompleteCleanSession = viewModel::completeStopwatchCompletionFromDisarmFace
             )
 
