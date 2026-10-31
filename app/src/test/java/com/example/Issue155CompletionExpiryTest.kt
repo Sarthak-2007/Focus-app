@@ -105,6 +105,13 @@ class Issue155CompletionExpiryTest {
     ).firstOrNull { it.exists() }?.readText()
         ?: error("MonolithShieldService.kt not found from ${File(".").absolutePath}")
 
+    private fun widgetSource(): String = listOf(
+        File("src/main/java/com/example/widget/MonolithWidgetProvider.kt"),
+        File("app/src/main/java/com/example/widget/MonolithWidgetProvider.kt"),
+        File("../app/src/main/java/com/example/widget/MonolithWidgetProvider.kt")
+    ).firstOrNull { it.exists() }?.readText()
+        ?: error("MonolithWidgetProvider.kt not found from ${File(".").absolutePath}")
+
     @Test
     fun summonsCompletionCardCarriesTheSameExpiry() {
         // Residue (3b): the SESSION COMPLETE summons call must pass
@@ -133,19 +140,131 @@ class Issue155CompletionExpiryTest {
 
     @Test
     fun revokedAfterFlipUnflipsTheWitness() {
-        // Race 1b (IQ-4): the latch must also flip DOWN — an
-        // iteration that measures usage access revoked resets the
+        // Race 1b (IQ-4) + IQ-1 unified latch (WING-F): the latch
+        // must also flip DOWN — an iteration that measures EITHER
+        // door closed (usage access revoked OR the accessibility
+        // door no longer standing for this session) resets the
         // witness before the flip/gate below it, in the same
-        // iteration. Without this block the gate reads a
-        // stale-true latch forever after a mid-session revocation.
+        // iteration, and fires the falling-edge widget refresh.
+        // Without this block the gate reads a stale-true latch
+        // forever after a mid-session revocation.
         val source = shieldSource()
-        val resetIdx = source.indexOf("if (protecting && !usageGranted) {")
+        val resetIdx = source.indexOf("if (protecting && (!usageGranted || !accessibilityStanding)) {")
         assertTrue("revoked-after-flip reset block missing", resetIdx >= 0)
-        val window = source.substring(resetIdx, minOf(resetIdx + 500, source.length))
+        val window = source.substring(resetIdx, minOf(resetIdx + 700, source.length))
         assertTrue(window.contains("protecting = false"))
         assertTrue(window.contains("protectingSessionId = -1"))
-        val flipIdx = source.indexOf("if (!protecting && usageGranted) {", resetIdx)
+        assertTrue(
+            "demote must fire the falling-edge widget refresh",
+            window.contains("MonolithWidgetProvider.requestUpdate(applicationContext)")
+        )
+        val flipIdx = source.indexOf(
+            "if (!protecting && usageGranted && accessibilityStanding) {", resetIdx
+        )
         assertTrue("reset must run before the flip in the iteration", flipIdx > resetIdx)
+    }
+
+    @Test
+    fun unifiedLatchMeasuresBothDoorsAtTheFlipSite() {
+        // IQ-1: the flip requires BOTH doors, and the
+        // accessibility door's standing is the armed-for-THIS-
+        // session measure (bound + armedSessionId == session id),
+        // taken per iteration in the shield loop — not the
+        // widget reading the accessibility service (the rejected
+        // fork) and not a bound-only check.
+        val source = shieldSource()
+        assertTrue(
+            source.contains(
+                "MonolithAccessibilityService.armedSessionId == updated.id"
+            )
+        )
+        assertTrue(
+            source.contains(
+                "if (!protecting && usageGranted && accessibilityStanding) {"
+            )
+        )
+        assertTrue(
+            "the loop publishes the measured standing on the shield witness",
+            source.contains("protectingAccessibilityStanding = accessibilityStanding")
+        )
+    }
+
+    @Test
+    fun widgetReadsTheShieldPublishedStandingNeverTheAccessibilityService() {
+        // IQ-1's fork pin: the widget's WidgetSealTruth input is
+        // the shield's published standing. If the provider ever
+        // reads MonolithAccessibilityService again, SEALED can
+        // print over a bound-but-unarmed door.
+        val widget = widgetSource()
+        assertTrue(!widget.contains("MonolithAccessibilityService"))
+        assertTrue(
+            widget.contains(
+                "accessibilityBound = MonolithShieldService.protectingAccessibilityStanding"
+            )
+        )
+    }
+
+    @Test
+    fun breakOverSummonsExpiresAfterTenMinutes() {
+        // IQ-2 VC-4: BREAK OVER carries its own 10-minute term,
+        // not the completion cards' 45 minutes.
+        assertEquals(600_000L, MonolithShieldService.BREAK_OVER_TIMEOUT_MS)
+        val source = shieldSource()
+        assertTrue(source.contains("timeoutAfterMs = BREAK_OVER_TIMEOUT_MS"))
+    }
+
+    @Test
+    fun batteryRepostIsLatchGated() {
+        // Gate completeness: a battery re-post must never revive
+        // the stored full card while the latch is down.
+        val source = shieldSource()
+        val fnIdx = source.indexOf("fun refreshBatteryNotification()")
+        assertTrue(fnIdx >= 0)
+        val window = source.substring(fnIdx, minOf(fnIdx + 900, source.length))
+        assertTrue(window.contains("if (!protecting) return"))
+    }
+
+    @Test
+    fun exceptionPathReplacesTheStaleFullCard() {
+        // Gate completeness: the loop's exception demote posts
+        // the arming card over the last full card, in the catch.
+        val source = shieldSource()
+        val catchIdx = source.indexOf("monitor iteration \$iteration failed")
+        assertTrue(catchIdx >= 0)
+        val window = source.substring(catchIdx, minOf(catchIdx + 1200, source.length))
+        assertTrue(
+            window.contains(
+                "updateNotification(\"Monolith\", \"Arming shield\\u2026\")"
+            )
+        )
+    }
+
+    @Test
+    fun localStopRefreshesTheWidget() {
+        // The local-stop fallback is a shield-down moment: the
+        // widget refresh fires there exactly as on STOP dispatch.
+        val source = shieldSource()
+        val fnIdx = source.indexOf("fun requestLocalStop()")
+        assertTrue(fnIdx >= 0)
+        val window = source.substring(fnIdx, minOf(fnIdx + 800, source.length))
+        assertTrue(
+            window.contains("MonolithWidgetProvider.requestUpdate(applicationContext)")
+        )
+    }
+
+    @Test
+    fun missingGrantWarningAppendsAndNamesTheCost() {
+        // IQ-2 M-8: the warning appends to the normal bigText,
+        // the usage wording names the real cost, and the counter
+        // is "urges stopped" in the subtitle scope too.
+        val source = shieldSource()
+        assertTrue(source.contains("append(bigText ?: subtitle)"))
+        assertTrue(!source.contains("detector degraded"))
+        assertTrue(
+            source.contains(
+                "\"Usage access off \u2014 Monolith may miss app launches\""
+            )
+        )
     }
 
     @Test

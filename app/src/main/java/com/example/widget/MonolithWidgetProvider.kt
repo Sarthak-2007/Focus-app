@@ -11,7 +11,6 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.MonolithDatabase
 import com.example.data.RoutineSchedule
-import com.example.service.MonolithAccessibilityService
 import com.example.service.MonolithShieldService
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -86,6 +85,13 @@ class MonolithWidgetProvider : AppWidgetProvider() {
                 // AND a fresh persisted beat (WidgetSealTruth).
                 // A live row beside a dead/blind shield prints the
                 // honest unproven line, never SEALED.
+                // Issue #155 (IQ-1 unified latch, WING-F): the
+                // accessibility input is the shield loop's OWN
+                // published standing — measured at the flip site
+                // every iteration (bound AND armed for this
+                // session). The widget never reads the
+                // accessibility service itself; that fork would
+                // let a bound-but-unarmed door print SEALED.
                 val sealedProven = WidgetSealTruth.sealedProven(
                     isActive = session.isActive,
                     protecting = MonolithShieldService.protecting,
@@ -93,7 +99,7 @@ class MonolithWidgetProvider : AppWidgetProvider() {
                     sessionId = session.id,
                     beatWallMillis = session.shieldLastBeatWallMillis,
                     nowWallMillis = now,
-                    accessibilityBound = MonolithAccessibilityService.instance != null
+                    accessibilityBound = MonolithShieldService.protectingAccessibilityStanding
                 )
                 if (!sealedProven) {
                     // Issue #155 (IQ-2 VC-2 + IQ-5 F-4): no
@@ -102,14 +108,14 @@ class MonolithWidgetProvider : AppWidgetProvider() {
                     "SHIELD UNPROVEN \u2022 OPEN THE APP TO CHECK"
                 } else when {
                     session.isStopwatchMode ->
-                        "SEALED \u2022 ${session.intention} \u2022 STOPWATCH, NO SET END"
+                        sealedLine(session.intention, "STOPWATCH, NO SET END")
                     session.windowEndMillis > now ->
-                        "SEALED \u2022 ${session.intention} \u2022 until ${hhmm(session.windowEndMillis)}"
+                        sealedLine(session.intention, "until ${hhmm(session.windowEndMillis)}")
                     else -> {
                         // Manual timed session: the end is now plus the
                         // whole-span remainder the model itself derives.
                         val end = now + session.spanRemainingSeconds * 1000L
-                        "SEALED \u2022 ${session.intention} \u2022 until ${hhmm(end)}"
+                        sealedLine(session.intention, "until ${hhmm(end)}")
                     }
                 }
             } else {
@@ -126,7 +132,14 @@ class MonolithWidgetProvider : AppWidgetProvider() {
                     // future act (Monolith is hand-armed; a routine
                     // is the user's, the app does not seal itself),
                     // and a bare HH:mm let tomorrow read as today.
-                    "OPEN \u2022 NEXT ROUTINE ${next.first.name} ${dayLabel(next.second, now)} ${hhmm(next.second)}"
+                    // Issue #155 (WING-F): a blank routine name
+                    // drops its segment: no doubled spaces and
+                    // no dangling gap where the name would sit.
+                    if (next.first.name.isBlank()) {
+                        "OPEN \u2022 NEXT ROUTINE ${dayLabel(next.second, now)} ${hhmm(next.second)}"
+                    } else {
+                        "OPEN \u2022 NEXT ROUTINE ${next.first.name} ${dayLabel(next.second, now)} ${hhmm(next.second)}"
+                    }
                 } else {
                     "OPEN"
                 }
@@ -136,6 +149,13 @@ class MonolithWidgetProvider : AppWidgetProvider() {
             "OPEN THE APP TO CHECK"
         }
     }
+
+    /** Issue #155 (WING-F): the SEALED line's segments — a blank
+     *  intention drops out instead of leaving a doubled separator
+     *  ("SEALED •  • until …") on the home screen. */
+    private fun sealedLine(intention: String, tail: String): String =
+        listOfNotNull("SEALED", intention.takeIf { it.isNotBlank() }, tail)
+            .joinToString(" \u2022 ")
 
     private fun hhmm(millis: Long): String =
         SimpleDateFormat("HH:mm", Locale.US).format(Date(millis))
