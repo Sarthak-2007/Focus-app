@@ -107,9 +107,16 @@ class PillControllerRenderTest {
         }
 
         val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        // Stamped one second in the past, deliberately: the shadow's
+        // queryEvents reads a TreeMap sub-range whose upper bound is
+        // EXCLUSIVE, so a witness stamped at the query's own
+        // millisecond falls outside the window and the foreground
+        // read comes back null (the second test in this class lost
+        // exactly that race). One second old is still the current
+        // foreground inside the read's fifteen-minute window.
         shadowOf(usm).addEvent(
             "com.foreign.witness",
-            System.currentTimeMillis(),
+            System.currentTimeMillis() - 1_000,
             UsageEvents.Event.MOVE_TO_FOREGROUND
         )
         assertEquals(
