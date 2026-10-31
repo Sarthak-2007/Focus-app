@@ -712,305 +712,25 @@ fun ShieldMatrixScreen(
             gatedSetAppCategory = gatedSetAppCategory
         )
 
-        // =====================================================================
-        // SECTION 5B: THE GUARDS (issue #51 F1 cure) — the sniper,
-        // the browser blocker and the profiles were wired from
-        // MainActivity to real ViewModel functions and rendered
-        // NOWHERE; this section is their UI. The switches sit
-        // directly above BLOCKED WEBSITES, whose header claimed
-        // sites were blocked with no switch in reach.
-        // =====================================================================
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                FullBleedSectionHeader(
-                    titleWord = "GUARDS",
-                    rightWordPrefix = "",
-                    rightMonoNumber = "",
-                    rightWordSuffix = ""
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "SHORTS & REELS SNIPER",
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        color = scheme.onBackground
-                    )
-                    BlockitActionChip(
-                        wordLabel = if (shortsReelsSniperEnabled) "ON" else "OFF",
-                        isPrimaryInk = shortsReelsSniperEnabled,
-                        onClick = gatedToggleSniper,
-                        testTag = "shield_sniper_toggle"
-                    )
-                }
-                // #337 F1: the accessibility shortcut — the second,
-                // system-level activation path for the service. The
-                // chip names the binding's actual state and opens
-                // the exact system screen where it is made.
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "ACCESSIBILITY SHORTCUT",
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        color = scheme.onBackground
-                    )
-                    BlockitActionChip(
-                        wordLabel = if (accessibilityShortcutSet) "SET" else "BIND",
-                        isPrimaryInk = accessibilityShortcutSet,
-                        onClick = onOpenAccessibilityShortcutSettings,
-                        testTag = "shield_a11y_shortcut_chip"
-                    )
-                }
-                // #335 F5: the detector-health line — first/last
-                // node, stale and slow-scan states, printed from
-                // the DetectorHealth record the services write.
-                Text(
-                    text = com.example.ui.components.detectorLineFor(
-                        com.example.service.DetectorHealth.snapshot(),
-                        SystemClock.elapsedRealtime()
-                    ).text,
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 11.sp,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.testTag("shield_detector_health_line")
-                )
-                // Issue #94 F4: the routine-chain liveness line —
-                // the heartbeat stamp's first reader, printed under
-                // the detector line. Absent unless a routine window
-                // is enforcing right now; then it names the chain
-                // LIVE or DEAD with the stamp's age.
-                if (routineChainLine != null) {
-                    Text(
-                        text = routineChainLine,
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier.testTag("shield_routine_chain_line")
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "BROWSER URL BLOCKER",
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        color = scheme.onBackground
-                    )
-                    BlockitActionChip(
-                        wordLabel = if (browserUrlBlockerEnabled) "ON" else "OFF",
-                        isPrimaryInk = browserUrlBlockerEnabled,
-                        onClick = gatedToggleBrowser,
-                        testTag = "shield_browser_blocker_toggle"
-                    )
-                }
-                // The dated truth line: the guards above are law
-                // inside the seal, but they may not self-report
-                // beyond what the probe proves — this line is the
-                // only enforcement statement on the sheet, printed
-                // from the beat's proof, identical everywhere it
-                // appears. A statement, never a control.
-                if (receiptLine != null) {
-                    Text(
-                        text = receiptLine,
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier.testTag("shield_receipt_line")
-                    )
-                }
-                // Audit R6 #341 F52: the EXEMPTIONS editor — one
-                // host carved out of a blocked domain (or its
-                // subdomains) browses free while the rest of the
-                // domain stays blocked. The matcher checks this
-                // list before the blocklist, in every mode.
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "SITE EXEMPTIONS — CARVED OUT OF THE BLOCKLIST",
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        color = scheme.onBackground
-                    )
-                }
-                var excludedHostText by remember { mutableStateOf("") }
-                var excludedHostError by remember { mutableStateOf<String?>(null) }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    BasicTextField(
-                        value = excludedHostText,
-                        onValueChange = { excludedHostText = it },
-                        singleLine = true,
-                        textStyle = TextStyle(
-                            fontFamily = AnonymousProFamily,
-                            fontSize = 14.sp,
-                            color = scheme.onBackground
-                        ),
-                        cursorBrush = SolidColor(scheme.onBackground),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("shield_exempt_host_input")
-                    )
-                    BlockitActionChip(
-                        wordLabel = "EXEMPT",
-                        isPrimaryInk = true,
-                        onClick = {
-                            val normalised =
-                                com.example.data.normaliseAllowedHost(excludedHostText)
-                            when {
-                                excludedHostText.isBlank() -> Unit
-                                normalised == null -> excludedHostError =
-                                    "NOT A HOST — CHECK THE ADDRESS AND TRY AGAIN"
-                                excludedWebHosts.contains(normalised) -> excludedHostError =
-                                    "ALREADY EXEMPT"
-                                else -> {
-                                    onAddExcludedWebHost(normalised)
-                                    excludedHostText = ""
-                                    excludedHostError = null
-                                }
-                            }
-                        },
-                        testTag = "shield_exempt_add"
-                    )
-                }
-                if (excludedHostError != null) {
-                    Text(
-                        text = excludedHostError!!,
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        color = scheme.onSurfaceVariant
-                    )
-                }
-                excludedWebHosts.forEach { host ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = host,
-                            fontFamily = AnonymousProFamily,
-                            fontSize = 13.sp,
-                            color = scheme.onBackground
-                        )
-                        BlockitActionChip(
-                            wordLabel = "REMOVE",
-                            isPrimaryInk = false,
-                            onClick = { onRemoveExcludedWebHost(host) },
-                            testTag = "shield_exempt_remove_$host"
-                        )
-                    }
-                }
-                // #339 F1: the Web Gate row — block the whole web
-                // except the allowed hosts below.
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "WEB GATE — BLOCK ALL BUT ALLOWED",
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        color = scheme.onBackground
-                    )
-                    BlockitActionChip(
-                        wordLabel = if (webBlockAll) "ON" else "OFF",
-                        isPrimaryInk = webBlockAll,
-                        onClick = onToggleWebBlockAll,
-                        testTag = "shield_web_gate_toggle"
-                    )
-                }
-                if (webBlockAll) {
-                    var allowedHostText by remember { mutableStateOf("") }
-                    var allowedHostError by remember { mutableStateOf<String?>(null) }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        BasicTextField(
-                            value = allowedHostText,
-                            onValueChange = { allowedHostText = it },
-                            singleLine = true,
-                            textStyle = TextStyle(
-                                fontFamily = AnonymousProFamily,
-                                fontSize = 14.sp,
-                                color = scheme.onBackground
-                            ),
-                            cursorBrush = SolidColor(scheme.onBackground),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("shield_web_gate_host_input")
-                        )
-                        BlockitActionChip(
-                            wordLabel = "ALLOW",
-                            isPrimaryInk = true,
-                            onClick = {
-                                val normalised =
-                                    com.example.data.normaliseAllowedHost(allowedHostText)
-                                when {
-                                    allowedHostText.isBlank() -> Unit
-                                    normalised == null -> allowedHostError =
-                                        "NOT A HOST — CHECK THE ADDRESS AND TRY AGAIN"
-                                    allowedWebHosts.contains(normalised) -> allowedHostError =
-                                        "ALREADY ALLOWED"
-                                    else -> {
-                                        onAddAllowedWebHost(normalised)
-                                        allowedHostText = ""
-                                        allowedHostError = null
-                                    }
-                                }
-                            },
-                            testTag = "shield_web_gate_add"
-                        )
-                    }
-                    if (allowedHostError != null) {
-                        Text(
-                            text = allowedHostError!!,
-                            fontFamily = AnonymousProFamily,
-                            fontSize = 11.sp,
-                            color = scheme.onSurfaceVariant
-                        )
-                    }
-                    allowedWebHosts.forEach { host ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = host,
-                                fontFamily = AnonymousProFamily,
-                                fontSize = 13.sp,
-                                color = scheme.onBackground
-                            )
-                            BlockitActionChip(
-                                wordLabel = "REMOVE",
-                                isPrimaryInk = false,
-                                onClick = { onRemoveAllowedWebHost(host) },
-                                testTag = "shield_web_gate_remove_$host"
-                            )
-                        }
-                    }
-                }
-            }
-        }
+        shieldGuards(
+            scheme = scheme,
+            shortsReelsSniperEnabled = shortsReelsSniperEnabled,
+            gatedToggleSniper = gatedToggleSniper,
+            accessibilityShortcutSet = accessibilityShortcutSet,
+            onOpenAccessibilityShortcutSettings = onOpenAccessibilityShortcutSettings,
+            routineChainLine = routineChainLine,
+            browserUrlBlockerEnabled = browserUrlBlockerEnabled,
+            gatedToggleBrowser = gatedToggleBrowser,
+            receiptLine = receiptLine,
+            excludedWebHosts = excludedWebHosts,
+            onAddExcludedWebHost = onAddExcludedWebHost,
+            onRemoveExcludedWebHost = onRemoveExcludedWebHost,
+            webBlockAll = webBlockAll,
+            onToggleWebBlockAll = onToggleWebBlockAll,
+            allowedWebHosts = allowedWebHosts,
+            onAddAllowedWebHost = onAddAllowedWebHost,
+            onRemoveAllowedWebHost = onRemoveAllowedWebHost
+        )
 
         // =====================================================================
         // SECTION 6: BLOCKED WEBSITES — the editor transplanted from
@@ -1563,6 +1283,341 @@ private fun LazyListScope.shieldCatalogueSleds(
                 onCycleDailyLimit = gatedCycleDailyLimit,
                 onSetAppCategory = gatedSetAppCategory
             )
+        }
+    }
+}
+
+/**
+ * Issue #90 (complexity F4 slice): SECTION 5B — THE GUARDS
+ * (issue #51 F1 cure) of ShieldMatrixScreen's list: the
+ * sniper and browser-blocker switches, the accessibility
+ * shortcut chip, the detector-health and routine-chain
+ * lines, the dated truth line, the site-exemptions editor
+ * and the Web Gate with its allowed-hosts editor — extracted
+ * as a LazyListScope extension, in the pattern of
+ * standingOrdersSlip. Behaviour-identical: same item, same
+ * testTags; the host's values arrive as parameters, every
+ * write rides the host's own callback parameters by name,
+ * and the editors' two remember states are declared by the
+ * section itself and travel verbatim inside — no line is
+ * rewired.
+ */
+private fun LazyListScope.shieldGuards(
+    scheme: androidx.compose.material3.ColorScheme,
+    shortsReelsSniperEnabled: Boolean,
+    gatedToggleSniper: () -> Unit,
+    accessibilityShortcutSet: Boolean,
+    onOpenAccessibilityShortcutSettings: () -> Unit,
+    routineChainLine: String?,
+    browserUrlBlockerEnabled: Boolean,
+    gatedToggleBrowser: () -> Unit,
+    receiptLine: String?,
+    excludedWebHosts: List<String>,
+    onAddExcludedWebHost: (String) -> Unit,
+    onRemoveExcludedWebHost: (String) -> Unit,
+    webBlockAll: Boolean,
+    onToggleWebBlockAll: () -> Unit,
+    allowedWebHosts: List<String>,
+    onAddAllowedWebHost: (String) -> Unit,
+    onRemoveAllowedWebHost: (String) -> Unit
+) {
+    // =====================================================================
+    // SECTION 5B: THE GUARDS (issue #51 F1 cure) — the sniper,
+    // the browser blocker and the profiles were wired from
+    // MainActivity to real ViewModel functions and rendered
+    // NOWHERE; this section is their UI. The switches sit
+    // directly above BLOCKED WEBSITES, whose header claimed
+    // sites were blocked with no switch in reach.
+    // =====================================================================
+    item {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            FullBleedSectionHeader(
+                titleWord = "GUARDS",
+                rightWordPrefix = "",
+                rightMonoNumber = "",
+                rightWordSuffix = ""
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "SHORTS & REELS SNIPER",
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onBackground
+                )
+                BlockitActionChip(
+                    wordLabel = if (shortsReelsSniperEnabled) "ON" else "OFF",
+                    isPrimaryInk = shortsReelsSniperEnabled,
+                    onClick = gatedToggleSniper,
+                    testTag = "shield_sniper_toggle"
+                )
+            }
+            // #337 F1: the accessibility shortcut — the second,
+            // system-level activation path for the service. The
+            // chip names the binding's actual state and opens
+            // the exact system screen where it is made.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "ACCESSIBILITY SHORTCUT",
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onBackground
+                )
+                BlockitActionChip(
+                    wordLabel = if (accessibilityShortcutSet) "SET" else "BIND",
+                    isPrimaryInk = accessibilityShortcutSet,
+                    onClick = onOpenAccessibilityShortcutSettings,
+                    testTag = "shield_a11y_shortcut_chip"
+                )
+            }
+            // #335 F5: the detector-health line — first/last
+            // node, stale and slow-scan states, printed from
+            // the DetectorHealth record the services write.
+            Text(
+                text = com.example.ui.components.detectorLineFor(
+                    com.example.service.DetectorHealth.snapshot(),
+                    SystemClock.elapsedRealtime()
+                ).text,
+                fontFamily = AnonymousProFamily,
+                fontSize = 11.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.testTag("shield_detector_health_line")
+            )
+            // Issue #94 F4: the routine-chain liveness line —
+            // the heartbeat stamp's first reader, printed under
+            // the detector line. Absent unless a routine window
+            // is enforcing right now; then it names the chain
+            // LIVE or DEAD with the stamp's age.
+            if (routineChainLine != null) {
+                Text(
+                    text = routineChainLine,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("shield_routine_chain_line")
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "BROWSER URL BLOCKER",
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onBackground
+                )
+                BlockitActionChip(
+                    wordLabel = if (browserUrlBlockerEnabled) "ON" else "OFF",
+                    isPrimaryInk = browserUrlBlockerEnabled,
+                    onClick = gatedToggleBrowser,
+                    testTag = "shield_browser_blocker_toggle"
+                )
+            }
+            // The dated truth line: the guards above are law
+            // inside the seal, but they may not self-report
+            // beyond what the probe proves — this line is the
+            // only enforcement statement on the sheet, printed
+            // from the beat's proof, identical everywhere it
+            // appears. A statement, never a control.
+            if (receiptLine != null) {
+                Text(
+                    text = receiptLine,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("shield_receipt_line")
+                )
+            }
+            // Audit R6 #341 F52: the EXEMPTIONS editor — one
+            // host carved out of a blocked domain (or its
+            // subdomains) browses free while the rest of the
+            // domain stays blocked. The matcher checks this
+            // list before the blocklist, in every mode.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "SITE EXEMPTIONS — CARVED OUT OF THE BLOCKLIST",
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onBackground
+                )
+            }
+            var excludedHostText by remember { mutableStateOf("") }
+            var excludedHostError by remember { mutableStateOf<String?>(null) }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                BasicTextField(
+                    value = excludedHostText,
+                    onValueChange = { excludedHostText = it },
+                    singleLine = true,
+                    textStyle = TextStyle(
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 14.sp,
+                        color = scheme.onBackground
+                    ),
+                    cursorBrush = SolidColor(scheme.onBackground),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("shield_exempt_host_input")
+                )
+                BlockitActionChip(
+                    wordLabel = "EXEMPT",
+                    isPrimaryInk = true,
+                    onClick = {
+                        val normalised =
+                            com.example.data.normaliseAllowedHost(excludedHostText)
+                        when {
+                            excludedHostText.isBlank() -> Unit
+                            normalised == null -> excludedHostError =
+                                "NOT A HOST — CHECK THE ADDRESS AND TRY AGAIN"
+                            excludedWebHosts.contains(normalised) -> excludedHostError =
+                                "ALREADY EXEMPT"
+                            else -> {
+                                onAddExcludedWebHost(normalised)
+                                excludedHostText = ""
+                                excludedHostError = null
+                            }
+                        }
+                    },
+                    testTag = "shield_exempt_add"
+                )
+            }
+            if (excludedHostError != null) {
+                Text(
+                    text = excludedHostError!!,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant
+                )
+            }
+            excludedWebHosts.forEach { host ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = host,
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 13.sp,
+                        color = scheme.onBackground
+                    )
+                    BlockitActionChip(
+                        wordLabel = "REMOVE",
+                        isPrimaryInk = false,
+                        onClick = { onRemoveExcludedWebHost(host) },
+                        testTag = "shield_exempt_remove_$host"
+                    )
+                }
+            }
+            // #339 F1: the Web Gate row — block the whole web
+            // except the allowed hosts below.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "WEB GATE — BLOCK ALL BUT ALLOWED",
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onBackground
+                )
+                BlockitActionChip(
+                    wordLabel = if (webBlockAll) "ON" else "OFF",
+                    isPrimaryInk = webBlockAll,
+                    onClick = onToggleWebBlockAll,
+                    testTag = "shield_web_gate_toggle"
+                )
+            }
+            if (webBlockAll) {
+                var allowedHostText by remember { mutableStateOf("") }
+                var allowedHostError by remember { mutableStateOf<String?>(null) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    BasicTextField(
+                        value = allowedHostText,
+                        onValueChange = { allowedHostText = it },
+                        singleLine = true,
+                        textStyle = TextStyle(
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 14.sp,
+                            color = scheme.onBackground
+                        ),
+                        cursorBrush = SolidColor(scheme.onBackground),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("shield_web_gate_host_input")
+                    )
+                    BlockitActionChip(
+                        wordLabel = "ALLOW",
+                        isPrimaryInk = true,
+                        onClick = {
+                            val normalised =
+                                com.example.data.normaliseAllowedHost(allowedHostText)
+                            when {
+                                allowedHostText.isBlank() -> Unit
+                                normalised == null -> allowedHostError =
+                                    "NOT A HOST — CHECK THE ADDRESS AND TRY AGAIN"
+                                allowedWebHosts.contains(normalised) -> allowedHostError =
+                                    "ALREADY ALLOWED"
+                                else -> {
+                                    onAddAllowedWebHost(normalised)
+                                    allowedHostText = ""
+                                    allowedHostError = null
+                                }
+                            }
+                        },
+                        testTag = "shield_web_gate_add"
+                    )
+                }
+                if (allowedHostError != null) {
+                    Text(
+                        text = allowedHostError!!,
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
+                allowedWebHosts.forEach { host ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = host,
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 13.sp,
+                            color = scheme.onBackground
+                        )
+                        BlockitActionChip(
+                            wordLabel = "REMOVE",
+                            isPrimaryInk = false,
+                            onClick = { onRemoveAllowedWebHost(host) },
+                            testTag = "shield_web_gate_remove_$host"
+                        )
+                    }
+                }
+            }
         }
     }
 }
