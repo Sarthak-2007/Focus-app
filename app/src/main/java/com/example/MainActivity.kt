@@ -2095,82 +2095,26 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 )
             }
 
-            // E-1 AS ONE SCRIM (wave-3; Hauch H-2 / Glanz G-4):
-            // composed BELOW the desk-clock overlay — while the
-            // clock stands, its opaque ground covers the scrim
-            // completely, so the veil's entry at E0 no longer
-            // cuts the finish print's ruled 260 Curve A fade; the
-            // scrim becomes visible exactly when the ground
-            // lifts, already at its phase weight, over the Deck
-            // alone. In LANDING and OPEN the scrim consumes NO
-            // touch (every Deck control live under the dim); in
-            // VEILED it takes the first touch on pointer DOWN
-            // (Hauch H-4 — a click's UP was a completed-tap law
-            // a half-awake hand could fail), with NO indication
-            // (H-5: a raw pointerInput draws no ripple on the
-            // black).
-            if (nightScrimAlpha.value > 0f) {
-                val veiled = nightReturnPhase == com.example.ui.NightReturnPhase.VEILED
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            androidx.compose.ui.graphics.Color.Black.copy(
-                                alpha = nightScrimAlpha.value
-                            )
-                        )
-                        .then(
-                            if (veiled) {
-                                Modifier
-                                    .pointerInput(Unit) {
-                                        detectTapGestures(
-                                            onPress = { viewModel.unveilNightReturn() }
-                                        )
-                                    }
-                                    .testTag("night_return_veil")
-                            } else {
-                                Modifier
-                            }
-                        )
-                )
-            }
-
-            AlwaysOnDeskClockOverlay(
-                visible = isAlwaysOnDeskClockVisible,
+            DeskClockOverlayCluster(
+                nightScrimAlpha = nightScrimAlpha,
+                nightReturnPhase = nightReturnPhase,
+                viewModel = viewModel,
+                isAlwaysOnDeskClockVisible = isAlwaysOnDeskClockVisible,
                 activeSession = activeSession,
                 activeTask = activeTask,
-                // Glaette G-6: dialMinutes no longer threads
-                // into the face (see the overlay's signature).
-                burnInStep = burnInFigure8MinuteStep,
-                entryCause = deskClockEntryCause,
-                exitIsFinish = deskClockExitIsFinish,
-                surrenderFade = deskClockSurrenderFade,
-                descentApplies = deskClockDescentApplies,
-                raiseGeneration = deskClockRaiseGeneration,
-                entryStartsAtFull = deskClockEntryStartsAtFull,
-                groundReleased = deskClockGroundRelease,
-                exitIsYield = deskClockExitIsYield,
-                exitSnap = deskClockExitSnap,
-                dimAlpha = breakDimAlpha,
-                onDismiss = { viewModel.toggleAlwaysOnDeskClock(false) }
+                burnInFigure8MinuteStep = burnInFigure8MinuteStep,
+                deskClockEntryCause = deskClockEntryCause,
+                deskClockExitIsFinish = deskClockExitIsFinish,
+                deskClockSurrenderFade = deskClockSurrenderFade,
+                deskClockDescentApplies = deskClockDescentApplies,
+                deskClockRaiseGeneration = deskClockRaiseGeneration,
+                deskClockEntryStartsAtFull = deskClockEntryStartsAtFull,
+                deskClockGroundRelease = deskClockGroundRelease,
+                deskClockExitIsYield = deskClockExitIsYield,
+                deskClockExitSnap = deskClockExitSnap,
+                breakDimAlpha = breakDimAlpha,
+                deskClockYielded = deskClockYielded
             )
-
-            // Wave-3 (Kante K-1 / Samt S-3): the yield's own
-            // exit — while a yielded session lives, a plain
-            // true-black surface stands above the Deck, so the
-            // surrender flag clears INTO black and stays black
-            // until his wake touch re-raises SEEDED (the VM's
-            // wake path; this box is non-clickable and consumes
-            // nothing — the Activity's onUserInteraction
-            // receives the touch first).
-            if (deskClockYielded) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(androidx.compose.ui.graphics.Color.Black)
-                        .testTag("desk_clock_yielded_black")
-                )
-            }
 
             // THE RECEIPT SLIP (Slice E, F-L1/F-B1): viewport-
             // hosted over the Deck's room, dismissed ONLY by the
@@ -2482,6 +2426,116 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             BreakDimScrim(alpha = breakDimAlpha)
 
         }
+    }
+}
+
+/**
+ * Issue #90 (complexity F3, overlay slice 1): the desk-clock
+ * cluster of MonolithRootApp's overlay layer — the E-1 night
+ * scrim, the always-on desk clock itself, and the yield's
+ * black — extracted as one composable, in the cluster's
+ * standing composition order (its own comments travel with
+ * it). Behaviour-identical: every value the cluster reads
+ * arrives as a parameter, read by the host at the standing
+ * position; the two view-model calls ride the viewModel
+ * parameter. No line inside the cluster is rewired.
+ */
+@Composable
+private fun DeskClockOverlayCluster(
+    nightScrimAlpha: androidx.compose.animation.core.Animatable<Float, androidx.compose.animation.core.AnimationVector1D>,
+    nightReturnPhase: com.example.ui.NightReturnPhase,
+    viewModel: MonolithViewModel,
+    isAlwaysOnDeskClockVisible: Boolean,
+    activeSession: FocusSessionEntity?,
+    activeTask: FocusTaskEntity?,
+    burnInFigure8MinuteStep: Int,
+    deskClockEntryCause: com.example.ui.components.DeskClockEntryCause,
+    deskClockExitIsFinish: Boolean,
+    deskClockSurrenderFade: Boolean,
+    deskClockDescentApplies: Boolean,
+    deskClockRaiseGeneration: Int,
+    deskClockEntryStartsAtFull: Boolean,
+    deskClockGroundRelease: Boolean,
+    deskClockExitIsYield: Boolean,
+    deskClockExitSnap: Boolean,
+    breakDimAlpha: Float,
+    deskClockYielded: Boolean
+) {
+    // E-1 AS ONE SCRIM (wave-3; Hauch H-2 / Glanz G-4):
+    // composed BELOW the desk-clock overlay — while the
+    // clock stands, its opaque ground covers the scrim
+    // completely, so the veil's entry at E0 no longer
+    // cuts the finish print's ruled 260 Curve A fade; the
+    // scrim becomes visible exactly when the ground
+    // lifts, already at its phase weight, over the Deck
+    // alone. In LANDING and OPEN the scrim consumes NO
+    // touch (every Deck control live under the dim); in
+    // VEILED it takes the first touch on pointer DOWN
+    // (Hauch H-4 — a click's UP was a completed-tap law
+    // a half-awake hand could fail), with NO indication
+    // (H-5: a raw pointerInput draws no ripple on the
+    // black).
+    if (nightScrimAlpha.value > 0f) {
+        val veiled = nightReturnPhase == com.example.ui.NightReturnPhase.VEILED
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    androidx.compose.ui.graphics.Color.Black.copy(
+                        alpha = nightScrimAlpha.value
+                    )
+                )
+                .then(
+                    if (veiled) {
+                        Modifier
+                            .pointerInput(Unit) {
+                                detectTapGestures(
+                                    onPress = { viewModel.unveilNightReturn() }
+                                )
+                            }
+                            .testTag("night_return_veil")
+                    } else {
+                        Modifier
+                    }
+                )
+        )
+    }
+
+    AlwaysOnDeskClockOverlay(
+        visible = isAlwaysOnDeskClockVisible,
+        activeSession = activeSession,
+        activeTask = activeTask,
+        // Glaette G-6: dialMinutes no longer threads
+        // into the face (see the overlay's signature).
+        burnInStep = burnInFigure8MinuteStep,
+        entryCause = deskClockEntryCause,
+        exitIsFinish = deskClockExitIsFinish,
+        surrenderFade = deskClockSurrenderFade,
+        descentApplies = deskClockDescentApplies,
+        raiseGeneration = deskClockRaiseGeneration,
+        entryStartsAtFull = deskClockEntryStartsAtFull,
+        groundReleased = deskClockGroundRelease,
+        exitIsYield = deskClockExitIsYield,
+        exitSnap = deskClockExitSnap,
+        dimAlpha = breakDimAlpha,
+        onDismiss = { viewModel.toggleAlwaysOnDeskClock(false) }
+    )
+
+    // Wave-3 (Kante K-1 / Samt S-3): the yield's own
+    // exit — while a yielded session lives, a plain
+    // true-black surface stands above the Deck, so the
+    // surrender flag clears INTO black and stays black
+    // until his wake touch re-raises SEEDED (the VM's
+    // wake path; this box is non-clickable and consumes
+    // nothing — the Activity's onUserInteraction
+    // receives the touch first).
+    if (deskClockYielded) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(androidx.compose.ui.graphics.Color.Black)
+                .testTag("desk_clock_yielded_black")
+        )
     }
 }
 
