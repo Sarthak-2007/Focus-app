@@ -5485,7 +5485,19 @@ class MonolithRepository(
             // completed, end stamped once), instead of copying
             // elapsed into the row and running indefinitely until
             // the user happens to find the valve.
-            if (verifiedElapsed >= STOPWATCH_MAX_CAP_SECONDS) {
+            // W3 #134 follow-up (verifier F2/F1 hole, DURCH-D):
+            // the cap is a FOCUS-time cap and its ending is a
+            // finish like any other — it is judged on focusElapsed
+            // and never fires underneath a live call. The pre-fix
+            // check read raw verifiedElapsed with no call guard,
+            // so a FLOW session crossing 4h mid-call finished,
+            // unsealed under the conversation, and booked the cap
+            // on the strength of call minutes. Mid-call the branch
+            // below books focusElapsed and stays active; the first
+            // post-hang-up tick whose focusElapsed reaches the cap
+            // ends it and stamps the end then — the same held-
+            // finish law as the timed path.
+            if (!callActive && focusElapsed >= STOPWATCH_MAX_CAP_SECONDS) {
                 val capped = session.copy(
                     elapsedSeconds = STOPWATCH_MAX_CAP_SECONDS,
                     startElapsedRealtimeMillis = newStartMono,

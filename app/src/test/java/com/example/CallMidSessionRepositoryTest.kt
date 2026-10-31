@@ -66,7 +66,8 @@ class CallMidSessionRepositoryTest {
         safeBreakSecondsRemaining: Int = 0,
         totalStudyBlocks: Int = 1,
         currentBlockIndex: Int = 1,
-        callExcludedSeconds: Int = 0
+        callExcludedSeconds: Int = 0,
+        isStopwatchMode: Boolean = false
     ): FocusSessionEntity {
         // Fixture correction (the requirement assertions below are
         // unchanged): Robolectric's monotonic clock starts near
@@ -99,6 +100,7 @@ class CallMidSessionRepositoryTest {
             isInSafeBreak = isInSafeBreak,
             safeBreakSecondsRemaining = safeBreakSecondsRemaining,
             callExcludedSeconds = callExcludedSeconds,
+            isStopwatchMode = isStopwatchMode,
             shieldLastBeatWallMillis = nowWall,
             isActive = true,
             completedSuccessfully = false
@@ -235,6 +237,54 @@ class CallMidSessionRepositoryTest {
         }
     }
 
+
+    @Test
+    fun stopwatchCap_isHeldUntilTheCallEnds() = runBlocking {
+        val db = MonolithDatabase.getInstance(context)
+        val dao = db.monolithDao()
+        val repository = MonolithRepository(context, dao)
+        // FLOW (stopwatch) row: 14,400s of focus — the 4h cap —
+        // then a 600s call ending now. Raw verified elapsed at
+        // the tick is 15,000s, past the cap; focus elapsed is
+        // exactly the cap. The pre-fix cap check read the raw
+        // figure with no call guard and ended the session
+        // underneath the conversation, booking the cap on the
+        // strength of call minutes.
+        val id = dao.insertSession(
+            sessionRow(
+                targetSeconds = 14_400,
+                focusSecondsBeforeCall = 14_400,
+                callSeconds = 600,
+                isStopwatchMode = true
+            )
+        ).toInt()
+        try {
+            repository.callActiveProbe = { true }
+            val duringCall = repository.updateSessionProgress(dao.getSessionById(id)!!)
+            // No FLOW ending underneath the call: still active,
+            // no outcome, no end stamp; focus booked at the cap,
+            // the 600 call seconds in the exclusion ledger.
+            assertTrue(duringCall.isActive)
+            assertFalse(duringCall.completedSuccessfully)
+            assertEquals("", duringCall.outcome)
+            assertEquals(0L, duringCall.endWallMillis)
+            assertEquals(14_400, duringCall.elapsedSeconds)
+            assertEquals(600, duringCall.callExcludedSeconds)
+
+            // First tick after hang-up: focus elapsed is at the
+            // cap, so FLOW's terminal law fires now, stamped now.
+            repository.callActiveProbe = { false }
+            val afterCall = repository.updateSessionProgress(duringCall)
+            assertFalse(afterCall.isActive)
+            assertTrue(afterCall.completedSuccessfully)
+            assertEquals(SessionOutcome.STOPWATCH_ENDED, afterCall.outcome)
+            assertEquals(14_400, afterCall.elapsedSeconds)
+            assertTrue(afterCall.endWallMillis > 0L)
+        } finally {
+            repository.callActiveProbe = { repository.isPhoneOrVoipCallActive() }
+            dao.deleteSessionById(id)
+        }
+    }
 
     @Test
     fun dialerPackage_isIdentifiedPackageExact() {
