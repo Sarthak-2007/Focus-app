@@ -14,7 +14,6 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FocusProfileEntity::class,
         FocusSessionEntity::class,
         InterceptLogEntity::class,
-        CapturedNotificationEntity::class,
         FocusTaskEntity::class,
         BlockedSiteEntity::class,
         GuardSettingsEntity::class,
@@ -23,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DayNoteEntity::class,
         TaskAccrualSegmentEntity::class
     ],
-    version = 21,
+    version = 23,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -453,6 +452,31 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
+         * Issue #100 (notifications-lived) — Sarthak's ruling:
+         * notification-content storage is CUT. The captured
+         * notifications table (plaintext message bodies, stored
+         * since v1-era) is dropped outright. Held notifications
+         * are now snoozes of the originals held by the system;
+         * Monolith keeps no copy, so there is nothing to migrate
+         * the rows into — dropping is the whole migration.
+         *
+         * BUILDER-100 composition note (Oct 31): authored as
+         * 14→15 on the CUT branch, renumbered 15→16 by DURCH-C,
+         * then 18→19, 19→20, 20→21, 21→22 and finally 22→23
+         * across this
+         * landing's compositions — main took 15→16 (#261), 16→17
+         * (#340), 17→18 (batch-10), 18→19 (#324), 19→20 (#138's
+         * metadata-only rebuild) and 20→21 (#525) while this lane
+         * was in flight. Same drop, same ruling; only the number
+         * moved.
+         */
+        val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS captured_notifications")
+            }
+        }
+
+        /**
          * TOKEN-SPEC §6: the spend ledger arrives as an explicit
          * migration. There is NO backfill — today's in-memory spends
          * were never recorded, so v8 truthfully starts with an empty
@@ -522,8 +546,15 @@ abstract class MonolithDatabase : RoomDatabase() {
          * 19→20 (#138 CUT, above) while the PR waited, so
          * the bundle lands as 20→21, the next free link
          * (FINISHER-748 rebase, Oct 31).
+         *
+         * BUILDER-100 repair (Oct 31, in PR #552's composition):
+         * main landed TWO MIGRATION_20_21 declarations in one wave
+         * (#525's rebootGapSeconds above and this bundle) — a
+         * duplicate-declaration compile break on main itself. This
+         * bundle, the later landing, renumbers to 21→22; #525's
+         * step keeps 20→21. Contents unchanged.
          */
-        val MIGRATION_20_21 = object : Migration(20, 21) {
+        val MIGRATION_21_22 = object : Migration(21, 22) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 addColumnIfAbsent(db, "focus_profiles", "appTiersCsv",
                     "ALTER TABLE focus_profiles ADD COLUMN appTiersCsv TEXT NOT NULL DEFAULT ''")
@@ -621,7 +652,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance

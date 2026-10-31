@@ -97,10 +97,6 @@ class SeedAndDayWordDrainTest {
             "no intercept log may be seeded",
             dao.getInterceptLogsFlow().first().isEmpty()
         )
-        assertTrue(
-            "no captured notification may be seeded",
-            dao.getCapturedNotificationsFlow().first().isEmpty()
-        )
 
         // The lawful seed set still lands, whole.
         assertTrue(dao.getAllSitesSnapshot().isNotEmpty())

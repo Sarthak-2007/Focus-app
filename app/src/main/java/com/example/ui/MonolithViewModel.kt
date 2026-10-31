@@ -13,7 +13,7 @@ import com.example.data.ClockText
 import com.example.data.AppCategory
 import com.example.data.BreakResult
 import com.example.data.BlockedAppEntity
-import com.example.data.CapturedNotificationEntity
+import com.example.data.CurioCatalog
 import com.example.data.DailyFocusStat
 import com.example.data.DistractionTriggerReason
 import com.example.data.FocusProfileEntity
@@ -158,24 +158,6 @@ fun evaluateTheme(
     }
     return ThemeEvaluation(false, "AUTO · DAY — NO ROUTINE OWNS IT")
 }
-
-/**
- * The SEALED digest: the held notifications for one session, keyed
- * to that session. While sealed, the digest renders through this
- * holder in frozen MODE — read-only, no row opens, no delete — but
- * the snapshot itself REFRESHES (issue #118, finding 3): opening the
- * sheet remints it, and while the sheet stands open every new held
- * item remints it again, so mid-session triage can see what has
- * arrived since the session started. Refreshing what is SHOWN
- * unlocks nothing: the repository's sealed gate still refuses every
- * delete/clear while a session is active. It survives the session's
- * end until dismissed unsealed.
- */
-data class FrozenDigest(
-    val items: List<CapturedNotificationEntity>,
-    val frozenAtMillis: Long,
-    val sessionId: Int
-)
 
 data class FloatingPeekPillState(
     val isActive: Boolean = false,
@@ -1195,14 +1177,9 @@ class MonolithViewModel(
     private val _floatingPeekPill = MutableStateFlow(FloatingPeekPillState())
     val floatingPeekPill: StateFlow<FloatingPeekPillState> = _floatingPeekPill.asStateFlow()
 
-    private val _frozenDigest = MutableStateFlow<FrozenDigest?>(null)
-    val frozenDigest: StateFlow<FrozenDigest?> = _frozenDigest.asStateFlow()
-
-    private val _showNotificationDigestSheet = MutableStateFlow(false)
-    val showNotificationDigestSheet: StateFlow<Boolean> = _showNotificationDigestSheet.asStateFlow()
-
     private val _sevenDayStats = MutableStateFlow<List<DailyFocusStat>>(emptyList())
     val sevenDayStats: StateFlow<List<DailyFocusStat>> = _sevenDayStats.asStateFlow()
+
 
 
     // Truth Car 3 (UNA-03): the printed state is born from the
@@ -1626,9 +1603,6 @@ class MonolithViewModel(
 
     /** Otis's heartbeat, exposed for the strip and the chrome line. */
     val wireSnapshots: StateFlow<com.example.service.WatchSnapshot> = com.example.service.WatchStore.snapshots
-
-    val capturedNotifications: StateFlow<List<CapturedNotificationEntity>> = repository.capturedNotificationsFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val totalFocusedMinutes: StateFlow<Int> = combine(
         sessionHistory,
@@ -2535,33 +2509,6 @@ class MonolithViewModel(
                 )
             }
         }
-        // THE DIGEST WATCH: while the digest sheet is visible under
-        // an active session, the sealed snapshot (re)mints whenever
-        // the session the holder carries changes — a routine arming
-        // under an open live sheet (RoutineAlarmReceiver fires with
-        // no UI), or a new session replacing one that ended under an
-        // open sheet — AND whenever a new notification is held
-        // (issue #118, finding 3: the sealed digest refreshes what it
-        // shows; it still opens and deletes nothing). Transitions to
-        // inactive are ignored on purpose: the holder latches past
-        // the session's end until dismissed unsealed.
-        viewModelScope.launch {
-            combine(activeSession, showNotificationDigestSheet, capturedNotifications) { session, visible, held ->
-                Triple(session, visible, held)
-            }.collect { (session, visible, held) ->
-                val holder = _frozenDigest.value
-                // A remint is owed when the holder belongs to another
-                // session, or when the live held list carries an item
-                // the holder has never shown (a new arrival). Ids, not
-                // list equality: the snapshot is uncapped, the flow is
-                // capped, and the two must not chase each other.
-                val owesMint = holder == null || holder.sessionId != session?.id ||
-                    held.any { item -> holder.items.none { it.id == item.id } }
-                if (visible && session != null && session.isActive && owesMint) {
-                    mintFrozenDigest(session.id)
-                }
-            }
-        }
         // Issue #114 finding 1: the peek pill finally gets a face.
         // The overlay window (over the peeked app) and the in-app
         // Compose pill both render THIS state; the overlay's END
@@ -2616,26 +2563,6 @@ class MonolithViewModel(
         startFinishController()
         startShotGroundDriver()
         runSliceERecovery()
-    }
-
-    /** Take a snapshot for [sessionId] and hold it. The write is
-     *  guarded: if the session changed again while the read was in
-     *  flight, the stale mint is dropped and the digest watch will
-     *  mint for the session that is actually active. Reminting for
-     *  the SAME session is the refresh path (issue #118, finding 3):
-     *  it replaces the holder's rows and stamp with the held world
-     *  as it stands now. */
-    private fun mintFrozenDigest(sessionId: Int) {
-        viewModelScope.launch {
-            val items = repository.capturedNotificationsSnapshot()
-            if (activeSession.value?.id == sessionId && activeSession.value?.isActive == true) {
-                _frozenDigest.value = FrozenDigest(
-                    items = items,
-                    frozenAtMillis = System.currentTimeMillis(),
-                    sessionId = sessionId
-                )
-            }
-        }
     }
 
     private fun startTickerLoop() {
@@ -3944,57 +3871,6 @@ class MonolithViewModel(
             deskClockSettle.noteHandDecision(session.id)
         }
     }
-
-    fun toggleNotificationDigestSheet(visible: Boolean) {
-        soundEngine.playMechanicalLatch(visible)
-        if (visible) {
-            val session = activeSession.value
-            if (session != null && session.isActive) {
-                // Sealed open: ALWAYS remint (issue #118, finding 3)
-                // — reopening the sheet shows the held world as it
-                // stands at this open, including everything held
-                // since the last look; the old reuse-the-holder path
-                // made reopening show the same frozen rows forever.
-                mintFrozenDigest(session.id)
-            } else {
-                // Unsealed open is live mode; no holder may linger.
-                _frozenDigest.value = null
-            }
-        } else {
-            // Dismiss clears the freeze ONLY when unsealed. A dismiss
-            // while sealed keeps the holder for the session's next
-            // open; a freeze latched past the session's end clears
-            // here, on the first unsealed dismiss.
-            if (activeSession.value?.isActive != true) {
-                _frozenDigest.value = null
-            }
-        }
-        _showNotificationDigestSheet.value = visible
-    }
-
-    fun clearAllCapturedNotifications() {
-        viewModelScope.launch {
-            // The repository refuses while sealed; a sealed attempt
-            // is SILENT — no latch sound rewards it.
-            if (repository.clearAllCapturedNotifications()) {
-                soundEngine.playMechanicalLatch(false)
-            }
-            // Issue #83: the same erasure clears the intercept
-            // behaviour log — it had no production delete path at
-            // all, so a "clear" that left it standing was not an
-            // erasure.
-            repository.clearInterceptLogs()
-        }
-    }
-
-    fun deleteCapturedNotification(id: Int) {
-        viewModelScope.launch {
-            if (repository.deleteCapturedNotification(id)) {
-                soundEngine.playRotaryDetent(520.0)
-            }
-        }
-    }
-
 
     fun toggleChecklistItem(id: Int) {
         completeTaskAndAdvance(id)

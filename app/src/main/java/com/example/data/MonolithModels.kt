@@ -912,20 +912,6 @@ data class InterceptLogEntity(
             ?: InterceptTriggerKind.derive(triggerReason, packageName)
 }
 
-@Entity(tableName = "captured_notifications")
-data class CapturedNotificationEntity(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val timestampMillis: Long = System.currentTimeMillis(),
-    val packageName: String,
-    val appName: String,
-    // Issue #138 CUT (Sarthak's ruling, Oct 30): notification-CONTENT
-    // storage is removed, not repaired — no senderTitle, no
-    // messageBody is stored anywhere. A held row is metadata only:
-    // which app, and when it was held. The digest prints exactly
-    // that; the message itself is never transcribed to disk.
-    val isRead: Boolean = false
-)
-
 data class DailyFocusStat(
     val dayLabel: String,
     val dateIso: String,

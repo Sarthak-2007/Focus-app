@@ -344,7 +344,9 @@ class RoutinesMigrationChainTest {
                 MonolithDatabase.MIGRATION_17_18,
                 MonolithDatabase.MIGRATION_18_19,
                 MonolithDatabase.MIGRATION_19_20,
-                MonolithDatabase.MIGRATION_20_21
+                MonolithDatabase.MIGRATION_20_21,
+                MonolithDatabase.MIGRATION_21_22,
+                MonolithDatabase.MIGRATION_22_23
             )
             .build()
 
@@ -380,12 +382,16 @@ class RoutinesMigrationChainTest {
             tables.containsAll(
                 setOf(
                     "blocked_apps", "focus_profiles", "focus_sessions", "intercept_logs",
-                    "captured_notifications", "focus_tasks", "blocked_sites", "guard_settings",
+"focus_tasks", "blocked_sites", "guard_settings",
                     "routines", "emergency_break_spends", "day_notes"
                 )
             )
         )
         assertFalse(tables.contains("routine_attendance"))
+        // Issue #100 CUT: the notification-content store is GONE at
+        // v23 — MIGRATION_22_23 dropped the table the v7 fixture
+        // created; no content store may stand at the latest schema.
+        assertFalse(tables.contains("captured_notifications"))
 
         // The struck predicate exists NOWHERE — every table scanned.
         for (table in tables) {
@@ -399,12 +405,12 @@ class RoutinesMigrationChainTest {
         // day_notes is exactly the specced two columns, date as PK.
         assertEquals(setOf("dateIso", "word"), columnsOf(raw, "day_notes"))
 
-        // Issue #138 CUT (19→20): captured_notifications survives
-        // as metadata only — the content columns are GONE at v20.
-        assertEquals(
-            setOf("id", "timestampMillis", "packageName", "appName", "isRead"),
-            columnsOf(raw, "captured_notifications")
-        )
+        // Issue #138's v20 pin (captured_notifications survives
+        // metadata-only) is SUPERSEDED by Issue #100's ruling at
+        // v23: MIGRATION_22_23 drops the table outright, and the
+        // absence assertion above is now the latest-schema truth.
+        // (#138's 19→20 rebuild stands as shipped history in the
+        // chain; nothing at v23 resurrects the table.)
         raw.query("PRAGMA table_info(day_notes)").use { cursor ->
             val nameIdx = cursor.getColumnIndex("name")
             val pkIdx = cursor.getColumnIndex("pk")

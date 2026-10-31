@@ -900,30 +900,27 @@ class MonolithShieldService : Service() {
                     } else {
                         null
                     }
-                // Issue #155 (F4): the badge's one number is the held
-                // (captured) notification count — the same count the
-                // Deck's HELD chip prints. If that read ever fails,
-                // fall back to this session's urges stopped.
-                val heldCount = runCatching {
-                    dao.getCapturedNotificationsSnapshot().size
-                }.getOrNull()
-                // Issue #155 (IQ-2 M-5): NO fallback swap — the
-                // badge's one number keeps one meaning (held
-                // notifications). When the held count is unreadable
-                // the badge shows no number, never the urges count
-                // wearing the held count's slot.
+                // Issue #155 (F4) as amended by Issue #100's CUT,
+                // composed by BUILDER-100 (Oct 31): the badge's held
+                // number is the notification listener's IN-MEMORY
+                // snooze count — the only held count that exists now
+                // that notification-content storage is gone. It counts
+                // this process's snoozes and dies with it; it never
+                // pretends to be a stored total, and (per #155 IQ-2
+                // M-5) it is never swapped for the urges count.
+                val heldCount = MonolithNotificationListener.snoozedCount
                 val badgeNumber = heldCount
-                // Issue #155 (IQ-2 M-8): the bigText's time segment
-                // is the LABELLED format (timeFormatted, #127's two
-                // labelled scopes), never the bare per-block label;
-                // and a blank intention drops its segment instead
-                // of leaving a doubled separator at the head.
+                // Issue #155 (IQ-2 M-8), kept from main: the bigText's
+                // time segment is the LABELLED format (timeFormatted,
+                // #127's two labelled scopes), never the bare per-block
+                // label; and a blank intention drops its segment
+                // instead of leaving a doubled separator at the head.
                 val bigText = listOfNotNull(
                     updated.intention.takeIf { it.isNotBlank() },
                     timeFormatted,
                     "Block ${updated.currentBlockIndex}/${updated.totalStudyBlocks}",
                     "${updated.phantomReachesBlocked} urges stopped",
-                    if (heldCount != null) "$heldCount held" else "held count unavailable"
+                    "$heldCount held"
                 ).joinToString(" • ")
 
                 // Audit R3b #149 (from main): the grace window exists

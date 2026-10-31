@@ -245,15 +245,6 @@ class ExampleRobolectricTest {
         assertTrue("Dialing < 10m should activate Stopwatch Mode", stopwatchSession.isStopwatchMode)
         assertEquals(2, stopwatchSession.totalStudyBlocks)
 
-        // Save a silent notification to the digest
-        val initialCount = db.monolithDao().getCapturedNotificationsFlow().first().size
-        repository.saveCapturedNotification(
-            packageName = "com.whatsapp",
-            appName = "WhatsApp"
-        )
-        val notifications = db.monolithDao().getCapturedNotificationsFlow().first()
-        assertEquals(initialCount + 1, notifications.size)
-
         assertEquals(6, CurioCatalog.artifacts.size)
     }
 
