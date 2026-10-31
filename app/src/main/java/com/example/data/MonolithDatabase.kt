@@ -23,7 +23,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DayNoteEntity::class,
         TaskAccrualSegmentEntity::class
     ],
-    version = 21,
+    version = 22,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -507,7 +507,7 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
-         * Issue #253 lines 8 + 9 (20→21): the full-context
+         * Issue #253 lines 8 + 9 (21→22): the full-context
          * profile bundle lands on focus_profiles — three bundle
          * CSVs (per-app tiers, per-app limits, blocked sites;
          * ProfileBundle's encodings) and three nullable fact
@@ -520,10 +520,15 @@ abstract class MonolithDatabase : RoomDatabase() {
          * Renumber history: authored as 18→19 on PR #748;
          * main took 18→19 (#324 intercept kinds, above) and
          * 19→20 (#138 CUT, above) while the PR waited, so
-         * the bundle lands as 20→21, the next free link
-         * (FINISHER-748 rebase, Oct 31).
+         * the bundle was rebased to 20→21 (FINISHER-748,
+         * Oct 31) — and then the #748 merge landed AFTER
+         * PR #740's reboot-gap step had taken 20→21 on main,
+         * leaving both declarations in this file under one
+         * name (MERGE-INTRODUCED, filed on #245: 6544174285).
+         * The reboot-gap step keeps 20→21 (it was on main
+         * first); the bundle takes 21→22, the next free link.
          */
-        val MIGRATION_20_21 = object : Migration(20, 21) {
+        val MIGRATION_21_22 = object : Migration(21, 22) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 addColumnIfAbsent(db, "focus_profiles", "appTiersCsv",
                     "ALTER TABLE focus_profiles ADD COLUMN appTiersCsv TEXT NOT NULL DEFAULT ''")
@@ -621,7 +626,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance

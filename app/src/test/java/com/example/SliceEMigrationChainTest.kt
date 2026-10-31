@@ -37,7 +37,7 @@ import org.robolectric.annotation.Config
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
-// PIN-SCOPE: PLUMBING — Room migration chain to v21, schema validation (working-rules adoption, Oct 31 18:06 IST).
+// PIN-SCOPE: PLUMBING — Room migration chain to v22, schema validation (working-rules adoption, Oct 31 18:06 IST).
 class SliceEMigrationChainTest {
 
     private val context: Context
@@ -270,14 +270,15 @@ class SliceEMigrationChainTest {
                 MonolithDatabase.MIGRATION_17_18,
                 MonolithDatabase.MIGRATION_18_19,
                 MonolithDatabase.MIGRATION_19_20,
-                MonolithDatabase.MIGRATION_20_21
+                MonolithDatabase.MIGRATION_20_21,
+                MonolithDatabase.MIGRATION_21_22
             )
             .build()
         runBlocking {
             val dao = room.monolithDao()
             // The read forces the open: Room has migrated
             // 7→8→9→10→11→12→13→14→15→16→17→18→19→20→21 AND
-            // validated the result against every v21 entity.
+            // validated the result against every v22 entity.
             val session = dao.getSessionHistorySnapshot().single()
             assertEquals("shaped session", session.intention)
             assertEquals(0L, session.endWallMillis)
