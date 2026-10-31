@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -563,140 +564,19 @@ fun ShieldMatrixScreen(
             )
         }
 
-        // =====================================================================
-        // SECTION 3.5: RULES IN FORCE — THE STANDING ORDERS SLIP.
-        // (Issue #97, recomposed under the Oct 31 ruling: the slip
-        // mixes factory presets and category births with the man's
-        // own changes, so it is headed RULES IN FORCE, never
-        // "YOUR RULES" — a guessed or factory rule must not print
-        // as his personal decision.)
-        // The tally first (three numbers that sum to the phone — a
-        // ledger that doesn't balance is a lie), then PEEK before
-        // SHUT (the holes are the urgent read), one printed line per
-        // ruling. A line tap flips the ruling on the sled's own
-        // commit path; revoking to OPEN lives on the catalogue sled,
-        // where it belongs — the book amends, the catalogue revokes.
-        // Under search the slip folds to its header line (Liv D6):
-        // search is a finding tool for the catalogue and never
-        // filters the book, or its counts would stop being counts of
-        // his decisions.
-        // =====================================================================
-        if (searchQuery.isBlank()) {
-            item {
-                Column {
-                    SlipHeaderRow(right = null)
-                    // Issue #107 (#4): the slip's lines are toggles —
-                    // the header now SAYS so, instead of letting a
-                    // tap-to-inspect silently flip a ruling.
-                    Text(
-                        text = "TAP A LINE TO FLIP IT SHUT ↔ PEEK",
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .padding(top = 4.dp)
-                            .testTag("slip_hint")
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    StandingTallyLine(counts = tallyShown)
-                    // Issue #129 F5: the tally's OPEN figure is
-                    // exposure, and the slip now says so in words
-                    // — an open app is not bookkeeping, it is a
-                    // door nothing guards for a whole session.
-                    if (rules.unguardedCount > 0) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "${rules.unguardedCount} OPEN — NOT HELD. ANY OF THEM CAN BE USED FOR THE WHOLE SESSION.",
-                            fontFamily = AnonymousProFamily,
-                            fontSize = 11.sp,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier.testTag("open_exposure_line")
-                        )
-                    }
-                    // Issue #107 (#2): the PEEK terms, printed where
-                    // the rulings are read.
-                    Text(
-                        text = peekTermsLine(peekMinutes),
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 11.sp,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .padding(top = 4.dp)
-                            .testTag("shield_peek_terms")
-                    )
-                }
-            }
-            val peekLines = slipLines(AppBlockTier.PEEK_2M, rules, restingFlips, allApps)
-            item { SlipSectionHeader(word = "PEEK") }
-            if (peekLines.isEmpty()) {
-                item { SlipNoneLine() }
-            } else {
-                items(peekLines, key = { "slip_${it.app.packageName}" }) { line ->
-                    SlipLineRow(
-                        line = line,
-                        onTap = { slipTap(line.app) },
-                        onRestElapsed = {
-                            restingFlips[line.app.packageName]?.let { entry ->
-                                restingFlips = restingFlips +
-                                    (line.app.packageName to entry.copy(exiting = true))
-                            }
-                        },
-                        onExitElapsed = {
-                            restingFlips = restingFlips - line.app.packageName
-                        }
-                    )
-                }
-            }
-            // Issue #141: OPEN gets a section too. The slip used to
-            // print only the rulings that restrict, so an app flipped
-            // to OPEN vanished from the book entirely — discoverable
-            // only by the absence nobody audits. The open rulings are
-            // printed like the others; a line tap shuts the app
-            // (the book amends in both directions).
-            val openLines = slipLines(AppBlockTier.OPEN, rules, restingFlips, allApps)
-            item { SlipSectionHeader(word = "OPEN") }
-            if (openLines.isEmpty()) {
-                item { SlipNoneLine() }
-            } else {
-                items(openLines, key = { "slip_${it.app.packageName}" }) { line ->
-                    SlipLineRow(
-                        line = line,
-                        onTap = { slipTap(line.app) },
-                        onRestElapsed = {
-                            restingFlips[line.app.packageName]?.let { entry ->
-                                restingFlips = restingFlips +
-                                    (line.app.packageName to entry.copy(exiting = true))
-                            }
-                        },
-                        onExitElapsed = {
-                            restingFlips = restingFlips - line.app.packageName
-                        }
-                    )
-                }
-            }
-        } else {
-            // Shield Rethink 2, Step 2 — the Sheet: SHUT prints as
-            // ONE collapsed tally line. The shut are the ground,
-            // not the news; under the inversion most of the phone
-            // is shut, and a book that prints the ground buries the
-            // decisions. Their names live in the catalogue below,
-            // where a shut app is unshut. PEEK and OPEN — the
-            // exceptions, his named decisions — print in full above.
-            item { SlipSectionHeader(word = "SHUT") }
-            item {
-                Text(
-                    text = "$shutCount APPS SHUT — THE CATALOGUE BELOW HOLDS THEIR NAMES",
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 11.sp,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.testTag("slip_shut_tally")
-                )
-            }
-
-            item {
-                SlipHeaderRow(right = tallyText(shutCount, peekCount, open = null))
-            }
-        }
+        standingOrdersSlip(
+            searchQuery = searchQuery,
+            scheme = scheme,
+            tallyShown = tallyShown,
+            rules = rules,
+            restingFlips = restingFlips,
+            onRestingFlipsChanged = { restingFlips = it },
+            allApps = allApps,
+            slipTap = slipTap,
+            shutCount = shutCount,
+            peekCount = peekCount,
+            peekMinutes = peekMinutes
+        )
 
         // M5 (Mikro): the prune announces itself once — one quiet
         // line in the app's one-time-strip grammar (the routine
@@ -1317,6 +1197,167 @@ internal val PEEK_TERMS_LINE: String = peekTermsLine(2)
 // LazyColumn. They are standalone composables now, with every input
 // passed explicitly; bodies are verbatim, behaviour unchanged.
 // ------------------------------------------------------------------
+
+/**
+ * Issue #90 (complexity F4 slice): SECTION 3.5 — the standing
+ * orders slip — extracted out of ShieldMatrixScreen's body as a
+ * LazyListScope section, in the pattern of the already-extracted
+ * RoutinesSection/banners. Behaviour-identical: the header item,
+ * the PEEK and OPEN line sections and the under-search SHUT tally
+ * fold are the same items in the same order; the host's captures
+ * are explicit parameters, and the resting-flip state writes ride
+ * onRestingFlipsChanged back to the host's state holder.
+ */
+private fun LazyListScope.standingOrdersSlip(
+    searchQuery: String,
+    scheme: androidx.compose.material3.ColorScheme,
+    tallyShown: Triple<Int, Int, Int>,
+    rules: com.example.data.AppRules,
+    restingFlips: Map<String, RestingFlip>,
+    onRestingFlipsChanged: (Map<String, RestingFlip>) -> Unit,
+    allApps: List<BlockedAppEntity>,
+    slipTap: (BlockedAppEntity) -> Unit,
+    shutCount: Int,
+    peekCount: Int,
+    peekMinutes: Int
+) {
+    // =====================================================================
+    // SECTION 3.5: RULES IN FORCE — THE STANDING ORDERS SLIP.
+    // (Issue #97, recomposed under the Oct 31 ruling: the slip
+    // mixes factory presets and category births with the man's
+    // own changes, so it is headed RULES IN FORCE, never
+    // "YOUR RULES" — a guessed or factory rule must not print
+    // as his personal decision.)
+    // The tally first (three numbers that sum to the phone — a
+    // ledger that doesn't balance is a lie), then PEEK before
+    // SHUT (the holes are the urgent read), one printed line per
+    // ruling. A line tap flips the ruling on the sled's own
+    // commit path; revoking to OPEN lives on the catalogue sled,
+    // where it belongs — the book amends, the catalogue revokes.
+    // Under search the slip folds to its header line (Liv D6):
+    // search is a finding tool for the catalogue and never
+    // filters the book, or its counts would stop being counts of
+    // his decisions.
+    // =====================================================================
+    if (searchQuery.isBlank()) {
+        item {
+            Column {
+                SlipHeaderRow(right = null)
+                // Issue #107 (#4): the slip's lines are toggles —
+                // the header now SAYS so, instead of letting a
+                // tap-to-inspect silently flip a ruling.
+                Text(
+                    text = "TAP A LINE TO FLIP IT SHUT ↔ PEEK",
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .testTag("slip_hint")
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                StandingTallyLine(counts = tallyShown)
+                // Issue #129 F5: the tally's OPEN figure is
+                // exposure, and the slip now says so in words
+                // — an open app is not bookkeeping, it is a
+                // door nothing guards for a whole session.
+                if (rules.unguardedCount > 0) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "${rules.unguardedCount} OPEN — NOT HELD. ANY OF THEM CAN BE USED FOR THE WHOLE SESSION.",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("open_exposure_line")
+                    )
+                }
+                // Issue #107 (#2): the PEEK terms, printed where
+                // the rulings are read.
+                Text(
+                    text = peekTermsLine(peekMinutes),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .testTag("shield_peek_terms")
+                )
+            }
+        }
+        val peekLines = slipLines(AppBlockTier.PEEK_2M, rules, restingFlips, allApps)
+        item { SlipSectionHeader(word = "PEEK") }
+        if (peekLines.isEmpty()) {
+            item { SlipNoneLine() }
+        } else {
+            items(peekLines, key = { "slip_${it.app.packageName}" }) { line ->
+                SlipLineRow(
+                    line = line,
+                    onTap = { slipTap(line.app) },
+                    onRestElapsed = {
+                        restingFlips[line.app.packageName]?.let { entry ->
+                            onRestingFlipsChanged(
+                                restingFlips + (line.app.packageName to entry.copy(exiting = true))
+                            )
+                        }
+                    },
+                    onExitElapsed = {
+                        onRestingFlipsChanged(restingFlips - line.app.packageName)
+                    }
+                )
+            }
+        }
+        // Issue #141: OPEN gets a section too. The slip used to
+        // print only the rulings that restrict, so an app flipped
+        // to OPEN vanished from the book entirely — discoverable
+        // only by the absence nobody audits. The open rulings are
+        // printed like the others; a line tap shuts the app
+        // (the book amends in both directions).
+        val openLines = slipLines(AppBlockTier.OPEN, rules, restingFlips, allApps)
+        item { SlipSectionHeader(word = "OPEN") }
+        if (openLines.isEmpty()) {
+            item { SlipNoneLine() }
+        } else {
+            items(openLines, key = { "slip_${it.app.packageName}" }) { line ->
+                SlipLineRow(
+                    line = line,
+                    onTap = { slipTap(line.app) },
+                    onRestElapsed = {
+                        restingFlips[line.app.packageName]?.let { entry ->
+                            onRestingFlipsChanged(
+                                restingFlips + (line.app.packageName to entry.copy(exiting = true))
+                            )
+                        }
+                    },
+                    onExitElapsed = {
+                        onRestingFlipsChanged(restingFlips - line.app.packageName)
+                    }
+                )
+            }
+        }
+    } else {
+        // Shield Rethink 2, Step 2 — the Sheet: SHUT prints as
+        // ONE collapsed tally line. The shut are the ground,
+        // not the news; under the inversion most of the phone
+        // is shut, and a book that prints the ground buries the
+        // decisions. Their names live in the catalogue below,
+        // where a shut app is unshut. PEEK and OPEN — the
+        // exceptions, his named decisions — print in full above.
+        item { SlipSectionHeader(word = "SHUT") }
+        item {
+            Text(
+                text = "$shutCount APPS SHUT — THE CATALOGUE BELOW HOLDS THEIR NAMES",
+                fontFamily = AnonymousProFamily,
+                fontSize = 11.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.testTag("slip_shut_tally")
+            )
+        }
+
+        item {
+            SlipHeaderRow(right = tallyText(shutCount, peekCount, open = null))
+        }
+    }
+}
 
 @Composable
 private fun RatchetWarningBanner(
