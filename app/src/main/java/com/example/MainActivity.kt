@@ -2146,37 +2146,18 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onArmedHandover = { armedHandover = it }
             )
 
-            // Composition note (issue #14 landing, Oct 31): the
-            // Slice D comment that rode with this graft ("the
-            // ShieldPermissionPrimerModal binding stays REMOVED")
-            // is superseded on current main — issue #324 re-created
-            // the primer below WITHOUT the banned COMMIT & ARM
-            // ANYWAY path, so the register reason for the removal
-            // no longer holds. Both surfaces stand: the Reception
-            // above, the primer below it in the overlay order.
-            // Issue #324, finding 4 (build half, relabelled):
-            // the ShieldPermissionPrimerModal is RE-CREATED and
-            // bound here. This is NOT the Slice D modal restored:
-            // its "COMMIT & ARM ANYWAY" path (register LR2-S1-18)
-            // does not exist in the re-creation — the only action
-            // is FIX, routed through openFixPane to the step's own
-            // Settings pane, and arming still lives where Slice D
-            // put it: the warrant slide reads the grants itself
-            // and refuses in the open. The primer stands over an
-            // open Park while a measured board shows an ungranted
-            // step; the step derives from the live grants plus
-            // PermissionStepStore's persisted in-flight record, so
-            // an interrupted sequence resumes where it stopped.
-            com.example.ui.components.ShieldPermissionPrimerModal(
-                visible = parkOpen && watchSnapshot.items.isNotEmpty() &&
-                    permissionStep != null && !permissionPrimerDismissed,
-                currentStep = permissionStep,
-                grants = permissionGrants,
-                onFixClick = { item ->
-                    permissionPrimerDismissed = true
-                    openFixPane(context, permissionStepStore, viewModel, parkIntroDeliveredThisOpen, { parkIntroFixTripThisOpen = true }, item)
-                },
-                onDismiss = { permissionPrimerDismissed = true }
+            PrimerOverlay(
+                parkOpen = parkOpen,
+                watchSnapshot = watchSnapshot,
+                permissionStep = permissionStep,
+                permissionPrimerDismissed = permissionPrimerDismissed,
+                permissionGrants = permissionGrants,
+                context = context,
+                permissionStepStore = permissionStepStore,
+                viewModel = viewModel,
+                parkIntroDeliveredThisOpen = parkIntroDeliveredThisOpen,
+                onPrimerDismissed = { permissionPrimerDismissed = true },
+                onParkIntroFixTrip = { parkIntroFixTripThisOpen = true }
             )
 
             // THE LAUNCHER BLOCK SURFACE: hosted under the Airlock,
@@ -2359,6 +2340,66 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
 
         }
     }
+}
+
+/**
+ * Issue #90 (complexity F3, overlay slice 4): the shield
+ * permission primer modal call of MonolithRootApp's overlay
+ * layer — extracted as one composable (the call's own
+ * composition-note comment travels with it).
+ * Behaviour-identical: every value the call consumes arrives
+ * as a parameter; its two dismissal writes ride the
+ * onPrimerDismissed callback at their standing positions
+ * (the fix click's first act, and onDismiss), and the
+ * fix-trip flag inside the openFixPane argument rides
+ * onParkIntroFixTrip, as in the reception slice.
+ */
+@Composable
+private fun PrimerOverlay(
+    parkOpen: Boolean,
+    watchSnapshot: com.example.service.WatchSnapshot,
+    permissionStep: com.example.service.WatchItemId?,
+    permissionPrimerDismissed: Boolean,
+    permissionGrants: Map<com.example.service.WatchItemId, Boolean>,
+    context: android.content.Context,
+    permissionStepStore: com.example.data.PermissionStepStore,
+    viewModel: MonolithViewModel,
+    parkIntroDeliveredThisOpen: Boolean,
+    onPrimerDismissed: () -> Unit,
+    onParkIntroFixTrip: () -> Unit
+) {
+    // Composition note (issue #14 landing, Oct 31): the
+    // Slice D comment that rode with this graft ("the
+    // ShieldPermissionPrimerModal binding stays REMOVED")
+    // is superseded on current main — issue #324 re-created
+    // the primer below WITHOUT the banned COMMIT & ARM
+    // ANYWAY path, so the register reason for the removal
+    // no longer holds. Both surfaces stand: the Reception
+    // above, the primer below it in the overlay order.
+    // Issue #324, finding 4 (build half, relabelled):
+    // the ShieldPermissionPrimerModal is RE-CREATED and
+    // bound here. This is NOT the Slice D modal restored:
+    // its "COMMIT & ARM ANYWAY" path (register LR2-S1-18)
+    // does not exist in the re-creation — the only action
+    // is FIX, routed through openFixPane to the step's own
+    // Settings pane, and arming still lives where Slice D
+    // put it: the warrant slide reads the grants itself
+    // and refuses in the open. The primer stands over an
+    // open Park while a measured board shows an ungranted
+    // step; the step derives from the live grants plus
+    // PermissionStepStore's persisted in-flight record, so
+    // an interrupted sequence resumes where it stopped.
+    com.example.ui.components.ShieldPermissionPrimerModal(
+        visible = parkOpen && watchSnapshot.items.isNotEmpty() &&
+            permissionStep != null && !permissionPrimerDismissed,
+        currentStep = permissionStep,
+        grants = permissionGrants,
+        onFixClick = { item ->
+            onPrimerDismissed()
+            openFixPane(context, permissionStepStore, viewModel, parkIntroDeliveredThisOpen, { onParkIntroFixTrip() }, item)
+        },
+        onDismiss = { onPrimerDismissed() }
+    )
 }
 
 /**
