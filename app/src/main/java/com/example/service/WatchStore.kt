@@ -108,7 +108,15 @@ enum class WatchItemId(val boardName: String, val counted: Boolean) {
     BATTERY("BATTERY", false),
     SHORTS_REELS("SHORTS + REELS", false),
     SOCIAL_SITES("SOCIAL SITES", false),
-    NOTIFICATIONS("NOTIFICATIONS", false);
+    NOTIFICATIONS("NOTIFICATIONS", false),
+    // Audit R6 #340 F44: the OEM gates Android refuses to report —
+    // autostart, background-popup, sleeping-apps lists. No API can
+    // measure this item, ever: its only lawful states are
+    // UNMEASURED and SWORN (the user's own timestamped oath). It
+    // is in neither PERMISSIONS (the sweep cannot query it and the
+    // Guard denominator must never count an oath as a grant) nor
+    // INTERCEPTORS. It sits last in board order for that reason.
+    AUTOSTART("AUTOSTART", false);
 
     companion object {
         /** The six permission-family items, board order.
@@ -177,6 +185,11 @@ data class WatchSnapshot(
      *  value it copies, so the old poke could never notify a
      *  collector. */
     val pokeGen: Long = 0L,
+    /** Audit R6 #340 F44: live attestations — item → wall millis
+     *  sworn. Validated at bind (boot count + package stamp must
+     *  still match); an invalidated oath never enters a snapshot,
+     *  so no print can resurrect it. */
+    val attestations: Map<WatchItemId, Long> = emptyMap(),
     /** Issue #122: the latest battery snapshot (level / saver /
      *  charging / exemption), published by the BATTERY sweep
      *  query and by the shield loop. PARK's BATTERY line prints
@@ -196,8 +209,13 @@ data class WatchSnapshot(
  *  UNPROVED (issue #94): a measurement exists and reads granted, but
  *  a fact the app cannot measure stands behind it — the BATTERY line
  *  on an OEM-autostart-gated skin, where the AOSP exemption is only
- *  half the survival fact and the autostart half is unreadable. */
-enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE, MISSING_STALE, UNPROVED }
+ *  half the survival fact and the autostart half is unreadable.
+ *  SWORN (Audit R6 #340 F44) is the further truth the funnel owed:
+ *  "the OS cannot tell us — the user swears they did it." It is
+ *  a PRINT only, never a PermState: an oath is not a measurement,
+ *  is never counted as GRANTED anywhere, and dies on the events
+ *  that could falsify it (reboot, app replacement). */
+enum class PermPrint { UNMEASURED, GRANTED, MISSING, STALE, MISSING_STALE, UNPROVED, SWORN }
 
 object WatchStore {
 
@@ -244,6 +262,14 @@ object WatchStore {
     private const val PREFS_NAME = "monolith_watch"
     private const val KEY_LAST_PROVED_WALL = "last_proved_wall_ms"
 
+    // Audit R6 #340 F44: attestation storage — the oath's wall
+    // instant, the boot count it was sworn under, and the app
+    // package stamp it was sworn into. All three must still match
+    // at bind or the oath is dead and is never restored.
+    private const val KEY_SWORN_WALL_PREFIX = "sworn_wall_"
+    private const val KEY_SWORN_BOOT_PREFIX = "sworn_boot_"
+    private const val KEY_SWORN_PKG_PREFIX = "sworn_pkg_"
+
     @Volatile private var boundContext: Context? = null
 
     /**
@@ -257,16 +283,72 @@ object WatchStore {
         val app = context.applicationContext
         if (boundContext === app) return
         boundContext = app
-        val persisted = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getLong(KEY_LAST_PROVED_WALL, 0L)
-        if (persisted > 0L) {
+        val prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val persisted = prefs.getLong(KEY_LAST_PROVED_WALL, 0L)
+        // Audit R6 #340 F44: restore only the oaths that still
+        // stand — sworn under THIS boot and into THIS package
+        // build. A reboot or an app replacement kills the oath
+        // silently and completely: the item returns to UNMEASURED
+        // and the user swears again, eyes open.
+        val restoredOaths = HashMap<WatchItemId, Long>()
+        for (item in WatchItemId.entries) {
+            val wall = prefs.getLong(KEY_SWORN_WALL_PREFIX + item.name, 0L)
+            if (wall <= 0L) continue
+            val bootThen = prefs.getInt(KEY_SWORN_BOOT_PREFIX + item.name, -1)
+            val bootNow = currentBootCount(app)
+            if (bootThen >= 0 && bootNow >= 0 && bootThen != bootNow) continue
+            val pkgThen = prefs.getLong(KEY_SWORN_PKG_PREFIX + item.name, 0L)
+            val pkgNow = currentPackageStamp(app)
+            if (pkgThen > 0L && pkgNow > 0L && pkgThen != pkgNow) continue
+            restoredOaths[item] = wall
+        }
+        if (persisted > 0L || restoredOaths.isNotEmpty()) {
             publish { current ->
-                if ((current.lastProvedWallMillis ?: 0L) < persisted) {
-                    current.copy(lastProvedWallMillis = persisted)
-                } else {
-                    current
+                var next = current
+                if (persisted > (next.lastProvedWallMillis ?: 0L)) {
+                    next = next.copy(lastProvedWallMillis = persisted)
                 }
+                if (restoredOaths.isNotEmpty()) {
+                    next = next.copy(attestations = next.attestations + restoredOaths)
+                }
+                next
             }
+        }
+    }
+
+    private fun currentBootCount(context: Context): Int = try {
+        android.provider.Settings.Global.getInt(
+            context.contentResolver, android.provider.Settings.Global.BOOT_COUNT, -1
+        )
+    } catch (_: Exception) {
+        -1
+    }
+
+    private fun currentPackageStamp(context: Context): Long = try {
+        context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
+    } catch (_: Exception) {
+        0L
+    }
+
+    /**
+     * Audit R6 #340 F44: record the user's oath for a gate no API
+     * can verify ("I have applied it"). Timestamped, persisted
+     * with its boot count and package stamp, and printed as SWORN
+     * — distinctly, never as GRANTED. Swearing is the whole verb:
+     * there is no settings trip for a gate the OS will not report,
+     * and faking a trip would be theatre.
+     */
+    fun attest(item: WatchItemId) {
+        val app = boundContext ?: return
+        val wall = System.currentTimeMillis()
+        app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(KEY_SWORN_WALL_PREFIX + item.name, wall)
+            .putInt(KEY_SWORN_BOOT_PREFIX + item.name, currentBootCount(app))
+            .putLong(KEY_SWORN_PKG_PREFIX + item.name, currentPackageStamp(app))
+            .commit()
+        publish { current ->
+            current.copy(attestations = current.attestations + (item to wall))
         }
     }
 
@@ -497,6 +579,7 @@ object WatchStore {
                     .onSuccess { granted -> stampPermission(item, granted, gen) }
                     .onFailure {
                         Log.w("WatchStore", "sweep query threw for $item; no stamp written", it)
+                        FailureLog.record("watchstore", "sweep:$item", it)
                     }
             }
         }
@@ -606,8 +689,15 @@ object WatchStore {
      *  that act on a lack (PARK's FIX key) still know the item is
      *  missing, not merely old. */
     fun permPrintAt(snapshot: WatchSnapshot, item: WatchItemId, nowMono: Long): PermPrint {
-        val m = snapshot.items[item] ?: return PermPrint.UNMEASURED
-        val perm = m.perm ?: return PermPrint.UNMEASURED
+        val m = snapshot.items[item]
+        val perm = m?.perm
+        // Audit R6 #340 F44: a standing oath prints SWORN over any
+        // non-grant measurement — but never over a real GRANTED:
+        // proof outranks testimony, always.
+        if (perm != PermState.GRANTED && snapshot.attestations.containsKey(item)) {
+            return PermPrint.SWORN
+        }
+        if (m == null || perm == null) return PermPrint.UNMEASURED
         val stale = nowMono - m.measuredMono > STALE_AFTER_MS
         return when {
             // Issue #94 (F1): on a skin whose OEM autostart toggle gates

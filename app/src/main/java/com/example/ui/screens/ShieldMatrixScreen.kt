@@ -125,6 +125,11 @@ fun ShieldMatrixScreen(
     // below stays open there — abort is free, the law correctable.
     isGracePeriod: Boolean = false,
     ratchetWarningMessage: String? = null,
+    // Audit R6 #340 F13: the held-save notice — a routine edit that
+    // collided was NOT written, and this banner names the exact
+    // collision until the user dismisses it.
+    routineConflictNotice: String? = null,
+    onDismissRoutineConflictNotice: () -> Unit = {},
     // Issue #141: the staged sled commit + its take-back, rendered
     // as a banner under the ratchet warning while the window lasts.
     tierChangeForUndo: TierChangeForUndo? = null,
@@ -368,46 +373,48 @@ fun ShieldMatrixScreen(
             }
         }
 
-        // Issue #141: the sled commit's receipt + take-back. A tier
-        // change used to land silently and forever; while the undo
-        // window lasts, the banner names what changed and offers
-        // the reversal on the spot.
+        // Audit R6 #340 F13: the held routine save. Same banner
+        // grammar as the ratchet warning; tapping dismisses.
+        // (The issue #141 tier-change banner that also stood here
+        // on this branch lives on main as an extracted component
+        // above — it is NOT duplicated here.)
         item {
-            AnimatedVisibility(visible = tierChangeForUndo != null) {
-                val change = tierChangeForUndo
-                if (change != null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(scheme.primaryContainer)
-                            .padding(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "'${change.appName.uppercase()}' SET TO ${tierWord(change.toTier)}",
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = Color(0xFFFBF1EC)
-                            )
-                            Text(
-                                text = "UNDO",
-                                modifier = Modifier.clickable { gatedUndoTierChange() },
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = Color(0xFFFBF1EC)
-                            )
-                        }
-                    }
+            AnimatedVisibility(visible = !routineConflictNotice.isNullOrBlank()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(scheme.primaryContainer)
+                        .clickable { onDismissRoutineConflictNotice() }
+                        .padding(12.dp)
+                ) {
+                    Text(
+                        text = routineConflictNotice ?: "",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = TokenColorOnPrimary
+                    )
                 }
             }
         }
 
+        // =====================================================================
+        // SECTION 1: SLIDING CAP LOADOUT SELECTOR (Sarthak's pick,
+        // Oct 29 — Linea's cap over the RombiKnob; the cap occupies
+        // the same 84dp slot the knob's AndroidView held)
+        // =====================================================================
+
+        // FIX-R2 recomposition (PR #388 onto main 0901283c): the
+        // #141 banner renders through main's extracted
+        // TierChangeUndoBanner; the undo callback stays this
+        // branch's lock-gated one.
+        item {
+            TierChangeUndoBanner(
+                change = tierChangeForUndo,
+                onUndo = gatedUndoTierChange
+            )
+        }
         // SECTION 1 was the LOADOUT cap + preview (profiles /
         // smart loadouts). Shield Rethink 2, Step 2: DELETED by
         // ruling (#22, Oct 30) — guessed rulings wearing a uniform.

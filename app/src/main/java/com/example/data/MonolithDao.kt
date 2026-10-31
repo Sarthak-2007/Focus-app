@@ -438,6 +438,23 @@ interface MonolithDao {
     @Query("UPDATE focus_sessions SET receiptNumber = :number WHERE id = :sessionId")
     suspend fun stampReceiptNumber(sessionId: Int, number: Int): Int
 
+    // Audit R6 #340 F5/F48: the finish seal, stamped on the row at
+    // publish time in the same targeted-UPDATE style as the № —
+    // two columns, nothing else on the row may move.
+    @Query("UPDATE focus_sessions SET finishSignature = :signature, prevFinishSignature = :prevSignature WHERE id = :sessionId")
+    suspend fun stampFinishSeal(sessionId: Int, signature: String, prevSignature: String)
+
+    // The chain's previous link: the finish seal of the highest
+    // claimed № below this one that carries a seal at all.
+    @Query("SELECT finishSignature FROM focus_sessions WHERE receiptNumber > 0 AND receiptNumber < :receiptNumber AND finishSignature != '' ORDER BY receiptNumber DESC LIMIT 1")
+    suspend fun previousFinishSignature(receiptNumber: Int): String?
+
+    // Audit R6 #340 F17: today's reach count for one package —
+    // the escalation signal for the Airlock wall. The DrawerDay
+    // filing boundary is the caller's (it passes the day start).
+    @Query("SELECT COUNT(*) FROM intercept_logs WHERE packageName = :packageName AND timestampMillis >= :fromMillis")
+    suspend fun countInterceptsForPackageSince(packageName: String, fromMillis: Long): Int
+
     // Blocked Websites (user-editable; enforced by the accessibility service)
     @Query("SELECT * FROM blocked_sites ORDER BY domain ASC")
     fun getAllSitesFlow(): Flow<List<BlockedSiteEntity>>
@@ -476,6 +493,12 @@ interface MonolithDao {
     // same §7.5 discipline as the browser pair above.
     @Query("UPDATE guard_settings SET shortsReelsSniperEnabled = :enabled WHERE id = 1")
     suspend fun updateShortsReelsSniperEnabled(enabled: Boolean): Int
+
+    // Audit R6 #340 F68: body-consent is its own consent, separate
+    // from notification-capture consent. Targeted UPDATE, same
+    // §7.5 discipline as the pairs above.
+    @Query("UPDATE guard_settings SET notificationBodyConsent = :consent WHERE id = 1")
+    suspend fun updateNotificationBodyConsent(consent: String)
 
     @Query("UPDATE guard_settings SET routineReseedV1Done = 1 WHERE id = 1")
     suspend fun markRoutineReseedV1Done(): Int
