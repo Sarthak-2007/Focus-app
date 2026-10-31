@@ -105,3 +105,12 @@ SURVIVES metadata-only at the latest schema, which #100's v21 drop
 supersedes. The pin is removed and replaced by a supersession note
 in place; the absence assertion (same test, above it) is the
 latest-schema truth. Named here for K8/#166 per the test orders.
+
+Addendum 4 (same run): main landed TWO MIGRATION_20_21 declarations
+in one wave (#525 rebootGapSeconds + #253 profile bundle, PR #748) —
+a duplicate-declaration compile break on main itself (verified on
+main dc933100). As composing lane I repaired it inside this PR:
+#525 keeps 20→21, the #253 bundle renumbers to MIGRATION_21_22
+(contents unchanged), and the #100 drop takes MIGRATION_22_23,
+DB v23. This failure is classified MERGE-INTRODUCED (by the wave,
+not by this PR and not the floor), owned here as the composing lane.
