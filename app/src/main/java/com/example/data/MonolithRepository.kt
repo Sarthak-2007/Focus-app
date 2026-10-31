@@ -549,6 +549,11 @@ class MonolithRepository(
     val allSitesFlow: Flow<List<BlockedSiteEntity>> = dao.getAllSitesFlow()
     val allRoutinesFlow: Flow<List<RoutineEntity>> = dao.getAllRoutinesFlow()
 
+    /** Issue #94 F4: the guard-settings row as a flow — its
+     *  lastRoutineTickMillis column is the routine chain's
+     *  liveness stamp, read by the Shield surface's ROUTINE line. */
+    val guardSettingsFlow: Flow<GuardSettingsEntity?> = dao.getGuardSettingsFlow()
+
     // Issue #13, A-10(ii)/(iii): the receipt's persisted
     // filed-marker — one store, two writers (birth for
     // routine-born kinds, the hand for the rest).

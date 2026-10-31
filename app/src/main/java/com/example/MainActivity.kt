@@ -670,6 +670,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val darkTheme by viewModel.darkTheme.collectAsStateWithLifecycle()
     val themeEvaluation by viewModel.themeEvaluation.collectAsStateWithLifecycle()
     val guardLinePrint by viewModel.guardLinePrint.collectAsStateWithLifecycle()
+    val routineChainPrint by viewModel.routineChainPrint.collectAsStateWithLifecycle()
     val watchSnapshot by viewModel.watchSnapshots.collectAsStateWithLifecycle()
     // Issue #14 (#70-F2 remainder): the Reception Sheet's later
     // movement gates on the session history — finished sessions,
@@ -1716,6 +1717,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     isSessionActive = sealed,
                                     blockingStatus = shieldBlockingStatus,
                                     receiptLine = shieldReceiptLine,
+                                    routineChainLine = routineChainPrint?.text,
                                     intention = shieldIntention,
                                     onIntentionChanged = viewModel::setShieldIntention,
                                     isGracePeriod = shieldInGracePeriod,
