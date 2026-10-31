@@ -223,3 +223,11 @@ Register note: Wave-3 cell reports are still landing; their seat ideas enter on 
 | Idea | Seat | Issue | Disposition |
 |---|---|---|---|
 | SealTruth — ONE shared truth source for every glance surface: pure law (SealTruthLaw) + persisted shield warrant record (the protecting flip, written at the flip) + throttled persisted a11y pipeline record, so widget / shield card (incl. lock-screen public version) / Deck warrant / watchdog / QS tile / DreamService / shortcuts all RENDER one SealVerdict instead of re-deriving; kills lie classes L1–L8 (row-truth SEALED, warm-process-only truth, grant-as-binding, clock-travel, threshold drift, static public version, future-surface re-derivation, friendly-writer beat forgery); programme ≈5–7 builder-days, core M–L 2–3d | MAXIMPL-2 | #155 | PANEL-QUEUED (design + per-surface prices + consult asks filed on #155: https://github.com/Sarthak-2007/Focus-app/issues/155#issuecomment-6538324133 · VERIFIED vs main 9e7b38f68b3694146a95e4dba02dacf49539686b · offered to FINISH-LEAD K5 / PR #540 driver for the fresh re-implementation; no code built by this seat) |
+
+## Glance-truth test floor (WING-A, #155)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| PIN-scope labels as a floor law: every test carries its scope (PLUMBING / POST / RENDER / SOURCE) in its name or header, so coverage can never be misread at a glance — a test named as a behaviour pin that only exercises plumbing is how F3's ghost survived PR #540's first test file | MAXIMPL-4 | #155 | PANEL-QUEUED (full test matrix + audit: https://github.com/Sarthak-2007/Focus-app/issues/155#issuecomment-6538317578) |
+| Mutation acceptance as the definition of "pinned" for every truth surface: six named mutations (call-site flag flip, funnel deletion, gate removal, timeout zeroing, badge flip, truth-boundary shift) must each fail at least one test, or the coverage is decoration | MAXIMPL-4 | #155 | PANEL-QUEUED |
+| The widget line carries its own death: a SEALED render schedules its own un-render at beat + 30 s, making staleness impossible by construction rather than by the 30-minute platform cadence | MAXIMPL-4 | #155 | PANEL-QUEUED (feeds MAXIMPL-3's refresh-architecture seat) |
