@@ -1417,7 +1417,16 @@ class MonolithAccessibilityService : AccessibilityService() {
                 }
             }
             val telecomInCall = telecom?.let {
-                try { it.isInCall } catch (e: Exception) {
+                // isInCall is permission-gated (READ_PHONE_STATE,
+                // which this app deliberately never holds): an
+                // unpermitted read throws SecurityException and
+                // lands as "not in call" — named explicitly, the
+                // way the generic catch below already treated it,
+                // so no exemption can ever be minted on an
+                // unreadable state.
+                try { it.isInCall } catch (e: SecurityException) {
+                    noteDetectionFailure("callTrackingIsInCall", e); false
+                } catch (e: Exception) {
                     noteDetectionFailure("callTrackingIsInCall", e); false
                 }
             } ?: false
