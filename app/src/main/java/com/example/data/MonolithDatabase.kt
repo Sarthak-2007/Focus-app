@@ -589,12 +589,21 @@ abstract class MonolithDatabase : RoomDatabase() {
          * on Android N+ so Direct-Boot (`LOCKED_BOOT_COMPLETED`) can enforce active locks
          * immediately upon device reboot before the user even unlocks their lock screen.
          *
-         * TOKEN-SPEC §6.2: `fallbackToDestructiveMigration` is GONE, in
-         * the same change that adds this migration — permanently. With
+         * TOKEN-SPEC §6.2: the blanket `fallbackToDestructiveMigration`
+         * is GONE, in the same change that adds this migration. With
          * it, any future un-migrated bump would silently wipe sessions,
-         * routines and spends. From v8 on, a missing migration is a loud
-         * IllegalStateException in testing, never a silent wipe on his
-         * phone.
+         * routines and spends. From v8 on, a missing migration inside
+         * the supported chain is a loud IllegalStateException in
+         * testing, never a silent wipe on his phone.
+         *
+         * Two scoped exceptions stand by Sarthak's explicit ruling
+         * (issue #31, 2026-10-31, comment 6544207912), and only those
+         * two: a pre-v7 database wipes and starts fresh (F2 — there
+         * is no pre-v7 schema anywhere to migrate from), and a
+         * downgrade wipes instead of crashing (F5). Both are set on
+         * the builder in [getInstance]; neither widens into a general
+         * fallback — the loud failure above still governs everything
+         * else.
          */
         /**
          * Issue #83 (storage-hygiene F4): space reclamation. Every
@@ -653,6 +662,23 @@ abstract class MonolithDatabase : RoomDatabase() {
                     "monolith_tactile_db"
                 )
                     .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
+                    // Issue #31, Sarthak's ruling (2026-10-31, issue
+                    // comment 6544207912) — the only two destructive
+                    // paths in this app, each scoped to its ruled case:
+                    // F2: a pre-v7 database wipes and starts fresh.
+                    // No pre-v7 schema exists anywhere to migrate
+                    // FROM, and hand-reconstructing one would be
+                    // fiction; the wipe is the cure, and it is scoped
+                    // to the pre-v7 start versions only — every
+                    // version inside the chain above still migrates
+                    // for real, and any other missing path still
+                    // fails loudly (§6.2 below stands for the rest).
+                    .fallbackToDestructiveMigrationFrom(true, 1, 2, 3, 4, 5, 6)
+                    // F5: a downgrade wipes. An older build opening a
+                    // newer database recreates it empty instead of
+                    // crash-looping; downgrade migrations are NOT
+                    // hand-written, per the same ruling.
+                    .fallbackToDestructiveMigrationOnDowngrade(true)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance
