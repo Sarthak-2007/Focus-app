@@ -5,6 +5,8 @@ import com.example.R
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -1416,7 +1418,17 @@ internal fun peekWithheldReasonVisible(peekReady: Boolean): Boolean = !peekReady
  */
 internal fun peekOfferPreviewText(durationSeconds: Int): String {
     val minutes = durationSeconds / 60
-    return "AFTER THE BREATH: ONE TAP OPENS THIS APP FOR $minutes MINUTES"
+    // Issue #102 rider on #517's set-length prints: at the SET
+    // length of 1 minute (now reachable since #517's writer
+    // landed) the preview names it in the singular rather than
+    // printing a grammar the lease never spoke. At 120s the
+    // line is byte-identical to before (TemptationJourneyTest
+    // pins it).
+    return if (minutes == 1) {
+        "AFTER THE BREATH: ONE TAP OPENS THIS APP FOR 1 MINUTE"
+    } else {
+        "AFTER THE BREATH: ONE TAP OPENS THIS APP FOR $minutes MINUTES"
+    }
 }
 
 /**
@@ -2327,7 +2339,18 @@ fun PeekCountdownPill(
     state: com.example.ui.FloatingPeekPillState,
     onEndEarly: () -> Unit
 ) {
-    if (!state.isActive) return
+    // Issue #102 (retained DAYLIGHT break 2): the pill arrives
+    // and leaves with the ceremony its overlay twin got — a
+    // fade + settle, never the bare `if (!state.isActive) return`
+    // snap the W9 filing charged. The pill's seat and print are
+    // unchanged; only its manners are new.
+    AnimatedVisibility(
+        visible = state.isActive,
+        enter = fadeIn(MonolithCurves.specB()) +
+            slideInVertically(MonolithCurves.specB()) { -it / 2 },
+        exit = fadeOut(MonolithCurves.specA()) +
+            slideOutVertically(MonolithCurves.specA()) { -it / 2 }
+    ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -2372,6 +2395,7 @@ fun PeekCountdownPill(
                     .size(16.dp)
             )
         }
+    }
     }
 }
 
