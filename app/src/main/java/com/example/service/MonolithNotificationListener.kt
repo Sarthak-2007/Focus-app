@@ -160,6 +160,20 @@ class CaptureDedupeTracker {
  * - Saves captured notifications to Room persistent disk storage so they survive background
  *   restarts and can be read, cleared, or tapped to open after studying.
  */
+/**
+ * The hold rule (Audit R3, safe-break-lived #2): a notification is
+ * held — digested and cancelled — when its app's tier is not OPEN,
+ * EXCEPT that a Safe Break releases the apps the break itself
+ * unlocks: a PEEK-tier app is freely open for the break's length
+ * (the accessibility service's Safe Break rule), so holding its
+ * notifications while its owner chats inside it made the "unlock"
+ * half a lie — messages arrived silently into the HELD digest.
+ * LOCKED apps stay held through the break, exactly as they stay
+ * locked. Pure, so the rule is unit-tested without the service.
+ */
+internal fun notificationHeldDuringSession(isInSafeBreak: Boolean, tier: AppBlockTier): Boolean =
+    tier != AppBlockTier.OPEN && !(isInSafeBreak && tier == AppBlockTier.PEEK_2M)
+
 class MonolithNotificationListener : NotificationListenerService() {
 
     private val scope = CoroutineScope(
@@ -331,7 +345,7 @@ class MonolithNotificationListener : NotificationListenerService() {
             // the POST TIME, not about now — a coroutine scheduled
             // after the session ended still captures a message
             // that arrived while the session was running.
-            dao.getSessionCoveringInstant(postTimeMillis) ?: return@launch
+            val coveringSession = dao.getSessionCoveringInstant(postTimeMillis) ?: return@launch
 
             val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
             // Issue #120: FINANCE is never captured and never
@@ -345,7 +359,9 @@ class MonolithNotificationListener : NotificationListenerService() {
             if (appRule != null && appRule.category == AppCategory.FINANCE.name) {
                 return@launch
             }
-            if (appRule != null && appRule.resolvedTier != AppBlockTier.OPEN) {
+            if (appRule != null &&
+                notificationHeldDuringSession(coveringSession.isInSafeBreak, appRule.resolvedTier)
+            ) {
                 val storedTitle = title.ifEmpty { appRule.appName }
                 if (key != null) {
                     // Dedupe, second gate (inside the coroutine, so
@@ -473,7 +489,7 @@ class MonolithNotificationListener : NotificationListenerService() {
         scope.launch {
             val dao = com.example.AppContainer.dao(applicationContext) /* ISSUE-67: single construction point */
             val target = seen ?: run {
-                val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
+                val appRule = dao.getAppByPackage(pkg)
                 SeenCapture(
                     fingerprint = NotificationCapturePolicy.contentFingerprint(rawTitle, text),
                     packageName = pkg,

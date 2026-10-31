@@ -1,4 +1,6 @@
 package com.example.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -147,6 +150,20 @@ fun FocusSequencerScreen(
         orderedQueue.sumOf { it.estimatedMinutes }
     }
 
+    // Issue #106, finding 3: the undo banner lives at the TOP of
+    // this list (item index 2 — Horizon, composer, banner). A
+    // delete taken low in the queue used to birth it off-screen,
+    // where its whole 5-second life expired unseen. When a delete
+    // lands, the list scrolls the banner into view the moment it
+    // appears, so its full window is usable from where the user
+    // actually is.
+    val listState = rememberLazyListState()
+    LaunchedEffect(deletedTaskForUndo) {
+        if (deletedTaskForUndo != null) {
+            listState.scrollToItem(2)
+        }
+    }
+
     fun submitTask() {
         val clean = newTaskTitle.trim()
         if (clean.isNotEmpty()) {
@@ -156,7 +173,12 @@ fun FocusSequencerScreen(
             // Issue #53 F4: and it asks nothing about category —
             // the tag is "" (uncategorised), never a fabricated
             // "Study" the user never chose.
-            onAddTask(clean, 0, "", "", orderedQueue.isEmpty())
+            // Issue #106, finding 4: an empty queue is a reason to
+            // crown the new task only while NO session runs — a
+            // mid-session jot-down is for later, never a hijack of
+            // NOW (the repository enforces the same guard for its
+            // other callers).
+            onAddTask(clean, 0, "", "", orderedQueue.isEmpty() && !isSessionActive)
             newTaskTitle = ""
         }
     }
@@ -174,6 +196,7 @@ fun FocusSequencerScreen(
     }
 
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
             .background(scheme.background)
@@ -239,7 +262,7 @@ fun FocusSequencerScreen(
                 ) {
                     if (newTaskTitle.isEmpty()) {
                         Text(
-                            text = "Add single-line focus task...",
+                            text = stringResource(R.string.sequencer_add_hint),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontSize = 13.sp,
                             color = scheme.onSurfaceVariant
@@ -302,7 +325,7 @@ fun FocusSequencerScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "REMOVED: ${deletedTaskForUndo.title}",
+                        text = stringResource(R.string.sequencer_removed, deletedTaskForUndo.title),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -383,9 +406,10 @@ fun FocusSequencerScreen(
                         modifier = Modifier.weight(1f)
                     )
                     Text(
-                        text = "FINISHED ${
+                        text = stringResource(
+                            R.string.sequencer_finished,
                             ClockText.timeOfDay(LocalContext.current, lastFinished.completedAtMillis)
-                        }",
+                        ),
                         fontFamily = AnonymousProFamily,
                         fontSize = 10.5.sp,
                         color = scheme.onSurfaceVariant,
@@ -393,7 +417,7 @@ fun FocusSequencerScreen(
                     )
                     if (!isSessionActive) {
                         Text(
-                            text = "REOPEN",
+                            text = stringResource(R.string.sequencer_reopen),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
@@ -433,7 +457,7 @@ fun FocusSequencerScreen(
                         verticalArrangement = Arrangement.Center
                     ) {
                         Text(
-                            text = "NOTHING QUEUED",
+                            text = stringResource(R.string.sequencer_nothing_queued),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontSize = 15.sp,
                             color = scheme.onSurfaceVariant
@@ -692,7 +716,7 @@ private fun TaskLeafItem(
                 // while a session is sealed: its absence is the lock.
                 if (!isSessionActive) {
                     Text(
-                        text = "DONE — TEAR",
+                        text = stringResource(R.string.sequencer_done_tear),
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
@@ -703,7 +727,7 @@ private fun TaskLeafItem(
                 }
                 if (task.subSteps.isEmpty()) {
                     Text(
-                        text = "SPLIT",
+                        text = stringResource(R.string.label_split),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -751,7 +775,7 @@ private fun TaskLeafItem(
                     )
                 } else {
                     Text(
-                        text = "CUE",
+                        text = stringResource(R.string.label_cue),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -769,7 +793,7 @@ private fun TaskLeafItem(
                     )
                 }
                 Text(
-                    text = if (delArmed) "SURE?" else "DEL",
+                    text = if (delArmed) stringResource(R.string.key_sure) else stringResource(R.string.key_del),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,

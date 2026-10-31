@@ -1,4 +1,6 @@
 package com.example.ui.components
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExitTransition
@@ -136,6 +138,22 @@ fun ReceiptSheet(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                // WELLE-5 / #253-36: the slip carries its maker's
+                // name. The faulted sheet stays title-less (F-W1),
+                // so the brand prints only on a sound slip, above
+                // its title. The footer below is exact and untouched
+                // — the study record really does live in YPT; what
+                // was missing was Monolith's own name on its artefact.
+                if (!receipt.faulted) {
+                    Text(
+                        text = "MONOLITH",
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 9.sp,
+                        letterSpacing = 2.sp,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -177,12 +195,31 @@ fun ReceiptSheet(
                 // memory while DURATION arithmetic (monotonic)
                 // kept agreeing. Same zone — the overwhelming
                 // case — the print is exactly as before.
+                //
+                // Issue #152 residue (reopened): ENDED now has
+                // its own witness (ReceiptState.endZoneId —
+                // captured at the session-ending write into the
+                // same store's end slot). Before this, ENDED was
+                // derived at print: it rendered in the render
+                // zone and merely borrowed the ARMED line's
+                // crossed flag for its offset label, so a slip
+                // re-issued after landing in a THIRD zone printed
+                // an ENDED time in a zone the end was never lived
+                // in. ENDED renders in its witnessed zone — day
+                // label and offset included — whenever that zone
+                // differs from the render zone. A slip with no
+                // end witness (ended before the capture existed)
+                // keeps the previous print exactly.
                 val receiptContext = LocalContext.current
                 val renderZone = java.time.ZoneId.systemDefault()
                 val armZone = receipt.armZoneId?.let { id ->
                     runCatching { java.time.ZoneId.of(id) }.getOrNull()
                 }
                 val crossedZones = armZone != null && armZone != renderZone
+                val endZone = receipt.endZoneId?.let { id ->
+                    runCatching { java.time.ZoneId.of(id) }.getOrNull()
+                }
+                val endCrossed = endZone != null && endZone != renderZone
                 // #57 composed with #152 below: crossesDay is
                 // computed with main's sameLocalDay; the ARMED
                 // day label, when one prints, is taken in the
@@ -217,11 +254,29 @@ fun ReceiptSheet(
                 val endedPrint = buildString {
                     append("ENDED ")
                     if (crossesDay) {
-                        append(dayLabel(receipt.endedAtWallMs))
+                        append(
+                            if (endZone != null) {
+                                dayLabel(receipt.endedAtWallMs, endZone)
+                            } else {
+                                dayLabel(receipt.endedAtWallMs)
+                            }
+                        )
                         append(' ')
                     }
-                    append(hhmm(receiptContext, receipt.endedAtWallMs))
-                    if (crossedZones) {
+                    append(
+                        if (endCrossed) {
+                            hhmm(receiptContext, receipt.endedAtWallMs, endZone!!)
+                        } else {
+                            hhmm(receiptContext, receipt.endedAtWallMs)
+                        }
+                    )
+                    if (endCrossed) {
+                        append(" (${offsetLabel(receipt.endedAtWallMs, endZone!!)})")
+                    } else if (endZone == null && crossedZones) {
+                        // No end witness (a session that ended
+                        // before the capture existed): the legacy
+                        // print — render zone, labelled with the
+                        // render offset beside the ARMED witness.
                         append(" (${offsetLabel(receipt.endedAtWallMs, renderZone)})")
                     }
                 }
@@ -368,7 +423,7 @@ fun ReceiptSheet(
                 }
                 if (receipt.shieldWasOff) {
                     Text(
-                        text = "THE SHIELD WAS OFF FOR PART OF THAT SESSION",
+                        text = stringResource(R.string.receipt_shield_gap),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -413,7 +468,7 @@ fun ReceiptSheet(
                     // (build-ready §7.2) — it never prints on the
                     // imprint, the strip, or anywhere else.
                     Text(
-                        text = "SHIELD — STILL BLOCKED (SERVICE DIDN'T STOP)",
+                        text = stringResource(R.string.receipt_shield_still_blocked),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,

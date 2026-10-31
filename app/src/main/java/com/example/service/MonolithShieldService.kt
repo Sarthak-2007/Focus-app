@@ -20,13 +20,17 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.example.MLog
+import com.example.MainActivity
 import com.example.R
 import com.example.data.AppBlockTier
+import com.example.data.BreakDimState
 import com.example.data.MonolithDatabase
 import com.example.widget.MonolithWidgetProvider
 import com.example.data.batteryShieldWarning
 import com.example.data.readBatterySnapshot
 import java.util.UUID
+import com.example.data.MonolithRepository
+import com.example.data.NightDimMath
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -98,6 +102,13 @@ class MonolithShieldService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var monitorJob: Job? = null
+
+    // The Safe Break's announcer (Audit R3, safe-break-lived
+    // #3/#4): fed the updated row every iteration; its alerts ride
+    // their own HIGH-importance channel — the persistent shield
+    // notification is IMPORTANCE_LOW + onlyAlertOnce by design and
+    // can never announce anything.
+    private val breakAnnouncer = BreakAnnouncer()
 
     /** The live session's id re-derived from the store, or null
      *  when there is none (or the read failed — fail closed). The
@@ -245,6 +256,7 @@ class MonolithShieldService : Service() {
      *  start — the caller must stand down (START_NOT_STICKY). */
     private fun promoteToForeground(): Boolean {
         createNotificationChannel()
+        createBreakAlertChannel()
         val fgsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
         } else {
@@ -314,6 +326,11 @@ class MonolithShieldService : Service() {
             // summons — the loop remembers the last tick's break
             // state so the flip out of a break posts exactly once.
             var wasInSafeBreak = false
+            // Issue #143 F1/F6: the break-dim witness — the loop
+            // remembers the descent's depth so the flip out of a
+            // break can stamp the fade OUT the UI runs (breakDim).
+            var lastBreakElapsedSeconds = 0
+            var breakFadeStampMono = 0L
             while (isActive) {
                 iteration++
                 // Per-iteration guard (issue #43, finding 1): one
@@ -348,6 +365,9 @@ class MonolithShieldService : Service() {
                 }
                 val activeSession = repository.activeSessionSnapshot() // ISSUE-67(d): via repository, not direct DAO
                 if (activeSession == null || !activeSession.isActive) {
+                    // Issue #143: no session, no dim — retire the
+                    // phase before standing down.
+                    publishBreakDim(BreakDimState())
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     MonolithWidgetProvider.requestUpdate(applicationContext)
                     stopSelf()
@@ -370,7 +390,23 @@ class MonolithShieldService : Service() {
                 // shieldLastBeatWallMillis into the row it already
                 // persists, so the finish machine can later prove
                 // whether the shield was present or gone.
-                val updated = repository.updateSessionProgress(activeSession, stampShieldBeat = true)
+                // Audit R6 #341 F31: a full disk must not kill the
+                // shield. Before this, an SQLiteFullException out of
+                // the tick's write escaped the loop and took the
+                // session's only protection (and its elapsed record)
+                // with it. On a full-disk tick we log, skip the
+                // persistence for this beat and keep shielding; the
+                // next tick retries the write.
+                val updated = try {
+                    repository.updateSessionProgress(activeSession, stampShieldBeat = true)
+                } catch (e: android.database.sqlite.SQLiteFullException) {
+                    android.util.Log.e("MonolithShield", "storage full: progress tick not persisted", e)
+                    null
+                }
+                if (updated == null) {
+                    delay(2000L)
+                    continue
+                }
                 if (!usageGranted) {
                     // Latched AFTER the progress write on purpose:
                     // updateSession is a full-row @Update, so a latch
@@ -384,6 +420,34 @@ class MonolithShieldService : Service() {
                     // updateSessionProgress's outcome classification.)
                     repository.latchShieldGapNow()
                 }
+
+                // Break boundaries announce themselves from here —
+                // the loop that is alive in every app, screen on or
+                // off — never from a UI observer that may not exist
+                // mid-break (Audit R3, safe-break-lived #3/#4).
+                when (breakAnnouncer.onTick(updated.id, updated.isInSafeBreak, updated.safeBreakSecondsRemaining)) {
+                    BreakAlert.STARTED -> postBreakAlert(
+                        title = "SAFE BREAK STARTED",
+                        text = "Break clock ${breakClockText(updated.safeBreakSecondsRemaining)} — " +
+                            "PEEK apps are open. Locked apps, Shorts, Reels and blocked sites stay shut."
+                    )
+                    BreakAlert.FINAL_MINUTE -> postBreakAlert(
+                        title = "SAFE BREAK ENDING",
+                        text = "Under a minute left — finish up. Blocking resumes when the break clock hits 00:00."
+                    )
+                    // ENDED is deliberately NOT posted from here:
+                    // Audit R3b #146's summons (same loop, the
+                    // wasInSafeBreak witness below) is the break-end
+                    // voice — "BREAK OVER · Block n has started" —
+                    // and two heads-up alerts for one flip would be
+                    // noise, not truth. The announcer still returns
+                    // ENDED (its lifecycle is unit-tested); this loop
+                    // owns STARTED + FINAL_MINUTE, the summons owns
+                    // the end.
+                    BreakAlert.ENDED -> Unit
+                    null -> Unit
+                }
+
                 if (!updated.isActive) {
                     // Session-edge tick BEFORE standing down: a routine
                     // session that just timer-completed gets finalised
@@ -422,6 +486,9 @@ class MonolithShieldService : Service() {
                         autoCancel = true,
                         timeoutAfterMs = COMPLETION_TIMEOUT_MS
                     )
+                    // Issue #143: the session ended — any break dim
+                    // retires with it (no fade into a dead session).
+                    publishBreakDim(BreakDimState())
                     stopForeground(STOP_FOREGROUND_DETACH)
                     MonolithWidgetProvider.requestUpdate(applicationContext)
                     stopSelf()
@@ -437,13 +504,52 @@ class MonolithShieldService : Service() {
                         "Block ${updated.currentBlockIndex} of ${updated.totalStudyBlocks} has started."
                     )
                 }
+                // Issue #143 F1/F6: publish the break's dim phase
+                // on the same tick that knows it — in-break elapsed
+                // for the descent INTO the break, and at the flip
+                // out, the end stamp + the depth the descent had
+                // reached, so the UI can run the fade OUT on its
+                // own clock. Once the fade window has passed the
+                // state retires to rest.
+                if (updated.isInSafeBreak) {
+                    lastBreakElapsedSeconds =
+                        (MonolithRepository.SAFE_BREAK_DURATION_SECONDS -
+                            updated.safeBreakSecondsRemaining).coerceAtLeast(0)
+                    publishBreakDim(
+                        BreakDimState(
+                            inBreak = true,
+                            breakElapsedSeconds = lastBreakElapsedSeconds
+                        )
+                    )
+                } else if (wasInSafeBreak) {
+                    breakFadeStampMono = SystemClock.elapsedRealtime()
+                    publishBreakDim(
+                        BreakDimState(
+                            inBreak = false,
+                            breakEndedMono = breakFadeStampMono,
+                            fadeFromAlpha = NightDimMath.dimAlphaIntoBreak(lastBreakElapsedSeconds)
+                        )
+                    )
+                } else if (breakFadeStampMono > 0L &&
+                    SystemClock.elapsedRealtime() - breakFadeStampMono >= NightDimMath.FADE_OUT_MILLIS
+                ) {
+                    breakFadeStampMono = 0L
+                    publishBreakDim(BreakDimState())
+                }
                 wasInSafeBreak = updated.isInSafeBreak
 
                 val timeFormatted = when {
                     updated.isInSafeBreak -> {
-                        val bMin = updated.safeBreakSecondsRemaining / 60
-                        val bSec = updated.safeBreakSecondsRemaining % 60
-                        String.format("Safe Break %02d:%02d • Block %d/%d", bMin, bSec, updated.currentBlockIndex, updated.totalStudyBlocks)
+                        // #127 finding 2: the break count is labelled
+                        // as the break's, and the session's remaining
+                        // rides beside it — never a bare 00:00-style
+                        // finished reading anywhere during a break.
+                        val breakLeft = com.example.data.formatSessionDuration(updated.safeBreakSecondsRemaining)
+                        val sessionLeft = com.example.data.formatSessionDuration(updated.spanRemainingSeconds)
+                        String.format(
+                            "Safe Break %s left • %s left in session • Block %d/%d done",
+                            breakLeft, sessionLeft, updated.currentBlockIndex, updated.totalStudyBlocks
+                        )
                     }
                     updated.isStopwatchMode -> {
                         val mins = updated.elapsedSeconds / 60
@@ -451,11 +557,22 @@ class MonolithShieldService : Service() {
                         String.format("Stopwatch +%02d:%02d (20m floor)", mins, secs)
                     }
                     else -> {
-                        val effectiveTarget = updated.targetDurationSeconds + updated.penaltySecondsAdded
-                        val remainingSec = (effectiveTarget - updated.elapsedSeconds).coerceAtLeast(0)
-                        val mins = remainingSec / 60
-                        val secs = remainingSec % 60
-                        String.format("%02d:%02d left • Block %d/%d", mins, secs, updated.currentBlockIndex, updated.totalStudyBlocks)
+                        // #127 finding 1: this is the one zero-tap
+                        // glance (lock screen), so it must not answer
+                        // with the per-block number alone while the
+                        // desk clock answers with the session's. Both
+                        // scopes, both labelled, from the model's own
+                        // derivations (remainingSeconds / span).
+                        val blockLeft = com.example.data.formatSessionDuration(updated.remainingSeconds)
+                        val sessionLeft = com.example.data.formatSessionDuration(updated.spanRemainingSeconds)
+                        if (updated.totalStudyBlocks > 1) {
+                            String.format(
+                                "%s left in block %d/%d • %s left in session",
+                                blockLeft, updated.currentBlockIndex, updated.totalStudyBlocks, sessionLeft
+                            )
+                        } else {
+                            String.format("%s left in session", sessionLeft)
+                        }
                     }
                 }
 
@@ -807,6 +924,71 @@ class MonolithShieldService : Service() {
         }
     }
 
+    private fun createBreakAlertChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val channel = NotificationChannel(
+                BREAK_ALERT_CHANNEL_ID,
+                "Safe Break announcements",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Heads-up alerts when a Safe Break starts, nears its end, and ends"
+                setShowBadge(false)
+            }
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun breakClockText(totalSeconds: Int): String {
+        val s = totalSeconds.coerceAtLeast(0)
+        return String.format("%d:%02d", s / 60, s % 60)
+    }
+
+    /**
+     * One heads-up break announcement: its own channel + id (it
+     * never touches the persistent shield notification), auto-cancel
+     * and a 90 s timeout so a stale alert never lingers into the
+     * next block pretending to be news. Information only — tapping
+     * it opens the app; it is never an exit from anything.
+     *
+     * Issue #104 (STURM3-20 Feel verdict, one voice per moment):
+     * this post carries NO vibration of its own. The repository
+     * already spoke at this boundary in this same loop iteration —
+     * the mechanical latch at break start, the two-strike warning
+     * knock at the final minute — and every vibrate() cancels the
+     * previous one, so the old raw one-shot buzz (180/260 ms)
+     * erased the designed knock within milliseconds. The visual
+     * posts; the repository knock is the boundary's sole voice.
+     */
+    private fun postBreakAlert(title: String, text: String) {
+        try {
+            val pendingIntent = PendingIntent.getActivity(
+                this,
+                1,
+                Intent(this, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+                },
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val notification = NotificationCompat.Builder(this, BREAK_ALERT_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_STATUS)
+                .setAutoCancel(true)
+                .setTimeoutAfter(90_000L)
+                .setContentIntent(pendingIntent)
+                .build()
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(BREAK_ALERT_NOTIFICATION_ID, notification)
+        } catch (_: Exception) {
+            // Announcement is best-effort; protection never depends on it.
+        }
+    }
+
+
     /** #337 F2: is Usage Access granted to this app right now?
      *  (AppOps verdict, the same probe the repository uses.) */
     private fun hasUsageAccessNow(): Boolean {
@@ -1052,6 +1234,8 @@ class MonolithShieldService : Service() {
         protectingSessionId = -1
         protectingMono = 0L
         WatchStore.onShieldIteration(protecting = false)
+        // Issue #143: a dying shield takes its dim phase with it.
+        publishBreakDim(BreakDimState())
         monitorJob?.cancel()
         serviceScope.cancel()
         super.onDestroy()
@@ -1063,6 +1247,18 @@ class MonolithShieldService : Service() {
         // busy-polling the raw field every 25ms.
         private val _instancePresent = MutableStateFlow(false)
         val instancePresent: StateFlow<Boolean> = _instancePresent.asStateFlow()
+
+        // Issue #143 F1/F6: the break-dim phase — the end-of-break
+        // signal the finding found missing. The shield loop is the
+        // only writer (publishBreakDim); the UI reads it for the
+        // dimming progression INTO the break and the fade OUT at
+        // break end. In-memory only, never persisted.
+        private val _breakDim = MutableStateFlow(BreakDimState())
+        val breakDim: StateFlow<BreakDimState> = _breakDim.asStateFlow()
+
+        internal fun publishBreakDim(state: BreakDimState) {
+            _breakDim.value = state
+        }
 
         // Live Wire registry (Ines): in-memory only, never persisted.
         @Volatile
@@ -1101,6 +1297,11 @@ class MonolithShieldService : Service() {
         const val CHANNEL_ID = "monolith_shield_channel_v2"
         const val LEGACY_CHANNEL_ID = "monolith_shield_channel"
         const val NOTIFICATION_ID = 4096
+        const val BREAK_ALERT_CHANNEL_ID = "monolith_break_alert_channel"
+        // 4098, NOT 4097: #146's summons owns 4097 on its own channel;
+        // sharing the id would make break alerts and summonses
+        // overwrite each other in the shade.
+        const val BREAK_ALERT_NOTIFICATION_ID = 4098
         /** Issue #155 (F3): the detached completion card self-expires. */
         const val COMPLETION_TIMEOUT_MS = 45 * 60 * 1000L
         /** Issue #155 (F5): present (true) on the shield card's content
