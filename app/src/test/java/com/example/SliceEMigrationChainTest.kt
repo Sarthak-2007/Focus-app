@@ -272,8 +272,8 @@ class SliceEMigrationChainTest {
         runBlocking {
             val dao = room.monolithDao()
             // The read forces the open: Room has migrated
-            // 7→8→9→10→11→12→13→14→15→16→17 AND validated the
-            // result against every v17 entity.
+            // 7→8→9→10→11→12→13→14→15→16→17→18→19 AND validated
+            // the result against every v19 entity.
             val session = dao.getSessionHistorySnapshot().single()
             assertEquals("shaped session", session.intention)
             assertEquals(0L, session.endWallMillis)

@@ -153,7 +153,9 @@ class ValveFloorRecheckTest {
      * advances it 7200s in @Before for exactly this reason), so
      * the anchor was 0 and the function lawfully fell into the
      * reboot/resume branch, whose figure is
-     * max(accumulated, banked) + uptime — never the planted one,
+     * max(accumulated, banked) + the span this boot's shield
+     * witnessed since its first raise (issue #525) — never the
+     * planted one,
      * and the assertSeeded precondition could not hold for the
      * row as seeded. So: the mono clock is topped up to a
      * positive floor first, and both anchors are planted exactly

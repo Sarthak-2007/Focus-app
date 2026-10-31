@@ -520,6 +520,16 @@ data class FocusSessionEntity(
     // stale past the grace, the latch is set forever — a shield
     // that comes back late does not un-break the session's books.
     val shieldGapSeen: Boolean = false,
+    // Issue #525 (18→19): the boot-to-shield seconds this
+    // session's reboots left UNSHIELDED — the uptime between
+    // power-on and the shield's first protecting flip of each
+    // boot the session survived (ShieldRaiseStore's stamp),
+    // accumulated at every re-anchor. Booked, never credited:
+    // the elapsed derivation counts only the witnessed span
+    // past the raise, and the receipt prints this figure as
+    // its REBOOT line. 0 = no reboot crossed this session
+    // (every pre-v19 row).
+    val rebootGapSeconds: Int = 0,
     // Truth Car 2 (10→11, RC-01): the session's true end, wall
     // clock, stamped ONCE at the ending write (the elapsed path
     // in updateSessionProgress, the disarm doors, the routine

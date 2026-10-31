@@ -347,8 +347,9 @@ class RoutinesMigrationChainTest {
         runBlocking {
             val dao = room.monolithDao()
             // This read forces the open: Room has now migrated
-            // 7→8→9→10→11→12→13→14→15→16→17 AND validated the resulting
-            // schema against every v17 entity, day_notes included.
+            // 7→8→9→10→11→12→13→14→15→16→17→18→19 AND validated the
+            // resulting schema against every v19 entity, day_notes
+            // included.
             assertTrue(dao.getAllDayNotesSnapshot().isEmpty())
             dao.insertDayNotes(listOf(DayNoteEntity("2026-10-29", "REST")))
             assertEquals(
