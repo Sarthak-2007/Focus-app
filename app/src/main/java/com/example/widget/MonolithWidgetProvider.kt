@@ -11,6 +11,7 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.MonolithDatabase
 import com.example.data.RoutineSchedule
+import com.example.service.MonolithAccessibilityService
 import com.example.service.MonolithShieldService
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -91,10 +92,14 @@ class MonolithWidgetProvider : AppWidgetProvider() {
                     protectingSessionId = MonolithShieldService.protectingSessionId,
                     sessionId = session.id,
                     beatWallMillis = session.shieldLastBeatWallMillis,
-                    nowWallMillis = now
+                    nowWallMillis = now,
+                    accessibilityBound = MonolithAccessibilityService.instance != null
                 )
                 if (!sealedProven) {
-                    "SESSION LIVE \u2022 SHIELD UNPROVEN \u2022 OPEN THE APP TO CHECK"
+                    // Issue #155 (IQ-2 VC-2 + IQ-5 F-4): no
+                    // row-asserted "SESSION LIVE", short enough to
+                    // read whole at the smallest (3x1) placement.
+                    "SHIELD UNPROVEN \u2022 OPEN THE APP TO CHECK"
                 } else when {
                     session.isStopwatchMode ->
                         "SEALED \u2022 ${session.intention} \u2022 STOPWATCH, NO SET END"
@@ -116,7 +121,12 @@ class MonolithWidgetProvider : AppWidgetProvider() {
                     }
                     .minByOrNull { it.second }
                 if (next != null) {
-                    "OPEN \u2022 NEXT SEAL ${next.first.name} ${hhmm(next.second)}"
+                    // Issue #155 (IQ-2 VC-3): routine-marked and
+                    // day-qualified — "NEXT SEAL" stated the app's
+                    // future act (Monolith is hand-armed; a routine
+                    // is the user's, the app does not seal itself),
+                    // and a bare HH:mm let tomorrow read as today.
+                    "OPEN \u2022 NEXT ROUTINE ${next.first.name} ${dayLabel(next.second, now)} ${hhmm(next.second)}"
                 } else {
                     "OPEN"
                 }
@@ -129,6 +139,21 @@ class MonolithWidgetProvider : AppWidgetProvider() {
 
     private fun hhmm(millis: Long): String =
         SimpleDateFormat("HH:mm", Locale.US).format(Date(millis))
+
+    /** Issue #155 (IQ-2 VC-3): TODAY / TOMORROW / day name for a
+     *  future start, so the widget's clock time never reads as
+     *  sooner than it is. */
+    private fun dayLabel(startMillis: Long, nowMillis: Long): String {
+        val start = java.util.Calendar.getInstance().apply { timeInMillis = startMillis }
+        val nowCal = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
+        fun sameDay(a: java.util.Calendar, b: java.util.Calendar): Boolean =
+            a.get(java.util.Calendar.YEAR) == b.get(java.util.Calendar.YEAR) &&
+                a.get(java.util.Calendar.DAY_OF_YEAR) == b.get(java.util.Calendar.DAY_OF_YEAR)
+        if (sameDay(start, nowCal)) return "TODAY"
+        nowCal.add(java.util.Calendar.DAY_OF_YEAR, 1)
+        if (sameDay(start, nowCal)) return "TOMORROW"
+        return SimpleDateFormat("EEE", Locale.US).format(Date(startMillis)).uppercase(Locale.US)
+    }
 
     companion object {
         /**

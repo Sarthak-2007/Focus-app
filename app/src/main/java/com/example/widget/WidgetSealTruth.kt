@@ -33,10 +33,17 @@ object WidgetSealTruth {
         protectingSessionId: Int,
         sessionId: Int,
         beatWallMillis: Long,
-        nowWallMillis: Long
+        nowWallMillis: Long,
+        accessibilityBound: Boolean
     ): Boolean {
         if (!isActive) return false
         if (!protecting) return false
+        // Issue #155 (IQ-5 F-3(ii)): the accessibility door is a
+        // truth input, not a detail — when it dies mid-session
+        // blocking is OFF, whatever the usage witness says, and
+        // the shield card already warns so. The widget must not
+        // print SEALED over a dead door.
+        if (!accessibilityBound) return false
         if (protectingSessionId != sessionId) return false
         if (beatWallMillis <= 0L) return false
         val beatAgeMillis = nowWallMillis - beatWallMillis

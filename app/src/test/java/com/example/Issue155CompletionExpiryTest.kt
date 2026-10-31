@@ -130,4 +130,51 @@ class Issue155CompletionExpiryTest {
             )
         )
     }
+
+    @Test
+    fun revokedAfterFlipUnflipsTheWitness() {
+        // Race 1b (IQ-4): the latch must also flip DOWN — an
+        // iteration that measures usage access revoked resets the
+        // witness before the flip/gate below it, in the same
+        // iteration. Without this block the gate reads a
+        // stale-true latch forever after a mid-session revocation.
+        val source = shieldSource()
+        val resetIdx = source.indexOf("if (protecting && !usageGranted) {")
+        assertTrue("revoked-after-flip reset block missing", resetIdx >= 0)
+        val window = source.substring(resetIdx, minOf(resetIdx + 500, source.length))
+        assertTrue(window.contains("protecting = false"))
+        assertTrue(window.contains("protectingSessionId = -1"))
+        val flipIdx = source.indexOf("if (!protecting && usageGranted) {", resetIdx)
+        assertTrue("reset must run before the flip in the iteration", flipIdx > resetIdx)
+    }
+
+    @Test
+    fun completionSummonsUsesTheLedgerLine() {
+        // IQ-5 F-1: both completion cards tell one story — the
+        // summons carries the shield card's Ledger line, not the
+        // Deck line main's #164 cure already corrected.
+        val source = shieldSource()
+        assertTrue(
+            source.contains(
+                "\"Your session has ended. Your receipt is waiting in the Ledger.\""
+            )
+        )
+        assertTrue(!source.contains("receipt is on the Deck"))
+    }
+
+    @Test
+    fun lockScreenPublicVersionMatchesTheCardState() {
+        // IQ-2 M-1: the lock-screen public version is built from
+        // the card's own state — not ongoing with the same
+        // timeout on the completion card, the non-claim line
+        // while arming, the protection claim only on the
+        // standing card.
+        val source = shieldSource()
+        assertTrue(source.contains("!ongoing -> \"Session complete\""))
+        assertTrue(source.contains("\"Monolith session in progress\""))
+        assertTrue(source.contains(".setOngoing(ongoing)"))
+        assertTrue(
+            source.contains("if (timeoutAfterMs > 0) setTimeoutAfter(timeoutAfterMs)")
+        )
+    }
 }

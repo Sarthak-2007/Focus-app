@@ -25,14 +25,16 @@ class WidgetSealTruthTest {
         protecting: Boolean = true,
         protectingSessionId: Int = sessionId,
         beatWallMillis: Long = now - 1_000L,
-        nowWallMillis: Long = now
+        nowWallMillis: Long = now,
+        accessibilityBound: Boolean = true
     ): Boolean = WidgetSealTruth.sealedProven(
         isActive = isActive,
         protecting = protecting,
         protectingSessionId = protectingSessionId,
         sessionId = sessionId,
         beatWallMillis = beatWallMillis,
-        nowWallMillis = nowWallMillis
+        nowWallMillis = nowWallMillis,
+        accessibilityBound = accessibilityBound
     )
 
     @Test
@@ -78,6 +80,15 @@ class WidgetSealTruthTest {
         // Clock moved backwards — a beat ahead of now proves
         // nothing about the present.
         assertFalse(proven(beatWallMillis = now + 1_000L))
+    }
+
+    @Test
+    fun unproven_whenAccessibilityDoorIsDead() {
+        // IQ-5 F-3(ii): the usage witness can stand and the beat
+        // be fresh while the accessibility door — the door that
+        // actually blocks — is dead. Blocking is OFF; SEALED
+        // must not print.
+        assertFalse(proven(accessibilityBound = false))
     }
 
     @Test

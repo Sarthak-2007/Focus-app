@@ -461,7 +461,10 @@ class MonolithShieldService : Service() {
                     // the detached LOW notification below.
                     postSummons(
                         "SESSION COMPLETE",
-                        "Your session has ended. The receipt is on the Deck.",
+                        // Issue #155 (IQ-5 F-1): one story on both
+                        // completion cards — the Ledger line, as on
+                        // the shield card below (main's #164 wording).
+                        "Your session has ended. Your receipt is waiting in the Ledger.",
                         // Issue #155, verifier residue (3b): the
                         // completion moment posts TWO cards — the
                         // expiring shield card below (F3) and this
@@ -501,7 +504,13 @@ class MonolithShieldService : Service() {
                 if (wasInSafeBreak && !updated.isInSafeBreak) {
                     postSummons(
                         "BREAK OVER",
-                        "Block ${updated.currentBlockIndex} of ${updated.totalStudyBlocks} has started."
+                        "Block ${updated.currentBlockIndex} of ${updated.totalStudyBlocks} has started.",
+                        // Issue #155 (IQ-2 VC-4, wing-added cure):
+                        // the break-over summons gets the same
+                        // 45-minute expiry as the completion cards —
+                        // untimed, it could sit in the shade
+                        // asserting "has started" until tapped.
+                        timeoutAfterMs = COMPLETION_TIMEOUT_MS
                     )
                 }
                 // Issue #143 F1/F6: publish the break's dim phase
@@ -617,7 +626,12 @@ class MonolithShieldService : Service() {
                 val heldCount = runCatching {
                     dao.getCapturedNotificationsSnapshot().size
                 }.getOrNull()
-                val badgeNumber = heldCount ?: updated.phantomReachesBlocked
+                // Issue #155 (IQ-2 M-5): NO fallback swap — the
+                // badge's one number keeps one meaning (held
+                // notifications). When the held count is unreadable
+                // the badge shows no number, never the urges count
+                // wearing the held count's slot.
+                val badgeNumber = heldCount
                 val bigText = "${updated.intention} • $timeLeftLabel • " +
                     "Block ${updated.currentBlockIndex}/${updated.totalStudyBlocks} • " +
                     "${updated.phantomReachesBlocked} urges stopped • " +
@@ -650,6 +664,23 @@ class MonolithShieldService : Service() {
                 // witness (Opal L2) is stamped at the same flip:
                 // the session this iteration read, and the mono it
                 // flipped - CONFIRMED stamp for SHIELD-PROTECTING.
+                // Issue #155, Race 1b (IQ-4): a mid-session usage
+                // revocation must UN-flip the witness in the same
+                // iteration that measures it. Before this, the
+                // latch only ever flipped up — once protecting, a
+                // revoked usage door left it stale-true forever:
+                // the full card kept posting below and the widget
+                // kept reading SEALED while the usage door was
+                // blind. Residue (3a) covered only the
+                // never-flipped case; this is revoked-after-flip.
+                // The card gate below and the widget's truth rule
+                // both read this witness, so un-flipping here
+                // makes both honest in the same iteration.
+                if (protecting && !usageGranted) {
+                    protecting = false
+                    protectingSessionId = -1
+                    protectingMono = 0L
+                }
                 if (!protecting && usageGranted) {
                     protecting = true
                     protectingSessionId = updated.id
@@ -1057,14 +1088,30 @@ class MonolithShieldService : Service() {
         // Issue #274 (R5 Platform): lock-screen redaction. The live
         // title/subtitle carry the user's private intention text and
         // urge count — on a locked phone anyone holding it could read
-        // both. VISIBILITY_PRIVATE + a generic public version: the
-        // owner (unlocked) sees the real session line, the lock screen
-        // sees only that Monolith is protecting a session.
+        // both. VISIBILITY_PRIVATE + a generic public version.
+        // Issue #155 (IQ-5 F-2, deepened by IQ-2 M-1): the public
+        // version is STATE-MATCHED, mirroring the private card —
+        // it used to be one hardcoded ongoing "Focus session
+        // protected" attached to every card: F2's claim verbatim
+        // on the lock screen during arming, and on the completion
+        // card a public form that never expired (the F3 ghost,
+        // lock-screen edition). Now: completion -> not ongoing,
+        // the same timeout, "Session complete"; arming -> the
+        // non-claim line; "Focus session protected" only on the
+        // post-flip standing card it describes.
+        val publicText = when {
+            !ongoing -> "Session complete"
+            subtitle.contains("Arming shield") -> "Monolith session in progress"
+            else -> "Focus session protected"
+        }
         val publicVersion = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle("Monolith")
-            .setContentText("Focus session protected")
-            .setOngoing(true)
+            .setContentText(publicText)
+            .setOngoing(ongoing)
+            .apply {
+                if (timeoutAfterMs > 0) setTimeoutAfter(timeoutAfterMs)
+            }
             .setContentIntent(pendingIntent)
             .build()
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
