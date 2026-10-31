@@ -11,6 +11,7 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.example.R
 
 /**
  * Issue #102 (retained DAYLIGHT break 2): THE BREAK PILL — the
@@ -123,7 +124,7 @@ object BreakPillOverlay {
             setPadding(0, 0, dp(10), 0)
         }
         val end = Button(appCtx).apply {
-            text = "END BREAK"
+            text = appCtx.getString(R.string.pill_end_break)
             textSize = 11f
             typeface = figures
             setTextColor(Color.rgb(0x2A, 0x26, 0x23))
