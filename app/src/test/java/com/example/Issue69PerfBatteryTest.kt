@@ -264,7 +264,14 @@ class Issue69PerfBatteryTest {
 
         // Same row, beat moved to 59 s behind the implied now:
         // stale past the 10 s law — the VM fallback writer fires.
-        dao.adoptShieldBeat(id, appUpdate + 1_000L)
+        // (FINISHER-69 fix: dao.adoptShieldBeat is guarded
+        // `WHERE shieldLastBeatWallMillis = 0` — the pre-v10
+        // adoption door only — so moving an existing beat with
+        // it was a silent no-op and this assertion could never
+        // pass. The row is rewritten through updateSession.)
+        val row = dao.getActiveSessionSnapshot()!!
+        assertEquals(id, row.id)
+        dao.updateSession(row.copy(shieldLastBeatWallMillis = appUpdate + 1_000L))
         assertTrue(repo.isShieldBeatStale(mono))
     }
 
