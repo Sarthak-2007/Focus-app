@@ -132,3 +132,11 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | Launcher block screen: un-exitable launcher surface + separate allowed/peek screens | Sarthak's ruling 04:29 (not a seat idea — his order) | #22/#18 | BUILT-IN-PROGRESS (Umbau lane; first slice merged via PR #167) |
 
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
+
+## Smallest glances — badge, collapse ladder, glance a11y (DESIGNER-E-5, WING-A)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| Badge ruling: the launcher-badge number means nothing — kill setNumber entirely; badge OFF via v3 channel (fallback ceiling: dot-only, presence = "a shield card is live now"); shipped number is a lifetime uncapped held total (MonolithDao snapshot, no session filter) with a silent reaches fallback on main | DESIGNER-E-5 | #155 | PANEL-QUEUED (ruling filed on #155, comment 6536803182; priced S / 1 day; PR #540 cures only the fallback leg) |
+| Widget collapse ladder: rungs composed per size (state word first, until-time second, intention last/dropped), 2x1 single-line, 1x1 doorbell (SEALED / OPEN / CHECK — time-without-state forbidden), min-resize floor as a designed refusal; provider gains onAppWidgetOptionsChanged | DESIGNER-E-5 | #155 | PANEL-QUEUED (spec on #155; priced M / 2–3 days, downstream of PR #540's WidgetSealTruth) |
+| Glance accessibility spec: one spoken sentence per state as root content description (full degrade sentence for UNPROVEN), real picker description, 14sp floor / 16sp doorbell, opaque receipt-paper field guaranteeing 4.5:1 body / 7:1 state word, state by word never colour, no green, UNPROVEN never de-emphasised | DESIGNER-E-5 | #155 | PANEL-QUEUED (spec on #155; priced S–M / 1–2 days, 0.5 day folded into the ladder build) |
