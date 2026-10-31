@@ -32,7 +32,11 @@ import kotlinx.coroutines.launch
  * async (goAsync, the boot/package receivers' posture); a FAILED
  * read fails open — an unprovable gate must not swallow the
  * return call #339 exists to guarantee — while a read that proves
- * the session gone or replaced suppresses the card.
+ * the session gone or replaced suppresses the card. Deliveries
+ * carrying no session id (alarms armed before the gate existed)
+ * skip the read entirely: the gate allows id 0 against every
+ * store state (pinned in BreakEndSessionGateTest), so those post
+ * on the spot, exactly as the ungated receiver did.
  */
 class BreakEndReceiver : BroadcastReceiver() {
 
@@ -50,6 +54,13 @@ class BreakEndReceiver : BroadcastReceiver() {
         }
         val scheduledSessionId =
             intent?.getIntExtra(BreakEndScheduler.EXTRA_SESSION_ID, 0) ?: 0
+        if (scheduledSessionId == 0) {
+            // No session to gate on: sessionGateAllows(0, ·) is
+            // unconditionally true, so the read could only ever
+            // allow — post inline, the pre-gate behaviour.
+            postBreakOver(context, breakEndsWallMillis)
+            return
+        }
         val appContext = context.applicationContext
         val pendingResult = goAsync()
         scope.launch {
