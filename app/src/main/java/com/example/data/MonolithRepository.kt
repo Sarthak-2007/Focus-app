@@ -2204,19 +2204,25 @@ class MonolithRepository(
     /** Guard settings as a flow (reset-note strip + tick stamps). */
     val guardSettingsFlow: Flow<GuardSettingsEntity?> = dao.getGuardSettingsFlow()
 
-    /** The three routines of his real day (Sten §2.5 targets). */
+    /**
+     * The three routines of his real day (Sten §2.5 targets).
+     *
+     * Issue #96 F1 (Ren's Phase-1 ruling, Oct 30): seeded routines are
+     * born DISABLED. A fresh install must never auto-seal — nothing
+     * blocks until he enables a routine himself.
+     */
     fun routineTargets(): List<RoutineEntity> = listOf(
         RoutineEntity(
             name = "FASTED BLOCK", startMinutes = 300, endMinutes = 480,
-            daysMask = RoutineSchedule.ALL_DAYS, loadoutName = SmartLoadout.STUDY.name, enabled = true
+            daysMask = RoutineSchedule.ALL_DAYS, loadoutName = SmartLoadout.STUDY.name, enabled = false
         ),
         RoutineEntity(
             name = "DAY BLOCKS", startMinutes = 540, endMinutes = 1170,
-            daysMask = RoutineSchedule.ALL_DAYS, loadoutName = SmartLoadout.STUDY.name, enabled = true
+            daysMask = RoutineSchedule.ALL_DAYS, loadoutName = SmartLoadout.STUDY.name, enabled = false
         ),
         RoutineEntity(
             name = "SLEEP", startMinutes = 1200, endMinutes = 210,
-            daysMask = RoutineSchedule.ALL_DAYS, loadoutName = SmartLoadout.SLEEP.name, enabled = true
+            daysMask = RoutineSchedule.ALL_DAYS, loadoutName = SmartLoadout.SLEEP.name, enabled = false
         )
     )
 
