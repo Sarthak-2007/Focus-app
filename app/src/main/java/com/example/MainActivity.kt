@@ -2160,101 +2160,15 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onParkIntroFixTrip = { parkIntroFixTripThisOpen = true }
             )
 
-            // THE LAUNCHER BLOCK SURFACE: hosted under the Airlock,
-            // so a fresh intercept's door always stands above it.
-            LauncherBlockScreen(
-                visible = launcherOpen && sealed,
-                session = activeSession,
-                apps = allApps,
-                initialPage = launcherPage,
-                onClose = { launcherOpen = false },
-                onLaunchApp = { app ->
-                    // TAP-TIME LAUNCH GATE (design-revamp salvage,
-                    // b027368): the entity handed in was composed when
-                    // the grid rendered — re-read the VM's live rows
-                    // at the tap and launch only what is still true
-                    // NOW. On any refusal: no launch, the launcher
-                    // stays open, nothing crashes.
-                    val liveApp = viewModel.apps.value
-                        .find { it.packageName == app.packageName }
-                    val tapSealed =
-                        viewModel.activeSession.value?.isActive == true
-                    val launchAllowed = liveApp != null &&
-                        liveApp.resolvedTier == com.example.data.AppBlockTier.OPEN &&
-                        tapSealed &&
-                        !viewModel.navigationLocked() &&
-                        // Defence in depth, even if OPEN: the Play
-                        // Store is an install vector, and browsers
-                        // sit behind only a partial site blocker.
-                        // BlockedAppEntity.category stores the
-                        // AppCategory enum's name (see
-                        // MonolithModels / repository writers).
-                        liveApp.packageName != "com.android.vending" &&
-                        liveApp.category != com.example.data.AppCategory.BROWSERS.name
-                    if (launchAllowed && liveApp != null) {
-                        // D-05 (2dac73e): close only once an intent
-                        // has actually started — closing first made
-                        // a failed launch a silent nothing.
-                        val started = runCatching {
-                            context.packageManager
-                                .getLaunchIntentForPackage(liveApp.packageName)
-                                ?.let { launch ->
-                                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    context.startActivity(launch)
-                                    true
-                                } ?: false
-                        }.getOrDefault(false)
-                        if (started) launcherOpen = false
-                    }
-                },
-                onPeekApp = { app ->
-                    // SAFE-BREAK PEEK (design-revamp salvage, b027368):
-                    // during a Safe Break the active session already
-                    // suspends the interceptors (WatchStore reads
-                    // isInSafeBreak), so PEEK apps are already free —
-                    // launch directly, no peek lease is started and
-                    // no cooldown is armed. Read at tap time from
-                    // the VM's activeSession flow.
-                    val tapSession = viewModel.activeSession.value
-                    // D-03 re-gate (2dac73e): same tap-time discipline
-                    // as the OPEN gate — re-read the live entity; an
-                    // app tightened to LOCKED mid-break must not
-                    // launch off the stale composed row.
-                    val livePeekApp = viewModel.apps.value.firstOrNull {
-                        it.packageName == app.packageName
-                    }
-                    if (tapSession != null && tapSession.isActive && tapSession.isInSafeBreak &&
-                        !viewModel.navigationLocked() && livePeekApp != null &&
-                        livePeekApp.resolvedTier != com.example.data.AppBlockTier.LOCKED
-                    ) {
-                        val started = runCatching {
-                            context.packageManager
-                                .getLaunchIntentForPackage(livePeekApp.packageName)
-                                ?.let { launch ->
-                                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    context.startActivity(launch)
-                                    true
-                                } ?: false
-                        }.getOrDefault(false)
-                        if (started) launcherOpen = false
-                    } else {
-                        // Outside a Safe Break (or refused by the
-                        // re-gate) the existing Airlock route stands
-                        // exactly as it was — the peek offer / lease
-                        // machinery decides from there.
-                        launcherOpen = false
-                        viewModel.triggerAirlockIntercept(
-                            app.packageName,
-                            app.appName,
-                            app.resolvedTier.badge,
-                            InterceptPath.APP_TIER
-                        )
-                    }
-                },
-                onRequestEmergencyBreak = {
-                    launcherOpen = false
-                    viewModel.requestDisarmChallenge()
-                }
+            LauncherOverlay(
+                launcherOpen = launcherOpen,
+                sealed = sealed,
+                activeSession = activeSession,
+                allApps = allApps,
+                launcherPage = launcherPage,
+                viewModel = viewModel,
+                context = context,
+                onCloseLauncher = { launcherOpen = false }
             )
 
             AirlockInterceptOverlay(
@@ -2340,6 +2254,128 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
 
         }
     }
+}
+
+/**
+ * Issue #90 (complexity F3, overlay slice 5): the launcher
+ * block surface call of MonolithRootApp's overlay layer —
+ * extracted as one composable (the call's own surface
+ * comment and both tap-gate comment blocks travel with it).
+ * Behaviour-identical: every value the call consumes arrives
+ * as a parameter; all five of its launcher-close writes (the
+ * close door, both started-launch closes, the re-gate close,
+ * the emergency-break close) ride the onCloseLauncher
+ * callback at their standing positions, and both tap-time
+ * gates keep reading the view model's live rows through the
+ * viewModel parameter, exactly as composed.
+ */
+@Composable
+private fun LauncherOverlay(
+    launcherOpen: Boolean,
+    sealed: Boolean,
+    activeSession: com.example.data.FocusSessionEntity?,
+    allApps: List<com.example.data.BlockedAppEntity>,
+    launcherPage: com.example.ui.components.LauncherPage,
+    viewModel: MonolithViewModel,
+    context: android.content.Context,
+    onCloseLauncher: () -> Unit
+) {
+    // THE LAUNCHER BLOCK SURFACE: hosted under the Airlock,
+    // so a fresh intercept's door always stands above it.
+    LauncherBlockScreen(
+        visible = launcherOpen && sealed,
+        session = activeSession,
+        apps = allApps,
+        initialPage = launcherPage,
+        onClose = { onCloseLauncher() },
+        onLaunchApp = { app ->
+            // TAP-TIME LAUNCH GATE (design-revamp salvage,
+            // b027368): the entity handed in was composed when
+            // the grid rendered — re-read the VM's live rows
+            // at the tap and launch only what is still true
+            // NOW. On any refusal: no launch, the launcher
+            // stays open, nothing crashes.
+            val liveApp = viewModel.apps.value
+                .find { it.packageName == app.packageName }
+            val tapSealed =
+                viewModel.activeSession.value?.isActive == true
+            val launchAllowed = liveApp != null &&
+                liveApp.resolvedTier == com.example.data.AppBlockTier.OPEN &&
+                tapSealed &&
+                !viewModel.navigationLocked() &&
+                // Defence in depth, even if OPEN: the Play
+                // Store is an install vector, and browsers
+                // sit behind only a partial site blocker.
+                // BlockedAppEntity.category stores the
+                // AppCategory enum's name (see
+                // MonolithModels / repository writers).
+                liveApp.packageName != "com.android.vending" &&
+                liveApp.category != com.example.data.AppCategory.BROWSERS.name
+            if (launchAllowed && liveApp != null) {
+                // D-05 (2dac73e): close only once an intent
+                // has actually started — closing first made
+                // a failed launch a silent nothing.
+                val started = runCatching {
+                    context.packageManager
+                        .getLaunchIntentForPackage(liveApp.packageName)
+                        ?.let { launch ->
+                            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            context.startActivity(launch)
+                            true
+                        } ?: false
+                }.getOrDefault(false)
+                if (started) onCloseLauncher()
+            }
+        },
+        onPeekApp = { app ->
+            // SAFE-BREAK PEEK (design-revamp salvage, b027368):
+            // during a Safe Break the active session already
+            // suspends the interceptors (WatchStore reads
+            // isInSafeBreak), so PEEK apps are already free —
+            // launch directly, no peek lease is started and
+            // no cooldown is armed. Read at tap time from
+            // the VM's activeSession flow.
+            val tapSession = viewModel.activeSession.value
+            // D-03 re-gate (2dac73e): same tap-time discipline
+            // as the OPEN gate — re-read the live entity; an
+            // app tightened to LOCKED mid-break must not
+            // launch off the stale composed row.
+            val livePeekApp = viewModel.apps.value.firstOrNull {
+                it.packageName == app.packageName
+            }
+            if (tapSession != null && tapSession.isActive && tapSession.isInSafeBreak &&
+                !viewModel.navigationLocked() && livePeekApp != null &&
+                livePeekApp.resolvedTier != com.example.data.AppBlockTier.LOCKED
+            ) {
+                val started = runCatching {
+                    context.packageManager
+                        .getLaunchIntentForPackage(livePeekApp.packageName)
+                        ?.let { launch ->
+                            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            context.startActivity(launch)
+                            true
+                        } ?: false
+                }.getOrDefault(false)
+                if (started) onCloseLauncher()
+            } else {
+                // Outside a Safe Break (or refused by the
+                // re-gate) the existing Airlock route stands
+                // exactly as it was — the peek offer / lease
+                // machinery decides from there.
+                onCloseLauncher()
+                viewModel.triggerAirlockIntercept(
+                    app.packageName,
+                    app.appName,
+                    app.resolvedTier.badge,
+                    InterceptPath.APP_TIER
+                )
+            }
+        },
+        onRequestEmergencyBreak = {
+            onCloseLauncher()
+            viewModel.requestDisarmChallenge()
+        }
+    )
 }
 
 /**
