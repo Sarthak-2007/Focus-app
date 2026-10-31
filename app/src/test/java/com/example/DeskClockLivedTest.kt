@@ -162,7 +162,13 @@ class DeskClockLivedTest {
                     visible = true,
                     activeSession = row(inBreak = true, breakRemaining = 452),
                     activeTask = FocusTaskEntity(title = "Physics"),
-                    dialMinutes = 25,
+                    // Composed at the train merge (K8): dialMinutes
+                    // was deleted from the face's contract by the
+                    // train's Wave-3 (Glaette G-6) — the print had
+                    // already stopped reading it on main (the idle
+                    // lie's dead input). Every assertion below stands
+                    // as written: the break face derives from the
+                    // session row, never from that wire.
                     burnInStep = 0,
                     onDismiss = { dismissed = true }
                 )
@@ -176,7 +182,10 @@ class DeskClockLivedTest {
         composeRule.onNodeWithText("REMAINING").assertExists()
         // The task banner is suppressed through the break.
         composeRule.onNodeWithText("Physics").assertDoesNotExist()
-        composeRule.onNodeWithText("NIGHTSTAND DESK CLOCK • HOLD ANYWHERE TO EXIT").assertExists()
+        // Issue #143 F2: a sealed session's clock no longer wears
+        // the idle face — the eyebrow names the sealed break state
+        // (the exit instruction survives verbatim).
+        composeRule.onNodeWithText("SEALED — SAFE BREAK • HOLD ANYWHERE TO EXIT").assertExists()
 
         // A stray tap dismisses nothing.
         composeRule.onNodeWithTag("always_on_desk_clock_overlay").performClick()

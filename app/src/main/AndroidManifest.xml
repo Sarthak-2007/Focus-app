@@ -15,10 +15,20 @@
          inexact arm whenever it is absent (the heartbeat
          reconciles). -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Issue #143 F4: declared so the DND gate can read the
+         interruption filter and, ONLY where the user has granted
+         notification-policy access in system settings, engage /
+         restore Do-Not-Disturb around a seal. The declaration
+         alone grants nothing; DndGate checks the live grant. -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Declared so MainActivity can fire Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS directly (issue #26) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Audit R6 #340 F25: held ONLY across a single shield enforcement
+         tick (15 s timeout, released before the cadence gap) — never for
+         a session's whole length. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
@@ -29,6 +39,38 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- Audit R6 #341 F03: OEM security centres are addressable
+             surfaces (tamper guard + FIX routing targets). -->
+        <package android:name="com.miui.securitycenter" />
+        <package android:name="com.miui.permcenter" />
+        <package android:name="com.coloros.safecenter" />
+        <package android:name="com.oppo.safe" />
+        <package android:name="com.iqoo.secure" />
+        <package android:name="com.vivo.permissionmanager" />
+        <!-- Audit R6 #341 F10/F27: the browser coverage table's
+             packages are declared so the coverage probe (and the
+             catalogue) can see browsers that carry no launcher
+             entry on this phone — the stock OEM browsers first. -->
+        <package android:name="com.android.chrome" />
+        <package android:name="com.brave.browser" />
+        <package android:name="org.mozilla.firefox" />
+        <package android:name="com.microsoft.emmx" />
+        <package android:name="com.sec.android.app.sbrowser" />
+        <package android:name="com.opera.browser" />
+        <package android:name="com.opera.mini.native" />
+        <package android:name="com.opera.gx" />
+        <package android:name="com.duckduckgo.mobile.android" />
+        <package android:name="com.kiwibrowser.browser" />
+        <package android:name="mark.via.gp" />
+        <package android:name="com.yandex.browser" />
+        <package android:name="com.UCMobile.intl" />
+        <package android:name="com.vivaldi.browser" />
+        <package android:name="com.opera.browser.beta" />
+        <package android:name="com.mi.globalbrowser" />
+        <package android:name="com.vivo.browser" />
+        <package android:name="com.heytap.browser" />
+        <package android:name="com.huawei.browser" />
+        <package android:name="com.android.browser" />
         <!-- Issue #121: structural time-critical classification —
              TimeCriticalApps resolves which packages answer the
              platform alarm intents and which declare/handle the
@@ -88,7 +130,53 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
+
+        <!-- Issue #274: Quick Settings tile — in-session glance +
+             one-tap entry without a full launcher trip. -->
+        <service
+            android:name=".service.MonolithTileService"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <!-- Issue #305 (F2): launcher icon variants. Both aliases ship
+             DISABLED — .MainActivity's own entry stays the one live
+             launcher icon until the PARK picker row (the priced F2
+             residue) enables a variant via PackageManager. Re-authored
+             2026-10-31 (K7) from lost commit b486565. -->
+        <activity-alias
+            android:name=".LauncherIconMark"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_mark"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".LauncherIconMonogram"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_monogram"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <!-- Direct-Boot Aware Foreground Service for active focus session & call-aware usage polling -->
         <!-- Issue #328 (Audit R5, Zario): stopWithTask=false — a
@@ -136,7 +224,7 @@
             android:directBootAware="true"
             android:enabled="true"
             android:exported="false"
-            android:label="Monolith Notification Catcher"
+            android:label="@string/notification_catcher_label"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
@@ -152,6 +240,14 @@
             <intent-filter>
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <!-- Audit R6 #340 F53: the unlock moment itself is a
+                     resurrection trigger — a shield that died between
+                     boot and first unlock is re-asserted at the one
+                     instant the user is guaranteed to touch the phone.
+                     USER_UNLOCKED (not USER_PRESENT): once per unlock
+                     cycle, never per screen wake. -->
+                <action android:name="android.intent.action.USER_UNLOCKED" />
+                <action android:name="android.intent.action.REBOOT" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.TIME_SET" />
@@ -189,7 +285,7 @@
         <receiver
             android:name=".widget.MonolithWidgetProvider"
             android:exported="false"
-            android:label="Monolith">
+            android:label="@string/app_name">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>

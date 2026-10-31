@@ -39,6 +39,22 @@ class DrawerDayTest {
     // is always the coming 03:30 — from midday it is tomorrow's,
     // from the small hours it is today's, and AT 03:30 it is the
     // NEXT day's (the ticker must never spin on a zero wait).
+    // Audit R6 #341 F69: Europe/Athens springs forward 03:00 ->
+    // 04:00 on 2026-03-29. 03:30 does not exist that day; the
+    // filing rule flips at the transition instant itself (01:00Z,
+    // when the clock first reads 04:00), and the Drawer's wake
+    // must land there — not 30 minutes late at atZone's 04:30.
+    @Test
+    fun nextBoundary_euSpringForward_isTheTransitionInstant() {
+        val athens = ZoneId.of("Europe/Athens")
+        val from = LocalDate.of(2026, 3, 28).atTime(12, 0).atZone(athens)
+            .toInstant().toEpochMilli()
+        assertEquals(
+            java.time.Instant.parse("2026-03-29T01:00:00Z").toEpochMilli(),
+            DrawerDay.nextBoundaryMillis(from, athens)
+        )
+    }
+
     @Test
     fun nextBoundary_isAlwaysTheComing0330() {
         val date = LocalDate.of(2026, 10, 29)

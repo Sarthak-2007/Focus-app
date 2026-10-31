@@ -2,5 +2,5 @@
   "name": "Monolith",
   "description": "Sundial Studio tactile pocket switchboard and daybook featuring a notched rotary sun dial, live 3-stop app switchboard, master slide-to-latch bar, wind-up 2-minute knock pass, and inked linocut session stamps.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }
