@@ -1393,7 +1393,7 @@ private fun DeckInstrumentSection(
                     // and then the next block had already
                     // started — a countdown that cannot be used
                     // to leave on time is decoration.
-                    isSessionRunning && activeSession.isInSafeBreak ->
+                    isSessionRunning && activeSession != null && activeSession.isInSafeBreak ->
                         // R3b #164 F3 naming law (main) + #104 lane's
                         // precise countdown: the free automatic pause is
                         // the SAFE BREAK — never the bare word BREAK,
@@ -1405,7 +1405,7 @@ private fun DeckInstrumentSection(
                     // break flip, so it IS the block's start; the
                     // hero's elapsed readout beside it says how
                     // far in he is. No more silent fait accompli.
-                    isSessionRunning && activeSession.currentBlockIndex > 1 ->
+                    isSessionRunning && activeSession != null && activeSession.currentBlockIndex > 1 ->
                         "BLOCK ${activeSession.currentBlockIndex} · SINCE " +
                             ClockText.timeOfDay(ClockText.is24Hour(LocalContext.current), activeSession.startWallTimeMillis)
                     // Issue #6 F4: SESSION RUNNING / TOTAL were
