@@ -17,6 +17,29 @@ import android.content.Context
  * The word list is closed by construction: REST, ILL, FAMILY —
  * never TEST. This app does not know test days.
  */
+/**
+ * Audit R6 #341 F58: a pending day-word declaration — an OVERWRITE
+ * armed but not yet confirmed. The word it would replace stays the
+ * record until the confirm lands.
+ */
+data class PendingDayWordDeclaration(
+    val dateIso: String,
+    val word: String,
+    val existingWord: String
+)
+
+/**
+ * Audit R6 #341 F58: the confirm rule. Declaring a word where NO
+ * word stands needs no confirm (nothing is overwritten); clearing
+ * needs none (nothing is filed); re-declaring the SAME word needs
+ * none. Replacing one standing word with a DIFFERENT one always
+ * confirms first — the day word is the permanent explanation
+ * filed against a day, and any holder of the phone could
+ * otherwise rewrite it in one tap with no trace.
+ */
+fun dayWordRequiresConfirm(existing: String?, newWord: String?): Boolean =
+    existing != null && newWord != null && existing != newWord
+
 class DayWordStore(context: Context) {
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -59,7 +82,7 @@ class DayWordStore(context: Context) {
         if (!isDateIso(dateIso)) return false
         val editor = prefs.edit()
         when {
-            word == null -> editor.remove(dateIso).remove(zoneKey(dateIso))
+            word == null -> editor.remove(dateIso).remove(zoneKey(dateIso)).remove(timeKey(dateIso))
             word in WORDS -> {
                 editor.putString(dateIso, word)
                 // Issue #152: witness the zone this declaration is
@@ -87,6 +110,14 @@ class DayWordStore(context: Context) {
                     editor.putString(
                         zoneKey(dateIso), java.time.ZoneId.systemDefault().id
                     )
+                    // Audit R6 #341 F58: witness WHEN this
+                    // declaration was made, under the same
+                    // side-key discipline and the same earn rule
+                    // as the zone witness above — the day_notes
+                    // drain carries it into declaredAtMillis.
+                    editor.putLong(
+                        timeKey(dateIso), System.currentTimeMillis()
+                    )
                 }
             }
             else -> return false
@@ -100,7 +131,14 @@ class DayWordStore(context: Context) {
     fun declaredZone(dateIso: String): String? =
         prefs.getString(zoneKey(dateIso), null)
 
+    /** Audit R6 #341 F58: when the standing declaration for
+     *  [dateIso] was made (wall millis), or 0 when no witness
+     *  exists (declared before the witness, or none declared). */
+    fun declaredAtMillis(dateIso: String): Long =
+        prefs.getLong(timeKey(dateIso), 0L)
+
     private fun zoneKey(dateIso: String): String = "$dateIso#zone"
+    private fun timeKey(dateIso: String): String = "$dateIso#time"
 
     /** Strict yyyy-MM-dd: parses as a real calendar date and
      *  round-trips to the same string (no "2026-13-40", no

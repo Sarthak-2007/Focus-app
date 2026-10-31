@@ -31,10 +31,17 @@ import java.io.File
  *     (no <uses-policies> at all) — it is a disable-warning
  *     friction surface, not an admin power. And like Forest,
  *     Monolith declares no VPN service anywhere.
- *  Timing: routine timing deliberately does NOT use exact
- *     alarms — RoutineScheduler's law is "alarms are HINTS,
- *     never the mechanism" (setAndAllowWhileIdle + heartbeat
- *     reconcile), so no exact-alarm permission is declared.
+ *  Timing: routine timing declares the exact-alarm
+ *     permission (SCHEDULE_EXACT_ALARM, issues #280 + #319 F2
+ *     + #309 F2 — asked only when the user first enables a
+ *     routine, never a first-run gate), but the law is
+ *     unchanged: alarms are HINTS, never the mechanism. The
+ *     one ExactAlarm law probes the grant (useExact) and
+ *     fires exact only when it is held, with the inexact
+ *     setAndAllowWhileIdle arm as the standing fallback, and
+ *     the heartbeat reconcile remains the mechanism either
+ *     way. The stronger USE_EXACT_ALARM permission is still
+ *     never taken.
  */
 class ForestPlatformFootprintTest {
 
@@ -90,12 +97,32 @@ class ForestPlatformFootprintTest {
     @Test
     fun timing_alarmsAreHintsNeverTheMechanism() {
         val m = manifest()
-        assertFalse(m.contains("SCHEDULE_EXACT_ALARM"))
+        // Issue #280 + #319 F2 + #309 F2 (deliberate, on the record
+        // in the manifest's own comment at the declaration): the
+        // exact-alarm permission IS declared — asked only when the
+        // user first enables a routine, never a first-run gate.
+        // This assertion flipped from assertFalse on that drift
+        // evidence (posted on #166 before this edit, W2 BUILDER-B2);
+        // every guard rail below is what keeps the flip honest.
+        assertTrue(m.contains("SCHEDULE_EXACT_ALARM"))
+        // The stronger, never-ask permission is still not taken —
+        // this half of the original pin survives verbatim.
         assertFalse(m.contains("USE_EXACT_ALARM"))
         val scheduler = locateMainFile(
             "java/com/example/service/RoutineScheduler.kt"
         ).readText()
         assertTrue(scheduler.contains("Alarms are HINTS, never the mechanism"))
         assertTrue(scheduler.contains("setAndAllowWhileIdle"))
+        // The chain arms through the one ExactAlarm law (#319 F2):
+        // exactness is probed, never assumed, and the inexact arm
+        // remains the fallback — an exact alarm sharpens the hint,
+        // it never becomes the truth.
+        assertTrue(scheduler.contains("ExactAlarm.setWakeup"))
+        val exactAlarm = locateMainFile(
+            "java/com/example/service/ExactAlarm.kt"
+        ).readText()
+        assertTrue(exactAlarm.contains("canScheduleExactAlarms"))
+        assertTrue(exactAlarm.contains("setExactAndAllowWhileIdle"))
+        assertTrue(exactAlarm.contains("setAndAllowWhileIdle"))
     }
 }
