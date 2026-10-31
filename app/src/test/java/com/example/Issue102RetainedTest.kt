@@ -31,6 +31,11 @@ import org.junit.Test
  *
  * Retained break 3 (the Shield book) was cured on main by
  * PR #388 — struck with evidence on the issue, no code here.
+ *
+ * PIN scope: SOURCE — pure-function truth over
+ * breakPillLabelText, PillCeremony.enterStart / exitEnd and the
+ * ceremony constants, and peekOfferPreviewText; no Android
+ * runtime, no render, no post, no plumbing.
  */
 class Issue102RetainedTest {
 
