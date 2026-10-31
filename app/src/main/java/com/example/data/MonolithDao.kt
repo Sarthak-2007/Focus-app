@@ -160,6 +160,20 @@ interface MonolithDao {
     @Query("DELETE FROM focus_sessions WHERE id = :id")
     suspend fun deleteSessionById(id: Int)
 
+    // Issue #36 (ruling 1): the unsigned-row migration's reads. A
+    // row whose signature stands blank was born before fail-closed
+    // landed; the repository sweep signs exactly these rows, over
+    // their standing fields, and no others.
+    @Query("SELECT * FROM focus_sessions WHERE hmacSignature = ''")
+    suspend fun getUnsignedSessionsSnapshot(): List<FocusSessionEntity>
+
+    // The migration's write: a targeted single-column UPDATE,
+    // guarded on the row still standing unsigned, so a racing
+    // writer's real signature is never overwritten and the sweep
+    // is idempotent by construction.
+    @Query("UPDATE focus_sessions SET hmacSignature = :signature WHERE id = :id AND hmacSignature = ''")
+    suspend fun stampSessionSignatureIfUnsigned(id: Int, signature: String)
+
     // Slice E (9→10): the finish machine's reads. The E0 edge
     // re-reads the ended row by id (its history emission is a list;
     // the classification reads the row itself, fresh).

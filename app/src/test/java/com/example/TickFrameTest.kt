@@ -1,6 +1,5 @@
 package com.example
 
-import com.example.data.CryptoIntegrityManager
 import com.example.data.FocusSessionEntity
 import com.example.data.MonolithRepository
 import com.example.data.tickFrameFor
@@ -88,7 +87,14 @@ class TickFrameTest {
 
     // PIN-SCOPE: PLUMBING
     @Test
-    fun cleanTick_noReboot_keepsAnchorsAndStandingSignature() {
+    fun cleanTick_noReboot_keepsAnchors() {
+        // Issue #36 (ruling 3) — RULING-DRIVEN RE-PIN: this test
+        // previously also asserted the frame carries the standing
+        // signature (f.newHmac == "STANDING-SIG"). The frame
+        // carries NO signature any more: the v2 payload covers the
+        // persisted elapsed, which only the writer knows, so every
+        // writer signs the exact row it persists. The frame's
+        // contract is anchors/penalty/target only.
         val f = frame(session())
         assertEquals(0, f.penaltyAdd)
         assertEquals(1500, f.effectiveTarget)
@@ -99,7 +105,6 @@ class TickFrameTest {
         assertEquals(10_000L, f.newStartMono)
         assertEquals(1_700_000_000_000L, f.newStartWall)
         assertEquals(3, f.newBootCount)
-        assertEquals("STANDING-SIG", f.newHmac)
     }
 
     // PIN-SCOPE: PLUMBING
@@ -161,7 +166,14 @@ class TickFrameTest {
 
     // PIN-SCOPE: PLUMBING
     @Test
-    fun rebootByBootCount_movesBothAnchorsAndResignsOverNewPair() {
+    fun rebootByBootCount_movesBothAnchors() {
+        // Issue #36 (ruling 3) — RULING-DRIVEN RE-PIN: the frame
+        // no longer mints the re-sign over the moved pair (it
+        // cannot — the v2 payload needs the persisted elapsed).
+        // The writer signs the re-anchored row it persists; that
+        // act is pinned end-to-end by RebootTruthRepositoryTest
+        // (the post-reboot row verifies). The frame's half — both
+        // anchors move to the new boot's frame — stands as before.
         val s = session(bootCount = 3)
         val f = frame(s, currentBoot = 4, nowMono = 5_000L, nowWall = 1_700_001_000_000L, rawVerifiedElapsed = 280)
         assertTrue(f.rebootDetected)
@@ -169,16 +181,6 @@ class TickFrameTest {
         assertEquals(5_000L, f.newStartMono)
         assertEquals(1_700_001_000_000L, f.newStartWall)
         assertEquals(4, f.newBootCount)
-        assertEquals(
-            CryptoIntegrityManager.signSessionState(
-                startWallTimeMillis = 1_700_001_000_000L,
-                startElapsedRealtimeMillis = 5_000L,
-                bootCount = 4,
-                targetDurationSeconds = 1500,
-                isStopwatch = false
-            ),
-            f.newHmac
-        )
     }
 
     // PIN-SCOPE: PLUMBING
@@ -207,7 +209,8 @@ class TickFrameTest {
         // #524: the raw verified figure (900) books the dead
         // install interval as focus time; the absorb banks the
         // last PROVEN elapsed — max(bank 120, persisted 300) —
-        // moves both anchors, keeps the boot count, re-signs.
+        // moves both anchors, keeps the boot count (the writer
+        // re-signs the persisted row — issue #36, ruling 3).
         val start = 1_700_000_000_000L
         val s = session(startWall = start, beat = start + 165_000L)
         val f = frame(
@@ -224,16 +227,9 @@ class TickFrameTest {
         assertEquals(60_000L, f.newStartMono)
         assertEquals(start + 170_000L, f.newStartWall)
         assertEquals(3, f.newBootCount)
-        assertEquals(
-            CryptoIntegrityManager.signSessionState(
-                startWallTimeMillis = start + 170_000L,
-                startElapsedRealtimeMillis = 60_000L,
-                bootCount = 3,
-                targetDurationSeconds = 1500,
-                isStopwatch = false
-            ),
-            f.newHmac
-        )
+        // Issue #36 (ruling 3): the absorb's re-sign is the
+        // writer's act over the persisted row (the frame mints
+        // nothing) — see rebootByBootCount_movesBothAnchors.
         // The beat is fresh against the implied now: no latch.
         assertFalse(f.updateGapLatched)
     }

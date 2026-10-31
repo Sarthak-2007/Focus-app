@@ -104,14 +104,10 @@ class MidBlockSafeBreakRepositoryTest {
         val nowMono = SystemClock.elapsedRealtime()
         val startMono = nowMono - elapsed * 1000L
         val startWall = System.currentTimeMillis() - elapsed * 1000L
-        val hmac = if (forged) "forged" else CryptoIntegrityManager.signSessionState(
-            startWallTimeMillis = startWall,
-            startElapsedRealtimeMillis = startMono,
-            bootCount = 0,
-            targetDurationSeconds = target,
-            isStopwatch = stopwatch
-        )
-        return FocusSessionEntity(
+        // Issue #36 (ruling 3): the v2 signature covers the row's
+        // own time fields (elapsed and lastTick below), so the row
+        // is built first and signed over itself.
+        val unsigned = FocusSessionEntity(
             intention = "MID-BLOCK BREAK",
             profileName = "Manual",
             targetDurationSeconds = target,
@@ -120,7 +116,7 @@ class MidBlockSafeBreakRepositoryTest {
             startElapsedRealtimeMillis = startMono,
             bootCount = 0,
             lastTickElapsedRealtimeMillis = nowMono,
-            hmacSignature = hmac,
+            hmacSignature = "",
             totalStudyBlocks = blocks,
             currentBlockIndex = blockIndex,
             isInSafeBreak = false,
@@ -128,6 +124,11 @@ class MidBlockSafeBreakRepositoryTest {
             isActive = true,
             completedSuccessfully = false
         )
+        return if (forged) {
+            unsigned.copy(hmacSignature = "forged")
+        } else {
+            unsigned.copy(hmacSignature = CryptoIntegrityManager.signSessionState(unsigned))
+        }
     }
 
     @Test

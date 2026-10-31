@@ -98,15 +98,10 @@ class ExampleRobolectricTest {
         val nowMono = SystemClock.elapsedRealtime()
         val bootCount = repository.querySystemBootCount()
 
-        val validHmac = CryptoIntegrityManager.signSessionState(
-            startWallTimeMillis = nowWall - 10_000L,
-            startElapsedRealtimeMillis = (nowMono - 10_000L).coerceAtLeast(1L),
-            bootCount = bootCount,
-            targetDurationSeconds = 1800,
-            isStopwatch = false
-        )
-
-        val honestSession = FocusSessionEntity(
+        // Issue #36 (ruling 3): the v2 signature covers the row's
+        // own time fields (elapsed 10 below among them), so the
+        // fabricated row is built first and signed over itself.
+        val unsignedHonest = FocusSessionEntity(
             intention = "Deep Work",
             profileName = "Study Loadout",
             targetDurationSeconds = 1800,
@@ -114,9 +109,12 @@ class ExampleRobolectricTest {
             startWallTimeMillis = nowWall - 10_000L,
             startElapsedRealtimeMillis = (nowMono - 10_000L).coerceAtLeast(1L),
             bootCount = bootCount,
-            hmacSignature = validHmac,
+            hmacSignature = "",
             isActive = true,
             completedSuccessfully = false
+        )
+        val honestSession = unsignedHonest.copy(
+            hmacSignature = CryptoIntegrityManager.signSessionState(unsignedHonest)
         )
 
         val (honestElapsed, honestTamper) = repository.computeVerifiedSessionElapsed(honestSession)
@@ -269,29 +267,26 @@ class ExampleRobolectricTest {
         ShadowSystemClock.advanceBy(Duration.ofSeconds(330))
         val fiveMinsAgoMono = (SystemClock.elapsedRealtime() - 300_000L).coerceAtLeast(1L)
         val fiveMinsAgoWall = System.currentTimeMillis() - 300_000L
+        // Seat (b) cure, completed in the fourteenth sitting:
+        // startSession signed this row over its birth state; the
+        // fabrication below rewrites its anchors and elapsed, so
+        // the row is re-signed over the state it now claims — the
+        // same act the anti-tamper test above performs on its own
+        // fabricated entity. Without the re-sign the signature leg
+        // convicts the row however honest the clocks are (this
+        // PR's first gate attempt failed exactly there); blanking
+        // the signature instead would route around the HMAC leg
+        // entirely — weaker, rejected. Issue #36 (ruling 3): the
+        // re-sign is over the fabricated row itself, whose covered
+        // fields now include the rewritten elapsed.
+        val fabricated = session.copy(
+            startWallTimeMillis = fiveMinsAgoWall,
+            startElapsedRealtimeMillis = fiveMinsAgoMono,
+            elapsedSeconds = 300
+        )
         db.monolithDao().updateSession(
-            session.copy(
-                startWallTimeMillis = fiveMinsAgoWall,
-                startElapsedRealtimeMillis = fiveMinsAgoMono,
-                elapsedSeconds = 300,
-                // Seat (b) cure, completed in the fourteenth sitting:
-                // startSession signed this row over its birth
-                // anchors; the fabrication above rewrites them, so
-                // the row is re-signed over the anchors it now
-                // claims — the same act the anti-tamper test above
-                // performs on its own fabricated entity. Without
-                // the re-sign the signature leg convicts the row
-                // however honest the clocks are (this PR's first
-                // gate attempt failed exactly there); blanking the
-                // signature instead would route around the HMAC
-                // leg entirely — weaker, rejected.
-                hmacSignature = CryptoIntegrityManager.signSessionState(
-                    startWallTimeMillis = fiveMinsAgoWall,
-                    startElapsedRealtimeMillis = fiveMinsAgoMono,
-                    bootCount = session.bootCount,
-                    targetDurationSeconds = session.targetDurationSeconds,
-                    isStopwatch = session.isStopwatchMode
-                )
+            fabricated.copy(
+                hmacSignature = CryptoIntegrityManager.signSessionState(fabricated)
             )
         )
 
