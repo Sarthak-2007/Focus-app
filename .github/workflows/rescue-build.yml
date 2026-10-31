@@ -430,16 +430,36 @@ jobs:
   # ordinary pull request is judged on the quick compile check (the
   # `compile` job) plus the tests for the part that actually
   # changed — never the full suite. This job is the second half of
-  # that read. The mapping is mechanical and its limits are stated,
-  # not hidden:
-  #   - a test file changed in the diff runs, by name;
-  #   - a main-source file changed in the diff selects test classes
-  #     whose names contain the file's stem (MonolithRepository.kt
-  #     selects *MonolithRepository* test classes) — the tests sit
-  #     flat in com.example, so no package mirror exists to walk;
-  #   - if nothing maps, the job passes and its summary says so in
-  #     plain words: the compile job is this PR's gate read, and
-  #     the full suite judges the change at the batch/main venue.
+  # that read. The mapping is done by
+  # .github/scripts/map_targeted_tests.py, from file CONTENTS, and
+  # its rules are stated, not hidden:
+  #   - a test file changed in the diff contributes the test classes
+  #     it actually declares (top-level class/object bodies holding
+  #     @Test) — never a filter derived from the file's name, which
+  #     named nonexistent classes for multi-class files and silently
+  #     skipped the rest (issue #166, mapper incident 1);
+  #   - a main-source (.kt) file changed in the diff selects test
+  #     files whose name carries its stem OR whose contents reference
+  #     the stem as a whole word, and contributes THEIR declared test
+  #     classes — so a production-only change is routed to its
+  #     covering tests even when the test file itself is unmoved by
+  #     the diff (the PR #705 shape);
+  #   - a production CODE change (.kt under app/src/main/java/) that
+  #     still maps to no test makes this job FAIL as GATE UNMET —
+  #     no test failed, but no test ran either, and a skipped step
+  #     wearing SUCCESS is exactly the vacuous green of issue #166's
+  #     mapper incident 2. A workflow job cannot conclude "neutral"
+  #     (that conclusion exists only for external check runs), so
+  #     not-a-pass is spelled as a failure whose summary says UNMET
+  #     in plain words; the cures are named in the error (map a
+  #     covering test, or extend the mapper in the same PR);
+  #   - production RESOURCE files (strings, manifest, assets) map to
+  #     nothing mechanically and do NOT trip the unmet failure: no
+  #     unit-test filter can name their coverage. The summary names
+  #     them; the compile job and the batch/main venue judge them;
+  #   - a diff with no production change at all (docs, workflow,
+  #     build files) maps nothing and passes on the compile read, as
+  #     the venue law provides — the summary says so in plain words.
   # Batch/train PRs skip this job — the full venue runs for them.
   targeted:
     name: Targeted tests (changed part)
@@ -475,18 +495,12 @@ jobs:
           HEAD="${{ github.event.pull_request.head.sha }}"
           git diff --name-only "$BASE...$HEAD" > changed.txt
           echo "Changed files:"; cat changed.txt
-          : > filters.txt
-          while IFS= read -r f; do
-            case "$f" in
-              app/src/test/java/*.kt)
-                echo "$f" | sed -e 's|^app/src/test/java/||' -e 's|\.kt$||' -e 's|/|.|g' >> filters.txt ;;
-              app/src/main/java/*.kt)
-                stem=$(basename "$f" .kt)
-                find app/src/test/java -name "*${stem}*.kt" | sed -e 's|^app/src/test/java/||' -e 's|\.kt$||' -e 's|/|.|g' >> filters.txt ;;
-            esac
-          done < changed.txt
-          sort -u filters.txt -o filters.txt
-          echo "count=$(grep -c . filters.txt || true)" >> "$GITHUB_OUTPUT"
+          # Issue #166 (mapper cure): the mapping reads file CONTENTS
+          # (declared test classes; whole-word references from test
+          # files to changed production stems) — never file names.
+          # The script reports facts (filters.txt, unmapped.txt, the
+          # step outputs below); the verdict steps act on them.
+          python3 .github/scripts/map_targeted_tests.py changed.txt
           echo "Mapped test classes:"; cat filters.txt
 
       - name: Targeted unit tests
@@ -511,16 +525,41 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+      # Issue #166 (mapper incident 2): a production CODE change that
+      # mapped to no test must not let this job conclude SUCCESS on a
+      # skipped step. Placed after the tests + upload steps so any
+      # mapped tests still ran and their artifact stands as evidence;
+      # this step then fails the job as GATE UNMET. (Why failure and
+      # not "neutral": a workflow job has no neutral conclusion —
+      # see the job header comment.)
+      - name: Gate honesty — unmapped production code
+        if: ${{ always() && steps.map.outputs.unmapped_code != '' && steps.map.outputs.unmapped_code != '0' }}
+        run: |
+          echo "::error::GATE UNMET — production code changed with no mapped covering test. No test failed; no test ran for the file(s) below, so a green conclusion here would be vacuous. Cures: make the covering test findable (its file name carries the changed file's stem, or its contents reference the changed class), or extend .github/scripts/map_targeted_tests.py in this same PR."
+          grep '^code' unmapped.txt || true
+          exit 1
+
       - name: Targeted summary
         if: always()
         run: |
           {
             echo "## Targeted verdict — ${{ github.ref_name }} · ${{ github.sha }}"
+            UC="${{ steps.map.outputs.unmapped_code }}"
+            if [ -n "$UC" ] && [ "$UC" != "0" ]; then
+              echo "- ⛔ GATE UNMET: production code changed with NO mapped covering test (named in the Map step's log and the Gate honesty step). No test failed — no test ran for that part. This job's failure is an unmet gate, not a test failure; do not cite it as a red test."
+            fi
             if [ "${{ steps.map.outputs.count }}" = "0" ]; then
-              echo "- No test classes map to this diff (no changed test files; no stem-matched tests for changed main files). The compile job is this PR's gate read; the full suite judges this change at the batch/main venue."
+              if [ "${{ steps.map.outputs.production_changed }}" = "true" ]; then
+                echo "- No test classes map to this diff's production files. The unmapped files are listed in the Map step's log (code files trip the unmet gate above; resource files are judged by the compile job and the batch/main venue)."
+              else
+                echo "- No test classes map to this diff (no production or test change under app/src). The compile job is this PR's gate read; the full suite judges this change at the batch/main venue."
+              fi
             else
               echo "- Mapped test classes: ${{ steps.map.outputs.count }} (listed in the Map step's log)"
               echo "- Targeted verdict: ${{ steps.tests.outcome }}"
+            fi
+            if [ "${{ steps.map.outputs.unmapped_count }}" != "0" ] && { [ -z "$UC" ] || [ "$UC" = "0" ]; }; then
+              echo "- Production resource files changed with no mechanical test mapping (named in the Map step's log) — judged by the compile job and the batch/main venue, by design."
             fi
             echo "- Full suite, screenshots, and lint did NOT run on this PR — by design (new merge gate). They judge this change on the batch composition and on main after it lands."
           } >> "$GITHUB_STEP_SUMMARY"
