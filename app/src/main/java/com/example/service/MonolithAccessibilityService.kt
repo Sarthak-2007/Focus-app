@@ -999,7 +999,11 @@ class MonolithAccessibilityService : AccessibilityService() {
             }
             return
         }
-        if (pkgName.startsWith("com.android.systemui")) return
+        // Issue #275: system-UI surfaces — the shade, recents, and
+        // the keyguard (lockscreen / PIN) when it is up — are never
+        // processed as apps. The classification lives in
+        // WindowSurfaceClassifier; this is its event-gate site.
+        if (WindowSurfaceClassifier.isSystemUiFamily(pkgName)) return
         // Audit R6 #340 F63: a window change to a new foreground
         // package ends every other package's episode claim.
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
@@ -1092,7 +1096,7 @@ class MonolithAccessibilityService : AccessibilityService() {
             val winPkg = winRoot.packageName?.toString() ?: continue
             if (winPkg == eventPkg) continue
             if (winPkg == applicationContext.packageName ||
-                winPkg.startsWith("com.android.systemui")
+                WindowSurfaceClassifier.isSystemUiFamily(winPkg)
             ) {
                 continue
             }
@@ -1904,7 +1908,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         val rootNode = try { rootInActiveWindow } catch (e: Exception) { noteDetectionFailure("rootInActiveWindow", e); null } ?: return
         val pkgName = rootNode.packageName?.toString() ?: return
         if (pkgName == applicationContext.packageName ||
-            pkgName.startsWith("com.android.systemui")
+            WindowSurfaceClassifier.isSystemUiFamily(pkgName)
         ) {
             return
         }
