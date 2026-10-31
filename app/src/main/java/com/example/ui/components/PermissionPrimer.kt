@@ -21,9 +21,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.data.PermissionStepLogic
 import com.example.data.permissionExplainer
 import com.example.service.WatchItemId
@@ -95,14 +97,19 @@ fun ShieldPermissionPrimerModal(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "THE SHIELD'S GRANTS",
+                    text = stringResource(R.string.permission_primer_title),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,
                     color = scheme.onBackground
                 )
                 Text(
-                    text = "STEP ${PermissionStepLogic.stepNumber(step)} OF ${PermissionStepLogic.stepCount} — ${step.boardName}",
+                    text = stringResource(
+                        R.string.permission_primer_step,
+                        PermissionStepLogic.stepNumber(step),
+                        PermissionStepLogic.stepCount,
+                        step.boardName
+                    ),
                     fontFamily = AnonymousProFamily,
                     fontSize = 12.sp,
                     color = scheme.primaryContainer
@@ -118,7 +125,11 @@ fun ShieldPermissionPrimerModal(
                     WatchItemId.PERMISSIONS.forEach { item ->
                         val granted = grants[item] == true
                         Text(
-                            text = "${if (granted) "✓" else "·"} ${item.boardName}${if (item == step) " — THIS STEP" else ""}",
+                            text = stringResource(
+                                R.string.permission_primer_board_line,
+                                if (granted) "✓" else "·",
+                                item.boardName
+                            ) + if (item == step) stringResource(R.string.permission_primer_this_step) else "",
                             fontFamily = AnonymousProFamily,
                             fontSize = 12.sp,
                             color = if (granted) scheme.onSurfaceVariant else scheme.onSurface
@@ -138,7 +149,7 @@ fun ShieldPermissionPrimerModal(
                             .testTag("permission_primer_fix")
                     ) {
                         Text(
-                            text = "FIX — OPEN SETTINGS",
+                            text = stringResource(R.string.permission_primer_fix),
                             fontFamily = AnonymousProFamily,
                             fontSize = 12.sp,
                             color = scheme.primary
@@ -151,7 +162,7 @@ fun ShieldPermissionPrimerModal(
                             .testTag("permission_primer_later")
                     ) {
                         Text(
-                            text = "LATER",
+                            text = stringResource(R.string.permission_primer_later),
                             fontFamily = AnonymousProFamily,
                             fontSize = 12.sp,
                             color = scheme.onSurfaceVariant
