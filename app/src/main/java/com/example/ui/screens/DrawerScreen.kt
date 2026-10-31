@@ -611,90 +611,15 @@ fun DrawerScreen(
                     onNavigateToMonth = { viewName = DrawerView.MONTH.name },
                     onSelectTask = { selectedTaskId = it }
                 )
-                // The drawers doors (main, C10 — restored at
-                // the composition, K8): the composed landing had
-                // kept the train shelf but lost every entry row,
-                // stranding the CABINET / RECEIPTS / INDEX views
-                // the sections above implement. ALL MONTHS keeps
-                // main's case split (populated landings only).
-                if (!globallyEmpty) {
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(
-                                role = androidx.compose.ui.semantics.Role.Button
-                            ) { viewName = DrawerView.INDEX.name }
-                            .sizeIn(minHeight = 48.dp)
-                            .padding(vertical = 6.dp)
-                            .testTag("drawer_all_months"),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = stringResource(R.string.drawer_all_months),
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onBackground
-                        )
-                        androidx.compose.material3.Icon(
-                            imageVector = com.example.ui.theme.MonolithIcons.ChevronRight,
-                            contentDescription = null,
-                            tint = scheme.onSurfaceVariant,
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
-                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-                }
-                }
-                // The cabinet's door: ONE furniture row under
-                // ALL MONTHS (chrome C10).
-                item {
-                    DrawerNavRow(
-                        label = "CABINET",
-                        onClick = { viewName = DrawerView.CABINET.name },
-                        modifier = Modifier.testTag("drawer_curios_row")
-                    )
-                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-                }
-                // The receipts index's door: ONE furniture row
-                // under CABINET (issue #157) — this destination
-                // is named "Receipts"; the receipts are here.
-                item {
-                    DrawerNavRow(
-                        label = "RECEIPTS",
-                        onClick = { viewName = DrawerView.RECEIPTS.name },
-                        modifier = Modifier.testTag("drawer_receipts_row")
-                    )
-                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-                }
-                // Issue #253 line 39: the history leaves the app —
-                // one furniture door under RECEIPTS, standing only
-                // when the host supplies the export provider.
-                exportProvider?.let { provider ->
-                    item {
-                        DrawerNavRow(
-                            label = "EXPORT HISTORY (CSV)",
-                            onClick = {
-                                exportScope.launch {
-                                    val csv = runCatching { provider() }
-                                        .getOrNull()
-                                    if (csv != null) {
-                                        pendingExportCsv = csv
-                                        exportLauncher.launch(HistoryCsv.FILE_NAME)
-                                    }
-                                }
-                            },
-                            modifier = Modifier.testTag("drawer_export_history")
-                        )
-                        HorizontalDivider(
-                            thickness = 1.dp,
-                            color = scheme.outlineVariant
-                        )
-                    }
-                }
+                drawerLandingDoors(
+                    scheme = scheme,
+                    globallyEmpty = globallyEmpty,
+                    exportProvider = exportProvider,
+                    exportScope = exportScope,
+                    exportLauncher = exportLauncher,
+                    onPendingExportCsv = { pendingExportCsv = it },
+                    onNavigate = { viewName = it.name }
+                )
             }
         }
     }
@@ -1643,6 +1568,113 @@ private fun LazyListScope.drawerLandingBody(
                 }
                 HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
             }
+        }
+    }
+}
+
+/**
+ * Issue #90 (complexity F2 slice): the LANDING arm's doors block
+ * (ALL MONTHS / CABINET / RECEIPTS / EXPORT doors) of the
+ * Drawer's list column — extracted as a LazyListScope extension,
+ * in the pattern of drawerSearchResults. With this slice the F2
+ * list-view extractions are complete.
+ * Behaviour-identical: same items, same keys, same testTags; the
+ * host's captures are explicit parameters (the export machinery
+ * included) and the block's state writes (three navigations, the
+ * pending-export hand-off) ride callbacks to the host's holders,
+ * in the block's standing order.
+ */
+private fun LazyListScope.drawerLandingDoors(
+    scheme: androidx.compose.material3.ColorScheme,
+    globallyEmpty: Boolean,
+    exportProvider: (suspend () -> String)?,
+    exportScope: kotlinx.coroutines.CoroutineScope,
+    exportLauncher: androidx.activity.result.ActivityResultLauncher<String>,
+    onPendingExportCsv: (String) -> Unit,
+    onNavigate: (DrawerView) -> Unit
+) {
+    // The drawers doors (main, C10 — restored at
+    // the composition, K8): the composed landing had
+    // kept the train shelf but lost every entry row,
+    // stranding the CABINET / RECEIPTS / INDEX views
+    // the sections above implement. ALL MONTHS keeps
+    // main's case split (populated landings only).
+    if (!globallyEmpty) {
+    item {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(
+                    role = androidx.compose.ui.semantics.Role.Button
+                ) { onNavigate(DrawerView.INDEX) }
+                .sizeIn(minHeight = 48.dp)
+                .padding(vertical = 6.dp)
+                .testTag("drawer_all_months"),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(R.string.drawer_all_months),
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                letterSpacing = 1.sp,
+                color = scheme.onBackground
+            )
+            androidx.compose.material3.Icon(
+                imageVector = com.example.ui.theme.MonolithIcons.ChevronRight,
+                contentDescription = null,
+                tint = scheme.onSurfaceVariant,
+                modifier = Modifier.size(14.dp)
+            )
+        }
+        HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+    }
+    }
+    // The cabinet's door: ONE furniture row under
+    // ALL MONTHS (chrome C10).
+    item {
+        DrawerNavRow(
+            label = "CABINET",
+            onClick = { onNavigate(DrawerView.CABINET) },
+            modifier = Modifier.testTag("drawer_curios_row")
+        )
+        HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+    }
+    // The receipts index's door: ONE furniture row
+    // under CABINET (issue #157) — this destination
+    // is named "Receipts"; the receipts are here.
+    item {
+        DrawerNavRow(
+            label = "RECEIPTS",
+            onClick = { onNavigate(DrawerView.RECEIPTS) },
+            modifier = Modifier.testTag("drawer_receipts_row")
+        )
+        HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+    }
+    // Issue #253 line 39: the history leaves the app —
+    // one furniture door under RECEIPTS, standing only
+    // when the host supplies the export provider.
+    exportProvider?.let { provider ->
+        item {
+            DrawerNavRow(
+                label = "EXPORT HISTORY (CSV)",
+                onClick = {
+                    exportScope.launch {
+                        val csv = runCatching { provider() }
+                            .getOrNull()
+                        if (csv != null) {
+                            onPendingExportCsv(csv)
+                            exportLauncher.launch(HistoryCsv.FILE_NAME)
+                        }
+                    }
+                },
+                modifier = Modifier.testTag("drawer_export_history")
+            )
+            HorizontalDivider(
+                thickness = 1.dp,
+                color = scheme.outlineVariant
+            )
         }
     }
 }
