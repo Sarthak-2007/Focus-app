@@ -23,7 +23,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DayNoteEntity::class,
         TaskAccrualSegmentEntity::class
     ],
-    version = 20,
+    version = 21,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -430,6 +430,29 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
+         * Issue #525 (20→21): ONE column — focus_sessions
+         * .rebootGapSeconds, the accumulated boot-to-shield
+         * seconds a session's reboots left unshielded, booked at
+         * every re-anchor and printed on the receipt. No backfill:
+         * pre-v21 rows truthfully carry 0 (no reboot gap was ever
+         * booked for them — the old derivation credited the
+         * uptime instead of booking it, and inventing a figure
+         * now would fabricate the record).
+         *
+         * Renumber note: authored as 18→19; issue #324's step
+         * took 18→19 and issue #138's took 19→20 while this PR
+         * was in flight, so this step takes the next free link,
+         * 20→21 — the same etiquette both renumber histories
+         * record.
+         */
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfAbsent(db, "focus_sessions", "rebootGapSeconds",
+                    "ALTER TABLE focus_sessions ADD COLUMN rebootGapSeconds INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
          * TOKEN-SPEC §6: the spend ledger arrives as an explicit
          * migration. There is NO backfill — today's in-memory spends
          * were never recorded, so v8 truthfully starts with an empty
@@ -564,7 +587,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance

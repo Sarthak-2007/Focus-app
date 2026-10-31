@@ -2213,11 +2213,15 @@ class MonolithRepository(
      * 2. Across device reboots (`LOCKED_BOOT_COMPLETED` where `currentBoot != session.bootCount` or
      *    `nowMono < session.lastTickElapsedRealtimeMillis`), preserves the elapsed banked before
      *    the reboot and credits NOTHING for the unobserved interval — neither the powered-off
-     *    downtime nor the new boot's uptime before this first post-reboot tick. That time was
-     *    never witnessed by the shield or the session clock, so booking it as focus was a
-     *    fabrication (Audit R3 #113, finding 5). A reboot neither resets the timer nor
-     *    inflates it: the count resumes from the banked figure and ticks from the re-anchor
-     *    [updateSessionProgress] persists.
+     *    downtime nor the new boot's uptime before the shield's first post-reboot raise. That
+     *    time was never witnessed by the shield or the session clock, so booking it as focus
+     *    was a fabrication (Audit R3 #113, finding 5). Issue #525: the witnessed span is
+     *    measured from the boot's shield-raise stamp (ShieldRaiseStore, written at the
+     *    shield's first protecting flip) — raise-to-tick is credited, everything before
+     *    the raise is booked as the session's reboot gap, never as focus; with no stamp
+     *    standing, nothing past the banked figure is credited at all. A reboot neither
+     *    resets the timer nor inflates it: the count resumes from the banked figure and
+     *    ticks from the re-anchor [updateSessionProgress] persists.
      * 3. Verifies the AndroidKeyStore `HmacSHA256` signature via `CryptoIntegrityManager.verifySessionState`.
      */
     @WorkerThread
@@ -2244,7 +2248,8 @@ class MonolithRepository(
             Pair((session.accumulatedBeforeRebootSeconds + monoElapsedSec.toInt()), tamper)
         } else {
             // Device rebooted during an active lock (LOCKED_BOOT_COMPLETED):
-            // Resume from accumulated elapsed seconds prior to reboot + seconds elapsed since current boot.
+            // Resume from accumulated elapsed seconds prior to reboot + the span
+            // this boot's shield actually witnessed since its first raise (#525).
             // Issue #81 F3: the tamper term is no longer !hmacValid
             // alone. An unwitnessed intermediate boot (Safe Mode —
             // Monolith cannot run there, so it never re-anchors —
@@ -2257,10 +2262,48 @@ class MonolithRepository(
             // forgiven: they cost the tamper penalty instead of
             // passing as a free, invisible freeze.
             val priorElapsed = max(session.accumulatedBeforeRebootSeconds, session.elapsedSeconds)
-            val sinceRebootSec = (nowMono / 1000L).toInt().coerceAtLeast(0)
+            // Issue #525: credit ONLY the witnessed span — from
+            // this boot's first shield raise (ShieldRaiseStore)
+            // to this tick. The old figure gifted the ENTIRE
+            // uptime (nowMono, i.e. seconds since power-on) on
+            // the doctrine that the shield stands from
+            // BOOT_COMPLETED; it stands from its first
+            // protecting flip, and the uptime before that flip
+            // ran unshielded. No stamp stands → nothing was
+            // witnessed → nothing past the banked figure.
+            val raiseMono = currentBoot?.let { ShieldRaiseStore.raiseMonoForBoot(context, it) }
+            val sinceRebootSec = (witnessedPostRebootMillis(nowMono, raiseMono) / 1000L)
+                .toInt().coerceAtLeast(0)
             val unwitnessed = currentBoot != null && TamperWitness.unwitnessedBoot(session.bootCount, currentBoot)
             Pair(priorElapsed + sinceRebootSec, !hmacValid || unwitnessed)
         }
+    }
+
+    /**
+     * Issue #525: the booking a reboot crossing leaves on the
+     * row — this boot's unshielded span (uptime before the
+     * shield's first raise, off the ShieldRaiseStore stamp)
+     * accumulated onto the session's reboot-gap ledger, and the
+     * shield-gap latch set when that span crosses the 10s law:
+     * a session that crossed a long unshielded boot must not
+     * book ELAPSED_CLEAN for time nobody watched. Returns the
+     * row's standing (latch, ledger) unchanged when no reboot
+     * crossed. The credited side of the same stamp is priced in
+     * [computeVerifiedSessionElapsed]; the two never overlap —
+     * witnessed + unshielded = the uptime the old derivation
+     * gifted whole.
+     */
+    private fun rebootGapBooking(
+        session: FocusSessionEntity,
+        nowMono: Long,
+        rebootDetected: Boolean,
+        currentBoot: Int?
+    ): Pair<Boolean, Int> {
+        if (!rebootDetected) return session.shieldGapSeen to session.rebootGapSeconds
+        val raiseMono = currentBoot?.let { ShieldRaiseStore.raiseMonoForBoot(context, it) }
+        val gapMillis = unshieldedRebootMillis(nowMono, raiseMono)
+        return (session.shieldGapSeen || gapMillis > SHIELD_GAP_THRESHOLD_MILLIS) to
+            (session.rebootGapSeconds + (gapMillis / 1000L).toInt())
     }
 
     suspend fun getSystemGuardStatus(): SystemGuardStatus = withContext(Dispatchers.IO) {
@@ -3864,6 +3907,9 @@ class MonolithRepository(
             // its lived Safe Breaks, from the row's own ledgers.
             completedTasks = completedTasks,
             safeBreakSeconds = row.breakTakenSeconds,
+            // Issue #525: the row's booked reboot gap rides the
+            // slip (see PendingReceipt.rebootGapSeconds).
+            rebootGapSeconds = row.rebootGapSeconds,
             // W-41 FILL POINT (batch-10, landed): the split columns
             // now exist (MIGRATION_12_13) and the birth writer stores
             // them with the enforcer-derived sites figure. The gate
@@ -4018,6 +4064,7 @@ class MonolithRepository(
             restored = false,
             receiptPublishedMonoMs = 0L,
             penaltySecondsAdded = pending.penaltySecondsAdded,
+            rebootGapSeconds = pending.rebootGapSeconds,
             forgedArtifactName = pending.forgedArtifactName,
             heldShutAtSeal = pending.heldShutAtSeal,
             heldPeekAtSeal = pending.heldPeekAtSeal,
@@ -4230,6 +4277,7 @@ class MonolithRepository(
             restored = true,
             receiptPublishedMonoMs = 0L,
             penaltySecondsAdded = pending.penaltySecondsAdded,
+            rebootGapSeconds = pending.rebootGapSeconds,
             forgedArtifactName = pending.forgedArtifactName,
             heldShutAtSeal = pending.heldShutAtSeal,
             heldPeekAtSeal = pending.heldPeekAtSeal,
@@ -4563,11 +4611,12 @@ class MonolithRepository(
         // on the row at entry — a mid-block break resumes the block
         // it froze; a flip-born break advances past the finished
         // block. The taken booking is identical either way.
-        val next = if (row.midBlockSafeBreak) {
+        val currentBoot = querySystemBootCountOrNull()
+        val exited = if (row.midBlockSafeBreak) {
             resumeBlockFromMidBreak(
                 session = row,
                 nowMono = nowMono,
-                currentBoot = querySystemBootCountOrNull() ?: row.bootCount,
+                currentBoot = currentBoot ?: row.bootCount,
                 beatWall = row.shieldLastBeatWallMillis,
                 breakTakenSeconds = row.breakTakenSeconds + taken
             )
@@ -4575,11 +4624,19 @@ class MonolithRepository(
             advancePastBreak(
                 session = row,
                 nowMono = nowMono,
-                currentBoot = querySystemBootCountOrNull() ?: row.bootCount,
+                currentBoot = currentBoot ?: row.bootCount,
                 beatWall = row.shieldLastBeatWallMillis,
                 breakTakenSeconds = row.breakTakenSeconds + taken
             )
         }
+        // Issue #525: this exit re-anchors like every other door —
+        // a reboot that crossed during the break books its
+        // unshielded span here too, on the row the exit persists.
+        val rebootCrossed = (currentBoot != null && row.bootCount > 0 && currentBoot != row.bootCount) ||
+            (row.lastTickElapsedRealtimeMillis > 0L && nowMono < row.lastTickElapsedRealtimeMillis)
+        val (gapSeen, gapSeconds) =
+            rebootGapBooking(row, nowMono, rebootCrossed, currentBoot)
+        val next = exited.copy(shieldGapSeen = gapSeen, rebootGapSeconds = gapSeconds)
         dao.updateSession(next)
         // Issue #155 (IQ-4 edge 8a): the widget's break line must
         // fall the moment the break ends early — the glance follows
@@ -4779,6 +4836,13 @@ class MonolithRepository(
         if (frame.updateDetected && accrualPrefs.contains(ACCRUAL_KEY_MONO)) {
             accrualPrefs.edit().putLong(ACCRUAL_KEY_MONO, nowMono).apply()
         }
+        // Issue #525: book this reboot's unshielded span in the
+        // same write that re-anchors — the gap ledger and the
+        // latch ride every copy this tick persists below, so no
+        // exit from this function can re-anchor across a reboot
+        // and leave the books silent about the unshielded time.
+        val (newShieldGapSeen, newRebootGapSeconds) =
+            rebootGapBooking(session, nowMono, rebootDetected, currentBoot)
 
         // Issue #122 (finding 4): battery death IS an ending. On
         // the reboot branch only — the battery-death signature,
@@ -4809,6 +4873,8 @@ class MonolithRepository(
                 hmacSignature = newHmac,
                 penaltySecondsAdded = penaltyAdd,
                 tamperDetected = tamper,
+                shieldGapSeen = newShieldGapSeen,
+                rebootGapSeconds = newRebootGapSeconds,
                 shieldLastBeatWallMillis = beatWall,
                 outcome = SessionOutcome.ELAPSED_SHIELD_GAP,
                 endWallMillis = if (session.endWallMillis == 0L) plannedEnd else session.endWallMillis
@@ -4857,7 +4923,8 @@ class MonolithRepository(
                     hmacSignature = newHmac,
                     penaltySecondsAdded = penaltyAdd,
                     tamperDetected = tamper,
-                    shieldGapSeen = session.shieldGapSeen || updateGapLatched,
+                    shieldGapSeen = newShieldGapSeen || updateGapLatched,
+                    rebootGapSeconds = newRebootGapSeconds,
                     shieldLastBeatWallMillis = beatWall,
                     isActive = false,
                     completedSuccessfully = true,
@@ -4885,7 +4952,8 @@ class MonolithRepository(
                 hmacSignature = newHmac,
                 penaltySecondsAdded = penaltyAdd,
                 tamperDetected = tamper,
-                shieldGapSeen = session.shieldGapSeen || updateGapLatched,
+                shieldGapSeen = newShieldGapSeen || updateGapLatched,
+                rebootGapSeconds = newRebootGapSeconds,
                 shieldLastBeatWallMillis = beatWall
             )
             dao.updateSession(updated)
@@ -4936,9 +5004,17 @@ class MonolithRepository(
                 // exit follows the break's ORIGIN (issue #261): a
                 // mid-block break resumes its frozen block; a
                 // flip-born break advances past the finished one.
+                // Issue #525: a reboot that crossed during the
+                // break books its unshielded span at this exit
+                // re-anchor, like every other re-anchor door —
+                // the exit copies build on the booked row.
+                val exitSession = session.copy(
+                    shieldGapSeen = newShieldGapSeen,
+                    rebootGapSeconds = newRebootGapSeconds
+                )
                 val nextBlockSession = if (session.midBlockSafeBreak) {
                     resumeBlockFromMidBreak(
-                        session = session,
+                        session = exitSession,
                         nowMono = nowMono,
                         currentBoot = newBootCount,
                         beatWall = beatWall,
@@ -4947,7 +5023,7 @@ class MonolithRepository(
                     )
                 } else {
                     advancePastBreak(
-                        session = session,
+                        session = exitSession,
                         nowMono = nowMono,
                         currentBoot = newBootCount,
                         beatWall = beatWall,
@@ -5013,7 +5089,8 @@ class MonolithRepository(
                 hmacSignature = newHmac,
                 penaltySecondsAdded = penaltyAdd,
                 tamperDetected = tamper,
-                shieldGapSeen = session.shieldGapSeen || updateGapLatched,
+                shieldGapSeen = newShieldGapSeen || updateGapLatched,
+                rebootGapSeconds = newRebootGapSeconds,
                 shieldLastBeatWallMillis = beatWall
             )
             dao.updateSession(heldFinish)
@@ -5028,6 +5105,8 @@ class MonolithRepository(
                 lastTickElapsedRealtimeMillis = nowMono,
                 penaltySecondsAdded = penaltyAdd,
                 tamperDetected = tamper,
+                shieldGapSeen = newShieldGapSeen,
+                rebootGapSeconds = newRebootGapSeconds,
                 shieldLastBeatWallMillis = beatWall
             )
             dao.updateSession(safeBreakSession)
@@ -5125,11 +5204,14 @@ class MonolithRepository(
         }
 
         val outcomeStamp = classifyElapsedOutcome(
-            // Issue #524: an absorb that latched this very tick
-            // convicts through the classifier's latch term too —
-            // the row it judges carries the latch the absorb set.
+            // Issues #524 + #525: the classification reads the
+            // row as THIS tick books it — an absorb that latched
+            // this very tick (#524) and a reboot whose unshielded
+            // span first latches the gap on the finishing tick
+            // (#525) both convict through the classifier's latch
+            // term; neither may classify as clean.
             session = session.copy(
-                shieldGapSeen = session.shieldGapSeen || updateGapLatched
+                shieldGapSeen = newShieldGapSeen || updateGapLatched
             ),
             allBlocksCompleted = allBlocksCompleted,
             isRoutineSession = isRoutineSession,
@@ -5155,6 +5237,7 @@ class MonolithRepository(
             completedSuccessfully = allBlocksCompleted && !isRoutineSession &&
                 outcomeStamp != SessionOutcome.ELAPSED_OPEN_EXPOSURE,
             tamperDetected = tamper,
+            rebootGapSeconds = newRebootGapSeconds,
             forgedArtifactId = if (isRoutineSession ||
                 outcomeStamp == SessionOutcome.ELAPSED_OPEN_EXPOSURE
             ) {
@@ -5162,7 +5245,10 @@ class MonolithRepository(
             } else {
                 forgedId ?: session.forgedArtifactId
             },
-            shieldGapSeen = session.shieldGapSeen || updateGapLatched,
+            // Composed (#524 + #525): the row books BOTH latches
+            // that fired by this tick — the update absorb's and
+            // the reboot's unshielded span.
+            shieldGapSeen = newShieldGapSeen || updateGapLatched,
             shieldLastBeatWallMillis = beatWall,
             outcome = outcomeStamp,
             // Truth Car 2 (RC-01): the true end, stamped in the

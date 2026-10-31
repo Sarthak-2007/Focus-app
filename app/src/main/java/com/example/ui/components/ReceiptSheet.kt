@@ -483,6 +483,22 @@ fun ReceiptSheet(
                         color = scheme.onBackground
                     )
                 }
+                if (receipt.rebootGapSeconds > 0) {
+                    // Issue #525: the reboot's unshielded span,
+                    // named in the same bold register — the
+                    // boot-to-shield uptime was never credited
+                    // as focus, and the slip says so instead of
+                    // letting a genuine reboot pass silently
+                    // (or worse, convert into gifted seconds).
+                    Text(
+                        text = "REBOOT — ${receipt.rebootGapSeconds}s UNSHIELDED, NOT COUNTED",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        color = scheme.onBackground
+                    )
+                }
                 if (receipt.openExposureApps.isNotEmpty()) {
                     // Issue #129 F3: the slip names what was
                     // actually used through the open door — a

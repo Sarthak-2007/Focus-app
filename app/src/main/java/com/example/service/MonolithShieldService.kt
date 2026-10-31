@@ -28,6 +28,7 @@ import com.example.widget.MonolithWidgetProvider
 import com.example.data.batteryShieldWarning
 import com.example.data.readBatterySnapshot
 import com.example.data.MonolithRepository
+import com.example.data.ShieldRaiseStore
 import com.example.data.NightDimMath
 import com.example.data.SightState
 import java.util.UUID
@@ -1096,6 +1097,12 @@ class MonolithShieldService : Service() {
                     protecting = true
                     protectingSessionId = updated.id
                     protectingMono = SystemClock.elapsedRealtime()
+                    // Issue #525: stamp this boot's first shield
+                    // raise — the instant witnessed time honestly
+                    // starts for any session this boot re-anchors.
+                    // The store keeps the FIRST flip of the boot;
+                    // later flips in the same boot never move it.
+                    ShieldRaiseStore.stampFirstRaise(applicationContext, protectingMono)
                     WatchStore.poke()
                     // Issue #155 (F1): a session is now live — refresh
                     // the home-screen widget at the moment it matters.
