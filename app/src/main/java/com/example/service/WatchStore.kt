@@ -171,6 +171,14 @@ data class WatchSnapshot(
     val engineHeartbeatWall: Long,
     val engineProtecting: Boolean,
     val lastProvedWallMillis: Long?,
+    /** Shield Rethink 2, Step 1 — Door A: the shield loop's sight
+     *  on its latest beat, and the wall instant of the latest beat
+     *  that was SIGHTED under a live session (the receipt's
+     *  "verified [HH:MM]" / "last held [HH:MM]"). Sight defaults to
+     *  BLIND_NO_ACCESS: before the loop's first probe, nothing has
+     *  been seen, and the snapshot must not pretend otherwise. */
+    val engineSight: com.example.data.SightState = com.example.data.SightState.BLIND_NO_ACCESS,
+    val engineLastVerifiedWallMillis: Long? = null,
     /** Emission generation (issue #48): bumped by [WatchStore.poke]
      *  so a poke is a REAL emission — StateFlow suppresses equal
      *  values, and a bare copy() of a data class is equal to the
@@ -481,7 +489,15 @@ object WatchStore {
      * while the shield kept beating; now the board re-reads it on
      * the shield's own 2s cadence for as long as a session runs.
      */
-    fun onShieldIteration(protecting: Boolean, usageGranted: Boolean? = null) {
+    // Composed (FIX-R2, PR #388 recomposition): Shield Rethink 2's
+    // sight + last-verified stamps AND main's #81 F4 usage-access
+    // measurement ride the same per-iteration publication.
+    fun onShieldIteration(
+        protecting: Boolean,
+        sight: com.example.data.SightState = com.example.data.SightState.BLIND_NO_ACCESS,
+        lastVerifiedWallMillis: Long? = null,
+        usageGranted: Boolean? = null
+    ) {
         val mono = SystemClock.elapsedRealtime()
         val wall = System.currentTimeMillis()
         val a11y = MonolithAccessibilityService.instance != null
@@ -490,7 +506,10 @@ object WatchStore {
             var next = current.copy(
                 engineHeartbeatMono = mono,
                 engineHeartbeatWall = wall,
-                engineProtecting = protecting
+                engineProtecting = protecting,
+                engineSight = sight,
+                engineLastVerifiedWallMillis = lastVerifiedWallMillis
+                    ?: current.engineLastVerifiedWallMillis
             )
             next = next.withMeasurement(
                 WatchMeasurement(

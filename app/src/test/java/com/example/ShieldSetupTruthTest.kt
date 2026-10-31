@@ -219,7 +219,6 @@ class ShieldSetupTruthRenderTest {
                     onSearchQueryChanged = {},
                     onSelectCategory = {},
                     onSetAppTier = { _, _ -> },
-                    onApplySmartLoadout = { applied.set(it) },
                     onToggleShortsReelsSniper = {},
                     onToggleBrowserUrlBlocker = {}
                 )

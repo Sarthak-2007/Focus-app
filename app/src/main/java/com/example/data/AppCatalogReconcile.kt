@@ -497,6 +497,16 @@ object AppCatalogReconcile {
                     // (5s wall, 2-minute lease) is exactly the
                     // ceremony an OTP or UPI approval needs.
                     AppCategory.MESSAGING, AppCategory.MUSIC, AppCategory.FINANCE -> AppBlockTier.PEEK_2M
+                    // Shield Rethink 2, Step 2 — THE INVERSION, in the
+                    // same fail-closed birth #129 settled: the unruled
+                    // remainder is born SHUT. Before this, an app no
+                    // remembered ruling, factory preset or deliberate
+                    // category policy had an opinion about was born
+                    // OPEN — the majority of the phone, reachable
+                    // during a hold until he happened to rule it. Now
+                    // exceptions (PEEK / OPEN) are named — by him from
+                    // the Sheet, or by a reasoned category policy like
+                    // #120/#132 above — never by absence of a guess.
                     // Issue #129 (unlisted-distraction, CRITICAL),
                     // settled at the STURM-4 fix-forward: the safe
                     // default for a BLOCKER is fail-closed. Every

@@ -147,7 +147,11 @@ class Issue155CompletionExpiryTest {
 
     @Test
     fun revokedAfterFlipUnflipsTheWitness() {
-        // Race 1b (IQ-4) + IQ-1 unified latch (WING-F): the latch
+        // Race 1b (IQ-4) + IQ-1 unified latch (WING-F), as
+        // strengthened by Shield Rethink 2 Step 1 (PR #388,
+        // FIX-R2 recomposition): the flip-up now ALSO requires
+        // the beat's sight (SightState.SIGHTED) — no sight, no
+        // flip. The demote half below is unchanged. The latch
         // must also flip DOWN — an iteration that measures EITHER
         // door closed (usage access revoked OR the accessibility
         // door no longer standing for this session) resets the
@@ -166,14 +170,16 @@ class Issue155CompletionExpiryTest {
             window.contains("MonolithWidgetProvider.requestUpdate(applicationContext)")
         )
         val flipIdx = source.indexOf(
-            "if (!protecting && usageGranted && accessibilityStanding) {", resetIdx
+            "if (!protecting && usageGranted && accessibilityStanding && sightState == SightState.SIGHTED) {", resetIdx
         )
         assertTrue("reset must run before the flip in the iteration", flipIdx > resetIdx)
     }
 
     @Test
     fun unifiedLatchMeasuresBothDoorsAtTheFlipSite() {
-        // IQ-1: the flip requires BOTH doors, and the
+        // IQ-1, as strengthened by Shield Rethink 2 Step 1
+        // (PR #388, FIX-R2 recomposition): the flip requires
+        // BOTH doors AND the beat's sight, and the
         // accessibility door's standing is the armed-for-THIS-
         // session measure (bound + armedSessionId == session id),
         // taken per iteration in the shield loop — not the
@@ -187,7 +193,7 @@ class Issue155CompletionExpiryTest {
         )
         assertTrue(
             source.contains(
-                "if (!protecting && usageGranted && accessibilityStanding) {"
+                "if (!protecting && usageGranted && accessibilityStanding && sightState == SightState.SIGHTED) {"
             )
         )
         assertTrue(

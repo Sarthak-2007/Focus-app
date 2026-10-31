@@ -781,6 +781,19 @@ class MonolithViewModel(
     // only by applySmartLoadout below (the hand path — a routine
     // applying its own loadout does not move his selector).
     private val loadoutStore = com.example.data.LoadoutStore(appContext)
+
+    // Shield Rethink 2, Step 2: the intention line — his words,
+    // written on the Sheet, read back by the arm and the session
+    // plate verbatim. A sidecar fact (ShieldIntentionStore), never
+    // a session field: it may span days and must outlive sessions.
+    private val shieldIntentionStore = com.example.data.ShieldIntentionStore(appContext)
+    private val _shieldIntention = MutableStateFlow(shieldIntentionStore.intention())
+    val shieldIntention: StateFlow<String> = _shieldIntention.asStateFlow()
+
+    fun setShieldIntention(text: String) {
+        _shieldIntention.value = text
+        shieldIntentionStore.put(text)
+    }
     private val _loadoutCapIndex = MutableStateFlow(loadoutStore.capIndex())
     val loadoutCapIndex: StateFlow<Int> = _loadoutCapIndex.asStateFlow()
 
@@ -1120,6 +1133,41 @@ class MonolithViewModel(
     fun refreshDeckWarrant() {
         _deckWarrant.value = repository.standingWarrant()
     }
+
+    /** Shield Rethink 2, Step 1: the receipt line — the one place
+     *  enforcement is stated, derived from the Watch Store's
+     *  published beat (sight + last-verified), the live session and
+     *  the warrant. Facts are scoped to THIS session before the
+     *  pure print sees them: a verified stamp or heartbeat older
+     *  than the session's own start belongs to a previous hold and
+     *  is not this seal's proof. The guards leg reads the deck
+     *  warrant as-is — a stale warrant is not LIVE, so staleness
+     *  degrades the line to the partial form, never up. (Door B's
+     *  live test-block probe replaces this leg in Step 3.) */
+    val shieldReceiptLine: StateFlow<String> = combine(
+        watchSnapshots,
+        activeSession,
+        deckWarrant,
+        _themeNow
+    ) { snap, session, warrant, now ->
+        val sessionStart = session?.startWallTimeMillis
+        com.example.ui.components.shieldReceiptLine(
+            sessionActive = session?.isActive == true,
+            lawWrittenWallMillis = sessionStart,
+            sight = snap.engineSight,
+            beatWallMillis = snap.engineHeartbeatWall.takeIf { wall ->
+                wall > 0L && (sessionStart == null || wall >= sessionStart)
+            },
+            lastVerifiedWallMillis = snap.engineLastVerifiedWallMillis?.takeIf { verifiedAt ->
+                sessionStart == null || verifiedAt >= sessionStart
+            },
+            guardsVerified = warrant?.state == com.example.service.WarrantState.LIVE,
+            nowWallMillis = now
+        )
+    }.stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5000),
+        "OPEN — no block now"
+    )
 
     /** The synchronous verdict the slide reads at DOWN, at the gate,
      *  on every MOVE, and at the latch frame (Ines: ≤5ms, no wait). */
