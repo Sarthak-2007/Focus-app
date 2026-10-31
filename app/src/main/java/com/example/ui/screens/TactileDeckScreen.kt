@@ -444,15 +444,6 @@ fun TactileDeckScreen(
     // the naive product understated a 3 x 50 morning by 20 minutes.
     val totalSpanMinutes = dialMinutes * studyBlocksCount + (studyBlocksCount - 1) * 10
 
-    // Issue #123 (dial-precision): the seat the wheel's physics has
-    // committed to, previewed while it travels ("LANDS 47"); the
-    // precise-entry row's open state and its typed text. Session
-    // length is set by his hand on this instrument — the wheel, the
-    // steppers and the typed entry are three grips on the same value.
-    var wheelSeatPreview by remember { mutableStateOf<Int?>(null) }
-    var preciseEntryOpen by remember { mutableStateOf(false) }
-    var preciseEntryText by remember { mutableStateOf("") }
-
     // Issue #6 F3 (audit §3, Vega T-1/T-2/T-3 — the floored,
     // inverted, invented fraction dies): timed progress is
     // ELAPSED / TARGET, filling, no floors — never remaining/target
@@ -851,616 +842,31 @@ fun TactileDeckScreen(
                 )
             }
         }
-        // =====================================================================
-        // SECTION 1: THE INSTRUMENT (Ren — hero card and dial are ONE object:
-        // the readout lives in the same panel as the wheel that sets it.
-        // The preset tiles are gone: one value, one control — the wheel.)
-        // =====================================================================
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(24.dp))
-                // ESR-13 (chrome C6): the hero card is the Deck's one
-                // raised surface — it takes surfaceBright, both
-                // modes. The ground token (surface) here was the
-                // leaf-paper false close's twin: a raised card
-                // painted in the ground's own tone.
-                .background(scheme.surfaceBright)
-                .border(1.dp, scheme.outlineVariant, RoundedCornerShape(24.dp))
-                // The vertigo (Zug-II §5.2): at the seal the room
-                // recedes — scale and rise on the transform easing,
-                // the blur on its own re-ease, peaking mid-shot and
-                // gone at Settle. At rest every term is identity.
-                .then(
-                        // #116 finding 4 rides the same gate: at
-                        // night the shot is CALM (nightCalm) — the
-                        // vertigo/blur branch is skipped entirely and
-                        // the seal lands without the room receding.
-                    if (shotActive && shot != null && !shot.nightCalm) {
-                        // Issue #50 F3 cure: vertigoT/blurT are read
-                        // inside the graphicsLayer block (draw phase),
-                        // so the 1050ms shot no longer recomposes the
-                        // whole screen every frame. The blur rides the
-                        // layer's renderEffect on API 31+; below that
-                        // the composition-read Modifier.blur remains
-                        // as the documented fallback. (Issue #6 F15
-                        // stands: no translationY — the page recedes,
-                        // it does not climb.)
-                        Modifier.graphicsLayer {
-                            val vt = shot.vertigoT
-                            scaleX = 1f - 0.06f * vt
-                            scaleY = 1f - 0.06f * vt
-                            if (android.os.Build.VERSION.SDK_INT >=
-                                android.os.Build.VERSION_CODES.S
-                            ) {
-                                val b = if (lowRamDevice) 0f else 24f * shot.blurT * (1f - shot.blurT)
-                                renderEffect = if (b > 0f) {
-                                    android.graphics.RenderEffect
-                                        .createBlurEffect(
-                                            b.dp.toPx(), b.dp.toPx(),
-                                            android.graphics.Shader.TileMode.CLAMP
-                                        )
-                                        .asComposeRenderEffect()
-                                } else {
-                                    null
-                                }
-                            }
-                        }.then(
-                            if (android.os.Build.VERSION.SDK_INT <
-                                android.os.Build.VERSION_CODES.S
-                            ) {
-                                val blurDp =
-                                    (if (lowRamDevice) 0f else 6f * 4f * shot.blurT * (1f - shot.blurT)).dp
-                                if (blurDp > 0.dp) Modifier.blur(blurDp)
-                                else Modifier
-                            } else {
-                                Modifier
-                            }
-                        )
-                    } else {
-                        Modifier
-                    }
-                )
-                .padding(horizontal = 16.dp, vertical = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    // The Ellipsis fix (Wren): the engine runs the
-                    // 10-minute Safe Breaks between blocks and no screen
-                    // said so - the break was invisible. During a break
-                    // the eyebrow prints the word and the exact clock
-                    // left; the break is a fact, so it renders.
-                    text = when {
-                        // Exact seconds (Audit R3, safe-break-lived
-                        // #3): the old ceiling-minutes print read
-                        // "1 MIN" for the break's whole final minute
-                        // and then the next block had already
-                        // started — a countdown that cannot be used
-                        // to leave on time is decoration.
-                        isSessionRunning && activeSession.isInSafeBreak ->
-                            // R3b #164 F3 naming law (main) + #104 lane's
-                            // precise countdown: the free automatic pause is
-                            // the SAFE BREAK — never the bare word BREAK,
-                            // which belongs to the once-a-week emergency valve.
-                            breakEyebrowText(activeSession.safeBreakSecondsRemaining)
-                        // Audit R3b #146: a user returning late to a
-                        // later block is told when that block began —
-                        // startWallTimeMillis is re-anchored at the
-                        // break flip, so it IS the block's start; the
-                        // hero's elapsed readout beside it says how
-                        // far in he is. No more silent fait accompli.
-                        isSessionRunning && activeSession.currentBlockIndex > 1 ->
-                            "BLOCK ${activeSession.currentBlockIndex} · SINCE " +
-                                ClockText.timeOfDay(ClockText.is24Hour(LocalContext.current), activeSession.startWallTimeMillis)
-                        // Issue #6 F4: SESSION RUNNING / TOTAL were
-                        // wallpaper and die. A routine-born session
-                        // prints its name; a hand-armed running
-                        // session needs no label over its countdown.
-                        showRunningForm ->
-                            if (activeSession?.routineId != null) {
-                                "${activeSession.intention.uppercase()} · ROUTINE"
-                            } else {
-                                ""
-                            }
-                        // Idle prints the recipe — the hero's
-                        // arithmetic, explained on the face that
-                        // charges it (audit §3).
-                        else -> if (studyBlocksCount > 1) {
-                            "$studyBlocksCount × $dialMinutes + BREAKS"
-                        } else {
-                            // One block has no break (breaks live
-                            // BETWEEN blocks — totalSpanMinutes
-                            // prices (count − 1) × 10): the recipe
-                            // must not promise one (finisher pass).
-                            "$studyBlocksCount × $dialMinutes"
-                        }
-                    },
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 10.sp,
-                    letterSpacing = 2.sp,
-                    color = scheme.onSurfaceVariant
-                    // Issue #6 F10 family: the eyebrow's fake day
-                    // emboss (white 1dp shadow) dies — print is flat.
-                )
-                // The eyebrow's count is EVICTED (D9/A8): the app
-                // count's only homes are the strip's APPS cell and
-                // the imprint — one number, LOCKED+PEEK, one rendering
-                // per fact.
-            }
-
-            // Issue #135 F2: the LAST RECEIPT door, on the eyebrow's
-            // own line of the room — a quiet mono affordance, shown
-            // only when no receipt is standing and no session runs.
-            if (!isSessionRunning && receiptState == null && lastReceiptSessionId != null) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    Text(
-                        text = "LAST RECEIPT",
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 10.sp,
-                        letterSpacing = 2.sp,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .clickable { onShowLastReceipt(lastReceiptSessionId) }
-                            .testTag("last_receipt_button")
-                            .padding(vertical = 4.dp)
-                    )
-                }
-            }
-
-            // The hero states the TOTAL, once (one fact, one rendering).
-            // Span classes (BEYOND W3 / Aldo): N = "50 MIN", H = "2H 30M",
-            // W = "FLOW" - digits at H2 72, units at H3 50 on the shared
-            // baseline, same ink. The span is the true span (breaks priced
-            // in). Night steps the numeral up to glyph (D1). The press
-            // (D3): two static ghosts at +-1dp behind the glyph, print not
-            // rig - it dies on device if it reads as blur (removal trial).
-            val heroAnnotated = when {
-                showRunningForm -> buildAnnotatedString { append(primaryReadout) }
-                isStopwatchMode -> buildAnnotatedString { append("FLOW") }
-                totalSpanMinutes < 60 -> buildAnnotatedString {
-                    append(totalSpanMinutes.toString())
-                    withStyle(SpanStyle(fontSize = DisplayUnitTextStyle.fontSize, letterSpacing = DisplayUnitTextStyle.letterSpacing)) { append(" MIN") }
-                }
-                else -> buildAnnotatedString {
-                    append((totalSpanMinutes / 60).toString())
-                    withStyle(SpanStyle(fontSize = DisplayUnitTextStyle.fontSize, letterSpacing = DisplayUnitTextStyle.letterSpacing)) { append("H ") }
-                    append(String.format(Locale.US, "%02d", totalSpanMinutes % 60))
-                    withStyle(SpanStyle(fontSize = DisplayUnitTextStyle.fontSize, letterSpacing = DisplayUnitTextStyle.letterSpacing)) { append("M") }
-                }
-            }
-            val heroTracking = if (!showRunningForm && isStopwatchMode) (-0.5).sp else (-2.0).sp
-            val heroGlyph = if (effectiveNight) NightColorOnSurface else scheme.onBackground
-            val heroShadowGhost = if (effectiveNight) TokenTrueBlack.copy(alpha = 0.5f) else TokenColorSurfaceVariant.copy(alpha = 0.6f)
-            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                // Issue #6 F10 — SINGLE-PRESS: the catch ghost dies;
-                // ONE shadow ghost survives, and ghosts are OFF on
-                // FLOW and on the ticking readout (a press does not
-                // strike a moving target).
-                if (!showRunningForm && !isStopwatchMode) {
-                    Text(
-                        text = heroAnnotated,
-                        style = DialClockTextStyle.copy(color = heroShadowGhost, letterSpacing = heroTracking),
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.offset(y = (-1).dp).clearAndSetSemantics {}
-                    )
-                }
-                Text(
-                    text = heroAnnotated,
-                    style = DialClockTextStyle.copy(color = heroGlyph, letterSpacing = heroTracking),
-                    textAlign = TextAlign.Center
-                )
-            }
-
-            // #127 finding 1: the hero's number is per-BLOCK (or, in a
-            // break, the break's — main's #148 derivation above); the
-            // strip's ENDS and the desk clock are per-SESSION. Both are
-            // true, so the hero now carries its scope in print directly
-            // under the digits: a glance reads which truth the big
-            // number is, and the session's own remaining time beside
-            // it. Same Anonymous Pro eyebrow register as the card's
-            // other print — no new surface, no redesign.
-            if (showRunningForm && activeSession != null) {
-                Text(
-                    text = activeSession.glanceCaption,
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 10.sp,
-                    letterSpacing = 1.sp,
-                    color = scheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().testTag("deck_hero_glance_caption")
-                )
-            }
-
-            if (!showRunningForm && !isStopwatchMode) {
-                // Issue #98 (R3 arming journey): the multiplier,
-                // printed as a reading — the hero above states only
-                // the total span, and the wheel's hub carries the
-                // count as geometry alone (1,2,3,1,2,3,4,2 — 5 blocks
-                // read like 1). This line is the count's numeral
-                // home: "2 BLOCKS × 50 MIN", plus the breaks priced
-                // between them, in the same frame as the total it
-                // multiplies into. It recomposes with every hub tap,
-                // so cycling the count can no longer change the
-                // session by ~60 minutes in silence.
-                Text(
-                    text = if (studyBlocksCount > 1) {
-                        "$studyBlocksCount BLOCKS × $dialMinutes MIN · " +
-                            "${studyBlocksCount - 1} × 10 MIN BREAK BETWEEN"
-                    } else {
-                        "1 BLOCK × $dialMinutes MIN"
-                    },
-                    fontFamily = AnonymousProFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp,
-                    letterSpacing = 1.sp,
-                    color = scheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("blocks_reading")
-                )
-            }
-
-            // Issue #125 (armed-wrong F3 remainder): the grace fact,
-            // advertised BEFORE arming. The audit's core charge was
-            // that nothing anywhere before the seal mentions the
-            // window — the free abort was undiscoverable until it
-            // was already running out. The print stands under the
-            // hero, in the same eyebrow register as the blocks
-            // reading it follows, worded from the one constant the
-            // repository enforces so promise and law can never
-            // disagree. It lives in the scroll, NOT the pinned
-            // stack: the stack's geometry is census-pinned
-            // (ScreenshotHarnessTest.zzAccentCensus, foot ≤ 260dp)
-            // and an earlier draft of this line inside the stack
-            // pushed the Bolt bed to a 282dp foot — caught by that
-            // census on run 41201464326 and moved here.
-            if (!isSessionRunning && receiptState == null) {
-                Text(
-                    text = "ARMED WRONG? ${MonolithRepository.GRACE_WINDOW_SECONDS}S FREE ABORT — CANCEL FREE, NOTHING BOOKED",
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 10.sp,
-                    letterSpacing = 1.sp,
-                    color = scheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("pre_arm_grace_line")
-                )
-            }
-
-            if (!isSessionRunning || shotActive) {
-                // The wheel stays composed through the shot as a
-                // frozen ghost (Zug-II §4.1): same instance, physics
-                // halted by its lock, ground-night pushed at the
-                // t=400 step. At Settle the progress track takes
-                // the room, as shipped.
-                AndroidView(
-                    factory = { ctx ->
-                        RotaryWheelView(ctx).apply {
-                            this.soundEngine = soundEngine
-                        }.also { wheelViewRef = it }
-                    },
-                    update = { view ->
-                        wheelViewRef = view
-                        view.isNightMode = groundNight
-                        view.soundEngine = soundEngine
-                        view.minutesValue = dialMinutes
-                        view.studyBlocksCount = studyBlocksCount
-                        // Issue #126 F2: the wheel is a session
-                        // parameter — while an attempt is proving,
-                        // its parameters are already captured by
-                        // onLatch, so a turn here would silently
-                        // not apply. Lock it for the wait's span
-                        // (the view consumes and drops, its sealed
-                        // grammar) instead of letting it spin free
-                        // and lie about being settable.
-                        view.isLockedSession = shotActive || provingThisSession
-                        view.onMinutesChanged = { mins -> onDialMinutesChanged(mins) }
-                        view.onSeatTargetChanged = { seat -> wheelSeatPreview = seat }
-                        view.onCycleBlocksCount = {
-                            val nextBlocks = if (studyBlocksCount >= 8) 1 else studyBlocksCount + 1
-                            onSetStudyBlocksCount(nextBlocks)
-                        }
-                        view.onSetBlocksCount = { count -> onSetStudyBlocksCount(count) }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(288.dp)
-                        .testTag("rotary_wheel_view")
-                )
-                if (!isSessionRunning) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // FLOW as a key cap (Ren, ET66 lesson): a raised pill with a
-                    // hairline edge reads pressable; active state = ink fill.
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (isStopwatchMode) inkControlFill() else scheme.surfaceVariant)
-                            .border(1.dp, if (isStopwatchMode) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(12.dp))
-                            // Issue #126 F2: FLOW is the other
-                            // session parameter on this card — the
-                            // same proving lock as the wheel's.
-                            .clickable(enabled = !provingThisSession) {
-                                onSelectStudyPreset(StudyModePreset.STOPWATCH_FLOW)
-                                onDialMinutesChanged(5)
-                            }
-                            .padding(horizontal = 10.dp)
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                // Issue #70 F5: the target measure
-                                // lives on the text block itself —
-                                // the strip the thumb sees IS the
-                                // target it hits (was: 5dp vertical
-                                // padding on the box, an under-48dp
-                                // target under an 11sp label).
-                                modifier = Modifier.padding(vertical = 13.dp),
-                                text = stringResource(R.string.deck_flow),
-                                fontFamily = AnonymousProFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                letterSpacing = 1.sp,
-                                color = if (isStopwatchMode) onInkControlFill() else scheme.onBackground
-                            )
-                            // Audit R3b #147: the preset's one law —
-                            // its 20-minute floor — printed on the
-                            // key itself, from the preset's own
-                            // badge constant, before anyone arms.
-                            // It was defined in the catalogue and
-                            // rendered nowhere.
-                            Text(
-                                text = StudyModePreset.STOPWATCH_FLOW.badge.uppercase(Locale.US),
-                                fontFamily = AnonymousProFamily,
-                                fontSize = 8.5.sp,
-                                letterSpacing = 0.5.sp,
-                                color = if (isStopwatchMode) {
-                                    onInkControlFill().copy(alpha = 0.75f)
-                                } else {
-                                    scheme.onSurfaceVariant
-                                }
-                            )
-                        }
-                    }
-                    // Pia: the FINISHES line dies here — TIME's only
-                    // home is the strip's TIME cell (a pure function;
-                    // this row's copy slid with every recomposition).
-                }
-                // Issue #123 (dial-precision), the printed truth under
-                // the wheel. Three facts the instrument used to leave
-                // to inference, now stated in words on the Deck:
-                // (a) the dial's number is PER BLOCK and the hero's is
-                // the TOTAL — the breakdown line prints both, plus the
-                // breaks between blocks, so 50 x 2 can never again
-                // read as 50 while meaning 110;
-                // (b) the block count is a numeral + word here, not
-                // hub geometry alone — a hub tap that changes it
-                // changes THIS line in the same frame, nothing silent;
-                // (c) while the wheel coasts, the seat it has committed
-                // to prints as LANDS — where you let go is shown
-                // before you land there.
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = when {
-                            isStopwatchMode -> "FLOW · OPEN SESSION · NO TOTAL"
-                            studyBlocksCount <= 1 -> "$dialMinutes MIN × 1 BLOCK = $totalSpanMinutes MIN TOTAL"
-                            else -> "$dialMinutes MIN × $studyBlocksCount BLOCKS + ${(studyBlocksCount - 1) * 10} MIN BREAKS = " +
-                                if (totalSpanMinutes < 60) "$totalSpanMinutes MIN TOTAL"
-                                else "${totalSpanMinutes / 60}H ${String.format(Locale.US, "%02d", totalSpanMinutes % 60)}M TOTAL"
-                        },
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        letterSpacing = 1.sp,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier.testTag("dial_breakdown_line")
-                    )
-                    wheelSeatPreview?.let { seat ->
-                        Text(
-                            text = if (seat < 10) "LANDS FLOW" else "LANDS $seat",
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onBackground,
-                            modifier = Modifier.testTag("dial_seat_preview")
-                        )
-                    }
-                    // Precise entry, the wheel's second grip: −/+ step
-                    // exactly one minute per tap (long, deliberate
-                    // steps for the 47 the rim used to refuse), and
-                    // TYPE opens a numeric field for the exact value.
-                    // The wheel stays the instrument; these are its
-                    // fine adjustment, not a replacement.
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(scheme.surfaceVariant)
-                                .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
-                                .clickable {
-                                    if (dialMinutes > 10) onDialMinutesChanged(dialMinutes - 1)
-                                }
-                                .padding(horizontal = 14.dp, vertical = 5.dp)
-                                .testTag("dial_step_down")
-                        ) {
-                            Text(
-                                text = "−1",
-                                fontFamily = AnonymousProFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                letterSpacing = 1.sp,
-                                color = scheme.onBackground
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (preciseEntryOpen) inkControlFill() else scheme.surfaceVariant)
-                                .border(1.dp, if (preciseEntryOpen) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(8.dp))
-                                .clickable {
-                                    preciseEntryText = if (dialMinutes >= 10) dialMinutes.toString() else ""
-                                    preciseEntryOpen = !preciseEntryOpen
-                                }
-                                .padding(horizontal = 10.dp, vertical = 5.dp)
-                                .testTag("dial_precise_entry_toggle")
-                        ) {
-                            Text(
-                                text = "TYPE MINUTES",
-                                fontFamily = AnonymousProFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                letterSpacing = 1.sp,
-                                color = if (preciseEntryOpen) onInkControlFill() else scheme.onBackground
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(scheme.surfaceVariant)
-                                .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
-                                .clickable {
-                                    if (dialMinutes < 10) onDialMinutesChanged(10)
-                                    else if (dialMinutes < 180) onDialMinutesChanged(dialMinutes + 1)
-                                }
-                                .padding(horizontal = 14.dp, vertical = 5.dp)
-                                .testTag("dial_step_up")
-                        ) {
-                            Text(
-                                text = "+1",
-                                fontFamily = AnonymousProFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                letterSpacing = 1.sp,
-                                color = scheme.onBackground
-                            )
-                        }
-                    }
-                    if (preciseEntryOpen) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(scheme.surfaceVariant)
-                                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
-                                    .padding(horizontal = 10.dp, vertical = 7.dp),
-                                contentAlignment = Alignment.CenterStart
-                            ) {
-                                if (preciseEntryText.isEmpty()) {
-                                    Text(
-                                        text = "10–180",
-                                        fontFamily = AnonymousProFamily,
-                                        fontSize = 13.sp,
-                                        color = scheme.onSurfaceVariant
-                                    )
-                                }
-                                BasicTextField(
-                                    value = preciseEntryText,
-                                    onValueChange = { raw ->
-                                        preciseEntryText = raw.filter { it.isDigit() }.take(3)
-                                    },
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(
-                                        keyboardType = KeyboardType.Number,
-                                        imeAction = ImeAction.Done
-                                    ),
-                                    keyboardActions = KeyboardActions(onDone = {
-                                        preciseEntryText.toIntOrNull()?.let { entered ->
-                                            onDialMinutesChanged(entered.coerceIn(10, 180))
-                                        }
-                                        preciseEntryOpen = false
-                                    }),
-                                    textStyle = TextStyle(
-                                        fontFamily = AnonymousProFamily,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        color = scheme.onBackground
-                                    ),
-                                    cursorBrush = SolidColor(scheme.onBackground),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("dial_precise_entry_input")
-                                )
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(inkControlFill())
-                                    .clickable {
-                                        preciseEntryText.toIntOrNull()?.let { entered ->
-                                            onDialMinutesChanged(entered.coerceIn(10, 180))
-                                        }
-                                        preciseEntryOpen = false
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 7.dp)
-                                    .testTag("dial_precise_entry_set")
-                            ) {
-                                Text(
-                                    text = "SET",
-                                    fontFamily = AnonymousProFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp,
-                                    letterSpacing = 1.sp,
-                                    color = onInkControlFill()
-                                )
-                            }
-                        }
-                    }
-                }
-                }
-            } else {
-                // Running: the wheel hands over to a single progress track.
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(scheme.surfaceVariant)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(progressFraction)
-                            .fillMaxHeight()
-                            .clip(RoundedCornerShape(3.dp))
-                            // E5b B4 (Horiz §2) governs the fill's
-                            // standing form: born scheme.primary
-                            // (chrome C7), it EXITS to the ink
-                            // control fill at the seal — and since
-                            // this track first composes at Settle,
-                            // post-exit, ink is its only composed
-                            // state. C7's intent (no second, louder
-                            // orange) is served, not broken.
-                            .background(inkControlFill())
-                    )
-                }
-                // Issue #6 F3: the % text is KILLED (audit §3,
-                // unanimous) — the track itself is the reading;
-                // a printed percent was the floored fraction's
-                // second lie. FLOW renders the empty track only.
-            }
-        }
+        DeckInstrumentSection(
+            activeSession = activeSession,
+            isSessionRunning = isSessionRunning,
+            showRunningForm = showRunningForm,
+            isStopwatchMode = isStopwatchMode,
+            primaryReadout = primaryReadout,
+            totalSpanMinutes = totalSpanMinutes,
+            dialMinutes = dialMinutes,
+            studyBlocksCount = studyBlocksCount,
+            effectiveNight = effectiveNight,
+            shotActive = shotActive,
+            shot = shot,
+            lowRamDevice = lowRamDevice,
+            groundNight = groundNight,
+            provingThisSession = provingThisSession,
+            progressFraction = progressFraction,
+            receiptState = receiptState,
+            lastReceiptSessionId = lastReceiptSessionId,
+            soundEngine = soundEngine,
+            onWheelViewRef = { wheelViewRef = it },
+            onShowLastReceipt = onShowLastReceipt,
+            onDialMinutesChanged = onDialMinutesChanged,
+            onSelectStudyPreset = onSelectStudyPreset,
+            onSetStudyBlocksCount = onSetStudyBlocksCount
+        )
 
         // Issue #143 F4: the DND gate's line stands under the
         // instrument — set at the arm (what the seal will do
@@ -1845,6 +1251,666 @@ fun TactileDeckScreen(
                 struckKey = struckSessionId?.toLong(),
                 onStruck = { key -> onSessionStruck(key.toInt()) }
             )
+        }
+    }
+}
+
+/**
+ * Issue #90 (complexity F1 slice): SECTION 1 — the instrument —
+ * extracted out of TactileDeckScreen's body as its own composable,
+ * in the pattern of DeckTaskSection (SECTION 2, issue #50) and
+ * DeckArmedUtilities (SECTION 3). Behaviour-identical: the hero
+ * card and the wheel are the same panel in the same order under
+ * the same conditions; the host's captures are explicit
+ * parameters. The wheel's view instance is reported back through
+ * [onWheelViewRef] — the host hoists the ref beside the sled's
+ * (Slice E: the shot's driver acts on THE view the seal happened
+ * on). The dial-precision states (wheelSeatPreview /
+ * preciseEntry*) live here now: this section is their only reader.
+ */
+@Composable
+private fun DeckInstrumentSection(
+    activeSession: FocusSessionEntity?,
+    isSessionRunning: Boolean,
+    showRunningForm: Boolean,
+    isStopwatchMode: Boolean,
+    primaryReadout: String,
+    totalSpanMinutes: Int,
+    dialMinutes: Int,
+    studyBlocksCount: Int,
+    effectiveNight: Boolean,
+    shotActive: Boolean,
+    shot: SealShotState?,
+    lowRamDevice: Boolean,
+    groundNight: Boolean,
+    provingThisSession: Boolean,
+    progressFraction: Float,
+    receiptState: com.example.data.ReceiptState?,
+    lastReceiptSessionId: Int?,
+    soundEngine: TactileSoundEngine?,
+    onWheelViewRef: (RotaryWheelView?) -> Unit,
+    onShowLastReceipt: (Int) -> Unit,
+    onDialMinutesChanged: (Int) -> Unit,
+    onSelectStudyPreset: (StudyModePreset) -> Unit,
+    onSetStudyBlocksCount: (Int) -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    // Issue #123 (dial-precision): the seat the wheel's physics has
+    // committed to, previewed while it travels ("LANDS 47"); the
+    // precise-entry row's open state and its typed text. Session
+    // length is set by his hand on this instrument — the wheel, the
+    // steppers and the typed entry are three grips on the same value.
+    var wheelSeatPreview by remember { mutableStateOf<Int?>(null) }
+    var preciseEntryOpen by remember { mutableStateOf(false) }
+    var preciseEntryText by remember { mutableStateOf("") }
+    // =====================================================================
+    // SECTION 1: THE INSTRUMENT (Ren — hero card and dial are ONE object:
+    // the readout lives in the same panel as the wheel that sets it.
+    // The preset tiles are gone: one value, one control — the wheel.)
+    // =====================================================================
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(24.dp))
+            // ESR-13 (chrome C6): the hero card is the Deck's one
+            // raised surface — it takes surfaceBright, both
+            // modes. The ground token (surface) here was the
+            // leaf-paper false close's twin: a raised card
+            // painted in the ground's own tone.
+            .background(scheme.surfaceBright)
+            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(24.dp))
+            // The vertigo (Zug-II §5.2): at the seal the room
+            // recedes — scale and rise on the transform easing,
+            // the blur on its own re-ease, peaking mid-shot and
+            // gone at Settle. At rest every term is identity.
+            .then(
+                    // #116 finding 4 rides the same gate: at
+                    // night the shot is CALM (nightCalm) — the
+                    // vertigo/blur branch is skipped entirely and
+                    // the seal lands without the room receding.
+                if (shotActive && shot != null && !shot.nightCalm) {
+                    // Issue #50 F3 cure: vertigoT/blurT are read
+                    // inside the graphicsLayer block (draw phase),
+                    // so the 1050ms shot no longer recomposes the
+                    // whole screen every frame. The blur rides the
+                    // layer's renderEffect on API 31+; below that
+                    // the composition-read Modifier.blur remains
+                    // as the documented fallback. (Issue #6 F15
+                    // stands: no translationY — the page recedes,
+                    // it does not climb.)
+                    Modifier.graphicsLayer {
+                        val vt = shot.vertigoT
+                        scaleX = 1f - 0.06f * vt
+                        scaleY = 1f - 0.06f * vt
+                        if (android.os.Build.VERSION.SDK_INT >=
+                            android.os.Build.VERSION_CODES.S
+                        ) {
+                            val b = if (lowRamDevice) 0f else 24f * shot.blurT * (1f - shot.blurT)
+                            renderEffect = if (b > 0f) {
+                                android.graphics.RenderEffect
+                                    .createBlurEffect(
+                                        b.dp.toPx(), b.dp.toPx(),
+                                        android.graphics.Shader.TileMode.CLAMP
+                                    )
+                                    .asComposeRenderEffect()
+                            } else {
+                                null
+                            }
+                        }
+                    }.then(
+                        if (android.os.Build.VERSION.SDK_INT <
+                            android.os.Build.VERSION_CODES.S
+                        ) {
+                            val blurDp =
+                                (if (lowRamDevice) 0f else 6f * 4f * shot.blurT * (1f - shot.blurT)).dp
+                            if (blurDp > 0.dp) Modifier.blur(blurDp)
+                            else Modifier
+                        } else {
+                            Modifier
+                        }
+                    )
+                } else {
+                    Modifier
+                }
+            )
+            .padding(horizontal = 16.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                // The Ellipsis fix (Wren): the engine runs the
+                // 10-minute Safe Breaks between blocks and no screen
+                // said so - the break was invisible. During a break
+                // the eyebrow prints the word and the exact clock
+                // left; the break is a fact, so it renders.
+                text = when {
+                    // Exact seconds (Audit R3, safe-break-lived
+                    // #3): the old ceiling-minutes print read
+                    // "1 MIN" for the break's whole final minute
+                    // and then the next block had already
+                    // started — a countdown that cannot be used
+                    // to leave on time is decoration.
+                    isSessionRunning && activeSession != null && activeSession.isInSafeBreak ->
+                        // R3b #164 F3 naming law (main) + #104 lane's
+                        // precise countdown: the free automatic pause is
+                        // the SAFE BREAK — never the bare word BREAK,
+                        // which belongs to the once-a-week emergency valve.
+                        breakEyebrowText(activeSession.safeBreakSecondsRemaining)
+                    // Audit R3b #146: a user returning late to a
+                    // later block is told when that block began —
+                    // startWallTimeMillis is re-anchored at the
+                    // break flip, so it IS the block's start; the
+                    // hero's elapsed readout beside it says how
+                    // far in he is. No more silent fait accompli.
+                    isSessionRunning && activeSession != null && activeSession.currentBlockIndex > 1 ->
+                        "BLOCK ${activeSession.currentBlockIndex} · SINCE " +
+                            ClockText.timeOfDay(ClockText.is24Hour(LocalContext.current), activeSession.startWallTimeMillis)
+                    // Issue #6 F4: SESSION RUNNING / TOTAL were
+                    // wallpaper and die. A routine-born session
+                    // prints its name; a hand-armed running
+                    // session needs no label over its countdown.
+                    showRunningForm ->
+                        if (activeSession?.routineId != null) {
+                            "${activeSession.intention.uppercase()} · ROUTINE"
+                        } else {
+                            ""
+                        }
+                    // Idle prints the recipe — the hero's
+                    // arithmetic, explained on the face that
+                    // charges it (audit §3).
+                    else -> if (studyBlocksCount > 1) {
+                        "$studyBlocksCount × $dialMinutes + BREAKS"
+                    } else {
+                        // One block has no break (breaks live
+                        // BETWEEN blocks — totalSpanMinutes
+                        // prices (count − 1) × 10): the recipe
+                        // must not promise one (finisher pass).
+                        "$studyBlocksCount × $dialMinutes"
+                    }
+                },
+                fontFamily = AnonymousProFamily,
+                fontSize = 10.sp,
+                letterSpacing = 2.sp,
+                color = scheme.onSurfaceVariant
+                // Issue #6 F10 family: the eyebrow's fake day
+                // emboss (white 1dp shadow) dies — print is flat.
+            )
+            // The eyebrow's count is EVICTED (D9/A8): the app
+            // count's only homes are the strip's APPS cell and
+            // the imprint — one number, LOCKED+PEEK, one rendering
+            // per fact.
+        }
+
+        // Issue #135 F2: the LAST RECEIPT door, on the eyebrow's
+        // own line of the room — a quiet mono affordance, shown
+        // only when no receipt is standing and no session runs.
+        if (!isSessionRunning && receiptState == null && lastReceiptSessionId != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                Text(
+                    text = "LAST RECEIPT",
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 10.sp,
+                    letterSpacing = 2.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .clickable { onShowLastReceipt(lastReceiptSessionId) }
+                        .testTag("last_receipt_button")
+                        .padding(vertical = 4.dp)
+                )
+            }
+        }
+
+        // The hero states the TOTAL, once (one fact, one rendering).
+        // Span classes (BEYOND W3 / Aldo): N = "50 MIN", H = "2H 30M",
+        // W = "FLOW" - digits at H2 72, units at H3 50 on the shared
+        // baseline, same ink. The span is the true span (breaks priced
+        // in). Night steps the numeral up to glyph (D1). The press
+        // (D3): two static ghosts at +-1dp behind the glyph, print not
+        // rig - it dies on device if it reads as blur (removal trial).
+        val heroAnnotated = when {
+            showRunningForm -> buildAnnotatedString { append(primaryReadout) }
+            isStopwatchMode -> buildAnnotatedString { append("FLOW") }
+            totalSpanMinutes < 60 -> buildAnnotatedString {
+                append(totalSpanMinutes.toString())
+                withStyle(SpanStyle(fontSize = DisplayUnitTextStyle.fontSize, letterSpacing = DisplayUnitTextStyle.letterSpacing)) { append(" MIN") }
+            }
+            else -> buildAnnotatedString {
+                append((totalSpanMinutes / 60).toString())
+                withStyle(SpanStyle(fontSize = DisplayUnitTextStyle.fontSize, letterSpacing = DisplayUnitTextStyle.letterSpacing)) { append("H ") }
+                append(String.format(Locale.US, "%02d", totalSpanMinutes % 60))
+                withStyle(SpanStyle(fontSize = DisplayUnitTextStyle.fontSize, letterSpacing = DisplayUnitTextStyle.letterSpacing)) { append("M") }
+            }
+        }
+        val heroTracking = if (!showRunningForm && isStopwatchMode) (-0.5).sp else (-2.0).sp
+        val heroGlyph = if (effectiveNight) NightColorOnSurface else scheme.onBackground
+        val heroShadowGhost = if (effectiveNight) TokenTrueBlack.copy(alpha = 0.5f) else TokenColorSurfaceVariant.copy(alpha = 0.6f)
+        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            // Issue #6 F10 — SINGLE-PRESS: the catch ghost dies;
+            // ONE shadow ghost survives, and ghosts are OFF on
+            // FLOW and on the ticking readout (a press does not
+            // strike a moving target).
+            if (!showRunningForm && !isStopwatchMode) {
+                Text(
+                    text = heroAnnotated,
+                    style = DialClockTextStyle.copy(color = heroShadowGhost, letterSpacing = heroTracking),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.offset(y = (-1).dp).clearAndSetSemantics {}
+                )
+            }
+            Text(
+                text = heroAnnotated,
+                style = DialClockTextStyle.copy(color = heroGlyph, letterSpacing = heroTracking),
+                textAlign = TextAlign.Center
+            )
+        }
+
+        // #127 finding 1: the hero's number is per-BLOCK (or, in a
+        // break, the break's — main's #148 derivation above); the
+        // strip's ENDS and the desk clock are per-SESSION. Both are
+        // true, so the hero now carries its scope in print directly
+        // under the digits: a glance reads which truth the big
+        // number is, and the session's own remaining time beside
+        // it. Same Anonymous Pro eyebrow register as the card's
+        // other print — no new surface, no redesign.
+        if (showRunningForm && activeSession != null) {
+            Text(
+                text = activeSession.glanceCaption,
+                fontFamily = AnonymousProFamily,
+                fontSize = 10.sp,
+                letterSpacing = 1.sp,
+                color = scheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().testTag("deck_hero_glance_caption")
+            )
+        }
+
+        if (!showRunningForm && !isStopwatchMode) {
+            // Issue #98 (R3 arming journey): the multiplier,
+            // printed as a reading — the hero above states only
+            // the total span, and the wheel's hub carries the
+            // count as geometry alone (1,2,3,1,2,3,4,2 — 5 blocks
+            // read like 1). This line is the count's numeral
+            // home: "2 BLOCKS × 50 MIN", plus the breaks priced
+            // between them, in the same frame as the total it
+            // multiplies into. It recomposes with every hub tap,
+            // so cycling the count can no longer change the
+            // session by ~60 minutes in silence.
+            Text(
+                text = if (studyBlocksCount > 1) {
+                    "$studyBlocksCount BLOCKS × $dialMinutes MIN · " +
+                        "${studyBlocksCount - 1} × 10 MIN BREAK BETWEEN"
+                } else {
+                    "1 BLOCK × $dialMinutes MIN"
+                },
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                letterSpacing = 1.sp,
+                color = scheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("blocks_reading")
+            )
+        }
+
+        // Issue #125 (armed-wrong F3 remainder): the grace fact,
+        // advertised BEFORE arming. The audit's core charge was
+        // that nothing anywhere before the seal mentions the
+        // window — the free abort was undiscoverable until it
+        // was already running out. The print stands under the
+        // hero, in the same eyebrow register as the blocks
+        // reading it follows, worded from the one constant the
+        // repository enforces so promise and law can never
+        // disagree. It lives in the scroll, NOT the pinned
+        // stack: the stack's geometry is census-pinned
+        // (ScreenshotHarnessTest.zzAccentCensus, foot ≤ 260dp)
+        // and an earlier draft of this line inside the stack
+        // pushed the Bolt bed to a 282dp foot — caught by that
+        // census on run 41201464326 and moved here.
+        if (!isSessionRunning && receiptState == null) {
+            Text(
+                text = "ARMED WRONG? ${MonolithRepository.GRACE_WINDOW_SECONDS}S FREE ABORT — CANCEL FREE, NOTHING BOOKED",
+                fontFamily = AnonymousProFamily,
+                fontSize = 10.sp,
+                letterSpacing = 1.sp,
+                color = scheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("pre_arm_grace_line")
+            )
+        }
+
+        if (!isSessionRunning || shotActive) {
+            // The wheel stays composed through the shot as a
+            // frozen ghost (Zug-II §4.1): same instance, physics
+            // halted by its lock, ground-night pushed at the
+            // t=400 step. At Settle the progress track takes
+            // the room, as shipped.
+            AndroidView(
+                factory = { ctx ->
+                    RotaryWheelView(ctx).apply {
+                        this.soundEngine = soundEngine
+                    }.also { onWheelViewRef(it) }
+                },
+                update = { view ->
+                    onWheelViewRef(view)
+                    view.isNightMode = groundNight
+                    view.soundEngine = soundEngine
+                    view.minutesValue = dialMinutes
+                    view.studyBlocksCount = studyBlocksCount
+                    // Issue #126 F2: the wheel is a session
+                    // parameter — while an attempt is proving,
+                    // its parameters are already captured by
+                    // onLatch, so a turn here would silently
+                    // not apply. Lock it for the wait's span
+                    // (the view consumes and drops, its sealed
+                    // grammar) instead of letting it spin free
+                    // and lie about being settable.
+                    view.isLockedSession = shotActive || provingThisSession
+                    view.onMinutesChanged = { mins -> onDialMinutesChanged(mins) }
+                    view.onSeatTargetChanged = { seat -> wheelSeatPreview = seat }
+                    view.onCycleBlocksCount = {
+                        val nextBlocks = if (studyBlocksCount >= 8) 1 else studyBlocksCount + 1
+                        onSetStudyBlocksCount(nextBlocks)
+                    }
+                    view.onSetBlocksCount = { count -> onSetStudyBlocksCount(count) }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(288.dp)
+                    .testTag("rotary_wheel_view")
+            )
+            if (!isSessionRunning) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // FLOW as a key cap (Ren, ET66 lesson): a raised pill with a
+                // hairline edge reads pressable; active state = ink fill.
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (isStopwatchMode) inkControlFill() else scheme.surfaceVariant)
+                        .border(1.dp, if (isStopwatchMode) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(12.dp))
+                        // Issue #126 F2: FLOW is the other
+                        // session parameter on this card — the
+                        // same proving lock as the wheel's.
+                        .clickable(enabled = !provingThisSession) {
+                            onSelectStudyPreset(StudyModePreset.STOPWATCH_FLOW)
+                            onDialMinutesChanged(5)
+                        }
+                        .padding(horizontal = 10.dp)
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            // Issue #70 F5: the target measure
+                            // lives on the text block itself —
+                            // the strip the thumb sees IS the
+                            // target it hits (was: 5dp vertical
+                            // padding on the box, an under-48dp
+                            // target under an 11sp label).
+                            modifier = Modifier.padding(vertical = 13.dp),
+                            text = stringResource(R.string.deck_flow),
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = if (isStopwatchMode) onInkControlFill() else scheme.onBackground
+                        )
+                        // Audit R3b #147: the preset's one law —
+                        // its 20-minute floor — printed on the
+                        // key itself, from the preset's own
+                        // badge constant, before anyone arms.
+                        // It was defined in the catalogue and
+                        // rendered nowhere.
+                        Text(
+                            text = StudyModePreset.STOPWATCH_FLOW.badge.uppercase(Locale.US),
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 8.5.sp,
+                            letterSpacing = 0.5.sp,
+                            color = if (isStopwatchMode) {
+                                onInkControlFill().copy(alpha = 0.75f)
+                            } else {
+                                scheme.onSurfaceVariant
+                            }
+                        )
+                    }
+                }
+                // Pia: the FINISHES line dies here — TIME's only
+                // home is the strip's TIME cell (a pure function;
+                // this row's copy slid with every recomposition).
+            }
+            // Issue #123 (dial-precision), the printed truth under
+            // the wheel. Three facts the instrument used to leave
+            // to inference, now stated in words on the Deck:
+            // (a) the dial's number is PER BLOCK and the hero's is
+            // the TOTAL — the breakdown line prints both, plus the
+            // breaks between blocks, so 50 x 2 can never again
+            // read as 50 while meaning 110;
+            // (b) the block count is a numeral + word here, not
+            // hub geometry alone — a hub tap that changes it
+            // changes THIS line in the same frame, nothing silent;
+            // (c) while the wheel coasts, the seat it has committed
+            // to prints as LANDS — where you let go is shown
+            // before you land there.
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = when {
+                        isStopwatchMode -> "FLOW · OPEN SESSION · NO TOTAL"
+                        studyBlocksCount <= 1 -> "$dialMinutes MIN × 1 BLOCK = $totalSpanMinutes MIN TOTAL"
+                        else -> "$dialMinutes MIN × $studyBlocksCount BLOCKS + ${(studyBlocksCount - 1) * 10} MIN BREAKS = " +
+                            if (totalSpanMinutes < 60) "$totalSpanMinutes MIN TOTAL"
+                            else "${totalSpanMinutes / 60}H ${String.format(Locale.US, "%02d", totalSpanMinutes % 60)}M TOTAL"
+                    },
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("dial_breakdown_line")
+                )
+                wheelSeatPreview?.let { seat ->
+                    Text(
+                        text = if (seat < 10) "LANDS FLOW" else "LANDS $seat",
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        letterSpacing = 1.sp,
+                        color = scheme.onBackground,
+                        modifier = Modifier.testTag("dial_seat_preview")
+                    )
+                }
+                // Precise entry, the wheel's second grip: −/+ step
+                // exactly one minute per tap (long, deliberate
+                // steps for the 47 the rim used to refuse), and
+                // TYPE opens a numeric field for the exact value.
+                // The wheel stays the instrument; these are its
+                // fine adjustment, not a replacement.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(scheme.surfaceVariant)
+                            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                            .clickable {
+                                if (dialMinutes > 10) onDialMinutesChanged(dialMinutes - 1)
+                            }
+                            .padding(horizontal = 14.dp, vertical = 5.dp)
+                            .testTag("dial_step_down")
+                    ) {
+                        Text(
+                            text = "−1",
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onBackground
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (preciseEntryOpen) inkControlFill() else scheme.surfaceVariant)
+                            .border(1.dp, if (preciseEntryOpen) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(8.dp))
+                            .clickable {
+                                preciseEntryText = if (dialMinutes >= 10) dialMinutes.toString() else ""
+                                preciseEntryOpen = !preciseEntryOpen
+                            }
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                            .testTag("dial_precise_entry_toggle")
+                    ) {
+                        Text(
+                            text = "TYPE MINUTES",
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = if (preciseEntryOpen) onInkControlFill() else scheme.onBackground
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(scheme.surfaceVariant)
+                            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                            .clickable {
+                                if (dialMinutes < 10) onDialMinutesChanged(10)
+                                else if (dialMinutes < 180) onDialMinutesChanged(dialMinutes + 1)
+                            }
+                            .padding(horizontal = 14.dp, vertical = 5.dp)
+                            .testTag("dial_step_up")
+                    ) {
+                        Text(
+                            text = "+1",
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onBackground
+                        )
+                    }
+                }
+                if (preciseEntryOpen) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(scheme.surfaceVariant)
+                                .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                .padding(horizontal = 10.dp, vertical = 7.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            if (preciseEntryText.isEmpty()) {
+                                Text(
+                                    text = "10–180",
+                                    fontFamily = AnonymousProFamily,
+                                    fontSize = 13.sp,
+                                    color = scheme.onSurfaceVariant
+                                )
+                            }
+                            BasicTextField(
+                                value = preciseEntryText,
+                                onValueChange = { raw ->
+                                    preciseEntryText = raw.filter { it.isDigit() }.take(3)
+                                },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Number,
+                                    imeAction = ImeAction.Done
+                                ),
+                                keyboardActions = KeyboardActions(onDone = {
+                                    preciseEntryText.toIntOrNull()?.let { entered ->
+                                        onDialMinutesChanged(entered.coerceIn(10, 180))
+                                    }
+                                    preciseEntryOpen = false
+                                }),
+                                textStyle = TextStyle(
+                                    fontFamily = AnonymousProFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = scheme.onBackground
+                                ),
+                                cursorBrush = SolidColor(scheme.onBackground),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("dial_precise_entry_input")
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(inkControlFill())
+                                .clickable {
+                                    preciseEntryText.toIntOrNull()?.let { entered ->
+                                        onDialMinutesChanged(entered.coerceIn(10, 180))
+                                    }
+                                    preciseEntryOpen = false
+                                }
+                                .padding(horizontal = 12.dp, vertical = 7.dp)
+                                .testTag("dial_precise_entry_set")
+                        ) {
+                            Text(
+                                text = "SET",
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = onInkControlFill()
+                            )
+                        }
+                    }
+                }
+            }
+            }
+        } else {
+            // Running: the wheel hands over to a single progress track.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(scheme.surfaceVariant)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(progressFraction)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(3.dp))
+                        // E5b B4 (Horiz §2) governs the fill's
+                        // standing form: born scheme.primary
+                        // (chrome C7), it EXITS to the ink
+                        // control fill at the seal — and since
+                        // this track first composes at Settle,
+                        // post-exit, ink is its only composed
+                        // state. C7's intent (no second, louder
+                        // orange) is served, not broken.
+                        .background(inkControlFill())
+                )
+            }
+            // Issue #6 F3: the % text is KILLED (audit §3,
+            // unanimous) — the track itself is the reading;
+            // a printed percent was the floored fraction's
+            // second lie. FLOW renders the empty track only.
         }
     }
 }
