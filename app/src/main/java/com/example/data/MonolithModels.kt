@@ -1044,6 +1044,50 @@ object RoutineSchedule {
         }
     }
 
+    /**
+     * Issue #155 (T9, re-close bench): the REFUSAL-AWARE next
+     * start — [effectiveNextStartMillis] (pause-aware) walked past
+     * every candidate window the machine itself would refuse to
+     * materialise. The heartbeat refuses a window on an excused
+     * date (ILL / REST / FAMILY day-word, filed under the window's
+     * filing date) and a tombstoned window (an annulled proving);
+     * a "next routine" claim derived without those two inputs
+     * names seals that will never happen — JUDGE-1's Reason-6
+     * premise ("stays true until a routine changes") falsified on
+     * exactly this point. This walk consumes the SAME refusal set
+     * the heartbeat's hand checks (RoutineHeartbeat: excused isos
+     * via DrawerDay.filingDate + dateIso; tombstones via
+     * SessionSealTransitions.isTombstoned), so a glance derived
+     * here can never disagree with the funnel.
+     *
+     * Bounded: at most [MAX_REFUSAL_WALK] refused candidates are
+     * stepped over; a routine whose every window inside that
+     * horizon is refused yields null, and the caller falls silent
+     * (WING-D C1: the line stands only where it names a real,
+     * refusal-aware next seal).
+     */
+    fun nextStartMillisRefusalAware(
+        routine: RoutineEntity,
+        nowMillis: Long,
+        excusedDateIsos: Set<String>,
+        isTombstoned: (routineId: Int, windowStartMillis: Long) -> Boolean
+    ): Long? {
+        var candidate = effectiveNextStartMillis(routine, nowMillis) ?: return null
+        repeat(MAX_REFUSAL_WALK) {
+            val refused =
+                DrawerDay.dateIso(DrawerDay.filingDate(candidate)) in excusedDateIsos ||
+                    isTombstoned(routine.id, candidate)
+            if (!refused) return candidate
+            candidate = effectiveNextStartMillis(routine, candidate) ?: return null
+        }
+        return null
+    }
+
+    /** How many refused candidates [nextStartMillisRefusalAware]
+     *  steps over before falling silent — a fortnight of daily
+     *  windows, or ~4 months of weekly ones. */
+    const val MAX_REFUSAL_WALK = 16
+
     /** End of the window containing [nowMillis], or of the next window if none contains it. */
     fun nextEndMillis(routine: RoutineEntity, nowMillis: Long): Long? {
         val r = routine.sanitized()

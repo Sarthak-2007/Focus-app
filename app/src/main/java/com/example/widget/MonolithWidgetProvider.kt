@@ -8,11 +8,14 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
+import com.example.AppContainer
 import com.example.MainActivity
 import com.example.R
+import com.example.data.DayWordStore
 import com.example.data.MonolithDatabase
 import com.example.data.RoutineSchedule
 import com.example.service.MonolithShieldService
+import com.example.service.SessionSealTransitions
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -185,11 +188,32 @@ class MonolithWidgetProvider : AppWidgetProvider() {
                     }
                 }
             } else {
+                // Issue #155 (T9, re-close bench): the NEXT ROUTINE
+                // derivation is REFUSAL-AWARE. It used to read only
+                // isLive + effectiveNextStartMillis (pause-aware),
+                // so on an excused date (ILL / REST / FAMILY) or
+                // over a tombstoned window the widget kept naming
+                // a next seal the heartbeat was bound to refuse —
+                // a future claim the machine knew was false. The
+                // derivation now consumes the heartbeat's own
+                // refusal set (excused filing dates + tombstones,
+                // read exactly as RoutineHeartbeat reads them),
+                // and where no unrefused start can be proven the
+                // line FALLS SILENT — plain OPEN (WING-D C1).
+                val repository = AppContainer.repository(context)
+                val excusedDateIsos = repository.allDayWords().entries
+                    .filter { DayWordStore.isExcuse(it.value) }
+                    .map { it.key }
+                    .toSet()
+                val transitions = SessionSealTransitions.get(context)
                 val next = dao.getAllRoutinesSnapshot()
                     .filter { RoutineSchedule.isLive(it) }
                     .mapNotNull { routine ->
-                        RoutineSchedule.effectiveNextStartMillis(routine, now)
-                            ?.let { start -> routine to start }
+                        RoutineSchedule.nextStartMillisRefusalAware(
+                            routine, now, excusedDateIsos
+                        ) { routineId, windowStart ->
+                            transitions.isTombstoned(routineId, windowStart)
+                        }?.let { start -> routine to start }
                     }
                     .minByOrNull { it.second }
                 if (next != null) {
