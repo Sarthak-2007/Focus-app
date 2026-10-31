@@ -212,6 +212,7 @@ Filed on #155 comment 6536721775 (design) + the reseat completion filing; `VERIF
 | The Plate: the glance rebuilt as the receipt slip's nameplate — fixed-geometry porcelain/ink plate, stamp-word state (SEALED/OPEN/UNPROVEN identical in silhouette), registration-mark accent in every state, typeset in the house fonts | DESIGNER-W-1 (Wow-level designer, WING-A) | #155 | PANEL-QUEUED |
 
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
+| One-time widget pin offer at the first receipt (system pin prompt, dismissible forever, never re-asked) — the #155 glance only helps users who place widgets; the offer rides on trust earned by a held block | CONSUMER-1 (Consumer seat, #155) | #155 · Discussion #615 | PANEL-QUEUED |
 
 ## Pill × receipt relation (WING-C DESIGN, Wave reseat)
 
@@ -232,3 +233,74 @@ Register note: Wave-3 cell reports are still landing; their seat ideas enter on 
 | PIN-scope labels as a floor law: every test carries its scope (PLUMBING / POST / RENDER / SOURCE) in its name or header, so coverage can never be misread at a glance — a test named as a behaviour pin that only exercises plumbing is how F3's ghost survived PR #540's first test file | MAXIMPL-4 | #155 | PANEL-QUEUED (full test matrix + audit: https://github.com/Sarthak-2007/Focus-app/issues/155#issuecomment-6538317578) |
 | Mutation acceptance as the definition of "pinned" for every truth surface: six named mutations (call-site flag flip, funnel deletion, gate removal, timeout zeroing, badge flip, truth-boundary shift) must each fail at least one test, or the coverage is decoration | MAXIMPL-4 | #155 | PANEL-QUEUED |
 | The widget line carries its own death: a SEALED render schedules its own un-render at beat + 30 s, making staleness impossible by construction rather than by the 30-minute platform cadence | MAXIMPL-4 | #155 | PANEL-QUEUED (feeds MAXIMPL-3's refresh-architecture seat) |
+
+## Ambient glances (INNOVATOR-1, Crazy-ideas/Wild/Innovator, WING-A — #155)
+
+Filed on #155 (comment 6535813528) and Discussion #609. All five consume PR #540's WidgetSealTruth (protecting witness + persisted beat <30 s) and land only after #540 merges; none prints SEALED from the session row alone.
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| P1 "Seal in the Shade": Quick Settings TileService glance — state computed at onStartListening, UNAVAILABLE = unproven, tap routes to SHIELD only (M, ~2 days) | INNOVATOR-1 | #155 | PANEL-QUEUED |
+| P2 "The Icon Changes Its Face": activity-alias launcher icon flips to a stamped SEALED plate on the protecting flip; boot default OPEN; watchdog re-asserts from the truth beat (M, ~2–3 days + OEM bench) | INNOVATOR-1 | #155 | PANEL-QUEUED (panel must rule the ≤1-watchdog-interval stale window first) |
+| P3 "Night Seal": DreamService glance that exists only while sealed and finishes immediately when OPEN/UNPROVEN — no seal, no surface (L, ~3–4 days) | INNOVATOR-1 | #155 | PANEL-QUEUED |
+| P4 Lock-screen widget twin: add lock-screen widgetCategory to the existing #312 widget, same truth line (S–M, ~1–2 days) | INNOVATOR-1 | #155 | PANEL-QUEUED (cheapest; natural first build after #540) |
+| P5 "The Held Glance": dynamic long-press shortcut whose label is the state, refreshed on flip events (S, ~1 day) | INNOVATOR-1 | #155 | PANEL-QUEUED (weakest freshness; ranked last) |
+| Streak/score complications, progress-ring live wallpaper, persistent AOD stats face, icon badge counts | INNOVATOR-1 | #155 | PARKED-WITH-REASON (killed by the seat before filing: fail blocker-identity law — 24/7 tracker/dashboard; badge counts also fail truth law, cached = stale) |
+
+## Glance failure faces (DESIGNER-W-3, WING-A — issue #155)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| Certainty grammar for glance states: proven = stamped word + future time + closed rule; unproven = light impression (regular weight, secondary ink) + past time + broken rule; alert orange spent only on proven-bad facts | DESIGNER-W-3 | #155 | PANEL-QUEUED (full filing #155 comment 6536655303; Discussion #630) |
+| F-A THE LIGHT IMPRESSION: UNPROVEN widget face composed — state word, broken rule, self-dating LAST PROVED evidence line, one tap (S, 0.5–1 d; needs PR #540 truth rule) | DESIGNER-W-3 | #155 | PANEL-QUEUED |
+| F-B THE BLANK SLIP: read-failure gets its own state word NOTHING PROVED, no evidence line (S, 0.5 d) | DESIGNER-W-3 | #155 | PANEL-QUEUED |
+| F-C THE WARMING PRESS: ARMING as its own face (SINCE HH:mm); ≥60 s stall becomes UNPROVEN; stalled shield card names the missing grant (M, 1–2 d; 60 s constant = W-2 consult) | DESIGNER-W-3 | #155 | PANEL-QUEUED |
+| F-D THE SLIP AFTER: post-mortem widget face for shield-gap endings only (THE SHIELD WAS OFF, OFF in TokenAlert, 45 min, NO tap offered); valve/break post-mortem killed — receipt law "no receipt, no №" binds the glance (M, 1–2 d; 45 min = W-2 consult) | DESIGNER-W-3 | #155 | PANEL-QUEUED (valve half PARKED-WITH-REASON — killed by design, receipt law) |
+| F-E THE PLATE: all four failure faces rendered at full press (Sora/Anonymous Pro/Atkinson, receipt character) (L, 3–4 d) | DESIGNER-W-3 | #155/#18 | PARKED-WITH-REASON (END-PHASE, with the #18 revamp per park 6525111973; compositions filed complete on #155) |
+| Lock-screen public version takes the failure grammar: unproven → "Open the app to check", no session claim (S–M, 0.5–1 d; words filed, build = JUDGE-2 T4 owner) | DESIGNER-W-3 | #155 | PANEL-QUEUED |
+
+## Refresh truth — widget freshness architecture (MAXIMPL-3, WING-A)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| Refresh event funnel: every state-writing funnel ends with MonolithWidgetProvider.requestUpdate (heartbeat tick-end, boot receiver, disarm, emergency-break completion, routine reseed, day-word declaration) | MAXIMPL-3 | #155 | PANEL-QUEUED (first follow-up PR after #540 merges; R3 one-liners offered to #540 driver) |
+| Self-invalidation alarms: a SEALED widget render arms a one-shot re-render at lastBeat+30s; an OPEN/NEXT SEAL render arms one at the seal instant — every printed claim carries its own invalidation (SEALED half first proposed by IMPROVER-4, #155 comment 6536071074; boundary half new here) | MAXIMPL-3 + IMPROVER-4 | #155 | PANEL-QUEUED |
+| Staleness print option: OPEN widget line gains "AS OF HH:mm" (SEALED line exempt — witness-backed); stale-by-design surfaces print their staleness per the truth law | MAXIMPL-3 | #155 | PANEL-QUEUED (design ruling needed) |
+| WorkManager periodic widget refresh | MAXIMPL-3 | #155 | PARKED-WITH-REASON (rejected by proposer: 15-min floor less precise than claim-tied one-shots; standing periodic worker = background-engine silhouette against blocker identity; no work-runtime dep on main) |
+
+## Notification glance family — printed matter (DESIGNER-E-2, WING-A IDEATION, #155)
+
+Full spec: issue #155, comment 6536662125 · Discussion #632.
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| State word first: every notification title opens with its caps state word (ARMING / SEALED / UNPROVEN / ON BREAK / COMPLETE / BREAK OVER) — one-second truth test at arm's length | DESIGNER-E-2 | #155 | PANEL-QUEUED (spec filed on #155; build priced M, 2 builder-days, after PR #540) |
+| Chronometer as uniform: the system clock runs only on a proven card (SEALED to session end, ON BREAK to break end); ARMING has none yet, UNPROVEN has it withdrawn, COMPLETE has none | DESIGNER-E-2 | #155 | PANEL-QUEUED |
+| UNPROVEN as a designed card: own title/body/named-cause line + repair actions; retires the #337 overlay that destroys the expanded session card; 60 s arming escalation into UNPROVEN | DESIGNER-E-2 | #155 | PANEL-QUEUED |
+| State-aware lock-screen public versions: one honest public sentence per state (kills the state-blind "Focus session protected" on arming/completion cards) | DESIGNER-E-2 | #155 | PANEL-QUEUED |
+| One counter, one name (REACHES STOPPED at both sizes); badge number carries held count or nothing — a number never changes meaning silently | DESIGNER-E-2 | #155 | PANEL-QUEUED |
+| Blocker-identity cuts on the glance family: reaches out of the collapsed line, "held count unavailable" deleted (absence over plumbing apologies), summons SESSION COMPLETE demoted to a knock repeating the Ledger words + 45 min expiry | DESIGNER-E-2 | #155 | PANEL-QUEUED |
+| Fonts as roles inside system templates (display = caps state word, body = one sentence, telemetry = labelled zero-padded numerals); RemoteViews rebuild for literal typefaces priced L and NOT recommended — truth before typeface | DESIGNER-E-2 | #155 | PARKED-WITH-REASON (RemoteViews half: truth risks to chronometer/redaction named in the #155 spec §1) |
+
+## Smallest glances — badge, collapse ladder, glance a11y (DESIGNER-E-5, WING-A)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| Badge ruling: the launcher-badge number means nothing — kill setNumber entirely; badge OFF via v3 channel (fallback ceiling: dot-only, presence = "a shield card is live now"); shipped number is a lifetime uncapped held total (MonolithDao snapshot, no session filter) with a silent reaches fallback on main | DESIGNER-E-5 | #155 | PANEL-QUEUED (ruling filed on #155, comment 6536803182; priced S / 1 day; PR #540 cures only the fallback leg) |
+| Widget collapse ladder: rungs composed per size (state word first, until-time second, intention last/dropped), 2x1 single-line, 1x1 doorbell (SEALED / OPEN / CHECK — time-without-state forbidden), min-resize floor as a designed refusal; provider gains onAppWidgetOptionsChanged | DESIGNER-E-5 | #155 | PANEL-QUEUED (spec on #155; priced M / 2–3 days, downstream of PR #540's WidgetSealTruth) |
+| Glance accessibility spec: one spoken sentence per state as root content description (full degrade sentence for UNPROVEN), real picker description, 14sp floor / 16sp doorbell, opaque receipt-paper field guaranteeing 4.5:1 body / 7:1 state word, state by word never colour, no green, UNPROVEN never de-emphasised | DESIGNER-E-5 | #155 | PANEL-QUEUED (spec on #155; priced S–M / 1–2 days, 0.5 day folded into the ladder build) |
+
+## Glance words — the word-set as a design object (DESIGNER-E-3, WING-A)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| Glance word-set for #155: every user-visible string on the widget + shield card family audited old→new per state; UNPROVEN reworded to the app's own plain dialect ("SESSION OPEN • BLOCK NOT PROVED • OPEN THE APP TO CHECK"), arming named as not-sealed, one unified completion sentence ("Open Monolith to claim your receipt" — Ledger holds claimed receipts only), lock-screen public version made state-true, one name per number ("urges stopped" everywhere) | DESIGNER-E-3 | #155 | ADOPTED (filed on #155 comment 6536734515 + Discussion #638; execution S/0.5 day in the #540 lane / range owner) |
+
+## The glance as one artwork (DESIGNER-W-5, Wow-level designer, WING-A — #155 capstone)
+
+Filed on #155 (comment 6536700922). Coherence verdict: one grammar, two worlds, three certainties — voice/grammar coherent (state word · his words · clock boundary), visible world fractured (glance wears system type, in-app world is Sora/Atkinson/Anonymous Pro receipt print), certainty incoherent on main (widget SEALED from the row alone, card before the flip, unconditional lock-screen "protected", two completion voices, badge referent swap).
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| THE PLATE: one shared glance plate — a single renderer fed by the truth function that produces every glance surface's face and words in the receipt's printed character (Sora masthead, Atkinson intention, Anonymous Pro state/time, house palette, never green, hand-built stamp for SEALED); widget consumes it as a rendered plate, cards/tile/icon/dream inherit its wording table (design M ~1–2 days; build L ~4–6 builder-days, END-PHASE #18, after PR #540) | DESIGNER-W-5 | #155 | PANEL-QUEUED |
+| GLANCE-1..5 composition rules: (1) ONE WITNESS — SEALED only from protecting + fresh beat <30s via the shared truth function, fail toward UNPROVEN; (2) ONE PLATE — no surface invents type/colour/wording/metaphor; (3) STATE, HIS WORDS, BOUNDARY — NOTHING ELSE — no totals/streaks/countdowns/imperatives, badge = held-custody or nothing; (4) OPEN IS A FACE — NEXT SEAL passive/earliest-only, summons in-session only, one expiring completion voice; (5) A GLANCE NEVER WEAKENS THE HOLD — no disarm verbs, tap lands on the named surface | DESIGNER-W-5 | #155 | PANEL-QUEUED (proposed as binding, cited by number on future glance issues) |
