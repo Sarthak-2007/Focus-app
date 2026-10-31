@@ -233,9 +233,7 @@ class ExampleRobolectricTest {
         val initialCount = db.monolithDao().getCapturedNotificationsFlow().first().size
         repository.saveCapturedNotification(
             packageName = "com.whatsapp",
-            appName = "WhatsApp",
-            senderTitle = "Study Group",
-            messageBody = "Meeting at library 4pm"
+            appName = "WhatsApp"
         )
         val notifications = db.monolithDao().getCapturedNotificationsFlow().first()
         assertEquals(initialCount + 1, notifications.size)

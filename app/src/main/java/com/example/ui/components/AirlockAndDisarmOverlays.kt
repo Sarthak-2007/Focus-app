@@ -1563,8 +1563,12 @@ fun CapturedNotificationsDigestSheet(
                                         // Both modes print the capture
                                         // time (issue #138): a live row
                                         // without its time hides whether
-                                        // it is fresh or hours old.
-                                        text = "${item.appName} • ${item.senderTitle} • ${captureTimeLabel(ClockText.is24Hour(LocalContext.current), item.timestampMillis)}",
+                                        // it is fresh or hours old. The
+                                        // row is app + time only — the
+                                        // sender was notification
+                                        // content, and content storage
+                                        // is CUT (issue #138 ruling).
+                                        text = "${item.appName} • ${captureTimeLabel(ClockText.is24Hour(LocalContext.current), item.timestampMillis)}",
                                         fontFamily = AtkinsonHyperlegibleFamily,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 12.sp,
@@ -1582,18 +1586,11 @@ fun CapturedNotificationsDigestSheet(
                                         )
                                     }
                                 }
-                                // A title-only capture has no body
-                                // (Truth Car 3, appendix): the row
-                                // prints the title alone, never an
-                                // invented sentence under it.
-                                if (item.messageBody.isNotBlank()) {
-                                    Text(
-                                        text = item.messageBody,
-                                        fontFamily = AtkinsonHyperlegibleFamily,
-                                        fontSize = 12.sp,
-                                        color = scheme.onSurfaceVariant
-                                    )
-                                }
+                                // No body line: the message body was
+                                // notification content, and content
+                                // storage is CUT (issue #138 ruling) —
+                                // the row prints its app and time and
+                                // nothing of the message itself.
                             }
                         }
                     }

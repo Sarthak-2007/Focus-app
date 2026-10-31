@@ -103,8 +103,6 @@ class NotificationCapturePolicyTest {
     private fun seen(title: String, body: String, postTime: Long = 1_000L) = SeenCapture(
         fingerprint = NotificationCapturePolicy.contentFingerprint(title, body),
         packageName = "com.example.chat",
-        senderTitle = title,
-        messageBody = body,
         postTimeMillis = postTime
     )
 
@@ -127,7 +125,7 @@ class NotificationCapturePolicyTest {
         val tracker = CaptureDedupeTracker()
         tracker.record("k1", seen("Mum", "hi"))
         val dropped = tracker.forget("k1")
-        assertEquals("Mum", dropped?.senderTitle)
+        assertEquals("com.example.chat", dropped?.packageName)
         assertNull(tracker.seen("k1"))
         assertFalse(
             tracker.isUnchanged("k1", NotificationCapturePolicy.contentFingerprint("Mum", "hi"))

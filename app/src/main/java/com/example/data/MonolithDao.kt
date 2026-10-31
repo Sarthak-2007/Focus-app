@@ -351,8 +351,8 @@ interface MonolithDao {
     @Query("DELETE FROM captured_notifications")
     suspend fun clearAllCapturedNotifications()
 
-    // Issue #45 (C5) retention: captured bodies are plaintext
-    // message content, so the table is bounded — the insert path
+    // Issue #45 (C5) retention: the held-metadata table is
+    // bounded — the insert path
     // prunes by age and caps the row count after every insert.
     // The bounds (7 days / newest 200) live in
     // MonolithNotificationListener; these are the two deletes it
@@ -367,35 +367,30 @@ interface MonolithDao {
     )
     suspend fun trimCapturedNotificationsToNewest(keep: Int)
 
-    // Issue #45 (C5): the identity of one stored capture — the
-    // package, the title and body AS STORED (senderTitle is the
-    // title after the app-name fallback), and the row's
+    // Issue #45 (C5), identity re-based by the issue #138 CUT:
+    // a stored capture's identity is its package + its
     // timestampMillis, which is the notification's sbn.postTime
-    // snapshot. The dedupe-replace path finds the superseded row
-    // by this quadruple before deleting it; the removal path
-    // deletes by the same quadruple so a recalled message cannot
-    // resurrect in the digest.
+    // snapshot. (Before the CUT the match also carried the stored
+    // senderTitle/messageBody; content is no longer stored at all,
+    // so it can no longer be part of a row's identity.) The
+    // dedupe-replace path finds the superseded row by this pair
+    // before deleting it; the removal path deletes by the same
+    // pair so a recalled message cannot resurrect in the digest.
     @Query(
         "SELECT * FROM captured_notifications WHERE packageName = :packageName " +
-            "AND senderTitle = :senderTitle AND messageBody = :messageBody " +
             "AND timestampMillis = :timestampMillis ORDER BY id DESC LIMIT 1"
     )
     suspend fun findCapturedNotificationMatching(
         packageName: String,
-        senderTitle: String,
-        messageBody: String,
         timestampMillis: Long
     ): CapturedNotificationEntity?
 
     @Query(
         "DELETE FROM captured_notifications WHERE packageName = :packageName " +
-            "AND senderTitle = :senderTitle AND messageBody = :messageBody " +
             "AND timestampMillis = :timestampMillis"
     )
     suspend fun deleteCapturedNotificationMatching(
         packageName: String,
-        senderTitle: String,
-        messageBody: String,
         timestampMillis: Long
     ): Int
 

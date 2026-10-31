@@ -453,6 +453,34 @@ abstract class MonolithDatabase : RoomDatabase() {
             if (!present) db.execSQL(ddl)
         }
 
+        /**
+         * Issue #138 CUT (18→19): notification-content storage is
+         * removed under Sarthak's ruling — the captured_notifications
+         * table is rebuilt WITHOUT senderTitle and messageBody, so
+         * every content copy stored by earlier versions is destroyed
+         * by this migration, not carried forward. The metadata a
+         * held row legitimately keeps (id, capture time, package,
+         * app name, read flag) is copied across unchanged.
+         */
+        val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `captured_notifications_new` (" +
+                    "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`timestampMillis` INTEGER NOT NULL, " +
+                    "`packageName` TEXT NOT NULL, " +
+                    "`appName` TEXT NOT NULL, " +
+                    "`isRead` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "INSERT INTO `captured_notifications_new` (id, timestampMillis, packageName, appName, isRead) " +
+                    "SELECT id, timestampMillis, packageName, appName, isRead FROM `captured_notifications`"
+                )
+                db.execSQL("DROP TABLE IF EXISTS `captured_notifications`")
+                db.execSQL("ALTER TABLE `captured_notifications_new` RENAME TO `captured_notifications`")
+            }
+        }
+
         val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(

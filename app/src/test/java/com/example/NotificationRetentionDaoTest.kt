@@ -21,8 +21,9 @@ import org.robolectric.annotation.Config
  * exercised against the real Room database (the same singleton the
  * listener writes through):
  * - the retention deletes (age prune + newest-N trim),
- * - the stored-row quadruple match behind dedupe-replace and the
- *   removal delete (a recalled message must not resurrect),
+ * - the stored-row identity match (package + postTime, since the
+ *   issue #138 CUT removed stored content) behind dedupe-replace
+ *   and the removal delete (a recalled message must not resurrect),
  * - getSessionCoveringInstant, the post-time session decision.
  *
  * Session instants use a fixed 2023-era base so rows other suites
@@ -58,62 +59,66 @@ class NotificationRetentionDaoTest {
         dao.getSessionHistorySnapshot().forEach { dao.deleteSessionById(it.id) }
     }
 
-    private fun captured(ts: Long, pkg: String = "com.example.chat", title: String = "Mum", body: String = "hi") =
+    // Issue #138 CUT: a capture's identity is package + timestamp
+    // (there is no stored title/body to distinguish rows by), so
+    // the fixtures below tell rows apart by their timestamps.
+    private fun captured(ts: Long, pkg: String = "com.example.chat") =
         CapturedNotificationEntity(
             timestampMillis = ts,
             packageName = pkg,
-            appName = "Chat",
-            senderTitle = title,
-            messageBody = body
+            appName = "Chat"
         )
 
     @Test
     fun pruneDeletesOnlyRowsOlderThanTheCutoff() = runBlocking {
         val day = 24L * 60 * 60 * 1000
-        dao.insertCapturedNotification(captured(1_000L, body = "ancient"))
-        dao.insertCapturedNotification(captured(8 * day, body = "boundary-kept"))
-        dao.insertCapturedNotification(captured(9 * day, body = "fresh"))
+        dao.insertCapturedNotification(captured(1_000L))
+        dao.insertCapturedNotification(captured(8 * day))
+        dao.insertCapturedNotification(captured(9 * day))
 
         dao.pruneCapturedNotificationsOlderThan(8 * day)
 
-        val bodies = dao.getCapturedNotificationsSnapshot().map { it.messageBody }.toSet()
-        assertEquals(setOf("boundary-kept", "fresh"), bodies)
+        val stamps = dao.getCapturedNotificationsSnapshot().map { it.timestampMillis }.toSet()
+        assertEquals(setOf(8 * day, 9 * day), stamps)
     }
 
     @Test
     fun trimKeepsExactlyTheNewestRows() = runBlocking {
         val base = 1_700_000_000_000L
         repeat(205) { i ->
-            dao.insertCapturedNotification(captured(base + i * 1_000L, body = "m$i"))
+            dao.insertCapturedNotification(captured(base + i * 1_000L))
         }
         dao.trimCapturedNotificationsToNewest(200)
 
         val rows = dao.getCapturedNotificationsSnapshot()
         assertEquals(200, rows.size)
-        val bodies = rows.map { it.messageBody }.toSet()
-        assertTrue("the five oldest must be trimmed", bodies.none { it in setOf("m0", "m1", "m2", "m3", "m4") })
-        assertTrue(bodies.contains("m5"))
-        assertTrue(bodies.contains("m204"))
+        val stamps = rows.map { it.timestampMillis }.toSet()
+        assertTrue(
+            "the five oldest must be trimmed",
+            stamps.none { it in (0..4).map { i -> base + i * 1_000L }.toSet() }
+        )
+        assertTrue(stamps.contains(base + 5 * 1_000L))
+        assertTrue(stamps.contains(base + 204 * 1_000L))
     }
 
     @Test
     fun matchingDeleteRemovesOnlyTheMatchingRow() = runBlocking {
         val ts = 1_700_000_100_000L
-        dao.insertCapturedNotification(captured(ts, body = "recalled"))
-        dao.insertCapturedNotification(captured(ts, body = "kept — same instant, other body"))
-        dao.insertCapturedNotification(captured(ts + 1_000L, body = "recalled"))
+        dao.insertCapturedNotification(captured(ts))
+        dao.insertCapturedNotification(captured(ts + 1_000L))
+        dao.insertCapturedNotification(captured(ts + 2_000L))
 
-        val found = dao.findCapturedNotificationMatching("com.example.chat", "Mum", "recalled", ts)
+        val found = dao.findCapturedNotificationMatching("com.example.chat", ts)
         assertNotNull(found)
 
-        val deleted = dao.deleteCapturedNotificationMatching("com.example.chat", "Mum", "recalled", ts)
+        val deleted = dao.deleteCapturedNotificationMatching("com.example.chat", ts)
         assertEquals(1, deleted)
 
         val rows = dao.getCapturedNotificationsSnapshot()
         assertEquals(2, rows.size)
-        assertNull(dao.findCapturedNotificationMatching("com.example.chat", "Mum", "recalled", ts))
+        assertNull(dao.findCapturedNotificationMatching("com.example.chat", ts))
         // A delete with no matching row is a no-op, not an error.
-        assertEquals(0, dao.deleteCapturedNotificationMatching("com.example.chat", "Mum", "recalled", ts))
+        assertEquals(0, dao.deleteCapturedNotificationMatching("com.example.chat", ts))
     }
 
     private suspend fun insertSession(

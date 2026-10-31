@@ -391,6 +391,13 @@ class RoutinesMigrationChainTest {
 
         // day_notes is exactly the specced two columns, date as PK.
         assertEquals(setOf("dateIso", "word"), columnsOf(raw, "day_notes"))
+
+        // Issue #138 CUT (18→19): captured_notifications survives
+        // as metadata only — the content columns are GONE at v19.
+        assertEquals(
+            setOf("id", "timestampMillis", "packageName", "appName", "isRead"),
+            columnsOf(raw, "captured_notifications")
+        )
         raw.query("PRAGMA table_info(day_notes)").use { cursor ->
             val nameIdx = cursor.getColumnIndex("name")
             val pkIdx = cursor.getColumnIndex("pk")

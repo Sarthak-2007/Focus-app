@@ -48,18 +48,21 @@ class FrozenDigestGateTest {
         db.close()
     }
 
-    private suspend fun insertCapture(body: String): Int {
+    // Issue #138 CUT: a capture is identified by its timestamp —
+    // there is no stored body left to tell rows apart by.
+    private var captureTick = 0L
+
+    private suspend fun insertCapture(label: String): Int {
         val dao = db.monolithDao()
+        val ts = System.currentTimeMillis() + (++captureTick * 1_000L)
         dao.insertCapturedNotification(
             CapturedNotificationEntity(
-                timestampMillis = System.currentTimeMillis(),
+                timestampMillis = ts,
                 packageName = "com.whatsapp",
-                appName = "WhatsApp",
-                senderTitle = "Sender",
-                messageBody = body
+                appName = "WhatsApp"
             )
         )
-        return dao.getCapturedNotificationsSnapshot().first { it.messageBody == body }.id
+        return dao.getCapturedNotificationsSnapshot().first { it.timestampMillis == ts }.id
     }
 
     private suspend fun insertActiveSession(): Int {
@@ -128,9 +131,7 @@ class FrozenDigestGateTest {
                 CapturedNotificationEntity(
                     timestampMillis = System.currentTimeMillis() + i,
                     packageName = "com.whatsapp",
-                    appName = "WhatsApp",
-                    senderTitle = "Sender",
-                    messageBody = "capture $i"
+                    appName = "WhatsApp"
                 )
             )
         }
