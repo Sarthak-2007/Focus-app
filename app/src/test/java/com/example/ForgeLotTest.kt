@@ -192,6 +192,9 @@ class ForgeLotTest {
     // is guaranteed to land on a different artifact (the draw's
     // complement excludes the stamp itself) and this test fails
     // on the unguarded write.
+    // PIN scope: PLUMBING — pins MonolithRepository's
+    // completion-write behaviour through the real DAO/Room path;
+    // no rendering is involved in the claim.
     @Test
     fun alreadyStampedSession_reTick_keepsStamp() = runBlocking {
         val dao = db.monolithDao()
