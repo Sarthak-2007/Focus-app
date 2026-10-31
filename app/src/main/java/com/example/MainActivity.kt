@@ -2124,68 +2124,26 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onDismissStandingReceipt = { dismissedReceiptSessionId = it }
             )
 
-            // THE RECEPTION (Empfang lane, Oct 30 — grafted seat):
-            // hosted in the overlay layer, BELOW the airlock and
-            // the disarm challenge — safety surfaces always win,
-            // and the sheet never renders its introduction over a
-            // session sealing the phone (visible gated on !sealed).
-            ReceptionSheet(
-                visible = receptionOpen && !sealed,
-                snapshot = watchSnapshot,
-                isFirstOpen = !setupStamped,
-                isNight = effectiveNight,
-                returnTick = parkReturnTick,
-                soundEngine = viewModel.soundEngine,
-                firstRoutineLine = receptionFirstRoutineLine(
-                    routines,
-                    System.currentTimeMillis()
-                ),
-                // #70-F2 remainder (issue #14): a Safe Break counts
-                // only where one was actually taken — breakTakenSeconds
-                // is the ledger column every break exit writes, and
-                // it stays 0 for a session that never broke.
-                completedSessions = sessionHistory.count { !it.isActive },
-                sessionsWithSafeBreak = sessionHistory.count {
-                    !it.isActive && it.breakTakenSeconds > 0
-                },
-                onShown = { viewModel.runWatchSweep() },
-                onFixClick = { item -> openFixPane(context, permissionStepStore, viewModel, parkIntroDeliveredThisOpen, { parkIntroFixTripThisOpen = true }, item) },
-                onCheckClick = { viewModel.runWatchSweep() },
-                onOpenShield = {
-                    // H-2: only the unstamped sheet's excursion
-                    // records a departure; a stamped sheet's home
-                    // is PARK and its return is PARK.
-                    if (!setupStamped) shieldExcursion = true
-                    receptionOpen = false
-                    // Through a local, as everywhere on current
-                    // main: the literal navigateTo(SHIELD) call
-                    // shape is the #312 glance route, pinned out
-                    // of this file by GlanceRoutingTest. This is
-                    // the sheet's own SHIELD door, not a glance
-                    // tap (glances route at GlanceRouting above).
-                    val shieldDestination = MonolithDestination.SHIELD
-                    viewModel.navigateTo(shieldDestination)
-                },
-                onStamp = {
-                    stampSetupOnly(
-                        setupStamped = setupStamped,
-                        watchSnapshot = watchSnapshot,
-                        setupStore = setupStore,
-                        viewModel = viewModel,
-                        onSetupStamped = { setupStamped = true },
-                        onArmedHandover = { armedHandover = it }
-                    )
-                },
-                onDone = {
-                    stampSetupAndEnter(
-                        viewModel = viewModel,
-                        onCloseReception = { receptionOpen = false }
-                    )
-                },
-                chit = chitUi,
-                onDeparture = { door, print ->
-                    setupStore.writeDepartureChit(door, print)
-                }
+            ReceptionOverlay(
+                receptionOpen = receptionOpen,
+                sealed = sealed,
+                watchSnapshot = watchSnapshot,
+                setupStamped = setupStamped,
+                effectiveNight = effectiveNight,
+                parkReturnTick = parkReturnTick,
+                viewModel = viewModel,
+                routines = routines,
+                sessionHistory = sessionHistory,
+                context = context,
+                permissionStepStore = permissionStepStore,
+                parkIntroDeliveredThisOpen = parkIntroDeliveredThisOpen,
+                chitUi = chitUi,
+                setupStore = setupStore,
+                onParkIntroFixTrip = { parkIntroFixTripThisOpen = true },
+                onShieldExcursion = { shieldExcursion = true },
+                onCloseReception = { receptionOpen = false },
+                onSetupStamped = { setupStamped = true },
+                onArmedHandover = { armedHandover = it }
             )
 
             // Composition note (issue #14 landing, Oct 31): the
@@ -2401,6 +2359,105 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
 
         }
     }
+}
+
+/**
+ * Issue #90 (complexity F3, overlay slice 3): the reception
+ * sheet call of MonolithRootApp's overlay layer — extracted
+ * as one composable (the sheet's own graft comment travels
+ * with the call). Behaviour-identical: every value the call
+ * consumes arrives as a parameter, and every host-state write
+ * inside its argument lambdas rides a callback at its
+ * standing position — the fix-trip flag inside onFixClick,
+ * the excursion record and the sheet close inside
+ * onOpenShield, and the stamp pair's own two write callbacks
+ * passed through to the hoisted stamp funs by name.
+ */
+@Composable
+private fun ReceptionOverlay(
+    receptionOpen: Boolean,
+    sealed: Boolean,
+    watchSnapshot: com.example.service.WatchSnapshot,
+    setupStamped: Boolean,
+    effectiveNight: Boolean,
+    parkReturnTick: Int,
+    viewModel: MonolithViewModel,
+    routines: List<com.example.data.RoutineEntity>,
+    sessionHistory: List<com.example.data.FocusSessionEntity>,
+    context: android.content.Context,
+    permissionStepStore: com.example.data.PermissionStepStore,
+    parkIntroDeliveredThisOpen: Boolean,
+    chitUi: com.example.data.ReturnChit?,
+    setupStore: com.example.data.SetupStore,
+    onParkIntroFixTrip: () -> Unit,
+    onShieldExcursion: () -> Unit,
+    onCloseReception: () -> Unit,
+    onSetupStamped: () -> Unit,
+    onArmedHandover: (GuardLinePrint?) -> Unit
+) {
+    // THE RECEPTION (Empfang lane, Oct 30 — grafted seat):
+    // hosted in the overlay layer, BELOW the airlock and
+    // the disarm challenge — safety surfaces always win,
+    // and the sheet never renders its introduction over a
+    // session sealing the phone (visible gated on !sealed).
+    ReceptionSheet(
+        visible = receptionOpen && !sealed,
+        snapshot = watchSnapshot,
+        isFirstOpen = !setupStamped,
+        isNight = effectiveNight,
+        returnTick = parkReturnTick,
+        soundEngine = viewModel.soundEngine,
+        firstRoutineLine = receptionFirstRoutineLine(
+            routines,
+            System.currentTimeMillis()
+        ),
+        // #70-F2 remainder (issue #14): a Safe Break counts
+        // only where one was actually taken — breakTakenSeconds
+        // is the ledger column every break exit writes, and
+        // it stays 0 for a session that never broke.
+        completedSessions = sessionHistory.count { !it.isActive },
+        sessionsWithSafeBreak = sessionHistory.count {
+            !it.isActive && it.breakTakenSeconds > 0
+        },
+        onShown = { viewModel.runWatchSweep() },
+        onFixClick = { item -> openFixPane(context, permissionStepStore, viewModel, parkIntroDeliveredThisOpen, { onParkIntroFixTrip() }, item) },
+        onCheckClick = { viewModel.runWatchSweep() },
+        onOpenShield = {
+            // H-2: only the unstamped sheet's excursion
+            // records a departure; a stamped sheet's home
+            // is PARK and its return is PARK.
+            if (!setupStamped) onShieldExcursion()
+            onCloseReception()
+            // Through a local, as everywhere on current
+            // main: the literal navigateTo(SHIELD) call
+            // shape is the #312 glance route, pinned out
+            // of this file by GlanceRoutingTest. This is
+            // the sheet's own SHIELD door, not a glance
+            // tap (glances route at GlanceRouting above).
+            val shieldDestination = MonolithDestination.SHIELD
+            viewModel.navigateTo(shieldDestination)
+        },
+        onStamp = {
+            stampSetupOnly(
+                setupStamped = setupStamped,
+                watchSnapshot = watchSnapshot,
+                setupStore = setupStore,
+                viewModel = viewModel,
+                onSetupStamped = onSetupStamped,
+                onArmedHandover = onArmedHandover
+            )
+        },
+        onDone = {
+            stampSetupAndEnter(
+                viewModel = viewModel,
+                onCloseReception = onCloseReception
+            )
+        },
+        chit = chitUi,
+        onDeparture = { door, print ->
+            setupStore.writeDepartureChit(door, print)
+        }
+    )
 }
 
 /**
