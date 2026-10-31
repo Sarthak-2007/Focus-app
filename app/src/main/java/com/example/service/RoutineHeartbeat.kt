@@ -51,7 +51,10 @@ object RoutineHeartbeat {
 
     enum class Source {
         CHAIN_ALARM, BOOT, PACKAGE_REPLACED, TIME_CHANGED,
-        RESUME, CRUD, SESSION_EDGE, SHIELD_LOOP, OPPORTUNISTIC
+        RESUME, CRUD, SESSION_EDGE, SHIELD_LOOP, OPPORTUNISTIC,
+        // Audit R6 #341 F17: the redundant WorkManager wake path —
+        // same tick, same idempotent reconcile, second road in.
+        WORKER
     }
 
     private const val TAG = "RoutineHeartbeat"

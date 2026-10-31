@@ -47,6 +47,30 @@
         <package android:name="com.oppo.safe" />
         <package android:name="com.iqoo.secure" />
         <package android:name="com.vivo.permissionmanager" />
+        <!-- Audit R6 #341 F10/F27: the browser coverage table's
+             packages are declared so the coverage probe (and the
+             catalogue) can see browsers that carry no launcher
+             entry on this phone — the stock OEM browsers first. -->
+        <package android:name="com.android.chrome" />
+        <package android:name="com.brave.browser" />
+        <package android:name="org.mozilla.firefox" />
+        <package android:name="com.microsoft.emmx" />
+        <package android:name="com.sec.android.app.sbrowser" />
+        <package android:name="com.opera.browser" />
+        <package android:name="com.opera.mini.native" />
+        <package android:name="com.opera.gx" />
+        <package android:name="com.duckduckgo.mobile.android" />
+        <package android:name="com.kiwibrowser.browser" />
+        <package android:name="mark.via.gp" />
+        <package android:name="com.yandex.browser" />
+        <package android:name="com.UCMobile.intl" />
+        <package android:name="com.vivaldi.browser" />
+        <package android:name="com.opera.browser.beta" />
+        <package android:name="com.mi.globalbrowser" />
+        <package android:name="com.vivo.browser" />
+        <package android:name="com.heytap.browser" />
+        <package android:name="com.huawei.browser" />
+        <package android:name="com.android.browser" />
         <!-- Issue #121: structural time-critical classification —
              TimeCriticalApps resolves which packages answer the
              platform alarm intents and which declare/handle the

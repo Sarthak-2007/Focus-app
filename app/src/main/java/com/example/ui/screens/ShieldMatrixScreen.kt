@@ -19,6 +19,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.border
@@ -75,7 +76,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.AppBlockTier
 import com.example.data.AppCategory
 import com.example.data.BlockedAppEntity
@@ -97,7 +97,6 @@ import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.theme.MonolithCurves
 import com.example.ui.theme.SoraFamily
 import com.example.ui.theme.TokenColorOnPrimary
-import com.example.ui.views.AppRowSledToggleView
 import com.example.ui.views.SledSwitchView
 import kotlinx.coroutines.delay
 
@@ -191,6 +190,12 @@ fun ShieldMatrixScreen(
     allowedWebHosts: List<String> = emptyList(),
     onAddAllowedWebHost: (String) -> Unit = {},
     onRemoveAllowedWebHost: (String) -> Unit = {},
+    // Audit R6 #341 F52: the exclusion list — hosts carved out of
+    // the ordinary blocklist (the matcher checks it BEFORE the
+    // blocklist). Defaults keep harnesses unchanged.
+    excludedWebHosts: List<String> = emptyList(),
+    onAddExcludedWebHost: (String) -> Unit = {},
+    onRemoveExcludedWebHost: (String) -> Unit = {},
     routines: List<com.example.data.RoutineEntity> = emptyList(),
     showResetNote: Boolean = false,
     onDismissResetNote: () -> Unit = {},
@@ -989,6 +994,94 @@ fun ShieldMatrixScreen(
                         color = scheme.onSurfaceVariant,
                         modifier = Modifier.testTag("shield_receipt_line")
                     )
+                }
+                // Audit R6 #341 F52: the EXEMPTIONS editor — one
+                // host carved out of a blocked domain (or its
+                // subdomains) browses free while the rest of the
+                // domain stays blocked. The matcher checks this
+                // list before the blocklist, in every mode.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "SITE EXEMPTIONS — CARVED OUT OF THE BLOCKLIST",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground
+                    )
+                }
+                var excludedHostText by remember { mutableStateOf("") }
+                var excludedHostError by remember { mutableStateOf<String?>(null) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    BasicTextField(
+                        value = excludedHostText,
+                        onValueChange = { excludedHostText = it },
+                        singleLine = true,
+                        textStyle = TextStyle(
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 14.sp,
+                            color = scheme.onBackground
+                        ),
+                        cursorBrush = SolidColor(scheme.onBackground),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("shield_exempt_host_input")
+                    )
+                    BlockitActionChip(
+                        wordLabel = "EXEMPT",
+                        isPrimaryInk = true,
+                        onClick = {
+                            val normalised =
+                                com.example.data.normaliseAllowedHost(excludedHostText)
+                            when {
+                                excludedHostText.isBlank() -> Unit
+                                normalised == null -> excludedHostError =
+                                    "NOT A HOST — CHECK THE ADDRESS AND TRY AGAIN"
+                                excludedWebHosts.contains(normalised) -> excludedHostError =
+                                    "ALREADY EXEMPT"
+                                else -> {
+                                    onAddExcludedWebHost(normalised)
+                                    excludedHostText = ""
+                                    excludedHostError = null
+                                }
+                            }
+                        },
+                        testTag = "shield_exempt_add"
+                    )
+                }
+                if (excludedHostError != null) {
+                    Text(
+                        text = excludedHostError!!,
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
+                excludedWebHosts.forEach { host ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = host,
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 13.sp,
+                            color = scheme.onBackground
+                        )
+                        BlockitActionChip(
+                            wordLabel = "REMOVE",
+                            isPrimaryInk = false,
+                            onClick = { onRemoveExcludedWebHost(host) },
+                            testTag = "shield_exempt_remove_$host"
+                        )
+                    }
                 }
                 // #339 F1: the Web Gate row — block the whole web
                 // except the allowed hosts below.
@@ -2204,6 +2297,105 @@ private fun SlipLineRow(
  *  next category, so a wrong guess is visible and correctable on
  *  the spot (a plain row update; no schema change). */
 @Composable
+/**
+ * Audit R6 #341 F64: the catalogue sled as pure Compose — name +
+ * usage caption on the left, the three-stop sled (SHUT / PEEK /
+ * OPEN) on the right. Tapping a stop selects it; tapping the sled
+ * body cycles one stop (the assistive path the View's
+ * performClick carried); a long press anywhere on the row steps
+ * the daily limit (issue #140). The whole row carries the
+ * `app_row_<pkg>` tag the catalogue tests address.
+ */
+@Composable
+private fun CatalogueSledRow(
+    app: BlockedAppEntity,
+    onTierSelected: (AppBlockTier) -> Unit,
+    onDailyLimitLongPress: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val scheme = MaterialTheme.colorScheme
+    val tier = app.resolvedTier
+    val tierWord = when (tier) {
+        AppBlockTier.LOCKED -> "Shut"
+        AppBlockTier.PEEK_2M -> "Peek"
+        AppBlockTier.OPEN -> "Open"
+    }
+    val stops = listOf(AppBlockTier.LOCKED, AppBlockTier.PEEK_2M, AppBlockTier.OPEN)
+    Row(
+        modifier = modifier
+            .testTag("app_row_${app.packageName}")
+            .semantics {
+                contentDescription = "${app.appName}, $tierWord"
+                stateDescription = tierWord
+            }
+            .combinedClickable(
+                onClick = {
+                    val next = stops[(stops.indexOf(tier) + 1) % stops.size]
+                    onTierSelected(next)
+                },
+                onLongClick = onDailyLimitLongPress
+            )
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = app.appName,
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp,
+                color = scheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            // Issue #140: the daily limit, printed on the row.
+            Text(
+                text = "USED ${app.todayUsageMinutes} OF ${app.dailyLimitMinutes} MIN TODAY",
+                fontFamily = AnonymousProFamily,
+                fontSize = 10.sp,
+                letterSpacing = 1.sp,
+                color = scheme.onSurfaceVariant
+            )
+        }
+        Row(
+            modifier = Modifier
+                .border(1.dp, scheme.outline, RoundedCornerShape(6.dp))
+                .padding(2.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            stops.forEach { stop ->
+                val stopWord = when (stop) {
+                    AppBlockTier.LOCKED -> "SHUT"
+                    AppBlockTier.PEEK_2M -> "PEEK"
+                    AppBlockTier.OPEN -> "OPEN"
+                }
+                val selected = stop == tier
+                Box(
+                    modifier = Modifier
+                        .testTag("app_row_stop_${app.packageName}_${stop.name}")
+                        .background(
+                            if (selected) scheme.onBackground else scheme.surface,
+                            RoundedCornerShape(4.dp)
+                        )
+                        .clickable { onTierSelected(stop) }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = stopWord,
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp,
+                        letterSpacing = 1.sp,
+                        color = if (selected) scheme.background else scheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun CatalogueAppRow(
     app: BlockedAppEntity,
     effectiveNight: Boolean,
@@ -2249,34 +2441,21 @@ private fun CatalogueAppRow(
                         .testTag("app_icon_${app.packageName}")
                 )
             }
-            AndroidView(
-                factory = { ctx ->
-                    AppRowSledToggleView(ctx).apply {
-                        this.soundEngine = soundEngine
-                    }
-                },
-                update = { view ->
-                    view.isNightMode = effectiveNight
-                    view.soundEngine = soundEngine
-                    view.appName = app.appName
-                    // R-11: the sled speaks its row to TalkBack —
-                    // "<appName>, <tierWord>" or the Canvas sled
-                    // is silent and Shield cannot be run by ear.
-                    view.contentDescription = "${app.appName}, ${tierWord(app.resolvedTier)}"
-                    view.currentTier = app.resolvedTier
-                // Issue #140: the daily limit, printed on the row,
-                // and the hold that steps it - see MonolithViewModel
-                // .cycleAppDailyLimit.
-                view.usageCaption = "USED ${app.todayUsageMinutes} OF ${app.dailyLimitMinutes} MIN TODAY"
-                view.onDailyLimitLongPress = { onCycleDailyLimit(app) }
-                    view.onTierSelected = { newTier ->
-                        onSetAppTier(app.packageName, newTier)
-                    }
-                },
+            // Audit R6 #341 F64: the catalogue row is pure Compose
+            // now — the AndroidView host (AppRowSledToggleView) is
+            // gone from the catalogue: every row paid a full View
+            // measure/layout/draw inside the scrolling list. The
+            // sled's contract is unchanged (three stops, tap a stop
+            // or cycle, hold steps the daily limit, the word reads
+            // to assistive tech); the View class itself stays for
+            // its other hosts and its pinned tests.
+            CatalogueSledRow(
+                app = app,
+                onTierSelected = { newTier -> onSetAppTier(app.packageName, newTier) },
+                onDailyLimitLongPress = { onCycleDailyLimit(app) },
                 modifier = Modifier
                     .weight(1f)
                     .height(54.dp)
-                    .testTag("app_row_${app.packageName}")
             )
         }
         Row(

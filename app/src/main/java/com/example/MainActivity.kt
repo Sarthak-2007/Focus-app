@@ -585,14 +585,29 @@ private fun openFixPane(
             // them bare, which would have reopened the unpinned-
             // intent finding on this one pane.
             val gate = com.example.data.OemPolicy.currentGate()
-            val autostartOpened = gate !=
+            // Audit R6 #341 F28: on Xiaomi the explicit BATTERY
+            // step comes first — MIUI's per-app battery saver
+            // (PowerKeeper → Monolith → "No restrictions") is
+            // the third gate the AOSP read cannot see, and the
+            // step Blockit's grant flow names explicitly. Its
+            // panes are guesses; fall through to autostart,
+            // then to AOSP, exactly as before.
+            val miuiBatteryOpened = gate ==
+                com.example.data.OemPolicy.AutostartGate.XIAOMI &&
+                com.example.data.OemPolicy
+                    .miuiBatterySaverIntents(context.packageName)
+                    .any { pane ->
+                        runCatching { context.startActivity(pane) }
+                            .isSuccess
+                    }
+            val autostartOpened = miuiBatteryOpened || (gate !=
                 com.example.data.OemPolicy.AutostartGate.NONE &&
                 com.example.data.OemPolicy
                     .autostartIntents(gate, context.packageName)
                     .any { pane ->
                         runCatching { context.startActivity(pane) }
                             .isSuccess
-                    }
+                    })
             if (!autostartOpened) {
                 val direct = pinnedSettingsIntent(
                     Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
@@ -625,6 +640,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val webGateStore = remember { com.example.data.WebGateStore(context) }
     var webBlockAllState by remember { mutableStateOf(webGateStore.blockAll()) }
     var allowedWebHostsState by remember { mutableStateOf(webGateStore.allowedHosts()) }
+    var excludedWebHostsState by remember { mutableStateOf(webGateStore.excludedHosts()) }
     val lifecycleOwner = LocalLifecycleOwner.current
     val scheme = MaterialTheme.colorScheme
 
@@ -748,6 +764,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val drawerLoading by viewModel.drawerLoading.collectAsStateWithLifecycle()
     val drawerError by viewModel.drawerError.collectAsStateWithLifecycle()
     val drawerSearchDayWords by viewModel.drawerSearchDayWords.collectAsStateWithLifecycle()
+    // Audit R6 #341 F58: the armed day-word overwrite (null = none).
+    val pendingDayWordConfirm by viewModel.pendingDayWordConfirm.collectAsStateWithLifecycle()
     val forgedArtifactIds by viewModel.forgedArtifactIds.collectAsStateWithLifecycle()
     val curioForgeRecords by viewModel.curioForgeRecords.collectAsStateWithLifecycle()
     val forgeStats by viewModel.forgeStats.collectAsStateWithLifecycle()
@@ -1777,6 +1795,19 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                         webGateStore.removeAllowedHost(host)
                                         allowedWebHostsState = webGateStore.allowedHosts()
                                     },
+                                    // Audit R6 #341 F52: the exemption
+                                    // list's render cache (the store
+                                    // is the truth, as with the gate).
+                                    excludedWebHosts = excludedWebHostsState,
+                                    onAddExcludedWebHost = { host ->
+                                        if (webGateStore.addExcludedHost(host)) {
+                                            excludedWebHostsState = webGateStore.excludedHosts()
+                                        }
+                                    },
+                                    onRemoveExcludedWebHost = { host ->
+                                        webGateStore.removeExcludedHost(host)
+                                        excludedWebHostsState = webGateStore.excludedHosts()
+                                    },
                                     routines = routines,
                                     showResetNote = showRoutineResetNote,
                                     onDismissResetNote = viewModel::dismissRoutineResetNote,
@@ -1886,6 +1917,11 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onLoadEarlierSearch = viewModel::loadEarlierDrawerSearch,
                                     onDeclareTodayWord = viewModel::declareTodayWord,
                                     onDeclareDayWord = viewModel::declareDayWordFor,
+                                    // Audit R6 #341 F58: the armed
+                                    // day-word overwrite + its taps.
+                                    pendingDayWordConfirm = pendingDayWordConfirm,
+                                    onConfirmPendingDayWord = viewModel::confirmPendingDayWord,
+                                    onCancelPendingDayWord = viewModel::cancelPendingDayWord,
                                     artifacts = com.example.data.CurioCatalog.artifacts,
                                     forgedArtifactIds = forgedArtifactIds,
                                     curioForgeRecords = curioForgeRecords,
@@ -1929,6 +1965,15 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         },
                         onFixClick = { item -> openFixPane(context, permissionStepStore, viewModel, parkIntroDeliveredThisOpen, { parkIntroFixTripThisOpen = true }, item) },
                         onCheckClick = { viewModel.runWatchSweep() },
+                        // Audit R6 #341 F28: the battery attestation —
+                        // the user's own word that the Xiaomi steps
+                        // are set, recorded with its instant.
+                        batteryAttested = com.example.service.WatchStore.batteryAttestedGate() ==
+                            com.example.data.OemPolicy.currentGate().name,
+                        onAttestBattery = {
+                            com.example.service.WatchStore.onBatteryAttested()
+                            viewModel.runWatchSweep()
+                        },
                         onToggleSound = { viewModel.toggleSound() },
                         soundscapeEnabled = soundscapeEnabled,
                         onToggleSoundscape = { viewModel.toggleSoundscape() },

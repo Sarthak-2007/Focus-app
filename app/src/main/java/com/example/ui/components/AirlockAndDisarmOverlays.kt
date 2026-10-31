@@ -2368,6 +2368,36 @@ fun DisarmChallengeOverlay(
                             .testTag("emergency_60s_valve")
                     )
 
+                    // Audit R6 #341 F23: the valve's progress is
+                    // also SPOKEN. The valve itself reports only as
+                    // Canvas pixels and pitch — a blind user had to
+                    // count a minute in their head. This live region
+                    // announces the remaining seconds at each
+                    // 15-second bank step (not every tick — progress,
+                    // not spam) and the completion. Polite, 1dp,
+                    // transparent: it exists for assistive tech
+                    // alone and changes no pixel of the design.
+                    val bankedSeconds = (hoistedBankedMs / 1000L).toInt()
+                    val valveBucket = bankedSeconds / 15
+                    val valveRemaining = state.requiredHoldSeconds - valveBucket * 15
+                    val valveAnnouncement = when {
+                        bankedSeconds >= state.requiredHoldSeconds ->
+                            "Emergency break complete"
+                        bankedSeconds == 0 ->
+                            "Emergency valve. Hold for ${state.requiredHoldSeconds} seconds to take this week's break."
+                        else ->
+                            "Emergency valve: $valveRemaining seconds remaining"
+                    }
+                    Text(
+                        text = valveAnnouncement,
+                        fontSize = 1.sp,
+                        color = androidx.compose.ui.graphics.Color.Transparent,
+                        modifier = Modifier
+                            .size(1.dp)
+                            .semantics { liveRegion = LiveRegionMode.Polite }
+                            .testTag("emergency_valve_live_region")
+                    )
+
                     // Issue #114, finding 5: the mechanics of the
                     // week's only break are consequential print —
                     // they stand at the same size and weight as the

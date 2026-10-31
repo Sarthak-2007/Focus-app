@@ -218,6 +218,10 @@ fun ParkDrawer(
     onDismiss: () -> Unit,
     onFixClick: (WatchItemId) -> Unit,
     onCheckClick: () -> Unit,
+    // Audit R6 #341 F28: battery attestation (Xiaomi) — the user's
+    // word that the OEM steps are set; see OemPolicy.
+    batteryAttested: Boolean = false,
+    onAttestBattery: () -> Unit = {},
     onToggleSound: () -> Unit,
     // #253 line 1: the session soundscape's sled facts — defaults
     // for the same test-compile reason as the sled facts above;
@@ -852,6 +856,28 @@ fun ParkDrawer(
                                 null
                             }
                         )
+                        // Audit R6 #341 F28: while the Xiaomi
+                        // battery fact is UNPROVED, the row offers
+                        // the attestation — the user's own word
+                        // that BOTH Xiaomi steps are set (autostart
+                        // ON; battery saver "No restrictions" — FIX
+                        // opens the steps). The app cannot read
+                        // either switch back; the word is the
+                        // proof, and it is recorded with its
+                        // instant (WatchStore.onBatteryAttested).
+                        if (item == WatchItemId.BATTERY &&
+                            print == PermPrint.UNPROVED &&
+                            com.example.data.OemPolicy.currentGate() ==
+                            com.example.data.OemPolicy.AutostartGate.XIAOMI &&
+                            !batteryAttested
+                        ) {
+                            BlockitActionChip(
+                                wordLabel = "I'VE SET BOTH XIAOMI STEPS — MARK PROVED",
+                                isPrimaryInk = true,
+                                onClick = onAttestBattery,
+                                testTag = "park_battery_attest"
+                            )
+                        }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                     WatchItemId.INTERCEPTORS.forEach { item ->

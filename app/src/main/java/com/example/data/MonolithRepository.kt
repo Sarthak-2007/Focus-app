@@ -1715,7 +1715,11 @@ class MonolithRepository(
         if (drained.isEmpty()) return
         dao.insertDayNotes(drained)
         val editor = prefs.edit()
-        drained.forEach { editor.remove(it.dateIso) }
+        // Audit R6 #341 F58: the declaration-time side key drains
+        // with its word (the witness itself rides the day_notes
+        // column from the 19->20 step; the prefs copy never
+        // outlives the drain).
+        drained.forEach { editor.remove(it.dateIso); editor.remove("${it.dateIso}#time") }
         editor.apply()
     }
 
@@ -2888,6 +2892,28 @@ class MonolithRepository(
         return session
     }
 
+
+    /**
+     * Audit R6 #341 F27: is at least one browser from the
+     * coverage table installed on this phone? The manifest's
+     * <queries> declarations for the table's packages make this
+     * probe truthful for browsers with no launcher entry too.
+     */
+    fun anySupportedBrowserInstalled(): Boolean {
+        val pm = context.packageManager
+        return BROWSER_PROFILES.any { profile ->
+            try {
+                pm.getPackageInfo(profile.packageName, 0)
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+    }
+
+    /** Audit R6 #341 F17: routines snapshot for the worker
+     *  path's self-arming (the DAO read, through this layer). */
+    suspend fun allRoutinesSnapshot(): List<RoutineEntity> = dao.getAllRoutinesSnapshot()
 
     /** ISSUE-67: the apps snapshot as a repository read, so the
      *  shield loop (which already holds a repository) stops

@@ -1822,6 +1822,10 @@ class MonolithViewModel(
      *  dispatched in parallel; each item re-stamps as its own query
      *  lands. Triggers: Deck entry, Deck resume, FIX return. */
     fun runWatchSweep() {
+        // Audit R6 #341 F27: the sweep also measures browser
+        // coverage, so SOCIAL SITES derives from what is actually
+        // installed, not from the setting alone.
+        com.example.service.WatchStore.onBrowserCoverage(repository.anySupportedBrowserInstalled())
         com.example.service.WatchStore.runSweep { item ->
             repository.watchGrantQuery(item)
         }
@@ -4377,6 +4381,14 @@ class MonolithViewModel(
      *  word is changeable all day; only today's filing date is
      *  declarable from here — the Drawer files words, it does not
      *  rewrite past days. */
+    // Audit R6 #341 F58: an armed overwrite awaiting its confirm
+    // tap. While this stands, the standing word is untouched —
+    // the declaration has NOT happened.
+    private val _pendingDayWordConfirm =
+        MutableStateFlow<com.example.data.PendingDayWordDeclaration?>(null)
+    val pendingDayWordConfirm: StateFlow<com.example.data.PendingDayWordDeclaration?> =
+        _pendingDayWordConfirm.asStateFlow()
+
     fun declareTodayWord(word: String?) {
         declareDayWord(
             com.example.data.DrawerDay.filingDate(System.currentTimeMillis()),
@@ -4393,14 +4405,50 @@ class MonolithViewModel(
      *  it files words, it does not rewrite history. The repository
      *  write is the same DayWordStore commit the today path has
      *  always used (Truth Car 2, G-02); the word is durable the
-     *  moment the tap returns. */
+     *  moment the tap returns. F58 routes the write through the
+     *  guarded declaration below: an overwrite of a standing word
+     *  arms a confirm before anything is written. */
     fun declareDayWord(date: java.time.LocalDate, word: String?) {
         val iso = com.example.data.DrawerDay.dateIso(date)
+        declareDayWordGuarded(iso, word)
+    }
+
+    /** F58: the guarded declaration — an overwrite of a standing
+     *  word by a different word arms the confirm instead of
+     *  writing; the same declaration repeated (or confirmed)
+     *  commits. Every other declaration commits immediately. */
+    private fun declareDayWordGuarded(iso: String, word: String?) {
+        val existing = _dayWords.value[iso]
+        val pending = _pendingDayWordConfirm.value
+        val confirmed = pending != null && pending.dateIso == iso && pending.word == word
+        if (!confirmed &&
+            com.example.data.dayWordRequiresConfirm(existing, word)
+        ) {
+            _pendingDayWordConfirm.value =
+                com.example.data.PendingDayWordDeclaration(iso, word!!, existing!!)
+            return
+        }
+        _pendingDayWordConfirm.value = null
+        commitDayWord(iso, word)
+    }
+
+    private fun commitDayWord(iso: String, word: String?) {
         viewModelScope.launch {
             repository.declareDayWord(iso, word)
             _dayWords.value = repository.allDayWords()
             _storedMonths.value = repository.storedMonths()
         }
+    }
+
+    /** F58: the confirm tap — commits the armed overwrite. */
+    fun confirmPendingDayWord() {
+        val pending = _pendingDayWordConfirm.value ?: return
+        _pendingDayWordConfirm.value = null
+        commitDayWord(pending.dateIso, pending.word)
+    }
+
+    fun cancelPendingDayWord() {
+        _pendingDayWordConfirm.value = null
     }
 
     /**
@@ -4411,11 +4459,8 @@ class MonolithViewModel(
      */
     fun declareDayWordFor(date: java.time.LocalDate, word: String?) {
         val iso = com.example.data.DrawerDay.dateIso(date)
-        viewModelScope.launch {
-            repository.declareDayWord(iso, word)
-            _dayWords.value = repository.allDayWords()
-            _storedMonths.value = repository.storedMonths()
-        }
+        // F58: yesterday's word is guarded by the same confirm.
+        declareDayWordGuarded(iso, word)
     }
 
 

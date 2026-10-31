@@ -149,6 +149,10 @@ dependencies {
   // implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
+  // Audit R6 #341 F17: the redundant session-boundary wake path
+  // (SessionBoundaryWorker) — persisted jobs that survive the
+  // process deaths the alarm chain does not.
+  implementation(libs.androidx.work.runtime.ktx)
   // implementation(libs.coil.compose)
   // implementation(libs.converter.moshi)
   // implementation(libs.firebase.ai)

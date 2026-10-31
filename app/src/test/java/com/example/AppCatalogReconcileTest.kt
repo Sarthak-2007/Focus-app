@@ -570,4 +570,75 @@ class AppCatalogReconcileTest {
         assertTrue(rules.peek.isEmpty())
         assertTrue(rules.shut.isEmpty())
     }
+
+    // PIN scope: PLUMBING.
+    // ---- Audit R6 #341 F13 (verification wave 1: ALREADY-CURED —
+    // these cases pin the landed mechanism; the desk draft's case
+    // title misstated it, corrected here: the ROW does not survive
+    // a genuine uninstall — the RULING does, tombstoned, and is
+    // restored on rediscovery). ----
+
+    @Test
+    fun reconcile_launcherHiddenApp_rulingSurvivesFirstAndSecondAbsence() {
+        val ruled = row("com.hidden.ruled", "Hidden Ruled", AppBlockTier.LOCKED)
+        val other = InstalledPackage("com.other", "Other App", true)
+        // First absence (a launcher hiding the app reads exactly
+        // like an uninstall to one sync): the row is NOT pruned —
+        // it is only noted pending.
+        val first = AppCatalogReconcile.reconcile(
+            existing = listOf(ruled),
+            installed = listOf(other),
+            usageMinutes = emptyMap(),
+            categorize = categorize,
+            previouslyAbsent = emptySet()
+        )
+        assertTrue(first.toPrune.isEmpty())
+        assertEquals(setOf("com.hidden.ruled"), first.pendingPrune.toSet())
+        // Second consecutive absence: the ROW is pruned (it is
+        // genuinely gone as far as two syncs can tell) — what
+        // survives is the ruling, via the tombstone the caller
+        // persists (rememberPrunedRules) — pinned by the restore
+        // case below.
+        val second = AppCatalogReconcile.reconcile(
+            existing = listOf(ruled),
+            installed = listOf(other),
+            usageMinutes = emptyMap(),
+            categorize = categorize,
+            previouslyAbsent = setOf("com.hidden.ruled")
+        )
+        assertEquals(setOf("com.hidden.ruled"), second.toPrune.toSet())
+    }
+
+    @Test
+    fun reconcile_genuinelyUninstalledApp_rulePrunedAndRemembered() {
+        val ruled = row("com.gone.app", "Gone App", AppBlockTier.PEEK_2M)
+        val plan = AppCatalogReconcile.reconcile(
+            existing = listOf(ruled),
+            installed = listOf(InstalledPackage("com.other", "Other App", true)),
+            usageMinutes = emptyMap(),
+            categorize = categorize,
+            previouslyAbsent = setOf("com.gone.app")
+        )
+        assertEquals(setOf("com.gone.app"), plan.toPrune.toSet())
+        assertTrue(plan.pendingPrune.isEmpty())
+    }
+
+    @Test
+    fun reconcile_reinstalledApp_rememberedRuleRestored() {
+        // Rediscovery with the tombstoned ruling on record: the
+        // reborn row carries HIS ruling (tier + limit), not the
+        // factory/category birth guess.
+        val plan = AppCatalogReconcile.reconcile(
+            existing = emptyList(),
+            installed = listOf(InstalledPackage("com.gone.app", "Gone App", true)),
+            usageMinutes = emptyMap(),
+            categorize = categorize,
+            rememberedRules = mapOf(
+                "com.gone.app" to com.example.data.AppRulePreset(AppBlockTier.PEEK_2M, 15)
+            )
+        )
+        val reborn = plan.toInsert.single { it.packageName == "com.gone.app" }
+        assertEquals(AppBlockTier.PEEK_2M, reborn.resolvedTier)
+        assertEquals(15, reborn.dailyLimitMinutes)
+    }
 }
