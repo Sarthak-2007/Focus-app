@@ -527,6 +527,14 @@ class MonolithRepository(
     val sessionHistoryFlow: Flow<List<FocusSessionEntity>> = dao.getSessionHistoryFlow()
     val interceptLogsFlow: Flow<List<InterceptLogEntity>> = dao.getInterceptLogsFlow()
 
+    /** Issue #253, line 39: the session history as one CSV
+     *  document — HistoryCsv over the canonical history snapshot
+     *  (the DAO's newest-first order, preserved by the formatter).
+     *  Read-only; the Drawer export door writes the returned text
+     *  to a document the user picks. */
+    suspend fun exportSessionHistoryCsv(): String =
+        HistoryCsv.format(dao.getSessionHistorySnapshot())
+
     /** Issue #254 F12 (Audit R5): today's reach count for one
      *  package, counted from the intercept ledger itself via the
      *  uncapped evidence query (getInterceptLogsBetween) — never
