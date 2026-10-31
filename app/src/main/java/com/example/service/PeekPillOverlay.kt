@@ -11,6 +11,7 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.example.R
 
 /**
  * Issue #114, finding 1 (Audit R3, moment-of-temptation, CRITICAL):
@@ -131,7 +132,7 @@ object PeekPillOverlay {
             setPadding(0, 0, dp(10), 0)
         }
         val end = Button(appCtx).apply {
-            text = "END PEEK"
+            text = appCtx.getString(R.string.pill_end_peek)
             textSize = 11f
             typeface = figures
             setTextColor(Color.rgb(0x2A, 0x26, 0x23))

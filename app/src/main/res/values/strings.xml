@@ -101,4 +101,6 @@
     <string name="sentence_not_sealed_session">NOT SEALED — THE SESSION DIDN\'T ANSWER.</string>
     <string name="sentence_not_sealed_named">NOT SEALED — %1$s DIDN\'T ANSWER.</string>
     <string name="sentence_annul_failed">ANNUL FAILED — THE ROW MAY STILL STAND. NOTHING WAS PROVED.</string>
+    <string name="pill_end_break">END BREAK</string>
+    <string name="pill_end_peek">END PEEK</string>
 </resources>
