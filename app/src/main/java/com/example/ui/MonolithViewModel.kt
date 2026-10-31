@@ -4954,6 +4954,43 @@ class MonolithViewModel(
         viewModelScope.launch { repository.extendActiveSessionBySeconds() }
     }
 
+    /** Issue #125 F4 (Sarthak's ruling, sharpened at 6544202995):
+     *  the in-grace edit's verb — add time / change duration,
+     *  change blocks, change loadout, in the start window only.
+     *  The repository enforces the window in the write and
+     *  refuses past it; on a landed loadout change the selector
+     *  rests on the corrected pick exactly as a pre-arm loadout
+     *  tap rests it, so no surface keeps printing the loadout
+     *  the live session no longer wears. */
+    fun editSessionInGrace(
+        durationMinutes: Int?,
+        studyBlocksCount: Int?,
+        loadout: SmartLoadout?
+    ) {
+        viewModelScope.launch {
+            val applied = repository.editActiveSessionInGrace(
+                durationMinutes, studyBlocksCount, loadout
+            )
+            if (applied && loadout != null) {
+                _selectedProfileName.value = loadout.title
+                val persisted = kotlinx.coroutines.withContext(
+                    kotlinx.coroutines.Dispatchers.IO
+                ) {
+                    loadoutStore.put(loadout)
+                }
+                _loadoutCapIndex.value = if (persisted) {
+                    com.example.data.LoadoutStore.capIndexOf(loadout)
+                } else {
+                    loadoutStore.capIndex()
+                }
+                if (loadout == SmartLoadout.STUDY) {
+                    repository.setBrowserBlockerEnabled(true)
+                    repository.setShortsReelsSniperEnabled(true)
+                }
+            }
+        }
+    }
+
     fun requestDisarmChallenge() {
         bloomNightLanding() // Ruhe R-3 verb: a disarm request
         val current = activeSession.value ?: return

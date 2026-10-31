@@ -80,7 +80,12 @@ class CascadeDeckRenderTest {
         intention = "Deep Study",
         profileName = "Default",
         targetDurationSeconds = 3000,
-        elapsedSeconds = 30,
+        // Issue #125 F1 re-pin: the fake stands for a SETTLED
+        // running session (the valve's tenancy), so its elapsed
+        // must stand past the grace window — 30 when the window
+        // was 10; the window is 30 since the ruling, so the fake
+        // stands at 90. The assertions it feeds are unchanged.
+        elapsedSeconds = 90,
         startWallTimeMillis = System.currentTimeMillis(),
         startElapsedRealtimeMillis = 1_000L,
         isActive = true,

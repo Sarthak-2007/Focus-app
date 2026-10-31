@@ -601,8 +601,12 @@ class MonolithRepository(
          *  [disarmActiveSession] enforces it in the ending write —
          *  a "Grace Cancel" arriving after it books the session's
          *  real elapsed as an ordinary early end instead of
-         *  zeroing its history. */
-        const val GRACE_WINDOW_SECONDS = 10
+         *  zeroing its history. Issue #125 F1 (Sarthak's ruling,
+         *  Oct 31 19:14 IST): the free window stretches 10s → 30s —
+         *  the second-11 cliff moves to second 31. The same window
+         *  gates the in-grace edit (issue #125 F4) at
+         *  [editActiveSessionInGrace]. */
+        const val GRACE_WINDOW_SECONDS = 30
         // Issue #290 F1: FLOW's terminal cap — a count-up session
         // auto-ends at 4 hours instead of running forever with no
         // terminal rule of its own (Forest's stopwatch auto-stops
@@ -3074,7 +3078,10 @@ class MonolithRepository(
      * - Study Loadout: Locks Social & Games, sets YouTube & Messaging to 2m Peek, leaves Utility/Docs Open.
      * - Sleep Loadout: Locks everything except Phone, Clock, Maps, Camera, and navigation (EssentialApps, by package).
      */
-    suspend fun applySmartLoadout(loadout: SmartLoadout) = withContext(Dispatchers.IO) {
+    suspend fun applySmartLoadout(
+        loadout: SmartLoadout,
+        graceCorrection: Boolean = false
+    ) = withContext(Dispatchers.IO) {
         // Issue #129 F4/F2: resync FIRST, so the loadout derives
         // over the phone's whole catalogue — an app installed
         // after the last sync previously wasn't in this map at
@@ -3089,7 +3096,12 @@ class MonolithRepository(
         // hole the AppBlock head-to-head named). Unsealed, and at
         // routine materialisation (which applies the loadout BEFORE
         // its session starts), the preset lands whole, as before.
-        val sealed = dao.getActiveSessionSnapshot()?.isActive == true
+        // Issue #125 F4's one exception: a graceCorrection call is
+        // the in-grace edit, whose caller has already enforced the
+        // grace window in its own write — inside the window the
+        // correction lands whole, as an arm-time apply does.
+        val sealed = !graceCorrection &&
+            dao.getActiveSessionSnapshot()?.isActive == true
         // Issue #121: the SLEEP loadout's structural time-critical
         // set (alarm / calendar class by capability and exact
         // identity — TimeCriticalApps), resolved once per
@@ -5139,6 +5151,94 @@ class MonolithRepository(
         return true
     }
 
+    /**
+     * Issue #125 F4 (Sarthak's ruling, Oct 31 19:14 IST, sharpened
+     * at 6544202995): the in-grace edit. Inside the grace window —
+     * the start only — the live session's OWN setup may be
+     * corrected: add time / change duration ([durationMinutes]),
+     * change the study-block count ([studyBlocksCount]), change
+     * the loadout ([loadout]). Nothing beyond the session's own
+     * setup is editable here, and past the window nothing is:
+     * the seal's immutability stands untouched, enforced in this
+     * write on the same verified-elapsed law the grace cancel
+     * answers to (the [disarmActiveSession] lawElapsed max) —
+     * never by a chip's visibility.
+     *
+     * A routine-born session refuses: its row is a frozen window
+     * snapshot the routine funnel judges, never a hand arm the
+     * free path serves. A stopwatch (FLOW) row takes the blocks
+     * and loadout halves; it has no set duration to correct, so
+     * [durationMinutes] is not applied to it.
+     *
+     * The loadout half deliberately bypasses the one-way ratchet
+     * ([applySmartLoadout]'s sealed tightening-only clamp): in
+     * the window the abort itself is free, so correcting the
+     * loadout is no escape the ratchet prices — the bypass is
+     * spent the instant the window closes. The seal's held
+     * counts are NOT rewritten (their writer law is one writer,
+     * at birth, forever — they stay the fact of the seal
+     * instant), and a duration change re-signs the row exactly
+     * as [extendActiveSessionBySeconds] does, so the verified
+     * clock never reads the correction as tamper.
+     */
+    suspend fun editActiveSessionInGrace(
+        durationMinutes: Int?,
+        studyBlocksCount: Int?,
+        loadout: SmartLoadout?
+    ): Boolean {
+        val active = dao.getActiveSessionSnapshot() ?: return false
+        if (!active.isActive || active.routineId != null) return false
+        if (durationMinutes == null && studyBlocksCount == null && loadout == null) {
+            return false
+        }
+        // The window, judged on the verified law elapsed — the
+        // same max the grace cancel books by.
+        val (verifiedElapsed, _) = computeVerifiedSessionElapsed(active)
+        val lawElapsed = max(verifiedElapsed, active.elapsedSeconds)
+        if (lawElapsed > GRACE_WINDOW_SECONDS) return false
+
+        if (loadout != null) {
+            applySmartLoadout(loadout, graceCorrection = true)
+        }
+        // The loadout commit never touches the session row, but
+        // the edit write starts from the row as it stands — and
+        // refuses if the session it was judged on is gone.
+        val fresh = dao.getActiveSessionSnapshot() ?: return false
+        if (!fresh.isActive || fresh.id != active.id) return false
+        var edited = fresh
+        if (durationMinutes != null && !fresh.isStopwatchMode) {
+            val newTarget = (durationMinutes * 60).coerceAtLeast(60)
+            if (newTarget != fresh.targetDurationSeconds) {
+                edited = edited.copy(
+                    targetDurationSeconds = newTarget,
+                    hmacSignature = CryptoIntegrityManager.signSessionState(
+                        fresh.startWallTimeMillis,
+                        fresh.startElapsedRealtimeMillis,
+                        fresh.bootCount,
+                        newTarget,
+                        fresh.isStopwatchMode
+                    )
+                )
+            }
+        }
+        if (studyBlocksCount != null) {
+            edited = edited.copy(
+                totalStudyBlocks = studyBlocksCount.coerceIn(1, 8)
+            )
+        }
+        if (loadout != null) {
+            edited = edited.copy(profileName = loadout.title)
+        }
+        if (edited != fresh) {
+            dao.updateSession(edited)
+            // The widget's SEALED-until derives from the target —
+            // a correction while sealed refreshes it now (the
+            // extend verb's residue law, issue #155 3c).
+            MonolithWidgetProvider.requestUpdate(context)
+        }
+        return true
+    }
+
     suspend fun updateSessionProgress(
         session: FocusSessionEntity,
         stampShieldBeat: Boolean = false
@@ -6073,8 +6173,9 @@ class MonolithRepository(
     suspend fun disarmActiveSession(completed: Boolean, outcomeReason: String): DisarmResult {
         val active = dao.getActiveSessionSnapshot() ?: return DisarmResult.NoActiveSession
         val (verifiedElapsed, tamper) = computeVerifiedSessionElapsed(active)
-        // Audit R3b #149: the 10-second law, enforced where the
-        // booking happens — not only by one chip's visibility. The
+        // Audit R3b #149: the grace-window law (30s since issue
+        // #125 F1's ruling), enforced where the booking happens —
+        // not only by one chip's visibility. The
         // law's elapsed is the anchor-derived figure (the same max
         // the bank uses), computed ahead of every disarm path below.
         val lawElapsed = max(verifiedElapsed, active.elapsedSeconds)

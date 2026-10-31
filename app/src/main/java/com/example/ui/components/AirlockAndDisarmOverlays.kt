@@ -1315,7 +1315,8 @@ internal fun airlockStakeLine(emergencyBreaksRemaining: Int): String? = when {
  * ([MonolithRepository.GRACE_WINDOW_SECONDS], verified elapsed
  * ≤ window). Returns the badge seconds the user can still use —
  * the Deck chip's own formula (window + 1 − elapsed, coerced to
- * 1..window: 10 on the first usable frame, 1 on the last) — or
+ * 1..window: the whole window on the first usable frame, 1 on
+ * the last) — or
  * null when no abort stands: no session snapshot carried
  * (elapsedAtIntercept < 0), or the window is already spent.
  */

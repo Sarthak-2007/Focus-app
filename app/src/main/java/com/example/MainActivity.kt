@@ -875,10 +875,13 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val sealed = activeSession?.isActive == true
     // Shield Rethink 2, Step 1: the receipt line for the Shield's
     // dated truth line, and the wedge's grace carve-out — the same
-    // <=10s window the Deck's grace abort reads (elapsedSeconds).
+    // grace window the Deck's grace abort reads (elapsedSeconds
+    // against MonolithRepository.GRACE_WINDOW_SECONDS).
     val shieldReceiptLine by viewModel.shieldReceiptLine.collectAsStateWithLifecycle()
     val shieldIntention by viewModel.shieldIntention.collectAsStateWithLifecycle()
-    val shieldInGracePeriod = activeSession?.let { it.isActive && it.elapsedSeconds <= 10 } == true
+    val shieldInGracePeriod = activeSession?.let {
+        it.isActive && it.elapsedSeconds <= com.example.data.MonolithRepository.GRACE_WINDOW_SECONDS
+    } == true
     // HB-1 / HB-2 (Truth Car 2; Band's header-band audit): ONE
     // predicate for the door. Until this car, the header's isSealed
     // drank from `sealed` alone while the VM's navigation law also
@@ -1645,6 +1648,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onEndSafeBreak = { viewModel.endSafeBreakEarly() },
                                     onStartSafeBreak = { viewModel.startSafeBreakMidBlock() },
                                     onExtendSession = viewModel::extendActiveSession,
+                                    onEditSessionInGrace = viewModel::editSessionInGrace,
                                     dndLine = dndLine,
                                     weeklyEmergencyTokensRemaining = weeklyEmergencyTokensRemaining,
                                     // Issue #103 F1: the repository
@@ -2026,18 +2030,19 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
 
                 // Issue #125 (armed-wrong F5): the grace abort does
                 // not live only on the Deck anymore. For the whole
-                // 10s window, every other tab carries the same chip
+                // grace window, every other tab carries the same chip
                 // above the rail — leaving the Deck to check what
                 // you armed wrong no longer burns the window
                 // invisibly. Same words, same badge, same call as
                 // the Deck's own chip.
                 val graceSession = activeSession
-                if (graceSession != null && graceSession.elapsedSeconds <= 10 &&
+                if (graceSession != null &&
+                    graceSession.elapsedSeconds <= com.example.data.MonolithRepository.GRACE_WINDOW_SECONDS &&
                     currentDestination != MonolithDestination.DECK
                 ) {
                     BlockitActionChip(
                         wordLabel = "GRACE WINDOW ABORT",
-                        monoBadge = "${10 - graceSession.elapsedSeconds}s",
+                        monoBadge = "${com.example.data.MonolithRepository.GRACE_WINDOW_SECONDS - graceSession.elapsedSeconds}s",
                         isPrimaryInk = true,
                         onClick = {
                             viewModel.confirmDisarmSession("Accidental Start Grace Cancel")

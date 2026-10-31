@@ -1703,7 +1703,9 @@ internal object SlideGestureMath {
     /** Schmitt dead-band: the latch releases at GATE − 0.020. */
     const val GATE_RELEASE = 0.66f
 
-    /** The catch (Vega): displayed crossing under contact commits. */
+    /** The catch (Vega): the release threshold — a drag RELEASED
+     *  at or past it commits; crossing it under contact commits
+     *  nothing (issue #125 F2, Sarthak's ruling). */
     const val CATCH = 0.84f
 
     /** The OFF-stop (Joss): hard clamp under a positively dead wire. */
@@ -1736,10 +1738,15 @@ internal object SlideGestureMath {
         WarrantState.OFF -> OFF_STOP
     }
 
-    /** The commit predicate (D1 + D3's boundary): displayed at or past
-     *  the catch, under contact, on a LIVE latch-frame read. */
-    fun commits(displayed: Float, underContact: Boolean, state: WarrantState): Boolean =
-        underContact && displayed >= CATCH && state == WarrantState.LIVE
+    /** The commit predicate (issue #125 F2, Sarthak's ruling —
+     *  supersedes D1's under-contact crossing): a drag commits
+     *  when it is RELEASED with displayed at or past the catch on
+     *  a LIVE release-frame read. Position at release is the only
+     *  judge — never velocity or fling (issue #117's law stands);
+     *  crossing the catch under contact seats nothing, and a
+     *  drag back below it before release cancels the order. */
+    fun commitsOnRelease(displayed: Float, state: WarrantState): Boolean =
+        displayed >= CATCH && state == WarrantState.LIVE
 
     /** Rhea's brush floor: 90ms inclusive is an order; below is a brush. */
     fun isBrush(pressDurationMs: Long): Boolean = pressDurationMs < BRUSH_FLOOR_MS
@@ -1823,9 +1830,13 @@ internal object SlideGestureMath {
  * ============================================================================
  * 4. SLIDE TO START VIEW — Slice D rebuild (D1+D2+D3+D4+D5+D10, Live Wire form)
  * ============================================================================
- * - Commit = displayed crossing 0.84 UNDER CONTACT on a LIVE wire read
- *   (Vega). Damping is a pure position function: free 1:1 to the 0.68
- *   gate, gain 2/3 beyond (finger commit coordinate p = 0.92).
+ * - Commit = a drag RELEASED at displayed ≥ 0.84 on a LIVE wire
+ *   read (issue #125 F2, Sarthak's ruling — supersedes Vega's
+ *   under-contact crossing): under contact the cap stays the
+ *   finger's past the catch and back, and drag-back below the
+ *   catch before release cancels the order. Damping is a pure
+ *   position function: free 1:1 to the 0.68 gate, gain 2/3 beyond
+ *   (finger commit coordinate p = 0.92).
  * - The gate is a Schmitt latch (0.680 up / 0.660 retreat, Luz): pitched
  *   both directions through fireFeel(1L) — 620Hz up, 340Hz retreat —
  *   and the wire is re-read in the same frame, BEFORE the feel.
@@ -1842,8 +1853,10 @@ internal object SlideGestureMath {
  *   hit-tested on the cap (drawn rect inflated 8dp in x, full track
  *   height in y), but a press of ANY duration released without travel
  *   dispatches nothing — a ≥90ms pocket/bag press physically cannot
- *   seal a session. The ONLY commit is the cap dragged under contact
- *   to the catch (position, never pointer-up/velocity/fling). A tap
+ *   seal a session. The ONLY commit is the cap dragged to the
+ *   catch and RELEASED there (position at release, never
+ *   velocity/fling — issue #125 F2's refinement of the commit
+ *   moment). A tap
  *   on a dead wire earns the refusal sequence; on a live wire it is
  *   answered like a brush: 1dp sink, one dull knock, zero travel.
  *   A press <90ms is a brush: 1dp sink, one dull knock, zero travel.
@@ -1964,8 +1977,9 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
     private var lastSeatedKnockMs: Long = 0L
 
     // The commutator floor (Vega, review V-1): the displayed value
-    // at which this SEAT run began — the catch crossing for a drag,
-    // 0.92 for the mesh. Inside the seat, displayed may never fall
+    // at which this SEAT run began — the release position for a
+    // drag (issue #125 F2), 0.92 for the mesh. Inside the seat,
+    // displayed may never fall
     // below it: the commit crossing ends finger ownership, and a
     // stalled frame must not walk a committed slide home (D3's
     // failure budget ends at refusal-from-the-catch, never at a
@@ -2642,19 +2656,12 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
             return
         }
 
-        // The commit (Vega + D3's boundary): displayed crossing the
-        // catch under contact, on this frame's LIVE read, ends finger
-        // ownership — Cato's integrator drives the seat from here.
-        // Seed velocity from the crossing MOVE delta (floor 0, cap
-        // +6.0 frac/s): a thrown seat is faster, never slower.
+        // The drag's standing velocity measure (Vega + R5-0723):
+        // the signed per-frame delta, kept current on every MOVE
+        // so the release can inherit the hand's actual motion —
+        // a retreat included — exactly as the old under-contact
+        // crossing inherited its floored twin.
         val dtSec = (eventTimeMs - prevDragTimeMs) / 1000f
-        val moveVelocity = if (dtSec > 0.001f) {
-            ((next - prevDragDisplayed) / dtSec).coerceIn(0f, 6f)
-        } else {
-            0f
-        }
-        // R5-0723: the signed twin of the seat seed — a retreat
-        // counts here, where the seat's floor law says it must not.
         dragVelocitySigned = if (dtSec > 0.001f) {
             ((next - prevDragDisplayed) / dtSec).coerceIn(-6f, 6f)
         } else {
@@ -2662,12 +2669,12 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         }
         prevDragDisplayed = next
         prevDragTimeMs = eventTimeMs
-        if (SlideGestureMath.commits(next, underContact = true, attemptWarrant)) {
-            displayed = next
-            startSeat(fromDrag = true, seedVelocity = moveVelocity)
-            return
-        }
-
+        // Issue #125 F2 (Sarthak's ruling): crossing the catch
+        // under contact commits NOTHING — the point of no return
+        // mid-gesture is abolished. The cap stays the finger's
+        // past the catch and back down, and the order lives or
+        // dies at the release, which endDrag judges against
+        // SlideGestureMath.commitsOnRelease.
         displayed = next
     }
 
@@ -2711,10 +2718,12 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
             // an order any more. The old tap path ran the driven mesh
             // to 0.92 on pointer-up alone, so a ≥90ms pocket/bag press
             // on the cap sealed a session the user never chose.
-            // Completion is now by cap POSITION only: the cap must be
-            // dragged under contact to the catch (SlideGestureMath
-            // .commits in applyDragPosition) — never by pointer-up
-            // inference, velocity, or fling. A classified tap on a
+            // Completion is by cap POSITION only: the cap must be
+            // dragged to the catch and released there
+            // (SlideGestureMath.commitsOnRelease, judged in this
+            // function — issue #125 F2) — never by velocity or
+            // fling, and a no-travel release is never an order. A
+            // classified tap on a
             // dead wire still earns the full refusal (Joss J-3, as
             // the brush branch above); on a live wire it is a
             // non-order contact, answered exactly like a brush:
@@ -2746,11 +2755,25 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
             return
         }
 
-        // Sub-catch release: the shipped spring-back survives for this
-        // path alone (Cato's site law) — it is not the seat, not the
-        // refusal spring. R5-0723: it now shares the integrator's
-        // CLOCK and the hand's release velocity, never their
-        // constants — the voice stays its own.
+        // Issue #125 F2 (Sarthak's ruling): the release judges the
+        // order. A genuine release — never a cancel — at or past
+        // the catch on this frame's fresh LIVE read seats the
+        // slide: Cato's integrator drives it to the latch exactly
+        // as the abolished under-contact crossing did, seeded
+        // with the hand's last measured motion floored and capped
+        // by the crossing's own law (floor 0, cap +6.0 frac/s).
+        if (!cancelled && SlideGestureMath.commitsOnRelease(displayed, attemptWarrant)) {
+            startSeat(fromDrag = true, seedVelocity = dragVelocitySigned.coerceIn(0f, 6f))
+            return
+        }
+
+        // Sub-catch release — which since #125 F2 includes every
+        // drag-back below the catch: the release is a cancel, and
+        // the shipped spring-back survives for this path alone
+        // (Cato's site law) — it is not the seat, not the refusal
+        // spring. R5-0723: it now shares the integrator's CLOCK
+        // and the hand's release velocity, never their constants
+        // — the voice stays its own.
         mode = Mode.REST
         animateSpringBack(0f) { onPressEnd?.invoke() }
     }
