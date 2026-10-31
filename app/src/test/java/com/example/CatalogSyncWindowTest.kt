@@ -144,9 +144,12 @@ class CatalogSyncWindowTest {
     @Test
     fun twoSyncsBeyondWindow_pruneTrulyGoneApp_tombstoneFiledAndRestores() = runBlocking {
         val dao = db.monolithDao()
+        // The ghost is UNRULED (OPEN): since issue #142 F2's union
+        // law a ruled row never prunes, so the prune + tombstone
+        // mechanics are staged on the row class they still govern.
         dao.insertApps(
             listOf(
-                storedRow("com.ghost.app", "Ghost", AppBlockTier.LOCKED),
+                storedRow("com.ghost.app", "Ghost", AppBlockTier.OPEN),
                 storedRow("com.keeper.app", "Keeper", AppBlockTier.LOCKED)
             )
         )
@@ -160,7 +163,7 @@ class CatalogSyncWindowTest {
         assertNull(repository.pendingPruneNote())
 
         // Second genuine look, beyond the window: the ghost is
-        // truly gone, so it is pruned — with its ruling filed.
+        // truly gone, so it is pruned — with its stored state filed.
         backdateLastSyncBeyondWindow()
         repository.ensureSeededAndSyncPackages()
         assertEquals(
@@ -168,10 +171,10 @@ class CatalogSyncWindowTest {
             dao.getAllAppsSnapshot().map { it.packageName }.toSet()
         )
         assertEquals(
-            PruneNote(appsRemoved = 1, rulesRemoved = true),
+            PruneNote(appsRemoved = 1, rulesRemoved = false),
             repository.pendingPruneNote()
         )
-        assertTrue(tombstones().contains("com.ghost.app|LOCKED|30"))
+        assertTrue(tombstones().contains("com.ghost.app|OPEN|30"))
 
         // The ghost returns on a later look: the tombstone, not a
         // factory/category default, decides its rebirth.
@@ -180,7 +183,7 @@ class CatalogSyncWindowTest {
         repository.ensureSeededAndSyncPackages()
         val reborn = dao.getAllAppsSnapshot()
             .first { it.packageName == "com.ghost.app" }
-        assertEquals(AppBlockTier.LOCKED, reborn.resolvedTier)
+        assertEquals(AppBlockTier.OPEN, reborn.resolvedTier)
         assertEquals(30, reborn.dailyLimitMinutes)
     }
 }
