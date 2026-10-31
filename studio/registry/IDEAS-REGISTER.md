@@ -131,4 +131,6 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | Test call-site census script (stdlib, prints PASS, catches seeded regressions) | Fuge | #2 | BUILT (studio/tools/check_test_callsites.py, on main via PR #165) |
 | Launcher block screen: un-exitable launcher surface + separate allowed/peek screens | Sarthak's ruling 04:29 (not a seat idea — his order) | #22/#18 | BUILT-IN-PROGRESS (Umbau lane; first slice merged via PR #167) |
 
+| The Plate: the glance rebuilt as the receipt slip's nameplate — fixed-geometry porcelain/ink plate, stamp-word state (SEALED/OPEN/UNPROVEN identical in silhouette), registration-mark accent in every state, typeset in the house fonts | DESIGNER-W-1 (Wow-level designer, WING-A) | #155 | PANEL-QUEUED |
+
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
