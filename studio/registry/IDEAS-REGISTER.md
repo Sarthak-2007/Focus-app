@@ -217,3 +217,9 @@ Register note: Wave-3 cell reports are still landing; their seat ideas enter on 
 | Idea | Seat | Issue | Disposition |
 |---|---|---|---|
 | The pill is the receipt's stub — one object, two tenses: claim the receipt № at ARM, pill Session face prints the same № + intention frozen at the claim; identity unifies (№, intention, row, derivation, type), tense never crosses (no outcome/sealed facts on the pill; no verbs/ephemerality on the receipt); valve/grace endings burn the claimed № | INTENTIONALITY-4 (origin: T01) | #16 | PANEL-QUEUED (verdict: https://github.com/Sarthak-2007/Focus-app/issues/16#issuecomment-6537576045 · Discussion: https://github.com/Sarthak-2007/Focus-app/discussions/671 · priced ~125 lines + 6 tests, ≈1 builder-day, after pill merge + C13 ghost deletion) |
+
+## Glance truth source (WING-A IDEATION, #155)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| SealTruth — ONE shared truth source for every glance surface: pure law (SealTruthLaw) + persisted shield warrant record (the protecting flip, written at the flip) + throttled persisted a11y pipeline record, so widget / shield card (incl. lock-screen public version) / Deck warrant / watchdog / QS tile / DreamService / shortcuts all RENDER one SealVerdict instead of re-deriving; kills lie classes L1–L8 (row-truth SEALED, warm-process-only truth, grant-as-binding, clock-travel, threshold drift, static public version, future-surface re-derivation, friendly-writer beat forgery); programme ≈5–7 builder-days, core M–L 2–3d | MAXIMPL-2 | #155 | PANEL-QUEUED (design + per-surface prices + consult asks filed on #155: https://github.com/Sarthak-2007/Focus-app/issues/155#issuecomment-6538324133 · VERIFIED vs main 9e7b38f68b3694146a95e4dba02dacf49539686b · offered to FINISH-LEAD K5 / PR #540 driver for the fresh re-implementation; no code built by this seat) |
