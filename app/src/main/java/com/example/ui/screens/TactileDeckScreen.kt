@@ -443,17 +443,15 @@ fun TactileDeckScreen(
     // one-derivation law forbids; the bar now folds the one warrant
     // read directly (see the BoltInputs block below). No BLOCK word
     // is derived anywhere on this face any more.
-    val idleTimeCell: Pair<String, StripDensity> = when {
-        isStopwatchMode && !isSessionRunning -> "NO END" to StripDensity.PASS
-        dialMinutes !in 5..180 || studyBlocksCount !in 1..8 -> "INVALID" to StripDensity.FAULT
-        // UNA2-03 rider: "ENDS HH:mm" is a fact about the plan, but
-        // its PASS tone is a claim the wire stands behind — beside
-        // a warrant that is not freshly LIVE the end prints at
-        // UNKNOWN density, never PASS beside BLOCK OFF.
-        else -> endsAtText(ClockText.is24Hour(LocalContext.current), sessionEndsAtMillis(System.currentTimeMillis(), totalSpanMinutes * 60)) to
-            if (warrantPrintState == WarrantState.LIVE) StripDensity.PASS
-            else StripDensity.UNKNOWN
-    }
+    val idleTimeCell = idleEndsAtCell(
+        isStopwatchMode = isStopwatchMode,
+        isSessionRunning = isSessionRunning,
+        dialMinutes = dialMinutes,
+        studyBlocksCount = studyBlocksCount,
+        totalSpanMinutes = totalSpanMinutes,
+        warrantPrintState = warrantPrintState,
+        is24Hour = ClockText.is24Hour(LocalContext.current)
+    )
 
     // Emil's mid-press latch: at DOWN the host freezes the imprint
     // tenant and the TIME text; they render latched through the
@@ -589,40 +587,20 @@ fun TactileDeckScreen(
     // its DOWN frame — derived, never written in composition.
     val pressLatchLive: PressLatch? =
         pressLatch?.takeIf { !isSessionRunning && latchArmKey == armResetKey }
-    val appsCell = when {
-        isSessionRunning -> {
-            if (frozenCount != null) frozenCount.toString() to StripDensity.PASS
-            else "UNKNOWN" to StripDensity.UNKNOWN
-        }
-        pressLatchLive != null -> pressLatchLive.appsWord to pressLatchLive.appsDensity
-        // Issue #98 (R3 arming journey): the count's PASS tone is a
-        // promise those apps WILL be blocked — it may only print at
-        // PASS beside a freshly LIVE warrant, exactly the law the
-        // TIME cell's rider (UNA2-03, above) already obeys. Beside
-        // BLOCK OFF/UNKNOWN the number still prints (it is a count,
-        // not a verdict) but at UNKNOWN density, so the strip's
-        // cells can no longer disagree in one frame.
-        appsCellCount != null -> appsCellCount.toString() to
-            if (warrantPrintState == WarrantState.LIVE) StripDensity.PASS
-            else StripDensity.UNKNOWN
-        else -> "UNKNOWN" to StripDensity.UNKNOWN
-    }
-    val timeCell: Pair<String, StripDensity> = when {
-        isSessionRunning && activeSession != null -> {
-            if (activeSession.isStopwatchMode) {
-                "NO END" to StripDensity.PASS
-            } else {
-                // #127 finding 3: fresh wall clock at THIS composition
-                // (the session flow re-emits every second), never the
-                // minute-boundary nowFrame — mixing a minute-stale
-                // clock with a per-second countdown drifted ENDS up
-                // to a minute early and disagreed with the Airlock.
-                endsAtText(ClockText.is24Hour(LocalContext.current), sessionEndsAtMillis(System.currentTimeMillis(), activeSession.spanRemainingSeconds)) to StripDensity.PASS
-            }
-        }
-        pressLatchLive != null -> pressLatchLive.timeText to pressLatchLive.timeDensity
-        else -> idleTimeCell
-    }
+    val appsCell = appsStripCell(
+        isSessionRunning = isSessionRunning,
+        frozenCount = frozenCount,
+        pressLatchLive = pressLatchLive,
+        appsCellCount = appsCellCount,
+        warrantPrintState = warrantPrintState
+    )
+    val timeCell = timeStripCell(
+        isSessionRunning = isSessionRunning,
+        activeSession = activeSession,
+        pressLatchLive = pressLatchLive,
+        idleTimeCell = idleTimeCell,
+        is24Hour = ClockText.is24Hour(LocalContext.current)
+    )
     // Issue #4 — THE FOLD (closer pass, ported by DURCH-A4).
     // Exactly one derivation reaches the seal bar: this block folds
     // the host's ONE warrant read (deckWarrant — raw state, print
@@ -2347,6 +2325,87 @@ private fun frozenSealFor(
         shut = frozenShut,
         peek = frozenPeek
     )
+}
+
+/**
+ * Issue #90 (complexity F1 slice): the strip's three cells — the
+ * idle TIME cell, the APPS cell and the live TIME cell — extracted
+ * from TactileDeckScreen's body as pure functions. Each cell is a
+ * closed derivation over the frame's facts; the host keeps the
+ * one-line calls, so every reader (the seal bar's numerals, the
+ * pinned stack) is untouched. Behaviour-identical: the branch
+ * bodies are the host's own, verbatim; the one mechanical change
+ * is that the composition-context clock-format read
+ * (ClockText.is24Hour(LocalContext.current)) is taken once at
+ * each callsite and arrives as the is24Hour parameter — a pure
+ * system-settings read, the same value in every branch.
+ */
+private fun idleEndsAtCell(
+    isStopwatchMode: Boolean,
+    isSessionRunning: Boolean,
+    dialMinutes: Int,
+    studyBlocksCount: Int,
+    totalSpanMinutes: Int,
+    warrantPrintState: WarrantState?,
+    is24Hour: Boolean
+): Pair<String, StripDensity> = when {
+    isStopwatchMode && !isSessionRunning -> "NO END" to StripDensity.PASS
+    dialMinutes !in 5..180 || studyBlocksCount !in 1..8 -> "INVALID" to StripDensity.FAULT
+    // UNA2-03 rider: "ENDS HH:mm" is a fact about the plan, but
+    // its PASS tone is a claim the wire stands behind — beside
+    // a warrant that is not freshly LIVE the end prints at
+    // UNKNOWN density, never PASS beside BLOCK OFF.
+    else -> endsAtText(is24Hour, sessionEndsAtMillis(System.currentTimeMillis(), totalSpanMinutes * 60)) to
+        if (warrantPrintState == WarrantState.LIVE) StripDensity.PASS
+        else StripDensity.UNKNOWN
+}
+
+private fun appsStripCell(
+    isSessionRunning: Boolean,
+    frozenCount: Int?,
+    pressLatchLive: PressLatch?,
+    appsCellCount: Int?,
+    warrantPrintState: WarrantState?
+): Pair<String, StripDensity> = when {
+    isSessionRunning -> {
+        if (frozenCount != null) frozenCount.toString() to StripDensity.PASS
+        else "UNKNOWN" to StripDensity.UNKNOWN
+    }
+    pressLatchLive != null -> pressLatchLive.appsWord to pressLatchLive.appsDensity
+    // Issue #98 (R3 arming journey): the count's PASS tone is a
+    // promise those apps WILL be blocked — it may only print at
+    // PASS beside a freshly LIVE warrant, exactly the law the
+    // TIME cell's rider (UNA2-03, above) already obeys. Beside
+    // BLOCK OFF/UNKNOWN the number still prints (it is a count,
+    // not a verdict) but at UNKNOWN density, so the strip's
+    // cells can no longer disagree in one frame.
+    appsCellCount != null -> appsCellCount.toString() to
+        if (warrantPrintState == WarrantState.LIVE) StripDensity.PASS
+        else StripDensity.UNKNOWN
+    else -> "UNKNOWN" to StripDensity.UNKNOWN
+}
+
+private fun timeStripCell(
+    isSessionRunning: Boolean,
+    activeSession: FocusSessionEntity?,
+    pressLatchLive: PressLatch?,
+    idleTimeCell: Pair<String, StripDensity>,
+    is24Hour: Boolean
+): Pair<String, StripDensity> = when {
+    isSessionRunning && activeSession != null -> {
+        if (activeSession.isStopwatchMode) {
+            "NO END" to StripDensity.PASS
+        } else {
+            // #127 finding 3: fresh wall clock at THIS composition
+            // (the session flow re-emits every second), never the
+            // minute-boundary nowFrame — mixing a minute-stale
+            // clock with a per-second countdown drifted ENDS up
+            // to a minute early and disagreed with the Airlock.
+            endsAtText(is24Hour, sessionEndsAtMillis(System.currentTimeMillis(), activeSession.spanRemainingSeconds)) to StripDensity.PASS
+        }
+    }
+    pressLatchLive != null -> pressLatchLive.timeText to pressLatchLive.timeDensity
+    else -> idleTimeCell
 }
 
 /**
