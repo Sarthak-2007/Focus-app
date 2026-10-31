@@ -2,7 +2,9 @@ package com.example
 
 import com.example.data.AppBlockTier
 import com.example.data.AppCategory
+import com.example.data.BlockedAppEntity
 import com.example.data.LoadoutRules
+import com.example.data.ShoppingFailClosedWarning
 import com.example.data.SmartLoadout
 import com.example.service.unlistedAppMustBeShut
 import org.junit.Assert.assertEquals
@@ -20,6 +22,9 @@ import org.junit.Test
  *    unlisted app the fail-closed birth shut.
  *  - F5: the OPEN tally is framed as exposure, not bookkeeping.
  * (F1's birth tiers are proven in AppCatalogReconcileTest.)
+ *  - D-2: the one-time SHOPPING fail-closed warning is owed
+ *    exactly while it has never been dismissed and a SHOPPING
+ *    row stands in the catalogue (panel verdict, 64–4).
  */
 class UnlistedDistraction129Test {
 
@@ -128,6 +133,72 @@ class UnlistedDistraction129Test {
             LoadoutRules.tierFor(
                 SmartLoadout.STUDY, "com.whatsapp", "WhatsApp",
                 AppCategory.MESSAGING.name, currentTier = AppBlockTier.LOCKED
+            )
+        )
+    }
+
+    // ---- D-2: the one-time SHOPPING fail-closed warning --------
+
+    private fun row(pkg: String, category: AppCategory, tier: AppBlockTier) =
+        BlockedAppEntity(
+            packageName = pkg, appName = pkg, category = category.name,
+            isBlocked = tier != AppBlockTier.OPEN, blockTier = tier.name
+        )
+
+    @Test
+    fun shoppingWarning_owedWhileShoppingRowStands_undismissed_129() {
+        // The lived case: an unrecognised app filed SHOPPING and
+        // born LOCKED under the D-1 fail-closed birth — he has
+        // never been told the category stands shut by default.
+        assertTrue(
+            ShoppingFailClosedWarning.owed(
+                listOf(row("com.fresh.shop", AppCategory.SHOPPING, AppBlockTier.LOCKED)),
+                dismissed = false
+            )
+        )
+        // The category law hangs over the row whatever its tier:
+        // a profile tap lands the whole SHOPPING category LOCKED,
+        // so a row he holds OPEN (or PEEK) is still exposure to
+        // the unruled default and the warning is still owed.
+        assertTrue(
+            ShoppingFailClosedWarning.owed(
+                listOf(row("com.big.store", AppCategory.SHOPPING, AppBlockTier.OPEN)),
+                dismissed = false
+            )
+        )
+        assertTrue(
+            ShoppingFailClosedWarning.owed(
+                listOf(row("com.big.store", AppCategory.SHOPPING, AppBlockTier.PEEK_2M)),
+                dismissed = false
+            )
+        )
+    }
+
+    @Test
+    fun shoppingWarning_oneTime_onceDismissedNeverOwed_129() {
+        // One-time means one time: after his tap, the warning is
+        // never owed again — not even when a new SHOPPING app is
+        // installed later.
+        val apps = listOf(
+            row("com.fresh.shop", AppCategory.SHOPPING, AppBlockTier.LOCKED),
+            row("com.new.store", AppCategory.SHOPPING, AppBlockTier.LOCKED)
+        )
+        assertFalse(ShoppingFailClosedWarning.owed(apps, dismissed = true))
+    }
+
+    @Test
+    fun shoppingWarning_notOwedWithoutShoppingRow_129() {
+        // No SHOPPING row on the phone = no fail-closed block to
+        // warn about; other categories standing shut (his ruled
+        // distractions) never trigger the shopping warning.
+        assertFalse(ShoppingFailClosedWarning.owed(emptyList(), dismissed = false))
+        assertFalse(
+            ShoppingFailClosedWarning.owed(
+                listOf(
+                    row("com.instagram.android", AppCategory.SOCIAL, AppBlockTier.LOCKED),
+                    row("com.whatsapp", AppCategory.MESSAGING, AppBlockTier.PEEK_2M)
+                ),
+                dismissed = false
             )
         )
     }

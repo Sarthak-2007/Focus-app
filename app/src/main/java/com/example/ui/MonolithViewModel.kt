@@ -1636,6 +1636,25 @@ class MonolithViewModel(
         _updateNoteVisible.value = false
     }
 
+    // Issue #129 D-2 (panel verdict, 64–4): the one-time SHOPPING
+    // fail-closed warning. The dismissed flag is the persisted
+    // store read once at init (a side-effect-free read, unlike
+    // the install-open registration above); visibility is the
+    // pure owed-check over the live catalogue — display-only,
+    // no enforcement reads or writes anywhere on this path.
+    private val _shoppingWarningDismissed =
+        MutableStateFlow(repository.shoppingWarningDismissed())
+    val shoppingWarningVisible: StateFlow<Boolean> = combine(
+        apps, _shoppingWarningDismissed
+    ) { list, dismissed ->
+        com.example.data.ShoppingFailClosedWarning.owed(list, dismissed)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    fun dismissShoppingWarning() {
+        repository.dismissShoppingWarning()
+        _shoppingWarningDismissed.value = true
+    }
+
     fun dismissRoutineResetNote() {
         viewModelScope.launch { repository.dismissRoutineResetNote() }
     }

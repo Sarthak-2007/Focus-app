@@ -218,7 +218,13 @@ fun ShieldMatrixScreen(
     onPruneNoteDismissed: () -> Unit = {},
     // Issue #129 F1: the unreviewed-auto-OPEN review prompt. Not
     // dismissible — it stands until each named app has a ruling.
-    unreviewedOpenText: String? = null
+    unreviewedOpenText: String? = null,
+    // Issue #129 D-2: the one-time SHOPPING fail-closed warning
+    // (panel verdict, 64–4). Shown once, pre-seal, on this review
+    // surface; his tap on the row dismisses it forever. Display-
+    // only — it changes no tier and no enforcement.
+    showShoppingWarning: Boolean = false,
+    onDismissShoppingWarning: () -> Unit = {}
 ) {
     val scheme = MaterialTheme.colorScheme
 
@@ -716,6 +722,27 @@ fun ShieldMatrixScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("unreviewed_open_note")
+                )
+            }
+        }
+
+        // #129 D-2: the one-time SHOPPING warning, in the same
+        // one-time-strip grammar, directly beside the F1 prompt —
+        // pre-seal, never in-session. Unlike the F1 prompt this
+        // one IS his to dismiss: the fact is told once, plainly,
+        // and his tap on the row closes it for good (the flag is
+        // persisted by the caller; this row only prints it).
+        if (showShoppingWarning) {
+            item {
+                Text(
+                    text = "SHOPPING STANDS SHUT IN A SESSION BY DEFAULT — NOT YOUR RULING: EVERY APP FILED AS SHOPPING (WHERE EVERY UNRECOGNISED APP LANDS) IS HELD UNTIL YOU OPEN IT YOURSELF BELOW. THIS WARNING SHOWS ONCE. TAP TO CLOSE.",
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onDismissShoppingWarning() }
+                        .testTag("shopping_fail_closed_warning")
                 )
             }
         }
