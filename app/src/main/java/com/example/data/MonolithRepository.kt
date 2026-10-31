@@ -375,6 +375,11 @@ class MonolithRepository(
          *  (TOKEN-SPEC §2 — stored on the spend row). */
         const val EMERGENCY_BREAK_HELD_SECONDS = 60
 
+        /** C-11: the outcome an intercept row carries from its
+         *  arrival until a resolution is known — a visit that was
+         *  never resolved reads as exactly that. */
+        const val AT_DOOR_OUTCOME = "AT DOOR"
+
         /** W3 #134 (phone-call-mid-session): the telephony surface.
          *  The call bypass has always covered calls that already
          *  exist (AudioManager call modes); placing a call starts
@@ -2589,6 +2594,20 @@ class MonolithRepository(
         )
 
     /**
+     * The cooldown's monotonic END instant for [app] (FIX-5b,
+     * issue #11): the anchor the Held Door's print derives from
+     * at each recomposition, instead of a snapshot seconds count
+     * ticked locally by the overlay. Null when no peek has ever
+     * anchored a cooldown on this row.
+     */
+    fun peekCooldownEndsAtElapsedRealtime(app: BlockedAppEntity): Long? {
+        val anchorEndMono = max(app.lastPeekEndElapsedRealtime, app.activePeekUntilElapsedRealtime)
+        if (anchorEndMono <= 0L) return null
+        return anchorEndMono + PEEK_COOLDOWN_MILLIS
+    }
+
+
+    /**
      * Issue #55: the cooldown's absolute deadline in the SAME
      * monotonic domain the lease machinery uses
      * (`SystemClock.elapsedRealtime()`), or 0 when no cooldown is
@@ -4724,7 +4743,9 @@ class MonolithRepository(
         appName: String,
         sessionIntention: String,
         outcome: String,
-        triggerReason: String = "Habit",
+        // FIX-3a (issue #11, merged with main's countAsReach/transaction
+        // form): the "Habit" default dies — UNSTATED unless stated.
+        triggerReason: String = "UNSTATED",
         // R3b #162 F4: an uninstall attempt is not a "phantom reach"
         // for a distraction app. Callers on the UNINSTALL_GUARD path
         // pass false: the intercept is still logged (with its

@@ -276,32 +276,17 @@ data class FocusTaskEntity(
     }
 }
 
-enum class DistractionTriggerReason(
-    val shortTag: String,
-    val label: String,
-    val coachingTip: String
-) {
-    MUSCLE_MEMORY(
-        shortTag = "Habit",
-        label = "Opened by Habit",
-        coachingTip = "Your thumb tapped this on autopilot. Take one slow breath and return to your next micro-step."
-    ),
-    STUCK_ON_PROBLEM(
-        shortTag = "Stuck",
-        label = "Stuck on a Hard Step",
-        coachingTip = "When a task feels heavy, your brain seeks quick novelty. Break the current task into a 10-minute micro-step."
-    ),
-    BORED_OR_TIRED(
-        shortTag = "Tired",
-        label = "Low Energy / Brain Fog",
-        coachingTip = "Doomscrolling drains working memory faster than resting. Stand up, drink water, or finish this short block."
-    ),
-    NEED_INFO(
-        shortTag = "Message",
-        label = "Checking Urgent Message / Code",
-        coachingTip = "If this app allows a 2m Peek, start the 2-minute pass below—the floating timer will keep you anchored."
-    )
-}
+/**
+ * Wave-2 (Purpose-questioning, KILL): the DistractionTriggerReason
+ * enum is deleted whole. FIX-3 killed its picker, its state, its
+ * coaching tips and every caller; the taxonomy survived as dead
+ * vocabulary describing reasons nobody can state — exactly the
+ * shape that re-arms a fabricated default ("just use
+ * MUSCLE_MEMORY, it's right there"). An intercept nobody
+ * explained books UNSTATED (MonolithRepository.recordIntercept's
+ * default). If a stated-reason surface is ever composed, its
+ * vocabulary is written then, for that surface.
+ */
 
 enum class AppCategory(val label: String, val code: String) {
     SHORT_VIDEO("Short Video", "Video"),
@@ -769,6 +754,33 @@ data class EmergencyBreakSpendEntity(
     val heldSeconds: Int
 )
 
+enum class DistractionTriggerReason(
+    val shortTag: String,
+    val label: String,
+    val coachingTip: String
+) {
+    MUSCLE_MEMORY(
+        shortTag = "Habit",
+        label = "Opened by Habit",
+        coachingTip = "Your thumb tapped this on autopilot. Take one slow breath and return to your next micro-step."
+    ),
+    STUCK_ON_PROBLEM(
+        shortTag = "Stuck",
+        label = "Stuck on a Hard Step",
+        coachingTip = "When a task feels heavy, your brain seeks quick novelty. Break the current task into a 10-minute micro-step."
+    ),
+    BORED_OR_TIRED(
+        shortTag = "Tired",
+        label = "Low Energy / Brain Fog",
+        coachingTip = "Doomscrolling drains working memory faster than resting. Stand up, drink water, or finish this short block."
+    ),
+    NEED_INFO(
+        shortTag = "Message",
+        label = "Checking Urgent Message / Code",
+        coachingTip = "If this app allows a 2m Peek, start the 2-minute pass below—the floating timer will keep you anchored."
+    )
+}
+
 @Entity(tableName = "intercept_logs")
 data class InterceptLogEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
@@ -777,7 +789,9 @@ data class InterceptLogEntity(
     val appName: String,
     val sessionIntention: String,
     val outcome: String,
-    val triggerReason: String = "Habit"
+    // FIX-3a: the "Habit" default dies — a log row nobody
+    // explained books UNSTATED, never a fabricated reason.
+    val triggerReason: String = "UNSTATED"
 )
 
 @Entity(tableName = "captured_notifications")

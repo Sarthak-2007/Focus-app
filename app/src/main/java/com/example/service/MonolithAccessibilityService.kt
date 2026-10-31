@@ -1700,6 +1700,11 @@ class MonolithAccessibilityService : AccessibilityService() {
             return
         }
 
+        // FIX-7a (issue #11, re-applied at merge): BACK before
+        // launch, like this door's three siblings — the blocked
+        // app must not stand visible, reward delivered, through
+        // the launch latency.
+        performGlobalAction(GLOBAL_ACTION_BACK)
         launchInterceptScreen(
             packageName = appRule.packageName,
             appName = appRule.appName,
@@ -2075,6 +2080,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         appName: String,
         reasonBadge: String,
         path: InterceptPath,
+        subLine: String? = null,
         freshOffence: Boolean = false
     ) {
         // Audit R6 #340 F63: the cross-door episode claim — the

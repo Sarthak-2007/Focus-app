@@ -130,6 +130,11 @@ class MainActivity : ComponentActivity() {
     // how re-intercepts used to be silently dropped.
     private var pendingInterceptIntent by mutableStateOf<Intent?>(null)
 
+    /** The composition's ViewModel, held so onNewIntent can route
+     *  repeat intercepts through the same consumption path as the
+     *  first composition (FIX-4). Set inside setContent. */
+    private var viewModelRef: MonolithViewModel? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(
@@ -229,10 +234,11 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        // Issue #27 (finding 1): bridge the re-delivered intent
-        // into composition — without this, a re-intercept while
-        // the Activity is alive never reaches the Airlock.
-        pendingInterceptIntent = intent
+        // FIX-4: a repeat intercept against this live (singleTop)
+        // activity consumes its extras HERE — first composition is
+        // no longer the only reader, so a second intercept can
+        // never land him on the previous app's stale door.
+        viewModelRef?.let { handleIncomingInterceptIntent(intent, it) }
     }
 
     private fun handleIncomingInterceptIntent(intent: Intent?, viewModel: MonolithViewModel) {
@@ -288,9 +294,16 @@ class MainActivity : ComponentActivity() {
             return
         }
         val name = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
-            ?: "Short-Form Feed"
+            // Wave-2 cure (critic N-4, issue #11 — carried through
+            // the #68/#78 merge): the old "Short-Form Feed" fallback
+            // fabricated a hero name for a door whose app was never
+            // identified. The name slot holds a fact or the package
+            // verbatim — never an invention.
+            ?: pkg
         val badge = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
-            ?: "Locked"
+            // FIX-6 (C-10, issue #11): the fallback badge word is
+            // "Blocked" — this is the fourth of the four sites.
+            ?: "Blocked"
         // WHICH door fired (Truth Car 3, UNA2-01): the peek
         // offer is computed per-path — an extra that is missing
         // or names no known door parses to UNKNOWN, and UNKNOWN
@@ -2009,6 +2022,13 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     (context as? android.app.Activity)?.moveTaskToBack(true)
                 },
                 onTake2MinutePeek = viewModel::start2MinutePeek,
+                // FIX-8 / P-2: the honest exit routes to the
+                // door-originated Disarm entry — the face stands
+                // in front of the still-standing door.
+                onEndSessionInstead = viewModel::requestDisarmChallengeFromDoor,
+                // FIX-7: the overlay reports the arm instant; the
+                // VM sounds the arm beat under its nonce guard.
+                onOfferArmed = viewModel::onAirlockOfferArmed,
                 allowedAppsCount = allApps.count {
                     it.resolvedTier == com.example.data.AppBlockTier.OPEN &&
                         it.category != com.example.data.AppCategory.BROWSERS.name &&

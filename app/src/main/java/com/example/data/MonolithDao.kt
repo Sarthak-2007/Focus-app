@@ -280,7 +280,14 @@ interface MonolithDao {
     fun getInterceptLogsFlow(): Flow<List<InterceptLogEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertInterceptLog(log: InterceptLogEntity)
+    suspend fun insertInterceptLog(log: InterceptLogEntity): Long
+
+    /** C-11 (Fein, Tor round 7): the arrival row's outcome is
+     *  written into the SAME row when it becomes known — a
+     *  targeted single-column update, so a resolution can never
+     *  mint a second row or move the arrival's timestamp. */
+    @Query("UPDATE intercept_logs SET outcome = :outcome WHERE id = :id")
+    suspend fun updateInterceptOutcome(id: Long, outcome: String)
 
     // Issue #83: the erasure path — intercept_logs was append-only
     // forever with no production delete at all. The digest clear

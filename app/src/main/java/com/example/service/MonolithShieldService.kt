@@ -1191,6 +1191,13 @@ class MonolithShieldService : Service() {
                 // Issue #290 F5: a dark/locked screen vetoes the
                 // verdict (see screenInteractive above).
                 val foregroundBlockedPkg = if (screenInteractive) selectedForeground else null
+                // FIX-7a disposition (issue #11, recomposed
+                // FIX-R3): the branch's raw BACK parity call is
+                // superseded on this door by main's #339 eject
+                // below (ejectForShield performs BACK/HOME via
+                // the tracker) plus the iteration snapshot —
+                // both intents stand, main's mechanism carries
+                // them.
                 if (foregroundBlockedPkg != null && foregroundBlockedPkg != applicationContext.packageName &&
                     // Audit R6 #340 F63: the cross-door episode
                     // claim — if the accessibility door already
@@ -1856,6 +1863,10 @@ class MonolithShieldService : Service() {
         const val EXTRA_INTERCEPTED_PACKAGE = "extra_intercepted_package"
         const val EXTRA_INTERCEPTED_APP_NAME = "extra_intercepted_app_name"
         const val EXTRA_INTERCEPT_BADGE = "extra_intercept_badge"
+        /** The site door's sub-line (FIX-6 name slot): the matched
+         *  domain, printed under the browser's name on the Held
+         *  Door. Written only by the site door's launcher. */
+        const val EXTRA_INTERCEPTED_SUBLINE = "extra_intercepted_subline"
         /** The firing door's [InterceptPath] name (Truth Car 3,
          *  UNA2-01): the badge says WHAT stopped him; the path says
          *  WHICH door — and only lease-honouring doors may sell a
