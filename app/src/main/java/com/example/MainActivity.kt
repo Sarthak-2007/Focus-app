@@ -453,6 +453,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val themeEvaluation by viewModel.themeEvaluation.collectAsStateWithLifecycle()
     val guardLinePrint by viewModel.guardLinePrint.collectAsStateWithLifecycle()
     val watchSnapshot by viewModel.watchSnapshots.collectAsStateWithLifecycle()
+    // Issue #14 (#70-F2 remainder): the Reception Sheet's later
+    // movement gates on the session history — finished sessions,
+    // and finished sessions in which a Safe Break was taken.
+    val sessionHistory by viewModel.sessionHistory.collectAsStateWithLifecycle()
     val guardSettings by viewModel.guardSettingsState.collectAsStateWithLifecycle()
     // Issue #324, finding 4 (build half, relabelled: primer
     // re-creation + binding + persisted step state): the
@@ -2053,6 +2057,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     routines,
                     System.currentTimeMillis()
                 ),
+                // #70-F2 remainder (issue #14): a Safe Break counts
+                // only where one was actually taken — breakTakenSeconds
+                // is the ledger column every break exit writes, and
+                // it stays 0 for a session that never broke.
+                completedSessions = sessionHistory.count { !it.isActive },
+                sessionsWithSafeBreak = sessionHistory.count {
+                    !it.isActive && it.breakTakenSeconds > 0
+                },
                 onShown = { viewModel.runWatchSweep() },
                 onFixClick = { item -> openFixPane(item) },
                 onCheckClick = { viewModel.runWatchSweep() },
