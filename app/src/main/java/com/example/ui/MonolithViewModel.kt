@@ -13,7 +13,6 @@ import com.example.data.ClockText
 import com.example.data.AppCategory
 import com.example.data.BreakResult
 import com.example.data.BlockedAppEntity
-import com.example.data.CapturedNotificationEntity
 import com.example.data.CurioCatalog
 import com.example.data.DisarmResult
 import com.example.data.DailyFocusStat
