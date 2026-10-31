@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performClick
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -361,9 +362,16 @@ class VaultHistoryTruthTest {
         composeRule.onNodeWithTag("cabinet_row_partial_stamp").performClick()
         settle()
         composeRule.onNodeWithText("Partial Stamp").assertIsDisplayed()
-        composeRule.onNodeWithText("STAMPED — IT STANDS IN THE CABINET").assertIsDisplayed()
+        // Floor lane (census #6, row 29): the Partial Stamp's lore
+        // runs several lines longer than the gyro's, so on the
+        // detail's LazyColumn the two record lines below sit past
+        // the fold — composed, but not displayed until scrolled
+        // to. The claim is that the lines PRINT, exactly; the
+        // scroll is the record page's own designed interaction.
+        composeRule.onNodeWithText("STAMPED — IT STANDS IN THE CABINET")
+            .performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText(
             "STAMPED ×2 · LAST ${headingWithYear(LocalDate.of(2026, 10, 20))}"
-        ).assertIsDisplayed()
+        ).performScrollTo().assertIsDisplayed()
     }
 }
