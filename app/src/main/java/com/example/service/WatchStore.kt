@@ -359,6 +359,30 @@ object WatchStore {
         }
     }
 
+    // Audit R6 #341 F28: the battery attestation — the user's own
+    // word, with its instant, that the Xiaomi steps (autostart ON,
+    // battery saver "No restrictions") are set. Stored in this
+    // store's own prefs file; the stamp names the gate it was
+    // given under, so an attestation never travels across skins.
+    private const val KEY_BATTERY_ATTESTED_GATE = "battery_attested_gate"
+    private const val KEY_BATTERY_ATTESTED_WALL = "battery_attested_wall"
+
+    fun onBatteryAttested() {
+        val app = boundContext ?: return
+        app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_BATTERY_ATTESTED_GATE, com.example.data.OemPolicy.currentGate().name)
+            .putLong(KEY_BATTERY_ATTESTED_WALL, System.currentTimeMillis())
+            .commit()
+        poke()
+    }
+
+    fun batteryAttestedGate(): String? {
+        val app = boundContext ?: return null
+        return app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_BATTERY_ATTESTED_GATE, null)
+    }
+
     private fun persistLastProved(wallMillis: Long) {
         val app = boundContext ?: return
         // commit(), not apply() (verifier pass, issue #48): the
@@ -416,6 +440,12 @@ object WatchStore {
     // the listener does not suspend during a Safe Break.
     @Volatile private var shortsSettingOn = true
     @Volatile private var sitesSettingOn = true
+    // Audit R6 #341 F27: whether ANY browser the site blocker can
+    // actually police is installed on this phone — measured by the
+    // watch sweep (ViewModel), null = never measured. SOCIAL SITES
+    // may not print RUNNING over a phone whose only browsers are
+    // ones the coverage table cannot read.
+    @Volatile private var supportedBrowserInstalled: Boolean? = null
     @Volatile private var safeBreakActive = false
     @Volatile private var sessionCapturing = false
 
@@ -475,6 +505,13 @@ object WatchStore {
     // ------------------------------------------------------------------
     // Writers
     // ------------------------------------------------------------------
+
+    /** Audit R6 #341 F27: the sweep's browser-coverage fact —
+     *  true when at least one coverage-table browser is installed. */
+    fun onBrowserCoverage(installedSupported: Boolean) {
+        supportedBrowserInstalled = installedSupported
+        poke()
+    }
 
     /** Accessibility BIND hook (service onServiceConnected/onUnbind/onDestroy). */
     fun onAccessibilityBound(bound: Boolean) =
@@ -721,7 +758,9 @@ object WatchStore {
             // MISSING below: that half is known, not proved-absent.
             item == WatchItemId.BATTERY && perm == PermState.GRANTED &&
                 !com.example.data.OemPolicy.batteryGrantedIsProved(
-                    com.example.data.OemPolicy.currentGate()
+                    com.example.data.OemPolicy.currentGate(),
+                    attested = batteryAttestedGate() ==
+                        com.example.data.OemPolicy.currentGate().name
                 ) -> PermPrint.UNPROVED
             perm == PermState.GRANTED && stale -> PermPrint.STALE
             perm == PermState.GRANTED -> PermPrint.GRANTED
@@ -886,6 +925,13 @@ object WatchStore {
             else -> return null
         }
         if (!settingOn) return InterceptorState.OFF
+        // Audit R6 #341 F27: the honest SOCIAL SITES derivation —
+        // measured coverage says NO supported browser is installed
+        // (e.g. only an unreadable stock browser): the site door
+        // cannot be running, so the line prints OFF, never RUNNING.
+        if (item == WatchItemId.SOCIAL_SITES && supportedBrowserInstalled == false) {
+            return InterceptorState.OFF
+        }
         val parentPrints = parents.map { permPrintAt(snapshot, it, nowMono) }
         if (parentPrints.any { it == PermPrint.UNMEASURED }) return null
         if (parentPrints.any { it != PermPrint.GRANTED }) return InterceptorState.OFF

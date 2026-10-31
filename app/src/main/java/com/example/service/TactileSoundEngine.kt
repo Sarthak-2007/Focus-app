@@ -123,6 +123,20 @@ class TactileSoundEngine(private val context: Context) {
         /** The Throw's full length: 1000 ms at 44 100 Hz. */
         const val SEAL_SAMPLES = 44_100
 
+        /** Audit R6 #341 F26: the pre-render cache's bound. */
+        const val DETENT_CACHE_MAX = 64
+
+        /**
+         * Audit R6 #341 F63: the missed-prime seal fallback renders
+         * only this many samples synchronously on the seal path —
+         * the Throw's first 200 ms, carrying its attack landmarks —
+         * instead of all 44,100. The full render stays the prime's
+         * job (render thread); a missed prime is degraded and on
+         * time, never a full second of synthesis squatting on the
+         * seal's own timing.
+         */
+        const val SEAL_FALLBACK_SYNC_SAMPLES = 8_820
+
         /** xorshift32 seed (Marsaglia shifts 13/17/5), frozen.
          *  Golden vector, pinned by test: the first four raw
          *  outputs are 0x510C4619, 0xE02E553E, 0x7BB98F3A,
@@ -234,6 +248,36 @@ class TactileSoundEngine(private val context: Context) {
          * (221, 0.5), wet send −12 dB. Samples 39 690–44 100 fade
          * linearly to zero.
          */
+        /**
+         * Audit R6 #341 F63: render only the first [out.size]
+         * samples of the Throw into [out] — the same pure function
+         * as [renderSealBuffer], bounded. The envelope state at
+         * sample n is identical to the full render's, so the
+         * prefix is bit-identical to the full voice's opening
+         * (the bolt/tail dressing past the prefix is the prime's
+         * concern, not the fallback's).
+         */
+        internal fun renderSealPrefix(out: FloatArray) {
+            require(out.size in 1..SEAL_SAMPLES)
+            val weights = PARTIAL_WEIGHTS
+            val weightNorm = weights.sum()
+            var envBody = 1.0f
+            var envTail = 1.0f
+            val twoPiOverSr = (2.0 * PI / SAMPLE_RATE).toFloat()
+            val f0 = 360f
+            for (n in out.indices) {
+                val phase = n * twoPiOverSr * f0
+                val p1 = sin(phase.toDouble()).toFloat() * weights[0]
+                val p2 = sin((phase * 2.0f * 1.5f).toDouble()).toFloat() * weights[1]
+                val p3 = sin((phase * 3.0f).toDouble()).toFloat() * weights[2]
+                val p4 = sin((phase * 4.7f).toDouble()).toFloat() * weights[3]
+                val sample = (((p1 + p2 + p3) * envBody + p4 * envTail) / weightNorm) * 0.62f
+                out[n] = sample.coerceIn(-0.95f, 0.95f)
+                envBody *= BODY_DECAY_STEP
+                envTail *= TAIL_DECAY_STEP
+            }
+        }
+
         internal fun renderSealBuffer(out: FloatArray) {
             require(out.size == SEAL_SAMPLES)
             val weights = PARTIAL_WEIGHTS
@@ -427,7 +471,14 @@ class TactileSoundEngine(private val context: Context) {
             if (synthThread == null) {
                 synthThread = Thread({ runFloatPcmSynthLoop() }, "MonolithFloatPcmSynth").apply {
                     isDaemon = true
-                    priority = Thread.MAX_PRIORITY
+                    // Audit R6 #341 F26: this thread used to run at
+                    // Thread.MAX_PRIORITY — on a two-core Go phone
+                    // the signature gesture starved its own UI
+                    // thread. It now runs at NORM thread priority
+                    // and asks the OS for AUDIO thread priority
+                    // inside the loop (Process.THREAD_PRIORITY_AUDIO),
+                    // the priority Android reserves for exactly this.
+                    priority = Thread.NORM_PRIORITY
                     start()
                 }
             }
@@ -504,7 +555,10 @@ class TactileSoundEngine(private val context: Context) {
                 var failed = false
                 while (off < SEAL_SAMPLES) {
                     val n = try {
-                        track.write(sealBuffer, off, SEAL_SAMPLES - off, AudioTrack.WRITE_BLOCKING)
+                        writeFloatSamples(
+                            track, sealTrackIsFloat, sealBuffer, off,
+                            SEAL_SAMPLES - off, sealShortScratch
+                        )
                     } catch (_: Exception) {
                         -1
                     }
@@ -526,15 +580,19 @@ class TactileSoundEngine(private val context: Context) {
         }
     }
 
-    private fun ensureSealTrack(): AudioTrack? {
-        sealTrack?.let { return it }
-        // Issue #77: double-checked under sealTrackLock — the render
-        // thread and playSealThrow's fallback both arrive here; only
-        // one may build the track.
-        return synchronized(sealTrackLock) {
-            sealTrack?.let { return@synchronized it }
-            try {
-            val track = AudioTrack.Builder()
+    // Audit R6 #341 F25: the engine's tracks are built FLOAT
+    // first, with a 16-BIT fallback lane. On low-end HALs without
+    // a float path the float build either throws or returns an
+    // uninitialised track — before this, every cue on such a phone
+    // was silently dead for the life of the process. The fallback
+    // lane converts the same rendered floats to shorts at write
+    // time; the render itself (the voice) never changes.
+    @Volatile
+    private var sealTrackIsFloat = true
+
+    private fun buildTrackWithFallback(floatBufferBytes: Int): Pair<AudioTrack, Boolean>? {
+        fun build(encoding: Int, bufferBytes: Int): AudioTrack? = try {
+            AudioTrack.Builder()
                 .setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
@@ -543,21 +601,80 @@ class TactileSoundEngine(private val context: Context) {
                 )
                 .setAudioFormat(
                     AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+                        .setEncoding(encoding)
                         .setSampleRate(SAMPLE_RATE)
                         .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                         .build()
                 )
-                // The render plus 5% headroom (185 220 B): a track
-                // buffer smaller than the render is the one way
-                // this lane could silently become a queue again.
-                .setBufferSizeInBytes(SEAL_SAMPLES * 4 * 105 / 100)
+                .setBufferSizeInBytes(bufferBytes)
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .build()
-                sealTrack = track
-                track
-            } catch (_: Exception) {
+                .takeIf { it.state == AudioTrack.STATE_INITIALIZED }
+        } catch (_: Exception) {
+            null
+        }
+        build(AudioFormat.ENCODING_PCM_FLOAT, floatBufferBytes)?.let { return it to true }
+        build(AudioFormat.ENCODING_PCM_16BIT, floatBufferBytes / 2)?.let { return it to false }
+        return null
+    }
+
+    /** Write [len] rendered float samples starting at [off],
+     *  converting into [scratch] when the lane is 16-bit (F25). */
+    private fun writeFloatSamples(
+        track: AudioTrack,
+        isFloat: Boolean,
+        buffer: FloatArray,
+        off: Int,
+        len: Int,
+        scratch: ShortArray
+    ): Int {
+        if (isFloat) {
+            return track.write(buffer, off, len, AudioTrack.WRITE_BLOCKING)
+        }
+        val n = minOf(len, scratch.size)
+        for (i in 0 until n) {
+            val v = (buffer[off + i] * 32767f).toInt().coerceIn(-32768, 32767)
+            scratch[i] = v.toShort()
+        }
+        return track.write(scratch, 0, n, AudioTrack.WRITE_BLOCKING)
+    }
+
+    /** F25: the seal lane's conversion scratch (reused per write). */
+    private val sealShortScratch = ShortArray(SEAL_SAMPLES)
+
+    /** F26: pre-rendered voice cache — a detent at the same
+     *  (frequency, length, gain, chord) is rendered ONCE and then
+     *  copied, never re-synthesised per detent on the synth thread.
+     *  Bounded: past [DETENT_CACHE_MAX] entries the cache clears
+     *  rather than growing with every frequency the wheel visits. */
+    private val detentCache = java.util.concurrent.ConcurrentHashMap<Long, FloatArray>()
+
+    private fun detentCacheKey(f0: Float, count: Int, gain: Float, chordRatio: Float): Long {
+        var key = f0.toBits().toLong() shl 32
+        key = key or (count.toLong() and 0xFFFF)
+        key = key or (gain.toBits().toLong() and 0xFF shl 16)
+        key = key or (chordRatio.toBits().toLong() and 0xFF shl 24)
+        return key
+    }
+
+    private fun ensureSealTrack(): AudioTrack? {
+        sealTrack?.let { return it }
+        // Issue #77: double-checked under sealTrackLock — the render
+        // thread and playSealThrow's fallback both arrive here; only
+        // one may build the track.
+        return synchronized(sealTrackLock) {
+            sealTrack?.let { return@synchronized it }
+            // F25: float first, 16-bit fallback (buildTrackWithFallback).
+            // The render plus 5% headroom (185 220 B float-sized): a
+            // track buffer smaller than the render is the one way
+            // this lane could silently become a queue again.
+            val built = buildTrackWithFallback(SEAL_SAMPLES * 4 * 105 / 100)
+            if (built == null) {
                 null
+            } else {
+                sealTrackIsFloat = built.second
+                sealTrack = built.first
+                built.first
             }
         }
     }
@@ -816,7 +933,15 @@ class TactileSoundEngine(private val context: Context) {
     }
 
     private fun runFloatPcmSynthLoop() {
+        // Audit R6 #341 F26: AUDIO thread priority at the OS level
+        // (the priority Android reserves for audio rendering) —
+        // never the MAX_PRIORITY this loop used to seize.
+        try {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
+        } catch (_: Exception) {}
         var track: AudioTrack? = null
+        var trackIsFloat = true
+        val shortScratch = ShortArray(1024)
         try {
             val maxSamples = (SAMPLE_RATE * 0.16f).toInt() // Up to 160ms transient buffer
             val minBufBytes = AudioTrack.getMinBufferSize(
@@ -848,29 +973,13 @@ class TactileSoundEngine(private val context: Context) {
                 // that will actually sound (never at thread start).
                 if (!requestTransientAudioFocus()) continue
                 if (track == null) {
-                    track = try {
-                        AudioTrack.Builder()
-                            .setAudioAttributes(
-                                AudioAttributes.Builder()
-                                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
-                                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                                    .build()
-                            )
-                            .setAudioFormat(
-                                AudioFormat.Builder()
-                                    .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                                    .setSampleRate(SAMPLE_RATE)
-                                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                                    .build()
-                            )
-                            .setBufferSizeInBytes(minBufBytes)
-                            .setTransferMode(AudioTrack.MODE_STREAM)
-                            .build()
-                            .also { it.play(); legacyTrack = it }
-                    } catch (_: Exception) {
-                        null
-                    }
-                    if (track == null) continue
+                    // Audit R6 #341 F25: float first, 16-bit
+                    // fallback — a HAL without a float path gets a
+                    // living engine, not a silently dead one.
+                    val built = buildTrackWithFallback(minBufBytes)
+                    if (built == null) continue
+                    trackIsFloat = built.second
+                    track = built.first.also { it.play(); legacyTrack = it }
                 }
                 val liveTrack = track ?: continue
 
@@ -880,7 +989,16 @@ class TactileSoundEngine(private val context: Context) {
                 val f0 = cmd.fundamentalHz.coerceIn(90f, 2400f)
                 val twoPiOverSr = (2.0 * PI / SAMPLE_RATE).toFloat()
 
-                for (n in 0 until count) {
+                // Audit R6 #341 F26: a voice already rendered for
+                // this (frequency, length, gain, chord) is COPIED
+                // from the pre-render cache — the per-sample sin()
+                // synthesis below runs once per distinct voice,
+                // not once per wheel detent.
+                val cacheKey = detentCacheKey(f0, count, cmd.gain, cmd.chordRatio)
+                val cached = detentCache[cacheKey]
+                if (cached != null && cached.size >= count) {
+                    System.arraycopy(cached, 0, floatBuffer, 0, count)
+                } else for (n in 0 until count) {
                     val phase = n * twoPiOverSr * f0
                     // 4 partials with exact weights { 0.6f, 0.28f, 0.37f, 2.2f }
                     val p1 = sin(phase.toDouble()).toFloat() * weights[0]
@@ -894,6 +1012,12 @@ class TactileSoundEngine(private val context: Context) {
 
                     envBody *= BODY_DECAY_STEP
                     envTail *= TAIL_DECAY_STEP
+                }
+
+                // F26: a fresh render joins the cache (bounded).
+                if (cached == null) {
+                    if (detentCache.size > DETENT_CACHE_MAX) detentCache.clear()
+                    detentCache[cacheKey] = floatBuffer.copyOf(count)
                 }
 
                 // Chunked writes under the lane epoch (Riegel
@@ -914,9 +1038,10 @@ class TactileSoundEngine(private val context: Context) {
                 while (off < count) {
                     if (laneEpoch.get() != epochAtStart) break
                     val n = try {
-                        liveTrack.write(
-                            floatBuffer, off, minOf(1024, count - off),
-                            AudioTrack.WRITE_BLOCKING
+                        // F25: the write honours the lane's encoding.
+                        writeFloatSamples(
+                            liveTrack, trackIsFloat, floatBuffer, off,
+                            minOf(1024, count - off), shortScratch
                         )
                     } catch (_: Exception) {
                         -1
@@ -1523,17 +1648,24 @@ class TactileSoundEngine(private val context: Context) {
                 // array garble the bit-identical Throw (the golden
                 // hash exists precisely to forbid two voices). The
                 // fallback renders into its own buffer now.
-                val fallbackBuffer = FloatArray(SEAL_SAMPLES)
-                renderSealBuffer(fallbackBuffer)
+                // Audit R6 #341 F63: and it renders only the
+                // bounded PREFIX synchronously (8,820 samples, the
+                // Throw's first 200 ms) — the full 44,100-sample
+                // synchronous render on the seal path is gone; the
+                // seal's timing is no longer taxed a full second
+                // of synthesis for a missed prime.
+                val fallbackBuffer = FloatArray(SEAL_FALLBACK_SYNC_SAMPLES)
+                renderSealPrefix(fallbackBuffer)
                 try {
                     track.pause()
                     track.flush()
                     track.play()
                     var off = 0
-                    while (off < SEAL_SAMPLES) {
-                        val n = track.write(
-                            fallbackBuffer, off, minOf(4096, SEAL_SAMPLES - off),
-                            AudioTrack.WRITE_BLOCKING
+                    while (off < SEAL_FALLBACK_SYNC_SAMPLES) {
+                        val n = writeFloatSamples(
+                            track, sealTrackIsFloat, fallbackBuffer, off,
+                            minOf(4096, SEAL_FALLBACK_SYNC_SAMPLES - off),
+                            sealShortScratch
                         )
                         if (n <= 0) break
                         off += n

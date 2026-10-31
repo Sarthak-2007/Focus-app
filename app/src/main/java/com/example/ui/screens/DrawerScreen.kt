@@ -67,6 +67,7 @@ import com.example.data.DayWordStore
 import com.example.data.DrawerDay
 import com.example.data.FocusTaskEntity
 import com.example.data.StoredMonth
+import com.example.ui.components.BlockitActionChip
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import kotlinx.coroutines.delay
@@ -206,6 +207,12 @@ fun DrawerScreen(
     // R3b #163 F1: yesterday's word stays declarable the morning
     // after. (F2/F3 struck — see DrawerDayGroup.)
     onDeclareDayWord: (LocalDate, String?) -> Unit = { _, _ -> },
+    // Audit R6 #341 F58: an armed day-word overwrite awaiting its
+    // confirm tap (null = nothing armed). Defaults keep render
+    // harnesses unchanged.
+    pendingDayWordConfirm: com.example.data.PendingDayWordDeclaration? = null,
+    onConfirmPendingDayWord: () -> Unit = {},
+    onCancelPendingDayWord: () -> Unit = {},
     // The cabinet (chrome C10): the curios' new home. The Drawer is
     // storage; the cabinet is its furniture — the six artifacts as
     // ruled rows, their forged state read from real sessions, their
@@ -620,6 +627,38 @@ fun DrawerScreen(
         verticalArrangement = Arrangement.Top,
         contentPadding = PaddingValues(bottom = 100.dp)
     ) {
+        // Audit R6 #341 F58: the armed day-word overwrite, when one
+        // stands — the standing word is still the record; only the
+        // CONFIRM chip files the new word (with its own declaration
+        // instant). KEEP leaves the standing word untouched.
+        if (pendingDayWordConfirm != null) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "REPLACE THE DAY WORD ${pendingDayWordConfirm.existingWord} " +
+                            "WITH ${pendingDayWordConfirm.word}? THE WORD IS THE DAY'S " +
+                            "PERMANENT EXPLANATION — THE CHANGE IS ITSELF RECORDED.",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 12.sp,
+                        color = scheme.onBackground
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        BlockitActionChip(
+                            wordLabel = "CONFIRM — DECLARE ${pendingDayWordConfirm.word}",
+                            isPrimaryInk = true,
+                            onClick = onConfirmPendingDayWord,
+                            testTag = "drawer_day_word_confirm"
+                        )
+                        BlockitActionChip(
+                            wordLabel = "KEEP ${pendingDayWordConfirm.existingWord}",
+                            isPrimaryInk = false,
+                            onClick = onCancelPendingDayWord,
+                            testTag = "drawer_day_word_keep"
+                        )
+                    }
+                }
+            }
+        }
         item {
             Text(
                 text = "STORED",

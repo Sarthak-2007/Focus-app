@@ -16,6 +16,9 @@ class MonolithApp : Application() {
         super.onCreate()
         CrashCapture.install(this)
         DebugStrictMode.install()
+        // Audit R6 #341 F56: every SharedPreferences file carries
+        // its schema version from this process start on.
+        com.example.data.PrefsSchema.stampAll(this)
         MLog.i("process start (debug=${BuildConfig.DEBUG})")
     }
 }

@@ -345,23 +345,13 @@ private fun ruleMatches(rule: SiteRule, candidate: UrlCandidate): Boolean {
  * collectUrlBarTexts, so no per-browser view ID has to be guessed
  * for them.
  */
-internal val SUPPORTED_BROWSER_PACKAGES: Set<String> = setOf(
-    "com.android.chrome",
-    "com.brave.browser",
-    "org.mozilla.firefox",
-    "com.microsoft.emmx",
-    "com.sec.android.app.sbrowser",
-    "com.opera.browser",
-    "com.opera.mini.native",
-    "com.opera.gx",
-    "com.duckduckgo.mobile.android",
-    "com.kiwibrowser.browser",
-    "mark.via.gp",
-    "com.yandex.browser",
-    "com.UCMobile.intl",
-    "com.vivaldi.browser",
-    "com.opera.browser.beta"
-)
+// Audit R6 #341 F10: the supported set is DERIVED from the
+// browser coverage table (data/SurfaceRules.kt BROWSER_PROFILES)
+// — one source of truth. The fifteen packages this set used to
+// spell out are the table's first fifteen rows; the table adds
+// the stock OEM browsers (F27) the set never named.
+internal val SUPPORTED_BROWSER_PACKAGES: Set<String> =
+    com.example.data.BROWSER_PROFILES.map { it.packageName }.toSet()
 
 internal fun isSupportedBrowserPackage(pkgName: String): Boolean =
     pkgName in SUPPORTED_BROWSER_PACKAGES
@@ -1721,10 +1711,31 @@ class MonolithAccessibilityService : AccessibilityService() {
             // (BACK, escalating) is owned by launchInterceptScreen
             // for every door (#339 F2) — neither door fires its own.
             val webGate = com.example.data.WebGateStore(applicationContext)
+            val excludedHosts = webGate.excludedHosts()
+            // Audit R6 #341 F38: the private-mode policy. A window
+            // this browser's badge table identifies as PRIVATE is
+            // a door of its own during a session: site rules are
+            // read from the URL bar, and a private window is
+            // precisely where that evidence is thinnest — so a
+            // private window inside a block is intercepted as
+            // itself, never waved through as a normal one. UNKNOWN
+            // (a browser with no badge table) changes nothing and
+            // claims nothing.
+            if (com.example.data.incognitoStateFor(pkgName, snapshot.facts.browserContentText) ==
+                com.example.data.IncognitoState.PRIVATE
+            ) {
+                launchInterceptScreen(
+                    packageName = pkgName,
+                    appName = "Private Browsing",
+                    reasonBadge = "Private Browsing Blocked",
+                    path = InterceptPath.SITE
+                )
+                return
+            }
             if (webGate.blockAll()) {
                 val gateHit = snapshot.facts.browserUrlTexts.firstNotNullOfOrNull { urlText ->
                     when (com.example.data.webGateVerdict(
-                        urlText, true, webGate.allowedHosts(), userDomains
+                        urlText, true, webGate.allowedHosts(), userDomains, excludedHosts
                     )) {
                         com.example.data.WebGateVerdict.BLOCK_ALL ->
                             extractUrlHost(urlText) ?: urlText
@@ -1749,14 +1760,25 @@ class MonolithAccessibilityService : AccessibilityService() {
                     return
                 }
             }
+            // Audit R6 #341 F52: the exclusion carve-out in the
+            // ORDINARY (blocklist-mode) matcher — an excluded host
+            // (or its subdomain) is exempt from the blocklist here,
+            // not only inside the Web Gate's block-all mode (PR
+            // #547's half). Package-level rulings are untouched:
+            // an exclusion never unblocks an app.
             val matchedDomain = snapshot.facts.browserUrlTexts.firstNotNullOfOrNull { urlText ->
-                matchBlockedDomain(urlText, userDomains)
+                if (com.example.data.hostExcluded(extractUrlHost(urlText), excludedHosts)) {
+                    null
+                } else {
+                    matchBlockedDomain(urlText, userDomains)
+                }
             } ?: snapshot.facts.browserContentText.takeIf { it.isNotEmpty() }?.let {
                 // Issue #79 finding 3 (detectable part): the URL bar
                 // is clean, but a blocked service's embed may be
                 // playing inside this allowed page — where the tree
                 // exposes the embed's address as page text.
                 matchEmbeddedBlockedDomain(it, userDomains)
+                    ?.takeUnless { host -> com.example.data.hostExcluded(host, excludedHosts) }
             }
             // W3 #130: the domain-scoped site peek is the ONLY
             // exemption — this exact domain, in this browser,
@@ -1857,8 +1879,11 @@ class MonolithAccessibilityService : AccessibilityService() {
             !isSupportedBrowser(pkgName) && snapshot.facts.windowTexts.isNotEmpty()
         ) {
             val userDomains = dao.getAllSitesSnapshot().map { it.domain }
+            // Audit R6 #341 F52: the exclusion carve-out binds
+            // this door too — same list, same law.
+            val loadedExcluded = com.example.data.WebGateStore(applicationContext).excludedHosts()
             val loadedHit = snapshot.facts.windowTexts.firstNotNullOfOrNull { text ->
-                matchBlockedDomainInLoadedUrl(text, userDomains)
+                matchBlockedDomainInLoadedUrlExcluding(text, userDomains, loadedExcluded)
             }
             // W3 #130: the domain-scoped site peek is the ONLY
             // exemption on this leg too — this exact domain, in
@@ -2344,7 +2369,16 @@ class MonolithAccessibilityService : AccessibilityService() {
         val texts = mutableListOf<String>()
         // #335 F2: suffixes are data — shipped defaults plus any
         // suffix learned for THIS browser on-device.
-        collectUrlBarTexts(rootNode, 0, texts, surfaceStore.urlBarSuffixesFor(pkgName))
+        // Audit R6 #341 F16: the suffix set is chosen PER BROWSER
+        // from its coverage-table engine (defaults + the engine's
+        // own suffixes + learned), not one global list tried
+        // against every browser.
+        val learned = surfaceStore.urlBarSuffixesFor(pkgName)
+            .filter { it !in com.example.data.DEFAULT_URL_BAR_SUFFIXES }
+        collectUrlBarTexts(
+            rootNode, 0, texts,
+            com.example.data.urlBarSuffixesForBrowser(pkgName, learned)
+        )
         return texts
     }
 
