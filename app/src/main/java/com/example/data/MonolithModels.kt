@@ -1,6 +1,7 @@
 package com.example.data
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
@@ -97,7 +98,12 @@ enum class TaskQueueStatus(val label: String) {
  */
 data class StoredMonth(val year: Int, val month: Int)
 
-@Entity(tableName = "focus_tasks")
+@Entity(
+    tableName = "focus_tasks",
+    // #30 F1 (train inheritance): the Drawer's hot sort — tasks
+    // by completion instant — stops being a full table scan.
+    indices = [Index(value = ["completedAtMillis"])]
+)
 data class FocusTaskEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val title: String,
@@ -276,17 +282,6 @@ data class FocusTaskEntity(
     }
 }
 
-/**
- * Wave-2 (Purpose-questioning, KILL): the DistractionTriggerReason
- * enum is deleted whole. FIX-3 killed its picker, its state, its
- * coaching tips and every caller; the taxonomy survived as dead
- * vocabulary describing reasons nobody can state — exactly the
- * shape that re-arms a fabricated default ("just use
- * MUSCLE_MEMORY, it's right there"). An intercept nobody
- * explained books UNSTATED (MonolithRepository.recordIntercept's
- * default). If a stated-reason surface is ever composed, its
- * vocabulary is written then, for that surface.
- */
 
 enum class AppCategory(val label: String, val code: String) {
     SHORT_VIDEO("Short Video", "Video"),
@@ -404,7 +399,12 @@ data class FocusProfileEntity(
     )
 }
 
-@Entity(tableName = "focus_sessions")
+@Entity(
+    tableName = "focus_sessions",
+    // #30 F1 (train inheritance): sessions are read by routine
+    // and by window end on the hot paths — both stop scanning.
+    indices = [Index(value = ["routineId"]), Index(value = ["windowEndMillis"])]
+)
 data class FocusSessionEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val intention: String,
@@ -579,7 +579,23 @@ data class FocusSessionEntity(
     // slots do not contain. 0 / false ARE the truthful pre-v16
     // values — before this door no break could start mid-block.
     val midBlockSafeBreak: Boolean = false,
-    val extraSafeBreakSeconds: Int = 0
+    val extraSafeBreakSeconds: Int = 0,
+    // Batch 10 (12→13): appended after receiptNumber, in exactly
+    // MIGRATION_12_13's ADD COLUMN order (entity order = column
+    // order, per table — the composed-order law).
+    // Frist: the break length stamped on the row at seal, so the
+    // span prices the break that was SET, not a constant.
+    val breakSeconds: Int = 600,
+    // Frist: ADD TIME's accumulated grant on this row; the span
+    // getters price it via effectiveTargetSeconds' extension term.
+    val extensionSecondsAdded: Int = 0,
+    // Frist: the per-extension event log ("+10@HH:MM" entries),
+    // list-never-sum on the slip (W-44).
+    val extensionLog: String = "",
+    // Voss (routine-edit, RC-03): the routine's WITHIN label,
+    // frozen at seal; null = no label. Nullable, NO default in
+    // the migration — the only nullable column of the eight.
+    val withinLabel: String? = null
 ) {
     // ONE derivation of session time (the Now Frame fix, Nadia x Freya):
     // every surface - Deck, desk clock, airlock, the enforcing service -
@@ -754,6 +770,23 @@ data class EmergencyBreakSpendEntity(
     val heldSeconds: Int
 )
 
+/**
+ * #110 (REISE's priced cure, folded into MIGRATION_12_13 by the
+ * batch-10 train): one accrual segment of a task — [seconds] of
+ * wall time credited to [taskId] during [sessionId], filed under
+ * [dateIso], the Drawer's filing day (DrawerDay) on which the
+ * credit was observed. Segments are append-only sums: repeated
+ * credits for the same (task, session, day) accumulate into one
+ * row (the DAO's upsert). The credit a segment records is the
+ * SAME observed credit that lands in FocusTaskEntity's lifetime
+ * scalar, written in the same branch of accrueActiveTaskSeconds —
+ * so for accrual after v13 the segments sum to the scalar by
+ * construction. Accrual from before v13 has NO segments and can
+ * never get any: it stays lifetime-only (printed TOTAL), never
+ * retro-split. A credit whose span straddles midnight files
+ * whole under its observation day.
+ */
+
 enum class DistractionTriggerReason(
     val shortTag: String,
     val label: String,
@@ -781,7 +814,24 @@ enum class DistractionTriggerReason(
     )
 }
 
-@Entity(tableName = "intercept_logs")
+@Entity(
+    tableName = "task_accrual_segments",
+    indices = [Index(value = ["taskId", "sessionId", "dateIso"], unique = true)]
+)
+data class TaskAccrualSegmentEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val taskId: Int,
+    val sessionId: Int,
+    val dateIso: String,
+    val seconds: Int
+)
+
+@Entity(
+    tableName = "intercept_logs",
+    // #30 F1 (train inheritance): intercept history reads are
+    // time-ordered — the timestamp stops being a full scan.
+    indices = [Index(value = ["timestampMillis"])]
+)
 data class InterceptLogEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val timestampMillis: Long = System.currentTimeMillis(),
@@ -1227,14 +1277,16 @@ object RoutineSchedule {
      * fire — switched on AND carrying at least one day. This is the
      * ONE definition every reader shares: the chain-alarm derivation
      * (RoutineDerive.nextBoundary skips non-live routines) and
-     * Shield's "n ACTIVE" header both read it, so the printed count
+     * Shield's "n ARMED" header both read it, so the printed count
      * can never again include a daysMask == 0 routine the scheduler
      * silently skips.
      */
     fun isLive(routine: RoutineEntity): Boolean =
         routine.enabled && routine.sanitized().daysMask != 0
 
-    /** How many of [routines] are LIVE — Shield's "n ACTIVE" number. */
+    /** How many of [routines] are LIVE — Shield's "n ARMED" number
+     *  (R-6: ARMED, not ACTIVE — a live routine is armed to fire,
+     *  it is not presently blocking). */
     fun liveCount(routines: List<RoutineEntity>): Int =
         routines.count { isLive(it) }
 
@@ -1276,6 +1328,13 @@ data class GuardSettingsEntity(
     // held. Default true IS the truthful pre-v12 value: the sniper
     // fired unconditionally whenever a session was active.
     val shortsReelsSniperEnabled: Boolean = true,
+    // Batch 10 (12→13, Frist — truth-3-times): the peek/break
+    // lengths become settings the lease and the break actually
+    // read, replacing the hardcoded 2 / 10 minutes. Bounds live
+    // in the setters (peek 0–30, break 0–60, clamped on write),
+    // not the schema. peekMinutes = 0 means PEEK IS OFF.
+    val peekMinutes: Int = 2,
+    val breakMinutes: Int = 10,
     // Audit R6 #340 F68 (12→13): data consent for OTHER APPS'
     // notification bodies, kept SEPARATE from the listener grant.
     // The grant answers "may Monolith hold notifications"; this

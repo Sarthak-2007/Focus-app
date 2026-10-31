@@ -88,6 +88,7 @@ import com.example.ui.components.endsAtNumeralsFor
 import com.example.ui.components.jamSentenceFor
 import com.example.ui.components.provingSentenceFor
 import com.example.ui.components.refusalSentenceFor
+import com.example.ui.components.sealBarStateFor
 import com.example.ui.components.inkControlFill
 import com.example.ui.components.onInkControlFill
 import com.example.ui.components.FullBleedSectionHeader

@@ -1234,11 +1234,11 @@ class MonolithShieldService : Service() {
                         applicationContext,
                         InterceptIntents.interceptIntent(
                             applicationContext, foregroundBlockedPkg,
-                            blockedApp?.appName ?: "Blocked App",
+                            blockedApp?.appName ?: foregroundBlockedPkg,
                             blockedApp?.resolvedTier?.badge ?: "Shut",
                             InterceptPath.SHIELD_APP
                         ),
-                        blockedApp?.appName ?: "Blocked App"
+                        blockedApp?.appName ?: foregroundBlockedPkg
                     )
                 }
 

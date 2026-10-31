@@ -26,6 +26,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -47,6 +49,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -60,8 +63,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
 import com.example.data.ReturnChitState
-import com.example.data.SmartLoadout
 import com.example.data.chitVerdictFor
+import com.example.data.SmartLoadout
 import com.example.service.InterceptConsumptionStore
 import com.example.service.InterceptNonce
 import com.example.service.InterceptPath
@@ -135,6 +138,18 @@ class MainActivity : ComponentActivity() {
      *  first composition (FIX-4). Set inside setContent. */
     private var viewModelRef: MonolithViewModel? = null
 
+    // Issue #13: the VM the content is showing, for the
+    // Activity-level interaction stamp (FLOW §2.1).
+    private var interactionViewModel: MonolithViewModel? = null
+
+    /** Every touch in the app stamps the VM's interaction clock:
+     *  the settle counts from his hand, A-4's discriminator reads
+     *  it, the battery-yield wake re-raises through it. */
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        interactionViewModel?.noteUserInteraction()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(
@@ -199,6 +214,8 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val viewModel = rootViewModel
+            viewModelRef = viewModel
+            interactionViewModel = viewModel
             val darkTheme by viewModel.darkTheme.collectAsStateWithLifecycle()
             val activeSessionForTheme by viewModel.activeSession.collectAsStateWithLifecycle()
             val shotGround by viewModel.shotGround.collectAsStateWithLifecycle()
@@ -311,6 +328,10 @@ class MainActivity : ComponentActivity() {
         val path = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
             ?.let { runCatching { InterceptPath.valueOf(it) }.getOrNull() }
             ?: InterceptPath.UNKNOWN
+        // The site door's sub-line (FIX-6 name slot): the
+        // browser holds the name; the matched domain rides
+        // here. Absent on every other door.
+        val subLine = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_SUBLINE)
         // Issue #78: consumption is PERSISTED, not just in-memory.
         // The platform retains the launching intent and redelivers
         // it intact after process death, so removeExtra on this
@@ -333,6 +354,7 @@ class MainActivity : ComponentActivity() {
         intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
         intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
         intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH)
+        intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPTED_SUBLINE)
         intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_ID)
         intent.removeExtra(MonolithShieldService.EXTRA_INTERCEPT_NONCE)
         if (InterceptConsumptionStore.isConsumed(this, interceptId)) return
@@ -341,7 +363,7 @@ class MainActivity : ComponentActivity() {
         // live session and the package's live tier/lease — a
         // first-delivered but long-delayed intent does not resurrect
         // an Airlock its facts no longer support.
-        viewModel.triggerAirlockInterceptFromIntent(pkg, name, badge, path)
+        viewModel.triggerAirlockInterceptFromIntent(pkg, name, badge, path, subLine)
     }
 
     // Issue #27 (finding 2): there is deliberately NO onDestroy
@@ -431,6 +453,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val themeEvaluation by viewModel.themeEvaluation.collectAsStateWithLifecycle()
     val guardLinePrint by viewModel.guardLinePrint.collectAsStateWithLifecycle()
     val watchSnapshot by viewModel.watchSnapshots.collectAsStateWithLifecycle()
+    val guardSettings by viewModel.guardSettingsState.collectAsStateWithLifecycle()
     // Issue #324, finding 4 (build half, relabelled: primer
     // re-creation + binding + persisted step state): the
     // permission sequence's persisted step. The store holds the
@@ -504,11 +527,11 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val drawerLoading by viewModel.drawerLoading.collectAsStateWithLifecycle()
     val drawerError by viewModel.drawerError.collectAsStateWithLifecycle()
     val drawerSearchDayWords by viewModel.drawerSearchDayWords.collectAsStateWithLifecycle()
-    val dayWords by viewModel.dayWords.collectAsStateWithLifecycle()
     val forgedArtifactIds by viewModel.forgedArtifactIds.collectAsStateWithLifecycle()
     val curioForgeRecords by viewModel.curioForgeRecords.collectAsStateWithLifecycle()
     val forgeStats by viewModel.forgeStats.collectAsStateWithLifecycle()
     val receiptIndex by viewModel.receiptIndex.collectAsStateWithLifecycle()
+    val dayWords by viewModel.dayWords.collectAsStateWithLifecycle()
     val appsCellCount by viewModel.appsCellCount.collectAsStateWithLifecycle()
     val appsSplit by viewModel.appsSplit.collectAsStateWithLifecycle()
     val deckWarrant by viewModel.deckWarrant.collectAsStateWithLifecycle()
@@ -522,8 +545,73 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val shotGround by viewModel.shotGround.collectAsStateWithLifecycle()
     val finishState by viewModel.finishState.collectAsStateWithLifecycle()
     val receiptState by viewModel.receiptState.collectAsStateWithLifecycle()
-    val lastReceiptSessionId by viewModel.lastReceiptSessionId.collectAsStateWithLifecycle()
     val isAlwaysOnDeskClockVisible by viewModel.isAlwaysOnDeskClockVisible.collectAsStateWithLifecycle()
+    // Issue #13: A-4's cause table, A-10(v)'s keep-awake +
+    // surrender fade, E-1's veil + Landing — all VM-owned state.
+    val deskClockEntryCause by viewModel.deskClockEntryCause.collectAsStateWithLifecycle()
+    val deskClockExitIsFinish by viewModel.deskClockExitIsFinish.collectAsStateWithLifecycle()
+    val deskClockSurrenderFade by viewModel.deskClockSurrenderFade.collectAsStateWithLifecycle()
+    val deskClockKeepAwake by viewModel.deskClockKeepAwake.collectAsStateWithLifecycle()
+    val deskClockDescentApplies by viewModel.deskClockDescentApplies.collectAsStateWithLifecycle()
+    // Wave-3 (E-1 as one scrim): the night return's phase +
+    // snap-entry fact, the yield's black, the finish ground's
+    // release, the snap/yield exit kinds, the raise generation,
+    // and the pre-decision black gate — all VM-owned.
+    val nightReturnPhase by viewModel.nightReturnPhase.collectAsStateWithLifecycle()
+    val nightReturnSnapEntry by viewModel.nightReturnSnapEntry.collectAsStateWithLifecycle()
+    val deskClockYielded by viewModel.deskClockYielded.collectAsStateWithLifecycle()
+    val deskClockGroundRelease by viewModel.deskClockGroundRelease.collectAsStateWithLifecycle()
+    val deskClockExitIsYield by viewModel.deskClockExitIsYield.collectAsStateWithLifecycle()
+    val deskClockExitSnap by viewModel.deskClockExitSnap.collectAsStateWithLifecycle()
+    val deskClockRaiseGeneration by viewModel.deskClockRaiseGeneration.collectAsStateWithLifecycle()
+    val deskClockEntryStartsAtFull by viewModel.deskClockEntryStartsAtFull.collectAsStateWithLifecycle()
+    val deskClockColdGate by viewModel.deskClockColdGate.collectAsStateWithLifecycle()
+
+    // A-10(v): keep-awake ownership is the VM's session
+    // machinery; this host only APPLIES the flag it is handed.
+    val activityWindow = (androidx.compose.ui.platform.LocalContext.current as? android.app.Activity)?.window
+    androidx.compose.runtime.LaunchedEffect(deskClockKeepAwake) {
+        if (deskClockKeepAwake) {
+            activityWindow?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            activityWindow?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+    // E-1 AS ONE SCRIM (wave-3 — Daemmer DAE-6 / Hauch H-1 /
+    // Ruhe R-2): ONE animated alpha over the VM's night-return
+    // phase — VEILED 0.80 / LANDING 0.45 / OPEN 0 — every leg
+    // tween(520, Curve C), except the entries the phase machine
+    // marks as snaps (the veil's covered entry, a hand
+    // dismissal's Landing entry, an expiry clear). The wave-1/2
+    // form was two objects (a boolean 0.80 veil box + this
+    // separate Landing animator starting from 0), whose sum
+    // flashed full Deck light for ~300 ms at the unveil. One
+    // value cannot overshoot: after the stand-down the light
+    // never rises except at his unveil (to 0.45) and his verb.
+    val nightScrimAlpha = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(nightReturnPhase) {
+        val target = when (nightReturnPhase) {
+            com.example.ui.NightReturnPhase.VEILED -> 0.80f
+            com.example.ui.NightReturnPhase.LANDING -> 0.45f
+            com.example.ui.NightReturnPhase.OPEN -> 0f
+        }
+        if (nightReturnSnapEntry) {
+            nightScrimAlpha.snapTo(target)
+        } else {
+            nightScrimAlpha.animateTo(
+                target,
+                androidx.compose.animation.core.tween(
+                    520, easing = com.example.ui.theme.MonolithCurves.EasingC
+                )
+            )
+        }
+    }
+    // Ruhe R-4: while a night return is armed, the Deck holds
+    // its NIGHT scheme — 0.55 is a weight only against a known
+    // ground, and the stand-down path's evaluation has already
+    // flipped to day by the time the return begins.
+    val nightReturnArmed = nightReturnPhase != com.example.ui.NightReturnPhase.OPEN
+    val lastReceiptSessionId by viewModel.lastReceiptSessionId.collectAsStateWithLifecycle()
     // Issue #143 F4: the DND gate's line for the Deck.
     val dndLine by viewModel.dndLine.collectAsStateWithLifecycle()
     // Issue #143 F1/F5/F6: the shield loop's published break-dim
@@ -541,6 +629,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val disarmChallenge by viewModel.disarmChallenge.collectAsStateWithLifecycle()
     val weeklyEmergencyTokensRemaining by viewModel.weeklyEmergencyTokensRemaining.collectAsStateWithLifecycle()
     val ratchetWarningMessage by viewModel.ratchetWarningMessage.collectAsStateWithLifecycle()
+    // R-5 (issue #7): Shield's status sentence derivation.
+    val shieldBlockingStatus by viewModel.shieldBlockingStatus.collectAsStateWithLifecycle()
     val routineConflictNotice by viewModel.routineConflictNotice.collectAsStateWithLifecycle()
     val tierChangeForUndo by viewModel.tierChangeForUndo.collectAsStateWithLifecycle()
 
@@ -563,7 +653,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // doorLocked now, so the print and the lock can never part
     // again.
     val doorLocked = sealed || viewModel.navigationLocked()
-    val effectiveNight = darkTheme || sealed
+    // Wave-3 (Ruhe R-4): an armed night return holds the night
+    // scheme for the header/PARK/Shield neighbours too, until
+    // the bloom hands the scheme back to the evaluation.
+    val effectiveNight = darkTheme || sealed || nightReturnArmed
     // Slice E (Zug-II §5.1): the GROUND night — the header band's
     // room and the rail step at t=400 with the scheme pin; the
     // Deck derives its own split internally and Shield / Tasks /
@@ -893,6 +986,35 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         parkIntroForOpen = parkOpen && viewModel.parkIntroPending()
     }
 
+    // F-B1: PARK's invocation dismisses the receipt sheet on the
+    // same input, and so does any navigation away from the Deck.
+    // Issue #10 (audit item 20, interim law): every dismissal
+    // also persists the slip's № through the VM, so the dismissed
+    // slip stays dismissed across process death — the remember
+    // above alone re-ambushed at every cold start.
+    LaunchedEffect(currentDestination, parkOpen) {
+        if (currentDestination != MonolithDestination.DECK || parkOpen) {
+            receiptState?.let {
+                dismissedReceiptSessionId = it.sessionId
+                viewModel.dismissReceipt(it.sessionId)
+            }
+        }
+    }
+
+    // First run (§5.7): the store has never measured — PARK opens
+    // directly at first composition. The persisted bit keeps a cold
+    // start's unmeasured instant from re-inviting on later runs.
+    // Empfang gate (Oct 30): while the setup stands unstamped the
+    // RECEPTION does the first-open introducing, and PARK does not
+    // invite itself over it — the two first-open surfaces never
+    // stack. Once stamped, this invitation behaves exactly as
+    // before for any run whose park bit somehow survived.
+    LaunchedEffect(Unit) {
+        if (viewModel.parkIntroPending() && setupStamped) {
+            parkOpen = true
+        }
+    }
+
     // The intro is spent on DELIVERY, not on dismissal (issue-156,
     // F3): once PARK stands open over a measured board, the intro
     // has been delivered — mark it done. Declared after the latch
@@ -968,6 +1090,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 parkReturnTick++
                 viewModel.onAppResumed()
                 viewModel.refreshDeckWarrant()
+                // Wave-3 (Ruhe R-5): the night return's
+                // staleness re-check rides this same resume.
+                viewModel.expireNightReturnIfStale()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -1285,7 +1410,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     // session-night is its own split
                                     // (hero at t=0, ground at t=400),
                                     // never the host's immediate one.
-                                    isDarkTheme = darkTheme,
+                                    // Wave-3 (Ruhe R-4): plus the
+                                    // night return's scheme hold —
+                                    // while VEILED/LANDING is armed
+                                    // the Deck composes in night,
+                                    // whatever the evaluation says.
+                                    isDarkTheme = darkTheme || nightReturnArmed,
                                     onDialMinutesChanged = viewModel::setDialMinutes,
                                     onSelectStudyPreset = viewModel::selectStudyPreset,
                                     onSetStudyBlocksCount = viewModel::setStudyBlocksCount,
@@ -1383,11 +1513,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     selectedCategory = selectedCategory,
                                     shortsReelsSniperEnabled = shortsReelsSniperEnabled,
                                     browserUrlBlockerEnabled = browserUrlBlockerEnabled,
+                                    loadoutCapIndex = loadoutCapIndex,
                                     isSessionActive = sealed,
+                                    blockingStatus = shieldBlockingStatus,
                                     receiptLine = shieldReceiptLine,
                                     intention = shieldIntention,
                                     onIntentionChanged = viewModel::setShieldIntention,
                                     isGracePeriod = shieldInGracePeriod,
+                                    onApplySmartLoadout = viewModel::applySmartLoadout,
                                     ratchetWarningMessage = ratchetWarningMessage,
                                     routineConflictNotice = routineConflictNotice,
                                     onDismissRoutineConflictNotice = viewModel::dismissRoutineConflictNotice,
@@ -1530,6 +1663,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onDismissUndoBanner = viewModel::dismissUndoDeleteBanner,
                                     onReopenTask = viewModel::reopenTask,
                                     onToggleSubStep = viewModel::toggleTaskSubStep,
+                                    onAddSubStep = viewModel::addTaskSubStep,
                                                                         onAutoSplitTask = viewModel::autoSplitTaskIntoMicroSteps,
                                     onNavigateToDeck = { viewModel.navigateTo(MonolithDestination.DECK) }
                                 )
@@ -1544,8 +1678,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     drawerQuery = drawerQuery,
                                     drawerResults = drawerResults,
                                     drawerSearchHasEarlier = drawerSearchHasEarlier,
-                                    drawerSearchDayWords = drawerSearchDayWords,
                                     dayWords = dayWords,
+                                    drawerSearchDayWords = drawerSearchDayWords,
                                     isSealed = sealed,
                                     isDarkTheme = effectiveNight,
                                     onSelectMonth = viewModel::selectDrawerMonth,
@@ -1573,8 +1707,15 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     ParkDrawer(
                         visible = parkOpen,
                         snapshot = watchSnapshot,
+                        // §4.12 (wave-2): PARK's gate composes the
+                        // unified doorLocked — HB-1/HB-2 were fixed
+                        // everywhere except inside PARK, which drank
+                        // from raw `sealed` while the header band
+                        // above it already used doorLocked.
+                        isSealed = doorLocked,
+                        // §4.2: the same warrant the Deck prints.
+                        warrant = deckWarrant,
                         introPending = parkIntroForOpen,
-                        isSealed = sealed,
                         isNight = effectiveNight,
                         soundEnabled = soundEnabled,
                         shortsReelsSniperEnabled = shortsReelsSniperEnabled,
@@ -1588,7 +1729,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                             )
                         },
                         onFixClick = { item -> openFixPane(item) },
-                        onRecheck = { viewModel.runWatchSweep() },
+                        onCheckClick = { viewModel.runWatchSweep() },
                         onToggleSound = { viewModel.toggleSound() },
                         onToggleShortsReelsSniper = { viewModel.toggleShortsReelsSniper() },
                         // Truth Car 3 (UNA-02): the SOCIAL SITES
@@ -1609,6 +1750,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         } else {
                             null
                         },
+                        peekMinutes = guardSettings?.peekMinutes ?: 2,
                         handoverText = armedHandover?.text,
                         modifier = Modifier.align(Alignment.BottomCenter)
                     )
@@ -1748,17 +1890,99 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             // =================================================================
             // FULL-SCREEN OVERLAYS & MODALS
             // =================================================================
+            // Wave-3 (Schimmer FE-2, piece 2): the pre-decision
+            // black gate — while a cold process has a live
+            // pre-birth session and no settle decision yet, black
+            // stands over the Deck, so the cold open's first
+            // surface is black and SEEDED's cut is black → face.
+            // Non-clickable: it takes no touch and names nothing.
+            if (deskClockColdGate) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(androidx.compose.ui.graphics.Color.Black)
+                        .testTag("desk_clock_cold_gate")
+                )
+            }
+
+            // E-1 AS ONE SCRIM (wave-3; Hauch H-2 / Glanz G-4):
+            // composed BELOW the desk-clock overlay — while the
+            // clock stands, its opaque ground covers the scrim
+            // completely, so the veil's entry at E0 no longer
+            // cuts the finish print's ruled 260 Curve A fade; the
+            // scrim becomes visible exactly when the ground
+            // lifts, already at its phase weight, over the Deck
+            // alone. In LANDING and OPEN the scrim consumes NO
+            // touch (every Deck control live under the dim); in
+            // VEILED it takes the first touch on pointer DOWN
+            // (Hauch H-4 — a click's UP was a completed-tap law
+            // a half-awake hand could fail), with NO indication
+            // (H-5: a raw pointerInput draws no ripple on the
+            // black).
+            if (nightScrimAlpha.value > 0f) {
+                val veiled = nightReturnPhase == com.example.ui.NightReturnPhase.VEILED
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            androidx.compose.ui.graphics.Color.Black.copy(
+                                alpha = nightScrimAlpha.value
+                            )
+                        )
+                        .then(
+                            if (veiled) {
+                                Modifier
+                                    .pointerInput(Unit) {
+                                        detectTapGestures(
+                                            onPress = { viewModel.unveilNightReturn() }
+                                        )
+                                    }
+                                    .testTag("night_return_veil")
+                            } else {
+                                Modifier
+                            }
+                        )
+                )
+            }
+
             AlwaysOnDeskClockOverlay(
                 visible = isAlwaysOnDeskClockVisible,
                 activeSession = activeSession,
                 activeTask = activeTask,
-                dialMinutes = dialMinutes,
+                // Glaette G-6: dialMinutes no longer threads
+                // into the face (see the overlay's signature).
                 burnInStep = burnInFigure8MinuteStep,
-                onDismiss = { viewModel.toggleAlwaysOnDeskClock(false) },
-                dimAlpha = breakDimAlpha
+                entryCause = deskClockEntryCause,
+                exitIsFinish = deskClockExitIsFinish,
+                surrenderFade = deskClockSurrenderFade,
+                descentApplies = deskClockDescentApplies,
+                raiseGeneration = deskClockRaiseGeneration,
+                entryStartsAtFull = deskClockEntryStartsAtFull,
+                groundReleased = deskClockGroundRelease,
+                exitIsYield = deskClockExitIsYield,
+                exitSnap = deskClockExitSnap,
+                dimAlpha = breakDimAlpha,
+                onDismiss = { viewModel.toggleAlwaysOnDeskClock(false) }
             )
 
-            // The digest renders the sealed snapshot whenever a
+            // Wave-3 (Kante K-1 / Samt S-3): the yield's own
+            // exit — while a yielded session lives, a plain
+            // true-black surface stands above the Deck, so the
+            // surrender flag clears INTO black and stays black
+            // until his wake touch re-raises SEEDED (the VM's
+            // wake path; this box is non-clickable and consumes
+            // nothing — the Activity's onUserInteraction
+            // receives the touch first).
+            if (deskClockYielded) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(androidx.compose.ui.graphics.Color.Black)
+                        .testTag("desk_clock_yielded_black")
+                )
+            }
+
+            // The digest renders the FROZEN snapshot whenever a
             // freeze exists or a session is sealing the phone — the
             // snapshot refreshes on open and on new arrivals (issue
             // #118, finding 3) but renders in frozen MODE: read-only,
@@ -1795,27 +2019,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     receipt = standingReceipt,
                     onDismiss = {
                         dismissedReceiptSessionId = standingReceipt.sessionId
-                        viewModel.persistReceiptDismissal(standingReceipt.sessionId)
-                    },
-                    // Issue #135 F3: NEXT SESSION — dismiss the slip;
-                    // the Deck underneath is already idle and ready
-                    // to arm. The detention/sled ceremony is untouched.
-                    onNextSession = { dismissedReceiptSessionId = standingReceipt.sessionId },
-                    // Issue #135 F4: DONE WITH THIS TASK — only while
-                    // the session's task is still open (the host's
-                    // active task, not yet COMPLETED); completes it
-                    // through the same path the Deck/Tasks use, then
-                    // dismisses the slip.
-                    onDoneWithTask = activeTask
-                        ?.takeIf {
-                            it.resolvedStatus != com.example.data.TaskQueueStatus.COMPLETED
-                        }
-                        ?.let { task ->
-                            {
-                                viewModel.completeTaskAndAdvance(task.id)
-                                dismissedReceiptSessionId = standingReceipt.sessionId
-                            }
-                        }
+                        viewModel.dismissReceipt(standingReceipt.sessionId)
+                    }
                 )
             }
 
@@ -2069,7 +2274,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 soundEngine = viewModel.soundEngine,
                 onDismissKeepFocusing = viewModel::dismissDisarmChallenge,
                 onCompleteDisarm = { viewModel.completeEmergencyBreakFromValve() },
-                onHoldBanked = viewModel::recordValveHoldBanked
+                onHoldBanked = viewModel::recordValveHoldBanked,
+                onCompleteCleanSession = viewModel::completeStopwatchCompletionFromDisarmFace
             )
 
             // Issue #143 F1/F6: the break dim stands over the

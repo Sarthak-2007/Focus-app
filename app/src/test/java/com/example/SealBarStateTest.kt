@@ -7,6 +7,7 @@ import com.example.ui.components.BoltWindow
 import com.example.ui.components.SealBarParams
 import com.example.ui.components.SealBarState
 import com.example.ui.components.boltStateFor
+import com.example.ui.components.sealBarStateFor
 import com.example.ui.components.endsAtNumeralsFor
 import com.example.ui.components.endingSoonThresholdFor
 import org.junit.Assert.assertEquals
@@ -328,5 +329,71 @@ class SealBarStateTest {
         assertNull(endsAtNumeralsFor("NO END"))
         assertNull(endsAtNumeralsFor("INVALID"))
         assertNull(endsAtNumeralsFor(""))
+    }
+    @Test
+    fun endingSoonStartsExactlyAtTheThreshold() {
+        val t = SealBarParams.endingSoonThresholdSeconds
+        assertEquals(
+            SealBarState.ENDING_SOON,
+            sealBarStateFor(isSessionRunning = true, blockWord = "ON", remainingSeconds = t)
+        )
+        assertEquals(
+            SealBarState.RUNNING,
+            sealBarStateFor(isSessionRunning = true, blockWord = "ON", remainingSeconds = t + 1)
+        )
+        // The last second of the span is still ending soon, never
+        // already off — the session owns its end.
+        assertEquals(
+            SealBarState.ENDING_SOON,
+            sealBarStateFor(isSessionRunning = true, blockWord = "ON", remainingSeconds = 0)
+        )
+    }
+    @Test
+    fun idleOnIsBlockingIdleOffIsOpenIdleUnknownIsHalfSet() {
+        assertEquals(
+            SealBarState.BLOCKING,
+            sealBarStateFor(isSessionRunning = false, blockWord = "ON", remainingSeconds = null)
+        )
+        assertEquals(
+            SealBarState.OFF,
+            sealBarStateFor(isSessionRunning = false, blockWord = "OFF", remainingSeconds = null)
+        )
+        assertEquals(
+            SealBarState.UNPROVEN,
+            sealBarStateFor(isSessionRunning = false, blockWord = "UNKNOWN", remainingSeconds = null)
+        )
+    }
+    @Test
+    fun jewelStaysInsideTheGlanceBudgetCap() {
+        // THE BOLT §6: jewel ≤9dp is the enforceable proxy for the
+        // ≤41.9 luminous budget; the budget ships as a named constant.
+        assertTrue(SealBarParams.lampDiameter.value <= 9f)
+        assertEquals(41.9f, SealBarParams.jewelLuminousBudget, 0.0001f)
+    }
+    @Test
+    fun runningOnIsRunningWithNumeralsState() {
+        assertEquals(
+            SealBarState.RUNNING,
+            sealBarStateFor(isSessionRunning = true, blockWord = "ON", remainingSeconds = 3600)
+        )
+        // Stopwatch: no remaining span exists, and the state must
+        // not fall into ENDING SOON over a null.
+        assertEquals(
+            SealBarState.RUNNING,
+            sealBarStateFor(isSessionRunning = true, blockWord = "ON", remainingSeconds = null)
+        )
+    }
+    @Test
+    fun runningUnknownKeepsThePlateShutAndTheLampDark() {
+        assertEquals(
+            SealBarState.RUNNING_UNPROVEN,
+            sealBarStateFor(isSessionRunning = true, blockWord = "UNKNOWN", remainingSeconds = 3600)
+        )
+        // An unproven bind never earns ENDING SOON's lit alert —
+        // the threshold applies to the proven branch only.
+        assertEquals(
+            SealBarState.RUNNING_UNPROVEN,
+            sealBarStateFor(isSessionRunning = true, blockWord = "UNKNOWN", remainingSeconds = 10)
+        )
     }
 }

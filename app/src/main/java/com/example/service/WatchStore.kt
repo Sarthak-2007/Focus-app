@@ -171,6 +171,13 @@ data class WatchSnapshot(
     val engineHeartbeatWall: Long,
     val engineProtecting: Boolean,
     val lastProvedWallMillis: Long?,
+    /** The generation of the latest sweep whose COMPLETE set has
+     *  landed (issue #9, Critic C-1). PARK's CHECK key derives its
+     *  CHECKING state from this — a press is answered only by the
+     *  sweep it dispatched, never by the shield loop's gen-0
+     *  re-stamps or an earlier sweep's late landings. 0 = no sweep
+     *  has completed in this process. */
+    val lastCompletedSweepGen: Int = 0,
     /** Shield Rethink 2, Step 1 — Door A: the shield loop's sight
      *  on its latest beat, and the wall instant of the latest beat
      *  that was SIGHTED under a live session (the receipt's
@@ -368,13 +375,20 @@ object WatchStore {
     val snapshots: StateFlow<WatchSnapshot> = _snapshots.asStateFlow()
 
     private val sweepScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var sweepGen = 0
+    @Volatile private var sweepGen = 0
 
     /** The in-flight sweep's dispatch instant, kept for the
      *  coexistence window (Critic C-5): a completing set must have
      *  landed within [STALE_AFTER_MS] of dispatch. It is NOT the
      *  completion test — see [pendingSweepGen]. */
     @Volatile private var pendingSweepStartWall: Long = 0L
+
+
+    /** The latest dispatched sweep's generation. PARK's CHECK
+     *  key reads this immediately after dispatching its sweep:
+     *  the press is answered when the snapshot's
+     *  lastCompletedSweepGen reaches it. */
+    fun currentSweepGen(): Int = sweepGen
 
     /** The in-flight sweep's generation (issue #9, Zahn Z-1). THE
      *  completion test reads THIS, on the stamps themselves: a
@@ -813,6 +827,14 @@ object WatchStore {
                     next = next.copy(lastProvedWallMillis = completedAt)
                     persistLastProved(completedAt)
                 }
+                // Train (PARK CHECK key life support): the completed
+                // generation is recorded BEFORE the pending generation
+                // clears — ParkDrawer derives its CHECKING state from
+                // lastCompletedSweepGen; without this assignment the
+                // CHECK key never answers.
+                if (next.lastCompletedSweepGen != pendingSweepGen) {
+                    next = next.copy(lastCompletedSweepGen = pendingSweepGen)
+                }
                 pendingSweepStartWall = 0L
                 pendingSweepGen = 0
             } else if (wall - sweepStart > STALE_AFTER_MS) {
@@ -897,8 +919,8 @@ object WatchStore {
         _snapshots.value = WatchSnapshot.EMPTY
         boundContext = null
         sweepGen = 0
-        pendingSweepStartWall = 0L
         pendingSweepGen = 0
+        pendingSweepStartWall = 0L
         shortsSettingOn = true
         sitesSettingOn = true
         safeBreakActive = false

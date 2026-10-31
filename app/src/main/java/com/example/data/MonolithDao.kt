@@ -39,7 +39,11 @@ interface MonolithDao {
     suspend fun setAppTier(packageName: String, isBlocked: Boolean, blockTier: String)
 
     @Query("UPDATE blocked_apps SET activePeekUntilElapsedRealtime = :activeUntilMono, lastPeekEndElapsedRealtime = :peekEndMono WHERE packageName = :packageName")
-    suspend fun updatePeekLeaseAndCooldown(packageName: String, activeUntilMono: Long, peekEndMono: Long)
+    suspend fun updatePeekLeaseAndCooldown(packageName: String, activeUntilMono: Long, peekEndMono: Long): Int
+    /** Batch-10 (pill Flag B companion): the one-live-lease law —
+     *  granting a lease zeroes every OTHER app's live lease. */
+    @Query("UPDATE blocked_apps SET activePeekUntilElapsedRealtime = 0 WHERE packageName != :packageName AND activePeekUntilElapsedRealtime > 0")
+    suspend fun clearOtherPeekLeases(packageName: String)
 
     // Issue #87 (process-death F1): both peek anchors are monotonic
     // (SystemClock.elapsedRealtime) values. A reboot resets that clock
@@ -268,6 +272,23 @@ interface MonolithDao {
 
     @Query("SELECT * FROM emergency_break_spends ORDER BY spentAtWallMillis DESC")
     suspend fun getAllSpendsSnapshot(): List<EmergencyBreakSpendEntity>
+
+    // Task Accrual Segments (#110 — how a task's stored seconds
+    // distribute over days; the lifetime scalar on focus_tasks stays
+    // the total of record, and post-v13 the segments sum to it by
+    // construction: both are written from the same observed credit)
+    @Query(
+        "INSERT INTO task_accrual_segments (taskId, sessionId, dateIso, seconds) " +
+        "VALUES (:taskId, :sessionId, :dateIso, :seconds) " +
+        "ON CONFLICT(taskId, sessionId, dateIso) DO UPDATE SET seconds = seconds + excluded.seconds"
+    )
+    suspend fun addTaskAccrualSegment(taskId: Int, sessionId: Int, dateIso: String, seconds: Int)
+
+    @Query("SELECT * FROM task_accrual_segments WHERE taskId = :taskId ORDER BY dateIso ASC")
+    suspend fun getAccrualSegmentsForTask(taskId: Int): List<TaskAccrualSegmentEntity>
+
+    @Query("SELECT * FROM task_accrual_segments WHERE dateIso = :dateIso ORDER BY taskId ASC")
+    suspend fun getAccrualSegmentsForDate(dateIso: String): List<TaskAccrualSegmentEntity>
 
     // Intercept Logs
     // Issue #30 finding 2: capped at the newest 500. The table

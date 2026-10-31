@@ -88,6 +88,38 @@ android {
   }
 }
 
+// Finisher (Klappe): JDK 21 strong encapsulation blocks Robolectric's
+// AndroidInterceptors reflection (IllegalAccessException at sandbox
+// start, every Robolectric test dead). Open the JDK modules Robolectric
+// documents for JDK 21 test workers.
+tasks.withType<Test>().configureEach {
+  jvmArgs(
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+    "--add-opens=java.base/java.io=ALL-UNNAMED",
+    "--add-opens=java.base/java.net=ALL-UNNAMED",
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/java.nio.charset=ALL-UNNAMED",
+    "--add-opens=java.base/java.security=ALL-UNNAMED",
+    "--add-opens=java.base/java.text=ALL-UNNAMED",
+    "--add-opens=java.base/java.time=ALL-UNNAMED",
+    "--add-opens=java.base/java.util=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.zip=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+    "--add-opens=java.base/sun.security.ssl=ALL-UNNAMED",
+    "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
+    "--add-opens=java.desktop/java.awt.font=ALL-UNNAMED",
+    // BUILDER-TRAIN-4 triage (PR #231, run 41105848855): add-opens does
+    // not substitute for add-exports - Robolectric's sandbox needs
+    // jdk.internal.access EXPORTED (SharedSecrets, at
+    // ApplicationSharedMemory.create). Without it every Robolectric
+    // suite dies in setup: 211 toolchain failures at head 7a0ba487.
+    "--add-exports=java.base/jdk.internal.access=ALL-UNNAMED"
+  )
+}
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
 // Some unused dependencies are commented out below instead of being removed.
@@ -149,4 +181,10 @@ dependencies {
   "ksp"(libs.androidx.room.compiler)
   coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
   // "ksp"(libs.moshi.kotlin.codegen)
+}
+
+// MOTOR #31 F3 (train inheritance): Room schema export location —
+// pairs with exportSchema = true on MonolithDatabase (DB v13).
+ksp {
+  arg("room.schemaLocation", "$projectDir/schemas")
 }

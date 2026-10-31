@@ -20,9 +20,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         GuardSettingsEntity::class,
         RoutineEntity::class,
         EmergencyBreakSpendEntity::class,
-        DayNoteEntity::class
+        DayNoteEntity::class,
+        TaskAccrualSegmentEntity::class
     ],
-    version = 17,
+    version = 18,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -234,8 +235,17 @@ abstract class MonolithDatabase : RoomDatabase() {
          */
         val MIGRATION_13_14 = object : Migration(13, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN heldShutAtSeal INTEGER NOT NULL DEFAULT -1")
-                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN heldPeekAtSeal INTEGER NOT NULL DEFAULT -1")
+                // Defensive form (main-merge ruling on M-A1 OPEN-1):
+                // a device that ever installed a train-v13 build
+                // already carries these two columns at version 13;
+                // an unguarded ADD COLUMN would crash its upgrade
+                // with a duplicate-column error. The guard makes the
+                // step idempotent — identical result on every
+                // install history, no main-line behaviour change.
+                addColumnIfAbsent(db, "focus_sessions", "heldShutAtSeal",
+                    "ALTER TABLE focus_sessions ADD COLUMN heldShutAtSeal INTEGER NOT NULL DEFAULT -1")
+                addColumnIfAbsent(db, "focus_sessions", "heldPeekAtSeal",
+                    "ALTER TABLE focus_sessions ADD COLUMN heldPeekAtSeal INTEGER NOT NULL DEFAULT -1")
             }
         }
 
@@ -315,12 +325,80 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
+         * Batch 10 (17→18 at the #231 composition sitting,
+         * K8/floor lane): the train’s composed 12→13 content,
+         * landed as a NEW link — main’s 12_13 (#287) is shipped
+         * history and is never redefined, and main’s own 16→17
+         * (#340, above) is likewise shipped: this content was
+         * authored as the train’s 16→17, but main took that link
+         * while the train was frozen, so it chains after it. Carries: Frist’s five
+         * (peek/break settings + the break/extension stamps) and
+         * Voss’s one (withinLabel), plus #110’s accrual-segment
+         * table (REISE cure) and #30 F1’s four secondary indices.
+         * The W-41 held pair is NOT here: main’s 13_14 already
+         * adds exactly those columns (identical type/default);
+         * running them twice is a duplicate-column crash. ADD
+         * COLUMNs run through the same defensive guard as
+         * 13_14, so a train-v13 install (which already has
+         * these columns at v13) upgrades cleanly too.
+         */
+        val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfAbsent(db, "guard_settings", "peekMinutes",
+                    "ALTER TABLE guard_settings ADD COLUMN peekMinutes INTEGER NOT NULL DEFAULT 2")
+                addColumnIfAbsent(db, "guard_settings", "breakMinutes",
+                    "ALTER TABLE guard_settings ADD COLUMN breakMinutes INTEGER NOT NULL DEFAULT 10")
+                addColumnIfAbsent(db, "focus_sessions", "breakSeconds",
+                    "ALTER TABLE focus_sessions ADD COLUMN breakSeconds INTEGER NOT NULL DEFAULT 600")
+                addColumnIfAbsent(db, "focus_sessions", "extensionSecondsAdded",
+                    "ALTER TABLE focus_sessions ADD COLUMN extensionSecondsAdded INTEGER NOT NULL DEFAULT 0")
+                addColumnIfAbsent(db, "focus_sessions", "extensionLog",
+                    "ALTER TABLE focus_sessions ADD COLUMN extensionLog TEXT NOT NULL DEFAULT ''")
+                addColumnIfAbsent(db, "focus_sessions", "withinLabel",
+                    "ALTER TABLE focus_sessions ADD COLUMN withinLabel TEXT")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `task_accrual_segments` (" +
+                    "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`taskId` INTEGER NOT NULL, " +
+                    "`sessionId` INTEGER NOT NULL, " +
+                    "`dateIso` TEXT NOT NULL, " +
+                    "`seconds` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_task_accrual_segments_taskId_sessionId_dateIso` " +
+                    "ON `task_accrual_segments` (`taskId`, `sessionId`, `dateIso`)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_focus_tasks_completedAtMillis` ON `focus_tasks` (`completedAtMillis`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_focus_sessions_routineId` ON `focus_sessions` (`routineId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_focus_sessions_windowEndMillis` ON `focus_sessions` (`windowEndMillis`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_intercept_logs_timestampMillis` ON `intercept_logs` (`timestampMillis`)")
+            }
+        }
+
+        /**
          * TOKEN-SPEC §6: the spend ledger arrives as an explicit
          * migration. There is NO backfill — today's in-memory spends
          * were never recorded, so v8 truthfully starts with an empty
          * ledger and a full token; inventing a past spend would be a
          * fabricated record.
          */
+        /**
+         * Idempotent ADD COLUMN (main-merge defensive form, M-A1
+         * OPEN-1 ruling): runs [ddl] only when [column] is absent
+         * from [table], so a migration step survives an install
+         * whose earlier lineage already added the same column.
+         */
+        private fun addColumnIfAbsent(db: SupportSQLiteDatabase, table: String, column: String, ddl: String) {
+            var present = false
+            db.query("PRAGMA table_info($table)").use { cursor ->
+                val nameIdx = cursor.getColumnIndex("name")
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIdx) == column) { present = true; break }
+                }
+            }
+            if (!present) db.execSQL(ddl)
+        }
+
         val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
@@ -402,7 +480,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance

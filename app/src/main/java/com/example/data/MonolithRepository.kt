@@ -2,6 +2,7 @@ package com.example.data
 
 import android.app.AppOpsManager
 import android.app.admin.DevicePolicyManager
+import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.ComponentName
 import android.content.Context
@@ -334,6 +335,17 @@ class MonolithRepository(
     val allSitesFlow: Flow<List<BlockedSiteEntity>> = dao.getAllSitesFlow()
     val allRoutinesFlow: Flow<List<RoutineEntity>> = dao.getAllRoutinesFlow()
 
+    // Issue #13, A-10(ii)/(iii): the receipt's persisted
+    // filed-marker — one store, two writers (birth for
+    // routine-born kinds, the hand for the rest).
+    private val receiptFiledStore = ReceiptFiledStore(context)
+
+    /** File a receipt so it never stands again (A-10). */
+    fun markReceiptFiled(sessionId: Int) = receiptFiledStore.markFiled(sessionId)
+
+    /** Whether [sessionId]'s receipt is filed (A-10). */
+    fun isReceiptFiled(sessionId: Int): Boolean = receiptFiledStore.isFiled(sessionId)
+
     companion object {
         private const val TAG = "MonolithRepository"
         private val seedMutex = Mutex()
@@ -474,6 +486,17 @@ class MonolithRepository(
         const val SEAL_MARKER_SESSION_KEY = "sealed_session_id"
         const val SEAL_MARKER_WALL_KEY = "sealed_wall_ms"
 
+        /** Receipt audit item 20, interim law (issue #10): the
+         *  dismissed slip's №. Prefs, not Room — the fact is one
+         *  integer, and a guard_settings column would cost a
+         *  database version bump for it alone (12→13); this store
+         *  carries it with NO schema change. Only the LATEST
+         *  dismissed № is kept: a newer slip supersedes it, and a
+         *  № can never be re-issued to another session (the claim
+         *  sequence only mints forward), so one slot is the whole
+         *  truth. */
+        const val RECEIPT_PREFS_NAME = "monolith_receipt"
+        const val DISMISSED_RECEIPT_NUMBER_KEY = "dismissed_receipt_number"
         /** The clock anchor's prefs home (issue #82): the persisted
          *  (wall, elapsedRealtime, bootCount) triple [ClockHonesty]
          *  reasons from. Prefs, not Room — the anchor is machinery
@@ -1443,6 +1466,36 @@ class MonolithRepository(
         }
     }
 
+    /** Batch-10 (pill lane port): the current foreground package,
+     *  whatever it is — the pill's ticker asks once per second so
+     *  the face can tell "you are inside the peeked app" from
+     *  "you wandered off". Event-based (queryEvents), unlike the
+     *  stats-based blocked-app query below. */
+    fun queryForegroundPackage(): String? {
+        if (!hasUsageStatsPermission()) return null
+        return try {
+            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+                ?: return null
+            val end = System.currentTimeMillis()
+            val start = end - 15 * 60 * 1000L
+            val events = usm.queryEvents(start, end) ?: return null
+            val event = UsageEvents.Event()
+            var foreground: String? = null
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                if (event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND ||
+                    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                        event.eventType == UsageEvents.Event.ACTIVITY_RESUMED)
+                ) {
+                    foreground = event.packageName
+                }
+            }
+            foreground
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     /**
      * Issue #129 F3: per-package foreground milliseconds inside
      * one wall-clock window, from UsageStats EVENTS (resumed /
@@ -1613,29 +1666,16 @@ class MonolithRepository(
         }
     }
 
-    /** Audit R6 #340 F42: the freshest foreground package, or
-     *  null when no app was used inside the freshness window —
-     *  a stale read must never pause accrual on a guess, so only
-     *  a read at most 90 s old is returned. Used by task accrual
-     *  to keep OPEN-tier foreground time out of a task's SPENT. */
-    @WorkerThread
-    fun queryForegroundPackage(): String? {
-        if (!hasUsageStatsPermission()) return null
-        return try {
-            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-                ?: return null
-            val end = System.currentTimeMillis()
-            val stats = usm.queryUsageStats(
-                UsageStatsManager.INTERVAL_DAILY, end - 15_000L, end
-            ) ?: return null
-            stats.filter { it.lastTimeUsed >= end - 90_000L }
-                .maxByOrNull { it.lastTimeUsed }
-                ?.packageName
-        } catch (e: Exception) {
-            swallow("queryForegroundPackage", e)
-            null
-        }
-    }
+    // Train composition (K8): main's stats-based
+    // queryForegroundPackage (Audit R6 #340 F42, the <=90 s
+    // freshness read for task accrual) stood here beside the
+    // train's event-based form of the same name. The train's
+    // form governs the composed tree — it is the read the pill's
+    // per-second ticker was built against, and it returns the
+    // event stream's current foreground (the accrual gate's
+    // truth requirement), failing to null exactly where main's
+    // form did. The stats-bucket freshness guard is recorded
+    // here as the considered-and-superseded half of the fork.
 
     /** Usage access as AppOps actually reports it: three-valued.
      *  The old Boolean collapsed UNSET (never asked, fresh device)
@@ -1746,7 +1786,11 @@ class MonolithRepository(
     }
 
     /** The artifact ids actually forged by real sessions — the
-     *  Drawer cabinet's forged state (chrome C10). */
+     *  cabinet's forged state (chrome C10). No live consumer since
+     *  the cabinet's eviction from the Drawer (#8): this read, the
+     *  DAO query under it and CurioCatalog are the preserved code
+     *  the cabinet's future home (#21) builds on. The VM flow that
+     *  merely mirrored it was deleted (SPITZ Charge 5). */
     suspend fun forgedArtifactIds(): Set<String> =
         dao.getForgedArtifactIds().toSet()
 
@@ -1763,16 +1807,21 @@ class MonolithRepository(
      *  among them is seeded by the finishing session's own facts —
      *  sealed seconds, tasks completed, blocks run — so the draw
      *  is a function of the effort that earned it, not a shuffle.
-     *  Once the whole catalogue stands forged, the same seeded
-     *  pick runs over all six and the duplicate is recorded by
-     *  the cabinet's provenance like any other forge. */
-    internal suspend fun drawCurioId(session: FocusSessionEntity): String {
+     *  Once the whole catalogue stands forged, the draw returns
+     *  null and the finish forges nothing (the exhaustion law —
+     *  see the cure note in the body). */
+    internal suspend fun drawCurioId(session: FocusSessionEntity): String? {
         val forged = dao.getForgedArtifactIds().toSet()
         val fresh = CurioCatalog.artifacts.filter { it.id !in forged }
-        val pool = if (fresh.isNotEmpty()) fresh else CurioCatalog.artifacts
+        // Exhaustion law (fidelity stamp #15, M-A1 P16 cure): when
+        // nothing unforged remains the draw is null — forge
+        // nothing. The former fallback to the whole catalogue
+        // silently reversed this law and forged a repeat at set
+        // completion while the printed rule promised otherwise.
+        if (fresh.isEmpty()) return null
         val seed = session.elapsedSeconds / 60 + session.tasksCompletedCount * 7 +
             session.currentBlockIndex * 13 + session.totalStudyBlocks
-        return pool[Math.floorMod(seed, pool.size)].id
+        return fresh[Math.floorMod(seed, fresh.size)].id
     }
 
     /**
@@ -2638,10 +2687,32 @@ class MonolithRepository(
      * [getPeekCooldownRemainingSeconds] also anchors on the live lease
      * end, so a lease that lapses without a recorded end (process
      * death mid-peek) still cannot be re-peeked inside the window.
+     *
+     * Issue #16 (builder's grant gate): returns whether a lease
+     * was actually written, so the ViewModel's ST-08 launch can
+     * gate on the grant. This tree's version always grants; the
+     * false arm arrives with the batch-10 composition — the pill
+     * lane's version of this function, taken wholesale, reads
+     * the duration through EditableTimesProvider and must return
+     * false on its existing `durationMillis <= 0` early return
+     * (peekMinutes = 0: no grant, no row touched). Statement-
+     * position callers (tests) are unaffected by the new return.
      */
-    suspend fun startPeekLease(packageName: String) {
+    suspend fun startPeekLease(packageName: String): Boolean {
+        // Batch-10 composition (pill Flag B + Ed2 B6): the duration
+        // comes through EditableTimesProvider off the settings row
+        // (peekMinutes, clamped 0-30). peekMinutes = 0 refuses at
+        // the source: no lease written, no row touched. The
+        // Repository-head guard stands here too: a grant against an
+        // unlisted package arms NOTHING — no lease, no cooldown —
+        // whatever caller reaches this function.
+        val durationMillis = EditableTimesProvider(dao).peekDurationMillis()
+        if (durationMillis <= 0L) return false
+        val listed = dao.getAllAppsSnapshot().any { it.packageName == packageName }
+        if (!listed) return false
+        dao.clearOtherPeekLeases(packageName)
         val nowMono = SystemClock.elapsedRealtime()
-        val leaseEndMono = nowMono + PEEK_DURATION_MILLIS
+        val leaseEndMono = nowMono + durationMillis
         val previousPeekEndMono = dao.getAllAppsSnapshot()
             .firstOrNull { it.packageName == packageName }
             ?.lastPeekEndElapsedRealtime ?: 0L
@@ -2655,6 +2726,7 @@ class MonolithRepository(
         // not a duplicate offence, and a later block (lease spent)
         // must be able to claim a fresh episode.
         com.example.service.InterceptClaim.release(packageName)
+        return true
     }
 
     /**
@@ -3219,6 +3291,28 @@ class MonolithRepository(
         }
     }
 
+    /** The dismissed receipt's №, or 0 when no slip has ever
+     *  been dismissed on this install (№s start at 1, so 0 can
+     *  never match a real slip). */
+    fun dismissedReceiptNumber(): Int =
+        context.getSharedPreferences(RECEIPT_PREFS_NAME, Context.MODE_PRIVATE)
+            .getInt(DISMISSED_RECEIPT_NUMBER_KEY, 0)
+
+    /** Persist a dismissal (receipt audit item 20, interim law):
+     *  the № is written the moment the slip is dismissed, so
+     *  the dismissal survives process death and the slip never
+     *  re-ambushes at cold start. The write COMMITS — the same
+     *  standard as the day words (DayWordStore, G-02): apply()'s
+     *  async flush would leave exactly the hard-death window
+     *  this law exists to close. */
+    fun dismissReceipt(number: Int) {
+        if (number <= 0) return
+        context.getSharedPreferences(RECEIPT_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(DISMISSED_RECEIPT_NUMBER_KEY, number)
+            .commit()
+    }
+
     /** The standing receipt's identity, for rehydration (Z6 case
      *  b): (№, sessionId, outcomeWord) when a receipt stands. */
     suspend fun standingReceipt(): Triple<Int, Int, String>? {
@@ -3332,6 +3426,17 @@ class MonolithRepository(
         val banked = spends.sumOf { it.heldSeconds }
 
         // Deflections (Zettel): intercept instants inside the
+        // session's wall window, intention-matched, system rows
+        // excluded, break-window openings excluded, 30s-per-
+        // package dedupe keeping the first. A list, never a sum.
+        //
+        // Receipt audit item 11 (Neu C-03): the filter also reads
+        // the row's OUTCOME — blocked outcomes only (the
+        // enumerated vocabulary on InterceptOutcome). A peek
+        // grant ("Used 2m Peek") is a let-in, not a block: it
+        // never reaches the slip, and because the outcome test
+        // runs BEFORE the dedupe, a peek row never eats the 30s
+        // dedupe slot of a real block of the same package.
         // session's wall window, intention-matched, BLOCKED
         // outcome only (A4 — peeks never print as blocks),
         // system rows excluded, break-window openings excluded,
@@ -3473,7 +3578,23 @@ class MonolithRepository(
             // Issue #105 (F1/F4): the session's booked work and
             // its lived Safe Breaks, from the row's own ledgers.
             completedTasks = completedTasks,
-            safeBreakSeconds = row.breakTakenSeconds
+            safeBreakSeconds = row.breakTakenSeconds,
+            // W-41 FILL POINT (batch-10, landed): the split columns
+            // now exist (MIGRATION_12_13) and the birth writer stores
+            // them with the enforcer-derived sites figure. The gate
+            // is all-or-nothing: the HELD line fills only when BOTH
+            // split columns were recorded (>= 0) — a pre-v13 row
+            // carries -1 and prints no HELD line, under the slip's
+            // omission law (an absent line over a false one).
+            heldFigures = if (row.heldShutAtSeal >= 0 && row.heldPeekAtSeal >= 0) {
+                ReceiptHeldFigures(
+                    shutApps = row.heldShutAtSeal,
+                    peekApps = row.heldPeekAtSeal,
+                    heldSites = row.heldSitesAtSeal
+                )
+            } else {
+                null
+            }
         )
     }
 
@@ -3513,7 +3634,15 @@ class MonolithRepository(
     fun receiptOutcomeWord(row: FocusSessionEntity, kind: String): String = when (kind) {
         FinishKind.ROUTINE_ATTENDED -> "ATTENDED"
         FinishKind.ROUTINE_PARTIAL -> "PARTIAL"
-        FinishKind.ROUTINE_SLEEP_STANDDOWN -> "SLEPT THROUGH"
+        // Receipt audit item 7 (A2, wave-2 — issue #10): the
+        // stand-down word is STOOD DOWN — the machine's own act,
+        // and true. "SLEPT THROUGH" read in plain English as the
+        // man's failure (he slept through the alarm) for a finish
+        // the machine chose. The word is stamped via the claim
+        // (lastReceiptOutcome), so new slips carry it whole; the
+        // sheet additionally normalises the legacy word on
+        // rehydrated slips, so no old slip re-prints the lie.
+        FinishKind.ROUTINE_SLEEP_STANDDOWN -> "STOOD DOWN"
         FinishKind.FLOW_FINISH -> "FLOW ENDED"
         else -> when (row.outcome) {
             SessionOutcome.ELAPSED_SHIELD_GAP -> "ENDED · SHIELD GAP"
@@ -3554,9 +3683,25 @@ class MonolithRepository(
         // latch alone would hand back the standing № and let a
         // second slip be built over it.
         if (standingReceipt()?.second == pending.sessionId) return null
+        // Issue #13, A-10(ii): a routine-born slip is BORN
+        // FILED — the marker is written in the publish act
+        // itself, so no process can ever stand it, and the
+        // VM's emission refuses it on the same fact.
+        // Wave-2 fix (Salz C-21): the marker is written BEFORE
+        // the № claim commits. The two stores cannot be atomic;
+        // ordering them this way makes the crash window fail
+        // SAFE — filed-but-unclaimed (a record with no slip)
+        // instead of claimed-but-standing (a routine slip on
+        // the Deck at first morning open, the exact frame
+        // A-10(ii) exists to prevent).
+        if (isRoutineBornKind(pending.kind)) {
+            receiptFiledStore.markFiled(pending.sessionId)
+        }
         // Audit R1 #40: the fault stamp is part of the claim
         // transaction now (see claimReceiptNumber) — no separate
-        // post-claim write exists for a crash to strand.
+        // post-claim write exists for a crash to strand. (M-A1 P12:
+        // the train's separate post-claim stampReleaseFault is
+        // deleted — keeping it would double-stamp.)
         val number = claimReceiptNumber(
             pending.sessionId, pending.outcomeWord,
             faulted = faulted, faultWallMillis = System.currentTimeMillis()
@@ -3594,7 +3739,8 @@ class MonolithRepository(
             armZoneId = armZoneStore.zoneFor(pending.armWallMs),
             completedTasks = pending.completedTasks,
             safeBreakSeconds = pending.safeBreakSeconds,
-            endZoneId = armZoneStore.endZoneFor(pending.endedAtWallMs)
+            endZoneId = armZoneStore.endZoneFor(pending.endedAtWallMs),
+            heldFigures = pending.heldFigures
         )
     }
 
@@ -3717,6 +3863,18 @@ class MonolithRepository(
     }
 
     private suspend fun rehydrateReceipt(sessionId: Int, number: Int): ReceiptState? {
+        // Receipt audit item 20, interim law (train): a slip he
+        // dismissed stays dismissed across process death —
+        // rehydration is the cold-start door, so the dismissal is
+        // honoured here, at the repository, where every host
+        // inherits it.
+        if (number == dismissedReceiptNumber()) return null
+
+        // Issue #13, A-10(ii)/(iii) (train): rehydration REFUSES a
+        // filed slip — born-filed routine receipts and
+        // hand-dismissed ones alike. The record stays; the standing
+        // does not resurrect.
+        if (receiptFiledStore.isFiled(sessionId)) return null
         val row = dao.getSessionById(sessionId) ?: return null
         if (row.isActive) return null
         val isSleep = row.routineId?.let { dao.getRoutineById(it)?.loadoutName } ==
@@ -3782,6 +3940,7 @@ class MonolithRepository(
             shieldWasOff = pending.shieldWasOff,
             faulted = row.releaseFaultShield || sealBroken,
             deflections = pending.deflections,
+            heldFigures = pending.heldFigures,
             openExposureApps = pending.openExposureApps,
             restored = true,
             receiptPublishedMonoMs = 0L,
@@ -4629,7 +4788,23 @@ class MonolithRepository(
         // finalise funnel, which runs off evidence, not off the clock.
         val isRoutineSession = session.routineId != null
         val forgedId = if (allBlocksCompleted && !isRoutineSession) {
-            drawCurioId(session)
+            // Forge truth (AUDIT-drawer §2A): the lot draws ONLY from
+            // what the cabinet cannot already show. The cabinet reads
+            // the DISTINCT forged set (MonolithDao.getForgedArtifactIds),
+            // so the lot draws from that same set's complement — the
+            // two sides can never disagree. Drawing from all six
+            // forged repeats from the second forge onward, and once
+            // the set stood complete, forged invisibly forever while
+            // the printed rule kept its promise. When nothing unforged
+            // remains, this span forges nothing new (null): no fresh
+            // claim the cabinet cannot honour. (Whether a completed-set
+            // finish prints anything elsewhere is Ren's escalated call,
+            // audit §7.3 — not this fix.)
+            val alreadyForged = dao.getForgedArtifactIds().toSet()
+            CurioCatalog.artifacts
+                .filter { it.id !in alreadyForged }
+                .shuffled()
+                .firstOrNull()?.id
         } else null
 
         // Slice E (Nocke §2.3): the ending write classifies the
@@ -4743,9 +4918,14 @@ class MonolithRepository(
         appName: String,
         sessionIntention: String,
         outcome: String,
-        // FIX-3a (issue #11, merged with main's countAsReach/transaction
-        // form): the "Habit" default dies — UNSTATED unless stated.
+        // FIX-3a (train): the "Habit" default dies with the
+        // MUSCLE_MEMORY default on the door — intercepts book
+        // UNSTATED unless a reason was actually stated by the man.
         triggerReason: String = "UNSTATED",
+        // C-11 (train): the row stamps the ARRIVAL instant, never
+        // the resolution's — callers that book on a resolution
+        // path pass the arrival they carry in state.
+        timestampMillis: Long = System.currentTimeMillis(),
         // R3b #162 F4: an uninstall attempt is not a "phantom reach"
         // for a distraction app. Callers on the UNINSTALL_GUARD path
         // pass false: the intercept is still logged (with its
@@ -4771,6 +4951,7 @@ class MonolithRepository(
             }
             dao.insertInterceptLog(
                 InterceptLogEntity(
+                    timestampMillis = timestampMillis,
                     packageName = packageName,
                     appName = appName,
                     sessionIntention = sessionIntention,
@@ -4783,6 +4964,36 @@ class MonolithRepository(
                 if (active != null) {
                     dao.updateSession(active.copy(phantomReachesBlocked = active.phantomReachesBlocked + 1))
                 }
+            }
+        }
+    }
+
+    suspend fun bookInterceptArrival(
+        packageName: String,
+        appName: String,
+        sessionIntention: String,
+        triggerReason: String = "UNSTATED",
+        arrivedAtWallMillis: Long
+    ): Long {
+        dao.incrementInterceptCount(packageName)
+        return dao.insertInterceptLog(
+            InterceptLogEntity(
+                timestampMillis = arrivedAtWallMillis,
+                packageName = packageName,
+                appName = appName,
+                sessionIntention = sessionIntention,
+                outcome = AT_DOOR_OUTCOME,
+                triggerReason = triggerReason
+            )
+        )
+    }
+
+    suspend fun resolveIntercept(id: Long, outcome: String) {
+        dao.updateInterceptOutcome(id, outcome)
+        if (outcome == "RETURNED AT DOOR") {
+            val active = dao.getActiveSessionSnapshot()
+            if (active != null) {
+                dao.updateSession(active.copy(phantomReachesBlocked = active.phantomReachesBlocked + 1))
             }
         }
     }
@@ -5415,6 +5626,21 @@ class MonolithRepository(
                     actualSecondsSpent = activeTask.actualSecondsSpent + credit
                 )
             )
+            if (credit > 0) {
+                // #110: the same observed credit, filed as an
+                // accrual segment under the day it was observed —
+                // the per-day split the lifetime scalar above can
+                // never reconstruct after the fact. Capture cannot
+                // wait for the Drawer's grouping read to land:
+                // every day without this write is accrual history
+                // lost permanently.
+                dao.addTaskAccrualSegment(
+                    taskId = activeTask.id,
+                    sessionId = session.id,
+                    dateIso = DrawerDay.filingDate(System.currentTimeMillis()).toString(),
+                    seconds = credit
+                )
+            }
         }
     }
 

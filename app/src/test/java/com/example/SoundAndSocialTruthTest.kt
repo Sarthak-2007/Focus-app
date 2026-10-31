@@ -572,6 +572,7 @@ class SoundAndSocialTruthTest {
                     parkReturnTick = 0,
                     onDismiss = {},
                     onFixClick = {},
+                    onCheckClick = {},
                     onToggleSound = {},
                     shortsReelsSniperEnabled = true,
                     onToggleShortsReelsSniper = {}

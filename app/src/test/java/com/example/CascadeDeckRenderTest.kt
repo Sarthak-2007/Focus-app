@@ -132,6 +132,7 @@ class CascadeDeckRenderTest {
 
     private fun capture(name: String) {
         val out = File(shotsDir, name)
+        out.parentFile?.mkdirs() // batch-10 CI cure: shots dir must exist on a clean runner
         composeRule.runOnUiThread {
             val decor = composeRule.activity.window.decorView
             val w = if (decor.width > 0) decor.width else 1318

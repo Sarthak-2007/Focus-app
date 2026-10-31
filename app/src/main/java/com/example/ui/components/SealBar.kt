@@ -470,6 +470,47 @@ fun boltStateFor(inputs: BoltInputs): BoltFace {
  * "INVALID" for a broken dial) yields null: no numerals stand
  * where no end exists.
  */
+/**
+ * The pure re-encoding of the strip's BLOCK word into the seal's
+ * state. [blockWord] is the Deck's blockCell word verbatim — the
+ * strip's own vocabulary ("ON" / "OFF" / "UNKNOWN" from
+ * blockCellFor, which already carries the freshness check at idle
+ * and the live-OFF override while running, UNA2-04). This function
+ * invents nothing: same inputs, physical encoding.
+ *
+ * [remainingSeconds] is the session's spanRemainingSeconds (timed
+ * sessions only; null for stopwatch / idle) — the same span the
+ * strip's TIME cell priced.
+ */
+internal fun sealBarStateFor(
+    isSessionRunning: Boolean,
+    blockWord: String,
+    remainingSeconds: Int?,
+    endingSoonThresholdSeconds: Int = SealBarParams.endingSoonThresholdSeconds
+): SealBarState {
+    if (isSessionRunning) {
+        return when (blockWord) {
+            // The live wire's OFF outranks the frozen verdict
+            // (UNA2-04): a running session whose bind is positively
+            // dead shows the seal OPEN — the face follows the wire.
+            "OFF" -> SealBarState.OFF
+            "ON" -> if (remainingSeconds != null &&
+                remainingSeconds <= endingSoonThresholdSeconds
+            ) {
+                SealBarState.ENDING_SOON
+            } else {
+                SealBarState.RUNNING
+            }
+            else -> SealBarState.RUNNING_UNPROVEN
+        }
+    }
+    return when (blockWord) {
+        "ON" -> SealBarState.BLOCKING
+        "OFF" -> SealBarState.OFF
+        else -> SealBarState.UNPROVEN
+    }
+}
+
 internal fun endsAtNumeralsFor(timeText: String): String? =
     if (timeText.startsWith("ENDS ")) timeText.removePrefix("ENDS ") else null
 

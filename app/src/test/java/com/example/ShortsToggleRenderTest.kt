@@ -62,6 +62,7 @@ class ShortsToggleRenderTest {
                     parkReturnTick = 0,
                     onDismiss = {},
                     onFixClick = {},
+                    onCheckClick = {},
                     onToggleSound = {},
                     onToggleShortsReelsSniper = {},
                     // Wave-2 premise: social pair is scaffolding here —
