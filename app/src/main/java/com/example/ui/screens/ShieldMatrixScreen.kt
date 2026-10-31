@@ -139,6 +139,10 @@ fun ShieldMatrixScreen(
     // composed once from the beat's proof by the ViewModel and
     // printed verbatim under GUARDS. Null in render harnesses.
     receiptLine: String? = null,
+    // Issue #94 F4: the routine-chain liveness line, composed by
+    // the ViewModel from the heartbeat's stamp. Null = no routine
+    // window is enforcing — the line is absent, never a claim.
+    routineChainLine: String? = null,
     // Shield Rethink 2, Step 2: the intention line — his words,
     // written here on the Sheet, read back by the arm and the
     // session plate verbatim. Blank is a complete state. The write
@@ -909,6 +913,20 @@ fun ShieldMatrixScreen(
                     color = scheme.onSurfaceVariant,
                     modifier = Modifier.testTag("shield_detector_health_line")
                 )
+                // Issue #94 F4: the routine-chain liveness line —
+                // the heartbeat stamp's first reader, printed under
+                // the detector line. Absent unless a routine window
+                // is enforcing right now; then it names the chain
+                // LIVE or DEAD with the stamp's age.
+                if (routineChainLine != null) {
+                    Text(
+                        text = routineChainLine,
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("shield_routine_chain_line")
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,

@@ -1745,6 +1745,19 @@ class MonolithShieldService : Service() {
     private fun postSummons(title: String, text: String, timeoutAfterMs: Long = 0) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Issue #94 (routed stray ex #155, FEEL-2): this channel
+            // used to be created with NO sound/vibration specified,
+            // so it inherited the system defaults and stacked a
+            // channel sound + vibration on top of the engine's own
+            // PCM summons and haptic at the same event — two voices,
+            // one moment. Wing law: per event the engine OR the
+            // channel speaks, never both; the summons events are
+            // engine-owned, so the channel is now EXPLICITLY silent
+            // (sound none, vibration off) and carries only the
+            // visual card. Channels are immutable once created, so
+            // the specified behaviour lives under a v2 id and the
+            // legacy id is deleted — the #155 F4 migration pattern.
+            manager.deleteNotificationChannel(LEGACY_SUMMONS_CHANNEL_ID)
             val channel = NotificationChannel(
                 SUMMONS_CHANNEL_ID,
                 "Session summons",
@@ -1752,6 +1765,8 @@ class MonolithShieldService : Service() {
             ).apply {
                 description = "Break-over and session-end calls back to the desk"
                 setShowBadge(false)
+                setSound(null, null)
+                enableVibration(false)
             }
             manager.createNotificationChannel(channel)
         }
@@ -1954,7 +1969,13 @@ class MonolithShieldService : Service() {
         // is away from the phone by design (break expiry, session
         // end). The standing countdown stays on the silent LOW
         // channel; a summons must be capable of being heard.
-        const val SUMMONS_CHANNEL_ID = "monolith_summons_channel"
+        const val SUMMONS_CHANNEL_ID = "monolith_summons_channel_v2"
+
+        /** Issue #94 (routed stray ex #155): the pre-specification
+         *  summons channel — created with unspecified sound/
+         *  vibration defaults, immutable on-device; deleted wherever
+         *  the v2 channel is created so its defaults die with it. */
+        const val LEGACY_SUMMONS_CHANNEL_ID = "monolith_summons_channel"
         const val SUMMONS_NOTIFICATION_ID = 4097
         const val ACTION_START_SHIELD = "com.example.action.START_SHIELD"
         const val ACTION_STOP_SHIELD = "com.example.action.STOP_SHIELD"

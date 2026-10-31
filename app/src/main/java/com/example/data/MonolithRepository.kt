@@ -2398,7 +2398,11 @@ class MonolithRepository(
         MonolithWidgetProvider.requestUpdate(context)
     }
 
-    /** Guard settings as a flow (reset-note strip + tick stamps). */
+    /** Guard settings as a flow (reset-note strip + tick stamps).
+     *  Issue #94 F4: this flow is also the routine chain liveness
+     *  stamp's reader path — MonolithViewModel.routineChainPrint
+     *  derives the Shield surface's ROUTINE line from its
+     *  lastRoutineTickMillis column. */
     val guardSettingsFlow: Flow<GuardSettingsEntity?> = dao.getGuardSettingsFlow()
 
     /**

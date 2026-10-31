@@ -1954,6 +1954,29 @@ class MonolithViewModel(
         com.example.ui.components.GuardLinePrint("GUARD — NOT CHECKED")
     )
 
+    /** Issue #94 F4: the ROUTINE CHAIN line's print — the first
+     *  reader of the heartbeat's liveness stamp. Combines the
+     *  guard-settings flow (which carries lastRoutineTickMillis),
+     *  the routines list (a window enforcing NOW is what makes a
+     *  stale stamp a death rather than a sleep), and the same 5 s
+     *  guard clock, so a chain that dies while the Shield surface
+     *  stands open is named on the next beat, not at some later
+     *  navigation. Null = no window enforcing — the line prints
+     *  nothing and claims nothing. */
+    val routineChainPrint: StateFlow<com.example.ui.components.GuardLinePrint?> = combine(
+        repository.guardSettingsFlow,
+        routines,
+        guardClock
+    ) { settings, routineList, _ ->
+        val now = System.currentTimeMillis()
+        val windowActive = routineList.any {
+            com.example.data.RoutineSchedule.isEnforcingAt(it, now)
+        }
+        com.example.ui.components.routineChainLineFor(
+            settings?.lastRoutineTickMillis ?: 0L, windowActive, now
+        )
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     // =========================================================================
     // THE CASCADE (Slice D step 4): the arm's proving controller.
     // The slide's latch enters here; the controller dispatches the
