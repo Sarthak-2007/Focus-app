@@ -381,7 +381,7 @@ fun DrawerScreen(
             rows = drawerRows,
             dayWords = dayWords,
             scopeMonth = drawerMonth,
-            includeTodayGroup = !isSealed && drawerMonth == currentYearMonth,
+            includeTodayGroup = drawerMonth == currentYearMonth,
             today = today
         )
     }
@@ -390,7 +390,7 @@ fun DrawerScreen(
             rows = drawerRows,
             dayWords = dayWords,
             scopeMonth = currentYearMonth,
-            includeTodayGroup = !isSealed,
+            includeTodayGroup = true,
             today = today
         )
     }
@@ -1048,7 +1048,7 @@ fun DrawerScreen(
                         // other DayHeading site.)
                         DayHeading(
                             group = group,
-                            canDeclare = !isSealed && (group.date == today ||
+                            canDeclare = (group.date == today ||
                                 (group.date == today.minusDays(1) && group.word == null)),
                             onDeclareWord = { word ->
                                 if (group.date == today) onDeclareTodayWord(word)
@@ -1239,7 +1239,7 @@ fun DrawerScreen(
                     item(key = "month-head-${group.date}") {
                         DayHeading(
                             group = group,
-                            canDeclare = !isSealed && (group.date == today ||
+                            canDeclare = (group.date == today ||
                                 (group.date == today.minusDays(1) && group.word == null)),
                             onDeclareWord = { word ->
                                 if (group.date == today) onDeclareTodayWord(word)
@@ -1321,7 +1321,7 @@ fun DrawerScreen(
                                 rows = emptyList(),
                                 word = dayWords[DrawerDay.dateIso(today)]
                             ),
-                            canDeclare = !isSealed,
+                            canDeclare = true,
                             onDeclareWord = onDeclareTodayWord
                         )
                     }
@@ -1406,7 +1406,7 @@ fun DrawerScreen(
                         item(key = "land-head-${group.date}") {
                             DayHeading(
                                 group = group,
-                                canDeclare = !isSealed && (group.date == today ||
+                                canDeclare = (group.date == today ||
                                     (group.date == today.minusDays(1) && group.word == null)),
                                 onDeclareWord = { word ->
                                     if (group.date == today) onDeclareTodayWord(word)

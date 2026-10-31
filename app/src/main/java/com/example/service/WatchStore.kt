@@ -9,6 +9,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -83,7 +84,15 @@ data class Warrant(
      *  treat 0 as age-unknown, never as fresh proof. Before this
      *  field, the Deck's prints could ride a warrant of unbounded
      *  age and nothing on the glass could tell. */
-    val readMono: Long = 0L
+    val readMono: Long = 0L,
+    /** The residency this verdict was derived under (cold-start
+     *  cure, issue #7): stamped by [WatchStore.deriveWarrant] from
+     *  the store's current residencyStartMono — the one construction
+     *  site — so a pure reader (the cured sentence table) can compute
+     *  the residency's age from the warrant itself, with no live
+     *  store access. 0 = no residency carried (a warrant built by
+     *  hand: a test, a preview default), never a fresh residency. */
+    val residencyStartMono: Long = 0L
 )
 
 /** The nine watch items, in board order (spec §4.1). The header's
@@ -212,6 +221,15 @@ object WatchStore {
     /** A PASS measurement older than this (monotonic) is stale. */
     const val STALE_AFTER_MS: Long = 45_000L
 
+    /** Cold-start grace (issue #7): how long a fresh residency may
+     *  rest UNPROVEN while the accessibility pipeline is actively
+     *  probed before the Deck's sentence hardens. The stamp races
+     *  residency start on a cold open — the service may bind after
+     *  the Deck is already showing, and a quiet Deck generates no
+     *  a11y events to stamp it — so the warrant's readers give the
+     *  active self-probe this window to land its proof. */
+    const val RESIDENCY_GRACE_MS: Long = 4_000L
+
     // Issue #48: LAST PROVED's durable home — a tiny wall-clock
     // fact needs no table (the seal marker's SharedPreferences
     // precedent, MonolithRepository SEAL_PREFS).
@@ -303,9 +321,34 @@ object WatchStore {
     // event at or after that instant — proof it processed THIS visit.
     @Volatile private var residencyStartMono: Long = 0L
 
+    /** Whether a Deck residency is in force in this process. */
+    fun residencyActive(): Boolean = residencyStartMono > 0L
+
     fun noteResidencyStart() {
         residencyStartMono = SystemClock.elapsedRealtime()
         poke()
+        // Cold-start cure (issue #7, active self-probe): the stamp
+        // races residency start — on a cold open the service may
+        // not be bound yet when the Deck appears, and a quiet Deck
+        // generates no a11y events, so waiting for the event path
+        // to stamp lastRootMono can leave the warrant UNPROVEN
+        // forever. Probe the pipeline NOW instead of waiting for
+        // an event that may never come.
+        MonolithAccessibilityService.instance?.requestPipelineProbe()
+        // One delayed re-probe at +1500 ms: the first probe can
+        // still lose the race when the service binds just after
+        // residency start. It fires only if this same residency is
+        // still unstamped — a stamp that already landed (event path
+        // or first probe) needs no second proof, and a superseded
+        // residency (start changed since scheduling) is never
+        // probed on its predecessor's schedule.
+        val scheduledStartMono = residencyStartMono
+        sweepScope.launch {
+            delay(1_500L)
+            if (residencyStartMono == scheduledStartMono && !stampedThisResidency()) {
+                MonolithAccessibilityService.instance?.requestPipelineProbe()
+            }
+        }
     }
 
     /** The stamp test, exactly as the wire has always run it. */
@@ -493,7 +536,11 @@ object WatchStore {
             a11yStampedThisResidency = stamped,
             shieldProtecting = shieldProtecting,
             usage = usage,
-            readMono = readMono
+            readMono = readMono,
+            // Cold-start cure (issue #7): the warrant carries the
+            // residency it was derived under, so its age is readable
+            // from the warrant itself.
+            residencyStartMono = residencyStartMono
         )
     }
 
@@ -673,10 +720,16 @@ object WatchStore {
 
     /**
      * The interceptor derivation (§4.3), computed at every emission:
-     *  RUNNING — setting on, every parent currently-warranted, no
-     *            suspension in force;
-     *  PAUSED  — setting on, warranted, and HIS suspension in force
-     *            (the Safe Break, for the two blocking interceptors);
+     *  RUNNING — setting on, every parent currently-warranted;
+     *  PAUSED  — retained in the vocabulary for a suspension that is
+     *            ever REAL (measured at the enforcement door); no
+     *            current input derives it. The Safe Break is NOT a
+     *            suspension of either blocking interceptor — the
+     *            sniper and the site blocker are documented, in the
+     *            accessibility service's own class doc, as strictly
+     *            active during Safe Breaks, and Audit R3
+     *            (safe-break-lived #1) caught this derivation
+     *            printing PAUSED for them while they intercepted;
      *  OFF     — setting off, or any parent MISSING or STALE.
      * A parent never measured makes the line unmeasured (it prints
      * its name only) — OFF would be a claim nobody measured.
@@ -713,11 +766,14 @@ object WatchStore {
         if (item == WatchItemId.NOTIFICATIONS && !sessionCapturing) {
             return InterceptorState.OFF
         }
-        val suspended = when (item) {
-            WatchItemId.NOTIFICATIONS -> false
-            else -> safeBreakActive
-        }
-        return if (suspended) InterceptorState.PAUSED else InterceptorState.RUNNING
+        // Audit R3 (safe-break-lived #1) — the suspension term stays
+        // DELETED even though the safeBreak input survives above (the
+        // ViewModel pushes it; nothing truthful derives from it): the
+        // accessibility service keeps intercepting SHORTS + REELS and
+        // SOCIAL SITES through a Safe Break, exactly as its class doc
+        // promises, so PAUSED from safeBreakActive was a false warrant.
+        // RUNNING is the truth in and out of a break alike.
+        return InterceptorState.RUNNING
     }
 
     private fun WatchSnapshot.withMeasurement(m: WatchMeasurement): WatchSnapshot =

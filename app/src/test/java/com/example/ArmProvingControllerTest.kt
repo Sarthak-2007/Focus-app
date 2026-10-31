@@ -676,14 +676,18 @@ class ArmProvingControllerTest {
         runCurrent()
         assertEquals(ArmPhase.Idle, controller.phase.value)
         assertEquals(1, controller.annulCount.value)
-        // The literal this asserted was re-ruled on main (#164 F5 merge
-        // note in ArmProvingController.annul): the annul sentence is now
-        // the named NOT SEALED form — res identity + args is the check.
+        // The literal this asserted was re-ruled on main (#164 F5): the
+        // NOT SEALED wording now lives in string resources — res identity
+        // + args is the check. This path is failSeal() (the seal act
+        // threw), whose sentence is the generic session form
+        // (sentence_not_sealed_session, no args) — NOT the annul path's
+        // named form. Both render "NOT SEALED — THE SESSION DIDN'T
+        // ANSWER."; the res identity is what separates the two paths.
         assertEquals(
-            R.string.sentence_not_sealed_named,
+            R.string.sentence_not_sealed_session,
             controller.armSentence.value?.textRes
         )
-        assertEquals(listOf("THE SESSION"), controller.armSentence.value?.args)
+        assertEquals(emptyList<Any>(), controller.armSentence.value?.args)
     }
 
     @Test

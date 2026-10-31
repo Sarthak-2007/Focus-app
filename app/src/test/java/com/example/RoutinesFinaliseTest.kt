@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.DesiredSession
+import com.example.data.DrawerDay
 import com.example.data.FocusSessionEntity
 import com.example.data.InterceptLogEntity
 import com.example.data.MonolithDatabase
@@ -119,6 +120,36 @@ class RoutinesFinaliseTest {
         assertEquals(0, sealed.elapsedSeconds)
         assertFalse(sealed.completedSuccessfully)
         assertNull(sealed.forgedArtifactId)
+        assertFalse(sealed.isActive)
+    }
+
+    @Test
+    fun excusedWindow_subFloor_booksUnknown_neverMissed() = runBlocking {
+        // Issue #137, F1c/F5: the window's filing date carries ILL,
+        // so the durable stamp can never be MISSED. A fixed midday
+        // window three days back keeps this date clear of the other
+        // tests' now-based windows.
+        context.getSharedPreferences(
+            MonolithRepository.DAY_WORDS_PREFS_NAME, android.content.Context.MODE_PRIVATE
+        ).edit().clear().commit()
+        val cal = java.util.Calendar.getInstance().apply {
+            add(java.util.Calendar.DAY_OF_YEAR, -3)
+            set(java.util.Calendar.HOUR_OF_DAY, 12)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val start = cal.timeInMillis
+        val end = start + hour
+        repository.declareDayWord(
+            DrawerDay.dateIso(DrawerDay.filingDate(start)), "ILL"
+        )
+        val routineId = insertRoutine()
+        val id = insertSession(routineId, start, end)
+        val outcome = repository.finaliseRoutineSession(row(id), System.currentTimeMillis())
+        assertEquals("UNKNOWN", outcome)
+        val sealed = row(id)
+        assertEquals("UNKNOWN", sealed.routineOutcome)
         assertFalse(sealed.isActive)
     }
 

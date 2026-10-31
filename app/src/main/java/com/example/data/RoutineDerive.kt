@@ -81,10 +81,11 @@ object RoutineDerive {
         nowMillis: Long,
         activeSession: FocusSessionEntity?,
         sessions: List<FocusSessionEntity>,
-        settings: GuardSettingsEntity
+        settings: GuardSettingsEntity,
+        excusedDateIsos: Set<String> = emptySet()
     ): DeriveResult {
         val derivations = routines.map { routine ->
-            deriveOne(routine, nowMillis, activeSession, sessions, settings)
+            deriveOne(routine, nowMillis, activeSession, sessions, settings, excusedDateIsos)
         }
         val knownIds = routines.map { it.id }.toSet()
         val orphans = sessions.filter { s ->
@@ -103,7 +104,8 @@ object RoutineDerive {
         nowMillis: Long,
         activeSession: FocusSessionEntity?,
         sessions: List<FocusSessionEntity>,
-        settings: GuardSettingsEntity
+        settings: GuardSettingsEntity,
+        excusedDateIsos: Set<String> = emptySet()
     ): RoutineDerivation {
         val mine = sessions.filter { it.routineId == routine.id }
         val isSleep = routine.loadoutName == SmartLoadout.SLEEP.name
@@ -134,7 +136,7 @@ object RoutineDerive {
             }
         }
 
-        val judgement = if (isSleep) null else judgeLatestClosed(routine, nowMillis, sessions, settings)
+        val judgement = if (isSleep) null else judgeLatestClosed(routine, nowMillis, sessions, settings, excusedDateIsos)
 
         if (!routine.enabled) {
             return RoutineDerivation(routine.id, WindowState.DISABLED, null, null, finaliseDue, judgement)
@@ -148,6 +150,14 @@ object RoutineDerive {
             // materialises at remainder (Otis §2.4 amendment / T8) —
             // the pause killed the start, not the whole window.
             if (nowMillis < routine.pausedUntilMillis && window.startMillis < routine.pausedUntilMillis) {
+                return RoutineDerivation(routine.id, WindowState.PAUSED, window, null, finaliseDue, judgement)
+            }
+            // Excused date (issue #137, F1b): the window's filing
+            // date carries an excuse word (ILL / REST / FAMILY), so
+            // no session materialises for it. The state reuses
+            // PAUSED — the existing "this window does not run"
+            // state; no new vocabulary is invented for it.
+            if (isExcused(window.startMillis, excusedDateIsos)) {
                 return RoutineDerivation(routine.id, WindowState.PAUSED, window, null, finaliseDue, judgement)
             }
             val active = activeSession
@@ -213,15 +223,27 @@ object RoutineDerive {
      *  struck suppression clause of J6: paused/disabled windows do
      *  not exist for judgement — a day he paused in advance cannot
      *  be a miss). */
+    /** True when [windowStartMillis]'s filing date (DrawerDay's
+     *  03:30 rule — the same date the Drawer files the word under)
+     *  is one of the excused date isos the caller read from the
+     *  day-word stores. */
+    private fun isExcused(windowStartMillis: Long, excusedDateIsos: Set<String>): Boolean =
+        DrawerDay.dateIso(DrawerDay.filingDate(windowStartMillis)) in excusedDateIsos
+
     private fun judgeLatestClosed(
         routine: RoutineEntity,
         nowMillis: Long,
         sessions: List<FocusSessionEntity>,
-        settings: GuardSettingsEntity
+        settings: GuardSettingsEntity,
+        excusedDateIsos: Set<String> = emptySet()
     ): WindowJudgement? {
         val closed = RoutineSchedule.latestClosedWindow(routine, nowMillis) ?: return null
         // J6: a window the pause covered end-to-end never existed.
         if (routine.pausedUntilMillis >= closed.endMillis) return null
+        // J6b (issue #137, F1a): a window whose filing date carries
+        // an excuse word gets the same amnesty as J6 — it is never
+        // judged MISSED (or NOT_DELIVERED) for a day he declared.
+        if (isExcused(closed.startMillis, excusedDateIsos)) return null
         val claim = pickClaim(sessions.filter {
             it.routineId == routine.id && it.windowStartMillis == closed.startMillis
         })
