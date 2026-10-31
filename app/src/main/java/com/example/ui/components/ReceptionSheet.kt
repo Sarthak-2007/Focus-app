@@ -173,6 +173,21 @@ fun receptionDoorJob(item: WatchItemId): String = when (item) {
         "THE MAIL ROOM. Holds the shut apps' messages while a session runs — " +
             "you read them in the digest. " +
             "HELD ON THIS PHONE, IN THE DIGEST."
+    WatchItemId.OVERLAY ->
+        // #70-F2 remainder (owned by #14): the board's own
+        // rationale (WatchStore.boardRationale) grown to the
+        // sheet's register — the block surface is the wall he
+        // actually meets mid-session.
+        "THE ROOF. Stands the block surface over a shut app — " +
+            "the wall itself, held over the app it seals. " +
+            "It draws nothing outside a session."
+    WatchItemId.BATTERY ->
+        // #70-F2 remainder (owned by #14): the board's own
+        // rationale, same treatment — the shield's wakefulness
+        // is the whole job, and the limit is printed with it.
+        "THE NIGHT WATCH. Keeps Android from putting Monolith " +
+            "to sleep mid-session — the shield stays awake " +
+            "through the day's work. Nothing else changes."
     else -> ""
 }
 
@@ -193,6 +208,21 @@ fun receptionDoorPrepare(item: WatchItemId): String = when (item) {
     WatchItemId.NOTIFICATION_LISTENER ->
         "YOU'LL SEE A LIST OF APPS. FIND MONOLITH, ALLOW, COME BACK. " +
             "ANDROID MAY WARN — THAT WARNING IS STANDARD. IT IS THE DOOR WORKING."
+    WatchItemId.OVERLAY ->
+        // The host's pane is Monolith's OWN page (the
+        // package-scoped ACTION_MANAGE_OVERLAY_PERMISSION in
+        // MainActivity.openFixPane) — the escort names the
+        // page he will actually see, not a list.
+        "YOU'LL SEE MONOLITH'S OWN PAGE — 'DISPLAY OVER OTHER APPS'. " +
+            "SWITCH IT ON, COME BACK."
+    WatchItemId.BATTERY ->
+        // The host's trip is two-shaped (issue #94): the
+        // direct exemption ask, or the maker's AUTOSTART list
+        // on gated skins. The escort names both shapes so
+        // neither can surprise him.
+        "ANDROID ASKS WHETHER MONOLITH MAY IGNORE BATTERY " +
+            "OPTIMISATION — ON SOME PHONES YOUR MAKER'S AUTOSTART " +
+            "LIST OPENS INSTEAD. ALLOW MONOLITH, COME BACK."
     else -> ""
 }
 
@@ -330,8 +360,38 @@ fun receptionDoorPrepareShort(item: WatchItemId): String = when (item) {
         "FIND MONOLITH IN THE LIST, ALLOW. " +
             "ANDROID MAY WARN — THAT WARNING IS STANDARD. " +
             "IT IS THE DOOR WORKING."
+    WatchItemId.OVERLAY ->
+        "ON MONOLITH'S OWN PAGE, SWITCH ON 'DISPLAY OVER OTHER APPS'."
+    WatchItemId.BATTERY ->
+        "ALLOW MONOLITH ON THE BATTERY OR AUTOSTART PAGE ANDROID SHOWS."
     else -> ""
 }
+
+/** The later pair — the #70-F2 remainder, owned by this issue
+ *  (filed by name, comment 6531931450): the two special-access
+ *  grants the counted four do not include, OVERLAY and
+ *  BATTERY. Both stand `counted = false` in WatchItemId and
+ *  stay that way: they are never in the total, never in the
+ *  doors mask, and deriveWarrant never reads them. What the
+ *  remainder owes them is not a count but a treatment — the
+ *  same job + escort words the four get (above), asked in a
+ *  second movement of this sheet, under the gate below. */
+val RECEPTION_LATER_PAIR: List<WatchItemId> =
+    listOf(WatchItemId.OVERLAY, WatchItemId.BATTERY)
+
+/** The later movement's gate, in the remainder's own sequence:
+ *  it prints only AFTER the first session and the first Safe
+ *  Break prove the four — at least one finished session, and
+ *  at least one finished session in which a Safe Break was
+ *  actually taken (the host derives the second count from
+ *  breakTakenSeconds > 0, the ledger column every break exit
+ *  writes). Before both stand, the movement prints nothing
+ *  at all: a later ask made early is a nag, and this sheet's
+ *  first movement is the four doors, whole. */
+fun receptionFullProtectionShown(
+    completedSessions: Int,
+    sessionsWithSafeBreak: Int
+): Boolean = completedSessions >= 1 && sessionsWithSafeBreak >= 1
 
 /** The next routine, named from the rows themselves (Muede's
  *  end-feeling: the seeded day is handed over, not discovered).
@@ -406,6 +466,13 @@ fun ReceptionSheet(
     returnTick: Int,
     soundEngine: TactileSoundEngine?,
     firstRoutineLine: String?,
+    // The later movement's gate inputs (the #70-F2 remainder):
+    // finished sessions, and finished sessions in which a
+    // Safe Break was actually taken — both derived host-side
+    // from the session history. Defaulted closed: a host that
+    // passes nothing never shows the movement.
+    completedSessions: Int = 0,
+    sessionsWithSafeBreak: Int = 0,
     onShown: () -> Unit,
     onFixClick: (WatchItemId) -> Unit,
     onCheckClick: () -> Unit,
@@ -823,6 +890,74 @@ fun ReceptionSheet(
                 color = scheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(20.dp))
+
+            // ---- MOVEMENT 4 · LATER, FOR FULL PROTECTION ----
+            // The #70-F2 remainder (owned by #14): a second,
+            // clearly-optional movement for OVERLAY + BATTERY,
+            // printed only behind its gate — a finished session
+            // and a taken Safe Break have proved the four. The
+            // pair's cards are Movement 2's own card, unmodified:
+            // same live print, same job + escort treatment, same
+            // FIX / CHECK keys riding the host's existing panes
+            // (the very panes the PARK board's rows open). Two
+            // honest differences, both deliberate: no departure
+            // chit (the chit is the counted four's return
+            // judgment, SetupStore's mechanism — the pair's
+            // prints simply re-derive live, as every door's do),
+            // and no count — the total below this movement
+            // still reads /4, and DONE never waits for either.
+            if (receptionFullProtectionShown(completedSessions, sessionsWithSafeBreak)) {
+                Text(
+                    text = "LATER, FOR FULL PROTECTION",
+                    style = PillBadgeTextStyle,
+                    color = scheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "NOT PART OF THE SETUP, AND NOT OWED. THE FOUR " +
+                        "DOORS ABOVE WERE PROVED BY A FIRST SESSION AND A " +
+                        "FIRST SAFE BREAK — ONLY NOW ARE THESE TWO ASKED, " +
+                        "EACH ON ITS OWN.",
+                    style = BodyTextStyle,
+                    color = scheme.onBackground
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                val laterPrints = RECEPTION_LATER_PAIR.map { item ->
+                    item to (snapshot?.let { WatchStore.permPrintAt(it, item, nowMono) }
+                        ?: PermPrint.UNMEASURED)
+                }
+                val laterFirstMissingIdx =
+                    laterPrints.indexOfFirst { it.second == PermPrint.MISSING }
+                laterPrints.forEachIndexed { idx, (item, print) ->
+                    ReceptionDoorCard(
+                        item = item,
+                        print = print,
+                        isNight = isNight,
+                        interactive = interactive,
+                        fixPressed = fixPressed && fixPressedItem == item,
+                        soundEngine = soundEngine,
+                        escortFull = idx == laterFirstMissingIdx,
+                        onFixPress = {
+                            fixPressed = true
+                            fixPressedItem = item
+                        },
+                        onFix = { onFixClick(item) },
+                        onFixCancel = {
+                            fixPressed = false
+                            fixPressedItem = null
+                        },
+                        onCheck = onCheckClick
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "THE TOTAL BELOW STILL COUNTS FOUR — THESE TWO " +
+                        "ARE NOT IN IT.",
+                    style = PillBadgeTextStyle,
+                    color = scheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(20.dp))
+            }
 
             // The total over the tear (Gust's one move): the
             // doors as they stand at this instant, counted in ink

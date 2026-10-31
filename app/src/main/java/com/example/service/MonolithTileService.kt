@@ -31,7 +31,16 @@ class MonolithTileService : TileService() {
 
     override fun onTileAdded() {
         super.onTileAdded()
+        // Issue #274: the placement fact's testimony — PARK's
+        // TILE line prints ADDED only because this fired (see
+        // TilePlacement).
+        TilePlacement.recordAdded(this)
         refreshTile()
+    }
+
+    override fun onTileRemoved() {
+        super.onTileRemoved()
+        TilePlacement.recordRemoved(this)
     }
 
     override fun onClick() {

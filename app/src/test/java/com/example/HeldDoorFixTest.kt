@@ -8,6 +8,7 @@ import com.example.service.InterceptPath
 import com.example.ui.PeekWithheld
 import com.example.ui.components.breakAppointmentText
 import com.example.ui.components.cooldownRemainingSeconds
+import com.example.ui.components.doorLastReachLine
 import com.example.ui.components.doorMemoryLineText
 import com.example.ui.nextBreakInstantMillis
 import com.example.ui.peekOfferFor
@@ -97,6 +98,40 @@ class HeldDoorFixTest {
         assertEquals("THIRD TIME THIS SESSION", doorMemoryLineText(2))
         assertEquals("TENTH TIME THIS SESSION", doorMemoryLineText(9))
         assertEquals("11TH TIME THIS SESSION", doorMemoryLineText(10))
+    }
+
+    @Test
+    fun lastReachLineStaysSilentWithoutAPriorReach() {
+        // Issue #264 (B-264-25): 0 = no prior reach in the log —
+        // the door claims no memory it doesn't have.
+        assertNull(doorLastReachLine(0L, nowMillis = 1_000_000L))
+    }
+
+    @Test
+    fun lastReachLineNamesTheDistanceInTheDoorsOwnUnits() {
+        val now = 10L * 24L * 3_600_000L // an arbitrary fixed "now"
+        assertEquals(
+            "LAST REACH UNDER A MINUTE AGO",
+            doorLastReachLine(now - 30_000L, now)
+        )
+        assertEquals(
+            "LAST REACH 26 MIN AGO",
+            doorLastReachLine(now - 26L * 60_000L, now)
+        )
+        assertEquals(
+            "LAST REACH 3 H AGO",
+            doorLastReachLine(now - 3L * 3_600_000L, now)
+        )
+        assertEquals(
+            "LAST REACH 2 D AGO",
+            doorLastReachLine(now - 2L * 86_400_000L, now)
+        )
+        // A log stamp in the future (clock skew) never prints a
+        // negative distance.
+        assertEquals(
+            "LAST REACH UNDER A MINUTE AGO",
+            doorLastReachLine(now + 5_000L, now)
+        )
     }
 
     // -----------------------------------------------------------------

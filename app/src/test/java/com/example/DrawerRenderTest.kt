@@ -14,7 +14,6 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
-import com.example.data.CapturedNotificationEntity
 import com.example.data.DrawerDay
 import com.example.data.FocusTaskEntity
 import com.example.data.MonolithDatabase
@@ -23,7 +22,6 @@ import com.example.data.TaskQueueStatus
 import com.example.service.TactileSoundEngine
 import com.example.ui.MonolithDestination
 import com.example.ui.MonolithViewModel
-import com.example.ui.components.CapturedNotificationsDigestSheet
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -54,6 +52,7 @@ import java.time.LocalDate
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], qualifiers = "w450dp-h1000dp")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
+// PIN-SCOPE: RENDER — digest sheet + drawer composables rendered/captured (working-rules adoption, Oct 31 18:06 IST).
 class DrawerRenderTest {
 
     @get:Rule
@@ -363,61 +362,4 @@ class DrawerRenderTest {
         capture("dr_drawer_empty_night.png")
     }
 
-    private fun sampleCaptures(): List<CapturedNotificationEntity> {
-        val today = LocalDate.now()
-        return listOf(
-            CapturedNotificationEntity(
-                id = 1, timestampMillis = at(today, 9, 12),
-                packageName = "com.whatsapp", appName = "WhatsApp",
-                senderTitle = "Maa", messageBody = "Beta khana kha liya? Take a break when the block ends."
-            ),
-            CapturedNotificationEntity(
-                id = 2, timestampMillis = at(today, 8, 47),
-                packageName = "com.google.android.youtube", appName = "YouTube",
-                senderTitle = "Physics Wallah", messageBody = "New one-shot is live: Rotational Mechanics in 90 minutes."
-            ),
-            CapturedNotificationEntity(
-                id = 3, timestampMillis = at(today.minusDays(1), 22, 31),
-                packageName = "org.telegram.messenger", appName = "Telegram",
-                senderTitle = "Study Group", messageBody = "Tomorrow's mock is at 9. Bring your own OMR sheets."
-            )
-        )
-    }
-
-    private fun setSheet(dark: Boolean, frozen: Boolean) {
-        val captures = sampleCaptures()
-        val frozenAt = at(LocalDate.now(), 9, 26)
-        composeRule.setContent {
-            MyApplicationTheme(darkTheme = dark) {
-                CapturedNotificationsDigestSheet(
-                    visible = true,
-                    notifications = captures,
-                    frozenAtMillis = if (frozen) frozenAt else null,
-                    frozenMode = frozen,
-                    onClearAll = {},
-                    onDeleteItem = {},
-                    onDismiss = {}
-                )
-            }
-        }
-        settle(600)
-    }
-
-    @Test
-    fun digestFrozen_day() {
-        setSheet(dark = false, frozen = true)
-        capture("dr_digest_frozen_day.png")
-    }
-
-    @Test
-    fun digestLive_day() {
-        setSheet(dark = false, frozen = false)
-        capture("dr_digest_live_day.png")
-    }
-
-    @Test
-    fun digestFrozen_night() {
-        setSheet(dark = true, frozen = true)
-        capture("dr_digest_frozen_night.png")
-    }
 }

@@ -28,6 +28,7 @@ import com.example.widget.MonolithWidgetProvider
 import com.example.data.batteryShieldWarning
 import com.example.data.readBatterySnapshot
 import com.example.data.MonolithRepository
+import com.example.data.ShieldRaiseStore
 import com.example.data.NightDimMath
 import com.example.data.SightState
 import java.util.UUID
@@ -797,7 +798,7 @@ class MonolithShieldService : Service() {
                 // state retires to rest.
                 if (updated.isInSafeBreak) {
                     lastBreakElapsedSeconds =
-                        (MonolithRepository.SAFE_BREAK_DURATION_SECONDS -
+                        (updated.effectiveBreakSeconds -
                             updated.safeBreakSecondsRemaining).coerceAtLeast(0)
                     publishBreakDim(
                         BreakDimState(
@@ -885,30 +886,41 @@ class MonolithShieldService : Service() {
                         System.currentTimeMillis() + remainingSec * 1000L
                     }
                 }
-                // Issue #155 (F4): the badge's one number is the held
-                // (captured) notification count — the same count the
-                // Deck's HELD chip prints. If that read ever fails,
-                // fall back to this session's urges stopped.
-                val heldCount = runCatching {
-                    dao.getCapturedNotificationsSnapshot().size
-                }.getOrNull()
-                // Issue #155 (IQ-2 M-5): NO fallback swap — the
-                // badge's one number keeps one meaning (held
-                // notifications). When the held count is unreadable
-                // the badge shows no number, never the urges count
-                // wearing the held count's slot.
+                // Audit R5 #278 (line 52): the stopwatch arm above
+                // gets no end chronometer — it counts up, not down —
+                // so its standing card carried NO visual progress,
+                // only this loop's text snapshot. It gets a count-UP
+                // system chronometer, anchored at the elapsed start
+                // derived from the same elapsedSeconds the text
+                // prints, so the ticking face and the printed count
+                // can never disagree about where the count stands.
+                val chronometerStartMillis: Long? =
+                    if (updated.isStopwatchMode) {
+                        System.currentTimeMillis() - updated.elapsedSeconds * 1000L
+                    } else {
+                        null
+                    }
+                // Issue #155 (F4) as amended by Issue #100's CUT,
+                // composed by BUILDER-100 (Oct 31): the badge's held
+                // number is the notification listener's IN-MEMORY
+                // snooze count — the only held count that exists now
+                // that notification-content storage is gone. It counts
+                // this process's snoozes and dies with it; it never
+                // pretends to be a stored total, and (per #155 IQ-2
+                // M-5) it is never swapped for the urges count.
+                val heldCount = MonolithNotificationListener.snoozedCount
                 val badgeNumber = heldCount
-                // Issue #155 (IQ-2 M-8): the bigText's time segment
-                // is the LABELLED format (timeFormatted, #127's two
-                // labelled scopes), never the bare per-block label;
-                // and a blank intention drops its segment instead
-                // of leaving a doubled separator at the head.
+                // Issue #155 (IQ-2 M-8), kept from main: the bigText's
+                // time segment is the LABELLED format (timeFormatted,
+                // #127's two labelled scopes), never the bare per-block
+                // label; and a blank intention drops its segment
+                // instead of leaving a doubled separator at the head.
                 val bigText = listOfNotNull(
                     updated.intention.takeIf { it.isNotBlank() },
                     timeFormatted,
                     "Block ${updated.currentBlockIndex}/${updated.totalStudyBlocks}",
                     "${updated.phantomReachesBlocked} urges stopped",
-                    if (heldCount != null) "$heldCount held" else "held count unavailable"
+                    "$heldCount held"
                 ).joinToString(" • ")
 
                 // Audit R3b #149 (from main): the grace window exists
@@ -1082,6 +1094,12 @@ class MonolithShieldService : Service() {
                     protecting = true
                     protectingSessionId = updated.id
                     protectingMono = SystemClock.elapsedRealtime()
+                    // Issue #525: stamp this boot's first shield
+                    // raise — the instant witnessed time honestly
+                    // starts for any session this boot re-anchors.
+                    // The store keeps the FIRST flip of the boot;
+                    // later flips in the same boot never move it.
+                    ShieldRaiseStore.stampFirstRaise(applicationContext, protectingMono)
                     WatchStore.poke()
                     // Issue #155 (F1): a session is now live — refresh
                     // the home-screen widget at the moment it matters.
@@ -1157,7 +1175,8 @@ class MonolithShieldService : Service() {
                         bigText = bigText,
                         chronometerEndMillis = chronometerEndMillis,
                         badgeNumber = badgeNumber,
-                        inSafeBreak = updated.isInSafeBreak
+                        inSafeBreak = updated.isInSafeBreak,
+                        chronometerStartMillis = chronometerStartMillis
                     )
                 }
 
@@ -1172,6 +1191,14 @@ class MonolithShieldService : Service() {
                 } else {
                     null
                 }
+                // Issue #520 (5-D): the accessibility door's call
+                // owner, imported — read only while that service
+                // is bound (its mirror zeroes with the binding).
+                val a11yCallOwner = if (MonolithAccessibilityService.instance != null) {
+                    MonolithAccessibilityService.callOwnerPackageNow
+                } else {
+                    null
+                }
                 // Issue #332 F2: a live call no longer suspends
                 // this door wholesale (the pre-cure shape made
                 // every call a complete enforcement holiday on
@@ -1180,16 +1207,25 @@ class MonolithShieldService : Service() {
                 // per-package through the safety floor (dialer /
                 // incallui / telecom), and every other blocked app
                 // stays blocked mid-call — Flipd's construction.
-                // The VoIP-owner exemption lives in the
-                // accessibility door (shouldBypassForCall); this
-                // fallback door fails closed, as a fallback must.
+                // Issue #520 (5-D): the VoIP owner is exempt here
+                // too — one call truth, both doors. Before this,
+                // this door deliberately did NOT inherit the owner
+                // exemption ("this fallback door fails closed")
+                // and could select the call's owner app mid-call
+                // and launch the Airlock over a live call the a11y
+                // door lawfully exempted. The surface narrowing
+                // (5-C) stays the a11y door's own refinement; this
+                // door imports the owner fact only.
                 val selectedForeground = ForegroundSelection
                     .selectBlockedForeground(
                         accessibilityForeground = a11yForeground,
                         blockedPackages = blockedPackages,
                         usageStatsFallback = { probe.blockedPackage }
                     )
-                    ?.takeUnless { com.example.data.SafetyFloor.isFloorPackage(it) }
+                    ?.takeUnless {
+                        com.example.data.SafetyFloor.isFloorPackage(it) ||
+                            ForegroundSelection.isCallOwnerExempt(it, a11yCallOwner)
+                    }
                 // The flip + the one WatchStore publication for
                 // this beat live at the composed latch above
                 // (FIX-R2, PR #388 recomposition): the latch's
@@ -1489,7 +1525,8 @@ class MonolithShieldService : Service() {
         bigText: String? = null,
         chronometerEndMillis: Long? = null,
         badgeNumber: Int? = null,
-        inSafeBreak: Boolean = false
+        inSafeBreak: Boolean = false,
+        chronometerStartMillis: Long? = null
     ): Notification {
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -1587,6 +1624,17 @@ class MonolithShieldService : Service() {
             builder.setWhen(chronometerEndMillis)
             builder.setShowWhen(true)
         }
+        if (chronometerStartMillis != null) {
+            // Audit R5 #278 (line 52): a stopwatch session counts
+            // UP — the system chronometer ticks from the elapsed
+            // start anchor, so the standing card carries live
+            // visual progress between the loop's re-posts instead
+            // of a frozen text snapshot.
+            builder.setUsesChronometer(true)
+            builder.setChronometerCountDown(false)
+            builder.setWhen(chronometerStartMillis)
+            builder.setShowWhen(true)
+        }
         if (badgeNumber != null) {
             builder.setNumber(badgeNumber)
         }
@@ -1628,12 +1676,13 @@ class MonolithShieldService : Service() {
         builder.addAction(0, "Open Monolith", pendingIntent)
         // Issue #274: a live countdown must be a system chronometer,
         // not hand-rendered static text re-posted every second. When
-        // the caller passed no explicit end (#155 seam above), fall
-        // back to the mirror: when it knows the session's end
-        // wall-clock, the system itself ticks the countdown -
-        // accurate on the lock screen and AOD even between
-        // shield-loop iterations.
-        if (chronometerEndMillis == null) {
+        // the caller passed no explicit end (#155 seam above) and no
+        // count-up start anchor either (a stopwatch card must never
+        // borrow a stale countdown from the mirror), fall back to
+        // the mirror: when it knows the session's end wall-clock,
+        // the system itself ticks the countdown — accurate on the
+        // lock screen and AOD even between shield-loop iterations.
+        if (chronometerEndMillis == null && chronometerStartMillis == null) {
             val endWallMs = SessionMirror.read(this).endWallMs
             if (endWallMs > System.currentTimeMillis()) {
                 builder.setWhen(endWallMs)
@@ -1664,7 +1713,8 @@ class MonolithShieldService : Service() {
         bigText: String? = null,
         chronometerEndMillis: Long? = null,
         badgeNumber: Int? = null,
-        inSafeBreak: Boolean = false
+        inSafeBreak: Boolean = false,
+        chronometerStartMillis: Long? = null
     ) {
         // Issue #122: only the standing (ongoing) protection
         // promise is remembered for battery re-posts \u2014 a detached
@@ -1686,7 +1736,8 @@ class MonolithShieldService : Service() {
             NOTIFICATION_ID,
             buildNotification(
                 title, warnedSubtitle, ongoing, autoCancel, timeoutAfterMs,
-                warnedBigText, chronometerEndMillis, badgeNumber, inSafeBreak
+                warnedBigText, chronometerEndMillis, badgeNumber, inSafeBreak,
+                chronometerStartMillis
             )
         )
     }
@@ -1698,6 +1749,19 @@ class MonolithShieldService : Service() {
     private fun postSummons(title: String, text: String, timeoutAfterMs: Long = 0) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Issue #94 (routed stray ex #155, FEEL-2): this channel
+            // used to be created with NO sound/vibration specified,
+            // so it inherited the system defaults and stacked a
+            // channel sound + vibration on top of the engine's own
+            // PCM summons and haptic at the same event — two voices,
+            // one moment. Wing law: per event the engine OR the
+            // channel speaks, never both; the summons events are
+            // engine-owned, so the channel is now EXPLICITLY silent
+            // (sound none, vibration off) and carries only the
+            // visual card. Channels are immutable once created, so
+            // the specified behaviour lives under a v2 id and the
+            // legacy id is deleted — the #155 F4 migration pattern.
+            manager.deleteNotificationChannel(LEGACY_SUMMONS_CHANNEL_ID)
             val channel = NotificationChannel(
                 SUMMONS_CHANNEL_ID,
                 "Session summons",
@@ -1705,6 +1769,8 @@ class MonolithShieldService : Service() {
             ).apply {
                 description = "Break-over and session-end calls back to the desk"
                 setShowBadge(false)
+                setSound(null, null)
+                enableVibration(false)
             }
             manager.createNotificationChannel(channel)
         }
@@ -1907,7 +1973,13 @@ class MonolithShieldService : Service() {
         // is away from the phone by design (break expiry, session
         // end). The standing countdown stays on the silent LOW
         // channel; a summons must be capable of being heard.
-        const val SUMMONS_CHANNEL_ID = "monolith_summons_channel"
+        const val SUMMONS_CHANNEL_ID = "monolith_summons_channel_v2"
+
+        /** Issue #94 (routed stray ex #155): the pre-specification
+         *  summons channel — created with unspecified sound/
+         *  vibration defaults, immutable on-device; deleted wherever
+         *  the v2 channel is created so its defaults die with it. */
+        const val LEGACY_SUMMONS_CHANNEL_ID = "monolith_summons_channel"
         const val SUMMONS_NOTIFICATION_ID = 4097
         const val ACTION_START_SHIELD = "com.example.action.START_SHIELD"
         const val ACTION_STOP_SHIELD = "com.example.action.STOP_SHIELD"

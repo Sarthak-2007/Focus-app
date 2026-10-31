@@ -201,6 +201,11 @@ fun isRoutineBornKind(kind: String): Boolean = when (kind) {
  * - [USED_PEEK] — MonolithViewModel's peek grant: he was LET IN
  *   on a 2-minute lease. NOT a block, and the one value this
  *   enumeration exists to keep off the slip.
+ * - [OPENED_LAUNCHER] — MonolithViewModel
+ *   .leaveAirlockViaLauncherDoors: he left the intercept
+ *   through a launcher door. A let-through, never a block:
+ *   off the slip (not in the allowlist) and off the blocked
+ *   counters (issue #7 charge N2).
  *
  * (The repository's disarm path also writes intercept rows with
  * the disarm reason as outcome, but always under the system
@@ -215,6 +220,7 @@ object InterceptOutcome {
     const val STAYED_FOCUSED = "Stayed Focused"
     const val SPLIT_INTO_MICRO_STEP = "Split Into 10m Micro-Step"
     const val USED_PEEK = "Used 2m Peek"
+    const val OPENED_LAUNCHER = "Opened Launcher"
 
     /** The outcomes that were truly turned away. Anything else —
      *  a peek grant, or a value no writer above produces — is
@@ -228,6 +234,96 @@ object InterceptOutcome {
  *  and the test suites' spelling differ in case only. */
 fun isBlockedInterceptOutcome(outcome: String): Boolean =
     InterceptOutcome.BLOCKED_OUTCOMES.any { it.equals(outcome.trim(), ignoreCase = true) }
+
+/**
+ * Issue #324, finding 3 (build half): the intercept log's TYPED
+ * outcome. Until this type landed, every intercept row's outcome
+ * was a free-text String written from five ViewModel call sites
+ * and two repository inserts, and every reader re-derived meaning
+ * by string comparison. The kind is now computed ONCE, at the
+ * write, by [fromStoredWord] over the exact legacy word — and
+ * persisted beside it (intercept_logs.outcomeKind, migration
+ * 18→19). The legacy word column is NOT removed: the receipt
+ * assembly's allowlist ([isBlockedInterceptOutcome]) and every
+ * historical row keep reading it, and the kind's [storedWord]
+ * is that same word, so kind and word can never disagree on a
+ * row this code wrote.
+ *
+ * [SESSION_END] and [UNKNOWN] carry no single word: session-end
+ * rows ride the reserved system package with the disarm reason
+ * as their word (several spellings, one meaning — the session
+ * ended), and a word no writer above produces is UNKNOWN, never
+ * guessed into a class.
+ */
+enum class InterceptOutcomeKind(val storedWord: String?) {
+    BLOCKED(InterceptOutcome.BLOCKED),
+    STAYED_FOCUSED(InterceptOutcome.STAYED_FOCUSED),
+    SPLIT_INTO_MICRO_STEP(InterceptOutcome.SPLIT_INTO_MICRO_STEP),
+    USED_PEEK(InterceptOutcome.USED_PEEK),
+    INTERCEPTED("Intercepted"),
+    LEFT_WITHOUT_CHOOSING("Left Airlock Without Choosing"),
+    OPENED_LAUNCHER("Opened Launcher"),
+    UNINSTALL_ATTEMPT_RETURNED("Uninstall Attempt — Returned"),
+    OPEN_EXPOSURE("Open exposure"),
+    SESSION_END(null),
+    UNKNOWN(null);
+
+    /** The kinds that were truly turned away — the typed twin of
+     *  [InterceptOutcome.BLOCKED_OUTCOMES]. */
+    val isBlock: Boolean
+        get() = this == BLOCKED || this == STAYED_FOCUSED || this == SPLIT_INTO_MICRO_STEP
+
+    companion object {
+        /** The kind for a legacy outcome word. Case-insensitive
+         *  (the writers' and the test suites' spellings differ in
+         *  case only); an unrecognised word is [UNKNOWN]. */
+        fun fromStoredWord(word: String): InterceptOutcomeKind {
+            val trimmed = word.trim()
+            return entries.firstOrNull { kind ->
+                kind.storedWord?.equals(trimmed, ignoreCase = true) == true
+            } ?: UNKNOWN
+        }
+
+        /** The kind persisted under a kind NAME (the outcomeKind
+         *  column stores [Enum.name]); blank/garbled → [UNKNOWN],
+         *  and callers fall back to [fromStoredWord] on the row's
+         *  word when this yields UNKNOWN for a pre-typing row. */
+        fun fromKindName(name: String?): InterceptOutcomeKind =
+            entries.firstOrNull { it.name == name } ?: UNKNOWN
+    }
+}
+
+/**
+ * Issue #324, finding 3 (build half): the intercept log's TYPED
+ * trigger. The writers already choose a [DistractionTriggerReason]
+ * enum at the call site, but only its free-text shortTag reached
+ * the row. [derive] recovers the kind from the stored facts: the
+ * reserved system packages (session-end and exposure rows) are
+ * SYSTEM whatever their reason column carries (exposure rows
+ * carry the exposed package name there); every other row maps
+ * its shortTag back to the reason that minted it.
+ */
+enum class InterceptTriggerKind {
+    HABIT, STUCK, TIRED, MESSAGE, SYSTEM, UNKNOWN;
+
+    companion object {
+        fun derive(triggerReason: String, packageName: String): InterceptTriggerKind {
+            if (packageName == "com.monolith.system" ||
+                packageName == "com.monolith.exposure"
+            ) return SYSTEM
+            return when (triggerReason.trim()) {
+                DistractionTriggerReason.MUSCLE_MEMORY.shortTag -> HABIT
+                DistractionTriggerReason.STUCK_ON_PROBLEM.shortTag -> STUCK
+                DistractionTriggerReason.BORED_OR_TIRED.shortTag -> TIRED
+                DistractionTriggerReason.NEED_INFO.shortTag -> MESSAGE
+                else -> UNKNOWN
+            }
+        }
+
+        fun fromKindName(name: String?): InterceptTriggerKind =
+            entries.firstOrNull { it.name == name } ?: UNKNOWN
+    }
+}
 
 /** Issue #13, A-10(iv): kinds whose end is a STORED-END fact —
  *  a routine row's end is its frozen windowEndMillis, so filing
@@ -366,6 +462,13 @@ data class PendingReceipt(
     // silently stretched the plan (it is inside spanTargetSeconds)
     // and no surface ever mentioned it.
     val penaltySecondsAdded: Int = 0,
+    // Issue #525: the boot-to-shield seconds this session's
+    // reboots left unshielded (the row's rebootGapSeconds),
+    // threaded so the slip can NAME them — the uptime before
+    // the shield's first raise was never credited, and the
+    // REBOOT line says so instead of letting the reboot pass
+    // silently. 0 prints nothing (the omission law).
+    val rebootGapSeconds: Int = 0,
     /** Issue #129 F3: the unguarded apps actually used inside
      *  this session's window (labels, longest-use first), read
      *  back from the ending write's exposure booking. Empty for
@@ -428,6 +531,9 @@ data class ReceiptState(
     // Audit R3 #113, finding 4: see PendingReceipt — the slip
     // prints the penalty its plan silently included.
     val penaltySecondsAdded: Int = 0,
+    // Issue #525: see PendingReceipt.rebootGapSeconds — the
+    // slip prints the REBOOT line the reboot honestly cost.
+    val rebootGapSeconds: Int = 0,
     /** Issue #129 F3: see [PendingReceipt.openExposureApps]. */
     val openExposureApps: List<String> = emptyList(),
     // Audit R3b #145: see PendingReceipt.forgedArtifactName.

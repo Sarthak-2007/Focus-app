@@ -5,6 +5,8 @@ import com.example.R
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -55,7 +57,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.BatterySnapshot
-import com.example.data.CapturedNotificationEntity
 import com.example.data.ClockText
 import androidx.compose.ui.platform.LocalContext
 import com.example.data.NightDimMath
@@ -1202,6 +1203,27 @@ internal fun doorMemoryLineText(priorInterceptsThisSession: Int): String? {
     return "${ordinalWord(priorInterceptsThisSession + 1)} TIME THIS SESSION"
 }
 
+/**
+ * The door's second memory (issue #264, B-264-25): how long
+ * since THIS APP was last reached for, read from the persisted
+ * intercept log — the count line says how often this session;
+ * this line says how long the urge waited between tries, which
+ * is the self-knowledge the moment can actually teach from.
+ * Prints whenever a prior reach exists in the log, even on a
+ * session's first visit to this door. No prior reach (0) prints
+ * nothing: the door claims no memory it doesn't have.
+ */
+internal fun doorLastReachLine(lastReachAtMillis: Long, nowMillis: Long): String? {
+    if (lastReachAtMillis <= 0L) return null
+    val agoSeconds = ((nowMillis - lastReachAtMillis) / 1000L).coerceAtLeast(0L)
+    return when {
+        agoSeconds < 60L -> "LAST REACH UNDER A MINUTE AGO"
+        agoSeconds < 3_600L -> "LAST REACH ${agoSeconds / 60L} MIN AGO"
+        agoSeconds < 86_400L -> "LAST REACH ${agoSeconds / 3_600L} H AGO"
+        else -> "LAST REACH ${agoSeconds / 86_400L} D AGO"
+    }
+}
+
 internal fun ordinalWord(n: Int): String = when (n) {
     1 -> "FIRST"
     2 -> "SECOND"
@@ -1282,6 +1304,46 @@ internal fun airlockStakeLine(emergencyBreaksRemaining: Int): String? = when {
         "EMERGENCY BREAK: $emergencyBreaksRemaining LEFT THIS WEEK"
 }
 
+/**
+ * Issue #125 (armed-wrong F5 remainder, pure, unit-tested): the
+ * Airlock's grace window, derived — never counted. The state
+ * carries the session's verified elapsed at the intercept instant;
+ * the live elapsed is that snapshot aged by the monotonic delta
+ * from the intercept's anchor (the overlay's resolved intercept
+ * instant — the same anchor its wall counts from), so the door's
+ * print can never drift from the repository's own grace law
+ * ([MonolithRepository.GRACE_WINDOW_SECONDS], verified elapsed
+ * ≤ window). Returns the badge seconds the user can still use —
+ * the Deck chip's own formula (window + 1 − elapsed, coerced to
+ * 1..window: 10 on the first usable frame, 1 on the last) — or
+ * null when no abort stands: no session snapshot carried
+ * (elapsedAtIntercept < 0), or the window is already spent.
+ */
+internal fun airlockGraceBadgeSeconds(
+    elapsedAtInterceptSeconds: Int,
+    interceptedAtMonoMillis: Long,
+    nowMonoMillis: Long,
+    windowSeconds: Int = MonolithRepository.GRACE_WINDOW_SECONDS
+): Int? {
+    if (elapsedAtInterceptSeconds < 0) return null
+    val agedSeconds = ((nowMonoMillis - interceptedAtMonoMillis)
+        .coerceAtLeast(0L) / 1000L).toInt()
+    val liveElapsed = elapsedAtInterceptSeconds + agedSeconds
+    if (liveElapsed > windowSeconds) return null
+    return (windowSeconds + 1 - liveElapsed).coerceIn(1, windowSeconds)
+}
+
+/**
+ * Issue #125: the door's grace chip words. A routine-born session
+ * never takes the free path — its tap is booked by the routine's
+ * judging funnel — so its chip carries the Deck's judged label,
+ * never the free abort's promise. Every other session in its
+ * window carries the identical words the Deck and off-Deck chips
+ * carry: one door, one name.
+ */
+internal fun airlockGraceChipLabel(sessionIsRoutine: Boolean): String =
+    if (sessionIsRoutine) "END ROUTINE · WILL BE JUDGED" else "GRACE WINDOW ABORT"
+
 /** English ordinal for the attempt mirror ("1ST", "2ND", "3RD",
  *  "4TH" — the 11/12/13 teens take TH, never ST/ND/RD). */
 internal fun attemptOrdinal(n: Int): String {
@@ -1355,7 +1417,17 @@ internal fun peekWithheldReasonVisible(peekReady: Boolean): Boolean = !peekReady
  */
 internal fun peekOfferPreviewText(durationSeconds: Int): String {
     val minutes = durationSeconds / 60
-    return "AFTER THE BREATH: ONE TAP OPENS THIS APP FOR $minutes MINUTES"
+    // Issue #102 rider on #517's set-length prints: at the SET
+    // length of 1 minute (now reachable since #517's writer
+    // landed) the preview names it in the singular rather than
+    // printing a grammar the lease never spoke. At 120s the
+    // line is byte-identical to before (TemptationJourneyTest
+    // pins it).
+    return if (minutes == 1) {
+        "AFTER THE BREATH: ONE TAP OPENS THIS APP FOR 1 MINUTE"
+    } else {
+        "AFTER THE BREATH: ONE TAP OPENS THIS APP FOR $minutes MINUTES"
+    }
 }
 
 /**
@@ -1396,220 +1468,6 @@ internal fun airlockSubstituteFor(interceptInstanceId: Long): String =
 internal fun airlockSubstituteLine(interceptInstanceId: Long): String =
     "INSTEAD, ONE MINUTE: ${airlockSubstituteFor(interceptInstanceId)}"
 
-/** The capture's own time, for a frozen row: HH:mm when the
- *  capture is from today, d MMM · HH:mm when it is not — yesterday's
- *  held rows legitimately sit in this morning's snapshot, and the
- *  AS OF stamp dates the snapshot, not the rows. */
-private fun captureTimeLabel(is24Hour: Boolean, timestampMillis: Long): String {
-    val zone = java.time.ZoneId.systemDefault()
-    val captureDate = java.time.Instant.ofEpochMilli(timestampMillis).atZone(zone).toLocalDate()
-    // #88: the time half follows the system 12/24-hour setting; the
-    // day half names the day in the device locale when it is not today.
-    return if (captureDate == java.time.LocalDate.now(zone)) {
-        ClockText.timeOfDay(is24Hour, timestampMillis)
-    } else {
-        ClockText.dayAndTime(is24Hour, timestampMillis)
-    }
-}
-
-/**
- * 2. CAPTURED NOTIFICATIONS DIGEST SHEET
- *
- * Two modes. LIVE (unsealed): the shipped sheet — live list, live
- * count, CLEAR ALL — plus a per-row delete, so one capture can be
- * triaged without wiping the table. FROZEN (sealed): a snapshot,
- * not a feed — the header stamps HELD · AS OF {HH:mm}, there is no
- * count and no CLEAR ALL (absent, not disabled), rows carry their
- * own capture times and no affordance of any kind, and acting is
- * refused at the repository besides. Reading is free; acting stays
- * sealed. Closing is not an act on the held world and works in
- * both modes.
- */
-@Composable
-fun CapturedNotificationsDigestSheet(
-    visible: Boolean,
-    notifications: List<CapturedNotificationEntity>,
-    frozenAtMillis: Long? = null,
-    frozenMode: Boolean = false,
-    onClearAll: () -> Unit,
-    onDeleteItem: (Int) -> Unit = {},
-    onDismiss: () -> Unit
-) {
-    // CLEAR ALL is the one irreversible mass action in this sheet:
-    // it arms on the first tap and fires only on the second
-    // (issue #138). The arm resets whenever the sheet hides.
-    var clearAllArmed by remember { mutableStateOf(false) }
-    LaunchedEffect(visible) {
-        if (!visible) clearAllArmed = false
-    }
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(MonolithCurves.specC()),
-        exit = fadeOut(MonolithCurves.specA())
-    ) {
-        val scheme = MaterialTheme.colorScheme
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(scheme.scrim.copy(alpha = 0.65f))
-                .clickable(onClick = onDismiss)
-                .padding(12.dp),
-            contentAlignment = Alignment.BottomCenter
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(scheme.surfaceBright)
-                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(24.dp))
-                    .clickable(enabled = false) {}
-                    .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (frozenMode) {
-                        if (frozenAtMillis != null) {
-                            Text(
-                                text = rememberMixedTypographyText(
-                                    wordPrefix = "HELD · AS OF ",
-                                    monoNumber = ClockText.timeOfDay(LocalContext.current, frozenAtMillis),
-                                    wordColor = scheme.onBackground,
-                                    monoColor = scheme.primaryContainer
-                                ),
-                                fontSize = 14.sp
-                            )
-                        } else {
-                            // The freeze is still landing: the frozen
-                            // frame with no stamp and no rows yet —
-                            // never one frame of the live list.
-                            Text(
-                                text = stringResource(R.string.label_held),
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = scheme.onBackground
-                            )
-                        }
-                    } else {
-                        Text(
-                            text = rememberMixedTypographyText(
-                                wordPrefix = "HELD NOTIFICATIONS • ",
-                                monoNumber = notifications.size.toString(),
-                                wordColor = scheme.onBackground,
-                                monoColor = scheme.primaryContainer
-                            ),
-                            fontSize = 14.sp
-                        )
-                        BlockitActionChip(
-                            wordLabel = if (clearAllArmed) "TAP AGAIN TO CLEAR" else "CLEAR ALL",
-                            onClick = {
-                                if (clearAllArmed) {
-                                    clearAllArmed = false
-                                    onClearAll()
-                                } else {
-                                    clearAllArmed = true
-                                }
-                            }
-                        )
-                    }
-                }
-                if (frozenMode && frozenAtMillis != null) {
-                    Text(
-                        text = "Everything held so far, as of the time above — this list refreshes as new items are held. Nothing here opens.",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 13.sp,
-                        color = scheme.onSurfaceVariant
-                    )
-                }
-                HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-
-                if (notifications.isEmpty()) {
-                    if (!frozenMode || frozenAtMillis != null) {
-                        Text(
-                            text = if (frozenMode) {
-                                "Nothing has been held."
-                            } else {
-                                "Zero notifications intercepted during focus."
-                            },
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 13.sp,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 24.dp)
-                        )
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.height(220.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(notifications, key = { it.id }) { item ->
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(scheme.surfaceVariant)
-                                    .padding(12.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        // Both modes print the capture
-                                        // time (issue #138): a live row
-                                        // without its time hides whether
-                                        // it is fresh or hours old.
-                                        text = "${item.appName} • ${item.senderTitle} • ${captureTimeLabel(ClockText.is24Hour(LocalContext.current), item.timestampMillis)}",
-                                        fontFamily = AtkinsonHyperlegibleFamily,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 12.sp,
-                                        color = scheme.onBackground,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    if (!frozenMode) {
-                                        Text(
-                                            text = stringResource(R.string.key_del),
-                                            fontFamily = AtkinsonHyperlegibleFamily,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 11.sp,
-                                            color = scheme.onSurfaceVariant,
-                                            modifier = Modifier.clickable { onDeleteItem(item.id) }
-                                        )
-                                    }
-                                }
-                                // A title-only capture has no body
-                                // (Truth Car 3, appendix): the row
-                                // prints the title alone, never an
-                                // invented sentence under it.
-                                if (item.messageBody.isNotBlank()) {
-                                    Text(
-                                        text = item.messageBody,
-                                        fontFamily = AtkinsonHyperlegibleFamily,
-                                        fontSize = 12.sp,
-                                        color = scheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                BlockitActionChip(
-                    wordLabel = "CLOSE DIGEST",
-                    isPrimaryInk = true,
-                    onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
-    }
-}
-
 /**
  * 5. AIRLOCK INTERCEPTION OVERLAY (Decision #16: 5s Breathing Delay Wall)
  */
@@ -1635,6 +1493,13 @@ fun AirlockInterceptOverlay(
     // identical effect (the session ends). Placement only; the
     // valve's price and power are untouched.
     onRequestEmergencyBreak: () -> Unit = {},
+    // Issue #125 (armed-wrong F5 remainder): the grace abort, at
+    // the door. Inside the session's opening window the free exit
+    // stands on the Airlock too — the same call the Deck's chip
+    // makes — so checking a blocked app no longer burns the
+    // window invisibly. Outside the window the chip does not
+    // render at all; the valve below remains the priced door.
+    onGraceAbort: () -> Unit = {},
     // Issue #11 (FIX-8): the honest exit — a quiet text row under
     // RETURN that routes to the door-originated Disarm entry. It
     // ends nothing itself; the Disarm face carries the gravity.
@@ -1646,7 +1511,14 @@ fun AirlockInterceptOverlay(
     // Issue #318 F4: the breathing wall's length is a stored,
     // per-configuration value (AirlockBreathStore), no longer a
     // composable-local literal. Default = Decision #16's 5 seconds.
-    breathSeconds: Int = com.example.data.AirlockBreathStore.DEFAULT_SECONDS
+    breathSeconds: Int = com.example.data.AirlockBreathStore.DEFAULT_SECONDS,
+    // Issue #517 (4-A): the SET peek length, from the same Guard
+    // row the lease reads — the offer's preview, badge and label
+    // print it, never the retired PEEK_DURATION_SECONDS constant
+    // (the EditableTimes seam's §4.3 law). Default 2 = the
+    // settings default, so render harnesses print the shipped
+    // truth.
+    peekMinutes: Int = 2
 ) {
     // Issue #55 (HIGH): System Back must never bypass the wall toward
     // the blocked app. While the airlock stands, Back is swallowed —
@@ -1676,7 +1548,46 @@ fun AirlockInterceptOverlay(
                 airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), effectiveWallSeconds)
             )
         }
+        // Issue #125 (F5 remainder): the grace chip's clock. The
+        // window is only 10 seconds, so while an abort could stand
+        // this face re-derives it four times a second from the
+        // monotonic anchor — the badge steps down per second and
+        // the chip vanishes on the first frame past the window,
+        // never lingering as a stale promise. The loop ends the
+        // moment no abort can stand; it never ticks a counter of
+        // its own (the derivation is airlockGraceBadgeSeconds).
+        var graceNowMono by remember(state.interceptInstanceId) {
+            mutableLongStateOf(SystemClock.elapsedRealtime())
+        }
+        // The anchor is wallStartMono — the overlay's own resolved
+        // intercept instant (the state's monotonic stamp, or the
+        // first-frame fallback the wall itself uses): live-trigger
+        // states carry no stamp, and ageing from 0 would read as
+        // an aeon and stand no abort at all.
         LaunchedEffect(state.interceptInstanceId, state.isVisible) {
+            while (
+                airlockGraceBadgeSeconds(
+                    state.sessionElapsedSecondsAtIntercept,
+                    wallStartMono,
+                    graceNowMono
+                ) != null
+            ) {
+                delay(200L)
+                graceNowMono = SystemClock.elapsedRealtime()
+            }
+        }
+        val graceBadgeSeconds = airlockGraceBadgeSeconds(
+            state.sessionElapsedSecondsAtIntercept,
+            wallStartMono,
+            graceNowMono
+        )
+        // Issue #254 line 14: the effect also re-keys on the
+        // escalated length itself — the ladder's count can land a
+        // beat after the door stands (the ViewModel reads it back
+        // after booking the arrival), and the reprice must restart
+        // the countdown derivation from the same anchored start
+        // rather than run out the un-escalated capture.
+        LaunchedEffect(state.interceptInstanceId, state.isVisible, effectiveWallSeconds) {
             countdownSecs =
                 airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), effectiveWallSeconds)
             while (countdownSecs > 0) {
@@ -1797,6 +1708,20 @@ fun AirlockInterceptOverlay(
                 // visit's ordinal, THIS SESSION only, printed
                 // only when a prior booking exists.
                 doorMemoryLineText(state.priorInterceptsThisSession)?.let { line ->
+                    Text(
+                        text = line,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f)
+                    )
+                }
+
+                // Issue #264 (B-264-25): the door's second
+                // memory — how long since this app was last
+                // reached for, from the persisted intercept log.
+                // Prints whenever a prior reach exists, even on
+                // this session's first visit to the door.
+                doorLastReachLine(state.lastReachAtMillis, System.currentTimeMillis())?.let { line ->
                     Text(
                         text = line,
                         fontFamily = AtkinsonHyperlegibleFamily,
@@ -2017,23 +1942,26 @@ fun AirlockInterceptOverlay(
                     if (peekReady) {
                         if (countdownSecs > 0) {
                             Text(
-                                text = peekOfferPreviewText(MonolithRepository.PEEK_DURATION_SECONDS),
+                                text = peekOfferPreviewText(peekMinutes * 60),
                                 fontFamily = AtkinsonHyperlegibleFamily,
                                 fontSize = 12.5.sp,
                                 color = NightColorPrimary.copy(alpha = 0.8f)
                             )
                         }
                         BlockitActionChip(
-                            wordLabel = "2-MINUTE PEEK",
+                            wordLabel = "$peekMinutes-MINUTE PEEK",
                             // Issue #114, finding 5: this door is
                             // NOT an emergency — it is the routine,
                             // repeatable, cooldown-priced peek. The
                             // EMERGENCY name belongs only to the
                             // session-ending weekly break.
                             // SIL-2 / W-29: the badge is the SET
-                            // value, read from the lease machinery's
-                            // own constant — no hardcoded minutes.
-                            monoBadge = peekBadgeText(MonolithRepository.PEEK_DURATION_SECONDS),
+                            // value — since issue #517 (4-A) it is
+                            // the Guard row's peekMinutes passed to
+                            // this overlay, not the retired constant:
+                            // the label and badge print the length
+                            // the lease will actually grant.
+                            monoBadge = peekBadgeText(peekMinutes * 60),
                             onClick = { if (countdownSecs == 0) onTake2MinutePeek() },
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -2124,6 +2052,26 @@ fun AirlockInterceptOverlay(
                     }
                 }
 
+                // THE GRACE ABORT, AT THE DOOR (issue #125,
+                // armed-wrong F5 remainder): for the session's
+                // opening window only, the free exit stands above
+                // the priced valve — checking what you armed wrong
+                // by tapping a blocked app no longer burns the
+                // window invisibly on a face with no countdown.
+                // Same words, same live badge, same call as the
+                // Deck's chip; a routine-born session wears the
+                // Deck's judged label, never the free promise.
+                if (graceBadgeSeconds != null) {
+                    BlockitActionChip(
+                        wordLabel = airlockGraceChipLabel(state.sessionIsRoutine),
+                        monoBadge = "${graceBadgeSeconds}s",
+                        isPrimaryInk = true,
+                        onClick = onGraceAbort,
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "airlock_grace_abort_button"
+                    )
+                }
+
                 // THE VALVE, AT THE DOOR (issue #119, finding 2):
                 // one tap from the intercept to the same emergency
                 // break the Deck offers — no multi-screen detour
@@ -2185,7 +2133,18 @@ fun PeekCountdownPill(
     state: com.example.ui.FloatingPeekPillState,
     onEndEarly: () -> Unit
 ) {
-    if (!state.isActive) return
+    // Issue #102 (retained DAYLIGHT break 2): the pill arrives
+    // and leaves with the ceremony its overlay twin got — a
+    // fade + settle, never the bare `if (!state.isActive) return`
+    // snap the W9 filing charged. The pill's seat and print are
+    // unchanged; only its manners are new.
+    AnimatedVisibility(
+        visible = state.isActive,
+        enter = fadeIn(MonolithCurves.specB()) +
+            slideInVertically(MonolithCurves.specB()) { -it / 2 },
+        exit = fadeOut(MonolithCurves.specA()) +
+            slideOutVertically(MonolithCurves.specA()) { -it / 2 }
+    ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -2230,6 +2189,7 @@ fun PeekCountdownPill(
                     .size(16.dp)
             )
         }
+    }
     }
 }
 

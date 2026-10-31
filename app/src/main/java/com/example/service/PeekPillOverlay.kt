@@ -50,12 +50,23 @@ object PeekPillOverlay {
     private var root: LinearLayout? = null
     private var labelView: TextView? = null
     private var clockView: TextView? = null
+    // Issue #102: an exit fade in flight — a re-show in this
+    // window cancels the exit instead of fighting it.
+    private var exiting = false
 
     fun showOrUpdate(context: Context, appName: String, secondsRemaining: Int) {
         val appCtx = context.applicationContext
         if (!Settings.canDrawOverlays(appCtx)) {
             hide(appCtx)
             return
+        }
+        if (exiting) {
+            // The lease lives again before the fade finished:
+            // cancel the exit, restore the resting face.
+            root?.animate()?.cancel()
+            root?.alpha = PillCeremony.REST_ALPHA
+            root?.translationY = 0f
+            exiting = false
         }
         if (root == null) {
             if (!buildAndAttach(appCtx)) return
@@ -69,15 +80,23 @@ object PeekPillOverlay {
     }
 
     fun hide(context: Context) {
-        val wm = windowManager
-        val view = root
-        if (wm != null && view != null) {
-            runCatching { wm.removeView(view) }
+        val view = root ?: return
+        if (exiting) return
+        exiting = true
+        // Issue #102: the pill leaves the way it came — a fade,
+        // not a snap. The window is removed only when the fade
+        // completes (PillCeremony), and only if this window is
+        // still the standing one.
+        animatePillOut(view) {
+            if (root === view) {
+                runCatching { windowManager?.removeView(view) }
+                windowManager = null
+                root = null
+                labelView = null
+                clockView = null
+            }
+            exiting = false
         }
-        windowManager = null
-        root = null
-        labelView = null
-        clockView = null
     }
 
     private fun buildAndAttach(appCtx: Context): Boolean {
@@ -94,26 +113,39 @@ object PeekPillOverlay {
             setStroke(dp(1), Color.rgb(0xE4, 0x7E, 0x35))
         }
 
+        // Issue #102: the app's own figures reach this face —
+        // Anonymous Pro via PillTheme, the same typeface the
+        // #16 pill lane loads. Before this the one surface he
+        // sees inside another app wore the platform default.
+        val figures = PillTheme.figures(appCtx)
         val label = TextView(appCtx).apply {
             setTextColor(Color.rgb(0xF4, 0xEF, 0xEE))
             textSize = 11f
+            typeface = figures
             setPadding(0, 0, dp(10), 0)
         }
         val clock = TextView(appCtx).apply {
             setTextColor(Color.rgb(0xF4, 0xEF, 0xEE))
             textSize = 18f
+            typeface = figures
             setPadding(0, 0, dp(10), 0)
         }
         val end = Button(appCtx).apply {
             text = "END PEEK"
             textSize = 11f
+            typeface = figures
             setTextColor(Color.rgb(0x2A, 0x26, 0x23))
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = dp(10).toFloat()
                 setColor(Color.rgb(0xF4, 0xEF, 0xEE))
             }
-            setOnClickListener { onEndPeekRequest?.invoke() }
+            setOnClickListener {
+                // A press you can feel: the hand-back answers
+                // in the hand, not only on the glass.
+                it.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                onEndPeekRequest?.invoke()
+            }
         }
 
         val row = LinearLayout(appCtx).apply {
@@ -151,6 +183,9 @@ object PeekPillOverlay {
         root = row
         labelView = label
         clockView = clock
+        // Issue #102: the ceremony — the pill settles in, it
+        // does not snap in like a system toast.
+        animatePillIn(row)
         return true
     }
 }

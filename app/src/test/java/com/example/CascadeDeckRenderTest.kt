@@ -96,7 +96,6 @@ class CascadeDeckRenderTest {
                     studyBlocksCount = 2,
                     activeTask = null,
                     queuedTasks = emptyList(),
-                    capturedNotificationsCount = 0,
                     soundEngine = TactileSoundEngine(context),
                     isDarkTheme = dark,
                     onDialMinutesChanged = {},
@@ -109,7 +108,6 @@ class CascadeDeckRenderTest {
                     onRequestDisarm = {},
                     onCancelWithinGraceWindow = {},
                     onOpenAlwaysOnDeskClock = {},
-                    onOpenNotificationDigest = {},
                     armPhase = phase
                 )
             }

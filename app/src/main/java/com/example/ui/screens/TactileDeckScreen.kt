@@ -154,7 +154,6 @@ fun TactileDeckScreen(
     // yesterday's active task (the ViewModel's day-boundary note).
     activeTaskFromYesterday: Boolean = false,
     queuedTasks: List<FocusTaskEntity>,
-    capturedNotificationsCount: Int,
     soundEngine: TactileSoundEngine? = null,
     isDarkTheme: Boolean = false,
     onDialMinutesChanged: (Int) -> Unit,
@@ -167,7 +166,6 @@ fun TactileDeckScreen(
     onRequestDisarm: () -> Unit,
     onCancelWithinGraceWindow: () -> Unit,
     onOpenAlwaysOnDeskClock: () -> Unit,
-    onOpenNotificationDigest: () -> Unit,
     // ST-02 (Truth Car 3): the break's own verb — defaulted so
     // render harnesses that seat the Deck without a live break
     // keep composing; MainActivity wires the VM's verb.
@@ -1110,6 +1108,34 @@ fun TactileDeckScreen(
                 )
             }
 
+            // Issue #125 (armed-wrong F3 remainder): the grace fact,
+            // advertised BEFORE arming. The audit's core charge was
+            // that nothing anywhere before the seal mentions the
+            // window — the free abort was undiscoverable until it
+            // was already running out. The print stands under the
+            // hero, in the same eyebrow register as the blocks
+            // reading it follows, worded from the one constant the
+            // repository enforces so promise and law can never
+            // disagree. It lives in the scroll, NOT the pinned
+            // stack: the stack's geometry is census-pinned
+            // (ScreenshotHarnessTest.zzAccentCensus, foot ≤ 260dp)
+            // and an earlier draft of this line inside the stack
+            // pushed the Bolt bed to a 282dp foot — caught by that
+            // census on run 41201464326 and moved here.
+            if (!isSessionRunning && receiptState == null) {
+                Text(
+                    text = "ARMED WRONG? ${MonolithRepository.GRACE_WINDOW_SECONDS}S FREE ABORT — CANCEL FREE, NOTHING BOOKED",
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("pre_arm_grace_line")
+                )
+            }
+
             if (!isSessionRunning || shotActive) {
                 // The wheel stays composed through the shot as a
                 // frozen ghost (Zug-II §4.1): same instance, physics
@@ -1472,71 +1498,13 @@ fun TactileDeckScreen(
             )
         }
 
-        // =====================================================================
-        // SECTION 3: ARMED — session utilities (desk clock, held notifications)
-        // =====================================================================
-        // F-Z3: the utilities row takes its place at Settle — during
-        // the shot's detention the row is absent, not disabled.
-        if (isSessionRunning && !shotActive) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                BlockitActionChip(
-                    wordLabel = "DESK CLOCK",
-                    isPrimaryInk = true,
-                    onClick = onOpenAlwaysOnDeskClock,
-                    modifier = Modifier.weight(1f),
-                    testTag = "open_desk_clock_button"
-                )
-                BlockitActionChip(
-                    wordLabel = "HELD",
-                    monoBadge = capturedNotificationsCount.toString(),
-                    onClick = onOpenNotificationDigest,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            // ST-02 (Truth Car 3): the break's own verb, seated in
-            // the utilities' room for exactly the break's life. The
-            // register's charge was plain — the break ended only
-            // when its timer expired, and a man ready early waited
-            // out dead minutes. The chip names the act, not the
-            // countdown (the eyebrow already prints the minutes
-            // left); the tap performs the expiry transition now
-            // and books the taken part — see endSafeBreakEarly in
-            // the repository. Full width, primary ink: during a
-            // break this is the Deck's one forward verb.
-            if (activeSession?.isInSafeBreak == true) {
-                BlockitActionChip(
-                    wordLabel = "END BREAK",
-                    isPrimaryInk = true,
-                    onClick = onEndSafeBreak,
-                    modifier = Modifier.fillMaxWidth(),
-                    testTag = "end_break_button"
-                )
-            }
-        }
-
-        // Audit R3 #113, finding 1: the HELD door outlives the
-        // session. The chip above is seated only while a session
-        // runs, so the moment a session ended — watched or not —
-        // the captured notifications became unreachable: no screen
-        // could open the digest again, and even its clear/delete
-        // verbs live inside that sheet. On the idle Deck, when
-        // anything stands captured, the same chip stands here
-        // alone: the count is the fact, the tap opens the same
-        // digest (unsealed opens are live mode — the VM clears
-        // any latched freeze — and the repository's sealed gate
-        // no longer refuses the verbs). An empty capture earns no
-        // chip: a door to nothing would be its own small lie.
-        if (!isSessionRunning && capturedNotificationsCount > 0) {
-            BlockitActionChip(
-                wordLabel = "HELD",
-                monoBadge = capturedNotificationsCount.toString(),
-                onClick = onOpenNotificationDigest,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
+        DeckArmedUtilities(
+            isSessionRunning = isSessionRunning,
+            shotActive = shotActive,
+            isInSafeBreak = activeSession?.isInSafeBreak == true,
+            onOpenAlwaysOnDeskClock = onOpenAlwaysOnDeskClock,
+            onEndSafeBreak = onEndSafeBreak
+        )
 
     }
         // =====================================================================
@@ -1887,6 +1855,64 @@ fun TactileDeckScreen(
  * never the whole Deck, and the sub-step expansion state is
  * keyed by task id so it cannot bleed across tasks.
  */
+/**
+ * Issue #90 (complexity F1 slice): SECTION 3 — the armed
+ * utilities — extracted out of TactileDeckScreen's body as its
+ * own composable, in the pattern of the already-extracted
+ * DeckTaskSection (SECTION 2, issue #50). Behaviour-identical:
+ * the desk-clock/HELD row at Settle, the END BREAK chip for the
+ * break's life, and the idle HELD door (Audit R3 #113 F1) are the
+ * same chips in the same order under the same conditions; the
+ * host's captures are explicit parameters.
+ */
+@Composable
+private fun DeckArmedUtilities(
+    isSessionRunning: Boolean,
+    shotActive: Boolean,
+    isInSafeBreak: Boolean,
+    onOpenAlwaysOnDeskClock: () -> Unit,
+    onEndSafeBreak: () -> Unit
+) {
+    // =====================================================================
+    // SECTION 3: ARMED — session utilities (desk clock, held notifications)
+    // =====================================================================
+    // F-Z3: the utilities row takes its place at Settle — during
+    // the shot's detention the row is absent, not disabled.
+    if (isSessionRunning && !shotActive) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            BlockitActionChip(
+                wordLabel = "DESK CLOCK",
+                isPrimaryInk = true,
+                onClick = onOpenAlwaysOnDeskClock,
+                modifier = Modifier.weight(1f),
+                testTag = "open_desk_clock_button"
+            )
+        }
+        // ST-02 (Truth Car 3): the break's own verb, seated in
+        // the utilities' room for exactly the break's life. The
+        // register's charge was plain — the break ended only
+        // when its timer expired, and a man ready early waited
+        // out dead minutes. The chip names the act, not the
+        // countdown (the eyebrow already prints the minutes
+        // left); the tap performs the expiry transition now
+        // and books the taken part — see endSafeBreakEarly in
+        // the repository. Full width, primary ink: during a
+        // break this is the Deck's one forward verb.
+        if (isInSafeBreak) {
+            BlockitActionChip(
+                wordLabel = "END BREAK",
+                isPrimaryInk = true,
+                onClick = onEndSafeBreak,
+                modifier = Modifier.fillMaxWidth(),
+                testTag = "end_break_button"
+            )
+        }
+    }
+}
+
 @Composable
 private fun DeckTaskSection(
     task: FocusTaskEntity,

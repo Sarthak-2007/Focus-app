@@ -219,14 +219,32 @@ fun ParkDrawer(
     onFixClick: (WatchItemId) -> Unit,
     onCheckClick: () -> Unit,
     onToggleSound: () -> Unit,
+    // #253 line 1: the session soundscape's sled facts — defaults
+    // for the same test-compile reason as the sled facts above;
+    // MainActivity passes both explicitly.
+    soundscapeEnabled: Boolean = false,
+    onToggleSoundscape: () -> Unit = {},
     onToggleShortsReelsSniper: () -> Unit = {},
     socialSitesEnabled: Boolean = false,
     onToggleSocialSites: () -> Unit = {},
+    // Issue #534 F3: the POST_NOTIFICATIONS runtime answer as a
+    // printed note fact — true = granted, false = denied,
+    // null = no answer recorded. A note, never a board grant: it
+    // is NOT one of the six counted PERMISSIONS and never feeds
+    // the Guard denominator. Defaulted like the sled facts above
+    // so older test renders still compile.
+    postNotificationsGranted: Boolean? = null,
+    onReaskPostNotifications: () -> Unit = {},
     onOpenReception: () -> Unit = {},
     // W-08 (batch-10): the spec plate's PEEK line reads the SET
     // peek length from the same GuardSettings row the lease reads
     // — never the retired 2-minute constant. 0 prints PEEK: OFF.
     peekMinutes: Int = 2,
+    // Issue #517 (4-A): the verb that SETS the length the plate
+    // prints — the stepper row seated with the sleds writes the
+    // Guard row through the ViewModel. Default no-op keeps render
+    // harnesses whole.
+    onPeekMinutesChange: (Int) -> Unit = {},
     setupStampMask: Int? = null,
     handoverText: String? = null,
     modifier: Modifier = Modifier
@@ -648,7 +666,10 @@ fun ParkDrawer(
                     Text(
                         text = "Every line names a guard and whether it is SET or MISSING. " +
                             "FIX takes you to the first one that is missing. " +
-                            "Monolith asks for six system grants, one at a time; " +
+                            "Monolith asks for six system grants, one at a time, " +
+                            "plus one Android prompt of its own — permission to post " +
+                            "notifications, whose answer is printed as a note on this " +
+                            "board and is not one of the six; " +
                             "each FIX trip first says what the grant does and what it never does. " +
                             "THE WAY OUT, BEFORE ANY GRANT: every session carries an emergency " +
                             "break — a 60-second hold, once a week. You are never sealed in without an exit.",
@@ -911,6 +932,49 @@ fun ParkDrawer(
                             }
                         }
                     )
+                    // Issue #274: the QUICK SETTINGS TILE line —
+                    // the second verb row on this board, in the
+                    // AUTOSTART row's mould. The tile has existed
+                    // since PR #492 but nothing ever offered to
+                    // place it; a FIX key cannot perform this verb
+                    // either (there is no settings pane that adds
+                    // a QS tile — the system's own add-tile sheet
+                    // is the only door). The word is the tile
+                    // service's lifecycle testimony (TilePlacement:
+                    // onTileAdded/onTileRemoved record the fact;
+                    // the prompt's own answer records it too) —
+                    // ADDED prints only on that testimony, and
+                    // testimony is not proof: if the platform
+                    // ever drops the tile silently, tapping the
+                    // line re-runs the prompt and its answer
+                    // re-derives the fact. The tile's settled law
+                    // is untouched — it still cannot end a
+                    // session. Below Android 13 no system prompt
+                    // exists, so the line names the panel's edit
+                    // screen as the route instead of pretending
+                    // a tap can ask.
+                    val tileContext = LocalContext.current
+                    val tileAdded = com.example.service.TilePlacement.isAdded(tileContext)
+                    ParkBoardRow(
+                        name = "QUICK SETTINGS TILE",
+                        word = com.example.service.TilePlacement.word(tileAdded),
+                        wordIsLack = !tileAdded,
+                        subLine = when {
+                            tileAdded -> null
+                            com.example.service.TilePlacement.systemPromptAvailable(
+                                android.os.Build.VERSION.SDK_INT
+                            ) -> "TAP — THE SYSTEM ASKS, YOU DECIDE"
+                            else -> "ADD IT FROM THE PANEL'S EDIT SCREEN — " +
+                                "THIS ANDROID OFFERS NO PROMPT"
+                        },
+                        onClick = {
+                            if (!tileAdded) {
+                                com.example.service.TilePlacement.requestAdd(
+                                    tileContext, tileContext.mainExecutor
+                                )
+                            }
+                        }
+                    )
                 } else {
                     // Never measured: the board prints its names
                     // only — except the two sled-backed rows
@@ -956,6 +1020,42 @@ fun ParkDrawer(
                             )
                         }
                     }
+                }
+
+                // Issue #534 F3: the POST_NOTIFICATIONS note line,
+                // seated directly under the interceptor family it
+                // belongs with — but as a NOTE, not a board row: it
+                // is not one of the six counted grants, it carries
+                // no FIX targeting, and the Guard denominator never
+                // reads it. Its word is the recorded runtime answer
+                // (or the live system fact the host re-reads), and
+                // a denial carries its own re-ask key.
+                Spacer(modifier = Modifier.height(10.dp))
+                ParkBoardRow(
+                    name = "APP NOTIFICATIONS — NOTE, NOT A GRANT",
+                    word = when (postNotificationsGranted) {
+                        true -> "GRANTED"
+                        false -> "DENIED"
+                        null -> "NOT ASKED"
+                    },
+                    wordIsLack = postNotificationsGranted != true
+                )
+                if (postNotificationsGranted == false && !isSealed) {
+                    Text(
+                        text = "NOTIFICATIONS ARE OFF FOR MONOLITH — TAP TO ASK AGAIN",
+                        style = PillBadgeTextStyle,
+                        color = scheme.onBackground,
+                        modifier = Modifier
+                            .testTag("park_post_notifications_reask")
+                            .then(
+                                if (interactive) {
+                                    Modifier.clickable { onReaskPostNotifications() }
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .padding(vertical = 8.dp)
+                    )
                 }
 
                 // (3) The FIX key — the board's only object. Present
@@ -1356,6 +1456,80 @@ fun ParkDrawer(
                 )
                 ParkHairline()
 
+                // #253 line 1: the session soundscape's sled —
+                // the same row grammar as SOUND EFFECTS above.
+                // The fact is SoundscapeSetting (default OFF);
+                // the sled prints and writes that fact through
+                // the ViewModel, never a local copy.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .semantics(mergeDescendants = true) {},
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(R.string.park_session_soundscape),
+                        style = PillBadgeTextStyle,
+                        color = scheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    var displayedSoundscape by remember { mutableStateOf(soundscapeEnabled) }
+                    LaunchedEffect(soundscapeEnabled) {
+                        delay(260L)
+                        displayedSoundscape = soundscapeEnabled
+                    }
+                    Text(
+                        text = if (displayedSoundscape) "ON" else "OFF",
+                        style = AppTitleTextStyle,
+                        color = scheme.onBackground
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Box {
+                        AndroidView(
+                            factory = { ctx ->
+                                SledSwitchView(ctx).apply {
+                                    chromeMode = true
+                                    contentDescription = "Session soundscape"
+                                    this.soundEngine = soundEngine
+                                    isChecked = soundscapeEnabled
+                                    onToggleRequested = { if (interactiveState.value) onToggleSoundscape() }
+                                    gateCheck = { interactiveState.value }
+                                }
+                            },
+                            update = { view ->
+                                view.soundEngine = soundEngine
+                                if (view.isChecked != soundscapeEnabled) {
+                                    view.isChecked = soundscapeEnabled
+                                }
+                                view.onToggleRequested = { if (interactiveState.value) onToggleSoundscape() }
+                                view.gateCheck = { interactiveState.value }
+                            },
+                            modifier = Modifier
+                                .width(76.dp)
+                                .height(48.dp)
+                                .testTag("park_soundscape_sled")
+                        )
+                        if (!interactive) {
+                            Box(
+                                modifier = Modifier
+                                    .width(76.dp)
+                                    .height(48.dp)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null
+                                    ) {}
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = "THE SOUNDSCAPE RIDES THE SESSION — IT RISES AT THE SEAL AND DIES WITH IT",
+                    style = PillBadgeTextStyle,
+                    color = scheme.onSurfaceVariant
+                )
+                ParkHairline()
+
                 // (5) Shorts + Reels — the sniper's sled, seated
                 // with the Sound sled in the same row grammar
                 // (Truth Car 3, UNA-01). Until this car the board's
@@ -1440,6 +1614,78 @@ fun ParkDrawer(
                                     ) {}
                             )
                         }
+                    }
+                }
+                // (5b) Peek length — the SETTING row for the value
+                // the spec plate (7) prints and the lease reads
+                // (issue #517, 4-A). Until this row, the peekMinutes
+                // column had readers everywhere and a writer
+                // nowhere: the length could never leave its
+                // migration default of 2, and his word that peek
+                // time should be editable stopped at a print. The
+                // steppers write the Guard row through the
+                // ViewModel; 0 is PEEK OFF; the bounds (0–30) are
+                // clamped again at the repository setter. An edit
+                // prices the NEXT grant only — a live lease keeps
+                // the end it was granted (PILL-AND-TIMES §3.4).
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "PEEK LENGTH — SETTING",
+                        style = PillBadgeTextStyle,
+                        color = scheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = if (peekMinutes == 0) "OFF" else "$peekMinutes MIN",
+                        style = AppTitleTextStyle,
+                        color = scheme.onBackground,
+                        modifier = Modifier.testTag("park_peek_value")
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Box(
+                        modifier = Modifier
+                            .width(48.dp)
+                            .height(48.dp)
+                            .clickable {
+                                if (interactiveState.value) {
+                                    onPeekMinutesChange((peekMinutes - 1).coerceAtLeast(0))
+                                }
+                            }
+                            .testTag("park_peek_stepper_minus"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "-",
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp,
+                            color = scheme.onBackground
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .width(48.dp)
+                            .height(48.dp)
+                            .clickable {
+                                if (interactiveState.value) {
+                                    onPeekMinutesChange((peekMinutes + 1).coerceAtMost(30))
+                                }
+                            }
+                            .testTag("park_peek_stepper_plus"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "+",
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp,
+                            color = scheme.onBackground
+                        )
                     }
                 }
                 ParkHairline()
@@ -1618,11 +1864,13 @@ private fun ParkBoardRow(
     // Issue #14 Setup Ledger: an optional second line under the
     // row (the WAS SET AT SETUP — SINCE LOST print).
     subLine: String? = null,
-    // Audit R6 #340 F44: exactly one row on the board is tappable —
-    // the AUTOSTART oath row. Every other row stays print, as the
-    // board's law (print and reading, the FIX key the only object)
-    // demands; the oath is a verb no FIX key can perform, since
-    // there is no settings pane to be sent to.
+    // Audit R6 #340 F44: the board's rows stay print, as its law
+    // (print and reading, the FIX key the only object) demands —
+    // with exactly two verb-row exceptions, each a verb no FIX
+    // key can perform because there is no settings pane to be
+    // sent to: the AUTOSTART oath row (F44) and the QUICK
+    // SETTINGS TILE row (issue #274 — the system's add-tile
+    // sheet is the only door that adds a tile).
     onClick: (() -> Unit)? = null
 ) {
     val scheme = MaterialTheme.colorScheme

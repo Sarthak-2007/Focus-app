@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -333,6 +335,14 @@ fun MonolithPullDownHeader(
                     // form) made the sealed door dead code.
                     .sizeIn(minHeight = 48.dp)
                     .monolithClickable { onGuardLineTap() }
+                    // Issue #97 (recomposed): the Guard line's
+                    // tap target carries its spoken label — the
+                    // way back into setup is named for a11y, not
+                    // just printed for sight.
+                    .semantics {
+                        contentDescription =
+                            "Park — setup, permissions and settings"
+                    }
                     .testTag("header_guard_line")
             )
         }
