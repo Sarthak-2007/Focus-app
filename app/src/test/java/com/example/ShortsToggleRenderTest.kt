@@ -63,7 +63,9 @@ class ShortsToggleRenderTest {
                     onDismiss = {},
                     onFixClick = {},
                     onToggleSound = {},
-                    onToggleShortsReelsSniper = {}
+                    onToggleShortsReelsSniper = {},
+                    socialSitesEnabled = true,
+                    onToggleSocialSites = {}
                 )
             }
         }

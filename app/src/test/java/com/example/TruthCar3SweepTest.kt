@@ -3,8 +3,6 @@ package com.example
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import androidx.activity.ComponentActivity
-import androidx.compose.ui.test.assertDoesNotExist
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.room.Room
@@ -311,7 +309,11 @@ class TruthCar3SweepRoboTest {
                     parkReturnTick = 0,
                     onDismiss = {},
                     onFixClick = {},
-                    onToggleSound = {}
+                    onToggleSound = {},
+                    shortsReelsSniperEnabled = true,
+                    onToggleShortsReelsSniper = {},
+                    socialSitesEnabled = true,
+                    onToggleSocialSites = {}
                 )
             }
         }
@@ -343,7 +345,11 @@ class TruthCar3SweepRoboTest {
                     parkReturnTick = 0,
                     onDismiss = {},
                     onFixClick = {},
-                    onToggleSound = {}
+                    onToggleSound = {},
+                    shortsReelsSniperEnabled = true,
+                    onToggleShortsReelsSniper = {},
+                    socialSitesEnabled = true,
+                    onToggleSocialSites = {}
                 )
             }
         }
