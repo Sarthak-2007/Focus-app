@@ -702,12 +702,11 @@ class MonolithShieldService : Service() {
                 when (breakAnnouncer.onTick(updated.id, updated.isInSafeBreak, updated.safeBreakSecondsRemaining)) {
                     BreakAlert.STARTED -> postBreakAlert(
                         title = "SAFE BREAK STARTED",
-                        text = "Break clock ${breakClockText(updated.safeBreakSecondsRemaining)} — " +
-                            "PEEK apps are open. Locked apps, Shorts, Reels and blocked sites stay shut."
+                        text = getString(R.string.shield_break_started_text, breakClockText(updated.safeBreakSecondsRemaining))
                     )
                     BreakAlert.FINAL_MINUTE -> postBreakAlert(
                         title = "SAFE BREAK ENDING",
-                        text = "Under a minute left — finish up. Blocking resumes when the break clock hits 00:00."
+                        text = getString(R.string.shield_break_final_minute_text)
                     )
                     // ENDED is deliberately NOT posted from here:
                     // Audit R3b #146's summons (same loop, the

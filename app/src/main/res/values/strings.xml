@@ -172,4 +172,6 @@
     <string name="overlay_stopwatch_wait">Or wait: this is a stopwatch session with a 20-minute floor. %1$d more minutes and stopping is free — no break spent.</string>
     <string name="overlay_hold_to_fill">Hold to fill %1$d seconds. Every 15 seconds banks. If your hand slips, what isn\'t banked drains away. The banked part stays.</string>
     <string name="overlay_valve_spent">VALVE SPENT — THIS WEEK\'S BREAK IS USED</string>
+    <string name="shield_break_started_text">Break clock %1$s — PEEK apps are open. Locked apps, Shorts, Reels and blocked sites stay shut.</string>
+    <string name="shield_break_final_minute_text">Under a minute left — finish up. Blocking resumes when the break clock hits 00:00.</string>
 </resources>
