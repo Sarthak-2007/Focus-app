@@ -1409,36 +1409,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         MonolithDestination.VAULT -> 3
     }
 
-    // Issue #534 F3(d): the denied note line's re-ask. While the
-    // system will still show its dialog, re-fire the runtime
-    // request; once it will not (rationale gone after a recorded
-    // denial), the only honest path is this app's own notification
-    // settings pane — the house FIX-trip pattern.
-    fun reaskPostNotifications() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            postNotificationsGranted = true
-            return
-        }
-        val activity = context as? android.app.Activity
-        val rationaleGone = activity != null &&
-            !androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
-                activity, Manifest.permission.POST_NOTIFICATIONS
-            )
-        if (rationaleGone && viewModel.postNotificationsGranted() == false) {
-            launchSettings(
-                context,
-                pinnedSettingsIntent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                },
-                "NOTIFICATIONS"
-            )
-        } else {
-            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
 
     // Issue #143 F6: the window's own brightness rides the same
     // dim progression — the palette was never the only lever, and
@@ -1948,7 +1918,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         socialSitesEnabled = browserUrlBlockerEnabled,
                         onToggleSocialSites = { viewModel.toggleBrowserUrlBlocker() },
                         postNotificationsGranted = postNotificationsGranted,
-                        onReaskPostNotifications = { reaskPostNotifications() },
+                        onReaskPostNotifications = {
+                            reaskPostNotifications(
+                                context = context,
+                                viewModel = viewModel,
+                                notifPermissionLauncher = notifPermissionLauncher,
+                                onNotificationsGranted = { postNotificationsGranted = true }
+                            )
+                        },
                         onOpenReception = {
                             closePark(
                                 parkOpenState, viewModel,
@@ -2582,6 +2559,51 @@ private fun stampSetupAndEnter(
 ) {
     onCloseReception()
     viewModel.navigateTo(MonolithDestination.DECK)
+}
+
+/**
+ * Issue #90 (complexity F3 slice): hoisted out of
+ * MonolithRootApp — the denied note line's re-ask (its own
+ * #534 F3(d) comment travels with it, below).
+ * Behaviour-identical: context, view model and the permission
+ * launcher arrive as parameters; the one state write (the
+ * granted flag, set in the already-granted branch only) rides
+ * a callback at its standing position.
+ */
+// Issue #534 F3(d): the denied note line's re-ask. While the
+// system will still show its dialog, re-fire the runtime
+// request; once it will not (rationale gone after a recorded
+// denial), the only honest path is this app's own notification
+// settings pane — the house FIX-trip pattern.
+private fun reaskPostNotifications(
+    context: android.content.Context,
+    viewModel: MonolithViewModel,
+    notifPermissionLauncher: androidx.activity.result.ActivityResultLauncher<String>,
+    onNotificationsGranted: () -> Unit
+) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+    if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+        PackageManager.PERMISSION_GRANTED
+    ) {
+        onNotificationsGranted()
+        return
+    }
+    val activity = context as? android.app.Activity
+    val rationaleGone = activity != null &&
+        !androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
+            activity, Manifest.permission.POST_NOTIFICATIONS
+        )
+    if (rationaleGone && viewModel.postNotificationsGranted() == false) {
+        launchSettings(
+            context,
+            pinnedSettingsIntent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            },
+            "NOTIFICATIONS"
+        )
+    } else {
+        notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
 }
 
 /** Stop order for KIN-TAB-IN's direction: the incoming screen
