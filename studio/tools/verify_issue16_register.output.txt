@@ -1,0 +1,76 @@
+# Actual run — T24 Builder seat 1, #16 wave, 2026-10-31 (run from branch agent/issue-16-verify-harness checkout; read-only git)
+# Command: python3 studio/tools/verify_issue16_register.py
+
+==============================================================================
+ISSUE #16 — VIER REGISTER VERIFICATION HARNESS (read-only git)
+  main   origin/main                30ce1b41423ac656f3493d6963f42af613fbaad2
+  train  origin/batch-10            833b8d4072254474a3672402e0d9c2525d69f736  (PR #231 head)
+  source origin/agent/issue-16      c40181f9054870dc19dcf74403e07648155edd50
+
+[1] COMMIT REGISTER — main..source must be exactly the 16 ledger SHAs
+  commit     register class           sens  subject
+  873a23e8   CONTENT-IN-TRAIN         -     pill verification plan + merge flags  (in source range)
+  ed75fc88   CONTENT-IN-TRAIN         YES   composed start2MinutePeek, ST-08 launch  (in source range)
+  ecc7fef2   CONTENT-IN-TRAIN         YES   cell package + startPeekLease Boolean gate  (in source range)
+  d81bc162   CONTENT-IN-TRAIN         -     wave-2 NO_VERDICT filing + test-v2.sh  (in source range)
+  477df552   CONTENT-IN-TRAIN         -     wave-2 addendum (Route B / C13)  (in source range)
+  5c3ba072   CONTENT-IN-TRAIN         -     wave-2 push-status record  (in source range)
+  174998e1   CONTENT-IN-TRAIN         -     wave-2 final status DIVERGED record  (in source range)
+  e0498346   CONTENT-IN-TRAIN         -     addendum-2: test-v2.sh Bug B + JDK evidence  (in source range)
+  b0e27e36   CONTENT-IN-TRAIN         YES   pill package lands + queryForegroundPackage seam  (in source range)
+  eb36f6b9   CONTENT-IN-TRAIN/SPLIT   -     signing cure; keystore-gen headline superseded  (in source range)
+  c727dde2   CONTENT-IN-MAIN          -     test-compile census cure  (in source range)
+  2bfc48a1   CONTENT-NOWHERE@filing   -     Glut crazy-ideas (17)  (in source range)
+  db7bc43f   CONTENT-NOWHERE@filing   -     Zunder crazy-ideas  (in source range)
+  09cfb2aa   CONTENT-NOWHERE@filing   -     Glanz interaction detail spec  (in source range)
+  d7eab4a8   CONTENT-NOWHERE@filing   -     GLUT greeting design doc  (in source range)
+  c40181f9   CONTENT-NOWHERE@filing   -     Sable charges S1-S10  (in source range)
+  [PASS] commit set == register (found 16, expected 16) — no extras, none missing
+  register headline: IN-MAIN 1 / IN-TRAIN 10 (incl. 1 SPLIT) / NOWHERE@filing 5 / SENSITIVE 3
+
+[2] PILL PACKAGE — per-file blob verdicts (register: absent in main, rides train)
+  file                                                       main      train     source    verdict
+  app/src/main/java/com/example/service/PillFace.kt          ABSENT    7478d035  7478d035  PASS train-only, blob-identical
+  app/src/main/java/com/example/service/PillController.kt    ABSENT    3678f785  3678f785  PASS train-only, blob-identical
+  app/src/main/java/com/example/service/PillTheme.kt         ABSENT    2675b0ee  2675b0ee  PASS train-only, blob-identical
+  app/src/test/java/com/example/PillDerivationTest.kt        ABSENT    1774930c  1774930c  PASS train-only, blob-identical
+  app/src/test/java/com/example/PillLeaseRepositoryTest.kt   ABSENT    f45779af  f45779af  PASS train-only, blob-identical
+  app/src/main/java/com/example/data/EditableTimes.kt        ABSENT    93c2e5ad  1178cc51  PASS adapted-in-train (peekMinutes/guard-snapshot bodies)
+
+[3] PAPER DOCS — register said CONTENT-NOWHERE at filing; adjudicate today
+  2bfc48a1 studio/crazy/issue-16-glut.md                           main=004ab385 train=004ab385 source=004ab385 -> RECOVERED-IN-MAIN (blob-identical; register bucket superseded)
+  db7bc43f studio/plan/ZUNDER-CRAZY-IDEAS.md                       main=9796f385 train=9796f385 source=9796f385 -> RECOVERED-IN-MAIN (blob-identical; register bucket superseded)
+  09cfb2aa studio/issue-16/GLANZ-INTERACTION-DETAIL-16.md          main=19296f97 train=19296f97 source=19296f97 -> RECOVERED-IN-MAIN (blob-identical; register bucket superseded)
+  d7eab4a8 studio/issue-16/cell/DESIGN-pill-greeting-glut.md       main=fb48de3e train=fb48de3e source=fb48de3e -> RECOVERED-IN-MAIN (blob-identical; register bucket superseded)
+  c40181f9 studio/issue-16/cell/sable-charges.md                   main=d6ef240a train=d6ef240a source=d6ef240a -> RECOVERED-IN-MAIN (blob-identical; register bucket superseded)
+
+[4] SENSITIVE SEAMS — must ride the train, must NOT be re-landed (presence read only)
+  [PASS] b0e27e36 queryForegroundPackage: in train Repo, absent in main Repo
+  [PASS] ecc7fef2 startPeekLease: Boolean in train, Unit-returning in main
+  [PASS] ed75fc88 composed start2MinutePeek: grant gate precedes ST-08 launch in train VM; no gate in main VM — train char-offsets gate@171395 < launch@172406
+
+[5] eb36f6b9 SPLIT — superseded keystore-generation headline must stay dead
+  [PASS] no 'Generate debug keystore' step in train or main workflow
+  fact: main carries 'Verify committed debug keystore' step: True; train: False (location is a fact, not a gate)
+
+[6] c727dde2 CONTENT-IN-MAIN — hunk-level standard (weakest in register, named)
+  [PASS] c727dde2 hunks present in main test tree — socialSitesEnabled pair + shortsReelsSniperEnabled found
+
+[7] NO-DB-MIGRATION — filename scan over merge-base..source diff
+  [PASS] no migration file among 37 changed files — doc references to migrations do not count
+
+[8] TEST CENSUS (train) — register promises 18 pill tests (15 + 3)
+  [PASS] PillDerivationTest.kt: 15 @Test (expected 15)
+  [PASS] PillLeaseRepositoryTest.kt: 3 @Test (expected 3)
+  total on train: 18 (expected 18)
+
+==============================================================================
+STAMP: VERIFIED vs main 30ce1b41423ac656f3493d6963f42af613fbaad2 — files: PillFace.kt, PillController.kt, PillTheme.kt, PillDerivationTest.kt, PillLeaseRepositoryTest.kt, EditableTimes.kt; train 833b8d4072254474a3672402e0d9c2525d69f736; source c40181f9054870dc19dcf74403e07648155edd50
+RESULT: PASS — register's core claims hold mechanically at the pinned SHAs.
+Deltas vs filing, by design of this harness: the 5 paper docs are reported
+in section [3] at their CURRENT state (recovered-in-main), not their
+at-filing NOWHERE state; eb36f6b9 remains SPLIT with its headline dead.
+The pill package lands in main if and only if PR #231 merges — this
+harness proves cargo placement, not the merge.
+
+EXIT_CODE=0
