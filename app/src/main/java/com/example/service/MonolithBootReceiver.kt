@@ -223,6 +223,9 @@ class MonolithBootReceiver : BroadcastReceiver() {
         // that has already passed). When a live session survives,
         // the shield's protecting flip also refreshes; this group
         // is the only refresh door for the idle and ended cases.
+        // (The IQ-4 edges 3/4/5 boot refresh rides this same door:
+        // refreshGlanceAfterReconcile issues the requestUpdate for
+        // every boot-class action, guarded like every group.)
         refreshGlanceAfterReconcile(appContext, action)
     }
 }

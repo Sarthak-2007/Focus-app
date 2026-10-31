@@ -1,5 +1,6 @@
 package com.example.widget
 
+import android.app.AlarmManager
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
@@ -45,12 +46,55 @@ class MonolithWidgetProvider : AppWidgetProvider() {
                 val status = readStatusLine(appContext)
                 for (id in appWidgetIds) {
                     appWidgetManager.updateAppWidget(
-                        id, buildViews(appContext, status)
+                        id, buildViews(appContext, status.line)
                     )
+                }
+                // Issue #155 (IQ-4 edge 1/2): a SEALED render arms
+                // its own expiry. The rendered RemoteViews are a
+                // snapshot with no lifetime of their own — without
+                // this wakeup a dead shield's last SEALED print
+                // survives until the 30-minute period update.
+                if (status.sealedBeatWallMillis > 0L) {
+                    armSealedExpiry(appContext, appWidgetIds, status.sealedBeatWallMillis)
                 }
             } finally {
                 pendingResult.finish()
             }
+        }
+    }
+
+    /** One rendered glance line plus, when the line claims SEALED,
+     *  the beat that proved it (0 otherwise). */
+    private data class WidgetStatus(
+        val line: String,
+        val sealedBeatWallMillis: Long = 0L
+    )
+
+    /** Issue #155 (IQ-4 edge 1): one-shot wakeup at the rendered
+     *  beat's freshness boundary, on the shield restart alarm's own
+     *  pattern (setAndAllowWhileIdle). It re-invokes this provider's
+     *  update; the re-render re-reads the truth and, if the shield
+     *  is still beating, re-arms from the fresher beat. */
+    private fun armSealedExpiry(context: Context, appWidgetIds: IntArray, beatWallMillis: Long) {
+        try {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+                ?: return
+            val intent = Intent(context, MonolithWidgetProvider::class.java).apply {
+                action = AppWidgetManager.ACTION_APPWIDGET_UPDATE
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, appWidgetIds)
+            }
+            val pending = PendingIntent.getBroadcast(
+                context, SEALED_EXPIRY_REQUEST_CODE, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            alarmManager.setAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                WidgetSealTruth.expiryWakeMillis(beatWallMillis),
+                pending
+            )
+        } catch (_: Exception) {
+            // No alarm service (or a revoked exact-alarm grant):
+            // the period update remains the backstop, as before.
         }
     }
 
@@ -72,7 +116,7 @@ class MonolithWidgetProvider : AppWidgetProvider() {
     }
 
     /** The one truthful status line, read defensively from Room. */
-    private suspend fun readStatusLine(context: Context): String {
+    private suspend fun readStatusLine(context: Context): WidgetStatus {
         return try {
             val dao = MonolithDatabase.getInstance(context).monolithDao()
             val now = System.currentTimeMillis()
@@ -98,23 +142,46 @@ class MonolithWidgetProvider : AppWidgetProvider() {
                     protectingSessionId = MonolithShieldService.protectingSessionId,
                     sessionId = session.id,
                     beatWallMillis = session.shieldLastBeatWallMillis,
-                    nowWallMillis = now
+                    nowWallMillis = now,
+                    shieldGapSeen = session.shieldGapSeen
                 )
                 if (!sealedProven) {
                     // Issue #155 (IQ-2 VC-2 + IQ-5 F-4): no
                     // row-asserted "SESSION LIVE", short enough to
                     // read whole at the smallest (3x1) placement.
-                    "SHIELD UNPROVEN \u2022 OPEN THE APP TO CHECK"
+                    WidgetStatus("SHIELD UNPROVEN \u2022 OPEN THE APP TO CHECK")
                 } else when {
+                    // Issue #155 (IQ-4 edge 8a): a Safe Break is a
+                    // PARTIAL seal — PEEK apps are lawfully open
+                    // while locked apps stay held. An unqualified
+                    // SEALED here is a whole claim for a partial
+                    // state; the break gets its own line, naming
+                    // what is open and when the full seal resumes.
+                    session.isInSafeBreak -> {
+                        val resumes = now + session.safeBreakSecondsRemaining * 1000L
+                        WidgetStatus(
+                            "ON BREAK \u2022 ${session.intention} \u2022 PEEK APPS OPEN \u2022 SEAL RESUMES ${hhmm(resumes)}",
+                            sealedBeatWallMillis = session.shieldLastBeatWallMillis
+                        )
+                    }
                     session.isStopwatchMode ->
-                        sealedLine(session.intention, "STOPWATCH, NO SET END")
+                        WidgetStatus(
+                            sealedLine(session.intention, "STOPWATCH, NO SET END"),
+                            sealedBeatWallMillis = session.shieldLastBeatWallMillis
+                        )
                     session.windowEndMillis > now ->
-                        sealedLine(session.intention, "until ${hhmm(session.windowEndMillis)}")
+                        WidgetStatus(
+                            sealedLine(session.intention, "until ${hhmm(session.windowEndMillis)}"),
+                            sealedBeatWallMillis = session.shieldLastBeatWallMillis
+                        )
                     else -> {
                         // Manual timed session: the end is now plus the
                         // whole-span remainder the model itself derives.
                         val end = now + session.spanRemainingSeconds * 1000L
-                        sealedLine(session.intention, "until ${hhmm(end)}")
+                        WidgetStatus(
+                            sealedLine(session.intention, "until ${hhmm(end)}"),
+                            sealedBeatWallMillis = session.shieldLastBeatWallMillis
+                        )
                     }
                 }
             } else {
@@ -134,18 +201,20 @@ class MonolithWidgetProvider : AppWidgetProvider() {
                     // Issue #155 (WING-F): a blank routine name
                     // drops its segment: no doubled spaces and
                     // no dangling gap where the name would sit.
-                    if (next.first.name.isBlank()) {
-                        "OPEN \u2022 NEXT ROUTINE ${dayLabel(next.second, now)} ${hhmm(next.second)}"
-                    } else {
-                        "OPEN \u2022 NEXT ROUTINE ${next.first.name} ${dayLabel(next.second, now)} ${hhmm(next.second)}"
-                    }
+                    WidgetStatus(
+                        if (next.first.name.isBlank()) {
+                            "OPEN \u2022 NEXT ROUTINE ${dayLabel(next.second, now)} ${hhmm(next.second)}"
+                        } else {
+                            "OPEN \u2022 NEXT ROUTINE ${next.first.name} ${dayLabel(next.second, now)} ${hhmm(next.second)}"
+                        }
+                    )
                 } else {
-                    "OPEN"
+                    WidgetStatus("OPEN")
                 }
             }
         } catch (_: Exception) {
             // Never a false claim: if the state cannot be read, say so.
-            "OPEN THE APP TO CHECK"
+            WidgetStatus("OPEN THE APP TO CHECK")
         }
     }
 
@@ -175,6 +244,9 @@ class MonolithWidgetProvider : AppWidgetProvider() {
     }
 
     companion object {
+        /** Request code for the SEALED-expiry one-shot (IQ-4 edge 1). */
+        private const val SEALED_EXPIRY_REQUEST_CODE = 0x155E
+
         /**
          * Refresh every placed widget NOW — the shield service calls
          * this on session start (first protecting iteration), session

@@ -29,14 +29,16 @@ class WidgetSealTruthTest {
         protecting: Boolean = true,
         protectingSessionId: Int = sessionId,
         beatWallMillis: Long = now - 1_000L,
-        nowWallMillis: Long = now
+        nowWallMillis: Long = now,
+        shieldGapSeen: Boolean = false
     ): Boolean = WidgetSealTruth.sealedProven(
         isActive = isActive,
         protecting = protecting,
         protectingSessionId = protectingSessionId,
         sessionId = sessionId,
         beatWallMillis = beatWallMillis,
-        nowWallMillis = nowWallMillis
+        nowWallMillis = nowWallMillis,
+        shieldGapSeen = shieldGapSeen
     )
 
     @Test
@@ -99,5 +101,28 @@ class WidgetSealTruthTest {
     @Test
     fun freshnessWindowIsThirtySeconds() {
         assertEquals(30_000L, WidgetSealTruth.BEAT_FRESH_MILLIS)
+    }
+
+    @Test
+    fun unproven_whenGapLatchHasSeenBlindness() {
+        // CRITIC-3 Charge C / LEAD-4 A8: every other leg is green —
+        // witness standing for this session, beat one second old,
+        // accessibility bound — but the row's gap latch has seen
+        // the shield blind. The beat was stamped every iteration
+        // regardless of the usage check, so its freshness never
+        // disproved blindness; a latched gap fails the seal closed.
+        assertFalse(proven(shieldGapSeen = true))
+    }
+
+    @Test
+    fun sealedExpiryWakeFiresJustPastTheFreshnessBoundary() {
+        // IQ-4 edge 1: a SEALED render arms its own expiry at the
+        // beat's freshness boundary (+ delivery slack) — never
+        // before it (the claim is still provable there) and never
+        // a period-length after it.
+        val beat = 500_000L
+        val wake = WidgetSealTruth.expiryWakeMillis(beat)
+        assertTrue(wake > beat + WidgetSealTruth.BEAT_FRESH_MILLIS)
+        assertTrue(wake <= beat + WidgetSealTruth.BEAT_FRESH_MILLIS + 5_000L)
     }
 }

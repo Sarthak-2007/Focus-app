@@ -610,6 +610,24 @@ class MonolithShieldService : Service() {
                     break
                 }
 
+                // Issue #155 (IQ-4 edge 9): the in-loop A→B handover.
+                // The heartbeat reconcile at this loop's own top can
+                // finalise session A and materialise routine session
+                // B inside the SAME loop — the loop keeps running
+                // and really does protect B, but a witness still
+                // keyed to A can never flip for B (the flip guard
+                // requires !protecting), so the widget would print
+                // UNPROVEN for B's whole session. Mirror the
+                // KEEP_RUNNING rule here: an id change re-keys the
+                // witness, and this same iteration's flip re-proves
+                // it for the session actually being protected.
+                if (protecting && protectingSessionId != activeSession.id) {
+                    protecting = false
+                    protectingSessionId = -1
+                    protectingMono = 0L
+                    WatchStore.poke()
+                }
+
                 // Issue #81 F4: the shield's sight IS Usage Access.
                 // Revoked mid-session, queryForegroundBlockedApp
                 // returns null forever — indistinguishable from an
@@ -633,8 +651,16 @@ class MonolithShieldService : Service() {
                 // with it. On a full-disk tick we log, skip the
                 // persistence for this beat and keep shielding; the
                 // next tick retries the write.
+                // Issue #155 (CRITIC-3 Charge C): only a SEEING
+                // iteration stamps the beat. The beat is the
+                // freshness witness WidgetSealTruth and the finish
+                // machine read; stamping it on a usage-blind tick
+                // made a blind shield look freshly present and
+                // defeated the stale-beat gap law. A blind tick
+                // still persists its progress — it just does not
+                // sign the witness it could not earn.
                 val updated = try {
-                    repository.updateSessionProgress(activeSession, stampShieldBeat = true)
+                    repository.updateSessionProgress(activeSession, stampShieldBeat = usageGranted)
                 } catch (e: android.database.sqlite.SQLiteFullException) {
                     Log.e(TAG, "storage full: progress tick not persisted", e)
                     null
@@ -655,6 +681,11 @@ class MonolithShieldService : Service() {
                     // by the fresh usage read inside
                     // updateSessionProgress's outcome classification.)
                     repository.latchShieldGapNow()
+                    // Issue #155 (IQ-4 edge 2): the glance must fall
+                    // to UNPROVEN at the latch, not at the next
+                    // scheduled update — and the recovery flip below
+                    // already refreshes it when sight returns.
+                    MonolithWidgetProvider.requestUpdate(applicationContext)
                 }
 
                 // Break boundaries announce themselves from here —
@@ -1459,6 +1490,14 @@ class MonolithShieldService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
+        // #337 F2's grant probe, computed BEFORE the public
+        // version so the lock-screen form can honour it (the repair
+        // actions below consume the same read).
+        val missing = missingRepairActions(
+            accessibilityBound = MonolithAccessibilityService.instance != null,
+            usageAccessGranted = hasUsageAccessNow()
+        )
+
         // Issue #274 (R5 Platform): lock-screen redaction. The live
         // title/subtitle carry the user's private intention text and
         // urge count — on a locked phone anyone holding it could read
@@ -1473,9 +1512,20 @@ class MonolithShieldService : Service() {
         // the same timeout, "Session complete"; arming -> the
         // non-claim line; "Focus session protected" only on the
         // post-flip standing card it describes.
+        // Issue #155 (LEAD-4 A7, WING-F stack): state-matching by
+        // subtitle alone still let two cards claim protection on
+        // the lock screen — a DEGRADED standing card (a grant
+        // missing, its own face saying blocking is OFF) and any
+        // standing card re-posted while the witness was down
+        // (battery refresh after a failed iteration). The public
+        // version is now gated on the SAME protecting truth as
+        // the card it shadows: no standing witness, or a missing
+        // grant, means no protection claim — ever.
         val publicText = when {
             !ongoing -> "Session complete"
             subtitle.contains("Arming shield") -> "Monolith session in progress"
+            !protecting -> "Monolith session in progress"
+            missing.isNotEmpty() -> "Monolith session in progress"
             else -> "Focus session protected"
         }
         val publicVersion = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -1522,11 +1572,8 @@ class MonolithShieldService : Service() {
         // warning naming what is missing plus one action button
         // per grant, deep-linking to the exact settings screen.
         // Grants are probed at render time, so the actions appear
-        // and disappear with the truth.
-        val missing = missingRepairActions(
-            accessibilityBound = MonolithAccessibilityService.instance != null,
-            usageAccessGranted = hasUsageAccessNow()
-        )
+        // and disappear with the truth. (The probe itself moved
+        // above the public version — A7 — so both read one truth.)
         if (missing.isNotEmpty()) {
             // Issue #155 (IQ-2 M-8): the warning APPENDS to the
             // card's normal bigText — it never replaces it (the
