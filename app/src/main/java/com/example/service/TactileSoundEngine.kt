@@ -974,51 +974,6 @@ class TactileSoundEngine(private val context: Context) {
         )
     }
 
-    /** Break-end summons (Audit R3b #146): the voice that calls the
-     *  user BACK from a Safe Break. The single latch was functionally
-     *  silence in a pocket — this is three full strikes with a low
-     *  body tone, unmistakably a summons and not a boundary tick. It
-     *  fires once, at the expiry flip; repetition lives in the
-     *  summons notification, not in nagging the buzzer. */
-    fun playBreakEndSummons() {
-        triggerWaveform(
-            timingsMs = longArrayOf(0, 32, 80, 32, 80, 32),
-            amplitudes = intArrayOf(0, 255, 0, 255, 0, 230),
-            fallbackMs = HAPTIC_SESSION_LOCK_8MS
-        )
-        // Issue #150: the summons is machinery-fired while the user
-        // is away from the phone — unattended by definition, so the
-        // ringer's word and Do Not Disturb bind it in the gate.
-        enqueueTransient(
-            fundamentalHz = 320f,
-            durationMs = 64,
-            gain = 0.7f,
-            chordRatio = 0.9f,
-            unattended = true
-        )
-    }
-
-    /** T-minus warning knock (Audit R3b #146/#148): two soft strikes,
-     *  felt in a pocket, clearly a warning and not an ending — fired
-     *  once when a countdown (break or block) crosses 60 seconds
-     *  remaining. */
-    fun playBreakWarningKnock() {
-        triggerWaveform(
-            timingsMs = longArrayOf(0, 14, 44, 14),
-            amplitudes = intArrayOf(0, 200, 0, 170),
-            fallbackMs = HAPTIC_SWITCH_FLIP_4MS
-        )
-        // Issue #150: machinery-fired T-minus-60 warning — unattended,
-        // so the ringer and Do Not Disturb bind it in the gate.
-        enqueueTransient(
-            fundamentalHz = 520f,
-            durationMs = 16,
-            gain = 0.4f,
-            chordRatio = 0.9f,
-            unattended = true
-        )
-    }
-
     /**
      * The Held Door's arrival voice (FIX-7c): the seal's recipe at
      * door pitch — 300Hz, 44ms, gain 0.60, chordRatio 1.5 — with
@@ -1133,6 +1088,51 @@ class TactileSoundEngine(private val context: Context) {
             durationMs = 40,
             gain = 0.42f,
             chordRatio = 0.9f
+        )
+    }
+
+    /** Break-end summons (Audit R3b #146): the voice that calls the
+     *  user BACK from a Safe Break. The single latch was functionally
+     *  silence in a pocket — this is three full strikes with a low
+     *  body tone, unmistakably a summons and not a boundary tick. It
+     *  fires once, at the expiry flip; repetition lives in the
+     *  summons notification, not in nagging the buzzer. */
+    fun playBreakEndSummons() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 32, 80, 32, 80, 32),
+            amplitudes = intArrayOf(0, 255, 0, 255, 0, 230),
+            fallbackMs = HAPTIC_SESSION_LOCK_8MS
+        )
+        // Issue #150: the summons is machinery-fired while the user
+        // is away from the phone — unattended by definition, so the
+        // ringer's word and Do Not Disturb bind it in the gate.
+        enqueueTransient(
+            fundamentalHz = 320f,
+            durationMs = 64,
+            gain = 0.7f,
+            chordRatio = 0.9f,
+            unattended = true
+        )
+    }
+
+    /** T-minus warning knock (Audit R3b #146/#148): two soft strikes,
+     *  felt in a pocket, clearly a warning and not an ending — fired
+     *  once when a countdown (break or block) crosses 60 seconds
+     *  remaining. */
+    fun playBreakWarningKnock() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 14, 44, 14),
+            amplitudes = intArrayOf(0, 200, 0, 170),
+            fallbackMs = HAPTIC_SWITCH_FLIP_4MS
+        )
+        // Issue #150: machinery-fired T-minus-60 warning — unattended,
+        // so the ringer and Do Not Disturb bind it in the gate.
+        enqueueTransient(
+            fundamentalHz = 520f,
+            durationMs = 16,
+            gain = 0.4f,
+            chordRatio = 0.9f,
+            unattended = true
         )
     }
 

@@ -1,6 +1,9 @@
 package com.example
 
 import android.content.Context
+import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.pm.ResolveInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.activity.ComponentActivity
@@ -8,7 +11,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.lifecycle.ViewModelStore
+import androidx.compose.ui.test.performScrollTo
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.CapturedNotificationEntity
@@ -29,6 +32,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowLooper
@@ -38,7 +42,7 @@ import java.time.LocalDate
 
 /**
  * Renders for the Drawer build (whole-studio review set): populated
- * landing + detail + shelf-opened month, Tasks with the Last-Finished
+ * landing + detail + month index, Tasks with the Last-Finished
  * Line, the globally-empty Drawer, and the digest sheet frozen and
  * live — day and night. Writes dr_* files into the lane's own
  * shots-own dir (Pipeline Law 4 render isolation).
@@ -59,7 +63,6 @@ class DrawerRenderTest {
     private lateinit var db: MonolithDatabase
     private lateinit var repository: MonolithRepository
     private lateinit var viewModel: MonolithViewModel
-    private val viewModelStore = ViewModelStore()
 
     // Render isolation (Pipeline Law 4): this lane renders ONLY
     // into its own shots-own dir, resolved from the lane's
@@ -91,27 +94,65 @@ class DrawerRenderTest {
         // §5.1) and would cover the Drawer under test. Mark the
         // introduction done, as a dismissed first open would.
         kotlinx.coroutines.runBlocking { repository.markParkIntroDone() }
+        // The Reception (setup + introduction sheet) opens itself
+        // over the root — full-screen, above every destination —
+        // while setup is unstamped, and never interrupts again
+        // once stamped (MainActivity: receptionInitiallyOpen on
+        // SetupStore.isCompleted()). In this rig the stamp never
+        // lands, so the sheet covered the whole window in every
+        // case: harmless to the capture-only cases, fatal to
+        // drawerPopulated_day's taps — probe evidence on PR #692
+        // (semantics dump at the failure point): the
+        // reception_sheet node spanned the full 450x1000 window
+        // over the composed landing, and both tap forms (text
+        // node, row tag after scroll) landed on the sheet and
+        // were swallowed by its scroll surface, so the detail
+        // never opened. Stamp the setup complete here, exactly
+        // what the sheet's own stamp writes — the fixture is a
+        // phone that has finished setup, which is the phone every
+        // case in this class means to render.
+        com.example.data.SetupStore(context).markCompleted()
+        // Rig contract (#166, floor lane): the catalog is the
+        // phone's truth — production reconciles `apps` ONLY from
+        // the installed launchable set, and this rig's set was
+        // empty, so no apps row could ever be written and
+        // waitForSeed's #91 assertion burned its full 45 s on a
+        // condition the environment made impossible (census
+        // evidence: apps=0, profiles=4 on all four RootApp cases).
+        // A phone always has launcher apps; the rig now says so,
+        // test-side only — the same shadow idiom the sibling
+        // catalog tests use (AppListTruthTest.fakeInstalled).
+        // waitForSeed itself is untouched: its deadline and its
+        // loud failure stand exactly as #91 built them.
+        fakeInstalledLauncherApps()
         viewModel = MonolithViewModel(context, repository, TactileSoundEngine(context))
-        viewModelStore.put("main", viewModel)
+    }
+
+    /** The faked package source: these packages, and only these,
+     *  answer the launcher query on this "phone". */
+    private fun fakeInstalledLauncherApps() {
+        val shadow = Shadows.shadowOf(context.packageManager)
+        val query = Intent(Intent.ACTION_MAIN, null).addCategory(Intent.CATEGORY_LAUNCHER)
+        for ((pkg, label) in listOf(
+            "com.keep.notes" to "Keep Notes",
+            "com.android.chrome" to "Chrome",
+            "org.mozilla.firefox" to "Firefox",
+            "com.whatsapp" to "WhatsApp"
+        )) {
+            val info = ResolveInfo().apply {
+                activityInfo = ActivityInfo().apply {
+                    packageName = pkg
+                    name = "$pkg.MainActivity"
+                    nonLocalizedLabel = label
+                }
+                nonLocalizedLabel = label
+            }
+            shadow.addResolveInfoForIntent(query, info)
+        }
     }
 
     @After
     fun tearDown() {
-        // KONTO-2 round 8 (diagnosed, run 41069616930): this class's
-        // directly-constructed VMs were never cleared, so their
-        // immortal viewModelScope collectors (the stateIn trio over
-        // getAllRoutinesFlow / getActiveSessionFlow / getAllApps)
-        // outlived db.close(); stale Main-looper continuations later
-        // executed queued queries against the closed pool and the
-        // escape surfaced as UncaughtExceptionsBeforeTest in
-        // TruthCar3SweepRoboTest.una07 - the round-4 poison in its
-        // cross-class form (same w450dp sandbox). Quiesce in the
-        // only safe order: clear the store (onCleared cancels
-        // viewModelScope), drain the paused looper so the
-        // cancellations actually execute, and only then close.
-        viewModelStore.clear()
-        ShadowLooper.idleMainLooper()
-        composeRule.waitForIdle()
         db.close()
     }
 
@@ -263,21 +304,28 @@ class DrawerRenderTest {
         settle(900)
         capture("dr_drawer_day.png")
 
-        composeRule.onNodeWithText("Electrostatics Problem Set 12").performClick()
+        // The row is tapped through its own furniture tag,
+        // scrolled fully into view first — the precise handle for
+        // the same tap on the same row. The taps (this form and
+        // the original text-node form alike) only reach the row
+        // because setup stamps the Reception away: the probe dump
+        // on this PR showed the unstamped sheet covering the
+        // whole window and swallowing both forms (see setup).
+        val electrostatics = db.monolithDao().getAllTasksSnapshot()
+            .first { it.title == "Electrostatics Problem Set 12" }
+        composeRule.onNodeWithTag("drawer_row_${electrostatics.id}")
+            .performScrollTo()
+        settle(300)
+        composeRule.onNodeWithTag("drawer_row_${electrostatics.id}")
+            .performClick()
         settle(600)
         capture("dr_drawer_detail_day.png")
         composeRule.onNodeWithTag("drawer_detail_back").performClick()
         settle(600)
 
-        // INDEX is dead (issue #8): the earlier month opens from the
-        // landing's MONTHS shelf row. seedPopulated files one task in
-        // last month, so that shelf row exists.
-        val shelfMonth = LocalDate.now().minusMonths(1)
-        composeRule.onNodeWithTag(
-            "drawer_month_${shelfMonth.year}_${shelfMonth.monthValue}"
-        ).performClick()
+        composeRule.onNodeWithTag("drawer_all_months").performClick()
         settle(600)
-        capture("dr_drawer_month_day.png")
+        capture("dr_drawer_index_day.png")
 
         composeRule.runOnUiThread { viewModel.navigateTo(MonolithDestination.TASKS) }
         settle(900)

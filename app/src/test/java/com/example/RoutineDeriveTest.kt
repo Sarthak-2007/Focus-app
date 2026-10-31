@@ -83,6 +83,7 @@ class RoutineDeriveTest {
         active: FocusSessionEntity? = null,
         sessions: List<FocusSessionEntity> = emptyList(),
         settings: GuardSettingsEntity = this.settings,
+        excused: Set<String> = emptySet(),
         // Defaulting to null keeps every pre-F-1 case above
         // meaning exactly what it meant before F-1. (Merged-tree
         // note: M-A1 G1 gave the production signature the same
@@ -91,7 +92,7 @@ class RoutineDeriveTest {
         headTaskTitle: String? = null
     ) = RoutineDerive.derive(
         routines, now, active, sessions, settings,
-        headTaskTitle = headTaskTitle
+        headTaskTitle = headTaskTitle, excusedDateIsos = excused
     )
 
     // --- F-1 fixtures: his real seeded morning --------------------------
@@ -117,9 +118,6 @@ class RoutineDeriveTest {
         task(2, "Synthesize Lecture 9 Architecture Notes", TaskQueueStatus.QUEUED, 1),
         task(3, "Debug Dynamic Programming Memo Table", TaskQueueStatus.QUEUED, 2)
     )
-        excused: Set<String> = emptySet()
-    ) = RoutineDerive.derive(routines, now, active, sessions, settings, excusedDateIsos = excused)
-
     /** The filing-date iso of an instant, as the Drawer files it. */
     private fun filingIso(millis: Long): String =
         DrawerDay.dateIso(DrawerDay.filingDate(millis))

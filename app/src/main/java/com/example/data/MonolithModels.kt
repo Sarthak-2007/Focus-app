@@ -282,32 +282,6 @@ data class FocusTaskEntity(
     }
 }
 
-enum class DistractionTriggerReason(
-    val shortTag: String,
-    val label: String,
-    val coachingTip: String
-) {
-    MUSCLE_MEMORY(
-        shortTag = "Habit",
-        label = "Opened by Habit",
-        coachingTip = "Your thumb tapped this on autopilot. Take one slow breath and return to your next micro-step."
-    ),
-    STUCK_ON_PROBLEM(
-        shortTag = "Stuck",
-        label = "Stuck on a Hard Step",
-        coachingTip = "When a task feels heavy, your brain seeks quick novelty. Break the current task into a 10-minute micro-step."
-    ),
-    BORED_OR_TIRED(
-        shortTag = "Tired",
-        label = "Low Energy / Brain Fog",
-        coachingTip = "Doomscrolling drains working memory faster than resting. Stand up, drink water, or finish this short block."
-    ),
-    NEED_INFO(
-        shortTag = "Message",
-        label = "Checking Urgent Message / Code",
-        coachingTip = "If this app allows a 2m Peek, start the 2-minute pass below—the floating timer will keep you anchored."
-    )
-}
 
 enum class AppCategory(val label: String, val code: String) {
     SHORT_VIDEO("Short Video", "Video"),
@@ -573,6 +547,21 @@ data class FocusSessionEntity(
     val failureCausePackage: String = "",
     val failureCauseKind: String = "",
     val reflectionNote: String = "",
+    // Audit R6 #340 F5/F48 (16→17): the FINISH seal. The arm-time
+    // hmacSignature covers only the session's first five fields;
+    // this second signature is minted at publish time over the
+    // finished receipt's own claims (№, outcome word, arm/end
+    // walls, sealed elapsed, held counts, deflection count,
+    // banked break seconds, gap + break facts) AND over the
+    // previous receipt's finish seal — so the receipts form a
+    // hash chain: editing, reordering or dropping one slip breaks
+    // every later verification loudly. '' = never sealed (every
+    // pre-v17 row, and any row whose publish never ran).
+    val finishSignature: String = "",
+    // The previous receipt's finish seal, embedded in this row's
+    // finish payload at sign time (the chain link itself, kept
+    // on the row so verification needs no ordering assumption).
+    val prevFinishSignature: String = "",
     // Issue #261 (15→16, the mid-block Safe Break door — the
     // transferred W9 DAYLIGHT DS3 finding): a Safe Break entered
     // MID-BLOCK, at the man's tap, instead of only at a block
@@ -797,6 +786,34 @@ data class EmergencyBreakSpendEntity(
  * retro-split. A credit whose span straddles midnight files
  * whole under its observation day.
  */
+
+enum class DistractionTriggerReason(
+    val shortTag: String,
+    val label: String,
+    val coachingTip: String
+) {
+    MUSCLE_MEMORY(
+        shortTag = "Habit",
+        label = "Opened by Habit",
+        coachingTip = "Your thumb tapped this on autopilot. Take one slow breath and return to your next micro-step."
+    ),
+    STUCK_ON_PROBLEM(
+        shortTag = "Stuck",
+        label = "Stuck on a Hard Step",
+        coachingTip = "When a task feels heavy, your brain seeks quick novelty. Break the current task into a 10-minute micro-step."
+    ),
+    BORED_OR_TIRED(
+        shortTag = "Tired",
+        label = "Low Energy / Brain Fog",
+        coachingTip = "Doomscrolling drains working memory faster than resting. Stand up, drink water, or finish this short block."
+    ),
+    NEED_INFO(
+        shortTag = "Message",
+        label = "Checking Urgent Message / Code",
+        coachingTip = "If this app allows a 2m Peek, start the 2-minute pass below—the floating timer will keep you anchored."
+    )
+}
+
 @Entity(
     tableName = "task_accrual_segments",
     indices = [Index(value = ["taskId", "sessionId", "dateIso"], unique = true)]
@@ -945,7 +962,12 @@ object BlockedBrowserDomains {
 /** One user-editable blocked website — the list the browser blocker enforces (Ren). */
 @Entity(tableName = "blocked_sites")
 data class BlockedSiteEntity(
-    @PrimaryKey val domain: String
+    @PrimaryKey val domain: String,
+    // Audit R6 #340 F10 (12→13): where a blocked visit is SENT
+    // instead of dead-ending at BACK + the Airlock wall — a
+    // per-site redirect destination (a full URL the user chose).
+    // '' = no destination: the classic BACK + Airlock stands.
+    val redirectTarget: String = ""
 )
 
 /** A real, persisted routine: a daily window on chosen days that arms a loadout session by itself (Ren). */
@@ -1085,6 +1107,50 @@ object RoutineSchedule {
             nextStartMillis(r, nowMillis)
         }
     }
+
+    /**
+     * Issue #155 (T9, re-close bench): the REFUSAL-AWARE next
+     * start — [effectiveNextStartMillis] (pause-aware) walked past
+     * every candidate window the machine itself would refuse to
+     * materialise. The heartbeat refuses a window on an excused
+     * date (ILL / REST / FAMILY day-word, filed under the window's
+     * filing date) and a tombstoned window (an annulled proving);
+     * a "next routine" claim derived without those two inputs
+     * names seals that will never happen — JUDGE-1's Reason-6
+     * premise ("stays true until a routine changes") falsified on
+     * exactly this point. This walk consumes the SAME refusal set
+     * the heartbeat's hand checks (RoutineHeartbeat: excused isos
+     * via DrawerDay.filingDate + dateIso; tombstones via
+     * SessionSealTransitions.isTombstoned), so a glance derived
+     * here can never disagree with the funnel.
+     *
+     * Bounded: at most [MAX_REFUSAL_WALK] refused candidates are
+     * stepped over; a routine whose every window inside that
+     * horizon is refused yields null, and the caller falls silent
+     * (WING-D C1: the line stands only where it names a real,
+     * refusal-aware next seal).
+     */
+    fun nextStartMillisRefusalAware(
+        routine: RoutineEntity,
+        nowMillis: Long,
+        excusedDateIsos: Set<String>,
+        isTombstoned: (routineId: Int, windowStartMillis: Long) -> Boolean
+    ): Long? {
+        var candidate = effectiveNextStartMillis(routine, nowMillis) ?: return null
+        repeat(MAX_REFUSAL_WALK) {
+            val refused =
+                DrawerDay.dateIso(DrawerDay.filingDate(candidate)) in excusedDateIsos ||
+                    isTombstoned(routine.id, candidate)
+            if (!refused) return candidate
+            candidate = effectiveNextStartMillis(routine, candidate) ?: return null
+        }
+        return null
+    }
+
+    /** How many refused candidates [nextStartMillisRefusalAware]
+     *  steps over before falling silent — a fortnight of daily
+     *  windows, or ~4 months of weekly ones. */
+    const val MAX_REFUSAL_WALK = 16
 
     /** End of the window containing [nowMillis], or of the next window if none contains it. */
     fun nextEndMillis(routine: RoutineEntity, nowMillis: Long): Long? {
@@ -1268,7 +1334,16 @@ data class GuardSettingsEntity(
     // in the setters (peek 0–30, break 0–60, clamped on write),
     // not the schema. peekMinutes = 0 means PEEK IS OFF.
     val peekMinutes: Int = 2,
-    val breakMinutes: Int = 10
+    val breakMinutes: Int = 10,
+    // Audit R6 #340 F68 (12→13): data consent for OTHER APPS'
+    // notification bodies, kept SEPARATE from the listener grant.
+    // The grant answers "may Monolith hold notifications"; this
+    // answers "may it KEEP the bodies". Values: UNSET / DECLINED /
+    // GRANTED. Anything but GRANTED stores sender-and-app lines
+    // only — the body is blanked at capture, never written — so
+    // the default posture is the private one and keeping bodies
+    // is an explicit, revocable choice of the user's.
+    val notificationBodyConsent: String = "UNSET"
 )
 
 /**

@@ -65,16 +65,19 @@ import com.example.data.MonolithRepository
 import com.example.data.ReturnChitState
 import com.example.data.chitVerdictFor
 import com.example.data.SmartLoadout
+import com.example.data.chitVerdictFor
 import com.example.service.InterceptConsumptionStore
 import com.example.service.InterceptNonce
 import com.example.service.InterceptPath
 import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithShieldService
 import com.example.service.PermPrint
+import com.example.service.PermissionReturnService
 import com.example.service.TactileSoundEngine
 import com.example.service.WatchItemId
 import com.example.service.PermissionReturnService
 import com.example.service.WatchStore
+import com.example.ui.GlanceRouting
 import com.example.ui.MonolithDestination
 import com.example.ui.ArmPhase
 import com.example.ui.MonolithViewModel
@@ -166,9 +169,31 @@ class MainActivity : ComponentActivity() {
             )
         )
 
+        // Audit R6 #340 F67: POST_NOTIFICATIONS was declared in
+        // the manifest but never requested at runtime — on
+        // Android 13+ every summons/session notification was
+        // silently undeliverable. Ask exactly once (prefs-guarded);
+        // a refusal is respected, never re-nagged.
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            val askPrefs = getSharedPreferences("monolith_perm_asks", MODE_PRIVATE)
+            if (!askPrefs.getBoolean("post_notifications_asked", false)) {
+                askPrefs.edit().putBoolean("post_notifications_asked", true).apply()
+                requestPermissions(
+                    arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                    34067
+                )
+            }
+        }
+
         // Watch Store bind (issue #48): LAST PROVED restored before
         // any surface reads the store.
         WatchStore.bind(applicationContext)
+        // Audit R6 #340 F61: the scrubbed failure log binds at the
+        // same moment so repository/a11y funnels can record.
+        com.example.service.FailureLog.bind(applicationContext)
 
         // ISSUE-67: the repository comes from the single
         // construction point (AppContainer: DAO + live service
@@ -228,30 +253,48 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        // Issue #27 (finding 1): bridge the re-delivered intent
-        // into composition — without this, a re-intercept while
-        // the Activity is alive never reaches the Airlock.
-        pendingInterceptIntent = intent
+        // FIX-4: a repeat intercept against this live (singleTop)
+        // activity consumes its extras HERE — first composition is
+        // no longer the only reader, so a second intercept can
+        // never land him on the previous app's stale door.
+        viewModelRef?.let { handleIncomingInterceptIntent(intent, it) }
     }
 
     private fun handleIncomingInterceptIntent(intent: Intent?, viewModel: MonolithViewModel) {
         if (intent == null) return
-        // Issue #155 (F5, re-homed at the STURM-4 merge): a tap on
-        // the shield notification is about the shield — land on
-        // SHIELD, not the default Deck. Intercept extras take
-        // precedence: when a firing's package rides the same intent,
-        // the intercept path below owns the delivery and this extra
-        // is simply consumed.
+        // Issue #155 (F5): a tap on a glance card lands on the
+        // surface the card is ABOUT, per GlanceRouting's per-state
+        // table — not the #312 single route to SHIELD, which the
+        // seal law in navigateTo refuses mid-session (dead code)
+        // and which, at completion, lands where the receipt is
+        // not. The about extra is routing-only: it names a
+        // destination, never a session action, so honouring it
+        // from any delivery can move the user's eyes but can
+        // never touch the seal. Intercept extras take precedence:
+        // when a firing's package rides the same intent, the
+        // intercept path below owns the delivery and these extras
+        // are simply consumed.
         val fromShieldNotification = intent.getBooleanExtra(
             MonolithShieldService.EXTRA_FROM_SHIELD_NOTIFICATION, false
+        )
+        val glanceAbout = GlanceRouting.parseAbout(
+            intent.getStringExtra(GlanceRouting.EXTRA_GLANCE_ABOUT)
         )
         if (fromShieldNotification) {
             intent.removeExtra(MonolithShieldService.EXTRA_FROM_SHIELD_NOTIFICATION)
         }
+        intent.removeExtra(GlanceRouting.EXTRA_GLANCE_ABOUT)
         val pkg = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
         if (pkg.isNullOrBlank()) {
             if (fromShieldNotification) {
-                viewModel.navigateTo(MonolithDestination.SHIELD)
+                // Cards posted by the current shield build carry
+                // only the boolean; infer their state from the
+                // live session fact. Per-state writers (the
+                // EXTRA_GLANCE_ABOUT extra) ride PR #540's lane.
+                val about = glanceAbout ?: GlanceRouting.aboutForLegacyShieldTap(
+                    sessionActive = viewModel.activeSession.value?.isActive == true
+                )
+                GlanceRouting.destinationFor(about)?.let { viewModel.navigateTo(it) }
             }
             return
         }
@@ -270,14 +313,15 @@ class MainActivity : ComponentActivity() {
             return
         }
         val name = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME)
-            // Wave-2 cure (critic N-4): the old "Short-Form Feed"
-            // fallback fabricated a hero name for a door whose
-            // app was never identified. The name slot holds a
-            // fact or the package verbatim — never an invention.
+            // Wave-2 cure (critic N-4, issue #11 — carried through
+            // the #68/#78 merge): the old "Short-Form Feed" fallback
+            // fabricated a hero name for a door whose app was never
+            // identified. The name slot holds a fact or the package
+            // verbatim — never an invention.
             ?: pkg
-        // FIX-6 (C-10): the fallback badge word is "Blocked" —
-        // this is the fourth of the four sites.
         val badge = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE)
+            // FIX-6 (C-10, issue #11): the fallback badge word is
+            // "Blocked" — this is the fourth of the four sites.
             ?: "Blocked"
         // WHICH door fired (Truth Car 3, UNA2-01): the peek
         // offer is computed per-path — an extra that is missing
@@ -485,6 +529,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val drawerLoading by viewModel.drawerLoading.collectAsStateWithLifecycle()
     val drawerError by viewModel.drawerError.collectAsStateWithLifecycle()
     val drawerSearchDayWords by viewModel.drawerSearchDayWords.collectAsStateWithLifecycle()
+    val forgedArtifactIds by viewModel.forgedArtifactIds.collectAsStateWithLifecycle()
+    val curioForgeRecords by viewModel.curioForgeRecords.collectAsStateWithLifecycle()
+    val forgeStats by viewModel.forgeStats.collectAsStateWithLifecycle()
+    val receiptIndex by viewModel.receiptIndex.collectAsStateWithLifecycle()
     val dayWords by viewModel.dayWords.collectAsStateWithLifecycle()
     val appsCellCount by viewModel.appsCellCount.collectAsStateWithLifecycle()
     val appsSplit by viewModel.appsSplit.collectAsStateWithLifecycle()
@@ -585,9 +633,16 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val ratchetWarningMessage by viewModel.ratchetWarningMessage.collectAsStateWithLifecycle()
     // R-5 (issue #7): Shield's status sentence derivation.
     val shieldBlockingStatus by viewModel.shieldBlockingStatus.collectAsStateWithLifecycle()
+    val routineConflictNotice by viewModel.routineConflictNotice.collectAsStateWithLifecycle()
     val tierChangeForUndo by viewModel.tierChangeForUndo.collectAsStateWithLifecycle()
 
     val sealed = activeSession?.isActive == true
+    // Shield Rethink 2, Step 1: the receipt line for the Shield's
+    // dated truth line, and the wedge's grace carve-out — the same
+    // <=10s window the Deck's grace abort reads (elapsedSeconds).
+    val shieldReceiptLine by viewModel.shieldReceiptLine.collectAsStateWithLifecycle()
+    val shieldIntention by viewModel.shieldIntention.collectAsStateWithLifecycle()
+    val shieldInGracePeriod = activeSession?.let { it.isActive && it.elapsedSeconds <= 10 } == true
     // HB-1 / HB-2 (Truth Car 2; Band's header-band audit): ONE
     // predicate for the door. Until this car, the header's isSealed
     // drank from `sealed` alone while the VM's navigation law also
@@ -909,8 +964,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // is still pending. The persisted bit keeps a cold start's
     // unmeasured instant from re-inviting on later runs.
     LaunchedEffect(doorLocked, watchSnapshot) {
+        // Empfang gate (issue #14 graft): while the setup stands
+        // unstamped the RECEPTION does the first-open introducing,
+        // and PARK does not invite itself over it — the two
+        // first-open surfaces never stack. Stamping discharges the
+        // intro bit itself (stampSetupOnly), so a stamped run is
+        // not re-invited by this effect either.
         if (!sealed && !viewModel.navigationLocked() &&
-            viewModel.parkIntroPending() &&
+            viewModel.parkIntroPending() && setupStamped &&
             watchSnapshot.items.isNotEmpty()
         ) {
             parkOpen = true
@@ -1048,13 +1109,17 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         BackHandler { viewModel.navigateTo(MonolithDestination.DECK) }
     }
 
-    // The reception's BACK: leaving stamps nothing (composed
-    // after the chain above so it wins while the sheet stands).
-    // The sheet re-offers at the next cold start and waits in
-    // PARK — leaving is never a trap and never a finish.
+    // The reception's BACK: leaving stamps nothing. Composed
+    // after the park chain above so it wins while the sheet
+    // stands, and before the #27 overlay handler below so the
+    // safety surfaces (Airlock, disarm challenge) still own
+    // Back over it — the sheet is hosted BELOW them. The sheet
+    // re-offers at the next cold start and waits in PARK —
+    // leaving is never a trap and never a finish.
     if (receptionOpen) {
         BackHandler { receptionOpen = false }
     }
+
     // Issue #27 (finding 3): full-screen overlays own Back. Before
     // this handler, Back on the DECK fell through to the default
     // dispatcher and FINISHED the Activity — including from the
@@ -1121,6 +1186,13 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         // Settings.
         PermissionReturnService.arm(context, item)
         when (item) {
+            // Audit R6 #340 F44: AUTOSTART has no pane to be sent
+            // to — the tap IS the oath. It records the attestation
+            // in the Watch Store and returns; no Settings trip is
+            // faked for a gate the OS refuses to report.
+            com.example.service.WatchItemId.AUTOSTART -> {
+                com.example.service.WatchStore.attest(item)
+            }
             com.example.service.WatchItemId.ACCESSIBILITY ->
                 launchSettings(pinnedSettingsIntent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "ACCESSIBILITY")
             com.example.service.WatchItemId.USAGE_ACCESS ->
@@ -1352,8 +1424,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onCompleteActiveTask = viewModel::completeTaskAndAdvance,
                                     onToggleTaskSubStep = viewModel::toggleTaskSubStep,
                                     onOpenTaskSequencer = { viewModel.navigateTo(MonolithDestination.TASKS) },
-                                    // Handover spender 1 (issue #14): the slide
-                                    // ATTEMPT spends the handover — a refused
+                                    // Handover spender 1 (issue #14
+                                    // graft): the slide ATTEMPT spends
+                                    // the Armed Handover — a refused
                                     // slide has still spent the act.
                                     onArmSession = {
                                         armedHandover = null
@@ -1386,6 +1459,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     deckWarrant = deckWarrant,
                                     deckPrimerPending = viewModel.deckPrimerPending(),
                                     sealFreeze = sealFreeze,
+                                    // Issue #4 B-C1: the Bolt fold's
+                                    // shield-beat input, from the
+                                    // WatchStore snapshot this host
+                                    // already collects.
+                                    shieldHeartbeatMono = watchSnapshot.engineHeartbeatMono,
+                                    shieldProtecting = watchSnapshot.engineProtecting,
                                     armPhase = armPhase,
                                     armSentence = armSentence,
                                     armResetKey = armAnnulCount,
@@ -1439,7 +1518,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     loadoutCapIndex = loadoutCapIndex,
                                     isSessionActive = sealed,
                                     blockingStatus = shieldBlockingStatus,
+                                    isSessionActive = sealed,
+                                    receiptLine = shieldReceiptLine,
+                                    intention = shieldIntention,
+                                    onIntentionChanged = viewModel::setShieldIntention,
+                                    isGracePeriod = shieldInGracePeriod,
                                     ratchetWarningMessage = ratchetWarningMessage,
+                                    routineConflictNotice = routineConflictNotice,
+                                    onDismissRoutineConflictNotice = viewModel::dismissRoutineConflictNotice,
                                     tierChangeForUndo = tierChangeForUndo,
                                     onUndoTierChange = viewModel::undoLastTierChange,
                                     soundEngine = viewModel.soundEngine,
@@ -1453,11 +1539,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                         }
                                     },
                                     onCycleDailyLimit = viewModel::cycleAppDailyLimit,
-                                    onApplySmartLoadout = viewModel::applySmartLoadout,
                                     onSetAppCategory = viewModel::setAppCategory,
-                                    onSelectProfile = viewModel::selectAndApplyProfile,
-                                    profileUndoAvailable = profileUndoAvailable,
-                                    onUndoProfileApply = viewModel::undoLastProfileApply,
                                     onToggleShortsReelsSniper = viewModel::toggleShortsReelsSniper,
                                     onToggleBrowserUrlBlocker = viewModel::toggleBrowserUrlBlocker,
                                     // #337 F1: shortcut binding state
@@ -1599,13 +1681,23 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     drawerResults = drawerResults,
                                     drawerSearchHasEarlier = drawerSearchHasEarlier,
                                     dayWords = dayWords,
+                                    drawerSearchDayWords = drawerSearchDayWords,
                                     isSealed = sealed,
                                     isDarkTheme = effectiveNight,
                                     onSelectMonth = viewModel::selectDrawerMonth,
                                     onLoadEarlier = viewModel::loadEarlierDrawer,
                                     onQueryChange = viewModel::setDrawerQuery,
                                     onLoadEarlierSearch = viewModel::loadEarlierDrawerSearch,
-                                    onDeclareDayWord = viewModel::declareDayWord
+                                    onDeclareTodayWord = viewModel::declareTodayWord,
+                                    onDeclareDayWord = viewModel::declareDayWordFor,
+                                    artifacts = com.example.data.CurioCatalog.artifacts,
+                                    forgedArtifactIds = forgedArtifactIds,
+                                    curioForgeRecords = curioForgeRecords,
+                                    drawerLoading = drawerLoading,
+                                    drawerError = drawerError,
+                                    forgeStats = forgeStats,
+                                    receipts = receiptIndex,
+                                    onReceiptClick = viewModel::presentReceipt
                                 )
                             }
                         }
@@ -1947,6 +2039,19 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 )
             }
 
+            // A PAST SLIP, re-presented from the Vault's receipts
+            // index (issue #157): the SAME sheet composable,
+            // verbatim, over whatever screen invoked it. Its
+            // dismissal is its own — it never touches the standing
+            // receipt's flag above.
+            val presentedReceipt by viewModel.presentedReceipt.collectAsStateWithLifecycle()
+            presentedReceipt?.let { pastReceipt ->
+                com.example.ui.components.ReceiptSheet(
+                    receipt = pastReceipt,
+                    onDismiss = { viewModel.dismissPresentedReceipt() }
+                )
+            }
+
             // THE RECEPTION (Empfang lane, Oct 30 — grafted seat):
             // hosted in the overlay layer, BELOW the airlock and
             // the disarm challenge — safety surfaces always win,
@@ -1972,7 +2077,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     // is PARK and its return is PARK.
                     if (!setupStamped) shieldExcursion = true
                     receptionOpen = false
-                    viewModel.navigateTo(MonolithDestination.SHIELD)
+                    // Through a local, as everywhere on current
+                    // main: the literal navigateTo(SHIELD) call
+                    // shape is the #312 glance route, pinned out
+                    // of this file by GlanceRoutingTest. This is
+                    // the sheet's own SHIELD door, not a glance
+                    // tap (glances route at GlanceRouting above).
+                    val shieldDestination = MonolithDestination.SHIELD
+                    viewModel.navigateTo(shieldDestination)
                 },
                 onStamp = { stampSetupOnly() },
                 onDone = { stampSetupAndEnter() },
@@ -1982,11 +2094,135 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 }
             )
 
-            // The ShieldPermissionPrimerModal binding stays REMOVED
-            // (Slice D): its "COMMIT & ARM ANYWAY" path was the
-            // register's LR2-S1-18 — the slide reads the warrant
-            // itself now and refuses in the open, with the FIX
-            // routes on the sentence itself.
+            // Composition note (issue #14 landing, Oct 31): the
+            // Slice D comment that rode with this graft ("the
+            // ShieldPermissionPrimerModal binding stays REMOVED")
+            // is superseded on current main — issue #324 re-created
+            // the primer below WITHOUT the banned COMMIT & ARM
+            // ANYWAY path, so the register reason for the removal
+            // no longer holds. Both surfaces stand: the Reception
+            // above, the primer below it in the overlay order.
+            // Issue #324, finding 4 (build half, relabelled):
+            // the ShieldPermissionPrimerModal is RE-CREATED and
+            // bound here. This is NOT the Slice D modal restored:
+            // its "COMMIT & ARM ANYWAY" path (register LR2-S1-18)
+            // does not exist in the re-creation — the only action
+            // is FIX, routed through openFixPane to the step's own
+            // Settings pane, and arming still lives where Slice D
+            // put it: the warrant slide reads the grants itself
+            // and refuses in the open. The primer stands over an
+            // open Park while a measured board shows an ungranted
+            // step; the step derives from the live grants plus
+            // PermissionStepStore's persisted in-flight record, so
+            // an interrupted sequence resumes where it stopped.
+            com.example.ui.components.ShieldPermissionPrimerModal(
+                visible = parkOpen && watchSnapshot.items.isNotEmpty() &&
+                    permissionStep != null && !permissionPrimerDismissed,
+                currentStep = permissionStep,
+                grants = permissionGrants,
+                onFixClick = { item ->
+                    permissionPrimerDismissed = true
+                    openFixPane(item)
+                },
+                onDismiss = { permissionPrimerDismissed = true }
+            )
+
+            // THE LAUNCHER BLOCK SURFACE: hosted under the Airlock,
+            // so a fresh intercept's door always stands above it.
+            LauncherBlockScreen(
+                visible = launcherOpen && sealed,
+                session = activeSession,
+                apps = allApps,
+                initialPage = launcherPage,
+                onClose = { launcherOpen = false },
+                onLaunchApp = { app ->
+                    // TAP-TIME LAUNCH GATE (design-revamp salvage,
+                    // b027368): the entity handed in was composed when
+                    // the grid rendered — re-read the VM's live rows
+                    // at the tap and launch only what is still true
+                    // NOW. On any refusal: no launch, the launcher
+                    // stays open, nothing crashes.
+                    val liveApp = viewModel.apps.value
+                        .find { it.packageName == app.packageName }
+                    val tapSealed =
+                        viewModel.activeSession.value?.isActive == true
+                    val launchAllowed = liveApp != null &&
+                        liveApp.resolvedTier == com.example.data.AppBlockTier.OPEN &&
+                        tapSealed &&
+                        !viewModel.navigationLocked() &&
+                        // Defence in depth, even if OPEN: the Play
+                        // Store is an install vector, and browsers
+                        // sit behind only a partial site blocker.
+                        // BlockedAppEntity.category stores the
+                        // AppCategory enum's name (see
+                        // MonolithModels / repository writers).
+                        liveApp.packageName != "com.android.vending" &&
+                        liveApp.category != com.example.data.AppCategory.BROWSERS.name
+                    if (launchAllowed && liveApp != null) {
+                        // D-05 (2dac73e): close only once an intent
+                        // has actually started — closing first made
+                        // a failed launch a silent nothing.
+                        val started = runCatching {
+                            context.packageManager
+                                .getLaunchIntentForPackage(liveApp.packageName)
+                                ?.let { launch ->
+                                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    context.startActivity(launch)
+                                    true
+                                } ?: false
+                        }.getOrDefault(false)
+                        if (started) launcherOpen = false
+                    }
+                },
+                onPeekApp = { app ->
+                    // SAFE-BREAK PEEK (design-revamp salvage, b027368):
+                    // during a Safe Break the active session already
+                    // suspends the interceptors (WatchStore reads
+                    // isInSafeBreak), so PEEK apps are already free —
+                    // launch directly, no peek lease is started and
+                    // no cooldown is armed. Read at tap time from
+                    // the VM's activeSession flow.
+                    val tapSession = viewModel.activeSession.value
+                    // D-03 re-gate (2dac73e): same tap-time discipline
+                    // as the OPEN gate — re-read the live entity; an
+                    // app tightened to LOCKED mid-break must not
+                    // launch off the stale composed row.
+                    val livePeekApp = viewModel.apps.value.firstOrNull {
+                        it.packageName == app.packageName
+                    }
+                    if (tapSession != null && tapSession.isActive && tapSession.isInSafeBreak &&
+                        !viewModel.navigationLocked() && livePeekApp != null &&
+                        livePeekApp.resolvedTier != com.example.data.AppBlockTier.LOCKED
+                    ) {
+                        val started = runCatching {
+                            context.packageManager
+                                .getLaunchIntentForPackage(livePeekApp.packageName)
+                                ?.let { launch ->
+                                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    context.startActivity(launch)
+                                    true
+                                } ?: false
+                        }.getOrDefault(false)
+                        if (started) launcherOpen = false
+                    } else {
+                        // Outside a Safe Break (or refused by the
+                        // re-gate) the existing Airlock route stands
+                        // exactly as it was — the peek offer / lease
+                        // machinery decides from there.
+                        launcherOpen = false
+                        viewModel.triggerAirlockIntercept(
+                            app.packageName,
+                            app.appName,
+                            app.resolvedTier.badge,
+                            InterceptPath.APP_TIER
+                        )
+                    }
+                },
+                onRequestEmergencyBreak = {
+                    launcherOpen = false
+                    viewModel.requestDisarmChallenge()
+                }
+            )
 
             AirlockInterceptOverlay(
                 state = airlockState,
@@ -2006,6 +2242,13 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     (context as? android.app.Activity)?.moveTaskToBack(true)
                 },
                 onTake2MinutePeek = viewModel::start2MinutePeek,
+                // FIX-8 / P-2: the honest exit routes to the
+                // door-originated Disarm entry — the face stands
+                // in front of the still-standing door.
+                onEndSessionInstead = viewModel::requestDisarmChallengeFromDoor,
+                // FIX-7: the overlay reports the arm instant; the
+                // VM sounds the arm beat under its nonce guard.
+                onOfferArmed = viewModel::onAirlockOfferArmed,
                 allowedAppsCount = allApps.count {
                     it.resolvedTier == com.example.data.AppBlockTier.OPEN &&
                         it.category != com.example.data.AppCategory.BROWSERS.name &&
@@ -2032,6 +2275,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 }
             )
 
+            // Issue #99 F2: the peek countdown pill — the one
+            // rendering of floatingPeekPill (canonical; #101-F3
+            // cross-ref). Shows while a peek lease runs in Monolith.
+            PeekCountdownPill(
+                state = floatingPeekPill,
+                onEndEarly = viewModel::end2MinutePeekEarly
+            )
+
             DisarmChallengeOverlay(
                 state = disarmChallenge,
                 tokensRemaining = weeklyEmergencyTokensRemaining,
@@ -2040,6 +2291,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onCompleteDisarm = { viewModel.completeEmergencyBreakFromValve() },
                 onHoldBanked = viewModel::recordValveHoldBanked,
                 onCompleteCleanSession = viewModel::completeStopwatchCompletionFromDisarmFace
+                onHoldBanked = viewModel::recordValveHoldBanked
             )
 
             // Issue #143 F1/F6: the break dim stands over the

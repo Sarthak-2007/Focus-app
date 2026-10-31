@@ -48,6 +48,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
@@ -70,6 +71,7 @@ import com.example.service.TactileSoundEngine
 import com.example.data.MonolithRepository
 import com.example.data.MonolithWeek
 import com.example.ui.AirlockInterceptState
+import com.example.ui.taperWallSeconds
 import com.example.ui.DisarmChallengeState
 import com.example.ui.PeekWithheld
 import com.example.ui.theme.AnonymousProFamily
@@ -106,7 +108,6 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import com.example.ui.theme.NightColorOnPrimaryContainer
 import com.example.ui.theme.NightColorSecondaryContainer
@@ -933,12 +934,34 @@ internal fun deskClockGlanceLine(is24Hour: Boolean, nowMillis: Long, session: Fo
 }
 
 /**
+ * The desk clock's break line (Audit R3, safe-break-lived #5):
+ * during a Safe Break the clock names the break and the block
+ * that resumes when its countdown (the hero, in break state)
+ * hits zero; outside a break there is no line — the clock never
+ * prints a break that is not running. [nextBlockIndex] is the
+ * 1-based block the break hands over to, clamped to the session's
+ * own block count so the line can never promise a block the
+ * session does not have.
+ */
+internal fun deskClockBreakLine(
+    isInSafeBreak: Boolean,
+    nextBlockIndex: Int,
+    totalBlocks: Int
+): String? {
+    if (!isInSafeBreak) return null
+    val next = nextBlockIndex.coerceIn(1, totalBlocks.coerceAtLeast(1))
+    return "SAFE BREAK · BLOCK $next RESUMES AT 00:00"
+}
+
+/**
  * Issue #111 finding 3 — the Safe Break announcement. Non-null
  * ONLY while the row says a break is actually running; the count
  * is the break's OWN remaining seconds (safeBreakSecondsRemaining),
  * never the span's. Outside a break this surface prints nothing
  * about breaks — no standing decoration, no false alarm.
  */
+
+
 internal fun deskClockBreakLine(session: FocusSessionEntity?): String? {
     if (session == null || !session.isActive || !session.isInSafeBreak) return null
     val left = session.safeBreakSecondsRemaining.coerceAtLeast(0)
@@ -1076,6 +1099,27 @@ internal fun airlockCountdownRemaining(
     return (wallSeconds - elapsedSeconds).coerceIn(0, wallSeconds)
 }
 
+/**
+ * Audit R6 #340 F17: the ESCALATING wall. The pre-cure wall was a
+ * fixed 5 seconds for the first reach and the hundredth alike.
+ * The price now doubles per prior reach at the same package
+ * TODAY (the DrawerDay filing day, counted from the persisted
+ * intercept log — so the price survives process death and can
+ * never reset mid-day): 5, 10, 20, 40, 80, then capped at 120.
+ * Locally rendered from the session's own record; no media, no
+ * network, nothing to degrade.
+ */
+internal fun escalatedAirlockWallSeconds(priorReachesToday: Int, baseSeconds: Int = 5): Int {
+    // The base is the configured breath length (issue #318 F4:
+    // AirlockBreathStore, 5 by Decision #16, at most 30); the
+    // ladder doubles FROM it, capped at 120.
+    var wall = baseSeconds.coerceAtLeast(1)
+    repeat(priorReachesToday.coerceIn(0, 10)) {
+        wall = (wall * 2).coerceAtMost(120)
+    }
+    return wall.coerceAtMost(120)
+}
+
 /** Issue #55: whole seconds until [deadlineMillis], ceiling — a
  *  deadline-derived remainder that reaches 0 exactly at the deadline. */
 internal fun cooldownRemainingSeconds(deadlineMillis: Long, nowMillis: Long): Int {
@@ -1134,7 +1178,67 @@ internal fun airlockSessionLine(
  * the constant as the value's source; this function is the one
  * print derivation that changes.)
  */
-internal fun peekBadgeText(durationSeconds: Int): String = "${durationSeconds / 60}m"
+/**
+ * The door's memory line (FIX-8, designer §5.7): the ordinal of
+ * THIS visit in the gate line's family — {prior booked + 1}
+ * TIME THIS SESSION. The scope word is THIS SESSION (Tor's
+ * ratification): the taper counts this session's booked
+ * intercepts, and a session is not a night. Printed only when
+ * at least one prior booking exists; the door claims no memory
+ * it doesn't have.
+ */
+internal fun doorMemoryLineText(priorInterceptsThisSession: Int): String? {
+    if (priorInterceptsThisSession < 1) return null
+    return "${ordinalWord(priorInterceptsThisSession + 1)} TIME THIS SESSION"
+}
+
+internal fun ordinalWord(n: Int): String = when (n) {
+    1 -> "FIRST"
+    2 -> "SECOND"
+    3 -> "THIRD"
+    4 -> "FOURTH"
+    5 -> "FIFTH"
+    6 -> "SIXTH"
+    7 -> "SEVENTH"
+    8 -> "EIGHTH"
+    9 -> "NINTH"
+    10 -> "TENTH"
+    else -> {
+        val suffix = when {
+            n % 100 in 11..13 -> "TH"
+            n % 10 == 1 -> "ST"
+            n % 10 == 2 -> "ND"
+            n % 10 == 3 -> "RD"
+            else -> "TH"
+        }
+        "$n$suffix"
+    }
+}
+
+/**
+ * The break appointment (FIX-8, the Errand's kernel; designer
+ * §4.5 wording, Tor-ratified cell spec): the instant the
+ * session's own schedule already guarantees, at which the Safe
+ * Break's tier law opens this app — no lease, no cooldown.
+ * Derived from the carried instant; never a literal.
+ */
+internal fun breakAppointmentText(nextBreakAtMillis: Long): String =
+    "BREAK AT " +
+        java.text.SimpleDateFormat("HH:mm", Locale.US).format(java.util.Date(nextBreakAtMillis)) +
+        " OPENS THIS APP"
+
+internal fun peekBadgeText(durationSeconds: Int): String {
+    // FIX-8 (issue #11): the badge derives honestly — 90s prints
+    // "1m30s", never a rounded "1m" the lease does not grant.
+    val total = durationSeconds.coerceAtLeast(0)
+    val minutes = total / 60
+    val seconds = total % 60
+    return when {
+        minutes > 0 && seconds > 0 -> "${minutes}m${seconds}s"
+        minutes > 0 -> "${minutes}m"
+        else -> "${seconds}s"
+    }
+}
 
 /**
  * The peek's price, printed on the offer before it is taken
@@ -1521,6 +1625,14 @@ fun AirlockInterceptOverlay(
     // identical effect (the session ends). Placement only; the
     // valve's price and power are untouched.
     onRequestEmergencyBreak: () -> Unit = {},
+    // Issue #11 (FIX-8): the honest exit — a quiet text row under
+    // RETURN that routes to the door-originated Disarm entry. It
+    // ends nothing itself; the Disarm face carries the gravity.
+    onEndSessionInstead: () -> Unit = {},
+    // Issue #11 (FIX-7): reports the arm instant (the wall's
+    // expiry with the offer standing) so the VM can sound the
+    // arm voice once per intercept.
+    onOfferArmed: () -> Unit = {},
     // Issue #318 F4: the breathing wall's length is a stored,
     // per-configuration value (AirlockBreathStore), no longer a
     // composable-local literal. Default = Decision #16's 5 seconds.
@@ -1539,23 +1651,33 @@ fun AirlockInterceptOverlay(
         // keyed on the intercept INSTANCE (not package+visibility, which
         // a same-package re-intercept left unchanged) and are
         // deadline-derived, so a fresh intercept always restarts the
-        // full 5 seconds and drift can never stretch the wall.
+        // full wall and drift can never stretch it. The wall's LENGTH
+        // is the configured breath (issue #318 F4, [breathSeconds])
+        // escalated per prior reach today (Audit R6 #340 F17): the
+        // ladder doubles from the breath base, capped at 120 —
+        // state.priorReachesToday carries the ViewModel's count.
+        val effectiveWallSeconds =
+            escalatedAirlockWallSeconds(state.priorReachesToday, breathSeconds)
         val wallStartMono = remember(state.interceptInstanceId) {
             state.interceptedAtMonoMillis.takeIf { it > 0L } ?: SystemClock.elapsedRealtime()
         }
         var countdownSecs by remember(state.interceptInstanceId) {
             mutableIntStateOf(
-                airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), breathSeconds)
+                airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), effectiveWallSeconds)
             )
         }
         LaunchedEffect(state.interceptInstanceId, state.isVisible) {
             countdownSecs =
-                airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), breathSeconds)
+                airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), effectiveWallSeconds)
             while (countdownSecs > 0) {
                 delay(200L)
                 countdownSecs =
-                    airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), breathSeconds)
+                    airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), effectiveWallSeconds)
             }
+            // Issue #11 (FIX-7): the wall has expired — report the
+            // arm instant; the VM sounds the arm voice once per
+            // intercept instance, and only if the offer stands.
+            if (state.canUse2MinutePeek) onOfferArmed()
         }
 
         // The withheld peek's cooldown, ticking live while the
@@ -1661,6 +1783,18 @@ fun AirlockInterceptOverlay(
                     )
                 }
 
+                // Issue #11 (FIX-8): the door's memory — this
+                // visit's ordinal, THIS SESSION only, printed
+                // only when a prior booking exists.
+                doorMemoryLineText(state.priorInterceptsThisSession)?.let { line ->
+                    Text(
+                        text = line,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f)
+                    )
+                }
+
                 // Issue #325 (Audit R5, Zario): the stake stands on
                 // the door — the week's break balance at the moment
                 // of decision, including the spent state at zero.
@@ -1702,7 +1836,10 @@ fun AirlockInterceptOverlay(
                 // counts the pulse). It grants nothing and shortens
                 // nothing; it is the wall's one permitted fidget.
                 Text(
-                    text = if (countdownSecs > 0) String.format(Locale.US, "0%d", countdownSecs) else "00",
+                    // Audit R6 #340 F17: the escalated wall runs to
+                    // 120 — the numeral zero-pads to two, never
+                    // prefixes a fixed "0" onto a 3-digit count.
+                    text = if (countdownSecs > 0) String.format(Locale.US, "%02d", countdownSecs) else "00",
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 88.sp,
@@ -1806,114 +1943,174 @@ fun AirlockInterceptOverlay(
                     testTag = "airlock_return_button"
                 )
 
-                if (peekReady) {
-                    // Audit R6 #341 F60: composed from the FIRST frame,
-                    // disabled and priced while the countdown runs.
-                    // Before this the chip (and its price line) only
-                    // appeared at second 0's end — the card grew
-                    // mid-decision, switch scanners restarted their
-                    // scan, and the offer could not even be READ
-                    // before the timer ran out.
-                    // Issue #114, finding 3 (composed with F60 above): the offer
-                    // line also stands during the breath — what waits at zero is
-                    // printed from the first second, while the price, scope and terms
-                    // print with the chip itself below, so the whole exchange is
-                    // readable during the countdown without duplicated lines.
-                    if (countdownSecs > 0) {
+                // Issue #11 (FIX-8): THE HONEST EXIT — one quiet
+                // bare-text line under RETURN. It ends nothing,
+                // spends nothing, books nothing — it routes to the
+                // door-originated Disarm entry, which carries the
+                // gravity. Quiet by form, never by illegibility.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .clickable(onClick = onEndSessionInstead)
+                        .testTag("airlock_end_session_instead"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "END THE SESSION INSTEAD",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.92f),
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                // F60 composition (Audit R6 #341, recomposed
+                // FIX-R3): main's chip-from-the-first-frame stands
+                // INSIDE the unified zone below — the zone's fixed
+                // height keeps RETURN stationary (FIX-6) while the
+                // chip is present and scrollable at every second
+                // (F60). Both mechanisms, one slot.
+                // THE UNIFIED ZONE (issue #11 FIX-6, composed with
+                // #114/#102 at the main merge): everything the door
+                // may print under the honest exit lives in ONE
+                // fixed-height slot — the #114 exchange preview
+                // during the breath, the offer at zero, the #102
+                // withheld reason from the first second — so the
+                // centred card's height, and RETURN's place in it,
+                // never changes between the counting, offer and
+                // held frames (the invariant
+                // HeldDoorStationarityTest guards). The slot is
+                // sized for its tallest tenant, the four-line
+                // preview stack; shorter tenants stand at its top.
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(224.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // Issue #114, finding 3 + Audit R6 #341 F60
+                    // (composed FIX-R3): inside the zone the offer
+                    // is composed from the FIRST frame — the preview
+                    // line stands during the breath, the chip itself
+                    // is present from frame one (dimmed, its tap
+                    // gated to zero), and the price, scope and terms
+                    // print once with the chip — so the whole
+                    // exchange is readable during the countdown, the
+                    // chip can be scrolled to on a short screen at
+                    // any second, and nothing is revealed by the
+                    // wall reaching zero. The zone's fixed height
+                    // keeps RETURN's bounds invariant across frames.
+                    if (peekReady) {
+                        if (countdownSecs > 0) {
+                            Text(
+                                text = peekOfferPreviewText(MonolithRepository.PEEK_DURATION_SECONDS),
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 12.5.sp,
+                                color = NightColorPrimary.copy(alpha = 0.8f)
+                            )
+                        }
+                        BlockitActionChip(
+                            wordLabel = "2-MINUTE PEEK",
+                            // Issue #114, finding 5: this door is
+                            // NOT an emergency — it is the routine,
+                            // repeatable, cooldown-priced peek. The
+                            // EMERGENCY name belongs only to the
+                            // session-ending weekly break.
+                            // SIL-2 / W-29: the badge is the SET
+                            // value, read from the lease machinery's
+                            // own constant — no hardcoded minutes.
+                            monoBadge = peekBadgeText(MonolithRepository.PEEK_DURATION_SECONDS),
+                            onClick = { if (countdownSecs == 0) onTake2MinutePeek() },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(if (countdownSecs == 0) Modifier else Modifier.alpha(0.45f)),
+                            testTag = "airlock_peek_button"
+                        )
+                        // SIL-2 / W-29: the price stands on the
+                        // offer, before the peek is taken — the
+                        // cooldown the repository will arm, named
+                        // in full.
                         Text(
-                            text = peekOfferPreviewText(MonolithRepository.PEEK_DURATION_SECONDS),
+                            text = peekPriceText(MonolithRepository.PEEK_COOLDOWN_MILLIS),
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 12.5.sp,
+                            color = NightColorPrimary.copy(alpha = 0.8f)
+                        )
+                        Text(
+                            text = peekCooldownScopeText(),
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 12.5.sp,
+                            color = NightColorPrimary.copy(alpha = 0.8f)
+                        )
+                        // Issue #102, finding 5: the terms stand
+                        // on the offer itself, before the tap.
+                        Text(
+                            text = peekTermsText(),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontSize = 12.5.sp,
                             color = NightColorPrimary.copy(alpha = 0.8f)
                         )
                     }
-                BlockitActionChip(
-                    wordLabel = "2-MINUTE PEEK",
-                    // Issue #114, finding 5: this door is NOT an
-                    // emergency — it is the routine, repeatable,
-                    // cooldown-priced peek. The EMERGENCY name now
-                    // belongs only to the session-ending weekly
-                    // break, so the two doors can never again be
-                    // confused at the moment of least capacity.
-                    // SIL-2 / W-29: the badge is the SET value,
-                    // read from the lease machinery's own
-                    // constant — no hardcoded minutes here.
-                    monoBadge = peekBadgeText(MonolithRepository.PEEK_DURATION_SECONDS),
-                    onClick = { if (countdownSecs == 0) onTake2MinutePeek() },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .then(if (countdownSecs == 0) Modifier else Modifier.alpha(0.45f)),
-                    testTag = "airlock_peek_button"
-                )
-                // SIL-2 / W-29: the price stands on the offer,
-                // before the peek is taken — the cooldown the
-                // repository will arm, named in full.
-                Text(
-                    text = peekPriceText(MonolithRepository.PEEK_COOLDOWN_MILLIS),
-                    fontFamily = AtkinsonHyperlegibleFamily,
-                    fontSize = 12.5.sp,
-                    color = NightColorPrimary.copy(alpha = 0.8f)
-                )
-                Text(
-                    text = peekCooldownScopeText(),
-                    fontFamily = AtkinsonHyperlegibleFamily,
-                    fontSize = 12.5.sp,
-                    color = NightColorPrimary.copy(alpha = 0.8f)
-                )
-                // Issue #102, finding 5: the terms stand on
-                // the offer itself, before the tap.
-                Text(
-                    text = peekTermsText(),
-                    fontFamily = AtkinsonHyperlegibleFamily,
-                    fontSize = 12.5.sp,
-                    color = NightColorPrimary.copy(alpha = 0.8f)
-                )
-                }
 
-                // The withheld peek prints its state AND its reason
-                // (Held Door Truth Baseline): cooldown with its
-                // live remaining time, or the running pill named.
-                // Doors that never owed a peek carry withheld ==
-                // null and print nothing here. Issue #102, finding
-                // 4: the reason is NOT gated on the breath countdown
-                // — it shows from the first second, not after a
-                // second countdown (see peekWithheldReasonVisible).
-                if (peekWithheldReasonVisible(peekReady)) {
-                    when (state.peekWithheld) {
-                        PeekWithheld.COOLDOWN -> {
-                            if (cooldownSecs > 0) {
-                                Text(
-                                    text = peekCooldownPrint(cooldownSecs),
-                                    fontFamily = AtkinsonHyperlegibleFamily,
-                                    fontSize = 12.5.sp,
-                                    color = NightColorPrimary.copy(alpha = 0.8f)
-                                )
+                    // The withheld peek prints its state AND its
+                    // reason (Held Door Truth Baseline): cooldown
+                    // with its live remaining time, or the running
+                    // pill named. Doors that never owed a peek carry
+                    // withheld == null and print nothing here. Issue
+                    // #102, finding 4: the reason is NOT gated on
+                    // the breath countdown — it shows from the first
+                    // second (see peekWithheldReasonVisible).
+                    if (peekWithheldReasonVisible(peekReady)) {
+                        when (state.peekWithheld) {
+                            PeekWithheld.COOLDOWN -> {
+                                if (cooldownSecs > 0) {
+                                    Text(
+                                        text = peekCooldownPrint(cooldownSecs),
+                                        fontFamily = AtkinsonHyperlegibleFamily,
+                                        fontSize = 12.5.sp,
+                                        color = NightColorPrimary.copy(alpha = 0.8f)
+                                    )
+                                }
+                                // Issue #11 (FIX-8, the Errand's
+                                // kernel): when the schedule already
+                                // guarantees a break that opens this
+                                // app, the door prints the appointment.
+                                state.nextBreakAtMillis?.let { instant ->
+                                    Text(
+                                        text = breakAppointmentText(instant),
+                                        fontFamily = AtkinsonHyperlegibleFamily,
+                                        fontSize = 12.5.sp,
+                                        color = NightColorPrimary.copy(alpha = 0.8f)
+                                    )
+                                }
                             }
+                            PeekWithheld.ALREADY_ACTIVE -> Text(
+                                text = stringResource(R.string.peek_already_running),
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 12.5.sp,
+                                color = NightColorPrimary.copy(alpha = 0.8f)
+                            )
+                            PeekWithheld.PEEK_OFF -> Text(
+                                text = stringResource(R.string.peek_off),
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 12.5.sp,
+                                color = NightColorPrimary.copy(alpha = 0.8f)
+                            )
+                            // Issue #154: not a refusal — the door's
+                            // own state line for a LOCKED tier, naming
+                            // the tier and where tiers are set.
+                            PeekWithheld.TIER_LOCKED -> Text(
+                                text = "LOCKED TIER — NO PEEK EXISTS HERE · PEEK APPS ARE SET IN THE SHIELD",
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 12.5.sp,
+                                color = NightColorPrimary.copy(alpha = 0.8f)
+                            )
+                            null -> Unit
                         }
-                        PeekWithheld.ALREADY_ACTIVE -> Text(
-                            text = stringResource(R.string.peek_already_running),
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 12.5.sp,
-                            color = NightColorPrimary.copy(alpha = 0.8f)
-                        )
-                        PeekWithheld.PEEK_OFF -> Text(
-                            text = stringResource(R.string.peek_off),
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 12.5.sp,
-                            color = NightColorPrimary.copy(alpha = 0.8f)
-                        )
-                        // Issue #154: not a refusal — the door's
-                        // own state line for a LOCKED tier, naming
-                        // the tier and where tiers are set, so a
-                        // legitimate need meets a fact instead of
-                        // a blank wall.
-                        PeekWithheld.TIER_LOCKED -> Text(
-                            text = "LOCKED TIER — NO PEEK EXISTS HERE · PEEK APPS ARE SET IN THE SHIELD",
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 12.5.sp,
-                            color = NightColorPrimary.copy(alpha = 0.8f)
-                        )
-                        null -> Unit
                     }
                 }
 
@@ -2115,16 +2312,10 @@ fun DisarmChallengeOverlay(
                 )
 
                 Text(
-                    text = when {
-                        // P-2c: the door-originated face's lawful
-                        // second body — a stopwatch past its floor
-                        // completes, it does not break.
-                        state.cleanCompletionAvailable ->
-                            "This session has run its floor. Ending it now is a completion, not a break."
-                        tokensRemaining > 0 ->
-                            "This ends the session early. It is the only break this week."
-                        else ->
-                            "This week's break is already spent."
+                    text = if (tokensRemaining > 0) {
+                        "This ends the session early. It is the only break this week."
+                    } else {
+                        "This week's break is already spent."
                     },
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontSize = 13.sp,
@@ -2536,53 +2727,6 @@ internal fun peekGateLineText(secondsRemaining: Int): String {
 }
 
 /**
- * The door's memory line (FIX-8, designer §5.7): the ordinal of
- * THIS visit in the gate line's family — {prior booked + 1}
- * TIME THIS SESSION. The scope word is THIS SESSION (Tor's
- * ratification): the taper counts this session's booked
- * intercepts, and a session is not a night. Printed only when
- * at least one prior booking exists; the door claims no memory
- * it doesn't have.
- */
-
-/**
- * The door's memory line (FIX-8, designer §5.7): the ordinal of
- * THIS visit in the gate line's family — {prior booked + 1}
- * TIME THIS SESSION. The scope word is THIS SESSION (Tor's
- * ratification): the taper counts this session's booked
- * intercepts, and a session is not a night. Printed only when
- * at least one prior booking exists; the door claims no memory
- * it doesn't have.
- */
-internal fun doorMemoryLineText(priorInterceptsThisSession: Int): String? {
-    if (priorInterceptsThisSession < 1) return null
-    return "${ordinalWord(priorInterceptsThisSession + 1)} TIME THIS SESSION"
-}
-
-internal fun ordinalWord(n: Int): String = when (n) {
-    1 -> "FIRST"
-    2 -> "SECOND"
-    3 -> "THIRD"
-    4 -> "FOURTH"
-    5 -> "FIFTH"
-    6 -> "SIXTH"
-    7 -> "SEVENTH"
-    8 -> "EIGHTH"
-    9 -> "NINTH"
-    10 -> "TENTH"
-    else -> {
-        val suffix = when {
-            n % 100 in 11..13 -> "TH"
-            n % 10 == 1 -> "ST"
-            n % 10 == 2 -> "ND"
-            n % 10 == 3 -> "RD"
-            else -> "TH"
-        }
-        "$n$suffix"
-    }
-}
-
-/**
  * Seconds until an anchored monotonic end, derived at the
  * frame that prints (FIX-5b): the ceiling form, the same
  * arithmetic as peekSecondsRemaining — a counter that ticks
@@ -2611,18 +2755,6 @@ internal fun derivedSecondsUntil(endMono: Long, nowMono: Long): Int {
  * Break's tier law opens this app — no lease, no cooldown.
  * Derived from the carried instant; never a literal.
  */
-
-/**
- * The break appointment (FIX-8, the Errand's kernel; designer
- * §4.5 wording, Tor-ratified cell spec): the instant the
- * session's own schedule already guarantees, at which the Safe
- * Break's tier law opens this app — no lease, no cooldown.
- * Derived from the carried instant; never a literal.
- */
-internal fun breakAppointmentText(nextBreakAtMillis: Long): String =
-    "BREAK AT " +
-        java.text.SimpleDateFormat("HH:mm", Locale.US).format(java.util.Date(nextBreakAtMillis)) +
-        " OPENS THIS APP"
 
 /** The capture's own time, for a frozen row: HH:mm when the
  *  capture is from today, d MMM · HH:mm when it is not — yesterday's

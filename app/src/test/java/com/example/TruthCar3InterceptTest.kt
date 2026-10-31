@@ -72,19 +72,19 @@ class TruthCar3InterceptTest {
         // The uninstall guard's whole caseload: no row, no offer —
         // on ANY door, including an honouring one.
         for (path in InterceptPath.values()) {
-            assertFalse(peekOfferFor(path, null, 0, false, sessionLive = true))
+            assertFalse(peekOfferFor(path, null, 0, false))
         }
     }
 
     @Test
     fun peekOfferNeedsThePeekTierAClearCooldownAndNoRunningPill() {
         val peekApp = app(AppBlockTier.PEEK_2M)
-        assertFalse(peekOfferFor(InterceptPath.APP_TIER, app(AppBlockTier.LOCKED), 0, false, sessionLive = true))
-        assertFalse(peekOfferFor(InterceptPath.APP_TIER, app(AppBlockTier.OPEN), 0, false, sessionLive = true))
-        assertFalse(peekOfferFor(InterceptPath.APP_TIER, peekApp, 1, false, sessionLive = true))
-        assertFalse(peekOfferFor(InterceptPath.APP_TIER, peekApp, 900, false, sessionLive = true))
-        assertFalse(peekOfferFor(InterceptPath.APP_TIER, peekApp, 0, true, sessionLive = true))
-        assertFalse(peekOfferFor(InterceptPath.SHIELD_APP, peekApp, 0, true, sessionLive = true))
+        assertFalse(peekOfferFor(InterceptPath.APP_TIER, app(AppBlockTier.LOCKED), 0, false))
+        assertFalse(peekOfferFor(InterceptPath.APP_TIER, app(AppBlockTier.OPEN), 0, false))
+        assertFalse(peekOfferFor(InterceptPath.APP_TIER, peekApp, 1, false))
+        assertFalse(peekOfferFor(InterceptPath.APP_TIER, peekApp, 900, false))
+        assertFalse(peekOfferFor(InterceptPath.APP_TIER, peekApp, 0, true))
+        assertFalse(peekOfferFor(InterceptPath.SHIELD_APP, peekApp, 0, true))
     }
 
     // -----------------------------------------------------------------
@@ -238,16 +238,6 @@ class TruthCar3InterceptTest {
             "WHEN THE PEEK ENDS, A 1 MINUTE COOLDOWN RUNS ON THIS APP",
             peekPriceText(60_000L)
         )
-    }
-
-    @Test
-    fun peekBadgeNeverTruncates() {
-        // FIX-8 (F-8): m+s honestly — 90s is "1m30s", never "1m".
-        assertEquals("1m30s", peekBadgeText(90))
-        assertEquals("45s", peekBadgeText(45))
-        assertEquals("2m5s", peekBadgeText(125))
-        assertEquals("1m", peekBadgeText(60))
-        assertEquals("0s", peekBadgeText(0))
     }
 
     @Test

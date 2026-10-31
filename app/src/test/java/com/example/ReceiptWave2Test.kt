@@ -73,7 +73,7 @@ class ReceiptWave2Test {
 
     private fun show(state: ReceiptState) {
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()

@@ -69,7 +69,7 @@ class DrawerWave2Test {
     fun filingZone_filesTomorrow_andDeclaredLineRetiresToPrint() {
         val declared = mutableListOf<Pair<LocalDate, String?>>()
         composeRule.setContent {
-            MyApplicationTheme {
+            MyApplicationTheme(darkTheme = false) {
                 DrawerScreen(
                     storedMonths = listOf(StoredMonth(today.year, today.monthValue)),
                     drawerMonth = today.year to today.monthValue,
@@ -84,6 +84,7 @@ class DrawerWave2Test {
                     onLoadEarlier = {},
                     onQueryChange = {},
                     onLoadEarlierSearch = {},
+                    onDeclareTodayWord = {},
                     onDeclareDayWord = { date, word -> declared += date to word }
                 )
             }
@@ -109,7 +110,7 @@ class DrawerWave2Test {
         // the one-setContent rule and less faithful than this.
         var query by mutableStateOf("")
         composeRule.setContent {
-            MyApplicationTheme {
+            MyApplicationTheme(darkTheme = false) {
                 DrawerScreen(
                     storedMonths = listOf(StoredMonth(today.year, today.monthValue)),
                     drawerMonth = today.year to today.monthValue,
@@ -124,6 +125,7 @@ class DrawerWave2Test {
                     onLoadEarlier = {},
                     onQueryChange = { query = it },
                     onLoadEarlierSearch = {},
+                    onDeclareTodayWord = {},
                     onDeclareDayWord = { _, _ -> }
                 )
             }
@@ -148,7 +150,7 @@ class DrawerWave2Test {
             )
         )
         composeRule.setContent {
-            MyApplicationTheme {
+            MyApplicationTheme(darkTheme = false) {
                 DrawerScreen(
                     storedMonths = listOf(StoredMonth(today.year, today.monthValue)),
                     drawerMonth = today.year to today.monthValue,
@@ -163,6 +165,7 @@ class DrawerWave2Test {
                     onLoadEarlier = {},
                     onQueryChange = {},
                     onLoadEarlierSearch = {},
+                    onDeclareTodayWord = {},
                     onDeclareDayWord = { _, _ -> }
                 )
             }

@@ -47,6 +47,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -74,10 +75,7 @@ import com.example.data.AppBlockTier
 import com.example.data.AppCategory
 import com.example.data.BlockedAppEntity
 import com.example.data.BlockedBrowserDomains
-import com.example.data.FocusProfileEntity
-import com.example.data.LoadoutRules
 import com.example.data.MonolithRepository
-import com.example.data.SmartLoadout
 import com.example.data.groupedByRule
 import com.example.data.groupedForCatalogue
 import com.example.service.TactileSoundEngine
@@ -86,7 +84,6 @@ import com.example.ui.ShieldBlockingProof
 import com.example.ui.ShieldBlockingStatus
 import com.example.ui.routineRunningNowSuffix
 import com.example.ui.components.BlockitActionChip
-import com.example.ui.components.ShieldCapSelector
 import com.example.ui.components.onInkControlFill
 import com.example.ui.components.inkControlFill
 import com.example.ui.components.FullBleedSectionHeader
@@ -102,7 +99,9 @@ import kotlinx.coroutines.delay
 /**
  * TAB 1: SUITCASE & APP SWITCHBOARD (DEVELOPER-GUIDE.pdf §4.2 #4 BagTiles, #6 SledSwitch, #7 RombiKnob)
  * - Full-bleed stacked sections with 12dp universal spacing.
- * - ShieldCapSelector for discrete 3-position Loadout selection (STUDY / WORK / SLEEP).
+ * - (Removed, Shield Rethink 2 Step 2: the Loadout cap and the
+ *   profile picker were deleted by ruling — rulings live here by
+ *   hand now, one app at a time.)
  * - AppRowSledToggleView ultra-minimal installed app rows with 3-stop sled switches (SHUT / PEEK / OPEN).
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
@@ -126,7 +125,26 @@ fun ShieldMatrixScreen(
     // fallback, never a claim.
     blockingStatus: ShieldBlockingStatus? = null,
     isSessionActive: Boolean = false,
+    // Shield Rethink 2, Step 1: the dated truth line — the receipt,
+    // composed once from the beat's proof by the ViewModel and
+    // printed verbatim under GUARDS. Null in render harnesses.
+    receiptLine: String? = null,
+    // Shield Rethink 2, Step 2: the intention line — his words,
+    // written here on the Sheet, read back by the arm and the
+    // session plate verbatim. Blank is a complete state. The write
+    // is wedge-gated like every other Shield edit. Defaults keep
+    // render harnesses whole.
+    intention: String = "",
+    onIntentionChanged: (String) -> Unit = {},
+    // The session's grace window (its first seconds): the wedge
+    // below stays open there — abort is free, the law correctable.
+    isGracePeriod: Boolean = false,
     ratchetWarningMessage: String? = null,
+    // Audit R6 #340 F13: the held-save notice — a routine edit that
+    // collided was NOT written, and this banner names the exact
+    // collision until the user dismisses it.
+    routineConflictNotice: String? = null,
+    onDismissRoutineConflictNotice: () -> Unit = {},
     // Issue #141: the staged sled commit + its take-back, rendered
     // as a banner under the ratchet warning while the window lasts.
     tierChangeForUndo: TierChangeForUndo? = null,
@@ -139,15 +157,9 @@ fun ShieldMatrixScreen(
     // Issue #140: the catalogue row's hold gesture steps the app's
     // daily limit (the limit is printed on the row; the hold sets it).
     onCycleDailyLimit: (BlockedAppEntity) -> Unit = {},
-    onApplySmartLoadout: (SmartLoadout) -> Unit,
     // Issue #107 (#3): correct the category printed on a catalogue
     // row. Default no-op for render harnesses and previews.
     onSetAppCategory: (String, AppCategory) -> Unit = { _, _ -> },
-    onSelectProfile: (FocusProfileEntity) -> Unit = {},
-    // Issue #139 F4: the profile-undo door — stands only while a
-    // pre-apply snapshot exists to restore.
-    profileUndoAvailable: Boolean = false,
-    onUndoProfileApply: () -> Unit = {},
     onToggleShortsReelsSniper: () -> Unit,
     onToggleBrowserUrlBlocker: () -> Unit,
     // Issue #337 F1: the accessibility-shortcut binding state and
@@ -213,18 +225,6 @@ fun ShieldMatrixScreen(
     // lead ruling R4: grouped structure, main's row wiring).
     val catalogueGroups = remember(filteredApps) { filteredApps.groupedForCatalogue() }
     val effectiveNight = isDarkTheme || isSessionActive
-    // UNA-07: the cap rests on the STORED FACT (loadoutCapIndex —
-    // his last hand pick), not on a bare remember defaulting to
-    // STUDY. The local state still answers a tap instantly; the
-    // remember key re-seats it whenever the stored fact (re)loads.
-    var selectedLoadoutIndex by remember(loadoutCapIndex) { mutableIntStateOf(loadoutCapIndex) }
-
-    // Issue #107 (#1): a cap tap NO LONGER applies a loadout. It
-    // stages one — the preview panel under the cap prints what the
-    // loadout does (its own subtitle), what else it switches on,
-    // and how many hand-set tiers it would replace — and only the
-    // panel's APPLY word commits. KEEP MY RULES drops the staging.
-    var pendingLoadout by remember { mutableStateOf<SmartLoadout?>(null) }
 
     // =====================================================================
     // THE STANDING ORDERS (Ordner lane — Liv's placement + catalogue
@@ -258,12 +258,19 @@ fun ShieldMatrixScreen(
     // Sweeper: a rest whose lifecycle was interrupted (an outside
     // actor re-tiered the app mid-rest) retires by age — a resting
     // entry may never become a permanent suppression.
+    // Issue #69 F5(a) — demand-driven: the old loop woke every
+    // 700 ms for the screen's whole life just to check the map
+    // was empty. Now it runs only while a rest exists to retire
+    // (the prune predicate is age-based at 1,200 ms, so starting
+    // the sweep when the first rest lands cannot miss one).
     LaunchedEffect(Unit) {
-        while (true) {
-            delay(700)
-            if (restingFlips.isNotEmpty()) {
-                val now = SystemClock.elapsedRealtime()
-                restingFlips = restingFlips.filterValues { now - it.createdAtMs <= 1200 }
+        snapshotFlow { restingFlips }.collect { flips ->
+            if (flips.isNotEmpty()) {
+                while (restingFlips.isNotEmpty()) {
+                    delay(700)
+                    val now = SystemClock.elapsedRealtime()
+                    restingFlips = pruneRests(restingFlips, now)
+                }
             }
         }
     }
@@ -278,13 +285,50 @@ fun ShieldMatrixScreen(
         tallyShown = tallyNow
     }
 
+    // =====================================================================
+    // THE WEDGE (Shield Rethink 2, Step 1): while a session holds,
+    // the Shield is law in force, not a draft — every edit door on
+    // this screen refuses. The refusal is constructed here, at the
+    // one choke point every mutating callback passes through on its
+    // way to the rows, chips and fields below: a control added
+    // tomorrow that wires a raw callback instead of a gated one is
+    // visible in review, and the gate itself is pinned by table
+    // test (shieldControlsLocked). The grace window is the one
+    // carve-out: the session's first seconds, where the hand that
+    // threw the seal may still correct what it sealed. (The
+    // ViewModel's one-way ratchet still governs weakenings outside
+    // this gate; the routines section is frozen and keeps its own
+    // wiring, untouched.)
+    // =====================================================================
+    val controlsLocked = com.example.ui.components.shieldControlsLocked(isSessionActive, isGracePeriod)
+    val gatedSetAppTier: (String, AppBlockTier) -> Unit =
+        { pkg, tier -> if (!controlsLocked) onSetAppTier(pkg, tier) }
+    // Issue #140's daily-limit hold arrived on main after the
+    // wedge: it mutates a ruling, so it takes the wedge too.
+    val gatedCycleDailyLimit: (BlockedAppEntity) -> Unit =
+        { app -> if (!controlsLocked) onCycleDailyLimit(app) }
+    val gatedSetAppCategory: (String, AppCategory) -> Unit =
+        { pkg, cat -> if (!controlsLocked) onSetAppCategory(pkg, cat) }
+    val gatedToggleSniper: () -> Unit =
+        { if (!controlsLocked) onToggleShortsReelsSniper() }
+    val gatedToggleBrowser: () -> Unit =
+        { if (!controlsLocked) onToggleBrowserUrlBlocker() }
+    val gatedAddSite: (String) -> Unit =
+        { site -> if (!controlsLocked) onAddSite(site) }
+    val gatedRemoveSite: (String) -> Unit =
+        { site -> if (!controlsLocked) onRemoveSite(site) }
+    val gatedIntentionChanged: (String) -> Unit =
+        { text -> if (!controlsLocked) onIntentionChanged(text) }
+    val gatedUndoTierChange: () -> Unit =
+        { if (!controlsLocked) onUndoTierChange() }
+
     val slipTap: (BlockedAppEntity) -> Unit = { app ->
         val pkg = app.packageName
         val resting = restingFlips[pkg]
         if (resting != null) {
             // Re-tap before the exit cancels it: flip back, no motion.
             restingFlips = restingFlips - pkg
-            onSetAppTier(pkg, resting.from)
+            gatedSetAppTier(pkg, resting.from)
         } else {
             val current = app.resolvedTier
             // Audit R6 #341 F22: the tap path walks the FULL ring
@@ -298,14 +342,13 @@ fun ShieldMatrixScreen(
                 AppBlockTier.PEEK_2M -> AppBlockTier.OPEN
                 AppBlockTier.OPEN -> AppBlockTier.LOCKED
             }
-            onSetAppTier(pkg, target)
+            gatedSetAppTier(pkg, target)
             // The choreography runs only when the commit will land:
-            // the one-way ratchet refuses a weakening mid-session,
-            // and a refused flip must not re-strike the line. This
-            // gate mirrors the ViewModel's rule exactly; the
-            // ViewModel remains the real guard.
-            val weakening = tierRank(target) < tierRank(current)
-            if (!isSessionActive || !weakening) {
+            // the wedge refuses every commit in hold, and a refused
+            // flip must not re-strike the line. Outside the wedge
+            // the ViewModel's one-way ratchet remains the guard for
+            // weakenings.
+            if (!controlsLocked) {
                 restingFlips = restingFlips + (pkg to RestingFlip(
                     from = current,
                     to = target,
@@ -332,34 +375,51 @@ fun ShieldMatrixScreen(
         // One-Way Ratchet warning banner if user tries to weaken rules during active session
         item { RatchetWarningBanner(message = ratchetWarningMessage, onAddRoutine = onAddRoutine) }
 
-        // Issue #141: the sled commit's receipt + take-back (the
-        // banner body lives in TierChangeUndoBanner below).
+        // The wedge's face: while it holds, the sheet says why it
+        // will not be edited — a sealed instrument reads as law in
+        // force, never as a screen of mysteriously dead controls.
         item {
-            TierChangeUndoBanner(
-                change = tierChangeForUndo,
-                onUndo = onUndoTierChange
-            )
-        }
-
-        // Issue #139 F4: the undo strip — a profile application
-        // overwrote the hand-set tiers; this restores them.
-        if (profileUndoAvailable) {
-            item {
+            AnimatedVisibility(visible = controlsLocked) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
                         .background(scheme.surfaceVariant)
-                        .clickable(onClick = onUndoProfileApply)
                         .padding(12.dp)
-                        .testTag("profile_undo_strip")
                 ) {
                     Text(
-                        text = "A LOADOUT OVERWROTE YOUR HAND-SET TIERS — TAP TO UNDO",
+                        text = "SEALED — SHIELD EDITS ARE CLOSED WHILE A SESSION HOLDS",
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
-                        color = scheme.onBackground
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("shield_sealed_notice")
+                    )
+                }
+            }
+        }
+
+        // Audit R6 #340 F13: the held routine save. Same banner
+        // grammar as the ratchet warning; tapping dismisses.
+        // (The issue #141 tier-change banner that also stood here
+        // on this branch lives on main as an extracted component
+        // above — it is NOT duplicated here.)
+        item {
+            AnimatedVisibility(visible = !routineConflictNotice.isNullOrBlank()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(scheme.primaryContainer)
+                        .clickable { onDismissRoutineConflictNotice() }
+                        .padding(12.dp)
+                ) {
+                    Text(
+                        text = routineConflictNotice ?: "",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = TokenColorOnPrimary
                     )
                 }
             }
@@ -370,27 +430,15 @@ fun ShieldMatrixScreen(
         // Oct 29 — Linea's cap over the RombiKnob; the cap occupies
         // the same 84dp slot the knob's AndroidView held)
         // =====================================================================
+
+        // FIX-R2 recomposition (PR #388 onto main 0901283c): the
+        // #141 banner renders through main's extracted
+        // TierChangeUndoBanner; the undo callback stays this
+        // branch's lock-gated one.
         item {
-            val context = LocalContext.current
-            // The counts left this header (Liv D3, adopted by Gust):
-            // SHUT / PEEK / OPEN live on the standing-orders tally
-            // below — one home per number, or numbers are decoration.
-            FullBleedSectionHeader(titleWord = "LOADOUT")
-            Spacer(modifier = Modifier.height(8.dp))
-            ShieldCapSelector(
-                selectedIndex = selectedLoadoutIndex,
-                soundEngine = soundEngine,
-                onSelect = { level ->
-                    // Stage, never apply (issue #107 #1) — resolved
-                    // through the ONE index↔loadout mapping
-                    // (LoadoutStore, #58 F6 / Audit R1 #38): an
-                    // index that seats nothing stages nothing — the
-                    // hand-written `else -> SLEEP` silently meant
-                    // SLEEP for any garbage index and stays deleted.
-                    com.example.data.LoadoutStore.loadoutAtCapIndex(level)?.let { loadout ->
-                        pendingLoadout = loadout
-                    }
-                }
+            TierChangeUndoBanner(
+                change = tierChangeForUndo,
+                onUndo = gatedUndoTierChange
             )
             // R-4(b) cap-source label (train, ported per M-A3
             // H10): the cap rests on the persisted LAST HAND PICK —
@@ -442,6 +490,13 @@ fun ShieldMatrixScreen(
                 )
             }
         }
+        // SECTION 1 was the LOADOUT cap + preview (profiles /
+        // smart loadouts). Shield Rethink 2, Step 2: DELETED by
+        // ruling (#22, Oct 30) — guessed rulings wearing a uniform.
+        // The SmartLoadout enum and LoadoutRules stay in the tree,
+        // orphaned: routines still carry loadouts as payload and the
+        // Deck still applies them; they leave with the routines
+        // disentanglement, not before.
 
         // =====================================================================
         // SECTION 3: ROUTINES — real, persisted, self-arming (Ren)
@@ -547,27 +602,6 @@ fun ShieldMatrixScreen(
                     )
                 }
             }
-            val shutLines = slipLines(AppBlockTier.LOCKED, rules, restingFlips, allApps)
-            item { SlipSectionHeader(word = "SHUT") }
-            if (shutLines.isEmpty()) {
-                item { SlipNoneLine() }
-            } else {
-                items(shutLines, key = { "slip_${it.app.packageName}" }) { line ->
-                    SlipLineRow(
-                        line = line,
-                        onTap = { slipTap(line.app) },
-                        onRestElapsed = {
-                            restingFlips[line.app.packageName]?.let { entry ->
-                                restingFlips = restingFlips +
-                                    (line.app.packageName to entry.copy(exiting = true))
-                            }
-                        },
-                        onExitElapsed = {
-                            restingFlips = restingFlips - line.app.packageName
-                        }
-                    )
-                }
-            }
             // Issue #141: OPEN gets a section too. The slip used to
             // print only the rulings that restrict, so an app flipped
             // to OPEN vanished from the book entirely — discoverable
@@ -596,6 +630,24 @@ fun ShieldMatrixScreen(
                 }
             }
         } else {
+            // Shield Rethink 2, Step 2 — the Sheet: SHUT prints as
+            // ONE collapsed tally line. The shut are the ground,
+            // not the news; under the inversion most of the phone
+            // is shut, and a book that prints the ground buries the
+            // decisions. Their names live in the catalogue below,
+            // where a shut app is unshut. PEEK and OPEN — the
+            // exceptions, his named decisions — print in full above.
+            item { SlipSectionHeader(word = "SHUT") }
+            item {
+                Text(
+                    text = "$shutCount APPS SHUT — THE CATALOGUE BELOW HOLDS THEIR NAMES",
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("slip_shut_tally")
+                )
+            }
+
             item {
                 SlipHeaderRow(right = tallyText(shutCount, peekCount, open = null))
             }
@@ -835,9 +887,9 @@ fun ShieldMatrixScreen(
                     app = app,
                     effectiveNight = effectiveNight,
                     soundEngine = soundEngine,
-                    onSetAppTier = onSetAppTier,
-                    onCycleDailyLimit = onCycleDailyLimit,
-                    onSetAppCategory = onSetAppCategory
+                    onSetAppTier = gatedSetAppTier,
+                    onCycleDailyLimit = gatedCycleDailyLimit,
+                    onSetAppCategory = gatedSetAppCategory
                 )
             }
         }
@@ -872,7 +924,7 @@ fun ShieldMatrixScreen(
                     BlockitActionChip(
                         wordLabel = if (shortsReelsSniperEnabled) "ON" else "OFF",
                         isPrimaryInk = shortsReelsSniperEnabled,
-                        onClick = onToggleShortsReelsSniper,
+                        onClick = gatedToggleSniper,
                         testTag = "shield_sniper_toggle"
                     )
                 }
@@ -925,8 +977,23 @@ fun ShieldMatrixScreen(
                     BlockitActionChip(
                         wordLabel = if (browserUrlBlockerEnabled) "ON" else "OFF",
                         isPrimaryInk = browserUrlBlockerEnabled,
-                        onClick = onToggleBrowserUrlBlocker,
+                        onClick = gatedToggleBrowser,
                         testTag = "shield_browser_blocker_toggle"
+                    )
+                }
+                // The dated truth line: the guards above are law
+                // inside the seal, but they may not self-report
+                // beyond what the probe proves — this line is the
+                // only enforcement statement on the sheet, printed
+                // from the beat's proof, identical everywhere it
+                // appears. A statement, never a control.
+                if (receiptLine != null) {
+                    Text(
+                        text = receiptLine,
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("shield_receipt_line")
                     )
                 }
                 // #339 F1: the Web Gate row — block the whole web
@@ -1022,22 +1089,6 @@ fun ShieldMatrixScreen(
                         }
                     }
                 }
-                if (profiles.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        profiles.forEach { profile ->
-                            FilterWord(
-                                label = profile.name.uppercase(),
-                                selected = profile.name == selectedProfileName,
-                                onClick = { onSelectProfile(profile) }
-                            )
-                        }
-                    }
-                }
             }
         }
 
@@ -1072,7 +1123,7 @@ fun ShieldMatrixScreen(
                         )
                         BlockitActionChip(
                             wordLabel = "REMOVE",
-                            onClick = { onRemoveSite(domain) }
+                            onClick = { gatedRemoveSite(domain) }
                         )
                     }
                 }
@@ -1136,13 +1187,16 @@ fun ShieldMatrixScreen(
                             // verdict it prints is the verdict the store gives.
                             val normalised = BlockedBrowserDomains.normalizeDomain(newSiteText)
                             when {
+                                // The wedge: in hold, ADD is inert —
+                                // no add, no error, no cleared field.
+                                controlsLocked -> Unit
                                 newSiteText.isBlank() -> Unit
                                 normalised == null -> siteError =
                                     "NOT A SITE — CHECK THE ADDRESS AND TRY AGAIN"
                                 blockedSites.contains(normalised) -> siteError =
                                     "ALREADY ON THE LIST"
                                 else -> {
-                                    onAddSite(newSiteText)
+                                    gatedAddSite(newSiteText)
                                     newSiteText = ""
                                     siteError = null
                                 }
@@ -1179,12 +1233,11 @@ internal val PEEK_TERMS_LINE: String =
         "THEN ${MonolithRepository.PEEK_COOLDOWN_MILLIS / 60_000} MINUTES SHUT BEFORE THE NEXT PEEK"
 
 /**
- * Issue #107 (#1): the staged loadout's preview. Prints the
- * loadout's own subtitle (dead text until tonight), its extra
- * side-effects for STUDY, and the exact cost in hand-set rulings —
- * counted by LoadoutRules, the same function that commits. Nothing
- * applies until APPLY LOADOUT is tapped; KEEP MY RULES stages
- * nothing and changes nothing.
+ * Issue #107 (#1)'s staged-loadout preview panel is NOT carried in
+ * this composition: Shield Rethink 2, Step 2 deletes the loadout
+ * surface from the Sheet (FIX-R2, PR #388 recomposition). The
+ * LoadoutRules / SmartLoadout machinery stays in the data layer,
+ * orphaned for the routines payload, exactly as Step 2 ruled.
  */
 // ------------------------------------------------------------------
 // Issue #90 (complexity F4, section extractions): the banner pair
@@ -1376,67 +1429,6 @@ private fun RoutinesSection(
        
 }
 
-@Composable
-private fun LoadoutPreviewPanel(
-    loadout: SmartLoadout,
-    preview: LoadoutRules.Preview,
-    onApply: () -> Unit,
-    onKeepMine: () -> Unit
-) {
-    val scheme = MaterialTheme.colorScheme
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 8.dp)
-            .testTag("loadout_preview"),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Text(
-            text = loadout.title.uppercase(),
-            fontFamily = SoraFamily,
-            fontWeight = FontWeight.Bold,
-            fontSize = 14.sp,
-            color = scheme.onBackground
-        )
-        Text(
-            text = loadout.subtitle,
-            fontFamily = AtkinsonHyperlegibleFamily,
-            fontSize = 12.sp,
-            color = scheme.onBackground,
-            modifier = Modifier.testTag("loadout_preview_subtitle")
-        )
-        if (loadout == SmartLoadout.STUDY) {
-            Text(
-                text = "ALSO SWITCHES ON: SHORTS & REELS SNIPER + BROWSER URL BLOCKER",
-                fontFamily = AnonymousProFamily,
-                fontSize = 11.sp,
-                color = scheme.onBackground,
-                modifier = Modifier.testTag("loadout_preview_side_effects")
-            )
-        }
-        Text(
-            text = "REPLACES ${preview.changed} HAND-SET RULING(S) — " +
-                "LANDS ON ${preview.shut} SHUT · ${preview.peek} PEEK · ${preview.open} OPEN",
-            fontFamily = AnonymousProFamily,
-            fontSize = 11.sp,
-            color = scheme.onSurfaceVariant,
-            modifier = Modifier.testTag("loadout_preview_cost")
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            BlockitActionChip(
-                wordLabel = "APPLY LOADOUT",
-                isPrimaryInk = true,
-                onClick = onApply,
-                testTag = "loadout_apply"
-            )
-            BlockitActionChip(
-                wordLabel = "KEEP MY RULES",
-                onClick = onKeepMine,
-                testTag = "loadout_keep_mine"
-            )
-        }
-    }
-}
 
 private fun fmtRoutineTime(minutes: Int): String =
     "%02d:%02d".format(minutes / 60, minutes % 60)
@@ -1741,12 +1733,24 @@ private fun FilterWord(
  *  section, rests 300ms, then exits over 280ms and is present in its
  *  new section when next seen. [createdAtMs] lets the screen's
  *  sweeper retire an entry whose lifecycle was interrupted. */
-private data class RestingFlip(
+internal data class RestingFlip(
     val from: AppBlockTier,
     val to: AppBlockTier,
     val exiting: Boolean,
     val createdAtMs: Long
 )
+
+/** Issue #69 F5(a): the sweeper's prune law, pure — a rest
+ *  retires once it is older than [REST_MAX_AGE_MS]; younger
+ *  rests stay. The sweeper itself is demand-driven (it runs
+ *  only while the rests map is non-empty), so with no rests
+ *  there is no loop and nothing to prune. */
+internal const val REST_MAX_AGE_MS = 1200L
+internal fun pruneRests(
+    rests: Map<String, RestingFlip>,
+    nowMs: Long
+): Map<String, RestingFlip> =
+    rests.filterValues { nowMs - it.createdAtMs <= REST_MAX_AGE_MS }
 
 /** One printed line of the book: the app, the ruling word it wears
  *  right now, and its rest state when it is mid-flip. */
