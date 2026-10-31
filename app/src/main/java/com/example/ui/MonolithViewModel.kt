@@ -376,6 +376,13 @@ data class AirlockInterceptState(
      *  The overlay keys its 5s wall and cooldown on this, never on
      *  (package, visibility), which a re-intercept left unchanged. */
     val interceptInstanceId: Long = 0L,
+    /** Audit R6 #340 F17: how many times this package was already
+     *  reached for TODAY (the DrawerDay filing day), counted by
+     *  the ViewModel from the persisted intercept log. The overlay
+     *  prices the wall from it: the configured breath base
+     *  (issue #318 F4) doubled per prior reach, capped at 120.
+     *  0 = the first reach of the day. */
+    val priorReachesToday: Int = 0,
     /** Issue #55: when this intercept fired, in the MONOTONIC
      *  `SystemClock.elapsedRealtime()` domain — the overlay's wall
      *  is deadline-derived from this instant, so a wall-clock jump
@@ -2493,8 +2500,40 @@ class MonolithViewModel(
         viewModelScope.launch { repository.setBrowserBlockerEnabled(newValue) }
     }
 
+    // Audit R6 #340 F13: the routine-conflict notice — set when a
+    // save is HELD for collision, cleared by the user's own tap.
+    private val _routineConflictNotice = MutableStateFlow<String?>(null)
+    val routineConflictNotice: StateFlow<String?> = _routineConflictNotice.asStateFlow()
+
+    fun dismissRoutineConflictNotice() {
+        _routineConflictNotice.value = null
+    }
+
     private fun persistRoutine(routine: com.example.data.RoutineEntity) {
         viewModelScope.launch {
+            // Audit R6 #340 F13: conflict detection IN the save
+            // path. An enabled routine whose window collides with
+            // another enabled routine under a DIFFERENT loadout is
+            // NOT saved silently — the save is held and the exact
+            // collision is printed, so no routine is ever starved
+            // in silence by RoutineDerive. The user's own edit
+            // (window, days, or loadout) is the resolution; there
+            // is no hidden precedence rule to discover at fire time.
+            val conflicts = com.example.data.RoutineConflictDetector.conflictsFor(
+                routine, repository.daoSnapshotRoutines()
+            )
+            if (conflicts.isNotEmpty()) {
+                val c = conflicts.first()
+                _routineConflictNotice.value =
+                    "ROUTINE HELD — \"${routine.name}\" overlaps \"${c.otherName}\" " +
+                    "by ${c.overlapMinutesPerWeek} min/week under a different loadout " +
+                    "(${routine.loadoutName} vs ${c.otherLoadoutName}). " +
+                    "The colliding save was not written. Change the window, " +
+                    "the days, or the loadout."
+                soundEngine.playFirmClick()
+                return@launch
+            }
+            _routineConflictNotice.value = null
             // Every edit re-stamps the schedule, then reconciles
             // immediately (CRUD trigger). Issue #82 (clock-attacks
             // F4): the stamp is the HONEST now — stamping raw wall
@@ -4012,6 +4051,17 @@ class MonolithViewModel(
         // silence there read as a broken door.
         val withheld = peekWithheldFor(canPeek, path, appEntity, cooldownLeft, pillActive)
 
+        // Audit R6 #340 F17: the escalated wall — prior reaches at
+        // this package TODAY (the DrawerDay filing day), counted
+        // from the persisted intercept log the VM already holds,
+        // so the price survives process death and never resets
+        // mid-day. This reach's own log lands after the wall is
+        // set, so the ladder prices reach k+1 from k prior rows.
+        val dayStart = com.example.data.DrawerDay.dayStartMillis(System.currentTimeMillis())
+        val priorReachesToday = interceptLogs.value.count {
+            it.packageName == packageName && it.timestampMillis >= dayStart
+        }
+
         return AirlockInterceptState(
             isVisible = true,
             interceptedPackageName = packageName,
@@ -4027,6 +4077,7 @@ class MonolithViewModel(
             sessionIntention = active?.intention ?: "",
             selectedReason = DistractionTriggerReason.MUSCLE_MEMORY,
             interceptInstanceId = ++airlockInstanceSeq,
+            priorReachesToday = priorReachesToday,
             // ANCHOR (Issue #55, DECISION-NEEDED recorded in the
             // wave-3 report): the wall is anchored to the INTERCEPT
             // instant (deadline truth); service→overlay latency

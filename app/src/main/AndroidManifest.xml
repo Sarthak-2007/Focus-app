@@ -25,6 +25,10 @@
     <!-- Declared so MainActivity can fire Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS directly (issue #26) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Audit R6 #340 F25: held ONLY across a single shield enforcement
+         tick (15 s timeout, released before the cadence gap) — never for
+         a session's whole length. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
@@ -212,6 +216,14 @@
             <intent-filter>
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <!-- Audit R6 #340 F53: the unlock moment itself is a
+                     resurrection trigger — a shield that died between
+                     boot and first unlock is re-asserted at the one
+                     instant the user is guaranteed to touch the phone.
+                     USER_UNLOCKED (not USER_PRESENT): once per unlock
+                     cycle, never per screen wake. -->
+                <action android:name="android.intent.action.USER_UNLOCKED" />
+                <action android:name="android.intent.action.REBOOT" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.TIME_SET" />
