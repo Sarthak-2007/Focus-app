@@ -225,12 +225,22 @@ fun AlwaysOnDeskClockOverlay(
             }
         }
         val displaySecs = if (activeSession != null && activeSession.isActive) {
-            // Timed sessions read the SPAN remaining, never the
-            // per-block remaining: the block's remainder is 0 for
-            // the whole of a Safe Break, and this clock has no block
-            // context - it would read 00:00 (FINISH) through every
-            // break. The span counts the break as session time.
-            if (activeSession.isStopwatchMode) activeSession.elapsedSeconds else activeSession.spanRemainingSeconds
+            // During a Safe Break the hero IS the break clock
+            // (Audit R3, safe-break-lived #5): the desk clock is a
+            // kept study display — elapsed + remaining is its job —
+            // and a user who props the phone up as their break
+            // clock must be able to tell break from work and spot
+            // its end on THIS screen. Outside a break, timed
+            // sessions read the SPAN remaining, never the per-block
+            // remaining: the block's remainder is 0 for the whole
+            // of a Safe Break — it would read 00:00 (FINISH)
+            // through every break. The span counts the break as
+            // session time.
+            when {
+                activeSession.isInSafeBreak -> activeSession.safeBreakSecondsRemaining
+                activeSession.isStopwatchMode -> activeSession.elapsedSeconds
+                else -> activeSession.spanRemainingSeconds
+            }
         } else {
             dialMinutes * 60
         }
@@ -497,6 +507,26 @@ fun AlwaysOnDeskClockOverlay(
  */
 internal fun deskClockBannerText(taskTitle: String?, intention: String?): String? =
     taskTitle?.takeIf { it.isNotBlank() } ?: intention?.takeIf { it.isNotBlank() }
+
+/**
+ * The desk clock's break line (Audit R3, safe-break-lived #5):
+ * during a Safe Break the clock names the break and the block
+ * that resumes when its countdown (the hero, in break state)
+ * hits zero; outside a break there is no line — the clock never
+ * prints a break that is not running. [nextBlockIndex] is the
+ * 1-based block the break hands over to, clamped to the session's
+ * own block count so the line can never promise a block the
+ * session does not have.
+ */
+internal fun deskClockBreakLine(
+    isInSafeBreak: Boolean,
+    nextBlockIndex: Int,
+    totalBlocks: Int
+): String? {
+    if (!isInSafeBreak) return null
+    val next = nextBlockIndex.coerceIn(1, totalBlocks.coerceAtLeast(1))
+    return "SAFE BREAK · BLOCK $next RESUMES AT 00:00"
+}
 
 /**
  * Issue #111 finding 2 — the burn-in wander, as a pure function.

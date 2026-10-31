@@ -720,10 +720,16 @@ object WatchStore {
 
     /**
      * The interceptor derivation (§4.3), computed at every emission:
-     *  RUNNING — setting on, every parent currently-warranted, no
-     *            suspension in force;
-     *  PAUSED  — setting on, warranted, and HIS suspension in force
-     *            (the Safe Break, for the two blocking interceptors);
+     *  RUNNING — setting on, every parent currently-warranted;
+     *  PAUSED  — retained in the vocabulary for a suspension that is
+     *            ever REAL (measured at the enforcement door); no
+     *            current input derives it. The Safe Break is NOT a
+     *            suspension of either blocking interceptor — the
+     *            sniper and the site blocker are documented, in the
+     *            accessibility service's own class doc, as strictly
+     *            active during Safe Breaks, and Audit R3
+     *            (safe-break-lived #1) caught this derivation
+     *            printing PAUSED for them while they intercepted;
      *  OFF     — setting off, or any parent MISSING or STALE.
      * A parent never measured makes the line unmeasured (it prints
      * its name only) — OFF would be a claim nobody measured.
@@ -760,11 +766,14 @@ object WatchStore {
         if (item == WatchItemId.NOTIFICATIONS && !sessionCapturing) {
             return InterceptorState.OFF
         }
-        val suspended = when (item) {
-            WatchItemId.NOTIFICATIONS -> false
-            else -> safeBreakActive
-        }
-        return if (suspended) InterceptorState.PAUSED else InterceptorState.RUNNING
+        // Audit R3 (safe-break-lived #1) — the suspension term stays
+        // DELETED even though the safeBreak input survives above (the
+        // ViewModel pushes it; nothing truthful derives from it): the
+        // accessibility service keeps intercepting SHORTS + REELS and
+        // SOCIAL SITES through a Safe Break, exactly as its class doc
+        // promises, so PAUSED from safeBreakActive was a false warrant.
+        // RUNNING is the truth in and out of a break alike.
+        return InterceptorState.RUNNING
     }
 
     private fun WatchSnapshot.withMeasurement(m: WatchMeasurement): WatchSnapshot =

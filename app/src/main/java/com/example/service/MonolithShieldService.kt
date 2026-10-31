@@ -20,6 +20,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.example.MLog
+import com.example.MainActivity
 import com.example.R
 import com.example.data.AppBlockTier
 import com.example.data.BreakDimState
@@ -101,6 +102,13 @@ class MonolithShieldService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var monitorJob: Job? = null
+
+    // The Safe Break's announcer (Audit R3, safe-break-lived
+    // #3/#4): fed the updated row every iteration; its alerts ride
+    // their own HIGH-importance channel — the persistent shield
+    // notification is IMPORTANCE_LOW + onlyAlertOnce by design and
+    // can never announce anything.
+    private val breakAnnouncer = BreakAnnouncer()
 
     /** The live session's id re-derived from the store, or null
      *  when there is none (or the read failed — fail closed). The
@@ -248,6 +256,7 @@ class MonolithShieldService : Service() {
      *  start — the caller must stand down (START_NOT_STICKY). */
     private fun promoteToForeground(): Boolean {
         createNotificationChannel()
+        createBreakAlertChannel()
         val fgsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
         } else {
@@ -411,6 +420,34 @@ class MonolithShieldService : Service() {
                     // updateSessionProgress's outcome classification.)
                     repository.latchShieldGapNow()
                 }
+
+                // Break boundaries announce themselves from here —
+                // the loop that is alive in every app, screen on or
+                // off — never from a UI observer that may not exist
+                // mid-break (Audit R3, safe-break-lived #3/#4).
+                when (breakAnnouncer.onTick(updated.id, updated.isInSafeBreak, updated.safeBreakSecondsRemaining)) {
+                    BreakAlert.STARTED -> postBreakAlert(
+                        title = "SAFE BREAK STARTED",
+                        text = "Break clock ${breakClockText(updated.safeBreakSecondsRemaining)} — " +
+                            "PEEK apps are open. Locked apps, Shorts, Reels and blocked sites stay shut."
+                    )
+                    BreakAlert.FINAL_MINUTE -> postBreakAlert(
+                        title = "SAFE BREAK ENDING",
+                        text = "Under a minute left — finish up. Blocking resumes when the break clock hits 00:00."
+                    )
+                    // ENDED is deliberately NOT posted from here:
+                    // Audit R3b #146's summons (same loop, the
+                    // wasInSafeBreak witness below) is the break-end
+                    // voice — "BREAK OVER · Block n has started" —
+                    // and two heads-up alerts for one flip would be
+                    // noise, not truth. The announcer still returns
+                    // ENDED (its lifecycle is unit-tested); this loop
+                    // owns STARTED + FINAL_MINUTE, the summons owns
+                    // the end.
+                    BreakAlert.ENDED -> Unit
+                    null -> Unit
+                }
+
                 if (!updated.isActive) {
                     // Session-edge tick BEFORE standing down: a routine
                     // session that just timer-completed gets finalised
@@ -867,6 +904,71 @@ class MonolithShieldService : Service() {
         }
     }
 
+    private fun createBreakAlertChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val channel = NotificationChannel(
+                BREAK_ALERT_CHANNEL_ID,
+                "Safe Break announcements",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Heads-up alerts when a Safe Break starts, nears its end, and ends"
+                setShowBadge(false)
+            }
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun breakClockText(totalSeconds: Int): String {
+        val s = totalSeconds.coerceAtLeast(0)
+        return String.format("%d:%02d", s / 60, s % 60)
+    }
+
+    /**
+     * One heads-up break announcement: its own channel + id (it
+     * never touches the persistent shield notification), auto-cancel
+     * and a 90 s timeout so a stale alert never lingers into the
+     * next block pretending to be news. Information only — tapping
+     * it opens the app; it is never an exit from anything.
+     *
+     * Issue #104 (STURM3-20 Feel verdict, one voice per moment):
+     * this post carries NO vibration of its own. The repository
+     * already spoke at this boundary in this same loop iteration —
+     * the mechanical latch at break start, the two-strike warning
+     * knock at the final minute — and every vibrate() cancels the
+     * previous one, so the old raw one-shot buzz (180/260 ms)
+     * erased the designed knock within milliseconds. The visual
+     * posts; the repository knock is the boundary's sole voice.
+     */
+    private fun postBreakAlert(title: String, text: String) {
+        try {
+            val pendingIntent = PendingIntent.getActivity(
+                this,
+                1,
+                Intent(this, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+                },
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val notification = NotificationCompat.Builder(this, BREAK_ALERT_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_STATUS)
+                .setAutoCancel(true)
+                .setTimeoutAfter(90_000L)
+                .setContentIntent(pendingIntent)
+                .build()
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(BREAK_ALERT_NOTIFICATION_ID, notification)
+        } catch (_: Exception) {
+            // Announcement is best-effort; protection never depends on it.
+        }
+    }
+
+
     /** #337 F2: is Usage Access granted to this app right now?
      *  (AppOps verdict, the same probe the repository uses.) */
     private fun hasUsageAccessNow(): Boolean {
@@ -1170,6 +1272,11 @@ class MonolithShieldService : Service() {
         const val CHANNEL_ID = "monolith_shield_channel_v2"
         const val LEGACY_CHANNEL_ID = "monolith_shield_channel"
         const val NOTIFICATION_ID = 4096
+        const val BREAK_ALERT_CHANNEL_ID = "monolith_break_alert_channel"
+        // 4098, NOT 4097: #146's summons owns 4097 on its own channel;
+        // sharing the id would make break alerts and summonses
+        // overwrite each other in the shade.
+        const val BREAK_ALERT_NOTIFICATION_ID = 4098
         /** Issue #155 (F3): the detached completion card self-expires. */
         const val COMPLETION_TIMEOUT_MS = 45 * 60 * 1000L
         /** Issue #155 (F5): present (true) on the shield card's content
