@@ -1120,7 +1120,12 @@ fun DrawerScreen(
                 )
                 groups.forEach { group ->
                     item(key = "month-head-${group.date}") {
-                        DayHeading(group = group)
+                        DayHeading(
+                            group = group,
+                            today = today,
+                            isSealed = isSealed,
+                            onDeclareDayWord = onDeclareDayWord
+                        )
                     }
                     items(group.rows, key = { "month-${it.id}" }) { task ->
                         StoredRow(task = task, onClick = { selectedTaskId = task.id })
@@ -1164,7 +1169,12 @@ fun DrawerScreen(
                     )
                     groups.forEach { group ->
                         item(key = "land-head-${group.date}") {
-                            DayHeading(group = group)
+                            DayHeading(
+                                group = group,
+                                today = today,
+                                isSealed = isSealed,
+                                onDeclareDayWord = onDeclareDayWord
+                            )
                         }
                         items(group.rows, key = { "land-${it.id}" }) { task ->
                             StoredRow(task = task, onClick = { selectedTaskId = task.id })
@@ -1306,26 +1316,93 @@ fun DrawerScreen(
  * declaration itself lives only in the filing zone; a question that
  * stays standing after it is answered is a summons, and storage
  * asks nothing. Heading type sits in the meta family (10.5sp).
+ *
+ * Issue #158 F1 (Option A, ratified — past day words are
+ * declarable/correctable, filed under the day described): a PAST
+ * day's heading carries one quiet exception to the no-ask rule —
+ * a collapsed DECLARE / CHANGE DAY WORD toggle in the meta voice.
+ * It is not a standing question: the words themselves appear only
+ * when the man opens the toggle himself, on the day he is reading.
+ * Opening it offers the three words; tapping a word files it for
+ * that past date, tapping the standing word clears it — declare,
+ * correct and clear after the 03:30 rollover, through the same
+ * date-generic write the filing zone uses. Today and tomorrow are
+ * never offered here (the filing zone owns them), and under seal
+ * the heading is print only — filing is an edit.
  */
 @Composable
-private fun DayHeading(group: DrawerDayGroup) {
+private fun DayHeading(
+    group: DrawerDayGroup,
+    today: LocalDate? = null,
+    isSealed: Boolean = true,
+    onDeclareDayWord: (LocalDate, String?) -> Unit = { _, _ -> }
+) {
     val scheme = MaterialTheme.colorScheme
-    Text(
-        text = if (group.word != null) {
-            "${headingLabel(group.date, withYear = false)} · ${group.word}"
-        } else {
-            headingLabel(group.date, withYear = false)
-        },
-        fontFamily = AnonymousProFamily,
-        fontWeight = FontWeight.Bold,
-        fontSize = 10.5.sp,
-        letterSpacing = 1.sp,
-        color = scheme.onSurfaceVariant,
-        // SPITZ Charge 10c (closer): the audit's shelf-break cure —
-        // day groups separate by an 18dp break above the heading,
-        // not the 6dp that stood at HEAD.
-        modifier = Modifier.padding(top = 18.dp)
-    )
+    var pastPickerOpen by remember { mutableStateOf(false) }
+    Column {
+        Text(
+            text = if (group.word != null) {
+                "${headingLabel(group.date, withYear = false)} · ${group.word}"
+            } else {
+                headingLabel(group.date, withYear = false)
+            },
+            fontFamily = AnonymousProFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 10.5.sp,
+            letterSpacing = 1.sp,
+            color = scheme.onSurfaceVariant,
+            // SPITZ Charge 10c (closer): the audit's shelf-break cure —
+            // day groups separate by an 18dp break above the heading,
+            // not the 6dp that stood at HEAD.
+            modifier = Modifier.padding(top = 18.dp)
+        )
+        if (today != null && group.date < today && !isSealed) {
+            Text(
+                text = if (group.word == null) "DECLARE DAY WORD" else "CHANGE DAY WORD",
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier
+                    .clickable { pastPickerOpen = !pastPickerOpen }
+                    .padding(horizontal = 4.dp, vertical = 6.dp)
+                    .testTag(
+                        "declare_past_word_toggle_${DrawerDay.dateIso(group.date)}"
+                    )
+            )
+            if (pastPickerOpen) {
+                Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                    DayWordStore.WORDS.forEach { w ->
+                        val active = group.word == w
+                        Text(
+                            text = w,
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            color = if (active) {
+                                scheme.onBackground
+                            } else {
+                                scheme.onSurfaceVariant
+                            },
+                            modifier = Modifier
+                                .clickable {
+                                    onDeclareDayWord(
+                                        group.date,
+                                        if (active) null else w
+                                    )
+                                }
+                                .padding(horizontal = 4.dp, vertical = 6.dp)
+                                .testTag(
+                                    "declare_past_word_" +
+                                        "${DrawerDay.dateIso(group.date)}_" +
+                                        w.lowercase()
+                                )
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 /**
