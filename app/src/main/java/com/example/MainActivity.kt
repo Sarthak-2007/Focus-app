@@ -1893,7 +1893,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     drawerError = drawerError,
                                     forgeStats = forgeStats,
                                     receipts = receiptIndex,
-                                    onReceiptClick = viewModel::presentReceipt
+                                    onReceiptClick = viewModel::presentReceipt,
+                                    historyCsvProvider = { viewModel.exportHistoryCsv() }
                                 )
                             }
                         }

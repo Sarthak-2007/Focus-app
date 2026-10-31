@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -16,6 +17,7 @@ import com.example.data.CurioCatalog
 import com.example.data.ClockText
 import androidx.compose.ui.platform.LocalContext
 import com.example.data.FocusSessionEntity
+import com.example.data.HistoryCsv
 import com.example.data.ForgeStat
 import com.example.data.KineticArtifact
 import com.example.data.PARTIAL_STAMP_ARTIFACT
@@ -24,6 +26,8 @@ import com.example.data.ReceiptIndexEntry
 import com.example.data.SessionOutcome
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -66,6 +70,7 @@ import com.example.data.StoredMonth
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -232,6 +237,11 @@ fun DrawerScreen(
     // nothing is printed on it from here.
     receipts: List<ReceiptIndexEntry> = emptyList(),
     onReceiptClick: (Int) -> Unit = {},
+    // Issue #253 line 39: session-history CSV export. The host
+    // supplies the document text on demand (a suspend read
+    // through the pure HistoryCsv formatter); null = no export
+    // door stands on this landing (previews, tests).
+    historyCsvProvider: (suspend () -> String)? = null,
     // Issue #52 F3 cure: the month read's state, from the
     // ViewModel — loading while a page is in flight, an error
     // line when the read failed. An empty month, a loading
@@ -240,6 +250,29 @@ fun DrawerScreen(
     drawerError: String? = null
 ) {
     val scheme = MaterialTheme.colorScheme
+    // Issue #253 line 39: the export door's machinery. The tap
+    // reads the history document through the host's provider,
+    // then the system document picker chooses where it lands;
+    // the picked document receives the CSV byte-for-byte. A
+    // cancelled picker writes nothing, and a failed read opens
+    // no picker — the door never fabricates a file.
+    val exportProvider = historyCsvProvider
+    val exportContext = LocalContext.current
+    val exportScope = rememberCoroutineScope()
+    var pendingExportCsv by remember { mutableStateOf<String?>(null) }
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        val csv = pendingExportCsv
+        pendingExportCsv = null
+        if (uri != null && csv != null) {
+            runCatching {
+                exportContext.contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(csv.toByteArray(Charsets.UTF_8))
+                }
+            }
+        }
+    }
     // AUDIT-drawer §2 (wave-2): view + selection IDs are saveable —
     // the view name and the selected task's ID survive process
     // death; a mid-browse man is no longer reset to LANDING by the
@@ -1035,6 +1068,31 @@ fun DrawerScreen(
                         modifier = Modifier.testTag("drawer_receipts_row")
                     )
                     HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+                }
+                // Issue #253 line 39: the history leaves the app —
+                // one furniture door under RECEIPTS, standing only
+                // when the host supplies the export provider.
+                exportProvider?.let { provider ->
+                    item {
+                        DrawerNavRow(
+                            label = "EXPORT HISTORY (CSV)",
+                            onClick = {
+                                exportScope.launch {
+                                    val csv = runCatching { provider() }
+                                        .getOrNull()
+                                    if (csv != null) {
+                                        pendingExportCsv = csv
+                                        exportLauncher.launch(HistoryCsv.FILE_NAME)
+                                    }
+                                }
+                            },
+                            modifier = Modifier.testTag("drawer_export_history")
+                        )
+                        HorizontalDivider(
+                            thickness = 1.dp,
+                            color = scheme.outlineVariant
+                        )
+                    }
                 }
             }
         }

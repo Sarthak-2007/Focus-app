@@ -2040,6 +2040,13 @@ class MonolithViewModel(
         }
     }
 
+    /** Issue #253, line 39: the session history as one CSV
+     *  document, for the Drawer's export door. Suspend — the
+     *  Drawer launches it in its own scope and hands the text to
+     *  the system document picker. */
+    suspend fun exportHistoryCsv(): String =
+        repository.exportSessionHistoryCsv()
+
     fun dismissPresentedReceipt() {
         _presentedReceipt.value = null
     }
