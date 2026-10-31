@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -55,6 +56,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.data.RoutineEntity
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import com.example.data.ReturnChit
@@ -625,13 +627,13 @@ fun ReceptionSheet(
             Text(
                 // S-13: the plate drops "· FIRST OPEN" — it names
                 // the stamp, not the opening.
-                text = "MONOLITH ML-01",
+                text = stringResource(R.string.reception_nameplate),
                 style = PillBadgeTextStyle,
                 color = scheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "SETUP + INTRODUCTION",
+                text = stringResource(R.string.reception_title),
                 style = DrawerHeaderTextStyle,
                 color = scheme.onBackground
             )
@@ -643,7 +645,7 @@ fun ReceptionSheet(
             // F-1: "THE DOOR" eyebrow killed — the sheet counts
             // four doors below; this movement is what it is.
             Text(
-                text = "WHAT IT IS",
+                text = stringResource(R.string.reception_what_it_is),
                 style = PillBadgeTextStyle,
                 color = scheme.onSurfaceVariant
             )
@@ -653,9 +655,7 @@ fun ReceptionSheet(
             // F-2: the one-liner carries AppTitle weight — the
             // identity is the sheet's hero sentence.
             Text(
-                text = "While a session runs, Monolith shuts the apps you ruled " +
-                    "shut and the sites on your list — and backs you out of " +
-                    "Shorts and Reels.",
+                text = stringResource(R.string.reception_identity_line),
                 style = AppTitleTextStyle,
                 color = scheme.onBackground
             )
@@ -665,8 +665,7 @@ fun ReceptionSheet(
             // The boundary, in the register's replacement words
             // (C-4 seat kept; S-4 words cured).
             Text(
-                text = "YOUR STUDY HOURS LIVE IN YPT. MONOLITH KEEPS NO SCORE " +
-                    "AND GRADES NOTHING.",
+                text = stringResource(R.string.reception_boundary_line),
                 style = PillBadgeTextStyle,
                 color = scheme.onSurfaceVariant
             )
@@ -674,7 +673,7 @@ fun ReceptionSheet(
 
             // ---- MOVEMENT 2 · THE FOUR DOORS ----
             Text(
-                text = "THE FOUR DOORS",
+                text = stringResource(R.string.reception_four_doors),
                 style = PillBadgeTextStyle,
                 color = scheme.onSurfaceVariant
             )
@@ -730,8 +729,7 @@ fun ReceptionSheet(
                 // S-6: the third clause is cured — the anchor
                 // guards the machine, it does not make blocking
                 // unbreakable.
-                text = "THE FIRST TWO MAKE BLOCKING REAL. THE THIRD GUARDS THE " +
-                    "MACHINE ITSELF. THE FOURTH MAKES IT QUIET.",
+                text = stringResource(R.string.reception_rank_line),
                 style = PillBadgeTextStyle,
                 color = scheme.onSurfaceVariant
             )
@@ -756,7 +754,7 @@ fun ReceptionSheet(
             // inside the confirmation (Ren's ratified ceiling) —
             // they never get screens of their own.
             Text(
-                text = "HOW A SESSION RUNS",
+                text = stringResource(R.string.reception_how_session_runs),
                 style = PillBadgeTextStyle,
                 color = scheme.onSurfaceVariant
             )
@@ -819,8 +817,7 @@ fun ReceptionSheet(
             // through a list as a setup step).
             Text(
                 // S-14: the rules line gains "BETWEEN SESSIONS".
-                text = "YOUR RULES LIVE ON SHIELD — THE APPS AND SITES, EACH " +
-                    "WITH YOUR RULING. CHANGE THEM ANY TIME BETWEEN SESSIONS.",
+                text = stringResource(R.string.reception_rules_line),
                 style = BodyTextStyle,
                 color = scheme.onBackground
             )
@@ -862,7 +859,7 @@ fun ReceptionSheet(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "OPEN THE LIST",
+                    text = stringResource(R.string.reception_open_list),
                     style = PrimaryButtonTextStyle,
                     color = scheme.onBackground
                 )
@@ -874,8 +871,7 @@ fun ReceptionSheet(
                 // are one fact and die together if either falls.
                 Spacer(modifier = Modifier.height(10.dp))
                 Text(
-                    text = "THE LIST LIVES ON SHIELD — COME BACK TO THE " +
-                        "DECK AND THIS SHEET RISES AGAIN.",
+                    text = stringResource(R.string.reception_list_wayback),
                     style = PillBadgeTextStyle,
                     color = scheme.onSurfaceVariant,
                     modifier = Modifier.testTag("reception_open_list_wayback")
@@ -884,8 +880,7 @@ fun ReceptionSheet(
             Spacer(modifier = Modifier.height(12.dp))
             Text(
                 // S-11 leave-line cure, verbatim.
-                text = "LEAVE WHEN YOU LIKE — THE HEADER KEEPS NAMING THE " +
-                    "FIRST THING MISSING.",
+                text = stringResource(R.string.reception_leave_line),
                 style = PillBadgeTextStyle,
                 color = scheme.onSurfaceVariant
             )
@@ -908,16 +903,13 @@ fun ReceptionSheet(
             // still reads /4, and DONE never waits for either.
             if (receptionFullProtectionShown(completedSessions, sessionsWithSafeBreak)) {
                 Text(
-                    text = "LATER, FOR FULL PROTECTION",
+                    text = stringResource(R.string.reception_later_title),
                     style = PillBadgeTextStyle,
                     color = scheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "NOT PART OF THE SETUP, AND NOT OWED. THE FOUR " +
-                        "DOORS ABOVE WERE PROVED BY A FIRST SESSION AND A " +
-                        "FIRST SAFE BREAK — ONLY NOW ARE THESE TWO ASKED, " +
-                        "EACH ON ITS OWN.",
+                    text = stringResource(R.string.reception_later_line),
                     style = BodyTextStyle,
                     color = scheme.onBackground
                 )
@@ -951,8 +943,7 @@ fun ReceptionSheet(
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "THE TOTAL BELOW STILL COUNTS FOUR — THESE TWO " +
-                        "ARE NOT IN IT.",
+                    text = stringResource(R.string.reception_later_total_note),
                     style = PillBadgeTextStyle,
                     color = scheme.onSurfaceVariant
                 )
@@ -968,7 +959,7 @@ fun ReceptionSheet(
                     // F-11: the count is a datum — the telemetry
                     // family carries it (Anonymous Pro Bold 15),
                     // the sentence below stays prose.
-                    text = "GUARD ${total.count}/4",
+                    text = stringResource(R.string.reception_guard_count, total.count!!),
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
@@ -989,7 +980,7 @@ fun ReceptionSheet(
                 // it through the tear, Letzt Flag B.)
                 Spacer(modifier = Modifier.height(10.dp))
                 Text(
-                    text = "THIS SHEET WAITS IN PARK — SETUP + INTRODUCTION.",
+                    text = stringResource(R.string.reception_park_stub),
                     style = PillBadgeTextStyle,
                     color = scheme.onSurfaceVariant
                 )
@@ -999,9 +990,7 @@ fun ReceptionSheet(
                     // host-evidenced spec: PARK named by its real
                     // openings — the rail cap's unmarked end first
                     // (the unconditional door), the Guard line second.
-                    text = "PARK OPENS BY TAKING THE RAIL CAP TO THE " +
-                        "UNMARKED END OF THE RAIL, OR BY TAPPING THE " +
-                        "GUARD LINE AT THE TOP RIGHT.",
+                    text = stringResource(R.string.reception_park_opens),
                     style = PillBadgeTextStyle,
                     color = scheme.onSurfaceVariant
                 )
@@ -1080,7 +1069,7 @@ fun ReceptionSheet(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "TO THE DECK →",
+                        text = stringResource(R.string.reception_to_deck),
                         style = PrimaryButtonTextStyle,
                         color = onInkControlFill()
                     )
@@ -1089,8 +1078,7 @@ fun ReceptionSheet(
                 // what the key does, and what it does not do.
                 Spacer(modifier = Modifier.height(10.dp))
                 Text(
-                    text = "THIS FINISHES THE SETUP. IT STARTS NOTHING, SEALS " +
-                        "NOTHING, AND MAY BE PRESSED WITH DOORS UNSET.",
+                    text = stringResource(R.string.reception_finishes_line),
                     style = PillBadgeTextStyle,
                     color = scheme.onSurfaceVariant
                 )
@@ -1237,7 +1225,7 @@ private fun ReceptionDoorCard(
             // the missing piece — the proof aged, CHECK re-proves.
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "THE LAST PROOF AGED OUT — CHECK RE-PROVES IT",
+                text = stringResource(R.string.reception_stale_gloss),
                 // The named ladder, not inline values (Fein §C):
                 // DoorJobTextStyle is the sheet's second voice.
                 style = DoorJobTextStyle,
@@ -1320,7 +1308,7 @@ private fun ReceptionDoorCard(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "FIX — ${item.boardName}",
+                        text = stringResource(R.string.reception_fix_key, item.boardName),
                         style = PrimaryButtonTextStyle,
                         color = scheme.onBackground
                     )
@@ -1369,7 +1357,7 @@ private fun ReceptionDoorCard(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "CHECK — ${item.boardName}",
+                        text = stringResource(R.string.reception_check_key, item.boardName),
                         style = PrimaryButtonTextStyle,
                         color = scheme.onBackground
                     )
