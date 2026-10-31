@@ -4,13 +4,6 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-// Wave-2 note (UNPROVEN until Ren's compile settles it): the
-// .assertExists() / .assertDoesNotExist() calls in this file are
-// MEMBER functions of SemanticsNodeInteraction, not top-level
-// extensions — that is why the two top-level imports were deleted
-// in 8a256a4. If the compile disagrees, restore both imports
-// exactly as they stood at batch-9 HEAD and record Class E as a
-// misdiagnosis (plan ISSUE-2-test-call-sites.md, Risk 1).
 import androidx.compose.ui.test.onNodeWithText
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -324,13 +317,13 @@ class TruthCar3SweepRoboTest {
                     isSealed = false,
                     isNight = false,
                     soundEnabled = true,
-                    shortsReelsSniperEnabled = true,
                     soundEngine = null,
                     themeReadout = "AUTO",
                     parkReturnTick = 0,
                     onDismiss = {},
                     onFixClick = {},
                     onToggleSound = {},
+                    shortsReelsSniperEnabled = true,
                     onToggleShortsReelsSniper = {},
                     // Wave-2 premise: social pair is scaffolding here —
                     // `true` is the persisted default; the toggle is not under test in this file.
@@ -362,13 +355,13 @@ class TruthCar3SweepRoboTest {
                     isSealed = false,
                     isNight = false,
                     soundEnabled = true,
-                    shortsReelsSniperEnabled = true,
                     soundEngine = null,
                     themeReadout = "AUTO",
                     parkReturnTick = 0,
                     onDismiss = {},
                     onFixClick = {},
                     onToggleSound = {},
+                    shortsReelsSniperEnabled = true,
                     onToggleShortsReelsSniper = {},
                     // Wave-2 premise: social pair is scaffolding here —
                     // `true` is the persisted default; the toggle is not under test in this file.

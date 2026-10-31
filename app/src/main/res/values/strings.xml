@@ -53,7 +53,6 @@
     <string name="deflection_line">%1$s · %2$s</string>
     <string name="receipt_shield_gap">THE SHIELD WAS OFF FOR PART OF THAT SESSION</string>
     <string name="receipt_shield_still_blocked">SHIELD — STILL BLOCKED (SERVICE DIDN\'T STOP)</string>
-    <string name="receipt_footer_log">THE MACHINE KEEPS ITS OWN LOG · YOUR STUDY RECORD LIVES IN YPT</string>
     <string name="drawer_stored">STORED</string>
     <string name="drawer_estimate">ESTIMATE %1$d MIN</string>
     <string name="drawer_spent">SPENT %1$s</string>

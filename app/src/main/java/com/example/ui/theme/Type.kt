@@ -62,24 +62,29 @@ val CenteredNumericLineHeightStyle = LineHeightStyle(
 // off-ladder, unused) is dead. The Atkinson "Medium" is dead - the family
 // ships 400/700 only, so body text is honest 400.
 
-/** H2 - the one big number in hand (running time, Deck total). */
+/** H2 - the one big number in hand (running time, Deck total).
+ *  Issue #256: tabular figures ("tnum") — Sora is a proportional
+ *  face, so without this the ticking hero number changed width
+ *  every second and the centred readout reflowed around it. */
 val DialClockTextStyle = TextStyle(
     fontFamily = SoraFamily,
     fontWeight = FontWeight.Bold,
     fontSize = 72.sp,
     lineHeight = 72.sp,
     letterSpacing = (-2.0).sp,
+    fontFeatureSettings = "tnum",
     platformStyle = TightNumericPlatformStyle,
     lineHeightStyle = CenteredNumericLineHeightStyle
 )
 
-/** H1 - across-the-room time. AOD only. */
+/** H1 - across-the-room time. AOD only. Tabular figures, as above. */
 val DeskClockTextStyle = TextStyle(
     fontFamily = SoraFamily,
     fontWeight = FontWeight.Bold,
     fontSize = 104.sp,
     lineHeight = 100.sp,
     letterSpacing = (-3.0).sp,
+    fontFeatureSettings = "tnum",
     platformStyle = TightNumericPlatformStyle,
     lineHeightStyle = CenteredNumericLineHeightStyle
 )

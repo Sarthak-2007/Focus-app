@@ -12,7 +12,6 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.example.MLog
-import com.example.MainActivity
 import com.example.data.AppBlockTier
 import com.example.data.BlockedBrowserDomains
 import com.example.data.DEFAULT_SURFACE_RULES
@@ -652,6 +651,20 @@ class MonolithAccessibilityService : AccessibilityService() {
         var lastRootMono: Long = 0L
             internal set
 
+        /** Binding generation (issue #7, TECH-1 B-Major-1): bumped
+         *  when a binding begins (onServiceConnected) and every time
+         *  one ends (onUnbind/onDestroy). A pipeline probe captures
+         *  the generation before its root query and re-checks it at
+         *  stamp time: the query can block for up to the platform's
+         *  interaction timeout, the binding can die while it is in
+         *  flight, and unbind zeroes [lastRootMono] precisely so a
+         *  rebound service starts unproven — an in-flight probe from
+         *  the dead binding must never stamp after that zeroing and
+         *  resurrect proof its successor never earned. */
+        @Volatile
+        var bindingGeneration: Long = 0L
+            internal set
+
         /** Cascade witness (Slice D step 4, Opal L3): the session
          *  this service's own session gate has observed as active,
          *  and the monotonic instant it was observed. The stamp is
@@ -713,7 +726,18 @@ class MonolithAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        // A new binding is a new generation: probes still in flight
+        // from any previous binding fail their stamp-time re-check.
+        bindingGeneration++
         instance = this
+        // Cold-start cure (issue #7): a rebind mid-residency
+        // re-proves itself. The stamp died with the old binding
+        // (onUnbind zeroes lastRootMono), so a residency that is
+        // already in force would rest UNPROVEN until some event
+        // happened to fire — probe actively instead of waiting.
+        if (WatchStore.residencyActive()) {
+            requestPipelineProbe()
+        }
         // Watch Store bind (issue #48): restore the persisted LAST
         // PROVED into the fresh process's store.
         WatchStore.bind(applicationContext)
@@ -722,6 +746,61 @@ class MonolithAccessibilityService : AccessibilityService() {
         WatchStore.onAccessibilityBound(true)
         startSessionArmedCollector()
         startEventWorker()
+    }
+
+    /**
+     * Active self-probe (issue #7, cold-start cure): the SAME proof
+     * the event path performs in [onAccessibilityEvent], done on
+     * demand instead of waiting for an event. The stamp races
+     * residency start on a cold open — the Deck can appear before
+     * this service binds, and a quiet Deck generates no events — so
+     * residency start (and a rebind mid-residency) probe the
+     * pipeline actively. A live root stamps [lastRootMono] and pokes
+     * the store, exactly as an event would; a null root or a thrown
+     * query stamps NOTHING and returns false — the wire reads dead,
+     * which is the truth. The stamp is also generation-guarded: a
+     * probe whose binding died while its query was in flight stamps
+     * nothing, so a dead binding can never mint its successor's
+     * proof (TECH-1 B-Major-1).
+     */
+    fun probePipelineNow(): Boolean {
+        // Capture the binding this probe serves BEFORE the query:
+        // the query can block for up to the platform interaction
+        // timeout, and the binding can die while it is in flight
+        // (TECH-1 B-Major-1).
+        val generationAtLaunch = bindingGeneration
+        return try {
+            if (rootInActiveWindow != null) {
+                // Stamp only if the binding that launched this probe
+                // is still the live one: same generation (no bind,
+                // unbind or destroy since launch) and this instance
+                // still the registered service. A probe that outlived
+                // its binding proves nothing for its successor.
+                if (bindingGeneration != generationAtLaunch || instance !== this) {
+                    false
+                } else {
+                    lastRootMono = SystemClock.elapsedRealtime()
+                    WatchStore.poke()
+                    true
+                }
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            // No stamp — and (issue #76) the failure is counted, not silent.
+            noteDetectionFailure("pipelineProbe", e)
+            false
+        }
+    }
+
+    /** Fire-and-forget probe request: runs [probePipelineNow] on
+     *  this service's existing scope, so a caller on any thread —
+     *  including the UI thread at residency start — never blocks
+     *  waiting for the root window. */
+    fun requestPipelineProbe() {
+        scope.launch {
+            probePipelineNow()
+        }
     }
 
     // ------------------------------------------------------------------
@@ -843,6 +922,10 @@ class MonolithAccessibilityService : AccessibilityService() {
 
     override fun onUnbind(intent: Intent?): Boolean {
         if (instance === this) {
+            // End this binding's generation FIRST: any probe still
+            // in flight under it fails its stamp-time re-check and
+            // cannot resurrect the stamp zeroed below (B-Major-1).
+            bindingGeneration++
             instance = null
             // The stamp dies with the binding (Register 3 Z-1): a
             // rebound service must never inherit its predecessor's
@@ -1259,46 +1342,20 @@ class MonolithAccessibilityService : AccessibilityService() {
         // host-exact (Wave-3 #42).
         if ((guardSettings?.browserBlockerEnabled ?: true) && isSupportedBrowser(pkgName)) {
             val userDomains = dao.getAllSitesSnapshot().map { it.domain }
-            val matchedDomain = snapshot.facts.browserUrlTexts.firstNotNullOfOrNull { urlText ->
-                matchBlockedDomain(urlText, userDomains)
-            } ?: snapshot.facts.browserContentText.takeIf { it.isNotEmpty() }?.let {
-                // Issue #79 finding 3 (detectable part): the URL bar
-                // is clean, but a blocked service's embed may be
-                // playing inside this allowed page — where the tree
-                // exposes the embed's address as page text.
-                matchEmbeddedBlockedDomain(it, userDomains)
-            }
-            // W3 #130: the domain-scoped site peek is the ONLY
-            // exemption — this exact domain, in this browser,
-            // while its lease (the browser row's lease end) is
-            // live. Every other blocked domain still intercepts,
-            // including during a browser app peek.
-            val sitePeeked = matchedDomain != null && sitePeekExempts(
-                peekedDomain = SitePeekStore.domain,
-                peekedPackage = SitePeekStore.packageName,
-                domain = matchedDomain,
-                packageName = pkgName,
-                leaseUntilMono = leaseRow?.activePeekUntilElapsedRealtime ?: 0L,
-                nowMono = SystemClock.elapsedRealtime()
-            )
-            if (matchedDomain != null && !sitePeeked) {
-                launchInterceptScreen(
-                    packageName = pkgName,
-                    appName = matchedDomain,
-                    reasonBadge = "Site Blocked",
-                    path = InterceptPath.SITE
-                )
-                return
-            }
-            // Issue #339 (Second-pass F1): the Web Gate — with
-            // block-all armed, the web is closed except the user's
-            // allowed hosts. The stored list above keeps its force
-            // in both modes (it fired first, as the listed leg);
-            // a domain under a live site-peek lease for this
-            // browser stays exempt here exactly as there (#130).
-            // The ejection (BACK, escalating) is owned by
-            // launchInterceptScreen for every door (#339 F2) —
-            // this door no longer fires its own.
+            // Issue #339 (Second-pass F1) — recomposition on
+            // current main: the Web Gate's BLOCK_ALL verdict is
+            // enforced here, AHEAD of the blacklist door below.
+            // When the gate is armed, a URL whose host is not on
+            // the user's allowed list is intercepted as 'Web
+            // Blocked — Allowlist'. Listed domains stay with the
+            // door below, which owns the embedded-domain detection
+            // (#79) and the site-peek exemption (W3 #130) the gate
+            // must not bypass — and a domain under a live site-peek
+            // lease for this browser stays exempt here exactly as
+            // there (#130). Gate off: webGateVerdict never returns
+            // BLOCK_ALL and this pre-check is inert. The ejection
+            // (BACK, escalating) is owned by launchInterceptScreen
+            // for every door (#339 F2) — neither door fires its own.
             val webGate = com.example.data.WebGateStore(applicationContext)
             if (webGate.blockAll()) {
                 val gateHit = snapshot.facts.browserUrlTexts.firstNotNullOfOrNull { urlText ->
@@ -1327,6 +1384,41 @@ class MonolithAccessibilityService : AccessibilityService() {
                     )
                     return
                 }
+            }
+            val matchedDomain = snapshot.facts.browserUrlTexts.firstNotNullOfOrNull { urlText ->
+                matchBlockedDomain(urlText, userDomains)
+            } ?: snapshot.facts.browserContentText.takeIf { it.isNotEmpty() }?.let {
+                // Issue #79 finding 3 (detectable part): the URL bar
+                // is clean, but a blocked service's embed may be
+                // playing inside this allowed page — where the tree
+                // exposes the embed's address as page text.
+                matchEmbeddedBlockedDomain(it, userDomains)
+            }
+            // W3 #130: the domain-scoped site peek is the ONLY
+            // exemption — this exact domain, in this browser,
+            // while its lease (the browser row's lease end) is
+            // live. Every other blocked domain still intercepts,
+            // including during a browser app peek.
+            val sitePeeked = matchedDomain != null && sitePeekExempts(
+                peekedDomain = SitePeekStore.domain,
+                peekedPackage = SitePeekStore.packageName,
+                domain = matchedDomain,
+                packageName = pkgName,
+                leaseUntilMono = leaseRow?.activePeekUntilElapsedRealtime ?: 0L,
+                nowMono = SystemClock.elapsedRealtime()
+            )
+            if (matchedDomain != null && !sitePeeked) {
+                // Ejection is owned by launchInterceptScreen (#339 F2
+                // composition): it ejects first (BACK, escalating to
+                // HOME on repeat) — this door no longer fires its own
+                // BACK ahead of it, or the user would be popped twice.
+                launchInterceptScreen(
+                    packageName = pkgName,
+                    appName = matchedDomain,
+                    reasonBadge = "Site Blocked",
+                    path = InterceptPath.SITE
+                )
+                return
             }
         }
 
@@ -1880,21 +1972,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         // #335 F5: every intercept is a detector block — recorded
         // (last block + last successful block) in the health record.
         DetectorHealth.recordBlock(SystemClock.elapsedRealtime(), success = true)
-        val interceptIntent = Intent(applicationContext, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            putExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE, packageName)
-            putExtra(MonolithShieldService.EXTRA_INTERCEPTED_APP_NAME, appName)
-            putExtra(MonolithShieldService.EXTRA_INTERCEPT_BADGE, reasonBadge)
-            putExtra(MonolithShieldService.EXTRA_INTERCEPT_PATH, path.name)
-            putExtra(
-                MonolithShieldService.EXTRA_INTERCEPT_NONCE,
-                InterceptNonce.mint(applicationContext)
-            )
-        }
-        // Issue #94 (F2): never a bare background launch — a dropped
-        // launch stamps itself and falls back to a tappable
-        // notification (InterceptLaunch).
-        InterceptLaunch.launch(applicationContext, interceptIntent, appName)
+
     }
 
     /** Issue #339 (Second-pass F2): the ejection itself, shared
@@ -1914,6 +1992,9 @@ class MonolithAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         if (instance === this) {
+            // Same generation close as onUnbind: a dying binding's
+            // in-flight probes stamp nothing after this point.
+            bindingGeneration++
             instance = null
             lastRootMono = 0L
             armedSessionId = -1
