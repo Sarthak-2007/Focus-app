@@ -1386,6 +1386,26 @@ private fun StoredRow(
 }
 
 @Composable
+@Composable
+private fun DrawerNavRow(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val scheme = MaterialTheme.colorScheme
+    Text(
+        text = label,
+        fontFamily = AtkinsonHyperlegibleFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 12.sp,
+        color = scheme.onBackground,
+        modifier = modifier
+            .clickable(role = androidx.compose.ui.semantics.Role.Button) { onClick() }
+            .sizeIn(minHeight = 48.dp)
+            .padding(vertical = 14.dp)
+    )
+}
+
 /** One receipts-index row (issue #157): № · date · outcome word,
  *  in the Drawer's furniture. The warnings print here — in Drawer
  *  type, on the furniture, never on the slip — only where the
