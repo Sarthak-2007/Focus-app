@@ -208,6 +208,8 @@ Filed on #155 comment 6536721775 (design) + the reseat completion filing; `VERIF
 | Conditional AS OF: staleness foot line prints only when the standing read is older than one 30-min cadence (refines MAXIMPL-3 R5 / W-2 for the OPEN state) | DESIGNER-W-4 | #155 | PANEL-QUEUED |
 | No history on the OPEN face: W-2's yesterday-trace line ruled against on this face (sides with W-5 GLANCE-3; the receipt lives in the Ledger) | DESIGNER-W-4 | #155 | PANEL-QUEUED (named disagreement on #155 for the Panel) |
 
+| The Plate: the glance rebuilt as the receipt slip's nameplate — fixed-geometry porcelain/ink plate, stamp-word state (SEALED/OPEN/UNPROVEN identical in silhouette), registration-mark accent in every state, typeset in the house fonts | DESIGNER-W-1 (Wow-level designer, WING-A) | #155 | PANEL-QUEUED |
+
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
 
 ## Pill × receipt relation (WING-C DESIGN, Wave reseat)
