@@ -7,6 +7,7 @@ import com.example.ui.components.BoltWindow
 import com.example.ui.components.SealBarParams
 import com.example.ui.components.SealBarState
 import com.example.ui.components.boltStateFor
+import com.example.ui.components.sealBarStateFor
 import com.example.ui.components.endsAtNumeralsFor
 import com.example.ui.components.endingSoonThresholdFor
 import org.junit.Assert.assertEquals
