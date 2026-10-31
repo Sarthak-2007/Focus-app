@@ -64,6 +64,7 @@ import com.example.data.AppBlockTier
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
 import com.example.data.MonolithRepository
+import com.example.data.SmartLoadout
 import com.example.data.StudyChecklistItem
 import com.example.data.StudyModePreset
 import com.example.service.TactileSoundEngine
@@ -176,6 +177,10 @@ fun TactileDeckScreen(
     // Issue #283: the in-session extend verb — defaulted like
     // onEndSafeBreak so render harnesses keep composing.
     onExtendSession: () -> Unit = {},
+    // Issue #125 F4: the in-grace edit verb (duration minutes /
+    // study blocks / loadout; null = leave that half) — defaulted
+    // like onExtendSession so render harnesses keep composing.
+    onEditSessionInGrace: (Int?, Int?, SmartLoadout?) -> Unit = { _, _, _ -> },
     // Issue #143 F4: the DND gate's line (armed at the arm, sealed
     // truth during the session) — defaulted null so harnesses and
     // previews compose the standing Deck unchanged.
@@ -1544,10 +1549,11 @@ fun TactileDeckScreen(
                 // window the ABORT chip owns this address even while
                 // the seal shot is still detaining the slide — the
                 // free exit must not be physically absent for the
-                // first ~1050ms of its own 10s. The Δy = 0 address
+                // first ~1050ms of its own window. The Δy = 0 address
                 // discipline is unchanged: same Box, same chip.
                 val graceChipDue = isSessionRunning && !heldFinish && receiptState == null &&
-                    activeSession != null && activeSession.elapsedSeconds <= 10
+                    activeSession != null &&
+                    activeSession.elapsedSeconds <= MonolithRepository.GRACE_WINDOW_SECONDS
                 if ((!isSessionRunning || shotActive || heldFinish || receiptState != null) && !graceChipDue) {
                     // The slide holds this address through the seal
                     // (as the seated ghost), through the finish's
@@ -1615,8 +1621,9 @@ fun TactileDeckScreen(
                     val stopwatchFloorMet = activeSession?.isStopwatchMode == true &&
                         activeSession.elapsedSeconds >= MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
                     // Issue #98 (merged): the badge counts the
-                    // seconds the user can actually still use — 10
-                    // at the settle frame, 1 on the last — derived
+                    // seconds the user can actually still use — the
+                    // whole window at the settle frame, 1 on the
+                    // last — derived
                     // from the one constant the repository write
                     // enforces (issue #103 F2).
                     val graceBadge = "${(MonolithRepository.GRACE_WINDOW_SECONDS + 1 - (activeSession?.elapsedSeconds ?: 0)).coerceIn(1, MonolithRepository.GRACE_WINDOW_SECONDS)}s"
@@ -1714,13 +1721,13 @@ fun TactileDeckScreen(
                 }
             }
             // Audit R3b #149: the grace-to-valve cliff, named. The
-            // slot above swaps its chip at 10 seconds with nothing
-            // saying the door changed; this standing line states
-            // both states, in both states — in-window it counts the
-            // free cancel down, past it the valve's terms stand
-            // printed before they are ever needed.
+            // slot above swaps its chip at the window's edge with
+            // nothing saying the door changed; this standing line
+            // states both states, in both states — in-window it
+            // counts the free cancel down, past it the valve's
+            // terms stand printed before they are ever needed.
             if (activeSession != null) {
-                val graceLeft = 10 - activeSession.elapsedSeconds
+                val graceLeft = MonolithRepository.GRACE_WINDOW_SECONDS - activeSession.elapsedSeconds
                 Text(
                     text = when {
                         graceLeft > 0 && activeSession.routineId != null ->
@@ -1745,6 +1752,233 @@ fun TactileDeckScreen(
                     color = scheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp)
                 )
+            }
+            // Issue #125 F4 (Sarthak's ruling, sharpened at
+            // 6544202995): the in-grace edit. The start window is
+            // the only place a wrong arm can be corrected — add
+            // time / change duration, change blocks, change
+            // loadout; nothing beyond the session's own setup,
+            // and nothing after the window. This block stands
+            // only while the row's elapsed is inside the window,
+            // and the repository refuses the write past it
+            // whatever any surface shows. Routine-born sessions
+            // never stand here: their ending is judged, not
+            // edited.
+            val graceEditSession = activeSession
+            if (graceEditSession != null && graceEditSession.routineId == null &&
+                graceEditSession.elapsedSeconds <= MonolithRepository.GRACE_WINDOW_SECONDS
+            ) {
+                var graceEditOpen by remember(graceEditSession.id) { mutableStateOf(false) }
+                var editMinutes by remember(graceEditSession.id) {
+                    mutableStateOf(graceEditSession.targetDurationSeconds / 60)
+                }
+                var editBlocks by remember(graceEditSession.id) {
+                    mutableStateOf(graceEditSession.totalStudyBlocks)
+                }
+                var editLoadout by remember(graceEditSession.id) {
+                    mutableStateOf(
+                        SmartLoadout.entries.firstOrNull {
+                            it.title == graceEditSession.profileName
+                        }
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                BlockitActionChip(
+                    wordLabel = if (graceEditOpen) "CLOSE EDIT" else "EDIT ARM",
+                    monoBadge = "START ONLY",
+                    isPrimaryInk = false,
+                    onClick = { graceEditOpen = !graceEditOpen },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(72.dp),
+                    testTag = "grace_edit_toggle"
+                )
+                if (graceEditOpen) {
+                    Spacer(Modifier.height(8.dp))
+                    if (graceEditSession.isStopwatchMode) {
+                        Text(
+                            text = "FLOW — NO SET DURATION TO CORRECT",
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 9.5.sp,
+                            letterSpacing = 0.8.sp,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("grace_edit_flow_note")
+                        )
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(scheme.surfaceVariant)
+                                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        if (editMinutes > 10) {
+                                            editMinutes = maxOf(10, editMinutes - 5)
+                                        }
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 5.dp)
+                                    .testTag("grace_edit_minutes_down")
+                            ) {
+                                Text(
+                                    text = "−5",
+                                    fontFamily = AnonymousProFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    letterSpacing = 1.sp,
+                                    color = scheme.onBackground
+                                )
+                            }
+                            Text(
+                                text = "DURATION · $editMinutes MIN",
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onBackground,
+                                modifier = Modifier.testTag("grace_edit_minutes_value")
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(scheme.surfaceVariant)
+                                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        if (editMinutes < 180) {
+                                            editMinutes = minOf(180, editMinutes + 5)
+                                        }
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 5.dp)
+                                    .testTag("grace_edit_minutes_up")
+                            ) {
+                                Text(
+                                    text = "+5",
+                                    fontFamily = AnonymousProFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    letterSpacing = 1.sp,
+                                    color = scheme.onBackground
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(scheme.surfaceVariant)
+                                .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                .clickable {
+                                    if (editBlocks > 1) editBlocks -= 1
+                                }
+                                .padding(horizontal = 14.dp, vertical = 5.dp)
+                                .testTag("grace_edit_blocks_down")
+                        ) {
+                            Text(
+                                text = "−1",
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onBackground
+                            )
+                        }
+                        Text(
+                            text = if (editBlocks == 1) "BLOCKS · 1" else "BLOCKS · $editBlocks",
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onBackground,
+                            modifier = Modifier.testTag("grace_edit_blocks_value")
+                        )
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(scheme.surfaceVariant)
+                                .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                .clickable {
+                                    if (editBlocks < 8) editBlocks += 1
+                                }
+                                .padding(horizontal = 14.dp, vertical = 5.dp)
+                                .testTag("grace_edit_blocks_up")
+                        ) {
+                            Text(
+                                text = "+1",
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onBackground
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        SmartLoadout.entries.forEach { loadout ->
+                            val selected = editLoadout == loadout
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        if (selected) inkControlFill() else scheme.surfaceVariant
+                                    )
+                                    .border(
+                                        1.dp,
+                                        if (selected) inkControlFill() else scheme.outlineVariant,
+                                        RoundedCornerShape(8.dp)
+                                    )
+                                    .clickable { editLoadout = loadout }
+                                    .padding(horizontal = 6.dp, vertical = 5.dp)
+                                    .testTag("grace_edit_loadout_${loadout.name}")
+                            ) {
+                                Text(
+                                    text = loadout.name.replace('_', ' '),
+                                    fontFamily = AnonymousProFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    letterSpacing = 1.sp,
+                                    color = if (selected) {
+                                        onInkControlFill()
+                                    } else {
+                                        scheme.onBackground
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    BlockitActionChip(
+                        wordLabel = "APPLY EDIT",
+                        monoBadge = "FREE IN GRACE",
+                        isPrimaryInk = true,
+                        onClick = {
+                            onEditSessionInGrace(
+                                if (graceEditSession.isStopwatchMode) null else editMinutes,
+                                editBlocks,
+                                editLoadout
+                            )
+                            graceEditOpen = false
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(72.dp),
+                        testTag = "grace_edit_apply"
+                    )
+                }
             }
             // Issue #283 (R5 supplement): the extend verb. A running
             // session used to offer only endings (grace abort, the

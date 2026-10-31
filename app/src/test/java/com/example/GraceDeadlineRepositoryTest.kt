@@ -25,8 +25,10 @@ import java.time.Duration
 /**
  * PIN scope: PLUMBING.
  *
- * Issue #103 F2 — the 10-second grace deadline is enforced in the
- * ending write, not only rendered by the Deck.
+ * Issue #103 F2 — the grace deadline (30 seconds since issue
+ * #125 F1 stretched the window, Sarthak's ruling Oct 31 19:14
+ * IST) is enforced in the ending write, not only rendered by
+ * the Deck.
  *
  * Before the fix, [MonolithRepository.disarmActiveSession] derived
  * `isGraceCancel` purely from the outcome-reason STRING, so any
@@ -106,10 +108,32 @@ class GraceDeadlineRepositoryTest {
     }
 
     @Test
+    fun graceCancelAtSecondTwenty_booksZero_underTheStretchedWindow() = runBlocking {
+        val dao = MonolithDatabase.getInstance(context).monolithDao()
+        val repo = MonolithRepository(context, dao)
+        // Issue #125 F1: second 20 was past the old 10-second
+        // cliff (it would have booked real elapsed as an early
+        // end); under the ruled 30-second window the same cancel
+        // is free and books zero.
+        val sessionId = insertActiveSessionBackdated(dao, secondsAgo = 20L)
+
+        repo.disarmActiveSession(
+            completed = false,
+            outcomeReason = "Accidental Start Grace Cancel"
+        )
+
+        assertNull(dao.getActiveSessionSnapshot())
+        val row = dao.getSessionHistorySnapshot().first { it.id == sessionId }
+        assertEquals(0, row.elapsedSeconds)
+        assertEquals(SessionOutcome.GRACE_CANCEL, row.outcome)
+        assertFalse(row.tamperDetected)
+    }
+
+    @Test
     fun graceCancelAfterTheWindow_isRefused_sessionStaysSealedAndUnbooked() = runBlocking {
         val dao = MonolithDatabase.getInstance(context).monolithDao()
         val repo = MonolithRepository(context, dao)
-        // Five real minutes in — far past the printed 10 seconds.
+        // Five real minutes in — far past the printed window.
         // The stored counter and the verified clock agree (the
         // helper advances the shadow clock so both anchors are
         // real); only the string claims "Grace Cancel".

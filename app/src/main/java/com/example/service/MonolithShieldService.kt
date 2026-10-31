@@ -1120,11 +1120,11 @@ class MonolithShieldService : Service() {
                 // so a stopped reach (count change) or a held
                 // notification (badge change) still re-prints on
                 // the very iteration it happens.
-                val standingSubtitle = if (updated.elapsedSeconds <= 10 && !updated.isInSafeBreak) {
+                val standingSubtitle = if (updated.elapsedSeconds <= MonolithRepository.GRACE_WINDOW_SECONDS && !updated.isInSafeBreak) {
                     if (updated.routineId != null) {
-                        "GRACE ${10 - updated.elapsedSeconds}S — ABORT BOOKED BY ROUTINE · TAP TO OPEN"
+                        "GRACE ${MonolithRepository.GRACE_WINDOW_SECONDS - updated.elapsedSeconds}S — ABORT BOOKED BY ROUTINE · TAP TO OPEN"
                     } else {
-                        "GRACE ${10 - updated.elapsedSeconds}S — CANCEL FREE · TAP TO OPEN"
+                        "GRACE ${MonolithRepository.GRACE_WINDOW_SECONDS - updated.elapsedSeconds}S — CANCEL FREE · TAP TO OPEN"
                     }
                 } else {
                     // Issue #155 (IQ-2 M-8): the counter carries ONE
