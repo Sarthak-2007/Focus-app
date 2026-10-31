@@ -214,8 +214,15 @@ class SoundHapticsLivedTest {
         sled.soundEngine = engine
         sled.onToggleRequested = { handlerCalls++ }
         val before = engine.enqueuedTransientCountForTest()
+        // Main's complete-press gesture law (#56/#60, preserved by the
+        // #112 recomposition): a press is DOWN on the sled, then UP on
+        // it. The original test sent a bare UP, which main's law now
+        // rightly ignores — the voice assertions below are unchanged.
         sled.dispatchTouchEvent(
-            MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_UP, 0f, 0f, 0)
+            MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 0f, 0f, 0)
+        )
+        sled.dispatchTouchEvent(
+            MotionEvent.obtain(0L, 1L, MotionEvent.ACTION_UP, 0f, 0f, 0)
         )
         assertEquals("the gesture must reach the handler exactly once", 1, handlerCalls)
         assertEquals(
