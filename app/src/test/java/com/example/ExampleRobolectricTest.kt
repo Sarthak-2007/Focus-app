@@ -27,6 +27,7 @@ import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
+// PIN-SCOPE: PLUMBING — broad Robolectric repository/session suite (working-rules adoption, Oct 31 18:06 IST).
 class ExampleRobolectricTest {
 
     private lateinit var context: Context

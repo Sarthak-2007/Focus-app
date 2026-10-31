@@ -15,6 +15,7 @@ import org.junit.Test
  * looksLikeOneTimeCode); the dedupe tracker and content
  * fingerprint it once fed are deleted with the store.
  */
+// PIN-SCOPE: SOURCE — pure capture policy + in-memory dedupe tracker (working-rules adoption, Oct 31 18:06 IST).
 class NotificationCapturePolicyTest {
 
     @Test

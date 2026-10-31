@@ -52,6 +52,7 @@ import java.time.LocalDate
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], qualifiers = "w450dp-h1000dp")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
+// PIN-SCOPE: RENDER — digest sheet + drawer composables rendered/captured (working-rules adoption, Oct 31 18:06 IST).
 class DrawerRenderTest {
 
     @get:Rule

@@ -43,6 +43,7 @@ import org.robolectric.annotation.Config
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
+// PIN-SCOPE: PLUMBING — Room migration chain 7→19, schema validation (working-rules adoption, Oct 31 18:06 IST).
 class RoutinesMigrationChainTest {
 
     private val context: Context
@@ -339,7 +340,8 @@ class RoutinesMigrationChainTest {
                 MonolithDatabase.MIGRATION_16_17,
                 MonolithDatabase.MIGRATION_17_18,
                 MonolithDatabase.MIGRATION_18_19,
-                MonolithDatabase.MIGRATION_19_20
+                MonolithDatabase.MIGRATION_19_20,
+                MonolithDatabase.MIGRATION_20_21
             )
             .build()
 
@@ -381,7 +383,7 @@ class RoutinesMigrationChainTest {
         )
         assertFalse(tables.contains("routine_attendance"))
         // Issue #100 CUT: the notification-content store is GONE at
-        // v20 — MIGRATION_19_20 dropped the table the v7 fixture
+        // v21 — MIGRATION_20_21 dropped the table the v7 fixture
         // created; no content store may stand at the latest schema.
         assertFalse(tables.contains("captured_notifications"))
 
@@ -396,6 +398,13 @@ class RoutinesMigrationChainTest {
 
         // day_notes is exactly the specced two columns, date as PK.
         assertEquals(setOf("dateIso", "word"), columnsOf(raw, "day_notes"))
+
+        // Issue #138 CUT (19→20): captured_notifications survives
+        // as metadata only — the content columns are GONE at v20.
+        assertEquals(
+            setOf("id", "timestampMillis", "packageName", "appName", "isRead"),
+            columnsOf(raw, "captured_notifications")
+        )
         raw.query("PRAGMA table_info(day_notes)").use { cursor ->
             val nameIdx = cursor.getColumnIndex("name")
             val pkIdx = cursor.getColumnIndex("pk")

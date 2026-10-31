@@ -81,3 +81,18 @@ extended. ShieldService composed with main's #278 stopwatch
 chronometer (kept) + the snoozedCount badge (CUT). MainActivity kept
 main's new shoppingWarningVisible state; its re-added frozenDigest
 collection was removed with the digest.
+
+Addendum 3 (same run): the gate PASSED on head 09c581a6 (run
+41203850237: Compile SUCCESS; targeted 605 tests, sole failure
+ForestComparativeWinsTest W2 — a floor failure, main's own VM
+"coin flip"/"only coin" comments trip its scan, this diff adds no
+such line; the two MERGE-INTRODUCED SessionCovering failures were
+cured by the #478 @Before carry). Before the merge call, main moved
+again: PR #736 (issue #138) landed a metadata-only
+captured_notifications rebuild as MIGRATION_19_20 / DB v20 — content
+columns removed, storage kept. That is #138's measure, not #100's
+ruling: #100's body rules removal, and no filing on #100 supersedes
+it. Third composition: #138's 19→20 kept as shipped history, the
+#100 drop renumbered to MIGRATION_20_21 / DB v21, conflicts resolved
+CUT-side (Deck keeps #90's DeckArmedUtilities extraction minus the
+HELD chips; listener capture path superseded by the snooze-hold).
