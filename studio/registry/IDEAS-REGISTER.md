@@ -232,3 +232,16 @@ Register note: Wave-3 cell reports are still landing; their seat ideas enter on 
 | PIN-scope labels as a floor law: every test carries its scope (PLUMBING / POST / RENDER / SOURCE) in its name or header, so coverage can never be misread at a glance — a test named as a behaviour pin that only exercises plumbing is how F3's ghost survived PR #540's first test file | MAXIMPL-4 | #155 | PANEL-QUEUED (full test matrix + audit: https://github.com/Sarthak-2007/Focus-app/issues/155#issuecomment-6538317578) |
 | Mutation acceptance as the definition of "pinned" for every truth surface: six named mutations (call-site flag flip, funnel deletion, gate removal, timeout zeroing, badge flip, truth-boundary shift) must each fail at least one test, or the coverage is decoration | MAXIMPL-4 | #155 | PANEL-QUEUED |
 | The widget line carries its own death: a SEALED render schedules its own un-render at beat + 30 s, making staleness impossible by construction rather than by the 30-minute platform cadence | MAXIMPL-4 | #155 | PANEL-QUEUED (feeds MAXIMPL-3's refresh-architecture seat) |
+
+## Ambient glances (INNOVATOR-1, Crazy-ideas/Wild/Innovator, WING-A — #155)
+
+Filed on #155 (comment 6535813528) and Discussion #609. All five consume PR #540's WidgetSealTruth (protecting witness + persisted beat <30 s) and land only after #540 merges; none prints SEALED from the session row alone.
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| P1 "Seal in the Shade": Quick Settings TileService glance — state computed at onStartListening, UNAVAILABLE = unproven, tap routes to SHIELD only (M, ~2 days) | INNOVATOR-1 | #155 | PANEL-QUEUED |
+| P2 "The Icon Changes Its Face": activity-alias launcher icon flips to a stamped SEALED plate on the protecting flip; boot default OPEN; watchdog re-asserts from the truth beat (M, ~2–3 days + OEM bench) | INNOVATOR-1 | #155 | PANEL-QUEUED (panel must rule the ≤1-watchdog-interval stale window first) |
+| P3 "Night Seal": DreamService glance that exists only while sealed and finishes immediately when OPEN/UNPROVEN — no seal, no surface (L, ~3–4 days) | INNOVATOR-1 | #155 | PANEL-QUEUED |
+| P4 Lock-screen widget twin: add lock-screen widgetCategory to the existing #312 widget, same truth line (S–M, ~1–2 days) | INNOVATOR-1 | #155 | PANEL-QUEUED (cheapest; natural first build after #540) |
+| P5 "The Held Glance": dynamic long-press shortcut whose label is the state, refreshed on flip events (S, ~1 day) | INNOVATOR-1 | #155 | PANEL-QUEUED (weakest freshness; ranked last) |
+| Streak/score complications, progress-ring live wallpaper, persistent AOD stats face, icon badge counts | INNOVATOR-1 | #155 | PARKED-WITH-REASON (killed by the seat before filing: fail blocker-identity law — 24/7 tracker/dashboard; badge counts also fail truth law, cached = stale) |
