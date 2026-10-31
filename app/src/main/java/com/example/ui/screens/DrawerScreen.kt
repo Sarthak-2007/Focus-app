@@ -93,6 +93,20 @@ import java.util.Locale
 
 private enum class DrawerView { LANDING, INDEX, MONTH, CABINET, RECEIPTS }
 
+/** Audit R3b #145, reopened defect A: the cabinet's standing forge
+ *  rule, as ONE named print so a test can pin the exact sentence.
+ *  The sentence is scoped to what the forge gates actually do
+ *  (MonolithRepository): MANUAL — a routine-born span forges
+ *  nothing (the finalise gate is `allBlocksCompleted &&
+ *  !isRoutineSession`, and the disarm door fences routine rows
+ *  too); IN FULL — a timed span hand-ended before all its blocks
+ *  complete forges nothing (at most a Partial Stamp), and a FLOW
+ *  span forges only at its completed hand finish. The earlier
+ *  print ("A SPAN YOU FINISH YOURSELF FORGES ONE") claimed both
+ *  exceptions away. */
+internal val CABINET_FORGE_RULE: String =
+    "A MANUAL SPAN YOU FINISH IN FULL FORGES ONE — THE FORGE CHOOSES WHICH."
+
 internal fun curioForgeGapMark(record: FocusSessionEntity): String =
     if (record.outcome == SessionOutcome.ELAPSED_SHIELD_GAP ||
         record.shieldGapSeen
@@ -1006,6 +1020,48 @@ fun DrawerScreen(
                 }
             }
         } else when (view) {
+            // Unreachable: the CABINET and RECEIPTS pages return
+            // early above, before this column exists. Present for
+            // exhaustiveness.
+            DrawerView.CABINET, DrawerView.RECEIPTS -> {
+                item { Spacer(Modifier.height(0.dp)) }
+            }
+            DrawerView.INDEX -> {
+                // ---------- ALL MONTHS ----------
+                item {
+                    DrawerNavRow(
+                        label = "BACK",
+                        onClick = { viewName = DrawerView.LANDING.name }
+                    )
+                }
+                items(storedMonths, key = { "month-${it.year}-${it.month}" }) { month ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(
+                                role = androidx.compose.ui.semantics.Role.Button
+                            ) {
+                                onSelectMonth(month.year, month.month)
+                                monthEnteredFromName = DrawerView.INDEX.name
+                                viewName = DrawerView.MONTH.name
+                            }
+                            .sizeIn(minHeight = 48.dp)
+                            .padding(vertical = 10.dp)
+                            .testTag("drawer_month_${month.year}_${month.month}"),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = monthLabel(month.year, month.month),
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 14.sp,
+                            color = scheme.onBackground
+                        )
+                    }
+                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+                }
+            }
+
             DrawerView.MONTH -> {
                 // ---------- ONE MONTH ----------
                 item {
@@ -1330,27 +1386,6 @@ private fun StoredRow(
 }
 
 @Composable
-private fun EarlierRow(onClick: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(vertical = 10.dp)
-            .testTag("drawer_earlier"),
-        horizontalArrangement = Arrangement.Center
-    ) {
-        Text(
-            text = "EARLIER",
-            fontFamily = AnonymousProFamily,
-            fontWeight = FontWeight.Bold,
-            fontSize = 11.sp,
-            letterSpacing = 2.sp,
-            color = scheme.onBackground
-        )
-    }
-}
-
 /** One receipts-index row (issue #157): № · date · outcome word,
  *  in the Drawer's furniture. The warnings print here — in Drawer
  *  type, on the furniture, never on the slip — only where the
