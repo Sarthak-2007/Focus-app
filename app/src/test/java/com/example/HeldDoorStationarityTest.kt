@@ -153,9 +153,16 @@ class HeldDoorStationarityTest {
     @Test
     fun returnBoundsAreEqualAcrossCountingOfferAndHeldRenders() {
         // COUNTING: wall running (5s taper floor from frame one).
+        // Composed FIX-R3 (issue #11 x Audit R6 #341 F60): main's
+        // later F60 ruling composes the peek chip from the first
+        // frame (dimmed, tap gated to zero) — the branch-era claim
+        // "no chip while counting" is superseded by that ruling and
+        // reworded here, B-3 style. The invariant this test guards
+        // is unchanged and stands asserted below in full: RETURN's
+        // bounds are equal across counting, offer and held frames.
         render(state(wallRunning = true, instance = 1L))
         val counting = returnBounds()
-        composeRule.onNodeWithTag("airlock_peek_button").assertDoesNotExist()
+        composeRule.onNodeWithTag("airlock_peek_button").assertExists()
 
         // OFFER: wall expired, the chip stands — RETURN unmoved.
         render(state(wallRunning = false, instance = 2L))
