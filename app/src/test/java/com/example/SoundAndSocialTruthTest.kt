@@ -780,3 +780,7 @@ class SoundAndSocialTruthTest {
         db.close()
     }
 }
+
+// Diagnostic touch (BUILDER-7, Oct 31): forces SoundAndSocialTruthTest into
+// the targeted set on unmodified main to isolate two poll timeouts seen on
+// PR #740. No assertion or production change; this branch is deleted after.
