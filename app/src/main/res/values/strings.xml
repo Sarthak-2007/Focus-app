@@ -141,4 +141,27 @@
     <string name="receipt_done_with_task">DONE WITH THIS TASK</string>
     <string name="receipt_next_session">NEXT SESSION</string>
     <string name="receipt_quiet_span">%1$s QUIET</string>
+    <string name="reception_nameplate">MONOLITH ML-01</string>
+    <string name="reception_title">SETUP + INTRODUCTION</string>
+    <string name="reception_what_it_is">WHAT IT IS</string>
+    <string name="reception_identity_line">While a session runs, Monolith shuts the apps you ruled shut and the sites on your list — and backs you out of Shorts and Reels.</string>
+    <string name="reception_boundary_line">YOUR STUDY HOURS LIVE IN YPT. MONOLITH KEEPS NO SCORE AND GRADES NOTHING.</string>
+    <string name="reception_four_doors">THE FOUR DOORS</string>
+    <string name="reception_rank_line">THE FIRST TWO MAKE BLOCKING REAL. THE THIRD GUARDS THE MACHINE ITSELF. THE FOURTH MAKES IT QUIET.</string>
+    <string name="reception_how_session_runs">HOW A SESSION RUNS</string>
+    <string name="reception_rules_line">YOUR RULES LIVE ON SHIELD — THE APPS AND SITES, EACH WITH YOUR RULING. CHANGE THEM ANY TIME BETWEEN SESSIONS.</string>
+    <string name="reception_open_list">OPEN THE LIST</string>
+    <string name="reception_list_wayback">THE LIST LIVES ON SHIELD — COME BACK TO THE DECK AND THIS SHEET RISES AGAIN.</string>
+    <string name="reception_leave_line">LEAVE WHEN YOU LIKE — THE HEADER KEEPS NAMING THE FIRST THING MISSING.</string>
+    <string name="reception_later_title">LATER, FOR FULL PROTECTION</string>
+    <string name="reception_later_line">NOT PART OF THE SETUP, AND NOT OWED. THE FOUR DOORS ABOVE WERE PROVED BY A FIRST SESSION AND A FIRST SAFE BREAK — ONLY NOW ARE THESE TWO ASKED, EACH ON ITS OWN.</string>
+    <string name="reception_later_total_note">THE TOTAL BELOW STILL COUNTS FOUR — THESE TWO ARE NOT IN IT.</string>
+    <string name="reception_guard_count">GUARD %1$d/4</string>
+    <string name="reception_park_stub">THIS SHEET WAITS IN PARK — SETUP + INTRODUCTION.</string>
+    <string name="reception_park_opens">PARK OPENS BY TAKING THE RAIL CAP TO THE UNMARKED END OF THE RAIL, OR BY TAPPING THE GUARD LINE AT THE TOP RIGHT.</string>
+    <string name="reception_to_deck">TO THE DECK →</string>
+    <string name="reception_finishes_line">THIS FINISHES THE SETUP. IT STARTS NOTHING, SEALS NOTHING, AND MAY BE PRESSED WITH DOORS UNSET.</string>
+    <string name="reception_stale_gloss">THE LAST PROOF AGED OUT — CHECK RE-PROVES IT</string>
+    <string name="reception_fix_key">FIX — %1$s</string>
+    <string name="reception_check_key">CHECK — %1$s</string>
 </resources>
