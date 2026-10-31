@@ -2426,6 +2426,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     launcherOpen = true
                 },
                 onRequestEmergencyBreak = viewModel::requestDisarmFromAirlock,
+                // Issue #125 (F5 remainder): the door's grace abort
+                // runs the same grace cancel as the Deck's chip.
+                onGraceAbort = viewModel::confirmGraceAbortFromAirlock,
                 // Issue #318 F4: the wall breathes for the stored,
                 // configured length — not a composable-local 5.
                 breathSeconds = remember {

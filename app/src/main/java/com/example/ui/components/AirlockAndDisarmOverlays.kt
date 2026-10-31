@@ -1282,6 +1282,46 @@ internal fun airlockStakeLine(emergencyBreaksRemaining: Int): String? = when {
         "EMERGENCY BREAK: $emergencyBreaksRemaining LEFT THIS WEEK"
 }
 
+/**
+ * Issue #125 (armed-wrong F5 remainder, pure, unit-tested): the
+ * Airlock's grace window, derived — never counted. The state
+ * carries the session's verified elapsed at the intercept instant;
+ * the live elapsed is that snapshot aged by the monotonic delta
+ * from the intercept's anchor (the overlay's resolved intercept
+ * instant — the same anchor its wall counts from), so the door's
+ * print can never drift from the repository's own grace law
+ * ([MonolithRepository.GRACE_WINDOW_SECONDS], verified elapsed
+ * ≤ window). Returns the badge seconds the user can still use —
+ * the Deck chip's own formula (window + 1 − elapsed, coerced to
+ * 1..window: 10 on the first usable frame, 1 on the last) — or
+ * null when no abort stands: no session snapshot carried
+ * (elapsedAtIntercept < 0), or the window is already spent.
+ */
+internal fun airlockGraceBadgeSeconds(
+    elapsedAtInterceptSeconds: Int,
+    interceptedAtMonoMillis: Long,
+    nowMonoMillis: Long,
+    windowSeconds: Int = MonolithRepository.GRACE_WINDOW_SECONDS
+): Int? {
+    if (elapsedAtInterceptSeconds < 0) return null
+    val agedSeconds = ((nowMonoMillis - interceptedAtMonoMillis)
+        .coerceAtLeast(0L) / 1000L).toInt()
+    val liveElapsed = elapsedAtInterceptSeconds + agedSeconds
+    if (liveElapsed > windowSeconds) return null
+    return (windowSeconds + 1 - liveElapsed).coerceIn(1, windowSeconds)
+}
+
+/**
+ * Issue #125: the door's grace chip words. A routine-born session
+ * never takes the free path — its tap is booked by the routine's
+ * judging funnel — so its chip carries the Deck's judged label,
+ * never the free abort's promise. Every other session in its
+ * window carries the identical words the Deck and off-Deck chips
+ * carry: one door, one name.
+ */
+internal fun airlockGraceChipLabel(sessionIsRoutine: Boolean): String =
+    if (sessionIsRoutine) "END ROUTINE · WILL BE JUDGED" else "GRACE WINDOW ABORT"
+
 /** English ordinal for the attempt mirror ("1ST", "2ND", "3RD",
  *  "4TH" — the 11/12/13 teens take TH, never ST/ND/RD). */
 internal fun attemptOrdinal(n: Int): String {
@@ -1635,6 +1675,13 @@ fun AirlockInterceptOverlay(
     // identical effect (the session ends). Placement only; the
     // valve's price and power are untouched.
     onRequestEmergencyBreak: () -> Unit = {},
+    // Issue #125 (armed-wrong F5 remainder): the grace abort, at
+    // the door. Inside the session's opening window the free exit
+    // stands on the Airlock too — the same call the Deck's chip
+    // makes — so checking a blocked app no longer burns the
+    // window invisibly. Outside the window the chip does not
+    // render at all; the valve below remains the priced door.
+    onGraceAbort: () -> Unit = {},
     // Issue #11 (FIX-8): the honest exit — a quiet text row under
     // RETURN that routes to the door-originated Disarm entry. It
     // ends nothing itself; the Disarm face carries the gravity.
@@ -1683,6 +1730,39 @@ fun AirlockInterceptOverlay(
                 airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), effectiveWallSeconds)
             )
         }
+        // Issue #125 (F5 remainder): the grace chip's clock. The
+        // window is only 10 seconds, so while an abort could stand
+        // this face re-derives it four times a second from the
+        // monotonic anchor — the badge steps down per second and
+        // the chip vanishes on the first frame past the window,
+        // never lingering as a stale promise. The loop ends the
+        // moment no abort can stand; it never ticks a counter of
+        // its own (the derivation is airlockGraceBadgeSeconds).
+        var graceNowMono by remember(state.interceptInstanceId) {
+            mutableLongStateOf(SystemClock.elapsedRealtime())
+        }
+        // The anchor is wallStartMono — the overlay's own resolved
+        // intercept instant (the state's monotonic stamp, or the
+        // first-frame fallback the wall itself uses): live-trigger
+        // states carry no stamp, and ageing from 0 would read as
+        // an aeon and stand no abort at all.
+        LaunchedEffect(state.interceptInstanceId, state.isVisible) {
+            while (
+                airlockGraceBadgeSeconds(
+                    state.sessionElapsedSecondsAtIntercept,
+                    wallStartMono,
+                    graceNowMono
+                ) != null
+            ) {
+                delay(200L)
+                graceNowMono = SystemClock.elapsedRealtime()
+            }
+        }
+        val graceBadgeSeconds = airlockGraceBadgeSeconds(
+            state.sessionElapsedSecondsAtIntercept,
+            wallStartMono,
+            graceNowMono
+        )
         LaunchedEffect(state.interceptInstanceId, state.isVisible) {
             countdownSecs =
                 airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), effectiveWallSeconds)
@@ -2132,6 +2212,26 @@ fun AirlockInterceptOverlay(
                             null -> Unit
                         }
                     }
+                }
+
+                // THE GRACE ABORT, AT THE DOOR (issue #125,
+                // armed-wrong F5 remainder): for the session's
+                // opening window only, the free exit stands above
+                // the priced valve — checking what you armed wrong
+                // by tapping a blocked app no longer burns the
+                // window invisibly on a face with no countdown.
+                // Same words, same live badge, same call as the
+                // Deck's chip; a routine-born session wears the
+                // Deck's judged label, never the free promise.
+                if (graceBadgeSeconds != null) {
+                    BlockitActionChip(
+                        wordLabel = airlockGraceChipLabel(state.sessionIsRoutine),
+                        monoBadge = "${graceBadgeSeconds}s",
+                        isPrimaryInk = true,
+                        onClick = onGraceAbort,
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "airlock_grace_abort_button"
+                    )
                 }
 
                 // THE VALVE, AT THE DOOR (issue #119, finding 2):
