@@ -183,6 +183,17 @@ Filed on #155 comment 6536721775 (design) + the reseat completion filing; `VERIF
 | The Wrist Answer: Wear OS pull-glance in the same three haptic patterns | INNOVATOR-3 | #155 | PARKED-WITH-REASON (pushed watch face re-imports icon-flip staleness; no wear module/bench; unpark only after the pull grammar exists; L, 5d+ if ever) |
 | The Dead-Man's Tick: periodic reassurance buzz while sealed | INNOVATOR-3 | #155 | PARKED-WITH-REASON (killed by the filing seat on both laws: pushed claim can tick over a dead shield; ambient-companion drift + room-law fight; the pull-glance covers the need at zero idle cost) |
 
+## The OPEN face — the glance off-duty (DESIGNER-W-4, #155)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| The OPEN plate: porcelain, ink, no accent — `OPEN` as headline in the receipt's printed character (ParkDrawer.kt:124: PORCELAIN = OPEN), near-silence as the designed default | DESIGNER-W-4 | #155 | PANEL-QUEUED (filed on #155, comment 6537408254; OPEN state of W-5's GLANCE PLATE) |
+| OPEN-2 gated NEXT SEAL: prints only from the excuse-aware derivation (G7 cure), live + unpaused, within a 12h modesty horizon, static clock time + day word — never a countdown | DESIGNER-W-4 | #155 | PANEL-QUEUED (build M, 2–3 builder-days with B2, after PR #540) |
+| Blank-widget withdrawal RULED REJECTED at every rung: blank is indistinguishable from failure and is a claim by omission; withdrawal of content, never of witness | DESIGNER-W-4 | #155 | ADOPTED (as ruling in the #155 design record; binds E-5's collapse ladder) |
+| Empty-chair rule: OPEN plate keeps the SEALED plate's anatomy with the intention line absent, never prompted — no intention slot, no interrogative/imperative copy between blocks | DESIGNER-W-4 | #155 | PANEL-QUEUED |
+| Conditional AS OF: staleness foot line prints only when the standing read is older than one 30-min cadence (refines MAXIMPL-3 R5 / W-2 for the OPEN state) | DESIGNER-W-4 | #155 | PANEL-QUEUED |
+| No history on the OPEN face: W-2's yesterday-trace line ruled against on this face (sides with W-5 GLANCE-3; the receipt lives in the Ledger) | DESIGNER-W-4 | #155 | PANEL-QUEUED (named disagreement on #155 for the Panel) |
+
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
 
 ## Pill × receipt relation (WING-C DESIGN, Wave reseat)
