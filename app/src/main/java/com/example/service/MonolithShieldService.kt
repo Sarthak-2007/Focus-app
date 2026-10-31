@@ -24,11 +24,9 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.AppBlockTier
 import com.example.data.BreakDimState
-import com.example.data.MonolithDatabase
 import com.example.widget.MonolithWidgetProvider
 import com.example.data.batteryShieldWarning
 import com.example.data.readBatterySnapshot
-import java.util.UUID
 import com.example.data.MonolithRepository
 import com.example.data.NightDimMath
 import kotlinx.coroutines.CancellationException
@@ -409,7 +407,6 @@ class MonolithShieldService : Service() {
         // binding is idempotent and every other door binds on entry.
         WatchStore.bind(applicationContext)
         return true
-        WatchStore.bind(applicationContext)
     }
 
     private fun startMonitoringLoop() {
@@ -465,6 +462,13 @@ class MonolithShieldService : Service() {
                     // leaves the standing table untouched — the
                     // reconcile itself refuses an empty query.
                     runCatching { repository.ensureSeededAndSyncPackages() }
+                        .onFailure {
+                            // Issue #75 doctrine (MLog): a swallowed
+                            // failure is logged, never silent — a
+                            // resync that keeps failing must not read
+                            // as a catalogue that simply has no news.
+                            MLog.w("catalogue resync failed; standing table untouched", it)
+                        }
                 }
                 val activeSession = repository.activeSessionSnapshot() // ISSUE-67(d): via repository, not direct DAO
                 if (activeSession == null || !activeSession.isActive) {
@@ -503,7 +507,7 @@ class MonolithShieldService : Service() {
                 val updated = try {
                     repository.updateSessionProgress(activeSession, stampShieldBeat = true)
                 } catch (e: android.database.sqlite.SQLiteFullException) {
-                    android.util.Log.e("MonolithShield", "storage full: progress tick not persisted", e)
+                    Log.e(TAG, "storage full: progress tick not persisted", e)
                     null
                 }
                 if (updated == null) {
@@ -1069,7 +1073,7 @@ class MonolithShieldService : Service() {
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setCategory(NotificationCompat.CATEGORY_STATUS)
                 .setAutoCancel(true)
-                .setTimeoutAfter(90_000L)
+                .setTimeoutAfter(BREAK_ALERT_TIMEOUT_MS)
                 .setContentIntent(pendingIntent)
                 .build()
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -1176,7 +1180,7 @@ class MonolithShieldService : Service() {
         }
         if (chronometerEndMillis != null) {
             // The countdown is the system's chronometer (real time),
-            // not the monitor loop's 2-second text snapshot.
+            // not the monitor loop's 1-second text snapshot.
             builder.setUsesChronometer(true)
             builder.setChronometerCountDown(true)
             builder.setWhen(chronometerEndMillis)
@@ -1388,6 +1392,8 @@ class MonolithShieldService : Service() {
         // sharing the id would make break alerts and summonses
         // overwrite each other in the shade.
         const val BREAK_ALERT_NOTIFICATION_ID = 4098
+        /** A break alert self-expires after 90 s (see postBreakAlert). */
+        const val BREAK_ALERT_TIMEOUT_MS = 90_000L
         /** Issue #155 (F3): the detached completion card self-expires. */
         const val COMPLETION_TIMEOUT_MS = 45 * 60 * 1000L
         /** Issue #155 (F5): present (true) on the shield card's content

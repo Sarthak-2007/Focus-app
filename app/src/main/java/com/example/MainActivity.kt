@@ -56,8 +56,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.MonolithDatabase
-import com.example.data.MonolithRepository
 import com.example.data.SmartLoadout
 import com.example.service.InterceptConsumptionStore
 import com.example.service.InterceptNonce
