@@ -55,7 +55,7 @@ class TokenBreakRoutineSeamTest {
         db.openHelper.writableDatabase.execSQL(
             "DELETE FROM emergency_break_spends WHERE weekAnchorMillis = $anchor"
         )
-        assertEquals(0, db.monolithDao().getSpendsForWeek(anchor).size)
+        assertEquals(0, db.monolithDao().getSpendsForWeek(anchor, MonolithWeek.nextWeekAnchorMillis(System.currentTimeMillis())).size)
     }
 
     @Test
@@ -114,7 +114,7 @@ class TokenBreakRoutineSeamTest {
         assertEquals(BreakResult.Completed, result)
 
         // The spend committed, naming this session.
-        val spends = dao.getSpendsForWeek(anchor)
+        val spends = dao.getSpendsForWeek(anchor, MonolithWeek.nextWeekAnchorMillis(System.currentTimeMillis()))
         assertEquals(1, spends.size)
         assertEquals(sessionId, spends.single().sessionId)
 
@@ -143,7 +143,7 @@ class TokenBreakRoutineSeamTest {
         )
         db.openHelper.writableDatabase.execSQL("DELETE FROM focus_sessions WHERE id = $sessionId")
         db.openHelper.writableDatabase.execSQL("DELETE FROM routines WHERE id = $routineId")
-        assertEquals(0, dao.getSpendsForWeek(anchor).size)
+        assertEquals(0, dao.getSpendsForWeek(anchor, MonolithWeek.nextWeekAnchorMillis(System.currentTimeMillis())).size)
     }
 
     @Test
@@ -177,7 +177,7 @@ class TokenBreakRoutineSeamTest {
 
         val result = repository.completeEmergencyBreak()
         assertEquals(BreakResult.Completed, result)
-        val spends = dao.getSpendsForWeek(anchor)
+        val spends = dao.getSpendsForWeek(anchor, MonolithWeek.nextWeekAnchorMillis(System.currentTimeMillis()))
         assertEquals(1, spends.size)
         assertEquals(sessionId, spends.single().sessionId)
         val sealed = dao.getSessionHistorySnapshot().single { it.id == sessionId }
@@ -188,6 +188,6 @@ class TokenBreakRoutineSeamTest {
             "DELETE FROM emergency_break_spends WHERE sessionId = $sessionId"
         )
         db.openHelper.writableDatabase.execSQL("DELETE FROM focus_sessions WHERE id = $sessionId")
-        assertEquals(0, dao.getSpendsForWeek(anchor).size)
+        assertEquals(0, dao.getSpendsForWeek(anchor, MonolithWeek.nextWeekAnchorMillis(System.currentTimeMillis())).size)
     }
 }

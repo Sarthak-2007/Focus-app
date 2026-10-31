@@ -176,7 +176,9 @@ class SoundAndSocialTruthTest {
         // Out-of-band write (bypasses setEnabled's push — e.g. a
         // restore): the standing engine's cache is stale until
         // the next bind re-reads the fact into it.
-        context.getSharedPreferences(
+        // Issue #83: the fact's file moved to device-protected
+        // storage — an out-of-band write lands where the bind reads.
+        (context.createDeviceProtectedStorageContext() ?: context).getSharedPreferences(
             SoundEffectsSetting.PREFS_NAME, Context.MODE_PRIVATE
         ).edit().putBoolean(SoundEffectsSetting.KEY_ENABLED, true).commit()
         SessionSealTransitions.get(context)
@@ -459,7 +461,6 @@ class SoundAndSocialTruthTest {
                     isSealed = false,
                     isNight = false,
                     soundEnabled = true,
-                    shortsReelsSniperEnabled = true,
                     soundEngine = vm.soundEngine,
                     socialSitesEnabled = socialOn,
                     onToggleSocialSites = { vm.toggleBrowserUrlBlocker() },
@@ -468,6 +469,7 @@ class SoundAndSocialTruthTest {
                     onDismiss = {},
                     onFixClick = {},
                     onToggleSound = {},
+                    shortsReelsSniperEnabled = true,
                     onToggleShortsReelsSniper = {}
                 )
             }

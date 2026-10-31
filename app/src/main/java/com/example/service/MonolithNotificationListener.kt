@@ -6,8 +6,8 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import com.example.data.AppBlockTier
+import com.example.data.AppCategory
 import com.example.data.CapturedNotificationEntity
-import com.example.data.MonolithDatabase
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -61,9 +61,45 @@ object NotificationCapturePolicy {
             Notification.CATEGORY_SERVICE,
             Notification.CATEGORY_TRANSPORT,
             Notification.CATEGORY_CALL,
+            // Issue #121: calendar reminders and events stand with
+            // calls and alarms in the time-critical class — a
+            // reminder captured and cancelled here is an alert the
+            // user never sees, and calendar apps do not post
+            // reminders as CATEGORY_ALARM. Spared HERE, at the
+            // capture decision, so they never enter storage and are
+            // never cancelled; this composes with any later removal
+            // of the content-storage path (#100) because the
+            // exemption sits strictly upstream of it.
+            Notification.CATEGORY_REMINDER,
+            Notification.CATEGORY_EVENT,
             Notification.CATEGORY_ALARM -> false
             else -> true
         }
+    }
+
+    /** Issue #120 (otp-banking-mid-session): one-time-code
+     *  recognition, deliberately narrow — code-words only, never
+     *  digits alone (a chat full of numbers is still a chat). A
+     *  notification matching this is copied to the digest but
+     *  NEVER cancelled: the original stays in the shade with its
+     *  actions, because the code dies in minutes while the digest
+     *  copy carries no Approve button and the session runs far
+     *  longer than the code does. Pure, unit-tested. */
+    private val ONE_TIME_CODE_PATTERNS = listOf(
+        Regex("""\botp\b""", RegexOption.IGNORE_CASE),
+        Regex("""one[- ]time""", RegexOption.IGNORE_CASE),
+        Regex("""verification code""", RegexOption.IGNORE_CASE),
+        Regex("""security code""", RegexOption.IGNORE_CASE),
+        Regex("""login code""", RegexOption.IGNORE_CASE),
+        Regex("""sign[- ]?in code""", RegexOption.IGNORE_CASE),
+        Regex("""auth code""", RegexOption.IGNORE_CASE),
+        Regex("""\bpasscode\b""", RegexOption.IGNORE_CASE),
+        Regex("""\b2fa\b""", RegexOption.IGNORE_CASE)
+    )
+
+    fun looksLikeOneTimeCode(title: String, text: String): Boolean {
+        val haystack = "$title $text"
+        return ONE_TIME_CODE_PATTERNS.any { it.containsMatchIn(haystack) }
     }
 
     /** The content fingerprint an update is compared by: title and
@@ -124,6 +160,20 @@ class CaptureDedupeTracker {
  * - Saves captured notifications to Room persistent disk storage so they survive background
  *   restarts and can be read, cleared, or tapped to open after studying.
  */
+/**
+ * The hold rule (Audit R3, safe-break-lived #2): a notification is
+ * held — digested and cancelled — when its app's tier is not OPEN,
+ * EXCEPT that a Safe Break releases the apps the break itself
+ * unlocks: a PEEK-tier app is freely open for the break's length
+ * (the accessibility service's Safe Break rule), so holding its
+ * notifications while its owner chats inside it made the "unlock"
+ * half a lie — messages arrived silently into the HELD digest.
+ * LOCKED apps stay held through the break, exactly as they stay
+ * locked. Pure, so the rule is unit-tested without the service.
+ */
+internal fun notificationHeldDuringSession(isInSafeBreak: Boolean, tier: AppBlockTier): Boolean =
+    tier != AppBlockTier.OPEN && !(isInSafeBreak && tier == AppBlockTier.PEEK_2M)
+
 class MonolithNotificationListener : NotificationListenerService() {
 
     private val scope = CoroutineScope(
@@ -135,9 +185,10 @@ class MonolithNotificationListener : NotificationListenerService() {
 
     // Issue #45 (C5) dedupe: updates of a notification this
     // instance already holds, recognised by sbn.key + content
-    // fingerprint. In-memory only, by design: after a process
-    // restart the worst case is one duplicate row for a still-live
-    // notification, never a lost message.
+    // fingerprint. In-memory only, by design — a restart loses the
+    // tracker, never a message; the duplicate row that used to be
+    // the restart's worst case is now stopped by the durable
+    // quadruple check on the insert path (issue #155 WING-F).
     internal val dedupe = CaptureDedupeTracker()
 
     companion object {
@@ -155,6 +206,29 @@ class MonolithNotificationListener : NotificationListenerService() {
         @Volatile
         var instance: MonolithNotificationListener? = null
             internal set
+
+        /**
+         * Issue #121: the categories of [packageName]'s currently
+         * active notifications, read from the bound listener — the
+         * notification proof the screen doors consult through
+         * [TimeCriticalAlertGate] before covering a ringing alarm
+         * or a tapped calendar reminder. Reads only the LIVE shade
+         * (never the stored digest), so it is independent of the
+         * captured-content storage path. Empty when no listener is
+         * bound (no proof, never a guess).
+         */
+        fun activeAlertCategoriesFor(packageName: String): Set<String> {
+            val live = instance ?: return emptySet()
+            return try {
+                live.activeNotifications
+                    ?.filter { it.packageName == packageName }
+                    ?.mapNotNull { it.notification?.category }
+                    ?.toSet()
+                    ?: emptySet()
+            } catch (_: Exception) {
+                emptySet()
+            }
+        }
     }
 
     override fun onListenerConnected() {
@@ -162,6 +236,31 @@ class MonolithNotificationListener : NotificationListenerService() {
         instance = this
         WatchStore.bind(applicationContext)
         WatchStore.onNotificationListenerBound(true)
+        // Issue #80 finding 4: a (re)bind is a session door too —
+        // notifications a blocked app posted while this listener
+        // was unbound are sitting in the shade right now.
+        sweepActiveNotifications()
+    }
+
+    /**
+     * Issue #80 finding 4: sweep the ALREADY-POSTED shade through
+     * the exact same capture-and-cancel path as a live post.
+     * Before this, onNotificationPosted was the only entry point,
+     * so anything posted before the session armed (or while the
+     * listener was unbound) stayed readable and actionable —
+     * inline reply included — for the whole session.
+     * Called on listener connect and once per shield arm (the
+     * shield service's protecting flip), which together cover
+     * "session starts after the posts" and "listener binds after
+     * the posts". No-ops when no session covers a post: the shared
+     * handler re-checks the session covering each post time itself
+     * (issue #45's post-time rule).
+     */
+    fun sweepActiveNotifications() {
+        val posted = try { activeNotifications } catch (_: Exception) { null } ?: return
+        for (sbn in posted) {
+            handleNotification(sbn)
+        }
     }
 
     override fun onListenerDisconnected() {
@@ -184,7 +283,13 @@ class MonolithNotificationListener : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
-        val notification = sbn?.notification ?: return
+        handleNotification(sbn ?: return)
+    }
+
+    /** One path for live posts AND the pre-posted sweep (#80-4):
+     *  identical gates, identical capture, identical cancel. */
+    private fun handleNotification(sbn: StatusBarNotification) {
+        val notification = sbn.notification ?: return
         val pkg = sbn.packageName ?: return
         if (pkg == applicationContext.packageName || pkg.startsWith("com.android.systemui")) return
 
@@ -230,16 +335,34 @@ class MonolithNotificationListener : NotificationListenerService() {
         val fingerprint = NotificationCapturePolicy.contentFingerprint(title, text)
         if (key != null && dedupe.isUnchanged(key, fingerprint)) return
 
+        // Issue #120: judged here, on the binder thread, from the
+        // same snapshot as everything else — the coroutine below
+        // never re-reads the (mutable, pooled) notification.
+        val otpLike = NotificationCapturePolicy.looksLikeOneTimeCode(title, text)
+
         scope.launch {
-            val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
+            val dao = com.example.AppContainer.dao(applicationContext) // ISSUE-67: single construction point
             // Issue #45 (C5): the session question is asked about
             // the POST TIME, not about now — a coroutine scheduled
             // after the session ended still captures a message
             // that arrived while the session was running.
-            dao.getSessionCoveringInstant(postTimeMillis) ?: return@launch
+            val coveringSession = dao.getSessionCoveringInstant(postTimeMillis) ?: return@launch
 
             val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
-            if (appRule != null && appRule.resolvedTier != AppBlockTier.OPEN) {
+            // Issue #120: FINANCE is never captured and never
+            // cancelled. A bank/UPI/authenticator notification is
+            // time-critical infrastructure: holding a title/text
+            // copy while cancelling the original destroyed the
+            // Approve action and raced a 30-second code against a
+            // session-length hold. The original stays live in the
+            // shade, actions intact — the same never-suppress class
+            // as calls and alarms.
+            if (appRule != null && appRule.category == AppCategory.FINANCE.name) {
+                return@launch
+            }
+            if (appRule != null &&
+                notificationHeldDuringSession(coveringSession.isInSafeBreak, appRule.resolvedTier)
+            ) {
                 val storedTitle = title.ifEmpty { appRule.appName }
                 if (key != null) {
                     // Dedupe, second gate (inside the coroutine, so
@@ -261,8 +384,30 @@ class MonolithNotificationListener : NotificationListenerService() {
                         )?.let { stale -> dao.deleteCapturedNotification(stale.id) }
                     }
                 }
-                dao.insertCapturedNotification(
-                    CapturedNotificationEntity(
+                // Issue #155 WING-F (SMALL-2): the two dedupe gates
+                // above ride the IN-MEMORY tracker, which dies with
+                // this process. The class doc already concedes the
+                // consequence — "after a process restart the worst
+                // case is one duplicate row" — but the digest has a
+                // reader that turns that duplicate into a false
+                // claim: the launcher badge (MonolithShieldService)
+                // and the Deck's HELD chip both print this table's
+                // SIZE, so every re-capture of a still-live held
+                // notification (the rebind sweep re-walks the shade;
+                // a never-cancelled OTP copy stays live by design)
+                // inflated the badge by one per restart. The table
+                // itself is the durable dedupe: the same stored
+                // quadruple the replace/removal paths already treat
+                // as a capture's identity, checked before inserting.
+                // An existing identical row means this exact capture
+                // is already held — record the tracker and fall
+                // through to the cancel below, but insert nothing.
+                val alreadyHeld = dao.findCapturedNotificationMatching(
+                    pkg, storedTitle, text, postTimeMillis
+                ) != null
+                if (!alreadyHeld) {
+                    dao.insertCapturedNotification(
+                        CapturedNotificationEntity(
                         // The row's timestamp is the capture
                         // snapshot — sbn.postTime — not the time
                         // this coroutine happened to run.
@@ -278,8 +423,9 @@ class MonolithNotificationListener : NotificationListenerService() {
                         // sentence was invented copy wearing the
                         // sender's name.
                         messageBody = text
+                        )
                     )
-                )
+                }
                 pruneCaptured(postTimeMillis)
                 if (key != null) {
                     dedupe.record(
@@ -293,10 +439,22 @@ class MonolithNotificationListener : NotificationListenerService() {
                         )
                     )
                 }
-                try {
-                    cancelNotification(key)
-                } catch (error: Exception) {
-                    Log.w(TAG, "cancelNotification failed for $pkg", error)
+                // Issue #120: a one-time code is copied, never
+                // cancelled — the original keeps its shade entry
+                // (and any action it carries) because the code
+                // expires in minutes while the session runs far
+                // longer.
+                if (!otpLike) {
+                    try {
+                        cancelNotification(key)
+                    } catch (error: Exception) {
+                        // #338 F2: diagnostics stay content-free —
+                        // no package names in logcat. Freedom's
+                        // release build logs blocked packages and
+                        // URLs; this line was Monolith's one leak
+                        // of that kind.
+                        Log.w(TAG, "cancelNotification failed", error)
+                    }
                 }
             }
         }
@@ -353,9 +511,9 @@ class MonolithNotificationListener : NotificationListenerService() {
         val seen = key?.let { dedupe.forget(it) }
 
         scope.launch {
-            val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
+            val dao = com.example.AppContainer.dao(applicationContext) /* ISSUE-67: single construction point */
             val target = seen ?: run {
-                val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
+                val appRule = dao.getAppByPackage(pkg)
                 SeenCapture(
                     fingerprint = NotificationCapturePolicy.contentFingerprint(rawTitle, text),
                     packageName = pkg,
@@ -379,7 +537,7 @@ class MonolithNotificationListener : NotificationListenerService() {
      *  [MAX_CAPTURED_ROWS] rows. Failures surface through the
      *  scope's exception handler — logged, never silent. */
     private suspend fun pruneCaptured(latestPostTimeMillis: Long) {
-        val dao = MonolithDatabase.getInstance(applicationContext).monolithDao()
+        val dao = com.example.AppContainer.dao(applicationContext) /* ISSUE-67: single construction point */
         dao.pruneCapturedNotificationsOlderThan(latestPostTimeMillis - RETENTION_MILLIS)
         dao.trimCapturedNotificationsToNewest(MAX_CAPTURED_ROWS)
     }

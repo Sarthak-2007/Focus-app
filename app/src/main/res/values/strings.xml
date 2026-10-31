@@ -6,23 +6,95 @@
     <string name="device_admin_description">Shows a warning when Monolith\'s device admin is about to be turned off. It only adds friction and a warning — Android still lets you deactivate it and uninstall Monolith; it does not prevent either.</string>
     <string name="device_admin_add_explanation">Turning this on only lets Monolith show a warning if you later go to turn its device admin off. It adds friction and a warning — it does not prevent deactivation or uninstall, and Android still lets you do both.</string>
     <string name="accessibility_service_summary">Guards a sealed focus session: blocked apps, Shorts/Reels and blocked sites are intercepted, including in split-screen and picture-in-picture. Open Monolith to configure what is blocked.</string>
+    <string name="widget_description">Seal status at a glance: sealed, open, or the next seal.</string>
     <string name="notification_channel_name">Monolith Active Shield</string>
-    <string name="notification_channel_desc">Displays real-time monotonic focus timer and active app shield telemetry.</string>
-    <string name="tab_deck">Focus</string>
+    <string name="notification_channel_desc">Shows the active focus session\'s countdown and shield status.</string>
+    <!-- Issue #115: one name per destination — the rail's words.
+         tab_reliability (Guard, dissolved into PARK) and
+         tab_web_studio (no such destination; sites live on Shield)
+         are deleted with the names they carried. -->
+    <string name="tab_deck">Deck</string>
     <string name="tab_tasks">Tasks</string>
     <string name="tab_shield">Shield</string>
-    <string name="tab_vault">Receipts</string>
-    <string name="tab_reliability">Guard</string>
-    <string name="tab_web_studio">Web Deck</string>
+    <string name="tab_vault">Ledger</string>
 
-    <!-- Ritual-flavored vocabulary (DEVELOPER-GUIDE.pdf §9.10) -->
-    <string name="ritual_lock_session">SLIDE TO SEAL VAULT</string>
-    <string name="ritual_vault_sealed">SEALED VAULT CHAMBER</string>
-    <string name="ritual_one_way_ratchet">ONE-WAY RATCHET ENGAGED • TIGHTEN ONLY</string>
-    <string name="ritual_emergency_valve">60S EMERGENCY BREAK VALVE (1/WK)</string>
-    <string name="ritual_grace_cancel">10S ACCIDENTAL-START GRACE CANCEL</string>
-    <string name="ritual_bag_tiles">SEALED APP BAG</string>
-    <string name="ritual_day_faders">7-DAY RHYTHM FADERS</string>
-    <string name="ritual_session_receipt">CRYPTOGRAPHIC SESSION RECEIPT</string>
-    <string name="ritual_airlock_wall">INTENTION AIRLOCK CHAMBER</string>
+
+    <!-- UI strings (issue #64 migration, re-ported: every migrated UI literal reads from here) -->
+    <string name="notification_catcher_label">Monolith Notification Catcher</string>
+    <string name="brand_word">MONOLITH</string>
+    <string name="label_held">HELD</string>
+    <string name="label_back">BACK</string>
+    <string name="label_start">START</string>
+    <string name="label_end">END</string>
+    <string name="label_done">DONE</string>
+    <string name="label_none">NONE</string>
+    <string name="label_split">SPLIT</string>
+    <string name="label_cue">CUE</string>
+    <string name="key_del">DEL</string>
+    <string name="key_sure">SURE?</string>
+    <string name="nightstand_desk_clock_hint">NIGHTSTAND DESK CLOCK • TAP ANYWHERE TO EXIT</string>
+    <string name="frozen_snapshot_note">Everything here is as of the time above. Nothing here opens. Anything newer waits until the session ends.</string>
+    <string name="guard_preflight_title">SYSTEM GUARD PRE-FLIGHT</string>
+    <string name="guard_preflight_body">Grant Accessibility &amp; Usage Access so Monolith can intercept distracting apps, or arm the session immediately.</string>
+    <string name="airlock_interception_badge">AIRLOCK INTERCEPTION • %1$s</string>
+    <string name="active_intention">ACTIVE INTENTION: %1$s</string>
+    <string name="peek_already_running">A PEEK IS ALREADY RUNNING</string>
+    <string name="peek_off">PEEK IS OFF</string>
+    <string name="emergency_break">EMERGENCY BREAK</string>
+    <string name="emergency_break_instructions">Hold to fill 60 seconds. Every 15 seconds banks. If your hand slips, what isn\'t banked drains away. The banked part stays.</string>
+    <string name="park_guard">GUARD</string>
+    <string name="park_last_proved">LAST PROVED</string>
+    <string name="park_fix_item">FIX — %1$s</string>
+    <string name="park_sound_effects">SOUND EFFECTS</string>
+    <string name="park_shorts_reels">SHORTS + REELS</string>
+    <string name="park_theme">THEME</string>
+    <string name="receipt_ended">ENDED %1$s · %2$s</string>
+    <string name="receipt_held">HELD %1$d APPS · %2$d SITES</string>
+    <string name="receipt_break_banked">BREAK BANKED %1$d MIN</string>
+    <string name="deflection_line">%1$s · %2$s</string>
+    <string name="receipt_shield_gap">THE SHIELD WAS OFF FOR PART OF THAT SESSION</string>
+    <string name="receipt_shield_still_blocked">SHIELD — STILL BLOCKED (SERVICE DIDN\'T STOP)</string>
+    <string name="drawer_stored">STORED</string>
+    <string name="drawer_estimate">ESTIMATE %1$d MIN</string>
+    <string name="drawer_spent">SPENT %1$s</string>
+    <string name="drawer_cabinet">CABINET</string>
+    <string name="drawer_forged">FORGED</string>
+    <string name="drawer_forge_note">A FINISHED SPAN FORGES ONE — THE FORGE CHOOSES WHICH.</string>
+    <string name="drawer_search_hint">TYPE TO FIND A TASK</string>
+    <string name="drawer_nothing_under">NOTHING STORED UNDER “%1$s”</string>
+    <string name="drawer_nothing_yet">NOTHING STORED YET</string>
+    <string name="drawer_all_months">ALL MONTHS</string>
+    <string name="drawer_earlier">EARLIER</string>
+    <string name="sequencer_add_hint">Add single-line focus task...</string>
+    <string name="sequencer_removed">REMOVED: %1$s</string>
+    <string name="sequencer_finished">FINISHED %1$s</string>
+    <string name="sequencer_reopen">REOPEN</string>
+    <string name="sequencer_nothing_queued">NOTHING QUEUED</string>
+    <string name="sequencer_done_tear">DONE — TEAR</string>
+    <string name="shield_schedule_reset">SCHEDULE RESET TO YOUR DAY — TAP ANY ROW TO CHANGE IT</string>
+    <string name="shield_filter_apps">Filter apps…</string>
+    <string name="shield_no_app">NO APP BY THAT NAME ON THIS PHONE</string>
+    <string name="shield_add_site_hint">Add a site — e.g. news.ycombinator.com</string>
+    <string name="shield_routine_end">→ %1$s</string>
+    <string name="routine_meta">%1$s · %2$s</string>
+    <string name="shield_your_rules">YOUR RULES</string>
+    <string name="deck_flow">FLOW</string>
+    <string name="deck_percent">%1$d%%</string>
+    <string name="deck_now">NOW</string>
+    <string name="deck_queue">QUEUE %1$d</string>
+    <string name="sentence_blocking_off">BLOCKING IS OFF — TAP TO FIX</string>
+    <string name="sentence_cant_check">CAN\'T CHECK BLOCKING — TAP TO RETRY</string>
+    <string name="sentence_usage_off">USAGE ACCESS IS OFF — TAP TO FIX</string>
+    <string name="sentence_didnt_answer">%1$s DIDN\'T ANSWER — STILL PROVING.</string>
+    <string name="sentence_no_proof">%1$s — NO PROOF. NOTHING WAS SEALED.</string>
+    <string name="sentence_session_row_no_proof">SESSION-ROW — NO PROOF. NOTHING WAS SEALED.</string>
+
+    <!-- Refusal-sentence strings for producers that post-date the branch
+         (issue #64 re-port: MonolithComponentLogic / ArmProvingController) -->
+    <string name="sentence_still_hasnt_answered">%1$s STILL HASN\'T ANSWERED — RETRYING · ANNULS IN %2$dS.</string>
+    <string name="sentence_checking_seal">CHECKING THE SEAL — %1$d OF 3 PROVED</string>
+    <string name="sentence_no_proof_blocking_off">%1$s — NO PROOF. NOTHING WAS SEALED. ANY BLOCKING FROM THE WAIT IS OFF.</string>
+    <string name="sentence_not_sealed_session">NOT SEALED — THE SESSION DIDN\'T ANSWER.</string>
+    <string name="sentence_not_sealed_named">NOT SEALED — %1$s DIDN\'T ANSWER.</string>
+    <string name="sentence_annul_failed">ANNUL FAILED — THE ROW MAY STILL STAND. NOTHING WAS PROVED.</string>
 </resources>

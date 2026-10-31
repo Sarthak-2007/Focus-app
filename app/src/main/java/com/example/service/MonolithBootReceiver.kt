@@ -3,8 +3,10 @@ package com.example.service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.PowerManager
 import android.util.Log
-import com.example.data.MonolithDatabase
+import com.example.data.UndoDeleteStore
+import com.example.widget.MonolithWidgetProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -57,6 +59,14 @@ class MonolithBootReceiver : BroadcastReceiver() {
         val action = intent?.action ?: return
         val appContext = context.applicationContext
         when (action) {
+            // Issue #122: the battery turned — the shield's
+            // standing notification must re-read it now (its own
+            // dynamic receiver usually beats this manifest one;
+            // both are idempotent re-posts of the same facts).
+            Intent.ACTION_BATTERY_LOW,
+            PowerManager.ACTION_POWER_SAVE_MODE_CHANGED -> {
+                MonolithShieldService.instance?.refreshBatteryNotification()
+            }
             Intent.ACTION_LOCKED_BOOT_COMPLETED,
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
@@ -80,6 +90,29 @@ class MonolithBootReceiver : BroadcastReceiver() {
                                 appContext, RoutineHeartbeat.Source.TIME_CHANGED, force = true
                             )
                         }
+                        // Issue #155 (F1): every HH:mm the widget
+                        // prints is a wall-clock render — a moved
+                        // clock or zone makes the standing snapshot
+                        // wrong even when no state moved. Re-render
+                        // the glance off the reconciled state.
+                        refreshGlanceAfterReconcile(appContext, action)
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
+            }
+            // Issue #81 F5: a package's component set changed —
+            // reconcile; the pass re-reads Monolith's own critical
+            // components' enabled states (RoutineHeartbeat step 4c)
+            // and latches the live session's gap if one was
+            // disabled out from under it.
+            Intent.ACTION_PACKAGE_CHANGED -> {
+                val pendingResult = goAsync()
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        RoutineHeartbeat.tick(
+                            appContext, RoutineHeartbeat.Source.PACKAGE_REPLACED, force = true
+                        )
                     } finally {
                         pendingResult.finish()
                     }
@@ -95,8 +128,38 @@ class MonolithBootReceiver : BroadcastReceiver() {
         // Group 1 — the boot stamp, once per real boot.
         runGuardedBootAction("boot-stamp") {
             if (bootStampDue(action)) {
-                MonolithDatabase.getInstance(appContext).monolithDao()
+                com.example.AppContainer.dao(appContext) /* ISSUE-67: single construction point */
                     .stampLastBoot(System.currentTimeMillis())
+            }
+        }
+
+        // Group 1b — issue #83: a boot-started process reaps a stale
+        // undo-delete copy. A process born through this door (incl.
+        // LOCKED_BOOT_COMPLETED and MY_PACKAGE_REPLACED) may be the
+        // only process that ever runs after the copy's 5-second
+        // window closed; without this the deleted task's full copy
+        // outlived its window indefinitely in cleartext prefs.
+        // Guarded as its own group: in direct boot the copy's
+        // credential-protected prefs may be unreadable pre-unlock,
+        // and a failed reap must never cost the tick its run.
+        runGuardedBootAction {
+            UndoDeleteStore.expireIfStale(appContext)
+        }
+
+        // Group 1c — Issue #87 (process-death F1): a REAL boot resets
+        // SystemClock.elapsedRealtime() to ~0, so every persisted
+        // peek lease/cooldown anchor — written against the PREVIOUS
+        // boot's monotonic clock — would otherwise read as a
+        // far-future expiry and resurrect a 2-minute peek for
+        // hours-to-days. Zero both fields on every row, BEFORE the
+        // shield groups read them. A package replace is NOT a boot:
+        // the monotonic clock survives it, so leases stay valid and
+        // are left alone there. LOCKED_BOOT and BOOT both fire for
+        // one boot; the clear is idempotent.
+        runGuardedBootAction {
+            if (action != Intent.ACTION_MY_PACKAGE_REPLACED) {
+                com.example.AppContainer.dao(appContext)
+                    .clearAllPeekLeases()
             }
         }
 
@@ -104,7 +167,7 @@ class MonolithBootReceiver : BroadcastReceiver() {
         // session is already active, it is shielded now, so a slow
         // or failed tick cannot lose the shield.
         runGuardedBootAction("shield-before-tick") {
-            val active = MonolithDatabase.getInstance(appContext).monolithDao()
+            val active = com.example.AppContainer.dao(appContext) /* ISSUE-67: single construction point */
                 .getActiveSessionSnapshot()
             if (shouldRaiseBootShield(active != null, active?.isActive == true)) {
                 MonolithShieldService.startShield(appContext)
@@ -120,12 +183,24 @@ class MonolithBootReceiver : BroadcastReceiver() {
         // finalised the session that was active, so raise the shield
         // only if one remains active afterwards.
         runGuardedBootAction("shield-after-tick") {
-            val active = MonolithDatabase.getInstance(appContext).monolithDao()
+            val active = com.example.AppContainer.dao(appContext) /* ISSUE-67: single construction point */
                 .getActiveSessionSnapshot()
             if (shouldRaiseBootShield(active != null, active?.isActive == true)) {
                 MonolithShieldService.startShield(appContext)
             }
         }
+
+        // Group 5 — issue #155 (F1): the home-screen glance owes a
+        // re-render off the reconciled state. The reconcile above
+        // can finalise a session that ended while the phone was off
+        // or the build was being replaced, and can materialise one
+        // that came due — while the launcher still shows the
+        // pre-boot / pre-update snapshot (a SEALED line for a
+        // session that no longer exists, or a NEXT SEAL instant
+        // that has already passed). When a live session survives,
+        // the shield's protecting flip also refreshes; this group
+        // is the only refresh door for the idle and ended cases.
+        refreshGlanceAfterReconcile(appContext, action)
     }
 }
 
@@ -178,3 +253,28 @@ internal fun bootHeartbeatSource(action: String?): RoutineHeartbeat.Source =
     } else {
         RoutineHeartbeat.Source.BOOT
     }
+
+/** Pure glance-refresh rule (issue #155, F1): the actions whose
+ *  reconcile can move anything the home-screen widget prints — a
+ *  session finalised or materialised by the tick, a NEXT SEAL
+ *  derived from routines, or every printed HH:mm re-derived from a
+ *  moved clock. Battery and package-component doors change nothing
+ *  the glance prints, so they owe it no re-render. */
+internal fun bootGlanceRefreshDue(action: String?): Boolean =
+    action == Intent.ACTION_LOCKED_BOOT_COMPLETED ||
+        action == Intent.ACTION_BOOT_COMPLETED ||
+        action == Intent.ACTION_MY_PACKAGE_REPLACED ||
+        action == "android.intent.action.QUICKBOOT_POWERON" ||
+        action == Intent.ACTION_TIME_CHANGED ||
+        action == Intent.ACTION_TIMEZONE_CHANGED
+
+/** The glance re-render itself, guarded like every other boot
+ *  group (issue #44): a widget host failure is contained and
+ *  logged, never a reason to fail the reconcile that called it.
+ *  No-ops for actions [bootGlanceRefreshDue] excludes. */
+internal suspend fun refreshGlanceAfterReconcile(context: Context, action: String?) {
+    if (!bootGlanceRefreshDue(action)) return
+    runGuardedBootAction("widget-refresh") {
+        MonolithWidgetProvider.requestUpdate(context)
+    }
+}

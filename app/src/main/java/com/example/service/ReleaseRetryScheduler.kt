@@ -4,7 +4,6 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import com.example.data.MonolithDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -56,7 +55,8 @@ object ReleaseRetryScheduler {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         val intent = pendingIntent(context, PendingIntent.FLAG_UPDATE_CURRENT) ?: return
         alarmManager.cancel(intent)
-        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atWallMillis, intent)
+        // Issue #319 F2: same exact-alarm law as the routine chain.
+        ExactAlarm.setWakeup(alarmManager, atWallMillis, intent)
     }
 
     fun cancel(context: Context) {
@@ -142,7 +142,7 @@ object ReleaseRetryScheduler {
      */
     suspend fun runDueRetry(context: Context): Boolean = withContext(Dispatchers.IO) {
         val appContext = context.applicationContext
-        val dao = MonolithDatabase.getInstance(appContext).monolithDao()
+        val dao = com.example.AppContainer.dao(appContext) /* ISSUE-67: single construction point */
         // Targeted read (issue #47 F5): newest faulted row only,
         // never a full-history scan per trigger.
         val faulted = dao.getFaultedReleaseSession() ?: return@withContext false

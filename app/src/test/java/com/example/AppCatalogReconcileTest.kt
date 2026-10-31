@@ -2,6 +2,7 @@ package com.example
 
 import com.example.data.AppBlockTier
 import com.example.data.AppCatalogReconcile
+import com.example.data.AppCategorizer
 import com.example.data.AppCategory
 import com.example.data.BlockedAppEntity
 import com.example.data.InstalledPackage
@@ -79,6 +80,28 @@ class AppCatalogReconcileTest {
     }
 
     @Test
+    fun reconcile_guessBornOpenAppsAreNamedUnreviewed_presetBornAreNot() {
+        // #129 F1, as closed by the STURM-4 fix-forward: the
+        // earlier lane named guess-born OPEN apps "unreviewed";
+        // the settled policy goes further — the guess no longer
+        // births OPEN at all (fail-closed: unlisted = shut), so
+        // the unreviewed-open list is empty by construction and
+        // the mystery app is born LOCKED. A preset-born OPEN app
+        // (Chrome) keeps its deliberate preset birth.
+        val installed = listOf(
+            InstalledPackage("com.mystery", "Mystery"),
+            InstalledPackage("com.android.chrome", "Chrome"),
+            InstalledPackage("com.fresh.chat", "Fresh Chat"),
+            InstalledPackage("com.new.game", "New Game")
+        )
+        val plan = AppCatalogReconcile.reconcile(emptyList(), installed, emptyMap(), categorize)
+        assertEquals(emptyList<String>(), plan.unreviewedOpenPackages)
+        val inserted = plan.toInsert.associateBy { it.packageName }
+        assertEquals(AppBlockTier.LOCKED, inserted.getValue("com.mystery").resolvedTier)
+        assertEquals(AppBlockTier.OPEN, inserted.getValue("com.android.chrome").resolvedTier)
+    }
+
+    @Test
     fun reconcile_categoryDefaults_shortVideoLocked_fallbackOpen_noPreset() {
         // Audit R1 tests-1 #2: the only SHORT_VIDEO app in the
         // suite used to be YouTube — whose FACTORY PRESET masked
@@ -103,11 +126,35 @@ class AppCatalogReconcileTest {
         assertEquals(30, video.dailyLimitMinutes)
         // GAMES -> LOCKED (the same branch, its other category).
         assertEquals(AppBlockTier.LOCKED, inserted.getValue("com.fresh.game").resolvedTier)
-        // SHOPPING hits the else branch -> OPEN, not blocked.
+        // SHOPPING hits the else branch -> LOCKED (Issue #129:
+        // fail-closed birth; this asserted OPEN before the cure —
+        // the born-open hole itself, encoded as a test).
         val shop = inserted.getValue("com.fresh.shop")
         assertEquals(AppCategory.SHOPPING.name, shop.category)
-        assertEquals(AppBlockTier.OPEN, shop.resolvedTier)
-        assertTrue(!shop.isBlocked)
+        assertEquals(AppBlockTier.LOCKED, shop.resolvedTier)
+        assertTrue(shop.isBlocked)
+    }
+
+    @Test
+    fun reconcile_unlistedIsBornLocked_129() {
+        // Issue #129 F1 with the REAL classifier: SOCIAL and
+        // BROWSERS — both born OPEN under the old policy — are
+        // born LOCKED, as is every unrecognised app (SHOPPING).
+        val installed = listOf(
+            InstalledPackage("com.fresh.social", "Fresh Twitter Club"),
+            InstalledPackage("com.fresh.browser", "Fresh Browser"),
+            InstalledPackage("com.unknown.thing", "Mystery App")
+        )
+        val plan = AppCatalogReconcile.reconcile(
+            emptyList(), installed, emptyMap(), AppCategorizer::categorize
+        )
+        val inserted = plan.toInsert.associateBy { it.packageName }
+        assertEquals(AppCategory.SOCIAL.name, inserted.getValue("com.fresh.social").category)
+        assertEquals(AppBlockTier.LOCKED, inserted.getValue("com.fresh.social").resolvedTier)
+        assertEquals(AppCategory.BROWSERS.name, inserted.getValue("com.fresh.browser").category)
+        assertEquals(AppBlockTier.LOCKED, inserted.getValue("com.fresh.browser").resolvedTier)
+        assertEquals(AppCategory.SHOPPING.name, inserted.getValue("com.unknown.thing").category)
+        assertEquals(AppBlockTier.LOCKED, inserted.getValue("com.unknown.thing").resolvedTier)
     }
 
     @Test
