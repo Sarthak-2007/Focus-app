@@ -4527,6 +4527,7 @@ class MonolithViewModel(
     }
 
     fun applySmartLoadout(loadout: SmartLoadout) {
+        bloomNightLanding() // Ruhe R-3 verb
         // Issue #304 F1: mid-session, the repository lands this
         // loadout tightening-only (SessionTierGate) — say so with
         // the ratchet's own warning instead of letting the tap
