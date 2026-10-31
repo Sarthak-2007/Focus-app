@@ -75,7 +75,7 @@ class BreakEndReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_shield)
             .setContentTitle("Break's over")
             .setContentText("Back to your session.")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
