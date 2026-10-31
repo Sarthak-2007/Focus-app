@@ -8,12 +8,9 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.performScrollTo
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -97,6 +94,24 @@ class DrawerRenderTest {
         // §5.1) and would cover the Drawer under test. Mark the
         // introduction done, as a dismissed first open would.
         kotlinx.coroutines.runBlocking { repository.markParkIntroDone() }
+        // The Reception (setup + introduction sheet) opens itself
+        // over the root — full-screen, above every destination —
+        // while setup is unstamped, and never interrupts again
+        // once stamped (MainActivity: receptionInitiallyOpen on
+        // SetupStore.isCompleted()). In this rig the stamp never
+        // lands, so the sheet covered the whole window in every
+        // case: harmless to the capture-only cases, fatal to
+        // drawerPopulated_day's taps — probe evidence on PR #692
+        // (semantics dump at the failure point): the
+        // reception_sheet node spanned the full 450x1000 window
+        // over the composed landing, and both tap forms (text
+        // node, row tag after scroll) landed on the sheet and
+        // were swallowed by its scroll surface, so the detail
+        // never opened. Stamp the setup complete here, exactly
+        // what the sheet's own stamp writes — the fixture is a
+        // phone that has finished setup, which is the phone every
+        // case in this class means to render.
+        com.example.data.SetupStore(context).markCompleted()
         // Rig contract (#166, floor lane): the catalog is the
         // phone's truth — production reconciles `apps` ONLY from
         // the installed launchable set, and this rig's set was
@@ -290,14 +305,12 @@ class DrawerRenderTest {
         capture("dr_drawer_day.png")
 
         // The row is tapped through its own furniture tag,
-        // scrolled fully into view first. PR #692's first run is
-        // the evidence for why: the text-node tap "passed" (the
-        // node exists, the touch injected without error) yet no
-        // detail ever composed — in this rig's short window the
-        // row sits at the list's lower edge and the text centre's
-        // touch lands off the row's clickable bounds, silently
-        // swallowed. The claim is unchanged: the same tap on the
-        // same row must open its detail.
+        // scrolled fully into view first — the precise handle for
+        // the same tap on the same row. The taps (this form and
+        // the original text-node form alike) only reach the row
+        // because setup stamps the Reception away: the probe dump
+        // on this PR showed the unstamped sheet covering the
+        // whole window and swallowing both forms (see setup).
         val electrostatics = db.monolithDao().getAllTasksSnapshot()
             .first { it.title == "Electrostatics Problem Set 12" }
         composeRule.onNodeWithTag("drawer_row_${electrostatics.id}")
@@ -306,17 +319,6 @@ class DrawerRenderTest {
         composeRule.onNodeWithTag("drawer_row_${electrostatics.id}")
             .performClick()
         settle(600)
-        // TEMPORARY DIAGNOSTIC PROBE (K8 sitting 7, PR #692): dump
-        // the composed tree at the exact point the detail's back
-        // node is missing, so the cure is written from evidence.
-        if (composeRule.onAllNodesWithTag("drawer_detail_back")
-                .fetchSemanticsNodes().isEmpty()
-        ) {
-            throw AssertionError(
-                "PROBE - detail back node absent after row tap. Tree:\n" +
-                    composeRule.onRoot().printToString(maxDepth = 40)
-            )
-        }
         capture("dr_drawer_detail_day.png")
         composeRule.onNodeWithTag("drawer_detail_back").performClick()
         settle(600)
