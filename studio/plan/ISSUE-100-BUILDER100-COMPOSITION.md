@@ -58,3 +58,18 @@ removed. The targeted-tests job's gate-honesty step also named
 MonolithNotificationListener.kt as unmapped: Issue100NotificationsTest
 now references the listener class directly and pins its in-memory
 snoozedCount, making the covering test findable by content.
+
+Gate cycle 2 (run 41202736695 on a3599dc8): Compile job SUCCESS.
+Targeted tests: 579 executed, 4 failed. Two were MERGE-INTRODUCED by
+this composition: SessionCoveringDaoTest's covering tests — the copy
+carried from the CUT branch predated main's #478 revival fix (a
+@Before clearing the shared singleton's session rows; without it,
+leftover ACTIVE rows with startWallTimeMillis=0 cover every instant
+and break the assertNull checks). The @Before session-clear is now
+carried into SessionCoveringDaoTest (the captured-clear half is moot:
+the table is gone). The other two failures are judged against the
+floor in the landing filing: ForestComparativeWinsTest
+w2_noCurrencyOrBillingSurfaceInMainCode (main's own VM comments —
+"coin flip", "the only coin" — trip its scan; this diff adds no such
+line) and SoundAndSocialTruthTest SocialToggleRenderedAndWritesThrough
+(a named member of the Oct 30 floor census's SoundAndSocial set).

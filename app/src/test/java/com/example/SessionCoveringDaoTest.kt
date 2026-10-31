@@ -7,6 +7,7 @@ import com.example.data.MonolithDatabase
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -36,6 +37,19 @@ class SessionCoveringDaoTest {
         get() = ApplicationProvider.getApplicationContext()
 
     private val dao get() = MonolithDatabase.getInstance(context).monolithDao()
+
+    @Before
+    fun clearSessions() = runBlocking {
+        // Carried from main's #478 revival of these tests (Oct 31):
+        // the covering-instant tests assert about the whole
+        // focus_sessions table in the shared singleton DB, and other
+        // suites leave session rows behind — including ACTIVE rows
+        // with startWallTimeMillis = 0, which the covering predicate
+        // (isActive = 1) reads as covering every instant since the
+        // epoch. Clear sessions first, so every test here starts
+        // from the empty world it asserts about.
+        dao.getSessionHistorySnapshot().forEach { dao.deleteSessionById(it.id) }
+    }
 
     private suspend fun insertSession(
         start: Long,
