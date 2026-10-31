@@ -1566,16 +1566,12 @@ fun AirlockInterceptOverlay(
                     )
                 }
 
-                // F60 disposition (Audit R6 #341, recomposed
-                // FIX-R3): main composed the peek chip from the
-                // first frame so the card could not grow at zero.
-                // The unified zone below cures the same harm by
-                // construction — the offer stack (preview, price,
-                // scope, terms) prints from the first frame inside
-                // a fixed-height slot and the chip's arrival at
-                // zero moves nothing — so F60's mechanism is
-                // superseded here, its intent (no growth, offer
-                // readable during the countdown) stands.
+                // F60 composition (Audit R6 #341, recomposed
+                // FIX-R3): main's chip-from-the-first-frame stands
+                // INSIDE the unified zone below — the zone's fixed
+                // height keeps RETURN stationary (FIX-6) while the
+                // chip is present and scrollable at every second
+                // (F60). Both mechanisms, one slot.
                 // THE UNIFIED ZONE (issue #11 FIX-6, composed with
                 // #114/#102 at the main merge): everything the door
                 // may print under the honest exit lives in ONE
@@ -1594,42 +1590,27 @@ fun AirlockInterceptOverlay(
                         .height(224.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // Issue #114, finding 3: the whole exchange is
-                    // printed DURING the breath, not revealed by
-                    // it — what waits at zero, what it costs, and
-                    // the cooldown's per-app scope all stand on the
-                    // door from the first second.
-                    if (countdownSecs > 0 && peekReady) {
-                        Text(
-                            text = peekOfferPreviewText(MonolithRepository.PEEK_DURATION_SECONDS),
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 12.5.sp,
-                            color = NightColorPrimary.copy(alpha = 0.8f)
-                        )
-                        Text(
-                            text = peekPriceText(MonolithRepository.PEEK_COOLDOWN_MILLIS),
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 12.5.sp,
-                            color = NightColorPrimary.copy(alpha = 0.8f)
-                        )
-                        Text(
-                            text = peekCooldownScopeText(),
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 12.5.sp,
-                            color = NightColorPrimary.copy(alpha = 0.8f)
-                        )
-                        // Issue #102, finding 5: the terms stand
-                        // with the preview — the peek is not the
-                        // break.
-                        Text(
-                            text = peekTermsText(),
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 12.5.sp,
-                            color = NightColorPrimary.copy(alpha = 0.8f)
-                        )
-                    }
-
-                    if (countdownSecs == 0 && peekReady) {
+                    // Issue #114, finding 3 + Audit R6 #341 F60
+                    // (composed FIX-R3): inside the zone the offer
+                    // is composed from the FIRST frame — the preview
+                    // line stands during the breath, the chip itself
+                    // is present from frame one (dimmed, its tap
+                    // gated to zero), and the price, scope and terms
+                    // print once with the chip — so the whole
+                    // exchange is readable during the countdown, the
+                    // chip can be scrolled to on a short screen at
+                    // any second, and nothing is revealed by the
+                    // wall reaching zero. The zone's fixed height
+                    // keeps RETURN's bounds invariant across frames.
+                    if (peekReady) {
+                        if (countdownSecs > 0) {
+                            Text(
+                                text = peekOfferPreviewText(MonolithRepository.PEEK_DURATION_SECONDS),
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 12.5.sp,
+                                color = NightColorPrimary.copy(alpha = 0.8f)
+                            )
+                        }
                         BlockitActionChip(
                             wordLabel = "2-MINUTE PEEK",
                             // Issue #114, finding 5: this door is
@@ -1641,8 +1622,10 @@ fun AirlockInterceptOverlay(
                             // value, read from the lease machinery's
                             // own constant — no hardcoded minutes.
                             monoBadge = peekBadgeText(MonolithRepository.PEEK_DURATION_SECONDS),
-                            onClick = onTake2MinutePeek,
-                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { if (countdownSecs == 0) onTake2MinutePeek() },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(if (countdownSecs == 0) Modifier else Modifier.alpha(0.45f)),
                             testTag = "airlock_peek_button"
                         )
                         // SIL-2 / W-29: the price stands on the
