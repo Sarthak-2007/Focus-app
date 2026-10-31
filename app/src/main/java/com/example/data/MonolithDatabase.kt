@@ -14,15 +14,15 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FocusProfileEntity::class,
         FocusSessionEntity::class,
         InterceptLogEntity::class,
-        CapturedNotificationEntity::class,
         FocusTaskEntity::class,
         BlockedSiteEntity::class,
         GuardSettingsEntity::class,
         RoutineEntity::class,
         EmergencyBreakSpendEntity::class,
-        DayNoteEntity::class
+        DayNoteEntity::class,
+        TaskAccrualSegmentEntity::class
     ],
-    version = 12,
+    version = 23,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -187,10 +187,292 @@ abstract class MonolithDatabase : RoomDatabase() {
          * NOT created, by name: testDateEpochDay — the test-date
          * predicate stays STRUCK (Ren), as at v9, v10 and v11.
          */
+        /**
+         * ISSUE #287 (12→13): schema only, zero data writes, no
+         * backfill — every default IS the truthful pre-v13 value
+         * ('' = no culprit recorded, '' = no reflection stored).
+         *
+         * focus_sessions +3 (Forest head-to-head F5/F8): the
+         * failure-cause pair (package + kind) stamped at the
+         * ending write by the disarm doors, and the one
+         * user-authored reflection line stored against the
+         * finished session.
+         *
+         * NOT created, by name: testDateEpochDay — the test-date
+         * predicate stays STRUCK (Ren), as at v9–v12.
+         */
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN failureCausePackage TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN failureCauseKind TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN reflectionNote TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         val MIGRATION_11_12 = object : Migration(11, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE guard_settings ADD COLUMN shortsReelsSniperEnabled INTEGER NOT NULL DEFAULT 1")
                 db.execSQL("ALTER TABLE focus_sessions ADD COLUMN breakTakenSeconds INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * Issue #10 (W-41): the seal's held count, split by tier.
+         * heldShutAtSeal / heldPeekAtSeal record how many of the
+         * apps held at a session's birth were SHUT and how many
+         * were on the 2-minute PEEK tier, so the receipt can print
+         * the two facts separately instead of one merged figure.
+         * (13→14, not 12→13: v13 was taken by the failure-cause
+         * columns above while this cure was in flight — the split
+         * chains after it, and both land.)
+         *
+         * There is NO backfill — a pre-v14 row's split was never
+         * recorded, and inventing one from today's tiers would
+         * fabricate history. Old rows keep -1 ("uncaptured"); the
+         * receipt prints their stored total and omits the split,
+         * the same omission law heldAppsAtSeal has always obeyed.
+         */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Defensive form (main-merge ruling on M-A1 OPEN-1):
+                // a device that ever installed a train-v13 build
+                // already carries these two columns at version 13;
+                // an unguarded ADD COLUMN would crash its upgrade
+                // with a duplicate-column error. The guard makes the
+                // step idempotent — identical result on every
+                // install history, no main-line behaviour change.
+                addColumnIfAbsent(db, "focus_sessions", "heldShutAtSeal",
+                    "ALTER TABLE focus_sessions ADD COLUMN heldShutAtSeal INTEGER NOT NULL DEFAULT -1")
+                addColumnIfAbsent(db, "focus_sessions", "heldPeekAtSeal",
+                    "ALTER TABLE focus_sessions ADD COLUMN heldPeekAtSeal INTEGER NOT NULL DEFAULT -1")
+            }
+        }
+
+        /**
+         * W3 #134, DURCH-D closure recomposition (14→15; renumbered
+         * again at landing — main took 13→14 itself for issue #10's
+         * held-split while this lane was in flight, exactly as it
+         * had taken 12→13 for #287 before that): schema only, zero
+         * data writes, no backfill — the default IS the truthful
+         * pre-v15 value (0 = no call seconds were ever excluded;
+         * before this column the progress machine never looked, so
+         * no past row can claim any).
+         *
+         * focus_sessions +1: callExcludedSeconds — the per-block
+         * seconds the call bypass was active, excluded from the
+         * booked elapsed by updateSessionProgress so call time
+         * is never certified as focus time.
+         */
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN callExcludedSeconds INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * Issue #261 (15→16): schema only, zero data writes, no
+         * backfill — both defaults ARE the truthful pre-v16 values
+         * (0 / false: before this door, no Safe Break could start
+         * mid-block, so no past row entered one or booked its
+         * planned length).
+         *
+         * focus_sessions +2, both for the mid-block Safe Break
+         * door (the transferred W9 DAYLIGHT DS3 finding):
+         * midBlockSafeBreak — the CURRENT break's origin marker,
+         * read by the break exits to resume the same block instead
+         * of advancing past it; extraSafeBreakSeconds — the
+         * planned length of every mid-block break entered, priced
+         * by spanTargetSeconds.
+         *
+         * NOT created, by name: testDateEpochDay — the test-date
+         * predicate stays STRUCK (Ren), as at v9–v15.
+         */
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN midBlockSafeBreak INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN extraSafeBreakSeconds INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * AUDIT R6 #340 (16→17): schema only, zero data writes, no
+         * backfill — every default IS the truthful pre-v17 value.
+         * (Renumbered at the FIX-R3 landing: this cure was authored
+         * against v12, renumbered through v13/v14/v15 in flight and
+         * carried as 15→16 on the branch — but main took 15→16
+         * itself for issue #261's Safe Break columns above while
+         * this landing was blocked, so the seal chains after it as
+         * 16→17. Both column sets land; neither migration is lost.)
+         *
+         * focus_sessions +2 (F5/F48): the finish seal and its chain
+         * link. '' = never sealed — every pre-v17 receipt stands
+         * exactly as provable as it was the day it printed, and no
+         * seal is ever minted retroactively over old claims.
+         * blocked_sites +1 (F10): the per-site redirect target.
+         * '' = no destination; BACK + Airlock stands.
+         * guard_settings +1 (F68): notification-body consent, kept
+         * apart from the listener grant. 'UNSET' = bodies are NOT
+         * kept — the private posture is the default posture.
+         */
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN finishSignature TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN prevFinishSignature TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE blocked_sites ADD COLUMN redirectTarget TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE guard_settings ADD COLUMN notificationBodyConsent TEXT NOT NULL DEFAULT 'UNSET'")
+            }
+        }
+
+        /**
+         * Batch 10 (17→18 at the #231 composition sitting,
+         * K8/floor lane): the train’s composed 12→13 content,
+         * landed as a NEW link — main’s 12_13 (#287) is shipped
+         * history and is never redefined, and main’s own 16→17
+         * (#340, above) is likewise shipped: this content was
+         * authored as the train’s 16→17, but main took that link
+         * while the train was frozen, so it chains after it. Carries: Frist’s five
+         * (peek/break settings + the break/extension stamps) and
+         * Voss’s one (withinLabel), plus #110’s accrual-segment
+         * table (REISE cure) and #30 F1’s four secondary indices.
+         * The W-41 held pair is NOT here: main’s 13_14 already
+         * adds exactly those columns (identical type/default);
+         * running them twice is a duplicate-column crash. ADD
+         * COLUMNs run through the same defensive guard as
+         * 13_14, so a train-v13 install (which already has
+         * these columns at v13) upgrades cleanly too.
+         */
+        val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfAbsent(db, "guard_settings", "peekMinutes",
+                    "ALTER TABLE guard_settings ADD COLUMN peekMinutes INTEGER NOT NULL DEFAULT 2")
+                addColumnIfAbsent(db, "guard_settings", "breakMinutes",
+                    "ALTER TABLE guard_settings ADD COLUMN breakMinutes INTEGER NOT NULL DEFAULT 10")
+                addColumnIfAbsent(db, "focus_sessions", "breakSeconds",
+                    "ALTER TABLE focus_sessions ADD COLUMN breakSeconds INTEGER NOT NULL DEFAULT 600")
+                addColumnIfAbsent(db, "focus_sessions", "extensionSecondsAdded",
+                    "ALTER TABLE focus_sessions ADD COLUMN extensionSecondsAdded INTEGER NOT NULL DEFAULT 0")
+                addColumnIfAbsent(db, "focus_sessions", "extensionLog",
+                    "ALTER TABLE focus_sessions ADD COLUMN extensionLog TEXT NOT NULL DEFAULT ''")
+                addColumnIfAbsent(db, "focus_sessions", "withinLabel",
+                    "ALTER TABLE focus_sessions ADD COLUMN withinLabel TEXT")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `task_accrual_segments` (" +
+                    "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`taskId` INTEGER NOT NULL, " +
+                    "`sessionId` INTEGER NOT NULL, " +
+                    "`dateIso` TEXT NOT NULL, " +
+                    "`seconds` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_task_accrual_segments_taskId_sessionId_dateIso` " +
+                    "ON `task_accrual_segments` (`taskId`, `sessionId`, `dateIso`)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_focus_tasks_completedAtMillis` ON `focus_tasks` (`completedAtMillis`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_focus_sessions_routineId` ON `focus_sessions` (`routineId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_focus_sessions_windowEndMillis` ON `focus_sessions` (`windowEndMillis`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_intercept_logs_timestampMillis` ON `intercept_logs` (`timestampMillis`)")
+            }
+        }
+
+        /**
+         * Issue #324, finding 3 build half (18→19): the intercept
+         * log's typed event. Two TEXT columns land on
+         * intercept_logs — outcomeKind / triggerKind, storing the
+         * InterceptOutcomeKind / InterceptTriggerKind enum NAMEs —
+         * and existing rows are BACKFILLED from the facts they
+         * already carry: the outcome word (matched case-insensitively
+         * over the full writer vocabulary enumerated in
+         * ReceiptState) and the trigger shortTag. The backfill is a
+         * pure derivation, not an invention: a word no writer
+         * produces stays UNKNOWN, session-end rows (reserved system
+         * package, disarm reason as word) become SESSION_END, and
+         * the reserved-package rows' trigger is SYSTEM. The legacy
+         * word columns are untouched and remain the receipt
+         * assembly's source.
+         *
+         * Renumber history (migration-train rulings on #324): the
+         * step was authored as 15→16; PR #588 landed its own 15→16
+         * first, so it renumbered to 16→17 (ruling v3, 6534867475);
+         * main then took 16→17 itself (#340 seal, above) and 17→18
+         * (batch-10 composition, above) while this PR waited out
+         * the merge hold — so it lands as 18→19, the next free
+         * link, named on #324 and #341 before it opened.
+         */
+        val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE intercept_logs ADD COLUMN outcomeKind TEXT NOT NULL DEFAULT 'UNKNOWN'")
+                db.execSQL("ALTER TABLE intercept_logs ADD COLUMN triggerKind TEXT NOT NULL DEFAULT 'UNKNOWN'")
+                db.execSQL(
+                    "UPDATE intercept_logs SET outcomeKind = CASE " +
+                        "WHEN packageName = 'com.monolith.system' THEN 'SESSION_END' " +
+                        "WHEN UPPER(outcome) = 'BLOCKED' THEN 'BLOCKED' " +
+                        "WHEN UPPER(outcome) = 'STAYED FOCUSED' THEN 'STAYED_FOCUSED' " +
+                        "WHEN UPPER(outcome) = 'SPLIT INTO 10M MICRO-STEP' THEN 'SPLIT_INTO_MICRO_STEP' " +
+                        "WHEN UPPER(outcome) = 'USED 2M PEEK' THEN 'USED_PEEK' " +
+                        "WHEN UPPER(outcome) = 'INTERCEPTED' THEN 'INTERCEPTED' " +
+                        "WHEN UPPER(outcome) = 'LEFT AIRLOCK WITHOUT CHOOSING' THEN 'LEFT_WITHOUT_CHOOSING' " +
+                        "WHEN UPPER(outcome) = 'OPENED LAUNCHER' THEN 'OPENED_LAUNCHER' " +
+                        "WHEN UPPER(outcome) = 'UNINSTALL ATTEMPT — RETURNED' THEN 'UNINSTALL_ATTEMPT_RETURNED' " +
+                        "WHEN UPPER(outcome) = 'OPEN EXPOSURE' THEN 'OPEN_EXPOSURE' " +
+                        "ELSE 'UNKNOWN' END"
+                )
+                db.execSQL(
+                    "UPDATE intercept_logs SET triggerKind = CASE " +
+                        "WHEN packageName IN ('com.monolith.system', 'com.monolith.exposure') THEN 'SYSTEM' " +
+                        "WHEN triggerReason = 'Habit' THEN 'HABIT' " +
+                        "WHEN triggerReason = 'Stuck' THEN 'STUCK' " +
+                        "WHEN triggerReason = 'Tired' THEN 'TIRED' " +
+                        "WHEN triggerReason = 'Message' THEN 'MESSAGE' " +
+                        "ELSE 'UNKNOWN' END"
+                )
+            }
+        }
+
+        /**
+         * Issue #525 (20→21): ONE column — focus_sessions
+         * .rebootGapSeconds, the accumulated boot-to-shield
+         * seconds a session's reboots left unshielded, booked at
+         * every re-anchor and printed on the receipt. No backfill:
+         * pre-v21 rows truthfully carry 0 (no reboot gap was ever
+         * booked for them — the old derivation credited the
+         * uptime instead of booking it, and inventing a figure
+         * now would fabricate the record).
+         *
+         * Renumber note: authored as 18→19; issue #324's step
+         * took 18→19 and issue #138's took 19→20 while this PR
+         * was in flight, so this step takes the next free link,
+         * 20→21 — the same etiquette both renumber histories
+         * record.
+         */
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfAbsent(db, "focus_sessions", "rebootGapSeconds",
+                    "ALTER TABLE focus_sessions ADD COLUMN rebootGapSeconds INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * Issue #100 (notifications-lived) — Sarthak's ruling:
+         * notification-content storage is CUT. The captured
+         * notifications table (plaintext message bodies, stored
+         * since v1-era) is dropped outright. Held notifications
+         * are now snoozes of the originals held by the system;
+         * Monolith keeps no copy, so there is nothing to migrate
+         * the rows into — dropping is the whole migration.
+         *
+         * BUILDER-100 composition note (Oct 31): authored as
+         * 14→15 on the CUT branch, renumbered 15→16 by DURCH-C,
+         * then 18→19, 19→20, 20→21, 21→22 and finally 22→23
+         * across this
+         * landing's compositions — main took 15→16 (#261), 16→17
+         * (#340), 17→18 (batch-10), 18→19 (#324), 19→20 (#138's
+         * metadata-only rebuild) and 20→21 (#525) while this lane
+         * was in flight. Same drop, same ruling; only the number
+         * moved.
+         */
+        val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS captured_notifications")
             }
         }
 
@@ -201,6 +483,94 @@ abstract class MonolithDatabase : RoomDatabase() {
          * ledger and a full token; inventing a past spend would be a
          * fabricated record.
          */
+        /**
+         * Idempotent ADD COLUMN (main-merge defensive form, M-A1
+         * OPEN-1 ruling): runs [ddl] only when [column] is absent
+         * from [table], so a migration step survives an install
+         * whose earlier lineage already added the same column.
+         */
+        private fun addColumnIfAbsent(db: SupportSQLiteDatabase, table: String, column: String, ddl: String) {
+            var present = false
+            db.query("PRAGMA table_info($table)").use { cursor ->
+                val nameIdx = cursor.getColumnIndex("name")
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIdx) == column) { present = true; break }
+                }
+            }
+            if (!present) db.execSQL(ddl)
+        }
+
+        /**
+         * Issue #138 CUT (19→20): notification-content storage is
+         * removed under Sarthak's ruling — the captured_notifications
+         * table is rebuilt WITHOUT senderTitle and messageBody, so
+         * every content copy stored by earlier versions is destroyed
+         * by this migration, not carried forward. The metadata a
+         * held row legitimately keeps (id, capture time, package,
+         * app name, read flag) is copied across unchanged. (Numbered
+         * 19→20 because #324's intercept stop-reason migration took
+         * 18→19 on main while this branch was in flight.)
+         */
+        val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `captured_notifications_new` (" +
+                    "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`timestampMillis` INTEGER NOT NULL, " +
+                    "`packageName` TEXT NOT NULL, " +
+                    "`appName` TEXT NOT NULL, " +
+                    "`isRead` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "INSERT INTO `captured_notifications_new` (id, timestampMillis, packageName, appName, isRead) " +
+                    "SELECT id, timestampMillis, packageName, appName, isRead FROM `captured_notifications`"
+                )
+                db.execSQL("DROP TABLE IF EXISTS `captured_notifications`")
+                db.execSQL("ALTER TABLE `captured_notifications_new` RENAME TO `captured_notifications`")
+            }
+        }
+
+        /**
+         * Issue #253 lines 8 + 9 (20→21): the full-context
+         * profile bundle lands on focus_profiles — three bundle
+         * CSVs (per-app tiers, per-app limits, blocked sites;
+         * ProfileBundle's encodings) and three nullable fact
+         * columns (sound / sniper / browser-blocker rulings;
+         * NULL = the profile does not rule that surface, which
+         * is every pre-bundle row's truth). No backfill: a
+         * legacy profile keeps behaving as the pure category
+         * stencil it was saved as.
+         *
+         * Renumber history: authored as 18→19 on PR #748;
+         * main took 18→19 (#324 intercept kinds, above) and
+         * 19→20 (#138 CUT, above) while the PR waited, so
+         * the bundle lands as 20→21, the next free link
+         * (FINISHER-748 rebase, Oct 31).
+         *
+         * BUILDER-100 repair (Oct 31, in PR #552's composition):
+         * main landed TWO MIGRATION_20_21 declarations in one wave
+         * (#525's rebootGapSeconds above and this bundle) — a
+         * duplicate-declaration compile break on main itself. This
+         * bundle, the later landing, renumbers to 21→22; #525's
+         * step keeps 20→21. Contents unchanged.
+         */
+        val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfAbsent(db, "focus_profiles", "appTiersCsv",
+                    "ALTER TABLE focus_profiles ADD COLUMN appTiersCsv TEXT NOT NULL DEFAULT ''")
+                addColumnIfAbsent(db, "focus_profiles", "appLimitsCsv",
+                    "ALTER TABLE focus_profiles ADD COLUMN appLimitsCsv TEXT NOT NULL DEFAULT ''")
+                addColumnIfAbsent(db, "focus_profiles", "sitesCsv",
+                    "ALTER TABLE focus_profiles ADD COLUMN sitesCsv TEXT NOT NULL DEFAULT ''")
+                addColumnIfAbsent(db, "focus_profiles", "soundEnabled",
+                    "ALTER TABLE focus_profiles ADD COLUMN soundEnabled INTEGER")
+                addColumnIfAbsent(db, "focus_profiles", "sniperEnabled",
+                    "ALTER TABLE focus_profiles ADD COLUMN sniperEnabled INTEGER")
+                addColumnIfAbsent(db, "focus_profiles", "browserBlockEnabled",
+                    "ALTER TABLE focus_profiles ADD COLUMN browserBlockEnabled INTEGER")
+            }
+        }
+
         val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
@@ -226,8 +596,51 @@ abstract class MonolithDatabase : RoomDatabase() {
          * IllegalStateException in testing, never a silent wipe on his
          * phone.
          */
+        /**
+         * Issue #83 (storage-hygiene F4): space reclamation. Every
+         * erase in this app was a bare DELETE, so deleted rows' pages
+         * stayed in the file forever and monolith_tactile_db grew
+         * monotonically for the life of the install. This callback
+         * puts the file on INCREMENTAL auto-vacuum: the first open
+         * that finds the file not already incremental performs the
+         * one full VACUUM the mode change requires, and every open
+         * hands a bounded slice of free pages back to the device.
+         * Best-effort by construction — a pragma failure must never
+         * cost the app its database open.
+         */
+        private val RECLAIM_CALLBACK = object : RoomDatabase.Callback() {
+            override fun onOpen(db: SupportSQLiteDatabase) {
+                super.onOpen(db)
+                try {
+                    val cursor = db.query("PRAGMA auto_vacuum")
+                    val mode = try {
+                        if (cursor.moveToFirst()) cursor.getInt(0) else 0
+                    } finally {
+                        cursor.close()
+                    }
+                    // auto_vacuum: 0 = NONE, 1 = FULL, 2 = INCREMENTAL.
+                    if (mode != 2) {
+                        db.execSQL("PRAGMA auto_vacuum = INCREMENTAL")
+                        db.execSQL("VACUUM")
+                    }
+                    db.execSQL("PRAGMA incremental_vacuum(512)")
+                } catch (_: Exception) {
+                    // Contained: reclamation is hygiene, not function.
+                }
+            }
+        }
+
         fun getInstance(context: Context): MonolithDatabase {
             return INSTANCE ?: synchronized(this) {
+                // The second check INSIDE the lock (issue #31
+                // finding 1): the pre-fix shape re-checked nothing
+                // after acquiring it, so two racing callers (boot
+                // receivers + the activity's first read are the
+                // realistic pair) could each build a database —
+                // the second overwriting INSTANCE and orphaning
+                // the first's open instance, its DAOs, and any
+                // transaction in flight on it.
+                INSTANCE?.let { return@synchronized it }
                 val appCtx = context.applicationContext
                 val storageContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     appCtx.createDeviceProtectedStorageContext() ?: appCtx
@@ -239,10 +652,28 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
+                    .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        /**
+         * Test-only escape hatch (issue #31 finding 4): closes
+         * the singleton and clears it under the same lock
+         * [getInstance] builds under, so a test can start from a
+         * cold database instead of inheriting whatever a previous
+         * test built. Production paths never call this — in
+         * production the singleton's immortality is deliberate
+         * (Direct-Boot enforcement reads it from boot receivers
+         * before any unlock exists).
+         */
+        fun closeAndResetForTests() {
+            synchronized(this) {
+                INSTANCE?.close()
+                INSTANCE = null
             }
         }
     }

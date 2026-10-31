@@ -13,7 +13,6 @@ import com.example.ui.evaluateTheme
 import com.example.ui.views.RailGeometry
 import java.util.Calendar
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -49,7 +48,16 @@ class ChromeWaveUnitTest {
             for (stamped in listOf(false, true)) {
                 for (usage in UsageAccess.entries) {
                     for (protecting in listOf(false, true)) {
-                        val w = WatchStore.deriveWarrant(bound, stamped, usage, protecting)
+                        // readMono is handed in explicitly (0 = no
+                        // instant carried, warrantAgeMs's own
+                        // age-unknown value): the parameter's
+                        // default reads SystemClock.elapsedRealtime(),
+                        // which a plain unit test cannot do — and
+                        // the state table under test never consults
+                        // it. Production callers keep the default,
+                        // which stamps the read instant (issue #7's
+                        // cold-start cure reads the age off it).
+                        val w = WatchStore.deriveWarrant(bound, stamped, usage, protecting, readMono = 0L)
                         assertEquals(
                             "bound=$bound stamped=$stamped usage=$usage",
                             referenceWarrantState(bound, stamped, usage),
@@ -63,8 +71,9 @@ class ChromeWaveUnitTest {
     }
 
     // ------------------------------------------------------------------
-    // Staleness: derived at render, never stored. A PASS older than
-    // 45s of monotonic time is STALE; MISSING never stales.
+    // Staleness: derived at render, never stored. ANY measurement
+    // older than 45s of monotonic time is stale (#58 F1): a PASS
+    // prints STALE, a denial prints MISSING_STALE.
     // ------------------------------------------------------------------
     private fun snapshotOf(vararg ms: WatchMeasurement): WatchSnapshot =
         WatchSnapshot(
@@ -79,7 +88,7 @@ class ChromeWaveUnitTest {
         WatchMeasurement(item, perm = state, measuredMono = mono, measuredWall = 1_000L)
 
     @Test
-    fun permPrint_staleOnlyForPassMeasurementsPast45s() {
+    fun permPrint_staleForAnyMeasurementPast45s() {
         val snap = snapshotOf(
             perm(WatchItemId.ACCESSIBILITY, PermState.GRANTED, mono = 10_000L),
             perm(WatchItemId.USAGE_ACCESS, PermState.MISSING, mono = 10_000L)
@@ -92,8 +101,15 @@ class ChromeWaveUnitTest {
             com.example.service.PermPrint.STALE,
             WatchStore.permPrintAt(snap, WatchItemId.ACCESSIBILITY, nowMono = 55_001L)
         )
+        // #58 F1: a denial stales too — at the same 45s boundary a
+        // PASS crosses, a MISSING crosses to MISSING_STALE, never
+        // printing bare-and-current forever.
         assertEquals(
             com.example.service.PermPrint.MISSING,
+            WatchStore.permPrintAt(snap, WatchItemId.USAGE_ACCESS, nowMono = 55_000L)
+        )
+        assertEquals(
+            com.example.service.PermPrint.MISSING_STALE,
             WatchStore.permPrintAt(snap, WatchItemId.USAGE_ACCESS, nowMono = 9_999_999L)
         )
         assertEquals(
@@ -104,23 +120,29 @@ class ChromeWaveUnitTest {
 
     // ------------------------------------------------------------------
     // The Guard line: whole / lack (bare + stale) / unmeasured.
+    // Issue #109, F4: the denominator is SIX — every permission line
+    // the board prints — so the header can never again print
+    // wholeness over a board showing OVERLAY / BATTERY MISSING.
     // ------------------------------------------------------------------
     private fun countedSnap(
         a11y: PermState, usage: PermState, admin: PermState, listener: PermState,
+        overlay: PermState = PermState.GRANTED, battery: PermState = PermState.GRANTED,
         mono: Long = 10_000L
     ): WatchSnapshot = snapshotOf(
         perm(WatchItemId.ACCESSIBILITY, a11y, mono),
         perm(WatchItemId.USAGE_ACCESS, usage, mono),
         perm(WatchItemId.DEVICE_ADMIN, admin, mono),
-        perm(WatchItemId.NOTIFICATION_LISTENER, listener, mono)
+        perm(WatchItemId.NOTIFICATION_LISTENER, listener, mono),
+        perm(WatchItemId.OVERLAY, overlay, mono),
+        perm(WatchItemId.BATTERY, battery, mono)
     )
 
     @Test
-    fun guardLine_wholePrints4of4() {
+    fun guardLine_wholePrints6of6() {
         val snap = countedSnap(
             PermState.GRANTED, PermState.GRANTED, PermState.GRANTED, PermState.GRANTED
         )
-        assertEquals("GUARD 4/4", guardLineFor(snap, nowMono = 20_000L)?.text)
+        assertEquals("GUARD 6/6", guardLineFor(snap, nowMono = 20_000L)?.text)
     }
 
     @Test
@@ -128,7 +150,19 @@ class ChromeWaveUnitTest {
         val snap = countedSnap(
             PermState.GRANTED, PermState.MISSING, PermState.MISSING, PermState.GRANTED
         )
-        assertEquals("GUARD 2/4 — USAGE ACCESS", guardLineFor(snap, nowMono = 20_000L)?.text)
+        assertEquals("GUARD 4/6 — USAGE ACCESS", guardLineFor(snap, nowMono = 20_000L)?.text)
+    }
+
+    @Test
+    fun guardLine_overlayMissingBreaksTheWholePrint() {
+        // The F4 case itself: the original counted four all GRANTED
+        // (the old line printed GUARD 4/4 here) while the board's
+        // OVERLAY line stands MISSING.
+        val snap = countedSnap(
+            PermState.GRANTED, PermState.GRANTED, PermState.GRANTED, PermState.GRANTED,
+            overlay = PermState.MISSING
+        )
+        assertEquals("GUARD 5/6 — OVERLAY", guardLineFor(snap, nowMono = 20_000L)?.text)
     }
 
     @Test
@@ -136,23 +170,41 @@ class ChromeWaveUnitTest {
         val snap = countedSnap(
             PermState.GRANTED, PermState.GRANTED, PermState.GRANTED, PermState.GRANTED
         )
-        // All four measured at 10_000; read at 60_000 -> all stale,
+        // All six measured at 10_000; read at 60_000 -> all stale,
         // the first in board order is named with the suffix.
         assertEquals(
-            "GUARD 0/4 — ACCESSIBILITY STALE",
+            "GUARD 0/6 — USAGE ACCESS STALE",
             guardLineFor(snap, nowMono = 60_000L)?.text
         )
     }
 
     @Test
-    fun guardLine_unmeasuredPrintsNothing() {
+    fun guardLine_unmeasuredPrintsNotChecked() {
+        // Issue #9, P-6: unmeasured prints the confession, never a
+        // blank and never a fabricated count.
         val snap = countedSnap(
             PermState.GRANTED, PermState.GRANTED, PermState.GRANTED, PermState.GRANTED
         )
         val partial = snap.copy(items = snap.items - WatchItemId.DEVICE_ADMIN)
-        assertNull(guardLineFor(partial, nowMono = 20_000L))
-        assertNull(guardLineFor(null, nowMono = 20_000L))
-        assertNull(guardLineFor(WatchSnapshot.EMPTY, nowMono = 20_000L))
+        assertEquals(
+            "GUARD — NOT CHECKED",
+            guardLineFor(partial, nowMono = 20_000L).text
+        )
+        // An unmeasured OVERLAY gates the line too — no partial
+        // denominator is ever printed as if it were the whole.
+        val noOverlay = snap.copy(items = snap.items - WatchItemId.OVERLAY)
+        assertEquals(
+            "GUARD — NOT CHECKED",
+            guardLineFor(noOverlay, nowMono = 20_000L).text
+        )
+        assertEquals(
+            "GUARD — NOT CHECKED",
+            guardLineFor(null, nowMono = 20_000L).text
+        )
+        assertEquals(
+            "GUARD — NOT CHECKED",
+            guardLineFor(WatchSnapshot.EMPTY, nowMono = 20_000L).text
+        )
     }
 
     // ------------------------------------------------------------------
@@ -273,12 +325,18 @@ class ChromeWaveUnitTest {
         assertTrue(!day.isNight)
         assertEquals("AUTO · DAY — NO ROUTINE OWNS IT", day.readout)
 
+        // Audit R3b #116 (finding 1): a disabled or paused SLEEP
+        // routine no longer costs the dark UI — clock night owns
+        // the theme at 21:30 even when no routine does. (Before
+        // the fix these two asserted DAY: darkness was hostage to
+        // accepting SLEEP's blocking.)
         val disabled = evaluateTheme(
             sessionActive = false,
             routines = listOf(sleepRoutine(20 * 60, 3 * 60 + 30, enabled = false)),
             nowMillis = at2130
         )
-        assertTrue(!disabled.isNight)
+        assertTrue(disabled.isNight)
+        assertEquals("AUTO · NIGHT — CLOCK 20:00–06:00", disabled.readout)
 
         val paused = evaluateTheme(
             sessionActive = false,
@@ -287,6 +345,16 @@ class ChromeWaveUnitTest {
             ),
             nowMillis = at2130
         )
-        assertTrue(!paused.isNight)
+        assertTrue(paused.isNight)
+        assertEquals("AUTO · NIGHT — CLOCK 20:00–06:00", paused.readout)
+
+        // Midday with SLEEP disabled stays DAY: the clock step is
+        // a night signal, not a permanent dark mode.
+        val disabledDay = evaluateTheme(
+            sessionActive = false,
+            routines = listOf(sleepRoutine(20 * 60, 3 * 60 + 30, enabled = false)),
+            nowMillis = at1200
+        )
+        assertTrue(!disabledDay.isNight)
     }
 }

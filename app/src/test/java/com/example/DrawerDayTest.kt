@@ -39,6 +39,22 @@ class DrawerDayTest {
     // is always the coming 03:30 — from midday it is tomorrow's,
     // from the small hours it is today's, and AT 03:30 it is the
     // NEXT day's (the ticker must never spin on a zero wait).
+    // Audit R6 #341 F69: Europe/Athens springs forward 03:00 ->
+    // 04:00 on 2026-03-29. 03:30 does not exist that day; the
+    // filing rule flips at the transition instant itself (01:00Z,
+    // when the clock first reads 04:00), and the Drawer's wake
+    // must land there — not 30 minutes late at atZone's 04:30.
+    @Test
+    fun nextBoundary_euSpringForward_isTheTransitionInstant() {
+        val athens = ZoneId.of("Europe/Athens")
+        val from = LocalDate.of(2026, 3, 28).atTime(12, 0).atZone(athens)
+            .toInstant().toEpochMilli()
+        assertEquals(
+            java.time.Instant.parse("2026-03-29T01:00:00Z").toEpochMilli(),
+            DrawerDay.nextBoundaryMillis(from, athens)
+        )
+    }
+
     @Test
     fun nextBoundary_isAlwaysTheComing0330() {
         val date = LocalDate.of(2026, 10, 29)
@@ -60,6 +76,40 @@ class DrawerDayTest {
     fun firstOfMonth_0002_filesUnderPreviousMonth() {
         val instant = millis(LocalDate.of(2026, 11, 1), 0, 2)
         assertEquals(2026 to 10, DrawerDay.filingYearMonth(instant, zone))
+    }
+
+    // Audit R1 #37 (HIGH): the months index used to be computed by
+    // a SQL twin subtracting 12,600 ELAPSED seconds — a different
+    // function from this wall-clock rule on DST days, including at
+    // real month boundaries. The twin is dead (the DAO now returns
+    // raw instants and this object files them); these are the
+    // audit's own verified divergence cases, pinned so the filing
+    // rule can never quietly fork again.
+    @Test
+    fun dstFallBack_monthBoundary_filesUnderOctober() {
+        val newYork = ZoneId.of("America/New_York")
+        // 2026-11-01 02:30 EST (the repeated hour, UTC-5): before
+        // the day's 03:30 start, so it belongs to Oct 31's day —
+        // and October's month. The dead SQL twin said November.
+        val instant = java.time.OffsetDateTime.of(2026, 11, 1, 2, 30, 0, 0, java.time.ZoneOffset.ofHours(-5))
+            .toInstant().toEpochMilli()
+        assertEquals(LocalDate.of(2026, 10, 31), DrawerDay.filingDate(instant, newYork))
+        assertEquals(2026 to 10, DrawerDay.filingYearMonth(instant, newYork))
+        // And October's month bounds contain it — index and page agree.
+        val (from, to) = DrawerDay.monthBoundsMillis(2026, 10, newYork)
+        assertTrue(instant >= from && instant < to)
+    }
+
+    @Test
+    fun dstSpringForward_filesUnderSameDay() {
+        val newYork = ZoneId.of("America/New_York")
+        // 2026-03-08 04:00 EDT (UTC-4, just after the 02:00 gap):
+        // past 03:30, so it files under Mar 8 itself. The dead SQL
+        // twin filed it a day later.
+        val instant = java.time.OffsetDateTime.of(2026, 3, 8, 4, 0, 0, 0, java.time.ZoneOffset.ofHours(-4))
+            .toInstant().toEpochMilli()
+        assertEquals(LocalDate.of(2026, 3, 8), DrawerDay.filingDate(instant, newYork))
+        assertEquals(2026 to 3, DrawerDay.filingYearMonth(instant, newYork))
     }
 
     @Test

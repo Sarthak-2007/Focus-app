@@ -13,6 +13,11 @@ batch 4 shipped 12:26 IST (sha a414972de18bc213), suite 112/112
 green, DB v9. All file/line citations are to that tree, read
 first-hand this seating.
 
+**STALE BASE (Issue #71):** written against sha a414972 / DB v9 /
+suite 112/112. Current main is e29acdf / DB v12
+(MonolithDatabase.kt:25). All file:line citations below are
+unverified against current main until re-based.
+
 **Law read first-hand for this spec:** MASTER-PLAN §2.5, §6
 (2930–3410), §8 (4079–4889); DESIGNERS-PLAN §8 (the floor document);
 REGISTER (staircase, specular, accent budget, gate values);
@@ -71,9 +76,11 @@ charge section:
 5. **`StreakTowerMonumentOverlay`** (AirlockAndDisarmOverlays.kt:
    404) and its MainActivity state — ruled OUT as a surface in the
    open: it celebrates totals the Drawer law killed, and the
-   console chip was its only door. `TowerStreakView` itself
-   SURVIVES (the running-session overlay at
-   AirlockAndDisarmOverlays.kt:446 is a live consumer).
+   console chip was its only door. `TowerStreakView` does NOT
+   survive: issue #61 DELETED it, and no live consumer ever
+   existed — AirlockAndDisarmOverlays.kt:446 sits inside
+   CapturedNotificationsDigestSheet. (Corrected under #144;
+   the SURVIVES claim was false.)
 6. **The manual theme** — VM `_darkTheme` (MonolithViewModel.kt:
    104–105), `toggleTheme()` (:549–551), and MainActivity's
    `effectiveNight = darkTheme || sessionActive` composition.
@@ -655,7 +662,7 @@ nowhere. A never-measured line prints its NAME ONLY (absence,
   HOLD: 60 SECONDS, BANKED EVERY 15 · ONE BREAK A WEEK /
   PEEK: 2 MINUTES, THEN SHUT AGAIN / COLOUR IS A VERB:
   ORANGE = COMMIT · INK = SHUT · GREY = PEEK · PORCELAIN =
-  OPEN / ROUTINES: SET BY HAND ON SHIELD · FIRED AS SET /
+  OPEN / ROUTINES: SET BY HAND ON SHIELD · ~~FIRED AS SET~~ (STRUCK — Hale W-11, marked by the issue-9 cell under Critic C-10: returns only when Wache F1–F5 land in the same build AND a live fire is re-verified) /
   SITES: KEPT WITH APPS ON SHIELD · DATA: ON THIS PHONE ONLY /
   STUDY RECORD: IN YPT / SOUND: FLOAT-PCM, 4 PARTIALS ·
   POWER: YOUR PHONE. Byte-identical text is an acceptance
@@ -1008,11 +1015,11 @@ accent, letter-spacing 0.5, on the 15sp step
 
 Night fills cap at the 38% cream blend **#A79587** (cream
 blended 38% toward night ground #171412), top hairline full
-cream @90% kept. Live surfaces in this wave: `TowerStreakView`'s
-CURRENT brick (BlockitTowerFadersAndCatalogViews.kt:24 — its
-other consumer is the running overlay; the accent exception
-stands: the CURRENT brick in accent #F47442 is the Ledger's
-single accent and is NOT capped). `DayFadersView`'s F-03 half
+cream @90% kept. Live surfaces in this wave: none for the
+tower — `TowerStreakView` was DELETED under issue #61 (its
+CURRENT brick and the claimed running-overlay consumer never
+existed as live code; corrected under #144), so the F-03 cap
+has no tower application. `DayFadersView`'s F-03 half
 dies with the view under §11 — stated here so nobody prices it
 twice. PARK builds flat from birth (§5.4), so the cap has no
 PARK application.
