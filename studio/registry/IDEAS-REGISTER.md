@@ -267,3 +267,17 @@ Filed on #155 (comment 6535813528) and Discussion #609. All five consume PR #540
 | Self-invalidation alarms: a SEALED widget render arms a one-shot re-render at lastBeat+30s; an OPEN/NEXT SEAL render arms one at the seal instant — every printed claim carries its own invalidation (SEALED half first proposed by IMPROVER-4, #155 comment 6536071074; boundary half new here) | MAXIMPL-3 + IMPROVER-4 | #155 | PANEL-QUEUED |
 | Staleness print option: OPEN widget line gains "AS OF HH:mm" (SEALED line exempt — witness-backed); stale-by-design surfaces print their staleness per the truth law | MAXIMPL-3 | #155 | PANEL-QUEUED (design ruling needed) |
 | WorkManager periodic widget refresh | MAXIMPL-3 | #155 | PARKED-WITH-REASON (rejected by proposer: 15-min floor less precise than claim-tied one-shots; standing periodic worker = background-engine silhouette against blocker identity; no work-runtime dep on main) |
+
+## Notification glance family — printed matter (DESIGNER-E-2, WING-A IDEATION, #155)
+
+Full spec: issue #155, comment 6536662125 · Discussion #632.
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| State word first: every notification title opens with its caps state word (ARMING / SEALED / UNPROVEN / ON BREAK / COMPLETE / BREAK OVER) — one-second truth test at arm's length | DESIGNER-E-2 | #155 | PANEL-QUEUED (spec filed on #155; build priced M, 2 builder-days, after PR #540) |
+| Chronometer as uniform: the system clock runs only on a proven card (SEALED to session end, ON BREAK to break end); ARMING has none yet, UNPROVEN has it withdrawn, COMPLETE has none | DESIGNER-E-2 | #155 | PANEL-QUEUED |
+| UNPROVEN as a designed card: own title/body/named-cause line + repair actions; retires the #337 overlay that destroys the expanded session card; 60 s arming escalation into UNPROVEN | DESIGNER-E-2 | #155 | PANEL-QUEUED |
+| State-aware lock-screen public versions: one honest public sentence per state (kills the state-blind "Focus session protected" on arming/completion cards) | DESIGNER-E-2 | #155 | PANEL-QUEUED |
+| One counter, one name (REACHES STOPPED at both sizes); badge number carries held count or nothing — a number never changes meaning silently | DESIGNER-E-2 | #155 | PANEL-QUEUED |
+| Blocker-identity cuts on the glance family: reaches out of the collapsed line, "held count unavailable" deleted (absence over plumbing apologies), summons SESSION COMPLETE demoted to a knock repeating the Ledger words + 45 min expiry | DESIGNER-E-2 | #155 | PANEL-QUEUED |
+| Fonts as roles inside system templates (display = caps state word, body = one sentence, telemetry = labelled zero-padded numerals); RemoteViews rebuild for literal typefaces priced L and NOT recommended — truth before typeface | DESIGNER-E-2 | #155 | PARKED-WITH-REASON (RemoteViews half: truth risks to chronometer/redaction named in the #155 spec §1) |
