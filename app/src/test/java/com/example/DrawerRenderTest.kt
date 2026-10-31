@@ -8,7 +8,9 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -303,6 +305,17 @@ class DrawerRenderTest {
         composeRule.onNodeWithTag("drawer_row_${electrostatics.id}")
             .performClick()
         settle(600)
+        // TEMPORARY DIAGNOSTIC PROBE (K8 sitting 7, PR #692): dump
+        // the composed tree at the exact point the detail's back
+        // node is missing, so the cure is written from evidence.
+        if (composeRule.onAllNodesWithTag("drawer_detail_back")
+                .fetchSemanticsNodes().isEmpty()
+        ) {
+            throw AssertionError(
+                "PROBE - detail back node absent after row tap. Tree:\n" +
+                    composeRule.onRoot().printToString(maxDepth = 40)
+            )
+        }
         capture("dr_drawer_detail_day.png")
         composeRule.onNodeWithTag("drawer_detail_back").performClick()
         settle(600)
