@@ -70,7 +70,7 @@ class ArmProductionWiringTest {
             .allowMainThreadQueries()
             .build()
         repository = MonolithRepository(context, db.monolithDao())
-        context.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+        com.example.data.DeviceProtectedPrefs.get(context, MonolithRepository.SEAL_PREFS_NAME)
             .edit().clear().commit()
         resetWitnessStatics()
         SessionSealTransitions.resetForTest()
@@ -189,7 +189,22 @@ class ArmProductionWiringTest {
                     MonolithAccessibilityService.armedMono = latchMono + 40
                 }
             }
-            ShadowSystemClock.advanceBy(Duration.ofMillis(60))
+            // The shadow clock does not advance until the session
+            // id has been observed (issue #678, diagnosed flake):
+            // the controller judges its jam/annul deadlines on
+            // this clock, and the witness statics above can only
+            // be set once Room's real threads land the session
+            // row. Advancing the clock from the first pump spends
+            // the latch+1500ms annul budget (~25 pumps) whether or
+            // not the row has landed, so a slow runner annuls a
+            // healthy attempt before its witnesses can exist.
+            // Frozen until observed, no deadline can pass before
+            // the witnesses are set in the block above; from that
+            // pump on the clock advances exactly as before and
+            // the seal path is unchanged.
+            if (sessionId != null) {
+                ShadowSystemClock.advanceBy(Duration.ofMillis(60))
+            }
             val queued = frames.size
             repeat(queued) { if (frames.isNotEmpty()) frames.removeFirst().invoke() }
             runCurrent()

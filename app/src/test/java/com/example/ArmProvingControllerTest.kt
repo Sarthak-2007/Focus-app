@@ -15,6 +15,7 @@ import com.example.ui.ArmSessionPort
 import com.example.ui.ArmWitnesses
 import com.example.ui.LinkMark
 import com.example.ui.components.jamSentenceFor
+import com.example.ui.components.provingSentenceFor
 import com.example.ui.provenCount
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -72,7 +73,7 @@ class ArmProvingControllerTest {
             .build()
         repository = MonolithRepository(context, db.monolithDao())
         engine = TactileSoundEngine(context)
-        context.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+        com.example.data.DeviceProtectedPrefs.get(context, MonolithRepository.SEAL_PREFS_NAME)
             .edit().clear().commit()
     }
 
@@ -417,7 +418,8 @@ class ArmProvingControllerTest {
         assertEquals(2, port.startShieldCalls)
         assertEquals(1, events.count { it == "jamhaptics" })
         val sentence = jamSentenceFor(jammed)
-        assertEquals("SHIELD DIDN'T ANSWER — STILL PROVING.", sentence?.text)
+        assertEquals(R.string.sentence_didnt_answer, sentence?.textRes)
+        assertEquals(listOf("SHIELD"), sentence?.args)
         assertNull(sentence?.action)
         // The retry answers: the attempt seals inside its window.
         witnesses.shieldMono = l + 700
@@ -449,7 +451,8 @@ class ArmProvingControllerTest {
         assertEquals(1, controller.annulCount.value)
         assertTrue(port.sealCalls.isEmpty())
         val sentence = controller.armSentence.value
-        assertEquals("SHIELD — NO PROOF. NOTHING WAS SEALED.", sentence?.text)
+        assertEquals(R.string.sentence_not_sealed_named, sentence?.textRes)
+        assertEquals(listOf("THE SHIELD"), sentence?.args)
         assertNull(sentence?.action)
     }
 
@@ -478,8 +481,8 @@ class ArmProvingControllerTest {
             jammed.jamSet
         )
         assertEquals(
-            "SHIELD DIDN'T ANSWER — STILL PROVING.",
-            jamSentenceFor(jammed)?.text
+            R.string.sentence_didnt_answer,
+            jamSentenceFor(jammed)?.textRes
         )
     }
 
@@ -544,7 +547,7 @@ class ArmProvingControllerTest {
             lastVibrationPattern()?.contentEquals(TactileSoundEngine.SEAL_THROW_TIMINGS) == true
         )
         val sentence = controller.armSentence.value
-        assertEquals("SESSION-ROW — NO PROOF. NOTHING WAS SEALED.", sentence?.text)
+        assertEquals(R.string.sentence_not_sealed_session, sentence?.textRes)
     }
 
     // =================================================================
@@ -673,10 +676,18 @@ class ArmProvingControllerTest {
         runCurrent()
         assertEquals(ArmPhase.Idle, controller.phase.value)
         assertEquals(1, controller.annulCount.value)
+        // The literal this asserted was re-ruled on main (#164 F5): the
+        // NOT SEALED wording now lives in string resources — res identity
+        // + args is the check. This path is failSeal() (the seal act
+        // threw), whose sentence is the generic session form
+        // (sentence_not_sealed_session, no args) — NOT the annul path's
+        // named form. Both render "NOT SEALED — THE SESSION DIDN'T
+        // ANSWER."; the res identity is what separates the two paths.
         assertEquals(
-            "SESSION-ROW — NO PROOF. NOTHING WAS SEALED.",
-            controller.armSentence.value?.text
+            R.string.sentence_not_sealed_session,
+            controller.armSentence.value?.textRes
         )
+        assertEquals(emptyList<Any>(), controller.armSentence.value?.args)
     }
 
     @Test
@@ -747,6 +758,86 @@ class ArmProvingControllerTest {
     }
 
     @Test
+    fun recoveryGateHoldsProvingUntilTheVerdict() = runTest {
+        // Issue #126 F1: a row under relaunch recovery reads
+        // PROVING (the Deck's gate renders it not-running) until
+        // the transition's verdict resolves it. SEALED relaxes
+        // silently — no hand-back, no sentence.
+        val controller = newController()
+        now = 20_000L
+        controller.beginRecovery(41)
+        val gated = controller.phase.value
+        assertTrue(gated is ArmPhase.Proving)
+        assertEquals(41, (gated as ArmPhase.Proving).sessionId)
+        assertEquals(0, gated.provenCount())
+        controller.resolveRecovery(41, com.example.service.SealVerdict.SEALED)
+        assertEquals(ArmPhase.Idle, controller.phase.value)
+        assertEquals(0, controller.annulCount.value)
+        assertNull(controller.armSentence.value)
+    }
+
+    @Test
+    fun recoveryAnnulmentHandsBackAndSpeaksPastTense() = runTest {
+        // The transition deleted the row; the controller's part
+        // is the hand-back + the past-tense sentence, and it must
+        // NOT annul through the port a second time.
+        val controller = newController()
+        now = 20_000L
+        controller.beginRecovery(41)
+        controller.resolveRecovery(41, com.example.service.SealVerdict.ANNULLED)
+        assertEquals(ArmPhase.Idle, controller.phase.value)
+        assertEquals(1, controller.annulCount.value)
+        assertTrue(port.annulCalls.isEmpty())
+        assertEquals(
+            R.string.sentence_no_proof_blocking_off,
+            controller.armSentence.value?.textRes
+        )
+        assertEquals(listOf("SESSION"), controller.armSentence.value?.args)
+    }
+
+    @Test
+    fun recoveryGateNeverHijacksALiveAttempt() = runTest {
+        val controller = newController()
+        now = 10_000L
+        controller.latch()
+        runCurrent()
+        val attempt = controller.phase.value
+        controller.beginRecovery(99)
+        assertEquals(attempt, controller.phase.value)
+        // And a verdict for some other row resolves nothing.
+        controller.resolveRecovery(99, com.example.service.SealVerdict.ANNULLED)
+        assertEquals(attempt, controller.phase.value)
+    }
+
+    @Test
+    fun jamSentenceNamesTheLivePendingLinkNotTheFrozenJamSet() {
+        // Issue #126 F4: SHIELD was in the deadline's jamSet but
+        // answered during the retry window (its mark is Confirmed
+        // in links); ACCESS is the link still pending. The old
+        // sentence kept accusing SHIELD; the live one names ACCESS.
+        val jammed = ArmPhase.Jammed(
+            attemptId = 1,
+            latchMono = 1_000L,
+            sessionId = 7,
+            links = mapOf(
+                ArmLink.SESSION_ROW to LinkMark.Confirmed(1_010L),
+                ArmLink.SHIELD_PROTECTING to LinkMark.Confirmed(1_700L),
+                ArmLink.A11Y_SESSION_ARMED to LinkMark.Pending
+            ),
+            jamSet = setOf(ArmLink.SHIELD_PROTECTING, ArmLink.A11Y_SESSION_ARMED),
+            retryCount = 1
+        )
+        assertEquals(R.string.sentence_didnt_answer, jamSentenceFor(jammed)?.textRes)
+        // With a clock: the retry verb + the annulment countdown
+        // (latch 1000 + ANNUL 1500 − now 1900 = 600ms → 1S).
+        assertEquals(
+            R.string.sentence_still_hasnt_answered,
+            jamSentenceFor(jammed, nowMono = 1_900L)?.textRes
+        )
+        assertEquals(listOf("ACCESS", 1L), jamSentenceFor(jammed, nowMono = 1_900L)?.args)
+    }
+
+    @Test
     fun jamSentenceAndProvenCountArePhasePure() {
         val proving = ArmPhase.Proving(
             attemptId = 1,
@@ -759,6 +850,17 @@ class ArmProvingControllerTest {
             )
         )
         assertEquals(2, proving.provenCount())
+        // Issue #126 F2: PROVING speaks, counting its answered
+        // links from the same derived count.
+        // Producer wording on main is the #98 form (see
+        // CascadeDeckRenderTest): res identity + args is the check.
+        assertEquals(
+            R.string.sentence_checking_seal,
+            provingSentenceFor(proving)?.textRes
+        )
+        assertEquals(listOf(2), provingSentenceFor(proving)?.args)
+        assertNull(provingSentenceFor(ArmPhase.Idle))
+        assertNull(provingSentenceFor(ArmPhase.SealedRunning(7, 100)))
         assertNull(jamSentenceFor(proving))
         assertNull(jamSentenceFor(ArmPhase.Idle))
         assertNull(jamSentenceFor(ArmPhase.SealedRunning(7, 100)))

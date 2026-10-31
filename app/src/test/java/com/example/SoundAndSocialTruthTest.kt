@@ -5,11 +5,10 @@ import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.test.click
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performTouchInput
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.MonolithDatabase
@@ -35,6 +34,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowLooper
 
 /**
@@ -58,12 +58,39 @@ import org.robolectric.shadows.ShadowLooper
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
+// Test-floor cures (rounds 2+4, proven against run
+// 40994003589's test XMLs): the PARK sleds are raw AndroidViews
+// whose switch fires only on a real MotionEvent ACTION_UP, so the
+// class runs in NATIVE graphics (real interop rendering) and the
+// taps are dispatched straight to the SledSwitchView
+// (tapParkSled). The ViewModel's coroutines — the toggle's Room
+// write, the WatchStore wiring — are driven by waitForIdle inside
+// awaitTrue; wall-clock polling alone left them unadvanced for
+// the full 30 s timeout. And every DB is closed through closeDb,
+// which drains both schedulers first: closing under in-flight
+// coroutines threw pool-closed exceptions that poisoned the next
+// case with UncaughtExceptionsBeforeTest.
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class SoundAndSocialTruthTest {
 
     @get:Rule
     val composeRule = createAndroidComposeRule<ComponentActivity>()
 
     private lateinit var context: Context
+
+    // Floor-lane speed cure (#166, round 6): whether THIS case has
+    // composed PARK via setParkContent. The two scheduler drivers
+    // below (awaitTrue, closeDb) call composeRule.waitForIdle() to
+    // advance the ViewModel's coroutines inside a composition —
+    // but in a case that never composes, waitForIdle has no
+    // composition to idle and stalls ~2 s per call (measured on
+    // the census artifacts: the two VM-only cases that close a DB
+    // cost exactly 81.1 s in consecutive censuses = 40 closeDb
+    // iterations x the stall, while composed cases with the same
+    // closeDb cost ~1 s). For VM-only cases the looper idle is
+    // already the driver (round 4's own finding, see awaitTrue);
+    // the compose call is skipped there, nothing else changes.
+    private var parkComposed = false
 
     @Before
     fun setUp() {
@@ -114,7 +141,7 @@ class SoundAndSocialTruthTest {
             )
             assertFalse(vm.soundEngine.soundEnabled)
         } finally {
-            db.close()
+            closeDb(db)
         }
     }
 
@@ -153,7 +180,7 @@ class SoundAndSocialTruthTest {
             assertFalse(vmEngine.soundEnabled)
             assertFalse("PARK's word (the VM flow) must agree", vm.soundEnabled.value)
         } finally {
-            db.close()
+            closeDb(db)
         }
     }
 
@@ -176,7 +203,9 @@ class SoundAndSocialTruthTest {
         // Out-of-band write (bypasses setEnabled's push — e.g. a
         // restore): the standing engine's cache is stale until
         // the next bind re-reads the fact into it.
-        context.getSharedPreferences(
+        // Issue #83: the fact's file moved to device-protected
+        // storage — an out-of-band write lands where the bind reads.
+        (context.createDeviceProtectedStorageContext() ?: context).getSharedPreferences(
             SoundEffectsSetting.PREFS_NAME, Context.MODE_PRIVATE
         ).edit().putBoolean(SoundEffectsSetting.KEY_ENABLED, true).commit()
         SessionSealTransitions.get(context)
@@ -313,7 +342,36 @@ class SoundAndSocialTruthTest {
     /** The VM-level chain, on real objects: PARK's new switch
      *  calls the same toggle that writes guard_settings; the
      *  blocker reads the same column fresh per event; the VM's
-     *  published print is that column's mirror. */
+     *  published print is that column's mirror.
+     *
+     *  Floor-lane cure (#166, tenth sitting) — this was the
+     *  class's rotating name (red at census #7, run 41182938534:
+     *  31.1 s, "Timed out waiting for: and back ON, print
+     *  following", while its gated siblings passed in ~1 s).
+     *  Mechanism, from the code: the print is born `true`
+     *  (MonolithViewModel.kt:696); the init launch assigns it
+     *  from the store exactly once, only after the whole seed
+     *  pass plus a forced heartbeat tick (:1647); the toggle
+     *  negates the PRINT and launches its store write (:2653).
+     *  The first poll below is satisfiable born-equal — print
+     *  true, stored default true — before that assignment
+     *  exists, so under full-suite load the assignment could
+     *  land inside the second toggle's write latency, re-read
+     *  the store still OFF, and clobber the print back OFF with
+     *  no writer left to raise it: the final await's print half
+     *  starved for the full 30 s. The seed-settle gate cannot
+     *  discharge this case — its equality polls cannot tell a
+     *  spent assignment from the born-equal steady state.
+     *
+     *  The preamble below is a proof, not a bound. The store is
+     *  planted OFF before the VM exists; inside this case the
+     *  print's only writers are the init assignment and the
+     *  toggle, so the print reaching OFF is the assignment's
+     *  own signature — it has fired, and it fires once. One
+     *  toggle restores ON (print set + write launched), and the
+     *  original chain then runs with the assignment dead: each
+     *  store write is awaited before the next toggle, and no
+     *  third writer exists. No interleave remains. */
     @Test
     fun SocialToggleChainWritesTheFactTheBlockerReads() {
         val db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
@@ -321,8 +379,17 @@ class SoundAndSocialTruthTest {
             .build()
         try {
             val repository = MonolithRepository(context, db.monolithDao())
+            // The discharge (see the case doc): plant the fact
+            // OFF before the VM exists, so the init publication
+            // — the print's one uncontrolled writer — must show
+            // itself by following the plant, and is then spent.
+            runBlocking { repository.setBrowserBlockerEnabled(false) }
             val vm = MonolithViewModel(context, repository, TactileSoundEngine(context))
 
+            awaitTrue("the init publication lands (the print follows the planted fact OFF)") {
+                !vm.browserUrlBlockerEnabled.value
+            }
+            runBlocking { vm.toggleBrowserUrlBlocker() }
             awaitTrue("the VM publishes the persisted fact (fresh install: ON)") {
                 vm.browserUrlBlockerEnabled.value &&
                     runBlocking { repository.isBrowserBlockerEnabled() }
@@ -340,7 +407,7 @@ class SoundAndSocialTruthTest {
                     vm.browserUrlBlockerEnabled.value
             }
         } finally {
-            db.close()
+            closeDb(db)
         }
     }
 
@@ -356,28 +423,30 @@ class SoundAndSocialTruthTest {
         try {
             val repository = MonolithRepository(context, db.monolithDao())
             val vm = MonolithViewModel(context, repository, TactileSoundEngine(context))
-            awaitTrue("the VM publishes the persisted fact before render") {
-                vm.browserUrlBlockerEnabled.value ==
-                    runBlocking { repository.isBrowserBlockerEnabled() }
-            }
+            // The seed-settle gate (DIAG-D3 §c2(iii)) replaces the
+            // old one-shot equality poll: born-equal (published
+            // true, stored default true) satisfied that poll
+            // before the VM's init seed assignment had even run,
+            // and the assignment — which lands only after the
+            // whole seed pass — could then clobber the published
+            // print mid-chain and eat a toggle (see the helper).
+            awaitPublishedFactSettled(vm, repository, db.monolithDao())
             setParkContent(vm)
 
             composeRule.onNodeWithTag("park_social_sled").assertExists()
             settlePark()
 
-            composeRule.onNodeWithTag("park_social_sled")
-                .performTouchInput { click(center) }
+            tapParkSled()
             awaitTrue("touching the rendered sled writes the stored fact OFF") {
                 !runBlocking { repository.isBrowserBlockerEnabled() }
             }
 
-            composeRule.onNodeWithTag("park_social_sled")
-                .performTouchInput { click(center) }
+            tapParkSled()
             awaitTrue("and a second touch writes it back ON") {
                 runBlocking { repository.isBrowserBlockerEnabled() }
             }
         } finally {
-            db.close()
+            closeDb(db)
         }
     }
 
@@ -413,13 +482,41 @@ class SoundAndSocialTruthTest {
                     ?.interceptor == InterceptorState.RUNNING
             }
 
+            // Same settle gate as the rendered case: the tap
+            // below reads the published print through the toggle,
+            // so the init seed assignment must have landed and
+            // the print must rest on the stored fact before it.
+            awaitPublishedFactSettled(vm, repository, db.monolithDao())
+
             setParkContent(vm)
             settlePark()
             composeRule.onNodeWithTag("park_social_sled").assertExists()
-            composeRule.onNodeWithText("OFF").assertDoesNotExist()
+            // The premise, re-pinned to current law (#166, K8's
+            // seventh sitting). The original premise — no OFF word
+            // anywhere on the composed board before the toggle —
+            // was written before issue #109 F1 and has been
+            // unmeetable since: the NOTIFICATIONS interceptor is
+            // OFF by law whenever no session is capturing (printing
+            // RUNNING there was the false print caught on a real
+            // phone), so the board lawfully carries that row's OFF
+            // from the first frame, session or none. Census #4
+            // caught the old premise failing on exactly that row's
+            // (NOTIFICATIONS, OFF) texts; a waited form of the same
+            // premise (this PR's first run) proved the OFF never
+            // leaves in 30 s. What this case actually guards is
+            // attribution — the OFF that follows the toggle must be
+            // the SOCIAL row's — so premise and verdict are both
+            // read on the social row's own (name, word) pair,
+            // waited on this class's driven loop like every other
+            // condition here. The setParkContent comment records
+            // the same discipline for the SHORTS row (its setting
+            // staged ON so its word cannot print OFF either).
+            awaitTrue("the composed SOCIAL SITES row does not print OFF before the toggle") {
+                composeRule.onAllNodes(boardRowPairs("SOCIAL SITES", "OFF"))
+                    .fetchSemanticsNodes().isEmpty()
+            }
 
-            composeRule.onNodeWithTag("park_social_sled")
-                .performTouchInput { click(center) }
+            tapParkSled()
 
             awaitTrue("the derived board word moves to OFF") {
                 WatchStore.snapshots.value
@@ -430,9 +527,17 @@ class SoundAndSocialTruthTest {
                 !runBlocking { repository.isBrowserBlockerEnabled() }
             }
             settlePark()
-            composeRule.onNodeWithText("OFF").assertExists()
+            // The verdict, on the same pair: the SOCIAL row itself
+            // must print OFF. (The old tail — some OFF exists
+            // anywhere — could be satisfied by the NOTIFICATIONS
+            // row's lawful OFF even if the social row never moved;
+            // this form cannot.)
+            awaitTrue("the composed SOCIAL SITES row prints OFF after the toggle") {
+                composeRule.onAllNodes(boardRowPairs("SOCIAL SITES", "OFF"))
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
         } finally {
-            db.close()
+            closeDb(db)
         }
     }
 
@@ -444,6 +549,7 @@ class SoundAndSocialTruthTest {
      *  social sled wired to the VM's existing toggle (the one
      *  write path to the fact), the board fed reactively. */
     private fun setParkContent(vm: MonolithViewModel) {
+        parkComposed = true
         composeRule.setContent {
             val socialOn by vm.browserUrlBlockerEnabled.collectAsState()
             val snapshot by WatchStore.snapshots.collectAsState()
@@ -459,7 +565,6 @@ class SoundAndSocialTruthTest {
                     isSealed = false,
                     isNight = false,
                     soundEnabled = true,
-                    shortsReelsSniperEnabled = true,
                     soundEngine = vm.soundEngine,
                     socialSitesEnabled = socialOn,
                     onToggleSocialSites = { vm.toggleBrowserUrlBlocker() },
@@ -467,7 +572,9 @@ class SoundAndSocialTruthTest {
                     parkReturnTick = 0,
                     onDismiss = {},
                     onFixClick = {},
+                    onCheckClick = {},
                     onToggleSound = {},
+                    shortsReelsSniperEnabled = true,
                     onToggleShortsReelsSniper = {}
                 )
             }
@@ -488,19 +595,188 @@ class SoundAndSocialTruthTest {
                 Thread.sleep(50L)
             }
         }
+        // Fail loudly (#91): silently giving up let the node
+        // assertions below run against a possibly still-rising
+        // sheet, passing/failing for timing reasons unrelated to
+        // the behaviour under test.
+        throw AssertionError("Park sheet did not settle (compose never idled) within 5s")
+    }
+
+    /** A board row pairing: a merged node whose texts carry both
+     *  the row's name and the given word (census #4's own failure
+     *  text shows rows merge exactly so — '[NOTIFICATIONS, OFF…').
+     *  Attribution-grade: unlike a bare OFF-text search, it cannot
+     *  be satisfied by another row's word. */
+    private fun boardRowPairs(name: String, word: String): SemanticsMatcher =
+        SemanticsMatcher("board row $name prints $word") { node ->
+            if (SemanticsProperties.Text !in node.config) {
+                false
+            } else {
+                val texts = node.config[SemanticsProperties.Text].map { it.text }
+                name in texts && word in texts
+            }
+        }
+
+    /** DIAG-D3 §c2(iii) — the seed-settle gate, landed for the
+     *  two rendered social cases. The VM's init launch assigns
+     *  the published browser-blocker print only AFTER the whole
+     *  seed pass (ensureSeededAndSyncPackages) returns, and the
+     *  flow is born `true` — the stored fact's own fresh-install
+     *  value — so a one-shot "published == stored" poll passes
+     *  before the assignment even exists. When the assignment
+     *  then lands mid-chain (after a first tap flipped the print
+     *  and launched its write), it re-reads the store — possibly
+     *  before that write lands — and clobbers the print back;
+     *  the next tap, which negates the PRINT, writes the same
+     *  value again and the chain's await times out (census #4:
+     *  "and a second touch writes it back ON" — the class's
+     *  rotating failure, run to run). The gate waits for proof
+     *  the assignment has landed: the seed pass's own products
+     *  are visible (profiles are seeded inside the same pass)
+     *  AND the published/stored pair reads equal across two
+     *  consecutive driven polls. After it, the only writer of
+     *  the print in these cases is the toggle itself.
+     *
+     *  The landed-proof reads the profiles TABLE, never the VM's
+     *  profiles flow: that flow is collection-driven and stays
+     *  dark until a composition collects it, so a flow-based gate
+     *  starves pre-composition — PR #697's first run died in this
+     *  gate at 30 s in both cases on exactly that. The seed pass
+     *  writes the table directly; the table is the product. */
+    private fun awaitPublishedFactSettled(
+        vm: MonolithViewModel,
+        repository: MonolithRepository,
+        dao: com.example.data.MonolithDao
+    ) {
+        awaitTrue("the VM's init seed pass has landed (profiles seeded)") {
+            runBlocking { dao.getAllProfilesSnapshot() }.isNotEmpty()
+        }
+        val deadline = System.currentTimeMillis() + 30_000L
+        var lastPair: Pair<Boolean, Boolean>? = null
+        while (System.currentTimeMillis() < deadline) {
+            val pair = vm.browserUrlBlockerEnabled.value to
+                runBlocking { repository.isBrowserBlockerEnabled() }
+            if (pair.first == pair.second && pair == lastPair) return
+            lastPair = pair
+            ShadowLooper.idleMainLooper()
+            if (parkComposed) {
+                try {
+                    composeRule.waitForIdle()
+                } catch (t: Throwable) {
+                    // See awaitTrue.
+                }
+            }
+            Thread.sleep(25L)
+        }
+        throw AssertionError(
+            "Timed out waiting for: the published fact to settle on the stored fact"
+        )
     }
 
     /** Poll-with-looper-idle until [condition] holds (the
      *  WatchStoreRobolectricTest idiom: under Robolectric the
      *  looper is parked, so wall-clock polling alone stalls the
-     *  coroutines being awaited). */
+     *  coroutines being awaited).
+     *
+     *  Test-floor cure, round 4 (proven on run 40994003589's test
+     *  XMLs): looper-idle alone does NOT drive the ViewModel's
+     *  coroutines under the Compose test environment — the
+     *  toggle's launched Room write and the VM's WatchStore
+     *  wiring collectors sat unadvanced for the full 30 s while
+     *  the poller slept in wall-clock time, and the failures
+     *  rotated between cases run to run. Driving the compose
+     *  test scheduler (waitForIdle) on every poll advances that
+     *  work deterministically. */
     private fun awaitTrue(what: String, condition: () -> Boolean) {
         val deadline = System.currentTimeMillis() + 30_000L
         while (System.currentTimeMillis() < deadline) {
             if (condition()) return
             ShadowLooper.idleMainLooper()
+            if (parkComposed) {
+                try {
+                    composeRule.waitForIdle()
+                } catch (t: Throwable) {
+                    // A composition that never idles (infinite
+                    // animation) must not stall the poll; the
+                    // looper idle above still drove this round.
+                }
+            }
             Thread.sleep(25L)
         }
         throw AssertionError("Timed out waiting for: $what")
+    }
+
+    /** Test-floor cure, round 4: tap the PARK social sled by
+     *  dispatching real MotionEvents straight to the live
+     *  SledSwitchView. The view's onTouchEvent fires the toggle
+     *  on any ACTION_UP (BlockitSuitcaseAndSwitchesViews.kt:168);
+     *  Compose-test touch injection into the AndroidView interop
+     *  surface proved unreliable in CI, so deliver the events to
+     *  the view itself, on the UI thread, as a finger would. */
+    private fun tapParkSled() {
+        composeRule.onNodeWithTag("park_social_sled").assertExists()
+        var sled: android.view.View? = null
+        composeRule.runOnUiThread {
+            fun find(v: android.view.View) {
+                if (sled != null) return
+                if (v is com.example.ui.views.SledSwitchView) {
+                    sled = v
+                    return
+                }
+                if (v is android.view.ViewGroup) {
+                    for (i in 0 until v.childCount) find(v.getChildAt(i))
+                }
+            }
+            find(composeRule.activity.window.decorView)
+        }
+        val view = sled
+            ?: throw AssertionError("SledSwitchView not found in the PARK hierarchy")
+        val down = SystemClock.uptimeMillis()
+        composeRule.runOnUiThread {
+            val cx = view.width / 2f
+            val cy = view.height / 2f
+            val d = android.view.MotionEvent.obtain(
+                down, down, android.view.MotionEvent.ACTION_DOWN, cx, cy, 0
+            )
+            view.dispatchTouchEvent(d)
+            d.recycle()
+            val u = android.view.MotionEvent.obtain(
+                down, SystemClock.uptimeMillis(),
+                android.view.MotionEvent.ACTION_UP, cx, cy, 0
+            )
+            view.dispatchTouchEvent(u)
+            u.recycle()
+        }
+        ShadowLooper.idleMainLooper()
+        try {
+            composeRule.waitForIdle()
+        } catch (t: Throwable) {
+            // See awaitTrue.
+        }
+    }
+
+    /** Test-floor cure, round 4: drain before closing the DB.
+     *  Run 40994003589's XMLs proved the poison path: a case's
+     *  `finally { db.close() }` landed while its ViewModel's
+     *  coroutines (the init fact-load, the wiring collectors)
+     *  were still in flight; they then hit the closed pool
+     *  (IllegalStateException: connection pool has been closed)
+     *  as UNCAUGHT exceptions and the next case died at birth
+     *  with UncaughtExceptionsBeforeTest. Idling both schedulers
+     *  for a settle window lets the in-flight work finish
+     *  against the live pool before it closes. */
+    private fun closeDb(db: MonolithDatabase) {
+        repeat(40) {
+            ShadowLooper.idleMainLooper()
+            if (parkComposed) {
+                try {
+                    composeRule.waitForIdle()
+                } catch (t: Throwable) {
+                    // See awaitTrue.
+                }
+            }
+            Thread.sleep(25L)
+        }
+        db.close()
     }
 }

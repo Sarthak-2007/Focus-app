@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import com.example.data.CryptoIntegrityManager
 import com.example.data.CurioCatalog
 import com.example.data.DrawerDay
 import com.example.data.FocusSessionEntity
@@ -36,6 +37,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowLooper
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -237,12 +240,36 @@ class VaultHistoryTruthTest {
             durationMinutes = 25,
             studyBlocksCount = 1
         )
+        // AUDIT-CLOCK census seat (b) cure (#166): advance the
+        // shadow clock past the 5-minute backdate before
+        // fabricating the anchor — clamped to 1L, the verified
+        // clock read (0s, tamper = true) and the stamp banked
+        // solely on the stored counter. The ForgeLot idiom.
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(330))
         val fiveMinsAgoMono = (SystemClock.elapsedRealtime() - 300_000L).coerceAtLeast(1L)
+        val fiveMinsAgoWall = System.currentTimeMillis() - 300_000L
         db.monolithDao().updateSession(
             session.copy(
-                startWallTimeMillis = System.currentTimeMillis() - 300_000L,
+                startWallTimeMillis = fiveMinsAgoWall,
                 startElapsedRealtimeMillis = fiveMinsAgoMono,
-                elapsedSeconds = 300
+                elapsedSeconds = 300,
+                // Seat (b) cure, completed in the fourteenth sitting:
+                // startSession signed this row over its birth
+                // anchors; the fabrication above rewrites them, so
+                // the row is re-signed over the anchors it now
+                // claims. Without the re-sign the signature leg
+                // convicts the row however honest the clocks are
+                // (the identical assertion failed on PR #752's
+                // first gate attempt for this reason); blanking
+                // the signature instead would route around the
+                // HMAC leg entirely — weaker, rejected.
+                hmacSignature = CryptoIntegrityManager.signSessionState(
+                    startWallTimeMillis = fiveMinsAgoWall,
+                    startElapsedRealtimeMillis = fiveMinsAgoMono,
+                    bootCount = session.bootCount,
+                    targetDurationSeconds = session.targetDurationSeconds,
+                    isStopwatch = session.isStopwatchMode
+                )
             )
         )
 
@@ -251,6 +278,10 @@ class VaultHistoryTruthTest {
         val row = db.monolithDao().getSessionById(session.id)!!
         assertEquals(PARTIAL_STAMP_ID, row.forgedArtifactId)
         assertEquals(1, repo.forgeStats()[PARTIAL_STAMP_ID]?.count)
+        // Seat (b) cure: the ending write stamps no tamper —
+        // the verified leg ran and agreed (before the cure the
+        // row was silently stamped tamperDetected).
+        assertFalse(row.tamperDetected)
     }
 
     // ---- Finding 2: the Drawer's SPENT prints say TOTAL ----
@@ -280,7 +311,7 @@ class VaultHistoryTruthTest {
         )
         val filing = DrawerDay.filingYearMonth(now)
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 DrawerScreen(
                     storedMonths = listOf(StoredMonth(filing.first, filing.second)),
                     drawerMonth = filing,
@@ -310,13 +341,22 @@ class VaultHistoryTruthTest {
         composeRule.onNodeWithText("SPENT IN TOTAL 1H 00M").assertIsDisplayed()
     }
 
+    // Floor lane (#166 row 29): this test stood red from census
+    // #3 to #6 on the stamp assertions below, and the failure was
+    // production's, not the rig's — DrawerScreen resolved the open
+    // cabinet detail against the curios-only list while the
+    // Partial Stamp joined only a second, list-local copy, so the
+    // stamp's row rendered and took the tap but its detail could
+    // never open. The cure (PR #705) computes the joined list once
+    // and resolves against it; the assertions below stand exactly
+    // as written.
     @Test
     fun cabinetDetail_printsForgeCountAndLastDate_stampIsHonest() {
         val gyroLast = millis(LocalDate.of(2026, 10, 27), 18, 30)
         val stampLast = millis(LocalDate.of(2026, 10, 20), 10, 0)
         val filing = DrawerDay.filingYearMonth(System.currentTimeMillis())
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 DrawerScreen(
                     storedMonths = listOf(StoredMonth(filing.first, filing.second)),
                     drawerMonth = filing,

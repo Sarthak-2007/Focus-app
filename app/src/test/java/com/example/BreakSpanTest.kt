@@ -32,7 +32,8 @@ class BreakSpanTest {
         inBreak: Boolean = false,
         remaining: Int = 0,
         taken: Int = 0,
-        elapsed: Int = 0
+        elapsed: Int = 0,
+        breakStamp: Int = 0
     ) = FocusSessionEntity(
         intention = "SPAN",
         profileName = "Manual",
@@ -44,6 +45,7 @@ class BreakSpanTest {
         currentBlockIndex = blockIndex,
         isInSafeBreak = inBreak,
         safeBreakSecondsRemaining = remaining,
+        breakSeconds = breakStamp,
         breakTakenSeconds = taken,
         isActive = true,
         completedSuccessfully = false
@@ -61,6 +63,24 @@ class BreakSpanTest {
             blockIndex = 2, inBreak = true, remaining = 450, taken = 600
         )
         assertEquals(3750, inBreak.spanElapsedSeconds)
+    }
+
+    @Test
+    fun span_stampedBreak_pricesTheSessionsOwnLength() {
+        // Issue #264 B-264-18: a session stamped with a 5-minute
+        // break (300s) prices its span with 300, not the old
+        // fixed 600 — target: 3 blocks + 2 stamped breaks.
+        val stamped = row(blocks = 3, breakStamp = 300)
+        assertEquals(3 * target + 2 * 300, stamped.spanTargetSeconds)
+        // Inside stamped break 1, 60 of its 300 run (240 left):
+        // elapsed = block 1 + the 60 that actually ran.
+        val inBreak = row(
+            blockIndex = 1, inBreak = true, remaining = 240, breakStamp = 300
+        )
+        assertEquals(target + 60, inBreak.spanElapsedSeconds)
+        // An unstamped row keeps the pre-stamp arithmetic exactly.
+        val unstamped = row(blocks = 3)
+        assertEquals(3 * target + 2 * 600, unstamped.spanTargetSeconds)
     }
 
     @Test

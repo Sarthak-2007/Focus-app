@@ -1,18 +1,24 @@
 package com.example
 
+import android.content.Context
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.down
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
+import androidx.test.core.app.ApplicationProvider
 import com.example.data.FinishKind
+import com.example.data.ReceiptDeflection
 import com.example.data.ReceiptState
 import com.example.ui.components.ReceiptSheet
 import com.example.ui.components.dayLabel
@@ -22,6 +28,7 @@ import com.example.ui.theme.MyApplicationTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -48,6 +55,28 @@ class ReceiptSheetTruthTest {
 
     @get:Rule
     val composeRule = createAndroidComposeRule<ComponentActivity>()
+
+    @Before
+    fun stageA24HourDevice() {
+        // Rig contract (#166, floor lane): since #88 the app's
+        // clocks speak the DEVICE's language — ClockText reads
+        // the system 12/24-hour setting, never a pinned format
+        // (ClockText.kt: "the system 12/24-hour setting and the
+        // device locale — never a pinned Locale.US HH:mm"). This
+        // class's ARMED/ENDED assertions are written in the
+        // 24-hour forms, so the rig states its device setting the
+        // way a 24-hour phone presents it. Unstaged, the rig's
+        // unset setting resolves by default locale to 12-hour and
+        // the slip prints "ARMED 9:00 AM" — a device this class
+        // never claimed to test — while every format-free line
+        // (RAN / PLANNED / HELD, all longSpan) kept passing.
+        // Production is untouched: on a 12-hour phone the slip
+        // still prints 12-hour, exactly as #88 ruled.
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        Settings.System.putString(
+            context.contentResolver, Settings.System.TIME_12_24, "24"
+        )
+    }
 
     // ---- pure formatters -------------------------------------
 
@@ -87,7 +116,16 @@ class ReceiptSheetTruthTest {
         endedAtWallMs: Long,
         plannedSeconds: Int? = 3000,
         sealedElapsedSeconds: Int = 3000,
-        bankedBreakSeconds: Int = 0
+        bankedBreakSeconds: Int = 0,
+        heldAppsAtSeal: Int = -1,
+        heldSitesAtSeal: Int = -1,
+        heldShutAtSeal: Int = -1,
+        heldPeekAtSeal: Int = -1,
+        deflections: List<ReceiptDeflection> = emptyList(),
+        completedTasks: List<String> = emptyList(),
+        safeBreakSeconds: Int = 0,
+        armZoneId: String? = null,
+        endZoneId: String? = null
     ) = ReceiptState(
         sessionId = 57,
         number = 57,
@@ -98,20 +136,26 @@ class ReceiptSheetTruthTest {
         endedAtWallMs = endedAtWallMs,
         plannedSeconds = plannedSeconds,
         sealedElapsedSeconds = sealedElapsedSeconds,
-        heldAppsAtSeal = -1,
-        heldSitesAtSeal = -1,
+        heldAppsAtSeal = heldAppsAtSeal,
+        heldSitesAtSeal = heldSitesAtSeal,
         routineLabelWithin = null,
         bankedBreakSeconds = bankedBreakSeconds,
         shieldWasOff = false,
         faulted = false,
-        deflections = emptyList(),
+        deflections = deflections,
         restored = true,
-        receiptPublishedMonoMs = 0L
+        receiptPublishedMonoMs = 0L,
+        heldShutAtSeal = heldShutAtSeal,
+        heldPeekAtSeal = heldPeekAtSeal,
+        completedTasks = completedTasks,
+        safeBreakSeconds = safeBreakSeconds,
+        armZoneId = armZoneId,
+        endZoneId = endZoneId
     )
 
     private fun show(state: ReceiptState, onDismiss: () -> Unit = {}) {
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -155,6 +199,77 @@ class ReceiptSheetTruthTest {
             .assertDoesNotExist()
     }
 
+    // ---- issue #10: footer, HELD split, deflection marks ------
+
+    @Test
+    fun footer_plainWords_noAcronym() {
+        show(receipt(wall(9, 0), wall(10, 0)))
+        composeRule.onNodeWithText(
+            "THIS APP KEEPS ITS OWN LOG · STUDY TIME IS IN THE STUDY TIMER",
+            substring = true
+        ).assertIsDisplayed()
+        // W-43: the acronym appears NOWHERE on the rendered slip.
+        composeRule.onAllNodesWithText("YPT", substring = true)
+            .assertCountEquals(0)
+    }
+
+    @Test
+    fun heldLine_splitByTier_whenSplitRecorded() {
+        show(
+            receipt(
+                wall(9, 0), wall(10, 0),
+                heldAppsAtSeal = 9, heldSitesAtSeal = 12,
+                heldShutAtSeal = 6, heldPeekAtSeal = 3
+            )
+        )
+        composeRule.onNodeWithText(
+            "HELD 6 SHUT · 3 PEEK (2 MIN) · 12 WEBSITES",
+            substring = true
+        ).assertIsDisplayed()
+        // The merged figure never prints alongside the split.
+        composeRule.onNodeWithText("HELD 9 APPS", substring = true)
+            .assertDoesNotExist()
+    }
+
+    @Test
+    fun heldLine_preSplitRow_printsStoredTotal_neverInventsSplit() {
+        show(
+            receipt(
+                wall(9, 0), wall(10, 0),
+                heldAppsAtSeal = 9, heldSitesAtSeal = 12
+            )
+        )
+        composeRule.onNodeWithText(
+            "HELD 9 APPS · 12 SITES ON THIS PHONE",
+            substring = true
+        ).assertIsDisplayed()
+        composeRule.onNodeWithText("SHUT", substring = true)
+            .assertDoesNotExist()
+    }
+
+    @Test
+    fun deflections_printNamesOnly_noPeekMarkerAnywhere() {
+        // R-04, as the law now stands (A4): assembly admits ONLY
+        // proven blocks into this list — a granted peek never
+        // reaches the slip at all, so nothing here may carry a
+        // peek marker or read a let-through as a turn-away.
+        show(
+            receipt(
+                wall(9, 0), wall(10, 0),
+                deflections = listOf(
+                    ReceiptDeflection("KnockApp", "com.knock", wall(9, 30)),
+                    ReceiptDeflection("ShutApp", "com.shut", wall(9, 45))
+                )
+            )
+        )
+        composeRule.onNodeWithText("· KnockApp", substring = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("· ShutApp", substring = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("PEEKED", substring = true)
+            .assertDoesNotExist()
+    }
+
     @Test
     fun breakBanked_neverPrintsFalseZeroOrTruncation() {
         show(receipt(wall(9, 0), wall(9, 50), bankedBreakSeconds = 45))
@@ -162,6 +277,64 @@ class ReceiptSheetTruthTest {
             .assertIsDisplayed()
         composeRule.onNodeWithText("BREAK BANKED 0 MIN", substring = true)
             .assertDoesNotExist()
+    }
+
+    @Test
+    fun issue105_doneLines_printFinishedTasksInBookingOrder() {
+        // F1: the slip names the work finished inside the session.
+        show(
+            receipt(
+                wall(9, 0), wall(10, 0),
+                completedTasks = listOf("Algebra (30m est)", "Physics (20m est)")
+            )
+        )
+        composeRule.onNodeWithText("DONE · Algebra (30m est)", substring = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("DONE · Physics (20m est)", substring = true)
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun issue105_breakTaken_printsTheLivedSpanExactly() {
+        // F4: the Safe Break actually lived prints, exact to the
+        // second — alongside (not instead of) the valve line.
+        show(receipt(wall(9, 0), wall(9, 50), safeBreakSeconds = 270))
+        composeRule.onNodeWithText("BREAK TAKEN 4 MIN 30 SEC", substring = true)
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun issue105_breakTaken_zeroLived_printsNothing() {
+        show(receipt(wall(9, 0), wall(9, 50), safeBreakSeconds = 0))
+        composeRule.onNodeWithText("BREAK TAKEN", substring = true)
+            .assertDoesNotExist()
+        composeRule.onNodeWithText("DONE ·", substring = true)
+            .assertDoesNotExist()
+    }
+
+    @Test
+    fun issue105_deflectionOutcomes_printDifferently() {
+        // F3 remainder: a turned-away attempt and a plain block
+        // are different events and print as different lines.
+        show(
+            receipt(
+                wall(9, 0), wall(10, 0),
+                deflections = listOf(
+                    ReceiptDeflection(
+                        "KnockApp", "com.knock", wall(9, 30),
+                        outcome = "Stayed Focused"
+                    ),
+                    ReceiptDeflection(
+                        "ShutApp", "com.shut", wall(9, 45),
+                        outcome = "Blocked"
+                    )
+                )
+            )
+        )
+        composeRule.onNodeWithText("· KnockApp · TURNED AWAY", substring = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("· ShutApp · BLOCKED", substring = true)
+            .assertIsDisplayed()
     }
 
     @Test
@@ -192,6 +365,40 @@ class ReceiptSheetTruthTest {
         composeRule
             .onNodeWithText("ARMED ${dayLabel(wall(9, 0))}", substring = true)
             .assertDoesNotExist()
+    }
+
+    @Test
+    fun ended_printsInItsWitnessedZone_whenReadInAThirdZone() {
+        // Issue #152 residue: armed in Kolkata, ended in London,
+        // the slip is re-issued in New York. ENDED must print the
+        // London wall time it was lived in, with London's offset —
+        // before the end-zone witness existed it silently
+        // re-rendered in the render zone (00:20, New York).
+        val original = java.util.TimeZone.getDefault()
+        try {
+            java.util.TimeZone.setDefault(
+                java.util.TimeZone.getTimeZone("America/New_York")
+            )
+            val arm = java.time.Instant.parse("2026-10-26T03:30:00Z").toEpochMilli()
+            val end = java.time.Instant.parse("2026-10-26T04:20:00Z").toEpochMilli()
+            show(
+                receipt(
+                    arm, end,
+                    armZoneId = "Asia/Kolkata", endZoneId = "Europe/London"
+                )
+            )
+            val armDay = dayLabel(arm, java.time.ZoneId.of("Asia/Kolkata"))
+            val endDay = dayLabel(end, java.time.ZoneId.of("Europe/London"))
+            composeRule.onNodeWithText("ARMED $armDay 09:00 (+05:30)", substring = true)
+                .assertIsDisplayed()
+            composeRule.onNodeWithText("ENDED $endDay 04:20 (+00:00)", substring = true)
+                .assertIsDisplayed()
+            // The render-zone re-render of the end must not exist.
+            composeRule.onNodeWithText("ENDED ${dayLabel(end)} 00:20", substring = true)
+                .assertDoesNotExist()
+        } finally {
+            java.util.TimeZone.setDefault(original)
+        }
     }
 
     @Test

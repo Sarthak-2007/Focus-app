@@ -21,13 +21,32 @@ import org.junit.Test
  * pure functions:
  *  - F1: a stale denial prints STALE on the Guard line, never
  *    bare-and-current forever; a fresh denial still prints bare.
- *  - F5: the Guard line's fraction is built from COUNTED.size.
+ *  - F5: the Guard line's fraction is built from the size of the
+ *    set it counts — never a hard-coded denominator.
  *  - F6: the cap index is clamped, and the index↔loadout mapping
  *    round-trips through its ONE source (LoadoutStore.CAP_ORDER).
  *  - F4: the re-tap guard fires only on a real move.
  * (F2 semantics and F3 hit-area live in the composable; their pure
  * inputs — clamped index, selected index, stop words — are the
  * values asserted here.)
+ *
+ * SUPERSESSION (#166 cure, DURCH-D support): when this class was
+ * written, the counted set was WatchItemId.COUNTED (four) and
+ * board order led with ACCESSIBILITY. Two later audited changes
+ * superseded both, deliberately: issue #109 F4 made the Guard
+ * line count ALL SIX PERMISSIONS (a counted-four denominator
+ * printed `GUARD 4/4` wholeness over a board showing OVERLAY /
+ * BATTERY MISSING — the F4 lie; pinned by ChromeWaveUnitTest's
+ * GUARD 6/6 and GUARD 5/6 — OVERLAY cases) and made the line
+ * print NOTHING while any of the six is UNMEASURED; issue #313
+ * F4 reordered the board to value order (USAGE ACCESS first).
+ * This class was never updated, so its four guard-line cases
+ * built four-item snapshots and read null against the six-count
+ * line. The cases below keep their original protective intents —
+ * stale suffix (missing AND granted), first-lack precedence in
+ * board order with the lack's own age, denominator derived from
+ * the counted set's size — asserted against the current audited
+ * semantics: six PERMISSIONS, PERMISSIONS board order.
  */
 class ShieldCapGuardLineWave3Test {
 
@@ -49,14 +68,18 @@ class ShieldCapGuardLineWave3Test {
 
     @Test
     fun guardLine_freshMissingPrintsBare() {
+        // All six PERMISSIONS measured (issue #109 F4: an
+        // unmeasured OVERLAY/BATTERY silences the line entirely).
         val snap = snapOf(
             perm(WatchItemId.ACCESSIBILITY, PermState.MISSING, mono = 10_000L),
             perm(WatchItemId.USAGE_ACCESS, PermState.GRANTED, mono = 10_000L),
             perm(WatchItemId.DEVICE_ADMIN, PermState.GRANTED, mono = 10_000L),
-            perm(WatchItemId.NOTIFICATION_LISTENER, PermState.GRANTED, mono = 10_000L)
+            perm(WatchItemId.NOTIFICATION_LISTENER, PermState.GRANTED, mono = 10_000L),
+            perm(WatchItemId.OVERLAY, PermState.GRANTED, mono = 10_000L),
+            perm(WatchItemId.BATTERY, PermState.GRANTED, mono = 10_000L)
         )
         assertEquals(
-            "GUARD 3/4 — ACCESSIBILITY",
+            "GUARD 5/6 — ACCESSIBILITY",
             guardLineFor(snap, nowMono = 20_000L)?.text
         )
     }
@@ -71,10 +94,12 @@ class ShieldCapGuardLineWave3Test {
             perm(WatchItemId.ACCESSIBILITY, PermState.MISSING, mono = 10_000L),
             perm(WatchItemId.USAGE_ACCESS, PermState.GRANTED, mono = 100_000L),
             perm(WatchItemId.DEVICE_ADMIN, PermState.GRANTED, mono = 100_000L),
-            perm(WatchItemId.NOTIFICATION_LISTENER, PermState.GRANTED, mono = 100_000L)
+            perm(WatchItemId.NOTIFICATION_LISTENER, PermState.GRANTED, mono = 100_000L),
+            perm(WatchItemId.OVERLAY, PermState.GRANTED, mono = 100_000L),
+            perm(WatchItemId.BATTERY, PermState.GRANTED, mono = 100_000L)
         )
         assertEquals(
-            "GUARD 3/4 — ACCESSIBILITY STALE",
+            "GUARD 5/6 — ACCESSIBILITY STALE",
             guardLineFor(snap, nowMono = 110_000L)?.text
         )
     }
@@ -84,25 +109,30 @@ class ShieldCapGuardLineWave3Test {
         // Verifier-added precedence cases: the FIRST lack in board
         // order is named, with ITS OWN age suffix — a later stale
         // lack never steals the name, and a stale first lack is
-        // never laundered by a fresh second one.
+        // never laundered by a fresh second one. Board order is
+        // PERMISSIONS order (issue #313 F4): USAGE ACCESS leads.
         val freshFirst = snapOf(
-            perm(WatchItemId.ACCESSIBILITY, PermState.MISSING, mono = 100_000L),
-            perm(WatchItemId.USAGE_ACCESS, PermState.MISSING, mono = 10_000L),
+            perm(WatchItemId.USAGE_ACCESS, PermState.MISSING, mono = 100_000L),
+            perm(WatchItemId.ACCESSIBILITY, PermState.MISSING, mono = 10_000L),
             perm(WatchItemId.DEVICE_ADMIN, PermState.GRANTED, mono = 100_000L),
-            perm(WatchItemId.NOTIFICATION_LISTENER, PermState.GRANTED, mono = 100_000L)
+            perm(WatchItemId.NOTIFICATION_LISTENER, PermState.GRANTED, mono = 100_000L),
+            perm(WatchItemId.OVERLAY, PermState.GRANTED, mono = 100_000L),
+            perm(WatchItemId.BATTERY, PermState.GRANTED, mono = 100_000L)
         )
         assertEquals(
-            "GUARD 2/4 — ACCESSIBILITY",
+            "GUARD 4/6 — USAGE ACCESS",
             guardLineFor(freshFirst, nowMono = 110_000L)?.text
         )
         val staleFirst = snapOf(
-            perm(WatchItemId.ACCESSIBILITY, PermState.GRANTED, mono = 10_000L),
-            perm(WatchItemId.USAGE_ACCESS, PermState.MISSING, mono = 100_000L),
+            perm(WatchItemId.USAGE_ACCESS, PermState.GRANTED, mono = 10_000L),
+            perm(WatchItemId.ACCESSIBILITY, PermState.MISSING, mono = 100_000L),
             perm(WatchItemId.DEVICE_ADMIN, PermState.GRANTED, mono = 100_000L),
-            perm(WatchItemId.NOTIFICATION_LISTENER, PermState.GRANTED, mono = 100_000L)
+            perm(WatchItemId.NOTIFICATION_LISTENER, PermState.GRANTED, mono = 100_000L),
+            perm(WatchItemId.OVERLAY, PermState.GRANTED, mono = 100_000L),
+            perm(WatchItemId.BATTERY, PermState.GRANTED, mono = 100_000L)
         )
         assertEquals(
-            "GUARD 2/4 — ACCESSIBILITY STALE",
+            "GUARD 4/6 — USAGE ACCESS STALE",
             guardLineFor(staleFirst, nowMono = 110_000L)?.text
         )
     }
@@ -121,23 +151,28 @@ class ShieldCapGuardLineWave3Test {
     }
 
     // --------------------------------------------------------------
-    // F5 — the denominator is COUNTED.size, by construction
+    // F5 — the denominator is the counted set's size, by construction
+    // (Issue #109 F4 superseded the counted set: it is now all six
+    // PERMISSIONS, so the size is PERMISSIONS.size. The method name
+    // keeps its wave-3 form for floor-name continuity on #166; the
+    // law it pins is unchanged — the denominator is DERIVED from
+    // the set the line counts, never a hard-coded literal.)
     // --------------------------------------------------------------
 
     @Test
     fun guardLine_fractionDenominatorIsCountedSize() {
-        val total = WatchItemId.COUNTED.size
+        val total = WatchItemId.PERMISSIONS.size
         val allGranted = snapOf(
-            *WatchItemId.COUNTED.map { perm(it, PermState.GRANTED, mono = 10_000L) }.toTypedArray()
+            *WatchItemId.PERMISSIONS.map { perm(it, PermState.GRANTED, mono = 10_000L) }.toTypedArray()
         )
         assertEquals("GUARD $total/$total", guardLineFor(allGranted, nowMono = 20_000L)?.text)
 
         val oneMissing = snapOf(
-            perm(WatchItemId.COUNTED.first(), PermState.MISSING, mono = 10_000L),
-            *WatchItemId.COUNTED.drop(1).map { perm(it, PermState.GRANTED, mono = 10_000L) }.toTypedArray()
+            perm(WatchItemId.PERMISSIONS.first(), PermState.MISSING, mono = 10_000L),
+            *WatchItemId.PERMISSIONS.drop(1).map { perm(it, PermState.GRANTED, mono = 10_000L) }.toTypedArray()
         )
         assertEquals(
-            "GUARD ${total - 1}/$total — ${WatchItemId.COUNTED.first().boardName}",
+            "GUARD ${total - 1}/$total — ${WatchItemId.PERMISSIONS.first().boardName}",
             guardLineFor(oneMissing, nowMono = 20_000L)?.text
         )
     }

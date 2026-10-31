@@ -37,8 +37,8 @@ import org.robolectric.shadows.ShadowLooper
  * itself. What each frame must show:
  *  - PROVING (row exists, t=0 not declared): the slide tenancy
  *    still stands, no running chips, no strike — and since issue
- *    #98 the sentence slot names the proving with its live count
- *    (the silent black box is closed).
+ *    #98 + #126 F2 the sentence slot names the proving with its
+ *    live count (the silent black box is closed).
  *  - JAMMED: the slot names the unanswering link.
  *  - SEALED (t=0 declared): the running tenancy takes the zone.
  *  - A row with the phase Idle (a routine-born session): runs
@@ -61,7 +61,12 @@ class CascadeDeckRenderTest {
             File("app/shots-redirect.txt")
         ).firstOrNull { it.isFile }
         val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        File(target ?: "/home/hatch/workspace/clone-inspect/shots")
+        // issue #66 cluster-priority: hardcoded author path removed, same cure as ScreenshotHarnessTest.
+        // Finisher cure: a redirect target that cannot be created on this machine falls through
+        // to the next candidate (a committed lane-local path poisoned every CI capture).
+        listOfNotNull(target, System.getenv("MONOLITH_SHOTS_DIR"), "build/outputs/screenshots")
+            .map { File(it) }
+            .first { it.mkdirs() || it.isDirectory }
     }
 
     @Before
@@ -91,7 +96,6 @@ class CascadeDeckRenderTest {
                     studyBlocksCount = 2,
                     activeTask = null,
                     queuedTasks = emptyList(),
-                    capturedNotificationsCount = 0,
                     soundEngine = TactileSoundEngine(context),
                     isDarkTheme = dark,
                     onDialMinutesChanged = {},
@@ -104,7 +108,6 @@ class CascadeDeckRenderTest {
                     onRequestDisarm = {},
                     onCancelWithinGraceWindow = {},
                     onOpenAlwaysOnDeskClock = {},
-                    onOpenNotificationDigest = {},
                     armPhase = phase
                 )
             }
@@ -127,6 +130,7 @@ class CascadeDeckRenderTest {
 
     private fun capture(name: String) {
         val out = File(shotsDir, name)
+        out.parentFile?.mkdirs() // batch-10 CI cure: shots dir must exist on a clean runner
         composeRule.runOnUiThread {
             val decor = composeRule.activity.window.decorView
             val w = if (decor.width > 0) decor.width else 1318
@@ -143,7 +147,6 @@ class CascadeDeckRenderTest {
             FileOutputStream(out).use { fos -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos) }
             bitmap.recycle()
         }
-        println("CASCADE-RENDER captured $name size=${out.length()}")
     }
 
     private fun proving(sessionId: Int?) = ArmPhase.Proving(
@@ -182,10 +185,15 @@ class CascadeDeckRenderTest {
         // the valve in pixels while the text query finds nothing);
         // the tag is the chip's designed handle, and the captures
         // carry the text-level evidence.
-        // Issue #98: the slot is no longer silent while real
-        // blocking already runs — it prints the proving word with
-        // the live proved count (the fabricated phase has SESSION
-        // confirmed, 1 of 3), and it is NOT the jam sentence.
+        // Issues #98 + #126 F2: the slot is no longer silent while
+        // real blocking already runs — it prints the proving word
+        // with the live proved count (the fabricated phase has
+        // SESSION confirmed, 1 of 3), and it is NOT the jam
+        // sentence. (At the #126-to-main merge the slot's wording
+        // is main's #98 form, "CHECKING THE SEAL — 1 OF 3 PROVED";
+        // the branch's duplicate wording was retired with its
+        // duplicated helper when the helpers moved to
+        // MonolithComponentLogic.)
         composeRule.onNodeWithTag("slide_to_start_view").assertExists()
         composeRule.onNodeWithTag("request_disarm_button").assertDoesNotExist()
         composeRule.onNodeWithTag("grace_abort_button").assertDoesNotExist()
@@ -206,17 +214,42 @@ class CascadeDeckRenderTest {
         capture("cascade_idle_blocks_day.png")
     }
 
+    // The jam sentence's live form (issue #126 F4): the Deck
+    // renders jamSentenceFor(phase, nowMono) — the sentence names
+    // the first STILL-pending link from the live links map,
+    // carries the retry verb, and counts down to the annulment
+    // ("SHIELD STILL HASN'T ANSWERED — RETRYING · ANNULS IN nS.").
+    // The retired sentence this pair once asserted ("THE SHIELD
+    // DIDN'T ANSWER — STILL CHECKING.") exists in no resource:
+    // #126 F4 replaced the frozen jamSet form because it kept
+    // accusing links that had already answered and hid the
+    // deadline until it fired. The exact wording — both forms,
+    // the name argument, the countdown arithmetic — is pinned
+    // deterministically in ArmProvingControllerTest; the seconds
+    // digit here is the machine's live clock reading and cannot
+    // be asserted as a constant. What this render pair guards is
+    // the claim in its name: in the composed frame, the jam slot
+    // prints, and it names the unanswering link — SHIELD, the
+    // fixture's one pending link (SESSION and ACCESS confirmed;
+    // naming either of them fails this assertion).
+    private fun assertJamNamesTheShield() {
+        composeRule.onNodeWithText(
+            "SHIELD STILL HASN'T ANSWERED — RETRYING · ANNULS IN",
+            substring = true
+        ).assertIsDisplayed()
+    }
+
     @Test
     fun jammedNamesTheUnansweringLink() {
         setDeck(jammed(), dark = false)
-        composeRule.onNodeWithText("SHIELD DIDN'T ANSWER — STILL PROVING.").assertIsDisplayed()
+        assertJamNamesTheShield()
         capture("cascade_jammed_day.png")
     }
 
     @Test
     fun jammedNamesTheUnansweringLinkAtNight() {
         setDeck(jammed(), dark = true)
-        composeRule.onNodeWithText("SHIELD DIDN'T ANSWER — STILL PROVING.").assertIsDisplayed()
+        assertJamNamesTheShield()
         capture("cascade_jammed_night.png")
     }
 

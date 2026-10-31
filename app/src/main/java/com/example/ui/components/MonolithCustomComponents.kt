@@ -1,4 +1,6 @@
 package com.example.ui.components
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -13,12 +15,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,7 +36,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import android.view.HapticFeedbackConstants
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -79,6 +84,29 @@ import java.util.Locale
  * Helper to build mixed-typography strings where words render in Google Sans / PlusJakartaSans
  * and every number renders in Space Mono / JetBrainsMono (DEVELOPER-GUIDE.pdf §2).
  */
+/**
+ * Issue #282 (R5 supplement): press feedback as a component-level
+ * invariant. Indication is purged app-wide (Theme.kt's
+ * NoRippleIndication — controls answer with position, fill and
+ * sound, never a wash), so a Compose control wired with a bare
+ * clickable gave the user no feedback of any kind: no ripple, no
+ * buzz, no click. This wrapper fires the platform haptic tick on
+ * every press, so every clickable primitive in this file answers
+ * the finger. Canvas views keep their richer TactileSoundEngine
+ * voices; this is the Compose floor, not a replacement for them.
+ */
+@Composable
+fun Modifier.monolithClickable(
+    role: Role? = Role.Button,
+    onClick: () -> Unit
+): Modifier {
+    val view = LocalView.current
+    return clickable(role = role) {
+        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        onClick()
+    }
+}
+
 @Composable
 fun rememberMixedTypographyText(
     wordPrefix: String,
@@ -210,7 +238,7 @@ fun BlockitActionChip(
             .clip(RoundedCornerShape(12.dp))
             .background(bg)
             .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
-            .clickable(role = Role.Button, onClick = onClick)
+            .monolithClickable(onClick = onClick)
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -257,7 +285,7 @@ fun BlockitActionChip(
  */
 @Composable
 fun MonolithPullDownHeader(
-    guardLine: GuardLinePrint?,
+    guardLine: GuardLinePrint,
     isSealed: Boolean,
     onGuardLineTap: () -> Unit
 ) {
@@ -275,7 +303,7 @@ fun MonolithPullDownHeader(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "MONOLITH",
+                text = stringResource(R.string.brand_word),
                 fontFamily = AnonymousProFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 10.sp,
@@ -284,23 +312,39 @@ fun MonolithPullDownHeader(
                 modifier = Modifier.padding(start = 20.dp)
             )
             Spacer(modifier = Modifier.weight(1f))
-            if (guardLine != null) {
-                Text(
-                    text = guardLine.text,
-                    fontFamily = AnonymousProFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    letterSpacing = 0.5.sp,
-                    color = scheme.onBackground,
-                    modifier = Modifier
-                        .padding(end = 20.dp)
-                        .then(
-                            if (isSealed) Modifier
-                            else Modifier.sizeIn(minHeight = 48.dp).clickable(role = Role.Button) { onGuardLineTap() }
-                        )
-                        .testTag("header_guard_line")
-                )
-            }
+            // The line always prints (issue #9, F-G4): unmeasured
+            // is GUARD — NOT CHECKED, never a blank band. The merged
+            // guardLine is non-null by construction (the VM's
+            // guardLinePrint flow never hands null — M-A3 §14
+            // decider read), so no null gate stands here.
+            Text(
+                text = guardLine.text,
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp,
+                letterSpacing = 0.5.sp,
+                color = scheme.onBackground,
+                modifier = Modifier
+                    .padding(end = 20.dp)
+                    // Always tappable (main, design-revamp salvage
+                    // D-01): the host's onGuardLineTap decides at
+                    // tap time — unsealed it opens PARK (openPark
+                    // re-reads the navigation lock at the tap,
+                    // HB-2), sealed it opens the launcher.
+                    // Stripping the clickable while sealed (train's
+                    // form) made the sealed door dead code.
+                    .sizeIn(minHeight = 48.dp)
+                    .monolithClickable { onGuardLineTap() }
+                    // Issue #97 (recomposed): the Guard line's
+                    // tap target carries its spoken label — the
+                    // way back into setup is named for a11y, not
+                    // just printed for sight.
+                    .semantics {
+                        contentDescription =
+                            "Park — setup, permissions and settings"
+                    }
+                    .testTag("header_guard_line")
+            )
         }
         Box(
             modifier = Modifier
@@ -452,74 +496,15 @@ private fun StripCell(
 }
 
 /**
- * The 53dp proof band (Kato's corrected sheet): three cells on a
- * recess body, square corners (radius 0 — the band is architecture,
- * not a card), 1px vertical hairlines one tone above recess, and the
- * seam stamp riding the hairline at the band's foot. Density flips
- * land in one frame — no easing, no pulse, ever: the strip is print.
+ * RETIRED (issue #4): the 53dp proof band (ProofStripBand + its
+ * StripCell) is gone — the Deck's pinned stack now seats the
+ * SealBar (components/SealBar.kt) at the same 53dp address, and
+ * the BIND / PROOF seam marks render nowhere. The pure helpers
+ * above (seamMarksFor, endsAtText, imprintTenantText,
+ * refusalSentenceFor, jamSentenceFor) stay: the sentence slot
+ * and the imprint below still read them, and the seam table
+ * remains pinned by its unit tests as the wire's grade record.
  */
-@Composable
-fun ProofStripBand(
-    blockWord: String,
-    blockDensity: StripDensity,
-    appsWord: String,
-    appsDensity: StripDensity,
-    timeText: String,
-    timeDensity: StripDensity,
-    stampLeft: String?,
-    stampRight: String?,
-    modifier: Modifier = Modifier
-) {
-    val tones = stripToneColors()
-    Column(
-        modifier
-            .fillMaxWidth()
-            .height(53.dp)
-            .background(tones.recess)
-    ) {
-        Row(Modifier.fillMaxWidth().weight(1f)) {
-            StripCell("BLOCK", blockWord, blockDensity, mono = false, tones = tones, modifier = Modifier.weight(1.05f).fillMaxHeight())
-            Box(Modifier.width(1.dp).fillMaxHeight().background(tones.divider))
-            StripCell("APPS", appsWord, appsDensity, mono = true, tones = tones, modifier = Modifier.weight(0.9f).fillMaxHeight())
-            Box(Modifier.width(1.dp).fillMaxHeight().background(tones.divider))
-            StripCell("TIME", timeText, timeDensity, mono = true, tones = tones, modifier = Modifier.weight(1.3f).fillMaxHeight())
-        }
-        // The seam: the stamp rides the hairline. Left mark inset
-        // 10dp; the right grade ends 10dp from the right edge; on
-        // collision the left degrades first (single line, clipped).
-        Box(Modifier.fillMaxWidth().height(12.dp)) {
-            Box(
-                Modifier
-                    .align(Alignment.TopStart)
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(tones.divider)
-            )
-            if (stampLeft != null && stampRight != null) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(start = 10.dp, end = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = stampLeft,
-                        style = PillBadgeTextStyle,
-                        color = tones.secondaryInk,
-                        maxLines = 1,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    Text(
-                        text = stampRight,
-                        style = PillBadgeTextStyle,
-                        color = tones.secondaryInk,
-                        maxLines = 1
-                    )
-                }
-            }
-        }
-    }
-}
 
 /**
  * The sentence slot (Suki): 22dp, reserved always, directly under the
@@ -566,7 +551,7 @@ fun RefusalSentenceSlot(
         val current = displayed
         if (current != null) {
             Text(
-                text = current.text,
+                text = stringResource(current.textRes, *current.args.toTypedArray()),
                 style = StripStateWordStyle,
                 color = tones.glyphInk.copy(alpha = alpha),
                 modifier = Modifier
@@ -574,7 +559,7 @@ fun RefusalSentenceSlot(
                     .then(
                         when (val action = current.action) {
                             null -> Modifier
-                            else -> Modifier.clickable(role = Role.Button) { onAction(action) }
+                            else -> Modifier.monolithClickable { onAction(action) }
                         }
                     )
             )
@@ -618,14 +603,9 @@ fun ImprintSlot(
             onStruck(key)
             // Reduced motion (animator scale 0): the Strike is a
             // single-frame step, filed in §3.3 — snap, don't tween.
-            val animatorScale = runCatching {
-                android.provider.Settings.Global.getFloat(
-                    context.contentResolver,
-                    android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
-                    1f
-                )
-            }.getOrDefault(1f)
-            if (animatorScale == 0f) {
+            // Issue #256: the read is the shared isReducedMotion —
+            // this site was the tree's only consumer of it.
+            if (isReducedMotion(context)) {
                 scale.snapTo(1f)
                 inkAlpha.snapTo(0.88f)
             } else {
