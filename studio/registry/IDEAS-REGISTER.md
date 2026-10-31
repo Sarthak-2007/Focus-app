@@ -131,4 +131,13 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | Test call-site census script (stdlib, prints PASS, catches seeded regressions) | Fuge | #2 | BUILT (studio/tools/check_test_callsites.py, on main via PR #165) |
 | Launcher block screen: un-exitable launcher surface + separate allowed/peek screens | Sarthak's ruling 04:29 (not a seat idea — his order) | #22/#18 | BUILT-IN-PROGRESS (Umbau lane; first slice merged via PR #167) |
 
+## The widget as a stamped plate (DESIGNER-E-1, WING-A ideation)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| Stamped-plate widget: one machined plate (rivets, hairline frame, maker's-mark wordmark) whose six states differ only by stamp treatment — struck box SEALED / plain print OPEN / dashed box OPEN-next / alert box UNPROVEN / unboxed ARMING / double-border void box NO READ; full spec on #155 (comment 6536917315), build home = #18 revamp per the END-PHASE park (6525111973) | DESIGNER-E-1 | #155/#18 | PANEL-QUEUED (design filed; builder-complete; price M, 3–4 builder-days) |
+| PRINTED HH:mm honesty line on the tall (3×2) plate: the plate admits when its state was last read — staleness as a printed fact, not a hidden lie (UNPROVEN tall prints LAST PROOF instead) | DESIGNER-E-1 | #155/#18 | PANEL-QUEUED (rides the plate build; alone S, 0.5d) |
+| Glance-tap routing by state: SEALED/UNPROVEN/NO READ → Shield surface, OPEN → Deck (answers park item 3 on #155; notification F5 routing is the precedent) | DESIGNER-E-1 | #155/#18 | PANEL-QUEUED (design ruling for the revamp pass to ratify) |
+| Tier-B rendered-text plate (park's original "rendered-text" form) only if Tier-A @font verification fails on a target launcher; accessibility-gated on the spoken sentence | DESIGNER-E-1 | #155/#18 | PARKED-WITH-REASON (contingent on the Tier-A launcher check; L, 5–8 builder-days if triggered) |
+
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
