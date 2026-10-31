@@ -103,4 +103,7 @@
     <string name="sentence_annul_failed">ANNUL FAILED — THE ROW MAY STILL STAND. NOTHING WAS PROVED.</string>
     <string name="pill_end_break">END BREAK</string>
     <string name="pill_end_peek">END PEEK</string>
+    <string name="pill_label_break">BREAK</string>
+    <string name="pill_label_session_elapsed">SESSION · ELAPSED</string>
+    <string name="pill_label_session_block">SESSION · BLOCK %1$d/%2$d</string>
 </resources>
