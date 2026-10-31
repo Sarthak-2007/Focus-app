@@ -44,19 +44,21 @@ class Issue155CompletionExpiryTest {
             Long::class.javaPrimitiveType,
             String::class.java,
             Long::class.javaObjectType,
-            Int::class.javaObjectType
+            Int::class.javaObjectType,
+            Boolean::class.javaPrimitiveType
         )
         method.isAccessible = true
         return method.invoke(
             service, "Session Complete", "Your receipt is waiting in the Ledger.",
-            ongoing, autoCancel, timeoutAfterMs, null, null, null
+            ongoing, autoCancel, timeoutAfterMs, null, null, null, false
         ) as Notification
     }
 
     private fun buildNotificationCard(
         title: String,
         subtitle: String,
-        ongoing: Boolean
+        ongoing: Boolean,
+        inSafeBreak: Boolean = false
     ): Notification {
         val service = Robolectric.buildService(MonolithShieldService::class.java)
             .create().get()
@@ -69,11 +71,12 @@ class Issue155CompletionExpiryTest {
             Long::class.javaPrimitiveType,
             String::class.java,
             Long::class.javaObjectType,
-            Int::class.javaObjectType
+            Int::class.javaObjectType,
+            Boolean::class.javaPrimitiveType
         )
         method.isAccessible = true
         return method.invoke(
-            service, title, subtitle, ongoing, false, 0L, null, null, null
+            service, title, subtitle, ongoing, false, 0L, null, null, null, inSafeBreak
         ) as Notification
     }
 

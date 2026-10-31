@@ -149,8 +149,24 @@ class Issue155Iq4LifecycleTest {
     fun publicVersionIsGatedOnTheProtectingWitness() {
         // A7: the lock-screen gate reads the witness and the
         // missing-grant state, not only the card's subtitle.
+        // (The decision now lives in the pure shieldPublicText;
+        // its inputs are the witness and the missing count.)
         val src = shieldSource()
         assertTrue(src.contains("!protecting -> \"Monolith session in progress\""))
-        assertTrue(src.contains("missing.isNotEmpty() -> \"Monolith session in progress\""))
+        assertTrue(src.contains("missingCount > 0 -> \"Monolith session in progress\""))
+        assertTrue(src.contains("missingCount = missing.size"))
+    }
+
+    @Test
+    fun safeBreakThreadsIntoThePublicVersion() {
+        // IQ-3 reseat (re-close bench): the break's public face is
+        // fed by an explicit inSafeBreak threaded from the loop's
+        // break branch — and the battery re-post passes the
+        // remembered break state, so no post path can revive the
+        // standing "protected" line mid-break.
+        val src = shieldSource()
+        assertTrue(src.contains("inSafeBreak = updated.isInSafeBreak"))
+        assertTrue(src.contains("inSafeBreak = lastBaseInSafeBreak"))
+        assertTrue(src.contains("inSafeBreak -> \"Monolith \\u2014 on a break \\u00b7 peek apps open\""))
     }
 }
