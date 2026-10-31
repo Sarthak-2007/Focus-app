@@ -23,12 +23,16 @@ val epochMinutesVersionCode: Int = (System.currentTimeMillis() / 60_000L).toInt(
 
 android {
   namespace = "com.example"
-  compileSdk { version = release(36) { minorApiLevel = 1 } }
+  // compileSdk/targetSdk 37 (was 36.1/36): compose-bom 2026.09.00
+  // (Compose 1.12.1) declares minCompileSdk=37 in its AAR metadata —
+  // this raise landed ahead of the BOM bump (PR #213) so the bump
+  // compiles. REFIT-DEPS-RAISE, Oct 31 2026; determination on #245.
+  compileSdk { version = release(37) }
 
   defaultConfig {
     applicationId = "com.aistudio.monolith.kxtpzr"
     minSdk = 24
-    targetSdk = 36
+    targetSdk = 37
     versionCode = epochMinutesVersionCode
     versionName = "1.1"
 
