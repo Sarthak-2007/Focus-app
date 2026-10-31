@@ -226,14 +226,15 @@ class ShortsSniperTruthTest {
                 MonolithDatabase.MIGRATION_16_17,
                 MonolithDatabase.MIGRATION_17_18,
                 MonolithDatabase.MIGRATION_18_19,
-                MonolithDatabase.MIGRATION_19_20
+                MonolithDatabase.MIGRATION_19_20,
+                MonolithDatabase.MIGRATION_20_21
             )
             .build()
         runBlocking {
             val dao = room.monolithDao()
             // The read forces the open: Room has migrated
-            // 7→8→9→10→11→12→13→14→15→16→17→18→19 AND validated
-            // the result against every v19 entity.
+            // 7→8→9→10→11→12→13→14→15→16→17→18→19→20→21 AND
+            // validated the result against every v21 entity.
             val settings = dao.getGuardSettingsSnapshot()
             assertNotNull(settings)
             assertTrue(settings!!.shortsReelsSniperEnabled)
