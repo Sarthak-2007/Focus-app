@@ -700,43 +700,17 @@ fun ShieldMatrixScreen(
             onSelectCategory = onSelectCategory
         )
 
-        // Issue #107 (#2): the PEEK terms again directly above the
-        // sleds that sell it — the middle stop's contract, at the
-        // point of choice.
-        if (filteredApps.isNotEmpty()) {
-            item {
-                Text(
-                    text = peekTermsLine(peekMinutes),
-                    fontFamily = AtkinsonHyperlegibleFamily,
-                    fontSize = 11.sp,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.testTag("shield_peek_terms_catalogue")
-                )
-            }
-        }
-
-        // =====================================================================
-        // SECTION 5: ULTRA-MINIMAL 3-STOP APP SLED ROWS (Decision #14)
-        // =====================================================================
-        // GROUPED BY RULING (R-1; lead ruling R4): a group header
-        // per ruling present (PEEK -> SHUT -> OPEN), main's #107
-        // row wiring carried inside the groups — a name appears
-        // exactly once, and the row keeps its full wiring.
-        catalogueGroups.forEach { (tier, groupApps) ->
-            item(key = "catalogue_group_${tier.name}") {
-                CatalogueGroupHeader(tier = tier, peekMinutes = peekMinutes)
-            }
-            items(groupApps, key = { it.packageName }) { app ->
-                CatalogueAppRow(
-                    app = app,
-                    effectiveNight = effectiveNight,
-                    soundEngine = soundEngine,
-                    onSetAppTier = gatedSetAppTier,
-                    onCycleDailyLimit = gatedCycleDailyLimit,
-                    onSetAppCategory = gatedSetAppCategory
-                )
-            }
-        }
+        shieldCatalogueSleds(
+            scheme = scheme,
+            filteredApps = filteredApps,
+            peekMinutes = peekMinutes,
+            catalogueGroups = catalogueGroups,
+            effectiveNight = effectiveNight,
+            soundEngine = soundEngine,
+            gatedSetAppTier = gatedSetAppTier,
+            gatedCycleDailyLimit = gatedCycleDailyLimit,
+            gatedSetAppCategory = gatedSetAppCategory
+        )
 
         // =====================================================================
         // SECTION 5B: THE GUARDS (issue #51 F1 cure) — the sniper,
@@ -1528,6 +1502,67 @@ private fun LazyListScope.shieldSearchFilterStrip(
                     .testTag("shield_no_match_line")
             )
         }
+        }
+    }
+}
+
+/**
+ * Issue #90 (complexity F4 slice): SECTION 5 — the peek-terms
+ * item and the grouped catalogue sled rows (Decision #14) of
+ * ShieldMatrixScreen's list — extracted as a LazyListScope
+ * extension, in the pattern of standingOrdersSlip.
+ * Behaviour-identical: same items, same keys, same testTags;
+ * the host's values arrive as parameters and the rows' three
+ * writes ride the host's own gated callbacks (gatedSetAppTier
+ * / gatedCycleDailyLimit / gatedSetAppCategory) by name — no
+ * line inside the section is rewired.
+ */
+private fun LazyListScope.shieldCatalogueSleds(
+    scheme: androidx.compose.material3.ColorScheme,
+    filteredApps: List<BlockedAppEntity>,
+    peekMinutes: Int,
+    catalogueGroups: List<Pair<AppBlockTier, List<BlockedAppEntity>>>,
+    effectiveNight: Boolean,
+    soundEngine: TactileSoundEngine?,
+    gatedSetAppTier: (String, AppBlockTier) -> Unit,
+    gatedCycleDailyLimit: (BlockedAppEntity) -> Unit,
+    gatedSetAppCategory: (String, AppCategory) -> Unit
+) {
+    // Issue #107 (#2): the PEEK terms again directly above the
+    // sleds that sell it — the middle stop's contract, at the
+    // point of choice.
+    if (filteredApps.isNotEmpty()) {
+        item {
+            Text(
+                text = peekTermsLine(peekMinutes),
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontSize = 11.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.testTag("shield_peek_terms_catalogue")
+            )
+        }
+    }
+
+    // =====================================================================
+    // SECTION 5: ULTRA-MINIMAL 3-STOP APP SLED ROWS (Decision #14)
+    // =====================================================================
+    // GROUPED BY RULING (R-1; lead ruling R4): a group header
+    // per ruling present (PEEK -> SHUT -> OPEN), main's #107
+    // row wiring carried inside the groups — a name appears
+    // exactly once, and the row keeps its full wiring.
+    catalogueGroups.forEach { (tier, groupApps) ->
+        item(key = "catalogue_group_${tier.name}") {
+            CatalogueGroupHeader(tier = tier, peekMinutes = peekMinutes)
+        }
+        items(groupApps, key = { it.packageName }) { app ->
+            CatalogueAppRow(
+                app = app,
+                effectiveNight = effectiveNight,
+                soundEngine = soundEngine,
+                onSetAppTier = gatedSetAppTier,
+                onCycleDailyLimit = gatedCycleDailyLimit,
+                onSetAppCategory = gatedSetAppCategory
+            )
         }
     }
 }
