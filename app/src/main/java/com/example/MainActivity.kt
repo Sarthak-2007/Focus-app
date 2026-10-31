@@ -1284,14 +1284,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             parkIntroDeliveredAtMonoMs = SystemClock.elapsedRealtime()
         }
     }
-    // The dismissal verdict for THIS opening, computed at the
-    // moment of dismissal by every closePark call site below.
-    fun parkIntroSpendForDismissal(): Boolean = parkIntroSpendsOnDismiss(
-        deliveredThisOpen = parkIntroDeliveredThisOpen,
-        fixTripTakenThisOpen = parkIntroFixTripThisOpen,
-        deliveredAtMonoMs = parkIntroDeliveredAtMonoMs,
-        nowMonoMs = SystemClock.elapsedRealtime()
-    )
 
     // Issue #280 (R5 supplement): POST_NOTIFICATIONS was declared
     // in the manifest but never asked, so the seal's own
@@ -1402,7 +1394,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     if (parkOpen) {
         BackHandler {
             closePark(parkOpenState, viewModel,
-                spendParkIntro = parkIntroSpendForDismissal())
+                spendParkIntro = parkIntroSpendForDismissal(parkIntroDeliveredThisOpen, parkIntroFixTripThisOpen, parkIntroDeliveredAtMonoMs))
         }
     } else if (currentDestination != MonolithDestination.DECK) {
         BackHandler { viewModel.navigateTo(MonolithDestination.DECK) }
@@ -1561,7 +1553,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         when {
                             parkOpen -> closePark(
                                 parkOpenState, viewModel,
-                                spendParkIntro = parkIntroSpendForDismissal()
+                                spendParkIntro = parkIntroSpendForDismissal(parkIntroDeliveredThisOpen, parkIntroFixTripThisOpen, parkIntroDeliveredAtMonoMs)
                             )
                             // While sealed, the Guard line opens the
                             // launcher — the sealed phone's home.
@@ -1964,7 +1956,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         onDismiss = {
                             closePark(
                                 parkOpenState, viewModel,
-                                spendParkIntro = parkIntroSpendForDismissal()
+                                spendParkIntro = parkIntroSpendForDismissal(parkIntroDeliveredThisOpen, parkIntroFixTripThisOpen, parkIntroDeliveredAtMonoMs)
                             )
                         },
                         onFixClick = { item -> openFixPane(context, permissionStepStore, viewModel, parkIntroDeliveredThisOpen, { parkIntroFixTripThisOpen = true }, item) },
@@ -1993,7 +1985,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         onOpenReception = {
                             closePark(
                                 parkOpenState, viewModel,
-                                spendParkIntro = parkIntroSpendForDismissal()
+                                spendParkIntro = parkIntroSpendForDismissal(parkIntroDeliveredThisOpen, parkIntroFixTripThisOpen, parkIntroDeliveredAtMonoMs)
                             )
                             receptionOpen = true
                         },
@@ -2080,7 +2072,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         view.onTabSelected = { idx ->
                             if (parkOpen) closePark(
                                 parkOpenState, viewModel,
-                                spendParkIntro = parkIntroSpendForDismissal()
+                                spendParkIntro = parkIntroSpendForDismissal(parkIntroDeliveredThisOpen, parkIntroFixTripThisOpen, parkIntroDeliveredAtMonoMs)
                             )
                             val dest = when (idx) {
                                 0 -> MonolithDestination.DECK
@@ -2110,7 +2102,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                             if (parkOpen) {
                                 closePark(
                                     parkOpenState, viewModel,
-                                    spendParkIntro = parkIntroSpendForDismissal()
+                                    spendParkIntro = parkIntroSpendForDismissal(parkIntroDeliveredThisOpen, parkIntroFixTripThisOpen, parkIntroDeliveredAtMonoMs)
                                 )
                             } else {
                                 openPark(parkOpenState, sealed, viewModel)
@@ -2534,6 +2526,27 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         }
     }
 }
+
+/**
+ * Issue #90 (complexity F3 slice): hoisted out of
+ * MonolithRootApp — the dismissal verdict for THIS opening,
+ * computed at the moment of dismissal by every closePark call
+ * site. Behaviour-identical: the host's three per-opening
+ * state values arrive as parameters, read by each call site at
+ * the standing moment; the verdict itself stays
+ * parkIntroSpendsOnDismiss's, and the clock is read inside,
+ * exactly where the nested original read it.
+ */
+private fun parkIntroSpendForDismissal(
+    deliveredThisOpen: Boolean,
+    fixTripTakenThisOpen: Boolean,
+    deliveredAtMonoMs: Long
+): Boolean = parkIntroSpendsOnDismiss(
+    deliveredThisOpen = deliveredThisOpen,
+    fixTripTakenThisOpen = fixTripTakenThisOpen,
+    deliveredAtMonoMs = deliveredAtMonoMs,
+    nowMonoMs = SystemClock.elapsedRealtime()
+)
 
 /** Stop order for KIN-TAB-IN's direction: the incoming screen
  *  translates in the direction the stops are printed. */
