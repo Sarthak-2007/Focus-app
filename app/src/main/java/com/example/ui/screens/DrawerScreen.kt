@@ -463,7 +463,7 @@ fun DrawerScreen(
         }
         item {
             Text(
-                text = stringResource(R.string.drawer_stored),
+                text = stringResource(R.string.drawer_stored_word),
                 fontFamily = AnonymousProFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 13.sp,
@@ -1070,7 +1070,7 @@ private fun DrawerDetailView(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = stringResource(R.string.drawer_stored),
+                    text = stringResource(R.string.drawer_stored_word),
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp,
