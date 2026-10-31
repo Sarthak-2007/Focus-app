@@ -867,17 +867,36 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
      *  saved state when it consumes the completion callback). */
     var onBankedProgressChanged: ((bankedMs: Long) -> Unit)? = null
 
+    /** Issue #523 (6-1): the session this valve instance serves, set
+     *  by the host before the view joins the hierarchy. The saved
+     *  bank is stamped with the key at save time and restored ONLY
+     *  when the stamp matches the key set for the session now being
+     *  served — a view-state bundle that outlives its session
+     *  (rotation across a session change, process death and relaunch
+     *  into a later session) can no longer pour the dead session's
+     *  bank into the new session's valve. -1 = unkeyed: only an
+     *  unkeyed stamp restores. The Compose host keys its hoisted
+     *  bank the same way; this gate guards the view's own bundle. */
+    var bankSessionKey: Int = -1
+
     /** Read-only snapshots for the hoisting caller and tests. */
     val currentHeldMs: Long get() = heldMs
     val currentBankedMs: Long get() = bankedMs
 
     init {
-        // Issue-60 (finding 3): the valve is a control — clickable,
-        // labelled, state-described. performClick starts/cancels the
-        // SAME timed hold (see below); it never shortens it.
-        isClickable = true
+        // Issue #70 RULING (Oct 31 2026, comment 6544472638 —
+        // supersedes the issue-60 activation seam that stood here):
+        // the valve is ANNOUNCE-ONLY. It speaks its name and its
+        // price and offers NO activation shortcut: focusable, so it
+        // can be found and heard (its banked state still speaks via
+        // stateDescription below), but NOT clickable, and no
+        // performClick path starts the hold. The continuous
+        // 60-second physical hold is the law of this control — an
+        // assistive tap that started it would substitute a tap for
+        // the hold. This is the branch-era shape (08eb602) the
+        // ruling names as its reference.
         isFocusable = true
-        contentDescription = "Emergency break valve"
+        describeAs("Emergency break. Hold for 60 seconds to open.")
         syncValveA11y()
     }
 
@@ -910,6 +929,8 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
         bundle.putLong("heldMs", heldMs)
         bundle.putLong("bankedMs", bankedMs)
         bundle.putInt("requiredSeconds", requiredSeconds)
+        // Issue #523 (6-1): stamp the bank with the session that owns it.
+        bundle.putInt("bankSessionKey", bankSessionKey)
         return bundle
     }
 
@@ -918,6 +939,10 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
             @Suppress("DEPRECATION")
             super.onRestoreInstanceState(state.getParcelable("super"))
             requiredSeconds = state.getInt("requiredSeconds", 60)
+            // Issue #523 (6-1): a bank stamped by another session is
+            // not restored — neither the chambers nor the in-flight
+            // remainder that belongs to them.
+            if (state.getInt("bankSessionKey", -1) != bankSessionKey) return
             restoreBankedProgress(state.getLong("bankedMs", 0L))
             // The un-banked remainder restores only up to the next
             // chamber — it had not locked, but it was earned in this
@@ -977,7 +1002,6 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
     private fun resetHold() {
         isHolding = false
         isDraining = false
-        a11yHoldActive = false
         heldMs = 0L
         bankedMs = 0L
         lastSecondTick = -1
@@ -1137,8 +1161,6 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
         )
     }
 
-    private var a11yHoldActive = false
-
     private fun startHold() {
         if (isHolding) return
         parent?.requestDisallowInterceptTouchEvent(true)
@@ -1162,7 +1184,6 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
     private fun releaseHold() {
         if (!isHolding) return
         isHolding = false
-        a11yHoldActive = false
         removeCallbacks(holdTickRunnable)
         if (heldMs > bankedMs) {
             isDraining = true
@@ -1175,26 +1196,15 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
         parent?.requestDisallowInterceptTouchEvent(false)
     }
 
-    /** Assistive activation toggles the SAME timed hold a finger
-     *  performs: first activation starts the full countdown (banking
-     *  identically, drained on cancel identically) — the 60 seconds
-     *  are never shortened, only the finger contact is substituted. */
-    override fun performClick(): Boolean {
-        super.performClick()
-        if (isHolding && a11yHoldActive) {
-            releaseHold()
-        } else if (!isHolding) {
-            a11yHoldActive = true
-            startHold()
-        }
-        sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_CLICKED)
-        return true
-    }
+    // Issue #70 RULING (6544472638): there is deliberately NO
+    // performClick override on this view. The issue-60 seam that
+    // let assistive activation start/cancel the hold is removed —
+    // the valve announces itself and its price, and the physical
+    // hold below is the only way in.
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                a11yHoldActive = false
                 startHold()
                 return true
             }
@@ -1215,7 +1225,7 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (!a11yHoldActive) releaseHold()
+                releaseHold()
                 return true
             }
         }
