@@ -12,7 +12,10 @@ import org.junit.Test
  * session's verified elapsed at the intercept instant, aged on
  * the monotonic clock — the same ≤10s window the repository's
  * grace law enforces (GraceDeadlineRepositoryTest pins that law;
- * this pins the door's print of it). The Deck chip's formula
+ * this pins the door's print of it). PIN-scope: SOURCE — pure
+ * function assertions on airlockGraceBadgeSeconds /
+ * airlockGraceChipLabel; no plumbing, post or render claim rests
+ * on this file. The Deck chip's formula
  * (window + 1 − elapsed, coerced 1..window) is the print: 10 on
  * the first usable frame, 1 on the last, nothing past it.
  */
