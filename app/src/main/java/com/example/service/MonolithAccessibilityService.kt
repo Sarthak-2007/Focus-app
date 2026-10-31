@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -651,12 +652,23 @@ class MonolithAccessibilityService : AccessibilityService() {
         internal fun isDateTimeSettingsSurface(windowTextLowercase: String): Boolean =
             DATE_TIME_SURFACE_MARKERS.any { windowTextLowercase.contains(it) }
 
-        /** Monotonic stamp of the last event whose root window was
-         *  successfully acquired. Pipeline proof (the service is
-         *  bound and processing this foreground), not session proof. */
+        /** Monotonic stamp of the last root window successfully
+         *  acquired — by an accessibility event, or by the armed
+         *  self-check (ACCESS_SELF_CHECK_MILLIS cadence). Pipeline
+         *  proof (the service is bound and able to acquire this
+         *  foreground's root), not session proof. */
         @Volatile
         var lastRootMono: Long = 0L
             internal set
+
+        /** The armed self-check's cadence: while a session is
+         *  armed, the service re-acquires a root window on this
+         *  beat and re-stamps lastRootMono. The Shield derivation's
+         *  freshness law for this stamp is three missed beats
+         *  (ACCESS_PROOF_FRESH_MILLIS in ShieldBlockingStatus.kt) —
+         *  the two constants are one law stated in two places:
+         *  change one, re-derive the other. */
+        const val ACCESS_SELF_CHECK_MILLIS: Long = 30_000L
 
         /** Binding generation (issue #7, TECH-1 B-Major-1): bumped
          *  when a binding begins (onServiceConnected) and every time
@@ -753,6 +765,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         WatchStore.onAccessibilityBound(true)
         startSessionArmedCollector()
         startEventWorker()
+        startAccessSelfCheck()
     }
 
     /**
@@ -885,6 +898,40 @@ class MonolithAccessibilityService : AccessibilityService() {
                     // next snapshot still deserves its verdict.
                     // Issue #75 F1 wiring: the drop now speaks.
                     MLog.w("a11y event worker dropped an event", e)
+                }
+            }
+        }
+    }
+
+    /** The liveness self-check (issue #7, ZEUGE — critic KRITIK-1R
+     *  attack 2): lastRootMono used to refresh only on accessibility
+     *  events, so a user sitting still on one page — reading, the
+     *  exact posture this app serves — starved the stamp and the
+     *  Shield sentence aged out a live pipeline. While a session is
+     *  armed, this loop re-acquires the root window every
+     *  ACCESS_SELF_CHECK_MILLIS and stamps on success, motion or no
+     *  motion. The stamp keeps its meaning — a root window was
+     *  acquired at this instant — and the Shield derivation's
+     *  freshness law (ACCESS_PROOF_FRESH_MILLIS = 3 missed checks)
+     *  now ages a cadence this service guarantees, not one it hopes
+     *  the user's hands provide. A service that cannot acquire a
+     *  root three checks running is, in truth, not proven able to
+     *  intercept — the stale verdict is then earned. Runs on the
+     *  service's existing scope (cancelled in onDestroy, per the
+     *  binding's life). */
+    private fun startAccessSelfCheck() {
+        scope.launch {
+            while (true) {
+                delay(ACCESS_SELF_CHECK_MILLIS)
+                if (armedSessionId != -1) {
+                    try {
+                        if (rootInActiveWindow != null) {
+                            lastRootMono = SystemClock.elapsedRealtime()
+                            WatchStore.poke()
+                        }
+                    } catch (_: Exception) {
+                        // No stamp: a failed acquisition proves nothing.
+                    }
                 }
             }
         }

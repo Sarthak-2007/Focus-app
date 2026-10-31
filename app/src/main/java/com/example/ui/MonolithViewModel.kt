@@ -1730,7 +1730,18 @@ class MonolithViewModel(
                 com.example.service.MonolithAccessibilityService.instance != null,
             accessibilityArmedSessionId =
                 com.example.service.MonolithAccessibilityService.armedSessionId,
-            nowWallMillis = System.currentTimeMillis()
+            // The third witness (critic Nagel N-1): sampled live
+            // here, in the same frame as the other two — one
+            // AppOps mode check, the same cost standingWarrant
+            // already pays at these triggers.
+            usageAccess = repository.usageAccess(),
+            // The ACCESS leg's liveness stamp (critic Nagel N-2):
+            // the last accessibility event that acquired a root
+            // window, aged by the derivation under its own law.
+            accessibilityLastRootMono =
+                com.example.service.MonolithAccessibilityService.lastRootMono,
+            nowWallMillis = System.currentTimeMillis(),
+            nowMonoMillis = android.os.SystemClock.elapsedRealtime()
         )
     }
     /** Shield Rethink 2, Step 1: the receipt line — the one place
