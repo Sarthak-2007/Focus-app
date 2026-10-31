@@ -103,6 +103,22 @@ class PillControllerRenderTest {
                 context.packageName,
                 AppOpsManager.MODE_ALLOWED
             )
+            // The same two ops under their int codes: the shadow's
+            // string-keyed and int-keyed mode stores are not the same
+            // shelf in every Robolectric version, and the framework
+            // reads canDrawOverlays through the int op.
+            shadowOf(appOps).setMode(
+                AppOpsManager.OP_SYSTEM_ALERT_WINDOW,
+                uid,
+                context.packageName,
+                AppOpsManager.MODE_ALLOWED
+            )
+            shadowOf(appOps).setMode(
+                AppOpsManager.OP_GET_USAGE_STATS,
+                uid,
+                context.packageName,
+                AppOpsManager.MODE_ALLOWED
+            )
         }
         @Suppress("DEPRECATION")
         shadowOf(context as Application).grantPermissions(
@@ -117,6 +133,16 @@ class PillControllerRenderTest {
             "overlay door: the SYSTEM_ALERT_WINDOW op must read MODE_ALLOWED once granted",
             AppOpsManager.MODE_ALLOWED,
             rawMode
+        )
+        val rawModeInt = appOps.unsafeCheckOpNoThrow(
+            AppOpsManager.OP_SYSTEM_ALERT_WINDOW,
+            Process.myUid(),
+            context.packageName
+        )
+        assertEquals(
+            "overlay door: the SYSTEM_ALERT_WINDOW op (int form) must read MODE_ALLOWED once granted",
+            AppOpsManager.MODE_ALLOWED,
+            rawModeInt
         )
         assertTrue(
             "overlay door: Settings.canDrawOverlays must read true once the op is granted",
