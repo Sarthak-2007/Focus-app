@@ -174,4 +174,19 @@
     <string name="overlay_valve_spent">VALVE SPENT — THIS WEEK\'S BREAK IS USED</string>
     <string name="shield_break_started_text">Break clock %1$s — PEEK apps are open. Locked apps, Shorts, Reels and blocked sites stay shut.</string>
     <string name="shield_break_final_minute_text">Under a minute left — finish up. Blocking resumes when the break clock hits 00:00.</string>
+    <string name="deck_intro_what">Monolith shuts the apps you name while a study session runs.</string>
+    <string name="deck_intro_switches">Two switches make it work. Both live in PARK, at the far end of the rail.</string>
+    <string name="deck_intro_privacy">Nothing leaves this phone.</string>
+    <string name="deck_last_receipt">LAST RECEIPT</string>
+    <string name="deck_armed_wrong">ARMED WRONG? %1$dS FREE ABORT — CANCEL FREE, NOTHING BOOKED</string>
+    <string name="deck_minus_one">−1</string>
+    <string name="deck_type_minutes">TYPE MINUTES</string>
+    <string name="deck_plus_one">+1</string>
+    <string name="deck_minutes_range">10–180</string>
+    <string name="deck_set">SET</string>
+    <string name="deck_flow_no_duration">FLOW — NO SET DURATION TO CORRECT</string>
+    <string name="deck_minus_five">−5</string>
+    <string name="deck_duration_edit">DURATION · %1$d MIN</string>
+    <string name="deck_plus_five">+5</string>
+    <string name="deck_from_yesterday">FROM YESTERDAY</string>
 </resources>
