@@ -60,11 +60,7 @@ object PeekPillOverlay {
         if (root == null) {
             if (!buildAndAttach(appCtx)) return
         }
-        labelView?.text = if (peekPillWarning(secondsRemaining)) {
-            "PEEK · ${appName.uppercase()} · ENDING SOON"
-        } else {
-            "PEEK · ${appName.uppercase()}"
-        }
+        labelView?.text = peekPillLabelText(appName, secondsRemaining)
         clockView?.text = peekPillClockText(secondsRemaining)
         clockView?.setTextColor(
             if (peekPillWarning(secondsRemaining)) Color.rgb(0xE4, 0x7E, 0x35)
@@ -165,5 +161,28 @@ fun peekPillClockText(secondsRemaining: Int): String {
     return String.format(java.util.Locale.US, "%d:%02d", s / 60, s % 60)
 }
 
-/** The pill's expiry warning law: the last 30 seconds warn. Pure. */
-fun peekPillWarning(secondsRemaining: Int): Boolean = secondsRemaining in 0..30
+/**
+ * The pill's label print: `PEEK · NAME`, gaining `· ENDING SOON`
+ * inside the warning window — pure, tested. The name is uppercased
+ * with [java.util.Locale.US], the same pin the clock below already
+ * uses: the no-arg `uppercase()` follows the device's default
+ * locale, so under e.g. tr-TR "Instagram" would print "İNSTAGRAM" —
+ * a name the app does not have, at a different width.
+ */
+fun peekPillLabelText(appName: String, secondsRemaining: Int): String {
+    val name = appName.uppercase(java.util.Locale.US)
+    return if (peekPillWarning(secondsRemaining)) {
+        "PEEK · $name · ENDING SOON"
+    } else {
+        "PEEK · $name"
+    }
+}
+
+/**
+ * The pill's expiry warning law: the last 30 LIVE seconds warn.
+ * Zero is not a live second — `peekSecondsRemaining` retires the
+ * lease at its end (`remainingMs <= 0` → null) instead of ever
+ * deriving 0, so a face shown at 0 would be a dead lease wearing
+ * a warning. Pure, tested.
+ */
+fun peekPillWarning(secondsRemaining: Int): Boolean = secondsRemaining in 1..30
