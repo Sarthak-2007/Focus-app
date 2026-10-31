@@ -35,6 +35,7 @@ import org.robolectric.annotation.Config
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
+// PIN-SCOPE: POST — listener capture landing, metadata-only under the #138 CUT (working-rules adoption, Oct 31 18:06 IST).
 class TruthCar3CaptureBodyTest {
 
     private val context: Context

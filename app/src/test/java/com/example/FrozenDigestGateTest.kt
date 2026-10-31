@@ -27,6 +27,7 @@ import org.robolectric.annotation.Config
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
+// PIN-SCOPE: PLUMBING — repository sealed-gate + snapshot over in-memory Room (working-rules adoption, Oct 31 18:06 IST).
 class FrozenDigestGateTest {
 
     private val context: Context

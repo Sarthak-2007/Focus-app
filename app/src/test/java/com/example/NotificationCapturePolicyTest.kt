@@ -17,6 +17,7 @@ import org.junit.Test
  * reads only the inlined Notification flag/category constants, so
  * no Android runtime is needed here.
  */
+// PIN-SCOPE: SOURCE — pure capture policy + in-memory dedupe tracker (working-rules adoption, Oct 31 18:06 IST).
 class NotificationCapturePolicyTest {
 
     @Test

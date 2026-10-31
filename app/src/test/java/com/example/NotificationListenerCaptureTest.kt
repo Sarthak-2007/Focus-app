@@ -33,6 +33,7 @@ import org.robolectric.annotation.Config
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
+// PIN-SCOPE: POST — listener post/remove path end-to-end through the real service + Room (working-rules adoption, Oct 31 18:06 IST).
 class NotificationListenerCaptureTest {
 
     private val context: Context

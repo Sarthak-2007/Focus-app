@@ -32,6 +32,7 @@ import org.robolectric.annotation.Config
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
+// PIN-SCOPE: PLUMBING — DAO retention/identity/covering-instant over real Room (working-rules adoption, Oct 31 18:06 IST).
 class NotificationRetentionDaoTest {
 
     private val context: Context
