@@ -595,114 +595,22 @@ fun DrawerScreen(
             }
 
             DrawerView.LANDING -> {
-                // ---------- LANDING: current month + MONTHS shelf ----------
-                if (globallyEmpty) {
-                    item {
-                        Text(
-                            text = "NOTHING STORED YET",
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 13.sp,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 24.dp)
-                        )
-                    }
-                    // The day-word capture exists even here — in
-                    // the FILING ZONE above, not on a heading: a
-                    // sick day in the first week, before anything
-                    // was ever finished, is exactly when a word
-                    // needs declaring (Selbst × Neu; AUDIT-drawer
-                    // §2 wave-2: the ask lives in the zone only).
-                } else {
-                    // The current month, newest first. An empty current
-                    // month renders in SILENCE above the MONTHS shelf —
-                    // no absence line greets a month that has barely begun.
-                    // (The filing zone stands above, outside this branch,
-                    // so a first-week sick day is fileable even here.)
-                    val groups = buildDayGroups(
-                        rows = drawerRows,
-                        dayWords = dayWords,
-                        scopeMonth = currentYearMonth,
-                        includeTodayGroup = !isSealed,
-                        today = today
-                    )
-                    groups.forEach { group ->
-                        item(key = "land-head-${group.date}") {
-                            DayHeading(
-                                group = group,
-                                today = today,
-                                isSealed = isSealed,
-                                onDeclareDayWord = onDeclareDayWord
-                            )
-                        }
-                        items(group.rows, key = { "land-${it.id}" }) { task ->
-                            StoredRow(task = task, onClick = { selectedTaskId = task.id })
-                        }
-                    }
-                    if (drawerHasEarlier) {
-                        item { EarlierRow(onClick = onLoadEarlier) }
-                    }
-                    // MONTHS shelf (AUDIT-drawer §2): the INDEX
-                    // corridor is dead. Earlier stored months stand
-                    // inline on the landing itself — one ruled row
-                    // per month (name incl. year, NO counts), each
-                    // opening MONTH exactly as the index row did.
-                    // The current month is the landing's own body
-                    // above, never a shelf row. A word-only month is
-                    // still an address and still shelves.
-                    // Shelf membership is STRICTLY BEFORE the
-                    // current month (Regal's G7 ruling, closer-built):
-                    // the old filterNot(current) also shelved a
-                    // FUTURE month — file tomorrow's word on the
-                    // 31st and next month stood at the top of the
-                    // "earlier months" shelf tonight, a future month
-                    // presented as the nearest past. The repository
-                    // union keeps returning the future word-month
-                    // (the filing zone needs it); the shelf is the
-                    // wrong consumer, so the shelf is what changes.
-                    val earlierMonths = storedMonths.filter {
-                        it.year < currentYearMonth.first ||
-                            (it.year == currentYearMonth.first &&
-                                it.month < currentYearMonth.second)
-                    }
-                    if (earlierMonths.isNotEmpty()) {
-                        item {
-                            Text(
-                                text = "MONTHS",
-                                fontFamily = AnonymousProFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                letterSpacing = 1.sp,
-                                color = scheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 6.dp)
-                            )
-                        }
-                        items(
-                            earlierMonths,
-                            key = { "shelf-${it.year}-${it.month}" }
-                        ) { month ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        onSelectMonth(month.year, month.month)
-                                        viewName = DrawerView.MONTH.name
-                                    }
-                                    .padding(vertical = 10.dp)
-                                    .testTag("drawer_month_${month.year}_${month.month}"),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = monthLabel(month.year, month.month),
-                                    fontFamily = AtkinsonHyperlegibleFamily,
-                                    fontWeight = FontWeight.Medium,
-                                    fontSize = 14.sp,
-                                    color = scheme.onBackground
-                                )
-                            }
-                            HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-                        }
-                    }
-                }
+                drawerLandingBody(
+                    scheme = scheme,
+                    globallyEmpty = globallyEmpty,
+                    drawerRows = drawerRows,
+                    dayWords = dayWords,
+                    currentYearMonth = currentYearMonth,
+                    today = today,
+                    isSealed = isSealed,
+                    onDeclareDayWord = onDeclareDayWord,
+                    drawerHasEarlier = drawerHasEarlier,
+                    onLoadEarlier = onLoadEarlier,
+                    storedMonths = storedMonths,
+                    onSelectMonth = onSelectMonth,
+                    onNavigateToMonth = { viewName = DrawerView.MONTH.name },
+                    onSelectTask = { selectedTaskId = it }
+                )
                 // The drawers doors (main, C10 — restored at
                 // the composition, K8): the composed landing had
                 // kept the train shelf but lost every entry row,
@@ -1600,6 +1508,143 @@ private fun LazyListScope.drawerOneMonth(
         if (drawerHasEarlier) {
             item { EarlierRow(onClick = onLoadEarlier) }
         }
+}
+
+/**
+ * Issue #90 (complexity F2 slice): the LANDING arm's stored-work
+ * body (empty print / current-month day groups / MONTHS shelf)
+ * of the Drawer's list column — extracted as a LazyListScope
+ * extension, in the pattern of drawerSearchResults. The arm's
+ * doors block stays in the host for its own slice.
+ * Behaviour-identical: same items, same keys, same testTags; the
+ * host's captures are explicit parameters and the body's state
+ * writes (shelf navigation, row selection) ride callbacks to the
+ * host's saveable state holders.
+ */
+private fun LazyListScope.drawerLandingBody(
+    scheme: androidx.compose.material3.ColorScheme,
+    globallyEmpty: Boolean,
+    drawerRows: List<FocusTaskEntity>,
+    dayWords: Map<String, String>,
+    currentYearMonth: Pair<Int, Int>,
+    today: LocalDate,
+    isSealed: Boolean,
+    onDeclareDayWord: (LocalDate, String?) -> Unit,
+    drawerHasEarlier: Boolean,
+    onLoadEarlier: () -> Unit,
+    storedMonths: List<StoredMonth>,
+    onSelectMonth: (Int, Int) -> Unit,
+    onNavigateToMonth: () -> Unit,
+    onSelectTask: (Int) -> Unit
+) {
+    // ---------- LANDING: current month + MONTHS shelf ----------
+    if (globallyEmpty) {
+        item {
+            Text(
+                text = "NOTHING STORED YET",
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontSize = 13.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 24.dp)
+            )
+        }
+        // The day-word capture exists even here — in
+        // the FILING ZONE above, not on a heading: a
+        // sick day in the first week, before anything
+        // was ever finished, is exactly when a word
+        // needs declaring (Selbst × Neu; AUDIT-drawer
+        // §2 wave-2: the ask lives in the zone only).
+    } else {
+        // The current month, newest first. An empty current
+        // month renders in SILENCE above the MONTHS shelf —
+        // no absence line greets a month that has barely begun.
+        // (The filing zone stands above, outside this branch,
+        // so a first-week sick day is fileable even here.)
+        val groups = buildDayGroups(
+            rows = drawerRows,
+            dayWords = dayWords,
+            scopeMonth = currentYearMonth,
+            includeTodayGroup = !isSealed,
+            today = today
+        )
+        groups.forEach { group ->
+            item(key = "land-head-${group.date}") {
+                DayHeading(
+                    group = group,
+                    today = today,
+                    isSealed = isSealed,
+                    onDeclareDayWord = onDeclareDayWord
+                )
+            }
+            items(group.rows, key = { "land-${it.id}" }) { task ->
+                StoredRow(task = task, onClick = { onSelectTask(task.id) })
+            }
+        }
+        if (drawerHasEarlier) {
+            item { EarlierRow(onClick = onLoadEarlier) }
+        }
+        // MONTHS shelf (AUDIT-drawer §2): the INDEX
+        // corridor is dead. Earlier stored months stand
+        // inline on the landing itself — one ruled row
+        // per month (name incl. year, NO counts), each
+        // opening MONTH exactly as the index row did.
+        // The current month is the landing's own body
+        // above, never a shelf row. A word-only month is
+        // still an address and still shelves.
+        // Shelf membership is STRICTLY BEFORE the
+        // current month (Regal's G7 ruling, closer-built):
+        // the old filterNot(current) also shelved a
+        // FUTURE month — file tomorrow's word on the
+        // 31st and next month stood at the top of the
+        // "earlier months" shelf tonight, a future month
+        // presented as the nearest past. The repository
+        // union keeps returning the future word-month
+        // (the filing zone needs it); the shelf is the
+        // wrong consumer, so the shelf is what changes.
+        val earlierMonths = storedMonths.filter {
+            it.year < currentYearMonth.first ||
+                (it.year == currentYearMonth.first &&
+                    it.month < currentYearMonth.second)
+        }
+        if (earlierMonths.isNotEmpty()) {
+            item {
+                Text(
+                    text = "MONTHS",
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+            items(
+                earlierMonths,
+                key = { "shelf-${it.year}-${it.month}" }
+            ) { month ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onSelectMonth(month.year, month.month)
+                            onNavigateToMonth()
+                        }
+                        .padding(vertical = 10.dp)
+                        .testTag("drawer_month_${month.year}_${month.month}"),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = monthLabel(month.year, month.month),
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 14.sp,
+                        color = scheme.onBackground
+                    )
+                }
+                HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+            }
+        }
+    }
 }
 
 @Composable
