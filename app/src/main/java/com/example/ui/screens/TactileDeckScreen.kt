@@ -913,345 +913,47 @@ fun TactileDeckScreen(
         )
 
     }
-        // =====================================================================
-        // SECTION 4: THE PINNED STACK (Slice D) — outside the scroll:
-        // the seal bar (issue #4 — THE BOLT's 60dp housing, grown
-        // from the retired proof strip's 53dp address per FEILE's
-        // grid, the SALZ rent the fold's evidence channel pays),
-        // the slide's 72dp register, the reserved sentence slot,
-        // and the imprint. The slide zone holds the grace / valve
-        // chips at the same address while sealed (Δy = 0 across
-        // tenancies), so the zone under the wheel never changes
-        // height by a pixel across the seal.
-        // =====================================================================
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-        ) {
-            // Issue #4 — THE BOLT replaces the proof strip here:
-            // state by form (bolt pose + jewel), the end in one
-            // glass window; BIND/PROOF telemetry renders nowhere
-            // on this face (issue #6 F8's seam-stamp exile is
-            // subsumed — the stamps have no slot on the bar).
-            SealBar(
-                face = boltFace,
-                endsAtNumerals = sealNumerals,
-                plannedEndsAtNumerals = plannedNumerals
-            )
-            Spacer(Modifier.height(6.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(72.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                // Issue #125 (armed-wrong F3): during the grace
-                // window the ABORT chip owns this address even while
-                // the seal shot is still detaining the slide — the
-                // free exit must not be physically absent for the
-                // first ~1050ms of its own 10s. The Δy = 0 address
-                // discipline is unchanged: same Box, same chip.
-                val graceChipDue = isSessionRunning && !heldFinish && receiptState == null &&
-                    activeSession != null && activeSession.elapsedSeconds <= 10
-                if ((!isSessionRunning || shotActive || heldFinish || receiptState != null) && !graceChipDue) {
-                    // The slide holds this address through the seal
-                    // (as the seated ghost), through the finish's
-                    // detention, and through its own return — the
-                    // chips take the address only for a settled,
-                    // receipt-free running session (F-Z3's room,
-                    // read by Kato's fallback: the utilities keep
-                    // the Δy = 0 address the zone has always had).
-                    AndroidView(
-                        factory = { ctx ->
-                            SlideToStartView(ctx).apply {
-                                this.soundEngine = soundEngine
-                                this.initialFraction = sledInitialFraction()
-                            }.also { slideViewRef = it }
-                        },
-                        update = { view ->
-                            slideViewRef = view
-                            view.isNightMode = groundNight
-                            view.soundEngine = soundEngine
-                            view.isArmedState = false
-                            if (view.resetKey != armResetKey) {
-                                view.resetKey = armResetKey
-                                if (armResetKey > 0) view.resetToRest()
-                            }
-                            view.warrantProvider = warrantProvider
-                            view.onPressStart = { downState ->
-                                // The latch captures from the slide's
-                                // own DOWN-frame read (Emil E-4), never
-                                // from this screen's async flow.
-                                latchArmKey = armResetKey
-                                pressLatch = PressLatch(
-                                    tenant = imprintTenantText(
-                                        isSealed = false,
-                                        shut = appsSplit?.shut,
-                                        peek = appsSplit?.peek,
-                                        warrantState = downState
-                                    ),
-                                    timeText = idleTimeCell.first,
-                                    timeDensity = idleTimeCell.second,
-                                    appsWord = appsCell.first,
-                                    appsDensity = appsCell.second
-                                )
-                            }
-                            view.onPressEnd = {
-                                if (!commitInFlight) pressLatch = null
-                            }
-                            view.onSlideCommitted = {
-                                commitInFlight = true
-                                onArmSession()
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(72.dp)
-                            .testTag("slide_to_start_view")
-                    )
-                } else {
-                    val withinGraceWindow = activeSession != null &&
-                        activeSession.elapsedSeconds <= MonolithRepository.GRACE_WINDOW_SECONDS
-                    // Issue #103 F3: past the stopwatch 20-minute
-                    // floor, this same tap is a FREE, instant,
-                    // successful finish — no hold, no token spent.
-                    // The chip must say so; it may not keep wearing
-                    // the valve's label and price.
-                    val stopwatchFloorMet = activeSession?.isStopwatchMode == true &&
-                        activeSession.elapsedSeconds >= MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
-                    // Issue #98 (merged): the badge counts the
-                    // seconds the user can actually still use — 10
-                    // at the settle frame, 1 on the last — derived
-                    // from the one constant the repository write
-                    // enforces (issue #103 F2).
-                    val graceBadge = "${(MonolithRepository.GRACE_WINDOW_SECONDS + 1 - (activeSession?.elapsedSeconds ?: 0)).coerceIn(1, MonolithRepository.GRACE_WINDOW_SECONDS)}s"
-                    if (withinGraceWindow) {
-                        if (isActiveRoutineJudged) {
-                            // Issue #103 F1 / R3b #149: a non-SLEEP
-                            // routine session never takes the free
-                            // grace path — the repository diverts it
-                            // to its judging funnel (MISSED / PARTIAL
-                            // / ATTENDED). Same tap, same funnel (no
-                            // redesign under the routines freeze) —
-                            // the chip names the real cost instead of
-                            // promising a free grace cancel.
-                            BlockitActionChip(
-                                wordLabel = "END ROUTINE · WILL BE JUDGED",
-                                monoBadge = graceBadge,
-                                isPrimaryInk = true,
-                                onClick = onCancelWithinGraceWindow,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(72.dp),
-                                testTag = "routine_judged_end_button"
-                            )
-                        } else {
-                            BlockitActionChip(
-                                wordLabel = "GRACE WINDOW ABORT",
-                                monoBadge = graceBadge,
-                                isPrimaryInk = true,
-                                onClick = onCancelWithinGraceWindow,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(72.dp),
-                                testTag = "grace_abort_button"
-                            )
-                        }
-                    } else if (stopwatchFloorMet) {
-                        BlockitActionChip(
-                            wordLabel = "FINISH STOPWATCH · NO BREAK SPENT",
-                            monoBadge = "PAST 20M FLOOR",
-                            isPrimaryInk = true,
-                            onClick = onRequestDisarm,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(72.dp),
-                            testTag = "stopwatch_finish_button"
-                        )
-                    } else {
-                        // Audit R3b #147: past the stopwatch floor
-                        // this same tap is a clean, free finish —
-                        // requestDisarmChallenge completes the
-                        // session and never opens the valve. The
-                        // label says which door the tap opens:
-                        // FINISH SESSION with no token badge once
-                        // the floor is banked; the valve's true
-                        // name and price everywhere else.
-                        val stopwatchFloorMet = activeSession != null &&
-                            activeSession.isStopwatchMode &&
-                            activeSession.elapsedSeconds >=
-                                com.example.data.MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
-                        BlockitActionChip(
-                            wordLabel = if (stopwatchFloorMet) {
-                                "FINISH SESSION"
-                            } else {
-                                // Issue #114, finding 5: the door's
-                                // one name — EMERGENCY BREAK, the
-                                // same words its own overlay carries.
-                                "EMERGENCY BREAK (60S HOLD)"
-                            },
-                            // R3b #163 F4: a spent valve used to wear
-                            // the same badge as a live one ("0/1 WEEK"
-                            // read as a state, not a wait). The spent
-                            // badge now names the wait itself — the
-                            // week turns on Monday (MonolithWeek).
-                            monoBadge = when {
-                                stopwatchFloorMet -> ""
-                                weeklyEmergencyTokensRemaining > 0 ->
-                                    "$weeklyEmergencyTokensRemaining/1 WEEK"
-                                else -> "0/1 WEEK · BACK MONDAY"
-                            },
-                            isPrimaryInk = true,
-                            onClick = onRequestDisarm,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(72.dp), // Issue #6 F6: the chair fills its 72dp zone in every state
-                            testTag = "request_disarm_button"
-                        )
-                        Text(
-                            text = emergencyBreakPriceText(weeklyEmergencyTokensRemaining),
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 12.5.sp,
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
-                            modifier = Modifier.testTag("emergency_break_price")
-                        )
-                    }
-                }
-            }
-            // Audit R3b #149: the grace-to-valve cliff, named. The
-            // slot above swaps its chip at 10 seconds with nothing
-            // saying the door changed; this standing line states
-            // both states, in both states — in-window it counts the
-            // free cancel down, past it the valve's terms stand
-            // printed before they are ever needed.
-            if (activeSession != null) {
-                val graceLeft = 10 - activeSession.elapsedSeconds
-                Text(
-                    text = when {
-                        graceLeft > 0 && activeSession.routineId != null ->
-                            "GRACE ${graceLeft}S — ABORT IS BOOKED BY THE ROUTINE · AFTER: VALVE, 60S HOLD"
-                        graceLeft > 0 ->
-                            "GRACE ${graceLeft}S — CANCEL FREE, NOTHING BOOKED · AFTER: VALVE, 60S HOLD"
-                        // R3b #163 F4 (fix-forward): the spent state
-                        // names its wait here too, exactly as the
-                        // valve chip's badge does — the week turns
-                        // on Monday (MonolithWeek).
-                        else ->
-                            "GRACE SPENT · VALVE: 60S HOLD · " +
-                                if (weeklyEmergencyTokensRemaining > 0) {
-                                    "$weeklyEmergencyTokensRemaining/1 WEEK"
-                                } else {
-                                    "0/1 WEEK · BACK MONDAY"
-                                }
-                    },
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 9.5.sp,
-                    letterSpacing = 0.8.sp,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 6.dp)
-                )
-            }
-            // Issue #283 (R5 supplement): the extend verb. A running
-            // session used to offer only endings (grace abort, the
-            // valve); the original's +15 lives here, under the
-            // standing grace/valve line, at the same 72dp chair
-            // height as the other session verbs. The repository
-            // caps it (no sale at 60+ minutes remaining).
-            if (activeSession != null && !activeSession.isStopwatchMode) {
-                Spacer(Modifier.height(8.dp))
-                BlockitActionChip(
-                    wordLabel = "EXTEND SESSION",
-                    monoBadge = "+15 MIN",
-                    isPrimaryInk = false,
-                    onClick = onExtendSession,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(72.dp),
-                    testTag = "extend_session_button"
-                )
-            }
-            // Issue #261: the Safe Break's missing door. Until this
-            // chip a break could only BEGIN at a block flip — the
-            // man inside a long block had no verb for the pause he
-            // needed mid-block. The chip stands for exactly the
-            // in-block life (active, timed, not already in a
-            // break) beside the extend verb; the tap freezes the
-            // block and enters the break, and the break's own
-            // END BREAK chip (utilities room) plus its timer bring
-            // him back to the SAME block — see
-            // startSafeBreakMidBlock in the repository. The badge
-            // prints the length in force today, no more: choosing
-            // the length is the parked doctrine half of #261.
-            if (activeSession != null && activeSession.isActive &&
-                !activeSession.isInSafeBreak && !activeSession.isStopwatchMode
-            ) {
-                Spacer(Modifier.height(8.dp))
-                BlockitActionChip(
-                    wordLabel = "TAKE SAFE BREAK",
-                    monoBadge = "${com.example.data.MonolithRepository.SAFE_BREAK_DURATION_SECONDS / 60} MIN",
-                    isPrimaryInk = false,
-                    onClick = onStartSafeBreak,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(72.dp),
-                    testTag = "take_safe_break_button"
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            RefusalSentenceSlot(
-                // The slot's tenant by phase (step 4): a JAMMED
-                // attempt names its unanswering link; PROVING names
-                // itself with its live proved count (issues #98 +
-                // #126 F2 — the silent black box is closed: real
-                // blocking already runs during proving, so the frame
-                // must say the machine is checking, never render the
-                // idle form as if nothing had happened); an
-                // annulment's past-tense sentence stands until the
-                // controller clears it; otherwise the wire's
-                // standing sentence. A RUNNING session used to be
-                // forced silent here (Audit R3 #113, finding 2) —
-                // exactly the case where the sentence matters most:
-                // refusalSentenceFor reads the LIVE warrant and
-                // returns null while the wire is whole, so the
-                // running Deck stays silent until a permission it
-                // depends on actually dies, then names it with its
-                // FIX verb. The stale guard inside
-                // refusalSentenceFor(warrant, nowMono) still owns
-                // the present tense: a stale read prints nothing.
-                sentence = when {
-                    armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase, nowMono)
-                    armPhase is ArmPhase.Proving -> provingSentenceFor(armPhase)
-                    isSessionRunning -> refusalSentenceFor(deckWarrant, nowMono)
-                    armSentence != null -> armSentence
-                    else -> refusalSentenceFor(deckWarrant, nowMono)
-                },
-                onAction = { action ->
-                    when (action) {
-                        RefusalAction.FIX_ACCESSIBILITY -> onFixBlockingAccess()
-                        RefusalAction.FIX_USAGE -> onFixUsageAccess()
-                        RefusalAction.RETRY_CHECK -> {
-                            // Suki: an UNSET usage grant makes "retry"
-                            // a lie — the tap routes to the pane that
-                            // owns the fact instead.
-                            if (deckWarrant?.usage == UsageAccess.UNSET) {
-                                onFixUsageAccess()
-                            } else {
-                                onRetryBlockingCheck()
-                            }
-                        }
-                    }
-                },
-                onHandBackTick = onHandBackTick
-            )
-            ImprintSlot(
-                tenantText = imprintTenant,
-                isSealed = isSessionRunning,
-                strikeKey = if (isSessionRunning) activeSession?.id?.toLong() else null,
-                struckKey = struckSessionId?.toLong(),
-                onStruck = { key -> onSessionStruck(key.toInt()) }
-            )
-        }
+        DeckPinnedStack(
+            boltFace = boltFace,
+            sealNumerals = sealNumerals,
+            plannedNumerals = plannedNumerals,
+            isSessionRunning = isSessionRunning,
+            heldFinish = heldFinish,
+            shotActive = shotActive,
+            receiptState = receiptState,
+            activeSession = activeSession,
+            soundEngine = soundEngine,
+            groundNight = groundNight,
+            armResetKey = armResetKey,
+            warrantProvider = warrantProvider,
+            appsSplit = appsSplit,
+            appsCell = appsCell,
+            idleTimeCell = idleTimeCell,
+            commitInFlight = commitInFlight,
+            isActiveRoutineJudged = isActiveRoutineJudged,
+            weeklyEmergencyTokensRemaining = weeklyEmergencyTokensRemaining,
+            armPhase = armPhase,
+            nowMono = nowMono,
+            deckWarrant = deckWarrant,
+            armSentence = armSentence,
+            imprintTenant = imprintTenant,
+            struckSessionId = struckSessionId,
+            sledInitialFraction = sledInitialFraction,
+            onSlideViewRef = { slideViewRef = it },
+            onLatchArmKey = { latchArmKey = it },
+            onPressLatch = { pressLatch = it },
+            onCommitInFlight = { commitInFlight = it },
+            onArmSession = onArmSession,
+            onCancelWithinGraceWindow = onCancelWithinGraceWindow,
+            onRequestDisarm = onRequestDisarm,
+            onExtendSession = onExtendSession,
+            onStartSafeBreak = onStartSafeBreak,
+            onFixBlockingAccess = onFixBlockingAccess,
+            onFixUsageAccess = onFixUsageAccess,
+            onRetryBlockingCheck = onRetryBlockingCheck,
+            onHandBackTick = onHandBackTick,
+            onSessionStruck = onSessionStruck
+        )
     }
 }
 
@@ -1912,6 +1614,406 @@ private fun DeckInstrumentSection(
             // a printed percent was the floored fraction's
             // second lie. FLOW renders the empty track only.
         }
+    }
+}
+
+/**
+ * Issue #90 (complexity F1 slice): SECTION 4 — the pinned stack —
+ * extracted out of TactileDeckScreen's body as its own composable,
+ * in the pattern of DeckInstrumentSection (SECTION 1) and
+ * DeckArmedUtilities (SECTION 3). Behaviour-identical: the seal
+ * bar, the slide's 72dp register, the grace/valve chips at the
+ * same address, the sentence slot and the imprint are the same
+ * elements in the same order under the same conditions; the
+ * host's captures are explicit parameters. The stack writes four
+ * hoisted host states — the sled's view ref, the latch arm key,
+ * the press latch, the commit flag — and those writes ride
+ * explicit setter parameters (onSlideViewRef / onLatchArmKey /
+ * onPressLatch / onCommitInFlight): the states themselves stay
+ * hoisted in the host, which derives the imprint and the seal
+ * shot from them.
+ */
+@Composable
+private fun DeckPinnedStack(
+    boltFace: com.example.ui.components.BoltFace,
+    sealNumerals: String?,
+    plannedNumerals: String?,
+    isSessionRunning: Boolean,
+    heldFinish: Boolean,
+    shotActive: Boolean,
+    receiptState: com.example.data.ReceiptState?,
+    activeSession: FocusSessionEntity?,
+    soundEngine: TactileSoundEngine?,
+    groundNight: Boolean,
+    armResetKey: Int,
+    warrantProvider: () -> Warrant,
+    appsSplit: com.example.ui.MonolithViewModel.AppsSplit?,
+    appsCell: Pair<String, StripDensity>,
+    idleTimeCell: Pair<String, StripDensity>,
+    commitInFlight: Boolean,
+    isActiveRoutineJudged: Boolean,
+    weeklyEmergencyTokensRemaining: Int,
+    armPhase: ArmPhase,
+    nowMono: Long,
+    deckWarrant: Warrant?,
+    armSentence: RefusalSentence?,
+    imprintTenant: String,
+    struckSessionId: Int?,
+    sledInitialFraction: () -> Float,
+    onSlideViewRef: (SlideToStartView?) -> Unit,
+    onLatchArmKey: (Int) -> Unit,
+    onPressLatch: (PressLatch?) -> Unit,
+    onCommitInFlight: (Boolean) -> Unit,
+    onArmSession: () -> Unit,
+    onCancelWithinGraceWindow: () -> Unit,
+    onRequestDisarm: () -> Unit,
+    onExtendSession: () -> Unit,
+    onStartSafeBreak: () -> Unit,
+    onFixBlockingAccess: () -> Unit,
+    onFixUsageAccess: () -> Unit,
+    onRetryBlockingCheck: () -> Unit,
+    onHandBackTick: () -> Unit,
+    onSessionStruck: (Int) -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    // =====================================================================
+    // SECTION 4: THE PINNED STACK (Slice D) — outside the scroll:
+    // the seal bar (issue #4 — THE BOLT's 60dp housing, grown
+    // from the retired proof strip's 53dp address per FEILE's
+    // grid, the SALZ rent the fold's evidence channel pays),
+    // the slide's 72dp register, the reserved sentence slot,
+    // and the imprint. The slide zone holds the grace / valve
+    // chips at the same address while sealed (Δy = 0 across
+    // tenancies), so the zone under the wheel never changes
+    // height by a pixel across the seal.
+    // =====================================================================
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        // Issue #4 — THE BOLT replaces the proof strip here:
+        // state by form (bolt pose + jewel), the end in one
+        // glass window; BIND/PROOF telemetry renders nowhere
+        // on this face (issue #6 F8's seam-stamp exile is
+        // subsumed — the stamps have no slot on the bar).
+        SealBar(
+            face = boltFace,
+            endsAtNumerals = sealNumerals,
+            plannedEndsAtNumerals = plannedNumerals
+        )
+        Spacer(Modifier.height(6.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(72.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            // Issue #125 (armed-wrong F3): during the grace
+            // window the ABORT chip owns this address even while
+            // the seal shot is still detaining the slide — the
+            // free exit must not be physically absent for the
+            // first ~1050ms of its own 10s. The Δy = 0 address
+            // discipline is unchanged: same Box, same chip.
+            val graceChipDue = isSessionRunning && !heldFinish && receiptState == null &&
+                activeSession != null && activeSession.elapsedSeconds <= 10
+            if ((!isSessionRunning || shotActive || heldFinish || receiptState != null) && !graceChipDue) {
+                // The slide holds this address through the seal
+                // (as the seated ghost), through the finish's
+                // detention, and through its own return — the
+                // chips take the address only for a settled,
+                // receipt-free running session (F-Z3's room,
+                // read by Kato's fallback: the utilities keep
+                // the Δy = 0 address the zone has always had).
+                AndroidView(
+                    factory = { ctx ->
+                        SlideToStartView(ctx).apply {
+                            this.soundEngine = soundEngine
+                            this.initialFraction = sledInitialFraction()
+                        }.also { onSlideViewRef(it) }
+                    },
+                    update = { view ->
+                        onSlideViewRef(view)
+                        view.isNightMode = groundNight
+                        view.soundEngine = soundEngine
+                        view.isArmedState = false
+                        if (view.resetKey != armResetKey) {
+                            view.resetKey = armResetKey
+                            if (armResetKey > 0) view.resetToRest()
+                        }
+                        view.warrantProvider = warrantProvider
+                        view.onPressStart = { downState ->
+                            // The latch captures from the slide's
+                            // own DOWN-frame read (Emil E-4), never
+                            // from this screen's async flow.
+                            onLatchArmKey(armResetKey)
+                            onPressLatch(PressLatch(
+                                tenant = imprintTenantText(
+                                    isSealed = false,
+                                    shut = appsSplit?.shut,
+                                    peek = appsSplit?.peek,
+                                    warrantState = downState
+                                ),
+                                timeText = idleTimeCell.first,
+                                timeDensity = idleTimeCell.second,
+                                appsWord = appsCell.first,
+                                appsDensity = appsCell.second
+                            ))
+                        }
+                        view.onPressEnd = {
+                            if (!commitInFlight) onPressLatch(null)
+                        }
+                        view.onSlideCommitted = {
+                            onCommitInFlight(true)
+                            onArmSession()
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(72.dp)
+                        .testTag("slide_to_start_view")
+                )
+            } else {
+                val withinGraceWindow = activeSession != null &&
+                    activeSession.elapsedSeconds <= MonolithRepository.GRACE_WINDOW_SECONDS
+                // Issue #103 F3: past the stopwatch 20-minute
+                // floor, this same tap is a FREE, instant,
+                // successful finish — no hold, no token spent.
+                // The chip must say so; it may not keep wearing
+                // the valve's label and price.
+                val stopwatchFloorMet = activeSession?.isStopwatchMode == true &&
+                    activeSession.elapsedSeconds >= MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
+                // Issue #98 (merged): the badge counts the
+                // seconds the user can actually still use — 10
+                // at the settle frame, 1 on the last — derived
+                // from the one constant the repository write
+                // enforces (issue #103 F2).
+                val graceBadge = "${(MonolithRepository.GRACE_WINDOW_SECONDS + 1 - (activeSession?.elapsedSeconds ?: 0)).coerceIn(1, MonolithRepository.GRACE_WINDOW_SECONDS)}s"
+                if (withinGraceWindow) {
+                    if (isActiveRoutineJudged) {
+                        // Issue #103 F1 / R3b #149: a non-SLEEP
+                        // routine session never takes the free
+                        // grace path — the repository diverts it
+                        // to its judging funnel (MISSED / PARTIAL
+                        // / ATTENDED). Same tap, same funnel (no
+                        // redesign under the routines freeze) —
+                        // the chip names the real cost instead of
+                        // promising a free grace cancel.
+                        BlockitActionChip(
+                            wordLabel = "END ROUTINE · WILL BE JUDGED",
+                            monoBadge = graceBadge,
+                            isPrimaryInk = true,
+                            onClick = onCancelWithinGraceWindow,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(72.dp),
+                            testTag = "routine_judged_end_button"
+                        )
+                    } else {
+                        BlockitActionChip(
+                            wordLabel = "GRACE WINDOW ABORT",
+                            monoBadge = graceBadge,
+                            isPrimaryInk = true,
+                            onClick = onCancelWithinGraceWindow,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(72.dp),
+                            testTag = "grace_abort_button"
+                        )
+                    }
+                } else if (stopwatchFloorMet) {
+                    BlockitActionChip(
+                        wordLabel = "FINISH STOPWATCH · NO BREAK SPENT",
+                        monoBadge = "PAST 20M FLOOR",
+                        isPrimaryInk = true,
+                        onClick = onRequestDisarm,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(72.dp),
+                        testTag = "stopwatch_finish_button"
+                    )
+                } else {
+                    // Audit R3b #147: past the stopwatch floor
+                    // this same tap is a clean, free finish —
+                    // requestDisarmChallenge completes the
+                    // session and never opens the valve. The
+                    // label says which door the tap opens:
+                    // FINISH SESSION with no token badge once
+                    // the floor is banked; the valve's true
+                    // name and price everywhere else.
+                    val stopwatchFloorMet = activeSession != null &&
+                        activeSession.isStopwatchMode &&
+                        activeSession.elapsedSeconds >=
+                            com.example.data.MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
+                    BlockitActionChip(
+                        wordLabel = if (stopwatchFloorMet) {
+                            "FINISH SESSION"
+                        } else {
+                            // Issue #114, finding 5: the door's
+                            // one name — EMERGENCY BREAK, the
+                            // same words its own overlay carries.
+                            "EMERGENCY BREAK (60S HOLD)"
+                        },
+                        // R3b #163 F4: a spent valve used to wear
+                        // the same badge as a live one ("0/1 WEEK"
+                        // read as a state, not a wait). The spent
+                        // badge now names the wait itself — the
+                        // week turns on Monday (MonolithWeek).
+                        monoBadge = when {
+                            stopwatchFloorMet -> ""
+                            weeklyEmergencyTokensRemaining > 0 ->
+                                "$weeklyEmergencyTokensRemaining/1 WEEK"
+                            else -> "0/1 WEEK · BACK MONDAY"
+                        },
+                        isPrimaryInk = true,
+                        onClick = onRequestDisarm,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(72.dp), // Issue #6 F6: the chair fills its 72dp zone in every state
+                        testTag = "request_disarm_button"
+                    )
+                    Text(
+                        text = emergencyBreakPriceText(weeklyEmergencyTokensRemaining),
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+                        modifier = Modifier.testTag("emergency_break_price")
+                    )
+                }
+            }
+        }
+        // Audit R3b #149: the grace-to-valve cliff, named. The
+        // slot above swaps its chip at 10 seconds with nothing
+        // saying the door changed; this standing line states
+        // both states, in both states — in-window it counts the
+        // free cancel down, past it the valve's terms stand
+        // printed before they are ever needed.
+        if (activeSession != null) {
+            val graceLeft = 10 - activeSession.elapsedSeconds
+            Text(
+                text = when {
+                    graceLeft > 0 && activeSession.routineId != null ->
+                        "GRACE ${graceLeft}S — ABORT IS BOOKED BY THE ROUTINE · AFTER: VALVE, 60S HOLD"
+                    graceLeft > 0 ->
+                        "GRACE ${graceLeft}S — CANCEL FREE, NOTHING BOOKED · AFTER: VALVE, 60S HOLD"
+                    // R3b #163 F4 (fix-forward): the spent state
+                    // names its wait here too, exactly as the
+                    // valve chip's badge does — the week turns
+                    // on Monday (MonolithWeek).
+                    else ->
+                        "GRACE SPENT · VALVE: 60S HOLD · " +
+                            if (weeklyEmergencyTokensRemaining > 0) {
+                                "$weeklyEmergencyTokensRemaining/1 WEEK"
+                            } else {
+                                "0/1 WEEK · BACK MONDAY"
+                            }
+                },
+                fontFamily = AnonymousProFamily,
+                fontSize = 9.5.sp,
+                letterSpacing = 0.8.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        }
+        // Issue #283 (R5 supplement): the extend verb. A running
+        // session used to offer only endings (grace abort, the
+        // valve); the original's +15 lives here, under the
+        // standing grace/valve line, at the same 72dp chair
+        // height as the other session verbs. The repository
+        // caps it (no sale at 60+ minutes remaining).
+        if (activeSession != null && !activeSession.isStopwatchMode) {
+            Spacer(Modifier.height(8.dp))
+            BlockitActionChip(
+                wordLabel = "EXTEND SESSION",
+                monoBadge = "+15 MIN",
+                isPrimaryInk = false,
+                onClick = onExtendSession,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(72.dp),
+                testTag = "extend_session_button"
+            )
+        }
+        // Issue #261: the Safe Break's missing door. Until this
+        // chip a break could only BEGIN at a block flip — the
+        // man inside a long block had no verb for the pause he
+        // needed mid-block. The chip stands for exactly the
+        // in-block life (active, timed, not already in a
+        // break) beside the extend verb; the tap freezes the
+        // block and enters the break, and the break's own
+        // END BREAK chip (utilities room) plus its timer bring
+        // him back to the SAME block — see
+        // startSafeBreakMidBlock in the repository. The badge
+        // prints the length in force today, no more: choosing
+        // the length is the parked doctrine half of #261.
+        if (activeSession != null && activeSession.isActive &&
+            !activeSession.isInSafeBreak && !activeSession.isStopwatchMode
+        ) {
+            Spacer(Modifier.height(8.dp))
+            BlockitActionChip(
+                wordLabel = "TAKE SAFE BREAK",
+                monoBadge = "${com.example.data.MonolithRepository.SAFE_BREAK_DURATION_SECONDS / 60} MIN",
+                isPrimaryInk = false,
+                onClick = onStartSafeBreak,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(72.dp),
+                testTag = "take_safe_break_button"
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        RefusalSentenceSlot(
+            // The slot's tenant by phase (step 4): a JAMMED
+            // attempt names its unanswering link; PROVING names
+            // itself with its live proved count (issues #98 +
+            // #126 F2 — the silent black box is closed: real
+            // blocking already runs during proving, so the frame
+            // must say the machine is checking, never render the
+            // idle form as if nothing had happened); an
+            // annulment's past-tense sentence stands until the
+            // controller clears it; otherwise the wire's
+            // standing sentence. A RUNNING session used to be
+            // forced silent here (Audit R3 #113, finding 2) —
+            // exactly the case where the sentence matters most:
+            // refusalSentenceFor reads the LIVE warrant and
+            // returns null while the wire is whole, so the
+            // running Deck stays silent until a permission it
+            // depends on actually dies, then names it with its
+            // FIX verb. The stale guard inside
+            // refusalSentenceFor(warrant, nowMono) still owns
+            // the present tense: a stale read prints nothing.
+            sentence = when {
+                armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase, nowMono)
+                armPhase is ArmPhase.Proving -> provingSentenceFor(armPhase)
+                isSessionRunning -> refusalSentenceFor(deckWarrant, nowMono)
+                armSentence != null -> armSentence
+                else -> refusalSentenceFor(deckWarrant, nowMono)
+            },
+            onAction = { action ->
+                when (action) {
+                    RefusalAction.FIX_ACCESSIBILITY -> onFixBlockingAccess()
+                    RefusalAction.FIX_USAGE -> onFixUsageAccess()
+                    RefusalAction.RETRY_CHECK -> {
+                        // Suki: an UNSET usage grant makes "retry"
+                        // a lie — the tap routes to the pane that
+                        // owns the fact instead.
+                        if (deckWarrant?.usage == UsageAccess.UNSET) {
+                            onFixUsageAccess()
+                        } else {
+                            onRetryBlockingCheck()
+                        }
+                    }
+                }
+            },
+            onHandBackTick = onHandBackTick
+        )
+        ImprintSlot(
+            tenantText = imprintTenant,
+            isSealed = isSessionRunning,
+            strikeKey = if (isSessionRunning) activeSession?.id?.toLong() else null,
+            struckKey = struckSessionId?.toLong(),
+            onStruck = { key -> onSessionStruck(key.toInt()) }
+        )
     }
 }
 
