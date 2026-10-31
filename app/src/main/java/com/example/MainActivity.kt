@@ -1544,7 +1544,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         socialSitesEnabled = browserUrlBlockerEnabled,
                         onToggleSocialSites = { viewModel.toggleBrowserUrlBlocker() },
                         onOpenReception = {
-                            closePark(dismissReceipt = false)
+                            closePark(
+                                parkOpenState, showNotificationDigestSheet, viewModel,
+                                dismissReceipt = false
+                            )
                             receptionOpen = true
                         },
                         setupStampMask = if (setupStamped) {
