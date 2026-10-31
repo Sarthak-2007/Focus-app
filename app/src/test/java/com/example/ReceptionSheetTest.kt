@@ -311,10 +311,15 @@ class ReceptionSheetTest {
         )
         val total = receptionTotal(snap, now)
         assertEquals(2, total.count)
+        // Board order is the live COUNTED order — since issue
+        // #309 F5 that is cheapest-first (USAGE, LISTENER, ACC,
+        // ADMIN), so the LISTENER's price prints before
+        // ACCESSIBILITY's. (This expectation originally named
+        // ACC first, from the pre-#309 board order.)
         assertEquals(
-            "WITHOUT ACCESSIBILITY, BLOCKING CANNOT PROVE ITSELF — " +
-                "SESSIONS WILL NOT SEAL. " +
-                "WITHOUT THE LISTENER, MESSAGES ARRIVE AS THEY COME — NOTHING IS HELD.",
+            "WITHOUT THE LISTENER, MESSAGES ARRIVE AS THEY COME — NOTHING IS HELD. " +
+                "WITHOUT ACCESSIBILITY, BLOCKING CANNOT PROVE ITSELF — " +
+                "SESSIONS WILL NOT SEAL.",
             total.sentence
         )
     }
@@ -331,8 +336,10 @@ class ReceptionSheetTest {
         // and totalPricesMixedLacksEachInItsOwnKindsWords above:
         // as written it would have failed on first run. The law
         // is per-kind pricing: EVERY lack is priced, in COUNTED
-        // order, each in its own kind's words — here the stale
-        // door (ACCESSIBILITY, first counted) prices first.
+        // order, each in its own kind's words — under the #309
+        // cheapest-first board order USAGE ACCESS leads the
+        // counted board, so its absence prices first and the
+        // stale door keeps its own kind's words after it.
         val snap = snapshotWithMonos(
             mapOf(
                 WatchItemId.ACCESSIBILITY to PermState.GRANTED,
@@ -344,8 +351,8 @@ class ReceptionSheetTest {
         val total = receptionTotal(snap, now)
         assertEquals(2, total.count)
         assertEquals(
-            "THE LAST PROOF OF ACCESSIBILITY AGED OUT — CHECK RE-PROVES IT. " +
-                "WITHOUT USAGE ACCESS, BLOCKING CANNOT PROVE ITSELF — SESSIONS WILL NOT SEAL.",
+            "WITHOUT USAGE ACCESS, BLOCKING CANNOT PROVE ITSELF — SESSIONS WILL NOT SEAL. " +
+                "THE LAST PROOF OF ACCESSIBILITY AGED OUT — CHECK RE-PROVES IT.",
             total.sentence
         )
     }

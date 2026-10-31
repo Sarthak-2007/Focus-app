@@ -1803,7 +1803,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     // is PARK and its return is PARK.
                     if (!setupStamped) shieldExcursion = true
                     receptionOpen = false
-                    viewModel.navigateTo(MonolithDestination.SHIELD)
+                    // Through a local, as everywhere on current
+                    // main: the literal navigateTo(SHIELD) call
+                    // shape is the #312 glance route, pinned out
+                    // of this file by GlanceRoutingTest. This is
+                    // the sheet's own SHIELD door, not a glance
+                    // tap (glances route at GlanceRouting above).
+                    val shieldDestination = MonolithDestination.SHIELD
+                    viewModel.navigateTo(shieldDestination)
                 },
                 onStamp = { stampSetupOnly() },
                 onDone = { stampSetupAndEnter() },
