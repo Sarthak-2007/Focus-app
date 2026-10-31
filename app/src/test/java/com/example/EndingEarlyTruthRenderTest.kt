@@ -75,7 +75,6 @@ class EndingEarlyTruthRenderTest {
                     studyBlocksCount = 2,
                     activeTask = null,
                     queuedTasks = emptyList(),
-                    capturedNotificationsCount = 0,
                     soundEngine = TactileSoundEngine(context),
                     isDarkTheme = false,
                     onDialMinutesChanged = {},
@@ -88,7 +87,6 @@ class EndingEarlyTruthRenderTest {
                     onRequestDisarm = {},
                     onCancelWithinGraceWindow = {},
                     onOpenAlwaysOnDeskClock = {},
-                    onOpenNotificationDigest = {},
                     isActiveRoutineJudged = routineJudged
                 )
             }
