@@ -89,14 +89,6 @@ class MonolithBootReceiver : BroadcastReceiver() {
                             RoutineHeartbeat.tick(
                                 appContext, RoutineHeartbeat.Source.TIME_CHANGED, force = true
                             )
-                            // Issue #155 (IQ-4 edge 6): the widget's
-                            // printed wall times (until / NEXT
-                            // ROUTINE) are rendered in the zone and
-                            // clock of their moment — a time-set or
-                            // timezone change strands them for up to
-                            // the 30-minute period. Re-render beside
-                            // the tick that re-derives the truth.
-                            MonolithWidgetProvider.requestUpdate(appContext)
                         }
                         // Issue #155 (F1): every HH:mm the widget
                         // prints is a wall-clock render — a moved

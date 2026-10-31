@@ -4714,8 +4714,30 @@ class MonolithRepository(
      * evidence via [recordAttendanceEvidence].
      */
     suspend fun completeEmergencyBreak(): BreakResult {
+        val result = completeEmergencyBreakInTransaction()
+        // Issue #155 (IQ-4 edge 8b): the valve ends the session in
+        // this transaction, but the widget was never told — its
+        // correction rode the shield loop noticing !isActive, and
+        // a dead loop stranded SEALED until the period update.
+        // Refresh AFTER the commit, so the re-render reads the
+        // disarmed row.
+        if (result == BreakResult.Completed) {
+            MonolithWidgetProvider.requestUpdate(context)
+        }
+        return result
+    }
+
+    /**
+     * The valve's booking transaction, extracted verbatim for the
+     * #155 landing composition: same floor re-check, same
+     * honest-clock week anchor, same spend + disarm, all inside
+     * the one transaction — it stands in its own function so the
+     * public door above stays the thin post-commit shell the IQ-4
+     * widget refresh rides.
+     */
+    private suspend fun completeEmergencyBreakInTransaction(): BreakResult {
         val database = db() // ISSUE-67: injected database, no re-fetch
-        val result = database.withTransaction {
+        return database.withTransaction {
             val active = dao.getActiveSessionSnapshot()
                 ?: return@withTransaction BreakResult.NoActiveSession
             // Issue #147 REOPENED (Findings 2/3 seam): the floor
@@ -4771,16 +4793,6 @@ class MonolithRepository(
             }
             BreakResult.Completed
         }
-        // Issue #155 (IQ-4 edge 8b): the valve ends the session in
-        // this transaction, but the widget was never told — its
-        // correction rode the shield loop noticing !isActive, and
-        // a dead loop stranded SEALED until the period update.
-        // Refresh AFTER the commit, so the re-render reads the
-        // disarmed row.
-        if (result == BreakResult.Completed) {
-            MonolithWidgetProvider.requestUpdate(context)
-        }
-        return result
     }
 
     /**
