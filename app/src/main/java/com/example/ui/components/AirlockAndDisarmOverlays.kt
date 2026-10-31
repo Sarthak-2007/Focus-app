@@ -1646,7 +1646,14 @@ fun AirlockInterceptOverlay(
     // Issue #318 F4: the breathing wall's length is a stored,
     // per-configuration value (AirlockBreathStore), no longer a
     // composable-local literal. Default = Decision #16's 5 seconds.
-    breathSeconds: Int = com.example.data.AirlockBreathStore.DEFAULT_SECONDS
+    breathSeconds: Int = com.example.data.AirlockBreathStore.DEFAULT_SECONDS,
+    // Issue #517 (4-A): the SET peek length, from the same Guard
+    // row the lease reads — the offer's preview, badge and label
+    // print it, never the retired PEEK_DURATION_SECONDS constant
+    // (the EditableTimes seam's §4.3 law). Default 2 = the
+    // settings default, so render harnesses print the shipped
+    // truth.
+    peekMinutes: Int = 2
 ) {
     // Issue #55 (HIGH): System Back must never bypass the wall toward
     // the blocked app. While the airlock stands, Back is swallowed —
@@ -2017,23 +2024,26 @@ fun AirlockInterceptOverlay(
                     if (peekReady) {
                         if (countdownSecs > 0) {
                             Text(
-                                text = peekOfferPreviewText(MonolithRepository.PEEK_DURATION_SECONDS),
+                                text = peekOfferPreviewText(peekMinutes * 60),
                                 fontFamily = AtkinsonHyperlegibleFamily,
                                 fontSize = 12.5.sp,
                                 color = NightColorPrimary.copy(alpha = 0.8f)
                             )
                         }
                         BlockitActionChip(
-                            wordLabel = "2-MINUTE PEEK",
+                            wordLabel = "$peekMinutes-MINUTE PEEK",
                             // Issue #114, finding 5: this door is
                             // NOT an emergency — it is the routine,
                             // repeatable, cooldown-priced peek. The
                             // EMERGENCY name belongs only to the
                             // session-ending weekly break.
                             // SIL-2 / W-29: the badge is the SET
-                            // value, read from the lease machinery's
-                            // own constant — no hardcoded minutes.
-                            monoBadge = peekBadgeText(MonolithRepository.PEEK_DURATION_SECONDS),
+                            // value — since issue #517 (4-A) it is
+                            // the Guard row's peekMinutes passed to
+                            // this overlay, not the retired constant:
+                            // the label and badge print the length
+                            // the lease will actually grant.
+                            monoBadge = peekBadgeText(peekMinutes * 60),
                             onClick = { if (countdownSecs == 0) onTake2MinutePeek() },
                             modifier = Modifier
                                 .fillMaxWidth()

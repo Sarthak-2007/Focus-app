@@ -2095,6 +2095,19 @@ class MonolithRepository(
         dao.updateShortsReelsSniperEnabled(enabled)
     }
 
+    // Issue #517 (4-A): the peek length's setter — the write half
+    // of the EditableTimes seam (PILL-AND-TIMES §3). The entity
+    // assigns the bounds to the setters: clamped 0–30 on write;
+    // 0 is PEEK OFF (the provider refuses the grant at the source
+    // and the offer withholds PEEK_OFF). Seed-if-absent, then the
+    // targeted UPDATE — never a whole-row REPLACE (§7.5).
+    suspend fun setPeekMinutes(minutes: Int) {
+        if (dao.getGuardSettingsSnapshot() == null) {
+            dao.insertGuardSettings(GuardSettingsEntity())
+        }
+        dao.updatePeekMinutes(minutes.coerceIn(0, 30))
+    }
+
     suspend fun isShortsReelsSniperEnabled(): Boolean =
         dao.getGuardSettingsSnapshot()?.shortsReelsSniperEnabled ?: true
 

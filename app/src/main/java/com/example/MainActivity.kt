@@ -1513,6 +1513,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     selectedCategory = selectedCategory,
                                     shortsReelsSniperEnabled = shortsReelsSniperEnabled,
                                     browserUrlBlockerEnabled = browserUrlBlockerEnabled,
+                                    peekMinutes = guardSettings?.peekMinutes ?: 2,
                                     loadoutCapIndex = loadoutCapIndex,
                                     isSessionActive = sealed,
                                     blockingStatus = shieldBlockingStatus,
@@ -1751,6 +1752,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                             null
                         },
                         peekMinutes = guardSettings?.peekMinutes ?: 2,
+                        onPeekMinutesChange = { viewModel.setPeekMinutes(it) },
                         handoverText = armedHandover?.text,
                         modifier = Modifier.align(Alignment.BottomCenter)
                     )
@@ -2227,6 +2229,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     (context as? android.app.Activity)?.moveTaskToBack(true)
                 },
                 onTake2MinutePeek = viewModel::start2MinutePeek,
+                peekMinutes = guardSettings?.peekMinutes ?: 2,
                 // FIX-8 / P-2: the honest exit routes to the
                 // door-originated Disarm entry — the face stands
                 // in front of the still-standing door.
