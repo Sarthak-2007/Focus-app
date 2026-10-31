@@ -78,58 +78,34 @@ class PillControllerRenderTest {
         }
     }
 
-    /** Grant the two AppOps doors render() and the foreground read
-     *  stand behind, and witness a foreign app in front. Each grant is
+    /** Grant the two doors render() and the foreground read stand
+     *  behind, and witness a foreign app in front. Each grant is
      *  proven by its own assertion before the controller starts.
      *
-     *  The grants are laid under every key and shelf the framework
-     *  might read: the op under both uids (the sandbox does not
-     *  promise the process uid and the Binder calling uid are the
-     *  same number), the uid-mode forms, and the legacy permission
-     *  canDrawOverlays falls back to when the op reads MODE_DEFAULT.
-     *  The door assertion then prints the full state vector — the
-     *  string-op read, the int-op read (24 is OP_SYSTEM_ALERT_WINDOW's
-     *  frozen AOSP code; neither the OP_* int constants nor strOpToOp
-     *  are public in this SDK surface, as two compile verdicts on
-     *  this file established) and canDrawOverlays itself — so a shut
-     *  door names the exact reading that stayed shut. */
+     *  Two different mechanisms, because the two doors are two
+     *  different mechanisms: in Robolectric, Settings.canDrawOverlays
+     *  is SHADOWED — ShadowSettings holds its own flag and no AppOps
+     *  grant moves it (five CI cycles on this file established that
+     *  the hard way: the op read asserted MODE_ALLOWED while the door
+     *  stayed shut) — while usageAccess() runs the real AppOps read,
+     *  so GET_USAGE_STATS is granted through ShadowAppOpsManager
+     *  under both uids (the sandbox does not promise the process uid
+     *  and the Binder calling uid are the same number). */
     private fun openTheDoors(repository: MonolithRepository) {
+        ShadowSettings.setCanDrawOverlays(true)
+        assertTrue(
+            "overlay door: Settings.canDrawOverlays must read true once the shadow flag is set",
+            Settings.canDrawOverlays(context)
+        )
         val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
         for (uid in setOf(Process.myUid(), Binder.getCallingUid())) {
-            shadowOf(appOps).setMode(
-                AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW,
-                uid,
-                context.packageName,
-                AppOpsManager.MODE_ALLOWED
-            )
             shadowOf(appOps).setMode(
                 AppOpsManager.OPSTR_GET_USAGE_STATS,
                 uid,
                 context.packageName,
                 AppOpsManager.MODE_ALLOWED
             )
-            runCatching {
-                appOps.setUidMode(24, uid, AppOpsManager.MODE_ALLOWED)
-                appOps.setUidMode(43, uid, AppOpsManager.MODE_ALLOWED)
-            }
         }
-        @Suppress("DEPRECATION")
-        shadowOf(context as Application).grantPermissions(
-            Manifest.permission.SYSTEM_ALERT_WINDOW
-        )
-        val vector = "stringOp=" + appOps.unsafeCheckOpNoThrow(
-            AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW,
-            Process.myUid(),
-            context.packageName
-        ) + " intOp=" + appOps.unsafeCheckOpNoThrow(
-            24,
-            Process.myUid(),
-            context.packageName
-        ) + " canDrawOverlays=" + Settings.canDrawOverlays(context)
-        assertTrue(
-            "overlay door: canDrawOverlays must read true once the op is granted [$vector]",
-            Settings.canDrawOverlays(context)
-        )
 
         val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         shadowOf(usm).addEvent(
