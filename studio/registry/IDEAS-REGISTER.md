@@ -131,4 +131,15 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | Test call-site census script (stdlib, prints PASS, catches seeded regressions) | Fuge | #2 | BUILT (studio/tools/check_test_callsites.py, on main via PR #165) |
 | Launcher block screen: un-exitable launcher surface + separate allowed/peek screens | Sarthak's ruling 04:29 (not a seat idea — his order) | #22/#18 | BUILT-IN-PROGRESS (Umbau lane; first slice merged via PR #167) |
 
+## Zero-screen glances — sound, touch, badge (INNOVATOR-3, WING-A ideation, #155)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| The Pocket Knock: haptic pull-glance — double-knock / volume long-press (a11y key events) / earbud hook asks the shield; it answers SEALED (Seal Throw waveform) / OPEN (single tick) / UNPROVEN (broken descending strikes) from the live witness at query instant; dead shield = silence = not proven | INNOVATOR-3 | #155 | PANEL-QUEUED (M–L, 3–4d; after PR #540; full filing on #155 + Discussion #609) |
+| The Unfinished Chord: earcon twin of the Pocket Knock — UNPROVEN rendered as the seal motif with its final seating strike missing | INNOVATOR-3 | #155 | PANEL-QUEUED (S–M, 1.5–2d on top of the Pocket Knock; never ships alone) |
+| Dot, Not Digits: kill setNumber (DESIGNER-E-5's ruling), move the 45-min completion card to a badge-off channel so the dot tracks the standing card only; badge specced as a pointer, never a claim (launcher-owned rendering stated) | INNOVATOR-3 (builds on DESIGNER-E-5) | #155 | PANEL-QUEUED (S, 0.5–1d; consult to K5/DURCH-D) |
+| The Fallen-Shield Knock: one UNPROVEN-pattern strike on the protecting flip true→false for a live row (witness loss while process lives); process death expressly out of scope | INNOVATOR-3 | #155 | PANEL-QUEUED (M, ~2d; strictly after PR #540's flip machinery) |
+| The Wrist Answer: Wear OS pull-glance in the same three haptic patterns | INNOVATOR-3 | #155 | PARKED-WITH-REASON (pushed watch face re-imports icon-flip staleness; no wear module/bench; unpark only after the pull grammar exists; L, 5d+ if ever) |
+| The Dead-Man's Tick: periodic reassurance buzz while sealed | INNOVATOR-3 | #155 | PARKED-WITH-REASON (killed by the filing seat on both laws: pushed claim can tick over a dead shield; ambient-companion drift + room-law fight; the pull-glance covers the need at zero idle cost) |
+
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
