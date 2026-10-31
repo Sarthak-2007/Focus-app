@@ -17,6 +17,9 @@ import org.robolectric.annotation.Config
  * what lives here is the store's one promise: never dismissed
  * until he dismisses it, and dismissed forever after — across
  * store instances, which is to say across process restarts.
+ *
+ * PIN scope: PLUMBING — SharedPreferences persistence behaviour
+ * under Robolectric; no rendering, no source-text claims.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])

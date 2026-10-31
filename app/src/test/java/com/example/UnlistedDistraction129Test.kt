@@ -138,6 +138,8 @@ class UnlistedDistraction129Test {
     }
 
     // ---- D-2: the one-time SHOPPING fail-closed warning --------
+    // PIN scope: SOURCE — the pure owed-check over catalogue
+    // values; no Android runtime involved.
 
     private fun row(pkg: String, category: AppCategory, tier: AppBlockTier) =
         BlockedAppEntity(
