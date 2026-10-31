@@ -187,23 +187,38 @@ def main():
                       "head tree (deleted/renamed); no filter")
         elif f.startswith(MAIN_ROOT):
             production_changed = True
-            before = len(filters)
+            # A production file is mapped iff at least one test
+            # file selects for its stem (by name or by content
+            # reference) and declares a @Test class — judged on
+            # THIS file's own candidates, never on whether those
+            # classes were already selected by an earlier file in
+            # the diff. (BUILDER-264, PR #731: ArmProvingController.kt
+            # was declared unmapped although ArmProvingControllerTest
+            # and ArmProductionWiringTest both reference its stem,
+            # ran, and passed — MonolithRepository, earlier in the
+            # diff, had already pulled both into the filter set, so
+            # the per-file filter-growth check read shared coverage
+            # as no coverage. The filter set itself is unchanged by
+            # this accounting: the same classes are selected; only
+            # the unmapped verdict becomes accurate.)
+            mapped_for_file = set()
             if f.startswith(MAIN_ROOT + "java/") and f.endswith(".kt"):
                 stem = os.path.basename(f)[:-3]
                 word = re.compile(r"\b" + re.escape(stem) + r"\b")
                 for tf in all_test_files:
                     base = os.path.basename(tf)
                     if stem in base:
-                        add_test_file(tf, f"name matches stem {stem}")
+                        mapped_for_file.update(
+                            add_test_file(tf, f"name matches stem {stem}"))
                     else:
                         try:
                             with open(tf, encoding="utf-8") as fh:
                                 if word.search(fh.read()):
-                                    add_test_file(
-                                        tf, f"contents reference {stem}")
+                                    mapped_for_file.update(add_test_file(
+                                        tf, f"contents reference {stem}"))
                         except OSError:
                             pass
-            if len(filters) == before:
+            if not mapped_for_file:
                 kind = ("code" if f.startswith(MAIN_ROOT + "java/")
                         and f.endswith(".kt") else "resource")
                 unmapped.append((kind, f))
