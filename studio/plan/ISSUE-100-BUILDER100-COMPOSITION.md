@@ -48,3 +48,13 @@ branch calling the deleted toggleNotificationDigestSheet — composed
 out (parameters + branch), #534's parkIntro spend law kept verbatim
 (definition + all call sites re-signed to
 closePark(parkOpenState, viewModel, spendParkIntro = …)).
+
+Gate cycle 1 (run 41202228237 on f56230e4): test-compile failed on
+EndingEarlyTruthRenderTest — a main-side Deck test still passing the
+deleted HELD-door parameters (capturedNotificationsCount /
+onOpenNotificationDigest) to TactileDeckScreen. Its assertions
+(grace/end buttons) are untouched; the two dead arguments were
+removed. The targeted-tests job's gate-honesty step also named
+MonolithNotificationListener.kt as unmapped: Issue100NotificationsTest
+now references the listener class directly and pins its in-memory
+snoozedCount, making the covering test findable by content.

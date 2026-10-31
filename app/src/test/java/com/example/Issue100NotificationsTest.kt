@@ -3,6 +3,7 @@ package com.example
 import com.example.data.AppBlockTier
 import com.example.data.BlockedAppEntity
 import com.example.data.FocusSessionEntity
+import com.example.service.MonolithNotificationListener
 import com.example.service.NotificationHoldCache
 import com.example.service.peekLeaseLive
 import com.example.service.SNOOZE_CHUNK_MILLIS
@@ -96,5 +97,13 @@ class Issue100NotificationsTest {
         assertFalse(peekLeaseLive(5_000L, 5_000L))
         assertFalse(peekLeaseLive(5_000L, 6_000L))
         assertFalse(peekLeaseLive(0L, 1_000L))
+    }
+
+    @Test
+    fun snoozedCount_isInMemoryOnly_andStartsAtZeroInAFreshProcess() {
+        // The shield badge's held number is MonolithNotificationListener's
+        // in-memory snooze count (Issue #100 CUT): no stored total exists
+        // to read, and a fresh process has snoozed nothing.
+        assertEquals(0, MonolithNotificationListener.snoozedCount)
     }
 }
