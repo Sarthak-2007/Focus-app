@@ -32,7 +32,18 @@ import org.robolectric.annotation.Config
  * to jam L1 and annul a correctly performed arm. The cure keeps
  * the #129 F2 birth coverage but moves the resync off the
  * seal's path: the birth inserts from the standing catalogue,
- * and the resync fires async the moment the insert lands.
+ * and the resync's CATALOGUE half fires async the moment the
+ * insert lands. (The SEED half of the old pass is still
+ * awaited inside startSession — cheap Room/prefs writes whose
+ * settled-not-in-flight ordering other paths rely on; the
+ * split landed after this lane's fully-async first shape let
+ * a seed pass drop the starter task slate into a wiped queue
+ * mid-flow, caught by IntentionFreezeRepositoryTest on
+ * PR #719's first head.)
+ *
+ * PIN SCOPE: PLUMBING — this test pins WHEN repository work
+ * runs relative to the birth insert, not a rendered surface
+ * and not a source read.
  *
  * Proven here with the birth-sync scope held on a test
  * dispatcher, so "not before the insert" is deterministic,
