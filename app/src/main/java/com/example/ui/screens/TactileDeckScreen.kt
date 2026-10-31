@@ -1110,6 +1110,34 @@ fun TactileDeckScreen(
                 )
             }
 
+            // Issue #125 (armed-wrong F3 remainder): the grace fact,
+            // advertised BEFORE arming. The audit's core charge was
+            // that nothing anywhere before the seal mentions the
+            // window — the free abort was undiscoverable until it
+            // was already running out. The print stands under the
+            // hero, in the same eyebrow register as the blocks
+            // reading it follows, worded from the one constant the
+            // repository enforces so promise and law can never
+            // disagree. It lives in the scroll, NOT the pinned
+            // stack: the stack's geometry is census-pinned
+            // (ScreenshotHarnessTest.zzAccentCensus, foot ≤ 260dp)
+            // and an earlier draft of this line inside the stack
+            // pushed the Bolt bed to a 282dp foot — caught by that
+            // census on run 41201464326 and moved here.
+            if (!isSessionRunning && receiptState == null) {
+                Text(
+                    text = "ARMED WRONG? ${MonolithRepository.GRACE_WINDOW_SECONDS}S FREE ABORT — CANCEL FREE, NOTHING BOOKED",
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("pre_arm_grace_line")
+                )
+            }
+
             if (!isSessionRunning || shotActive) {
                 // The wheel stays composed through the shot as a
                 // frozen ghost (Zug-II §4.1): same instance, physics
@@ -1751,27 +1779,6 @@ fun TactileDeckScreen(
             // both states, in both states — in-window it counts the
             // free cancel down, past it the valve's terms stand
             // printed before they are ever needed.
-            // Issue #125 (armed-wrong F3 remainder): the line also
-            // stands BEFORE arming. The audit's core charge was
-            // that nothing anywhere before the seal mentions the
-            // window — the free abort was undiscoverable until it
-            // was already running out. The idle print states the
-            // same fact in the same slot and type, from the one
-            // constant the repository enforces, so the promise and
-            // the law can never disagree; the fitted slide print
-            // itself is untouched.
-            if (activeSession == null) {
-                Text(
-                    text = "ARMED WRONG? ${MonolithRepository.GRACE_WINDOW_SECONDS}S FREE ABORT — CANCEL FREE, NOTHING BOOKED",
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 9.5.sp,
-                    letterSpacing = 0.8.sp,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .padding(top = 6.dp)
-                        .testTag("pre_arm_grace_line")
-                )
-            }
             if (activeSession != null) {
                 val graceLeft = 10 - activeSession.elapsedSeconds
                 Text(
