@@ -24,6 +24,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
+ * PIN scope: PLUMBING — pins the full migration chain's schema
+ * validation, no behaviour.
+ *
  * Routines rebuild — Migration chain 7→8→9.
  *
  * 8a: a v7-shaped file runs BOTH migrations: the token ledger appears

@@ -18,6 +18,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
+ * PIN scope: PLUMBING — pins the full migration chain's schema
+ * validation, no behaviour.
+ *
  * Slice E — Migration 9→10 (Saum's unified manifest, F-N1 +
  * F-SCH-2 as ruled) and the full clean-upgrade chain.
  *

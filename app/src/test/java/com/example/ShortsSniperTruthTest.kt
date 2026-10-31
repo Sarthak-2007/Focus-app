@@ -27,6 +27,10 @@ import org.robolectric.shadows.ShadowLooper
 import org.robolectric.shadows.ShadowSystemClock
 
 /**
+ * PIN scope: PLUMBING — its migration-chain half pins the
+ * schema validation end-to-end; the toggle-truth assertions
+ * are SOURCE.
+ *
  * Truth Car 3 — UNA-01: SHORTS + REELS WAS A PHANTOM.
  *
  * The charge, verified in trunk before the cure: the toggle lived

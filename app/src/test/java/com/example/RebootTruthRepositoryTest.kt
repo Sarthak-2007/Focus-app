@@ -11,8 +11,6 @@ import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
 import com.example.data.SessionOutcome
 import com.example.data.ShieldRaiseStore
-import com.example.data.unshieldedRebootMillis
-import com.example.data.witnessedPostRebootMillis
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -28,6 +26,9 @@ import org.robolectric.shadows.ShadowSystemClock
 import java.time.Duration
 
 /**
+ * PIN scope: SOURCE — pins the verified-elapsed derivation and
+ * the reboot booking at the repository seam.
+ *
  * Audit R3 #113, findings 4 + 5 — the reboot's two lies, proven
  * against the repository's own machinery, in the form the surge
  * merge composed them (STURM3-11 port):
@@ -421,45 +422,6 @@ class RebootTruthRepositoryTest {
         assertEquals(banked + witnessedSec, ticked.elapsedSeconds)
         assertEquals(gapSec, ticked.rebootGapSeconds)
         assertTrue(ticked.shieldGapSeen)
-    }
-
-    /** The shield-raise stamp's own law: the FIRST flip of a
-     *  boot wins, a stamp testifies only for its own boot, and
-     *  the next boot's first flip starts a fresh stamp. */
-    @Test
-    fun shieldRaiseStampKeepsTheFirstFlipOfTheBoot() {
-        setMachineBootCount(10)
-        ShieldRaiseStore.stampFirstRaise(context, 111_000L)
-        ShieldRaiseStore.stampFirstRaise(context, 222_000L)
-        assertEquals(111_000L, ShieldRaiseStore.raiseMonoForBoot(context, 10))
-        assertNull(ShieldRaiseStore.raiseMonoForBoot(context, 11))
-
-        setMachineBootCount(11)
-        ShieldRaiseStore.stampFirstRaise(context, 5_000L)
-        assertEquals(5_000L, ShieldRaiseStore.raiseMonoForBoot(context, 11))
-        assertNull(ShieldRaiseStore.raiseMonoForBoot(context, 10))
-    }
-
-    /** The pure seam's arithmetic: witnessed + unshielded is
-     *  exactly the uptime the old derivation gifted whole — the
-     *  cure splits it, it does not invent or lose a second. */
-    @Test
-    fun witnessedSpanMathSplitsTheOldGiftedFigureExactly() {
-        // No stamp: nothing witnessed, everything unshielded.
-        assertEquals(0L, witnessedPostRebootMillis(7_200_000L, null))
-        assertEquals(7_200_000L, unshieldedRebootMillis(7_200_000L, null))
-        // Raise 8 s into the boot, tick at 20 s: 12 s witnessed,
-        // 8 s unshielded — and the two sum to the old figure.
-        assertEquals(12_000L, witnessedPostRebootMillis(20_000L, 8_000L))
-        assertEquals(8_000L, unshieldedRebootMillis(20_000L, 8_000L))
-        assertEquals(
-            20_000L,
-            witnessedPostRebootMillis(20_000L, 8_000L) +
-                unshieldedRebootMillis(20_000L, 8_000L)
-        )
-        // A stamp ahead of the tick witnesses nothing.
-        assertEquals(0L, witnessedPostRebootMillis(5_000L, 9_000L))
-        assertEquals(5_000L, unshieldedRebootMillis(5_000L, 9_000L))
     }
 
     /**

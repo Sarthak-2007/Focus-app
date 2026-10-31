@@ -23,6 +23,9 @@ import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowSystemClock
 
 /**
+ * PIN scope: SOURCE — pins the valve's completion booking at
+ * the repository seam.
+ *
  * Issue #147 REOPENED (Findings 2/3 seam): the valve's booking must
  * re-judge the stopwatch floor at COMPLETION time, not trust the
  * snapshot the overlay opened on.

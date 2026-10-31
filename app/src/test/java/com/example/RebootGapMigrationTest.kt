@@ -18,6 +18,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
+ * PIN scope: PLUMBING — pins the 18→19 schema migration and the
+ * entity's column mapping, no behaviour.
+ *
  * Issue #525 — Migration(18, 19). A v18-shaped database opens
  * under v19: the focus_sessions row survives, and the new
  * rebootGapSeconds column stands at its truthful default —
@@ -115,6 +118,9 @@ class RebootGapMigrationTest {
                     intention = "Deep Study",
                     profileName = "Default",
                     targetDurationSeconds = 3_600,
+                    elapsedSeconds = 0,
+                    startWallTimeMillis = 0L,
+                    startElapsedRealtimeMillis = 0L,
                     rebootGapSeconds = 6_900,
                     isActive = true,
                     completedSuccessfully = false
