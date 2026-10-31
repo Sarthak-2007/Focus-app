@@ -221,9 +221,33 @@ class ScreenshotHarnessTest {
 
     private fun waitForSeed() {
         val deadline = System.currentTimeMillis() + 45_000
+        var profilesLandedAt = 0L
         while (System.currentTimeMillis() < deadline) {
             ShadowLooper.idleMainLooper()
-            if (viewModel.apps.value.isNotEmpty() && viewModel.profiles.value.isNotEmpty()) break
+            if (viewModel.apps.value.isNotEmpty() && viewModel.profiles.value.isNotEmpty()) return
+            if (viewModel.profiles.value.isNotEmpty()) {
+                // Floor-lane speed cure (#166): profiles are seeded
+                // AFTER the catalog sync inside the same pass
+                // (MonolithRepository.ensureSeededAndSyncPackages:
+                // the sync's insertApps precedes insertProfiles),
+                // and that sync is the seed pass's only writer of
+                // apps rows — rows are reconciled from the phone's
+                // installed launchable set; there is no factory
+                // seed. Once profiles have landed, the sync has
+                // already run, so any apps rows it was ever going
+                // to write are in the table (the apps flow reads
+                // the same DB). Hold a short grace for that flow's
+                // emission, then stop: past this point the 45 s
+                // deadline is spent waiting on a condition that
+                // cannot become true in this process — under the
+                // rig the installed set is empty and apps stays 0
+                // for the full deadline (measured: every RootApp
+                // case in this class burns the whole 45 s in the
+                // census artifacts). The wait stays non-fatal,
+                // exactly as before — captures proceed either way.
+                if (profilesLandedAt == 0L) profilesLandedAt = System.currentTimeMillis()
+                if (System.currentTimeMillis() - profilesLandedAt >= 2_000) return
+            }
             Thread.sleep(250)
         }
     }
