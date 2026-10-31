@@ -6,6 +6,7 @@
     <string name="device_admin_description">Shows a warning when Monolith\'s device admin is about to be turned off. It only adds friction and a warning — Android still lets you deactivate it and uninstall Monolith; it does not prevent either.</string>
     <string name="device_admin_add_explanation">Turning this on only lets Monolith show a warning if you later go to turn its device admin off. It adds friction and a warning — it does not prevent deactivation or uninstall, and Android still lets you do both.</string>
     <string name="accessibility_service_summary">Guards a sealed focus session: blocked apps, Shorts/Reels and blocked sites are intercepted, including in split-screen and picture-in-picture. Open Monolith to configure what is blocked.</string>
+    <string name="widget_description">Seal status at a glance: sealed, open, or the next seal.</string>
     <string name="notification_channel_name">Monolith Active Shield</string>
     <string name="notification_channel_desc">Shows the active focus session\'s countdown and shield status.</string>
     <!-- Issue #115: one name per destination — the rail's words.
@@ -13,6 +14,9 @@
          tab_web_studio (no such destination; sites live on Shield)
          are deleted with the names they carried. -->
     <string name="tab_deck">Deck</string>
+    <string name="shortcut_open_short">Open Monolith</string>
+    <string name="shortcut_open_long">Open Monolith</string>
+    <string name="tile_label">Monolith</string>
     <string name="tab_tasks">Tasks</string>
     <string name="tab_shield">Shield</string>
     <string name="tab_vault">Ledger</string>

@@ -249,7 +249,7 @@ class SliceEMigrationChainTest {
     }
 
     @Test
-    fun v7EntitySchema_fullChain_roomValidatesAtV14() {
+    fun v7EntitySchema_fullChain_roomValidatesAtV16() {
         createV7EntityFile()
         val room = Room.databaseBuilder(context, MonolithDatabase::class.java, dbName)
             .addMigrations(
@@ -261,14 +261,16 @@ class SliceEMigrationChainTest {
                 MonolithDatabase.MIGRATION_12_13,
                 MonolithDatabase.MIGRATION_13_14,
                 MonolithDatabase.MIGRATION_14_15,
-                MonolithDatabase.MIGRATION_15_16
+                MonolithDatabase.MIGRATION_15_16,
+                MonolithDatabase.MIGRATION_16_17,
+                MonolithDatabase.MIGRATION_17_18
             )
             .build()
         runBlocking {
             val dao = room.monolithDao()
             // The read forces the open: Room has migrated
-            // 7→8→9→10→11→12→13→14→15→16 AND validated the result
-            // against every v16 entity.
+            // 7→8→9→10→11→12→13→14→15→16→17 AND validated the
+            // result against every v17 entity.
             val session = dao.getSessionHistorySnapshot().single()
             assertEquals("shaped session", session.intention)
             assertEquals(0L, session.endWallMillis)
@@ -290,6 +292,10 @@ class SliceEMigrationChainTest {
             // the receipt will print its stored total, not a split.
             assertEquals(-1, session.heldShutAtSeal)
             assertEquals(-1, session.heldPeekAtSeal)
+            // Audit R6 #340 (16→17): a pre-v17 row was never
+            // finish-sealed — '' is the truth, no retroactive seal.
+            assertEquals("", session.finishSignature)
+            assertEquals("", session.prevFinishSignature)
             assertEquals("", session.outcome)
             assertEquals(0L, session.shieldLastBeatWallMillis)
             assertFalse(session.shieldGapSeen)
