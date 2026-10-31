@@ -66,6 +66,7 @@ import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithShieldService
 import com.example.service.PermissionReturnService
 import com.example.service.WatchStore
+import com.example.ui.GlanceRouting
 import com.example.ui.MonolithDestination
 import com.example.ui.ArmPhase
 import com.example.ui.MonolithViewModel
@@ -201,22 +202,39 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIncomingInterceptIntent(intent: Intent?, viewModel: MonolithViewModel) {
         if (intent == null) return
-        // Issue #155 (F5, re-homed at the STURM-4 merge): a tap on
-        // the shield notification is about the shield — land on
-        // SHIELD, not the default Deck. Intercept extras take
-        // precedence: when a firing's package rides the same intent,
-        // the intercept path below owns the delivery and this extra
-        // is simply consumed.
+        // Issue #155 (F5): a tap on a glance card lands on the
+        // surface the card is ABOUT, per GlanceRouting's per-state
+        // table — not the #312 single route to SHIELD, which the
+        // seal law in navigateTo refuses mid-session (dead code)
+        // and which, at completion, lands where the receipt is
+        // not. The about extra is routing-only: it names a
+        // destination, never a session action, so honouring it
+        // from any delivery can move the user's eyes but can
+        // never touch the seal. Intercept extras take precedence:
+        // when a firing's package rides the same intent, the
+        // intercept path below owns the delivery and these extras
+        // are simply consumed.
         val fromShieldNotification = intent.getBooleanExtra(
             MonolithShieldService.EXTRA_FROM_SHIELD_NOTIFICATION, false
+        )
+        val glanceAbout = GlanceRouting.parseAbout(
+            intent.getStringExtra(GlanceRouting.EXTRA_GLANCE_ABOUT)
         )
         if (fromShieldNotification) {
             intent.removeExtra(MonolithShieldService.EXTRA_FROM_SHIELD_NOTIFICATION)
         }
+        intent.removeExtra(GlanceRouting.EXTRA_GLANCE_ABOUT)
         val pkg = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
         if (pkg.isNullOrBlank()) {
             if (fromShieldNotification) {
-                viewModel.navigateTo(MonolithDestination.SHIELD)
+                // Cards posted by the current shield build carry
+                // only the boolean; infer their state from the
+                // live session fact. Per-state writers (the
+                // EXTRA_GLANCE_ABOUT extra) ride PR #540's lane.
+                val about = glanceAbout ?: GlanceRouting.aboutForLegacyShieldTap(
+                    sessionActive = viewModel.activeSession.value?.isActive == true
+                )
+                GlanceRouting.destinationFor(about)?.let { viewModel.navigateTo(it) }
             }
             return
         }
