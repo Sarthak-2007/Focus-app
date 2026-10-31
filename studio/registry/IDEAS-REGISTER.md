@@ -132,3 +132,12 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | Launcher block screen: un-exitable launcher surface + separate allowed/peek screens | Sarthak's ruling 04:29 (not a seat idea — his order) | #22/#18 | BUILT-IN-PROGRESS (Umbau lane; first slice merged via PR #167) |
 
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
+
+## The glance as one artwork (DESIGNER-W-5, Wow-level designer, WING-A — #155 capstone)
+
+Filed on #155 (comment 6536700922). Coherence verdict: one grammar, two worlds, three certainties — voice/grammar coherent (state word · his words · clock boundary), visible world fractured (glance wears system type, in-app world is Sora/Atkinson/Anonymous Pro receipt print), certainty incoherent on main (widget SEALED from the row alone, card before the flip, unconditional lock-screen "protected", two completion voices, badge referent swap).
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| THE PLATE: one shared glance plate — a single renderer fed by the truth function that produces every glance surface's face and words in the receipt's printed character (Sora masthead, Atkinson intention, Anonymous Pro state/time, house palette, never green, hand-built stamp for SEALED); widget consumes it as a rendered plate, cards/tile/icon/dream inherit its wording table (design M ~1–2 days; build L ~4–6 builder-days, END-PHASE #18, after PR #540) | DESIGNER-W-5 | #155 | PANEL-QUEUED |
+| GLANCE-1..5 composition rules: (1) ONE WITNESS — SEALED only from protecting + fresh beat <30s via the shared truth function, fail toward UNPROVEN; (2) ONE PLATE — no surface invents type/colour/wording/metaphor; (3) STATE, HIS WORDS, BOUNDARY — NOTHING ELSE — no totals/streaks/countdowns/imperatives, badge = held-custody or nothing; (4) OPEN IS A FACE — NEXT SEAL passive/earliest-only, summons in-session only, one expiring completion voice; (5) A GLANCE NEVER WEAKENS THE HOLD — no disarm verbs, tap lands on the named surface | DESIGNER-W-5 | #155 | PANEL-QUEUED (proposed as binding, cited by number on future glance issues) |
