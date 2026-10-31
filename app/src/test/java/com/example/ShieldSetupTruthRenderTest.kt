@@ -235,6 +235,15 @@ class ShieldSetupTruthRenderTest {
         composeRule.onNodeWithText("TAP A LINE TO FLIP IT", substring = true).assertExists()
     }
 
+    // (File renamed ShieldSetupTruthTest.kt ->
+    // ShieldSetupTruthRenderTest.kt in the same PR: the targeted
+    // gate maps a changed test FILE to a class filter by file
+    // name, and the old name matched neither class this file
+    // holds, so its targeted job could only ever report "no tests
+    // found". The rename targets the Render class — the class
+    // pruned below; the Pure class's identical blind spot is
+    // filed on #166 for the workflow parcel.)
+    //
     // PRUNED (floor lane, census #6, row 20 — Sarthak's Oct 31
     // pruning process: useless tests only, by name, with reason):
     // shield_capTapStagesLoadout_applyCommits stood here. It
