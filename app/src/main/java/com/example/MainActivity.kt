@@ -692,6 +692,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val activeTaskFromYesterday by viewModel.activeTaskFromYesterday.collectAsStateWithLifecycle()
     val freshStartNoteVisible by viewModel.freshStartNoteVisible.collectAsStateWithLifecycle()
     val updateNoteVisible by viewModel.updateNoteVisible.collectAsStateWithLifecycle()
+    val shoppingWarningVisible by viewModel.shoppingWarningVisible.collectAsStateWithLifecycle()
     val frozenDigest by viewModel.frozenDigest.collectAsStateWithLifecycle()
     val storedMonths by viewModel.storedMonths.collectAsStateWithLifecycle()
     val drawerMonth by viewModel.drawerMonth.collectAsStateWithLifecycle()
@@ -1794,7 +1795,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                         val shown = names.take(3).joinToString(", ") { it.uppercase() }
                                         val more = if (names.size > 3) " +${names.size - 3} MORE" else ""
                                         "${names.size} APPS ARE OPEN WITHOUT YOUR REVIEW: $shown$more — SET A RULE FOR EACH BELOW"
-                                    }
+                                    },
+                                    showShoppingWarning = shoppingWarningVisible,
+                                    onDismissShoppingWarning = viewModel::dismissShoppingWarning
                                 )
                             }
 

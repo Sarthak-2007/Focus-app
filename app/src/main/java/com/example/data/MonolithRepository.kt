@@ -2324,6 +2324,14 @@ class MonolithRepository(
 
     fun dismissUpdateNote() = InstallNoteStore(context).dismissUpdate()
 
+    // -- Shopping fail-closed warning (R3b #129 D-2) ------------
+
+    /** The D-2 one-time flag: true once he has tapped the
+     *  SHOPPING fail-closed warning closed on the Shield. */
+    fun shoppingWarningDismissed(): Boolean = ShoppingWarningStore(context).dismissed()
+
+    fun dismissShoppingWarning() = ShoppingWarningStore(context).dismiss()
+
     /** The reset note is dismissed ONLY by the user's own tap on
      *  it — never by obeying it (R3b #161: an edit used to erase
      *  the only record that a reset happened). */
