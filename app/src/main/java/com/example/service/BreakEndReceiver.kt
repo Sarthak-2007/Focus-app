@@ -30,11 +30,17 @@ class BreakEndReceiver : BroadcastReceiver() {
         ) {
             return
         }
-        BreakEndScheduler.markNotified(context, breakEndsWallMillis)
-
         val manager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
                 ?: return
+        // Issue #155 WING-F (SMALL-2): the dedupe ledger is stamped
+        // only once the post is actually possible. Before this, the
+        // mark landed BEFORE the manager was even obtained — a null
+        // manager (or any failure above the post) consumed the
+        // break-end instant forever: marked notified, never
+        // notified, and the dedupe rule then suppressed every
+        // legitimate re-delivery.
+        BreakEndScheduler.markNotified(context, breakEndsWallMillis)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
