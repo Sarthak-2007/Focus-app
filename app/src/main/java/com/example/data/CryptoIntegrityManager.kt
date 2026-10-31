@@ -17,12 +17,16 @@ import javax.crypto.spec.SecretKeySpec
  * state to detect local DB/SharedPreferences tampering and trigger a
  * penalty lock. Keys are REQUESTED from the AndroidKeyStore; hardware/TEE
  * backing is not verified (no StrongBox request, no KeyInfo security-level
- * check), and when the KeyStore is unavailable signing falls back to a
- * built-in software key — so a valid signature proves consistency with
- * whatever key signed, not hardware custody of that key. (The AES-GCM
- * backup export that used to live here was killed Oct 29, 2026: its
- * payload had no egress and no restore - theatre, not a backup. Critics
- * Phase-3, caller-verified.)
+ * check). Issue #317 F3: there is NO built-in key — the old fallback was a
+ * string literal shipped in the APK, so anyone could forge a "valid"
+ * signature offline. Where no KeyStore exists at all, signing falls back
+ * to a random per-process software key (generated at first use, never
+ * shipped, never persisted): a valid signature then proves consistency
+ * only within the signing process, and signatures made under it fail
+ * closed after process death instead of verifying forever under a
+ * public key. (The AES-GCM backup export that used to live here was
+ * killed Oct 29, 2026: its payload had no egress and no restore -
+ * theatre, not a backup. Critics Phase-3, caller-verified.)
  */
 object CryptoIntegrityManager {
 
@@ -30,11 +34,16 @@ object CryptoIntegrityManager {
     private const val HMAC_KEY_ALIAS = "monolith_hmac_timer_guard_v1"
     private const val HMAC_ALGO = "HmacSHA256"
 
-    // Deterministic 256-bit fallback keys used when AndroidKeyStore hardware TEE is unavailable (e.g., local JVM tests)
-    private val fallbackHmacKey = SecretKeySpec(
-        "Monolith_Hardware_HMAC_Fallback_32B!".toByteArray(StandardCharsets.UTF_8),
-        HMAC_ALGO
-    )
+    // Issue #317 F3: the fallback key is RANDOM PER PROCESS — generated
+    // at first use, held only in memory, never shipped in the APK and
+    // never persisted. The previous literal string key let anyone with
+    // the APK forge signatures; this one is unknowable outside the
+    // process, and its signatures die with the process (fail-closed).
+    private val processFallbackKey: SecretKey by lazy {
+        val bytes = ByteArray(32)
+        java.security.SecureRandom().nextBytes(bytes)
+        SecretKeySpec(bytes, HMAC_ALGO)
+    }
 
     /**
      * SIGN path only: returns the AndroidKeyStore key, CREATING and
@@ -47,6 +56,7 @@ object CryptoIntegrityManager {
             val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
             val existing = ks.getEntry(HMAC_KEY_ALIAS, null) as? KeyStore.SecretKeyEntry
             if (existing != null) {
+                cachedHardwareKey = existing.secretKey
                 existing.secretKey
             } else {
                 val keyGen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_HMAC_SHA256, ANDROID_KEYSTORE)
@@ -63,11 +73,45 @@ object CryptoIntegrityManager {
         }
     }
 
-    /** VERIFY path: lookup ONLY — returns the existing key or null, never creates one. */
-    private fun getExistingHardwareHmacKeyOrNull(): SecretKey? {
+    // Audit R6 #341 F53: the key is cached after first load. Before
+    // this, every progress tick (1s ViewModel + 2s shield) re-ran
+    // KeyStore.getInstance + load(null) + getEntry — ~5,400 store
+    // round-trips per session-hour to re-prove a signature over
+    // four values that cannot change mid-session. A key deleted
+    // behind our back now fails verification conservatively (the
+    // cached key no longer matches a re-signed state) instead of
+    // being silently re-minted — the R1 #36 law still holds.
+    @Volatile
+    private var cachedHardwareKey: SecretKey? = null
+
+    /**
+     * Whether the HMAC key already exists in AndroidKeyStore —
+     * WITHOUT generating it (issue #81 F1). AndroidKeyStore entries
+     * are held by the system per app UID: `pm clear` / Clear-data
+     * does NOT delete them (uninstall and factory reset do). A
+     * pre-existing key under a virgin database is therefore the
+     * one residue that proves the install ran before its data was
+     * wiped. Returns false wherever the keystore is unreachable
+     * (JVM tests, TEE failure) — absence of proof, never proof of
+     * a wipe.
+     */
+    fun hmacKeyExists(): Boolean {
         return try {
             val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-            (ks.getEntry(HMAC_KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.secretKey
+            ks.containsAlias(HMAC_KEY_ALIAS)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** VERIFY path: lookup ONLY — returns the existing key or null, never creates one. */
+    private fun getExistingHardwareHmacKeyOrNull(): SecretKey? {
+        cachedHardwareKey?.let { return it }
+        return try {
+            val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            val key = (ks.getEntry(HMAC_KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.secretKey
+            if (key != null) cachedHardwareKey = key
+            key
         } catch (_: Exception) {
             null
         }
@@ -130,16 +174,16 @@ object CryptoIntegrityManager {
                 try {
                     mac.init(hwKey)
                 } catch (_: Exception) {
-                    mac.init(fallbackHmacKey)
+                    mac.init(processFallbackKey)
                 }
             } else {
-                mac.init(fallbackHmacKey)
+                mac.init(processFallbackKey)
             }
             val sig = mac.doFinal(payloadBytes)
             Base64.encodeToString(sig, Base64.NO_WRAP)
         } catch (_: Exception) {
             val mac = Mac.getInstance(HMAC_ALGO)
-            mac.init(fallbackHmacKey)
+            mac.init(processFallbackKey)
             Base64.encodeToString(mac.doFinal(payloadBytes), Base64.NO_WRAP)
         }
     }
@@ -178,7 +222,142 @@ object CryptoIntegrityManager {
         val expectedBytes = when {
             existingKey != null -> hmacSha256OrNull(existingKey, payloadBytes) ?: return false
             canHoldHardwareKey() -> return false
-            else -> hmacSha256OrNull(fallbackHmacKey, payloadBytes) ?: return false
+            else -> hmacSha256OrNull(processFallbackKey, payloadBytes) ?: return false
+        }
+        return MessageDigest.isEqual(expectedBytes, storedBytes)
+    }
+
+    // ------------------------------------------------------------------
+    // THE FINISH SEAL (Audit R6 #340 F5 + F48)
+    //
+    // The arm signature above covers five start-time fields and
+    // nothing the receipt actually prints. The finish seal is the
+    // second signature the audit demanded: minted at publish time
+    // over the finished slip's own claims, and CHAINED — the
+    // payload embeds the previous receipt's finish seal, so the
+    // ledger is one tamper-evident body: an edit, reorder or
+    // deletion anywhere breaks every later verification loudly.
+    //
+    // Fail-closed law (the anti-Blockit rule): a finish seal that
+    // does not verify marks the receipt FAULTED at read time. It
+    // is never silently re-minted over edited fields.
+    // ------------------------------------------------------------------
+
+    /** The canonical finish payload (v1). Field order is law —
+     *  changing it invalidates every seal already minted, exactly
+     *  as a format change should. */
+    fun finishPayload(
+        sessionId: Int,
+        receiptNumber: Int,
+        outcomeWord: String,
+        armWallMs: Long,
+        endedAtWallMs: Long,
+        sealedElapsedSeconds: Int,
+        heldAppsAtSeal: Int,
+        heldSitesAtSeal: Int,
+        deflectionCount: Int,
+        bankedBreakSeconds: Int,
+        shieldGapSeen: Boolean,
+        breakTakenSeconds: Int,
+        prevFinishSignature: String
+    ): String = listOf(
+        "F1",
+        sessionId.toString(),
+        receiptNumber.toString(),
+        outcomeWord,
+        armWallMs.toString(),
+        endedAtWallMs.toString(),
+        sealedElapsedSeconds.toString(),
+        heldAppsAtSeal.toString(),
+        heldSitesAtSeal.toString(),
+        deflectionCount.toString(),
+        bankedBreakSeconds.toString(),
+        shieldGapSeen.toString(),
+        breakTakenSeconds.toString(),
+        prevFinishSignature
+    ).joinToString("|")
+
+    fun signFinishState(
+        sessionId: Int,
+        receiptNumber: Int,
+        outcomeWord: String,
+        armWallMs: Long,
+        endedAtWallMs: Long,
+        sealedElapsedSeconds: Int,
+        heldAppsAtSeal: Int,
+        heldSitesAtSeal: Int,
+        deflectionCount: Int,
+        bankedBreakSeconds: Int,
+        shieldGapSeen: Boolean,
+        breakTakenSeconds: Int,
+        prevFinishSignature: String
+    ): String {
+        val payloadBytes = finishPayload(
+            sessionId, receiptNumber, outcomeWord, armWallMs, endedAtWallMs,
+            sealedElapsedSeconds, heldAppsAtSeal, heldSitesAtSeal,
+            deflectionCount, bankedBreakSeconds, shieldGapSeen,
+            breakTakenSeconds, prevFinishSignature
+        ).toByteArray(StandardCharsets.UTF_8)
+        return try {
+            val mac = Mac.getInstance(HMAC_ALGO)
+            val hwKey = getOrCreateHardwareHmacKeyOrNull()
+            if (hwKey != null) {
+                try {
+                    mac.init(hwKey)
+                } catch (_: Exception) {
+                    mac.init(processFallbackKey)
+                }
+            } else {
+                mac.init(processFallbackKey)
+            }
+            Base64.encodeToString(mac.doFinal(payloadBytes), Base64.NO_WRAP)
+        } catch (_: Exception) {
+            val mac = Mac.getInstance(HMAC_ALGO)
+            mac.init(processFallbackKey)
+            Base64.encodeToString(mac.doFinal(payloadBytes), Base64.NO_WRAP)
+        }
+    }
+
+    /** Strict: a blank or malformed finish signature NEVER
+     *  verifies. (The arm path's blank exemption is a parked
+     *  decision about a different signature; the finish seal's
+     *  whole point is that an unsealed-or-broken slip must not
+     *  present as clean. Callers exempt pre-v13 legacy rows by
+     *  checking blankness themselves before calling this.) */
+    fun verifyFinishState(
+        sessionId: Int,
+        receiptNumber: Int,
+        outcomeWord: String,
+        armWallMs: Long,
+        endedAtWallMs: Long,
+        sealedElapsedSeconds: Int,
+        heldAppsAtSeal: Int,
+        heldSitesAtSeal: Int,
+        deflectionCount: Int,
+        bankedBreakSeconds: Int,
+        shieldGapSeen: Boolean,
+        breakTakenSeconds: Int,
+        prevFinishSignature: String,
+        signature: String
+    ): Boolean {
+        if (signature.isBlank()) return false
+        val storedBytes = try {
+            Base64.decode(signature, Base64.NO_WRAP)
+        } catch (_: Exception) {
+            return false
+        }
+        if (storedBytes.isEmpty()) return false
+        val payloadBytes = finishPayload(
+            sessionId, receiptNumber, outcomeWord, armWallMs, endedAtWallMs,
+            sealedElapsedSeconds, heldAppsAtSeal, heldSitesAtSeal,
+            deflectionCount, bankedBreakSeconds, shieldGapSeen,
+            breakTakenSeconds, prevFinishSignature
+        ).toByteArray(StandardCharsets.UTF_8)
+        val existingKey = getExistingHardwareHmacKeyOrNull()
+        val expectedBytes = when {
+            existingKey != null -> hmacSha256OrNull(existingKey, payloadBytes) ?: return false
+            canHoldHardwareKey() -> return false
+            else -> hmacSha256OrNull(processFallbackKey, payloadBytes) ?: return false
         }
         return MessageDigest.isEqual(expectedBytes, storedBytes)
     }

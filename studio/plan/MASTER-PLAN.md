@@ -57,8 +57,9 @@ built deliberately.
 
 **His verdicts (final, quoted):**
 - **60s hold → BANKED** (Oct 29, 05:04): "Bank the hold." Banks at
-  15/30/45, slip drains, full minute, once a week. *Built and shipped —
-  monolith-banked.apk, spec §5.3.*
+  15/30/45, slip drains, full minute, once a week. *Specified in §5.3. No APK is in this repo
+  (git ls-tree on e29acdf: 0 *.apk); 'shipped' claims require a
+  release/CI artefact link. (Corrected, Issue #71.)*
 - **Ledger → KEEP THE TAB, REBUILT** (Oct 29, 05:41): "Keep the tab,
   rebuilt." Six cohorts voted demote; his word overrides. The examination's
   truth conditions bind the rebuild (§7).
@@ -142,9 +143,16 @@ built deliberately.
   NEET` (the date is unannounced — an assumption is not a fact) and never
   prints YPT's hours (not this app's numbers). Chrome carries Monolith's
   own state, in words (§6).
+- **Reconciliation (Issue #71):** Ledger-as-tab was superseded by
+  the Drawer: the fourth destination is VAULT ('Receipts',
+  MonolithViewModel.kt:48-52) rendering DrawerScreen
+  (MainActivity.kt:624-625). 'LEDGER' in this plan is a historical
+  name for that stop, not a report-card screen.
 - **Knurl: kept cheap** (alternating teeth lit by the specular rig;
-  fail-one-and-it-dies gate per Old Tom). **Radius frozen** 8dp keys /
-  16dp panels. **Margin 20dp frozen.** **Gate vocabulary** (§5.1): one
+  fail-one-and-it-dies gate per Old Tom). **Radius frozen 12dp keys /
+  24dp panels** (BlockitCoreViews.kt:122-123; Theme.kt:82-86 —
+  corrected, Issue #71; the 8/16 wording was a plan freeze the
+  trunk never shipped). **Margin 20dp frozen.** **Gate vocabulary** (§5.1): one
   event, one number, one name.
 
 ## 0.1 The Critics' merge conditions — dispositions
@@ -170,9 +178,11 @@ built deliberately.
    shipped build (§5.3).
 9. *Token persisted, week-anchored, spend recorded, enforced in the
    repository* — **adopted as build debt**, specced in §5.3.
-   **[SETTLED — SHIPPED Oct 29: DB v8, MIGRATION_7_8 registered,
-   the destructive fallback deleted, the token ledger-derived in
-   trunk. Audit PA-S1-05.]**
+   **[SETTLED — SHIPPED, re-measured on e29acdf: DB v12
+   (MonolithDatabase.kt:25), MIGRATION_7_8…MIGRATION_11_12
+   registered (MonolithDatabase.kt:242), destructive fallback
+   absent, the token ledger-derived in trunk. The v8 wording was
+   stale. Audit PA-S1-05; correction Issue #71.]**
 10. *Open charges carried* — GUARD n/4 (his widget), Still Witness name —
     carried in §9, unclosed, owned by name. Settled since this register
     was drafted, and no longer open: HELD digest + slide tap-to-commit
@@ -2166,7 +2176,8 @@ break at zero regardless of what any UI asks. ViewModel:
 `MutableStateFlow(1)`) is **deleted** — today any process death
 silently refills the week's break. **[SETTLED — SHIPPED Oct 29:
 the deletion and the ledger derivation specced in this section
-are trunk fact (DB v8); the present-tense description above is
+are trunk fact (DB v12, MonolithDatabase.kt:25 — corrected,
+   Issue #71); the present-tense description above is
 the pre-build record. Audit PA-S1-05.]** `confirmDisarmSession` loses its
 token block entirely. **Ledger-Direct (Freya, Voss accepted): the
 valve receives no count.** No token state exists in the view layer.
@@ -2924,7 +2935,7 @@ the pickup-count trial run. §5 builds without it.
     transitions, patrol steps, and the finish step.
 
 **Build status at filing (Oct 29, ~08:32 IST):** the banked valve is
-built and shipped (monolith-banked.apk, §0) to TOKEN-SPEC's
+specified (§0; no APK exists in this repo — corrected, Issue #71) to TOKEN-SPEC's
 enforcement; the seal voice/shot, Release Proof, and Sled Goes Home
 are in the BEYOND fold-in flight (§2.7 status); the truth fixes are
 built (monolith-truth.apk — the `0.65f` fabrication is dead in code).
@@ -4674,7 +4685,7 @@ WHEEL SETS TIME · SLIDE ARMS · THE HOLD BREAKS
 HOLD: 60 SECONDS, BANKED EVERY 15 · ONE BREAK A WEEK
 PEEK: 2 MINUTES, THEN SHUT AGAIN
 COLOUR IS A VERB: ORANGE = COMMIT · INK = SHUT · GREY = PEEK · PORCELAIN = OPEN
-ROUTINES: SET BY HAND ON SHIELD · FIRED AS SET
+ROUTINES: SET BY HAND ON SHIELD · ~~FIRED AS SET~~ (STRUCK — Hale W-11, marked by the issue-9 cell under Critic C-10: returns only when Wache F1–F5 land in the same build AND a live fire is re-verified)
 SITES: KEPT WITH APPS ON SHIELD · DATA: ON THIS PHONE ONLY
 STUDY RECORD: IN YPT · SESSION RECORD: THE LEDGER
 SOUND: FLOAT-PCM, 4 PARTIALS · POWER: YOUR PHONE
@@ -4714,7 +4725,10 @@ is the flattest surface in the app, and that is its identity:
 - **Exactly one object on the board:** the FIX key (§8.9), present
   only when a lack exists — the board's only fill other than the
   ground, and its only radius other than the drawer panel's own.
-- **The drawer panel itself** obeys the radius freeze: **16dp**. No
+- **The drawer panel itself** was specced at **16dp** under the old
+  radius freeze (design intent as written; the shipped trunk radii
+  are 12dp/24dp — BlockitCoreViews.kt:122-123, Theme.kt:82-86;
+  corrected, Issue #71). No
   other radius exists in PARK except the FIX key's 8dp. No pills,
   ever.
 - **Orange: zero, everywhere in PARK, no exceptions.** PARK's accent

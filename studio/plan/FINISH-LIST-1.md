@@ -9,6 +9,8 @@ screen, the exact surface, and the finish in builder numbers.
 Ordered by what each fault costs the beauty of the whole app.
 This list feeds the chrome build directly.*
 
+*Evidence note (Issue #71): the renders cited above (shots/…) are outside this repo — see shots-redirect.txt. Verdicts on abolished surfaces (LEDGER) are marked in place below.*
+
 *The Finishers grade finishes, not functions. Where a surface is
 scheduled to move (Guard → PARK), the finish is written for the
 surface, and travels with it.*
@@ -16,6 +18,8 @@ surface, and travels with it.*
 ---
 
 ## F-01 — ALL SCREENS (worst: LEDGER) — the accent is spent everywhere, so it means nothing
+
+> **SUPERSEDED SURFACE (Issue #71):** the LEDGER parts of this finding (F-01's Ledger passages, F-03, F-08, F-09) grade a screen that does not exist in code (destinations MonolithViewModel.kt:48-52; screens TactileDeckScreen.kt:96, ShieldMatrixScreen.kt:86, FocusSequencerScreen.kt:71, DrawerScreen.kt:134). The record surface is the Drawer — no scores/streaks/grades. Re-apply these finishes, if at all, to DrawerScreen surfaces only after a fresh render exists in-repo. F-01's non-Ledger parts (Deck/Tasks accent law) stay live.
 **Seat: Tonwert (colour value), with Licht.**
 The register settles an accent budget (Deck: 1 surface). The
 renders break it on every screen. Day Deck: accent on the HELD 02
@@ -59,6 +63,8 @@ language. Canvas path change in the wheel view only; no physics,
 no geometry of travel touched.
 
 ## F-03 — LEDGER, night — filled surfaces glow at full cream and shout on the nightstand
+
+> **SUPERSEDED SURFACE (Issue #71):** LEDGER does not exist in code — see the note at F-01. This finish applies, if at all, to DrawerScreen surfaces after a fresh in-repo render.
 **Seat: Nacht (night face), with Licht.**
 At night the tower's bricks and the faders' fills render cream
 `#FFE4CF` at full value: a wall of lit windows. The WED fader — a
@@ -141,6 +147,8 @@ tail partial amplitude 70 → 90, so a turn of the wheel has a body
 and not only a tick. Nothing else in the engine changes.
 
 ## F-08 — LEDGER — the telemetry cards say every number twice, in two voices
+
+> **SUPERSEDED SURFACE (Issue #71):** LEDGER does not exist in code — see the note at F-01. This finish applies, if at all, to DrawerScreen surfaces after a fresh in-repo render.
 **Seat: Stoff (material), with Glatt.**
 Each telemetry card prints its value twice: once as a dot-matrix
 figure, once as a clean numeral beside it. The dots were meant
@@ -157,6 +165,8 @@ never truncate. The tower below gains the invention in F-09 and
 the screen becomes one instrument with one accent.
 
 ## F-09 — LEDGER — INVENTION: the tower's bricks have no light on their top faces
+
+> **SUPERSEDED SURFACE (Issue #71):** LEDGER does not exist in code — see the note at F-01. This finish applies, if at all, to DrawerScreen surfaces after a fresh in-repo render.
 **Seat: Luce (light), with Stoff. Priced invention — the current
 vocabulary has no finish for the tower as a built object.**
 Sixteen black/cream slabs stacked in rows read as a spreadsheet
@@ -172,6 +182,8 @@ geometry change. If Ren strikes it, the tower still gets F-03
 and F-08; this is the difference between a grid and a building.
 
 ## F-10 — GUARD → PARK — eight REMOVE billboards are the screen's heaviest rhythm
+
+> **Transitional (Issue #71):** written for Guard, applies to the PARK/Shield websites editor (MonolithViewModel.kt:53-55). Not a Guard-screen grade.
 **Seat: Mass, with Rand.**
 The blocked-websites list is a column of eight identical pale
 slabs (each ~88×48dp) all shouting REMOVE. A quiet, reversible

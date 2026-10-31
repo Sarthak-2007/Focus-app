@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MonolithMarkMonogram — the one-colour monogram variant of the mark
+  (issue #305, F2).
+
+  RE-AUTHORED 2026-10-31 (K7): the original asset commit a2701db was lost
+  (never pushed; authoring clone gone — accounting on PR tracker #245).
+  The monogram reduces the mark's established geometry to a single ink —
+  TokenColorPrimary #252323: the dial as a true ring (evenOdd punch-out,
+  outer r=28 / inner r=22 as in the colour mark), the centre hub and the
+  gnomon pointer, with the colour accents (paper plate, solar sector)
+  dropped so the silhouette reads at one colour, e.g. as an adaptive
+  icon's <monochrome> layer or a single-ink icon variant.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Dial Ring (punched) — TokenColorPrimary -->
+    <path
+        android:fillColor="#252323"
+        android:fillType="evenOdd"
+        android:pathData="M54,26 A28,28 0 1,1 53.99,26 Z M54,32 A22,22 0 1,1 53.99,32 Z" />
+    <!-- Center Hub — TokenColorPrimary -->
+    <path
+        android:fillColor="#252323"
+        android:pathData="M54,44 A10,10 0 1,1 53.99,44 Z" />
+    <!-- Gnomon Pointer — TokenColorPrimary -->
+    <path
+        android:fillColor="#252323"
+        android:pathData="M52,29 L56,29 L56,54 L52,54 Z" />
+</vector>
