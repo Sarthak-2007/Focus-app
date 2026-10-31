@@ -49,6 +49,7 @@
     <string name="park_last_proved">LAST PROVED</string>
     <string name="park_fix_item">FIX — %1$s</string>
     <string name="park_sound_effects">SOUND EFFECTS</string>
+    <string name="park_session_soundscape">SESSION SOUNDSCAPE</string>
     <string name="park_shorts_reels">SHORTS + REELS</string>
     <string name="park_theme">THEME</string>
     <string name="receipt_ended">ENDED %1$s · %2$s</string>

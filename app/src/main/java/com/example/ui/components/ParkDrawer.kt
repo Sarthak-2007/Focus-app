@@ -219,6 +219,11 @@ fun ParkDrawer(
     onFixClick: (WatchItemId) -> Unit,
     onCheckClick: () -> Unit,
     onToggleSound: () -> Unit,
+    // #253 line 1: the session soundscape's sled facts — defaults
+    // for the same test-compile reason as the sled facts above;
+    // MainActivity passes both explicitly.
+    soundscapeEnabled: Boolean = false,
+    onToggleSoundscape: () -> Unit = {},
     onToggleShortsReelsSniper: () -> Unit = {},
     socialSitesEnabled: Boolean = false,
     onToggleSocialSites: () -> Unit = {},
@@ -1351,6 +1356,80 @@ fun ParkDrawer(
                 // library desk.
                 Text(
                     text = "SOUND OFF KEEPS THE TOUCH — THE BUZZ CARRIES THE EVENT",
+                    style = PillBadgeTextStyle,
+                    color = scheme.onSurfaceVariant
+                )
+                ParkHairline()
+
+                // #253 line 1: the session soundscape's sled —
+                // the same row grammar as SOUND EFFECTS above.
+                // The fact is SoundscapeSetting (default OFF);
+                // the sled prints and writes that fact through
+                // the ViewModel, never a local copy.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .semantics(mergeDescendants = true) {},
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(R.string.park_session_soundscape),
+                        style = PillBadgeTextStyle,
+                        color = scheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    var displayedSoundscape by remember { mutableStateOf(soundscapeEnabled) }
+                    LaunchedEffect(soundscapeEnabled) {
+                        delay(260L)
+                        displayedSoundscape = soundscapeEnabled
+                    }
+                    Text(
+                        text = if (displayedSoundscape) "ON" else "OFF",
+                        style = AppTitleTextStyle,
+                        color = scheme.onBackground
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Box {
+                        AndroidView(
+                            factory = { ctx ->
+                                SledSwitchView(ctx).apply {
+                                    chromeMode = true
+                                    contentDescription = "Session soundscape"
+                                    this.soundEngine = soundEngine
+                                    isChecked = soundscapeEnabled
+                                    onToggleRequested = { if (interactiveState.value) onToggleSoundscape() }
+                                    gateCheck = { interactiveState.value }
+                                }
+                            },
+                            update = { view ->
+                                view.soundEngine = soundEngine
+                                if (view.isChecked != soundscapeEnabled) {
+                                    view.isChecked = soundscapeEnabled
+                                }
+                                view.onToggleRequested = { if (interactiveState.value) onToggleSoundscape() }
+                                view.gateCheck = { interactiveState.value }
+                            },
+                            modifier = Modifier
+                                .width(76.dp)
+                                .height(48.dp)
+                                .testTag("park_soundscape_sled")
+                        )
+                        if (!interactive) {
+                            Box(
+                                modifier = Modifier
+                                    .width(76.dp)
+                                    .height(48.dp)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null
+                                    ) {}
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = "THE SOUNDSCAPE RIDES THE SESSION — IT RISES AT THE SEAL AND DIES WITH IT",
                     style = PillBadgeTextStyle,
                     color = scheme.onSurfaceVariant
                 )

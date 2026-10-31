@@ -29,7 +29,13 @@ import kotlin.math.sin
  *
  * 2. Procedural Float-PCM Sound Engine (§7):
  *    - Zero audio files in res/raw or assets/.
- *    - Zero ambient sound mixer loops.
+ *    - Zero ambient sound mixer loops — with ONE ruled exception
+ *      (#253 line 1): the session soundscape lane below. It is
+ *      not a mixer and holds no files: a single generated loop
+ *      ([SoundscapeSynth]) on its own track, under the user's
+ *      persisted fact ([SoundscapeSetting], default OFF), living
+ *      only for a session's length. Every other voice in this
+ *      engine remains a transient under the 160 ms law.
  *    - Single dedicated background writer thread driving a float-PCM AudioTrack
  *      (AudioFormat.ENCODING_PCM_FLOAT) with:
  *      • 4 harmonic partials weighted { 0.6f, 0.28f, 0.37f, 2.2f }
@@ -92,6 +98,12 @@ class TactileSoundEngine(private val context: Context) {
         const val HAPTIC_COMPLETION_10MS = 10L
 
         private const val SAMPLE_RATE = 44100
+
+        // The soundscape lane (#253 line 1): one writer block is
+        // ~93 ms of the loop; the master gain keeps the wash
+        // under every transient voice in the engine.
+        internal const val SOUNDSCAPE_BLOCK_SAMPLES = 4096
+        internal const val SOUNDSCAPE_MASTER_GAIN = 0.55f
         // Exact 4-partial harmonic weights from DEVELOPER-GUIDE.pdf §7
         val PARTIAL_WEIGHTS = floatArrayOf(0.6f, 0.28f, 0.37f, 2.2f)
         // Exact dual exponential decay factors per sample step from DEVELOPER-GUIDE.pdf §7
@@ -546,6 +558,259 @@ class TactileSoundEngine(private val context: Context) {
                 track
             } catch (_: Exception) {
                 null
+            }
+        }
+    }
+
+    // =====================================================================
+    // THE SOUNDSCAPE LANE (#253 line 1): the session's one
+    // continuous voice. Its own retained loop buffer, its own
+    // AudioTrack, its own writer thread — the seal lane's shape,
+    // at ambient weight. The lane obeys the house laws:
+    //  - THE FACT GATES IT: [startSoundscape] reads
+    //    [SoundscapeSetting] at every call; OFF means silence.
+    //  - THE PERMISSION LAW GATES IT: it sounds only while
+    //    [audioPermitted] holds (sound fact + ringer), re-checked
+    //    every writer block, so a mid-session ringer flip or a
+    //    sound-fact push fades it out by the same ramp.
+    //  - THE FADE RULES GOVERN ITS EDGES: gain ramps over
+    //    [SoundscapeSynth.FADE_SAMPLES] in and out; it never
+    //    starts or stops with a click.
+    //  - THE NIGHT GATE SCALES IT: [nightGainScale] (ordinary
+    //    voice) applies per block, like every transient.
+    // =====================================================================
+
+    @Volatile
+    private var soundscapeBuffer: FloatArray? = null
+
+    @Volatile
+    private var soundscapeTrack: AudioTrack? = null
+    private val soundscapeTrackLock = Any()
+
+    @Volatile
+    private var soundscapeThread: Thread? = null
+
+    /** The user's standing wish, set by start/stop. The writer
+     *  loop owns the gain; this flag is only the direction. */
+    @Volatile
+    private var soundscapeDesired: Boolean = false
+
+    private var soundscapeFocusRequest: AudioFocusRequest? = null
+
+    @Volatile
+    private var soundscapeFocusHeld: Boolean = false
+
+    /** Start the session soundscape. No-ops unless the persisted
+     *  fact is ON and audio is permitted; the ViewModel calls
+     *  this on the session's rising edge and the fact — not the
+     *  caller — is the authority. Idempotent. */
+    fun startSoundscape() {
+        if (!running) return
+        if (!SoundscapeSetting.isEnabled(context)) return
+        if (!audioPermitted(unattended = false)) return
+        if (soundscapeBuffer == null) {
+            soundscapeBuffer = SoundscapeSynth.renderLoop()
+        }
+        soundscapeDesired = true
+        ensureSoundscapeThread()
+    }
+
+    /** Stop the session soundscape: the writer fades it out by
+     *  the fade rule, then parks the track and abandons the
+     *  lane's focus. Idempotent. */
+    fun stopSoundscape() {
+        soundscapeDesired = false
+    }
+
+    /** Test seam: is the lane's wish currently ON? */
+    internal fun soundscapeDesiredForTest(): Boolean = soundscapeDesired
+
+    private fun ensureSoundscapeThread() {
+        if (soundscapeThread != null) return
+        synchronized(threadStartLock) {
+            if (!running || soundscapeThread != null) return
+            soundscapeThread = Thread(
+                { runSoundscapeLoop() }, "MonolithSoundscape"
+            ).apply {
+                isDaemon = true
+                start()
+            }
+        }
+    }
+
+    private fun ensureSoundscapeTrack(): AudioTrack? {
+        soundscapeTrack?.let { return it }
+        return synchronized(soundscapeTrackLock) {
+            soundscapeTrack?.let { return@synchronized it }
+            try {
+                val track = AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build()
+                    )
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+                            .setSampleRate(SoundscapeSynth.SAMPLE_RATE)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(SOUNDSCAPE_BLOCK_SAMPLES * 4 * 4)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .build()
+                soundscapeTrack = track
+                track
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    private fun requestSoundscapeFocus(): Boolean {
+        if (soundscapeFocusHeld) return true
+        return try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                ?: return false
+            val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val req = soundscapeFocusRequest ?: AudioFocusRequest.Builder(
+                    AudioManager.AUDIOFOCUS_GAIN
+                ).setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                ).setOnAudioFocusChangeListener { change ->
+                    if (change == AudioManager.AUDIOFOCUS_LOSS ||
+                        change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
+                    ) {
+                        soundscapeFocusHeld = false
+                        soundscapeDesired = false
+                    }
+                }.build()
+                    .also { soundscapeFocusRequest = it }
+                am.requestAudioFocus(req)
+            } else {
+                @Suppress("DEPRECATION")
+                am.requestAudioFocus(
+                    { change ->
+                        if (change == AudioManager.AUDIOFOCUS_LOSS ||
+                            change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
+                        ) {
+                            soundscapeFocusHeld = false
+                            soundscapeDesired = false
+                        }
+                    },
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.AUDIOFOCUS_GAIN
+                )
+            }
+            soundscapeFocusHeld = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            soundscapeFocusHeld
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun abandonSoundscapeFocus() {
+        try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                soundscapeFocusRequest?.let { am.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                am.abandonAudioFocus { }
+            }
+        } catch (_: Exception) {}
+        soundscapeFocusHeld = false
+    }
+
+    private fun runSoundscapeLoop() {
+        val block = FloatArray(SOUNDSCAPE_BLOCK_SAMPLES)
+        var pos = 0
+        var fadeElapsed = 0
+        var trackLive = false
+        while (running) {
+            try {
+                // The permission law, re-read every pass: a
+                // ringer flip or a live sound-fact push retracts
+                // the wish and the ramp carries it out.
+                if (soundscapeDesired &&
+                    !(soundEnabled && !ringerSilencesAudio())
+                ) {
+                    soundscapeDesired = false
+                }
+                if (!soundscapeDesired && fadeElapsed <= 0) {
+                    if (trackLive) {
+                        try {
+                            soundscapeTrack?.pause()
+                            soundscapeTrack?.flush()
+                        } catch (_: Exception) {}
+                        trackLive = false
+                        abandonSoundscapeFocus()
+                    }
+                    Thread.sleep(200)
+                    continue
+                }
+                val buffer = soundscapeBuffer ?: run {
+                    Thread.sleep(200)
+                    continue
+                }
+                val track = ensureSoundscapeTrack() ?: run {
+                    Thread.sleep(200)
+                    continue
+                }
+                if (!trackLive) {
+                    if (!requestSoundscapeFocus()) {
+                        Thread.sleep(500)
+                        continue
+                    }
+                    try {
+                        track.play()
+                    } catch (_: Exception) {
+                        Thread.sleep(200)
+                        continue
+                    }
+                    trackLive = true
+                }
+                // Advance the fade toward the wish, then write
+                // one block under the resulting gain.
+                fadeElapsed = if (soundscapeDesired) {
+                    (fadeElapsed + SOUNDSCAPE_BLOCK_SAMPLES)
+                        .coerceAtMost(SoundscapeSynth.FADE_SAMPLES)
+                } else {
+                    (fadeElapsed - SOUNDSCAPE_BLOCK_SAMPLES)
+                        .coerceAtLeast(0)
+                }
+                val gain = SoundscapeSynth.fadeGain(fadeElapsed) *
+                    nightGainScale(sealVoice = false) * SOUNDSCAPE_MASTER_GAIN
+                if (gain <= 0f && !soundscapeDesired) continue
+                for (i in block.indices) {
+                    block[i] = buffer[pos] * gain
+                    pos++
+                    if (pos >= buffer.size) pos = 0
+                }
+                var off = 0
+                while (off < block.size) {
+                    val n = try {
+                        track.write(block, off, block.size - off, AudioTrack.WRITE_BLOCKING)
+                    } catch (_: Exception) {
+                        -1
+                    }
+                    if (n <= 0) break
+                    off += n
+                }
+            } catch (_: InterruptedException) {
+                if (!running) return
+            } catch (_: Exception) {
+                // Headless fallback: the lane idles and retries;
+                // a soundscape must never take the engine down.
+                try {
+                    Thread.sleep(200)
+                } catch (_: InterruptedException) {
+                    if (!running) return
+                }
             }
         }
     }
@@ -1333,6 +1598,19 @@ class TactileSoundEngine(private val context: Context) {
      */
     fun stopAllAudio() {
         running = false
+        // #253 line 1: the soundscape lane dies with the engine —
+        // wish retracted, focus abandoned, track released under
+        // its lock, thread interrupted out of its poll.
+        soundscapeDesired = false
+        abandonSoundscapeFocus()
+        synchronized(soundscapeTrackLock) {
+            try {
+                soundscapeTrack?.stop()
+                soundscapeTrack?.release()
+            } catch (_: Exception) {}
+            soundscapeTrack = null
+        }
+        soundscapeThread?.interrupt()
         commandQueue.clear()
         sealPrimeSignal.clear()
         sealBarrierSeq = -1L
