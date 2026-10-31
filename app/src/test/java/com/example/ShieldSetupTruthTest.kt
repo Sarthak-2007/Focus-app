@@ -142,11 +142,14 @@ class ShieldSetupTruthPureTest {
             app("com.docs", "Docs", AppCategory.SHOPPING, AppBlockTier.LOCKED)
         )
         val preview = LoadoutRules.preview(SmartLoadout.STUDY, apps)
-        // Instagram OPEN->LOCKED and Docs LOCKED->OPEN change; WhatsApp stays PEEK.
-        assertEquals(2, preview.changed)
-        assertEquals(1, preview.shut)
+        // Instagram OPEN->LOCKED changes; WhatsApp stays PEEK.
+        // Docs was LOCKED->OPEN before Issue #129; a loadout no
+        // longer loosens LOCKED->OPEN on a category guess, so Docs
+        // stays LOCKED and uncounted as a change.
+        assertEquals(1, preview.changed)
+        assertEquals(2, preview.shut)
         assertEquals(1, preview.peek)
-        assertEquals(1, preview.open)
+        assertEquals(0, preview.open)
     }
 
     @Test

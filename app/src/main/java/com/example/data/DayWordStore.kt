@@ -59,12 +59,48 @@ class DayWordStore(context: Context) {
         if (!isDateIso(dateIso)) return false
         val editor = prefs.edit()
         when {
-            word == null -> editor.remove(dateIso)
-            word in WORDS -> editor.putString(dateIso, word)
+            word == null -> editor.remove(dateIso).remove(zoneKey(dateIso))
+            word in WORDS -> {
+                editor.putString(dateIso, word)
+                // Issue #152: witness the zone this declaration is
+                // made in, under a side key the readers never serve
+                // as a word (its key is not a date and its value is
+                // not in WORDS, so all() filters it twice over).
+                // The seed-sync drain likewise skips it, so the
+                // witness survives the word's move into day_notes.
+                //
+                // Issue #152 residue (reopened): a SAME-word
+                // re-declare must NOT move the witness. The old
+                // body overwrote the zone unconditionally, so
+                // re-declaring the same word after a landing
+                // re-witnessed the date in the arrival zone — and
+                // a different word could then be written cross-zone
+                // under the fresh witness, re-opening the exact
+                // overwrite door F1 closed. The witness names the
+                // zone the standing declaration was FIRST made in;
+                // only a genuinely new declaration (no standing
+                // word, a changed word, or no witness yet) earns a
+                // fresh witness.
+                val standingWord = prefs.getString(dateIso, null)
+                val standingZone = prefs.getString(zoneKey(dateIso), null)
+                if (standingWord != word || standingZone == null) {
+                    editor.putString(
+                        zoneKey(dateIso), java.time.ZoneId.systemDefault().id
+                    )
+                }
+            }
             else -> return false
         }
         return editor.commit()
     }
+
+    /** Issue #152: the zone the standing declaration for
+     *  [dateIso] was made in, or null when no witness exists
+     *  (a word declared before this witness, or none declared). */
+    fun declaredZone(dateIso: String): String? =
+        prefs.getString(zoneKey(dateIso), null)
+
+    private fun zoneKey(dateIso: String): String = "$dateIso#zone"
 
     /** Strict yyyy-MM-dd: parses as a real calendar date and
      *  round-trips to the same string (no "2026-13-40", no
@@ -79,5 +115,17 @@ class DayWordStore(context: Context) {
 
         /** The complete, closed word list. Never TEST. */
         val WORDS: List<String> = listOf("REST", "ILL", "FAMILY")
+
+        /** The excuse words (issue #137, F1): a filing date
+         *  carrying one of these is excused from routine
+         *  judgement — RoutineDerive grants it the paused-window
+         *  amnesty (never MISSED), the heartbeat does not
+         *  auto-start its routines, and the finalise funnel
+         *  stamps UNKNOWN, never MISSED, over it. Today the
+         *  excuse set is the whole closed list above. */
+        val EXCUSE_WORDS: Set<String> = setOf("ILL", "REST", "FAMILY")
+
+        /** True when [word] is an excuse word. */
+        fun isExcuse(word: String?): Boolean = word != null && word in EXCUSE_WORDS
     }
 }
