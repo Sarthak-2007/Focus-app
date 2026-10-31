@@ -5262,6 +5262,14 @@ class MonolithViewModel(
         // its id write on this visit still standing.
         val nonce = maxOf(nowMono, _airlockState.value.interceptNonce + 1L)
 
+        // Issue #101 F4: reaching for the same package again annuls
+        // any pending "Stayed Focused" bank for it — see
+        // transmuteImpulseAndReturn. Placed after the revalidation
+        // gates above, so only a real, lawful re-intercept annuls.
+        // (Landed via PR #589; lost when this function's train-era
+        // rewrite replaced its body — restored by PR #583's re-fit,
+        // the last unlanded line of the #349 payload.)
+        pendingReturnBanks.remove(packageName)?.cancel()
         _airlockState.value = AirlockInterceptState(
             isVisible = true,
             interceptedPackageName = packageName,
