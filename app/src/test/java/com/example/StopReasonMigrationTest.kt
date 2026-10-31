@@ -181,12 +181,11 @@ class StopReasonMigrationTest {
             )
             assertTrue(arrivalId > 0)
             repository.resolveIntercept(
-                packageName = "com.tiktok.app",
-                outcome = "Stayed Focused",
-                resolvedAtWallMillis = 2_000L
+                id = arrivalId,
+                outcome = "Stayed Focused"
             )
 
-            val rows = room.monolithDao().getAllInterceptLogs().first()
+            val rows = room.monolithDao().getInterceptLogsFlow().first()
             assertEquals(4, rows.size)
             // Two video rows share package+outcome; the stamped
             // one is identified by its column.
