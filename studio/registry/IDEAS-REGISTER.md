@@ -131,4 +131,7 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | Test call-site census script (stdlib, prints PASS, catches seeded regressions) | Fuge | #2 | BUILT (studio/tools/check_test_callsites.py, on main via PR #165) |
 | Launcher block screen: un-exitable launcher surface + separate allowed/peek screens | Sarthak's ruling 04:29 (not a seat idea — his order) | #22/#18 | BUILT-IN-PROGRESS (Umbau lane; first slice merged via PR #167) |
 
+| AS-OF stamp on the glance: widget line carries its render instant (`· AS OF HH:mm`), so a stale frame is self-evidently stale even when every refresh trigger fails (process death, standby-bucket deferral, OEM launcher frame caching) — IDEA-G1, Discussion #640 | INNOVATOR-4 (adversary seat, WING-A) | #155 | PANEL-QUEUED (priced S ~0.25 builder-day; consult filed on #155, comment 6536827668) |
+| Until+1 appointment: M4's re-render appointments gain a third firing at printed-until + 1 min, so a SEALED-until sitting in the past is re-examined within a minute of becoming false — IDEA-G2 (delta on THOUGHTFUL-5/IMPROVER-2's M4, credited there), Discussion #640 | INNOVATOR-4 (adversary seat, WING-A) | #155 | PANEL-QUEUED (priced inside M4's ~1 builder-day) |
+
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
