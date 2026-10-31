@@ -430,7 +430,12 @@ fun DrawerScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "SPENT ${spentLabel(detail.actualSecondsSpent)}",
+                        // Issue #110, finding 2 (main's form,
+                        // restored at the composition, K8): SPENT
+                        // IN TOTAL — the detail's spent is the
+                        // task's lifetime accrual, same law as the
+                        // row's TOTAL print.
+                        text = "SPENT IN TOTAL ${spentLabel(detail.actualSecondsSpent)}",
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 13.sp,
                         color = scheme.onBackground
