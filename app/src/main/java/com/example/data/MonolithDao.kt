@@ -434,6 +434,14 @@ interface MonolithDao {
     @Query("UPDATE guard_settings SET shortsReelsSniperEnabled = :enabled WHERE id = 1")
     suspend fun updateShortsReelsSniperEnabled(enabled: Boolean)
 
+    // Issue #517 (4-A): the peek length's targeted UPDATE — the
+    // write half of the EditableTimes seam. The peekMinutes column
+    // had readers everywhere (provider, offer, seed, plate) and a
+    // writer nowhere, so the set length could never leave its
+    // migration default. Same §7.5 discipline as the pairs above.
+    @Query("UPDATE guard_settings SET peekMinutes = :minutes WHERE id = 1")
+    suspend fun updatePeekMinutes(minutes: Int)
+
     // Audit R6 #340 F68: body-consent is its own consent, separate
     // from notification-capture consent. Targeted UPDATE, same
     // §7.5 discipline as the pairs above.

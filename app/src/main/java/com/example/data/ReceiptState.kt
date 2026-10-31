@@ -201,6 +201,11 @@ fun isRoutineBornKind(kind: String): Boolean = when (kind) {
  * - [USED_PEEK] — MonolithViewModel's peek grant: he was LET IN
  *   on a 2-minute lease. NOT a block, and the one value this
  *   enumeration exists to keep off the slip.
+ * - [OPENED_LAUNCHER] — MonolithViewModel
+ *   .leaveAirlockViaLauncherDoors: he left the intercept
+ *   through a launcher door. A let-through, never a block:
+ *   off the slip (not in the allowlist) and off the blocked
+ *   counters (issue #7 charge N2).
  *
  * (The repository's disarm path also writes intercept rows with
  * the disarm reason as outcome, but always under the system
@@ -215,6 +220,7 @@ object InterceptOutcome {
     const val STAYED_FOCUSED = "Stayed Focused"
     const val SPLIT_INTO_MICRO_STEP = "Split Into 10m Micro-Step"
     const val USED_PEEK = "Used 2m Peek"
+    const val OPENED_LAUNCHER = "Opened Launcher"
 
     /** The outcomes that were truly turned away. Anything else —
      *  a peek grant, or a value no writer above produces — is

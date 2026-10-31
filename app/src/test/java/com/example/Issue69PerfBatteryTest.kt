@@ -176,7 +176,6 @@ class Issue69PerfBatteryTest {
             shieldBeatIsStale(
                 shieldLastBeatWallMillis = start,
                 startWallTimeMillis = start,
-                appLastUpdateMillis = 0L,
                 impliedNowMillis = start + 3_000L
             )
         )
@@ -185,7 +184,6 @@ class Issue69PerfBatteryTest {
             shieldBeatIsStale(
                 shieldLastBeatWallMillis = start,
                 startWallTimeMillis = start,
-                appLastUpdateMillis = 0L,
                 impliedNowMillis = start + 10_000L
             )
         )
@@ -194,7 +192,6 @@ class Issue69PerfBatteryTest {
             shieldBeatIsStale(
                 shieldLastBeatWallMillis = start,
                 startWallTimeMillis = start,
-                appLastUpdateMillis = 0L,
                 impliedNowMillis = start + 11_000L
             )
         )
@@ -204,17 +201,19 @@ class Issue69PerfBatteryTest {
             shieldBeatIsStale(
                 shieldLastBeatWallMillis = 0L,
                 startWallTimeMillis = start,
-                appLastUpdateMillis = 0L,
                 impliedNowMillis = start + 3_600_000L
             )
         )
-        // Update exemption (#95): the build landed after the last
-        // beat — downtime is not a gap.
-        assertFalse(
+        // #524 struck #95's update exemption (this case's old form
+        // pinned it NOT stale via the install-time term): the
+        // reference carries no install-time term any more, so a
+        // beat 25 s behind the implied now is stale however the
+        // silence was caused — an update's dead interval past
+        // the threshold counts like any other blindness.
+        assertTrue(
             shieldBeatIsStale(
                 shieldLastBeatWallMillis = start,
                 startWallTimeMillis = start,
-                appLastUpdateMillis = start + 20_000L,
                 impliedNowMillis = start + 25_000L
             )
         )
@@ -226,11 +225,13 @@ class Issue69PerfBatteryTest {
         val dao = db.monolithDao()
         val repo = MonolithRepository(context, db.monolithDao())
         // Deterministic anchors (the first CI run's lesson): the
-        // law's reference includes the app's last-update time,
-        // which under Robolectric is the sandbox install instant
-        // — so every fabricated instant is anchored TO it, and
-        // the monotonic clock is set explicitly instead of read
-        // from the frozen shadow clock.
+        // app's last-update time under Robolectric is the sandbox
+        // install instant — a fixed, readable wall value — so
+        // every fabricated instant is anchored TO it, and the
+        // monotonic clock is set explicitly instead of read from
+        // the frozen shadow clock. (#524: the gap law's reference
+        // no longer reads the install instant; it remains this
+        // story's anchor purely as a known wall value.)
         val appUpdate = runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
         }.getOrDefault(0L)

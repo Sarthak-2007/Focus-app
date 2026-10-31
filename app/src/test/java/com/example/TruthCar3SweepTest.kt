@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
 import androidx.compose.ui.test.onNodeWithText
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -16,7 +18,6 @@ import com.example.data.RoutineEntity
 import com.example.data.RoutineSchedule
 import com.example.data.SmartLoadout
 import com.example.service.InterceptPath
-import com.example.service.TactileSoundEngine
 import com.example.ui.peekOfferFor
 import com.example.service.matchBlockedDomain
 import com.example.ui.MonolithViewModel
@@ -432,10 +433,30 @@ class TruthCar3SweepRoboTest {
         val db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
             .allowMainThreadQueries()
             .build()
+        // BUILDER-5 cure (#5, Oct 31): every ViewModel this proof
+        // births lives in ONE ViewModelStore, cleared in the finally
+        // below BEFORE db.close(). A ViewModel collects the
+        // repository's Room flows in viewModelScope (stateIn) for as
+        // long as it lives; the old shape constructed VMs bare and
+        // never cleared them, so their collectors outlived the test
+        // and a Room invalidation re-query
+        // (getCapturedNotificationsFlow) could land after the close
+        // and die on the shut connection pool —
+        // IllegalStateException, merged-main run 41198244185, the
+        // failure that kept #5 open. A real process ends a
+        // ViewModel through its store; the proof now does the same.
+        // Distinct keys keep every "recreation" a genuinely new
+        // instance — the assertions and their teeth are untouched.
+        val viewModelStore = ViewModelStore()
         try {
             val repository = MonolithRepository(context, db.monolithDao())
-            fun freshViewModel() =
-                MonolithViewModel(context, repository, TactileSoundEngine(context))
+            val provider = ViewModelProvider(
+                viewModelStore,
+                MonolithViewModel.Factory(context, repository)
+            )
+            var vmSeq = 0
+            fun freshViewModel(): MonolithViewModel =
+                provider.get("una07-vm-${vmSeq++}", MonolithViewModel::class.java)
 
             // Before any pick, the cap rests on STUDY — of record.
             assertEquals(0, freshViewModel().loadoutCapIndex.value)
@@ -475,6 +496,20 @@ class TruthCar3SweepRoboTest {
             // composition) reads the stored fact at birth.
             assertEquals(2, freshViewModel().loadoutCapIndex.value)
         } finally {
+            // Lifecycle first, close second — in that order, by
+            // construction, not by timing: clear() runs onCleared()
+            // on every VM above, which cancels their viewModelScopes,
+            // so no collector can launch a query after the pool
+            // shuts; the bounded drain then idles the main looper
+            // while the pool is still open, letting any re-query
+            // already in flight finish against a live database.
+            viewModelStore.clear()
+            var drain = 0
+            while (drain < 100) {
+                shadowOf(Looper.getMainLooper()).idle()
+                Thread.sleep(10)
+                drain++
+            }
             db.close()
         }
     }

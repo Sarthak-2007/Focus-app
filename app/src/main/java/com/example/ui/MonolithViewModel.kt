@@ -1753,6 +1753,15 @@ class MonolithViewModel(
     fun parkIntroPending(): Boolean = repository.parkIntroPending()
     fun markParkIntroDone() = repository.markParkIntroDone()
 
+    /** Issue #534 F3: the POST_NOTIFICATIONS runtime answer —
+     *  recorded at the ask, read by PARK's note line. Null = the
+     *  recorded ask never landed an answer. This is NOT one of
+     *  the six counted Guard grants; it never feeds the Guard
+     *  denominator. */
+    fun recordPostNotificationsResult(granted: Boolean) =
+        repository.recordPostNotificationsResult(granted)
+    fun postNotificationsGranted(): Boolean? = repository.postNotificationsGranted()
+
     /** Issue #70 F3: the Deck primer's first-run bit. */
     fun deckPrimerPending(): Boolean = repository.deckPrimerPending()
     fun markDeckPrimerDone() = repository.markDeckPrimerDone()
@@ -2121,6 +2130,13 @@ class MonolithViewModel(
 
         viewModelScope.launch {
             repository.ensureSeededAndSyncPackages()
+            // Issue #534 F1: the seed above is what SETS the
+            // fresh-start flag (InstallNoteStore.markFreshStart,
+            // MonolithRepository's seed path) — the init read above
+            // ran BEFORE it, so on a virgin install it always read
+            // false and the note never showed on the first open.
+            // Re-read now that the seed has completed.
+            _freshStartNoteVisible.value = repository.freshStartNotePending()
             _pruneNote.value = repository.pendingPruneNote()
             refreshUnreviewedOpen()
             // Routines rebuild: no per-routine alarm arming — one
@@ -3380,6 +3396,19 @@ class MonolithViewModel(
         soundEngine.playMechanicalLatch(newValue)
         _browserUrlBlockerEnabled.value = newValue
         viewModelScope.launch { repository.setBrowserBlockerEnabled(newValue) }
+    }
+
+    fun setPeekMinutes(minutes: Int) {
+        // Issue #517 (4-A): the peek length becomes his to set —
+        // his Oct 29 word was that peek time "should be editable",
+        // and until this verb the column had no writer at all.
+        // The write persists through the repository's setter
+        // (clamped 0–30 there); the guard-settings flow re-emits
+        // and every reader (provider, offer, seed, plate, terms)
+        // re-derives from the row — no VM-side copy to drift.
+        // Mid-flight law (PILL-AND-TIMES §3.4): a live lease holds
+        // the end it was granted; the edit prices the NEXT grant.
+        viewModelScope.launch { repository.setPeekMinutes(minutes) }
     }
 
     // Audit R6 #340 F13: the routine-conflict notice — set when a

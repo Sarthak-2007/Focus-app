@@ -381,16 +381,52 @@ class MainActivity : ComponentActivity() {
 // behaviour is unchanged and each helper is testable in isolation.
 // ------------------------------------------------------------------
 
+/**
+ * Issue #534 F2: how long the delivered intro must stand in front
+ * of the user before a dismissal counts as "read". A reflexive
+ * scrim tap lands inside a second or two; the intro is ~60 words
+ * and cannot have been read in that window. A FIX trip spends the
+ * bit immediately at any dwell — engaging with the board IS
+ * having read enough to act.
+ */
+internal const val PARK_INTRO_READ_DWELL_MS = 5_000L
+
+/**
+ * Issue #534 F2: the intro-spend verdict for one dismissal, as
+ * pure arithmetic so the acceptance cases table directly:
+ *  - never delivered this open -> never spends;
+ *  - a FIX trip was taken this open -> spends;
+ *  - otherwise spends only once the read dwell has elapsed.
+ */
+internal fun parkIntroSpendsOnDismiss(
+    deliveredThisOpen: Boolean,
+    fixTripTakenThisOpen: Boolean,
+    deliveredAtMonoMs: Long,
+    nowMonoMs: Long
+): Boolean =
+    deliveredThisOpen &&
+        (fixTripTakenThisOpen ||
+            (deliveredAtMonoMs > 0L && nowMonoMs - deliveredAtMonoMs >= PARK_INTRO_READ_DWELL_MS))
+
 private fun closePark(
     parkOpenState: MutableState<Boolean>,
-    viewModel: MonolithViewModel
+    viewModel: MonolithViewModel,
+    spendParkIntro: Boolean = false
 ) {
     parkOpenState.value = false
-    // The intro bit is NOT spent here (issue-156, F3): a
-    // dismissal — above all a reflexive scrim tap before the
-    // sweep has printed a single word — spends nothing. The
-    // bit is spent on delivery, by the effect in the root, once
-    // the measured board is actually on screen.
+    // Issue #534 F2 (supersedes issue-156 F3's spend-on-delivery):
+    // the intro bit is spent HERE, at dismissal, and only when the
+    // caller judged this dismissal a read (see
+    // parkIntroSpendsOnDismiss: delivered this open AND either a
+    // FIX trip was taken or the read dwell elapsed). A reflexive
+    // scrim tap inside the dwell spends nothing, so the intro
+    // rises again on the next launch. The rise itself never spends.
+    // (Main's form also carried a digest-dismiss branch here; with
+    // Issue #100's CUT there is no digest sheet to dismiss, so the
+    // branch and its parameters are gone — BUILDER-100.)
+    if (spendParkIntro && viewModel.parkIntroPending()) {
+        viewModel.markParkIntroDone()
+    }
 }
 
 private fun openPark(
@@ -1006,17 +1042,42 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         }
     }
 
-    // The intro is spent on DELIVERY, not on dismissal (issue-156,
-    // F3): once PARK stands open over a measured board, the intro
-    // has been delivered — mark it done. Declared after the latch
-    // above so the latch reads the pending bit first.
-    LaunchedEffect(parkOpen, watchSnapshot) {
-        if (parkOpen && watchSnapshot.items.isNotEmpty() &&
-            viewModel.parkIntroPending()
-        ) {
-            viewModel.markParkIntroDone()
+    // Issue #534 F2: delivery is RECORDED here, never spent. The
+    // intro counts as delivered this open once PARK stands open
+    // over a measured board; the spend itself happens at
+    // dismissal (closePark) or on the first FIX trip
+    // (openFixPane), judged by parkIntroSpendsOnDismiss. All three
+    // facts are transient (remember, not persisted): a fresh
+    // process starts undelivered, so an intro that was risen and
+    // reflexively dismissed rises again on the next launch.
+    // Declared after the latch above so the latch reads the
+    // pending bit first.
+    var parkIntroDeliveredThisOpen by remember { mutableStateOf(false) }
+    var parkIntroDeliveredAtMonoMs by remember { mutableStateOf(0L) }
+    var parkIntroFixTripThisOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(parkOpen) {
+        if (!parkOpen) {
+            parkIntroDeliveredThisOpen = false
+            parkIntroDeliveredAtMonoMs = 0L
+            parkIntroFixTripThisOpen = false
         }
     }
+    LaunchedEffect(parkOpen, watchSnapshot) {
+        if (parkOpen && watchSnapshot.items.isNotEmpty() &&
+            viewModel.parkIntroPending() && !parkIntroDeliveredThisOpen
+        ) {
+            parkIntroDeliveredThisOpen = true
+            parkIntroDeliveredAtMonoMs = SystemClock.elapsedRealtime()
+        }
+    }
+    // The dismissal verdict for THIS opening, computed at the
+    // moment of dismissal by every closePark call site below.
+    fun parkIntroSpendForDismissal(): Boolean = parkIntroSpendsOnDismiss(
+        deliveredThisOpen = parkIntroDeliveredThisOpen,
+        fixTripTakenThisOpen = parkIntroFixTripThisOpen,
+        deliveredAtMonoMs = parkIntroDeliveredAtMonoMs,
+        nowMonoMs = SystemClock.elapsedRealtime()
+    )
 
     // Issue #280 (R5 supplement): POST_NOTIFICATIONS was declared
     // in the manifest but never asked, so the seal's own
@@ -1024,9 +1085,32 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // once, as a runtime permission, when the first-run board is
     // delivered — not as a Settings trip and never as a gate: the
     // board and the seal work the same whether it is granted.
+    // Issue #534 F3: the answer is now RECORDED (persisted via the
+    // VM) and printed on the board; the callback also restarts the
+    // intro's read dwell, because the system dialog stood OVER the
+    // intro text for its whole life — time under the dialog is not
+    // reading time.
+    var postNotificationsGranted by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                true
+            } else {
+                viewModel.postNotificationsGranted()
+            }
+        )
+    }
     val notifPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { }
+    ) { granted ->
+        viewModel.recordPostNotificationsResult(granted)
+        postNotificationsGranted = granted
+        if (parkIntroDeliveredThisOpen) {
+            parkIntroDeliveredAtMonoMs = SystemClock.elapsedRealtime()
+        }
+    }
     var notifAsked by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(parkIntroForOpen) {
         if (parkIntroForOpen && !notifAsked &&
@@ -1036,6 +1120,17 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         ) {
             notifAsked = true
             notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+    // A re-ask trip (or a Settings trip) hands back through
+    // ON_RESUME, which bumps parkReturnTick: re-read the live
+    // system fact so PARK's note line never prints a stale answer.
+    LaunchedEffect(parkReturnTick) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val live = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (live) postNotificationsGranted = true
         }
     }
 
@@ -1092,7 +1187,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
 
     if (parkOpen) {
         BackHandler {
-            closePark(parkOpenState, viewModel)
+            closePark(parkOpenState, viewModel,
+                spendParkIntro = parkIntroSpendForDismissal())
         }
     } else if (currentDestination != MonolithDestination.DECK) {
         BackHandler { viewModel.navigateTo(MonolithDestination.DECK) }
@@ -1160,10 +1256,49 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             }
     }
 
+    // Issue #534 F3(d): the denied note line's re-ask. While the
+    // system will still show its dialog, re-fire the runtime
+    // request; once it will not (rationale gone after a recorded
+    // denial), the only honest path is this app's own notification
+    // settings pane — the house FIX-trip pattern.
+    fun reaskPostNotifications() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            postNotificationsGranted = true
+            return
+        }
+        val activity = context as? android.app.Activity
+        val rationaleGone = activity != null &&
+            !androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
+                activity, Manifest.permission.POST_NOTIFICATIONS
+            )
+        if (rationaleGone && viewModel.postNotificationsGranted() == false) {
+            launchSettings(
+                pinnedSettingsIntent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                },
+                "NOTIFICATIONS"
+            )
+        } else {
+            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
     // The FIX key's panes: the exact Settings pane per grant; device
     // admin instead fires the official activation intent for this
     // app's own admin (issue #44), with Security Settings as fallback.
     fun openFixPane(item: com.example.service.WatchItemId) {
+        // Issue #534 F2: a FIX trip is the intro's other spend —
+        // the user engaged with the board, so the intro has done
+        // its work even if the dwell has not elapsed. Spend at the
+        // trip itself; the flag also lets the eventual dismissal
+        // judge the same way.
+        if (parkIntroDeliveredThisOpen && viewModel.parkIntroPending()) {
+            parkIntroFixTripThisOpen = true
+            viewModel.markParkIntroDone()
+        }
         // Issue #324 finding 4: record the step BEFORE the trip —
         // the persisted in-flight step is what a process death
         // during the Settings stay resumes from.
@@ -1338,7 +1473,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     isSealed = doorLocked,
                     onGuardLineTap = {
                         when {
-                            parkOpen -> closePark(parkOpenState, viewModel)
+                            parkOpen -> closePark(
+                                parkOpenState, viewModel,
+                                spendParkIntro = parkIntroSpendForDismissal()
+                            )
                             // While sealed, the Guard line opens the
                             // launcher — the sealed phone's home.
                             sealed -> {
@@ -1498,6 +1636,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     selectedCategory = selectedCategory,
                                     shortsReelsSniperEnabled = shortsReelsSniperEnabled,
                                     browserUrlBlockerEnabled = browserUrlBlockerEnabled,
+                                    peekMinutes = guardSettings?.peekMinutes ?: 2,
                                     loadoutCapIndex = loadoutCapIndex,
                                     isSessionActive = sealed,
                                     blockingStatus = shieldBlockingStatus,
@@ -1708,7 +1847,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         themeReadout = themeEvaluation.readout,
                         parkReturnTick = parkReturnTick,
                         onDismiss = {
-                            closePark(parkOpenState, viewModel)
+                            closePark(
+                                parkOpenState, viewModel,
+                                spendParkIntro = parkIntroSpendForDismissal()
+                            )
                         },
                         onFixClick = { item -> openFixPane(item) },
                         onCheckClick = { viewModel.runWatchSweep() },
@@ -1720,8 +1862,13 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         // the accessibility service enforces.
                         socialSitesEnabled = browserUrlBlockerEnabled,
                         onToggleSocialSites = { viewModel.toggleBrowserUrlBlocker() },
+                        postNotificationsGranted = postNotificationsGranted,
+                        onReaskPostNotifications = { reaskPostNotifications() },
                         onOpenReception = {
-                            closePark(parkOpenState, viewModel)
+                            closePark(
+                                parkOpenState, viewModel,
+                                spendParkIntro = parkIntroSpendForDismissal()
+                            )
                             receptionOpen = true
                         },
                         setupStampMask = if (setupStamped) {
@@ -1730,6 +1877,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                             null
                         },
                         peekMinutes = guardSettings?.peekMinutes ?: 2,
+                        onPeekMinutesChange = { viewModel.setPeekMinutes(it) },
                         handoverText = armedHandover?.text,
                         modifier = Modifier.align(Alignment.BottomCenter)
                     )
@@ -1803,7 +1951,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                             view.selectedTabIndex = selectedTabIndex
                         }
                         view.onTabSelected = { idx ->
-                            if (parkOpen) closePark(parkOpenState, viewModel)
+                            if (parkOpen) closePark(
+                                parkOpenState, viewModel,
+                                spendParkIntro = parkIntroSpendForDismissal()
+                            )
                             val dest = when (idx) {
                                 0 -> MonolithDestination.DECK
                                 1 -> MonolithDestination.SHIELD
@@ -1830,7 +1981,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                         }
                         view.onParkInvoked = {
                             if (parkOpen) {
-                                closePark(parkOpenState, viewModel)
+                                closePark(
+                                    parkOpenState, viewModel,
+                                    spendParkIntro = parkIntroSpendForDismissal()
+                                )
                             } else {
                                 openPark(parkOpenState, sealed, viewModel)
                                 // Issue #128 finding 4: the cap
@@ -2179,6 +2333,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     (context as? android.app.Activity)?.moveTaskToBack(true)
                 },
                 onTake2MinutePeek = viewModel::start2MinutePeek,
+                peekMinutes = guardSettings?.peekMinutes ?: 2,
                 // FIX-8 / P-2: the honest exit routes to the
                 // door-originated Disarm entry — the face stands
                 // in front of the still-standing door.

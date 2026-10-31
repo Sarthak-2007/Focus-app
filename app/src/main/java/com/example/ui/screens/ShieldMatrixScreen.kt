@@ -117,6 +117,11 @@ fun ShieldMatrixScreen(
     selectedCategory: AppCategory?,
     shortsReelsSniperEnabled: Boolean,
     browserUrlBlockerEnabled: Boolean,
+    // Issue #517 (4-A): the SET peek length from the Guard row —
+    // the terms line and the catalogue contract print it, never
+    // the retired PEEK_DURATION_SECONDS constant. Default 2
+    // (the settings default) keeps render harnesses whole.
+    peekMinutes: Int = 2,
     profiles: List<FocusProfileEntity> = emptyList(),
     selectedProfileName: String = "Study Loadout",
     // UNA-07: the LOADOUT cap's resting position, from the persisted
@@ -600,7 +605,7 @@ fun ShieldMatrixScreen(
                     // Issue #107 (#2): the PEEK terms, printed where
                     // the rulings are read.
                     Text(
-                        text = PEEK_TERMS_LINE,
+                        text = peekTermsLine(peekMinutes),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 11.sp,
                         color = scheme.onSurfaceVariant,
@@ -891,7 +896,7 @@ fun ShieldMatrixScreen(
         if (filteredApps.isNotEmpty()) {
             item {
                 Text(
-                    text = PEEK_TERMS_LINE,
+                    text = peekTermsLine(peekMinutes),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontSize = 11.sp,
                     color = scheme.onSurfaceVariant,
@@ -909,7 +914,7 @@ fun ShieldMatrixScreen(
         // exactly once, and the row keeps its full wiring.
         catalogueGroups.forEach { (tier, groupApps) ->
             item(key = "catalogue_group_${tier.name}") {
-                CatalogueGroupHeader(tier = tier)
+                CatalogueGroupHeader(tier = tier, peekMinutes = peekMinutes)
             }
             items(groupApps, key = { it.packageName }) { app ->
                 CatalogueAppRow(
@@ -1252,14 +1257,20 @@ fun ShieldMatrixScreen(
 
 
 /**
- * Issue #107 (#2): the PEEK contract, printed. The numbers are
- * derived from the repository's own constants — the lease and the
- * mandatory cooldown the code enforces — so the printed terms are
- * the enforced terms.
+ * Issue #107 (#2): the PEEK contract, printed. The length is the
+ * SET peek length (the Guard row's peekMinutes — since issue
+ * #517, 4-A, the value the lease actually grants) and the
+ * cooldown is the repository's enforced constant — so the
+ * printed terms are the enforced terms.
  */
-internal val PEEK_TERMS_LINE: String =
-    "PEEK = ${MonolithRepository.PEEK_DURATION_SECONDS / 60} MINUTES, ONCE — " +
+internal fun peekTermsLine(peekMinutes: Int): String =
+    "PEEK = $peekMinutes MINUTES, ONCE — " +
         "THEN ${MonolithRepository.PEEK_COOLDOWN_MILLIS / 60_000} MINUTES SHUT BEFORE THE NEXT PEEK"
+
+/** The terms at the settings default (peekMinutes = 2) — the
+ *  print for a composition that has not read the row. Screens
+ *  holding the row print [peekTermsLine] of the set value. */
+internal val PEEK_TERMS_LINE: String = peekTermsLine(2)
 
 /**
  * Issue #107 (#1)'s staged-loadout preview panel is NOT carried in
@@ -2201,7 +2212,7 @@ private fun CatalogueAppRow(
  *  tally, and a number with two homes is a duplication
  *  (R-13; critic Salz C-11.1). */
 @Composable
-private fun CatalogueGroupHeader(tier: AppBlockTier) {
+private fun CatalogueGroupHeader(tier: AppBlockTier, peekMinutes: Int = 2) {
     Column {
         Text(
             text = tierWord(tier),
@@ -2216,9 +2227,10 @@ private fun CatalogueGroupHeader(tier: AppBlockTier) {
         )
         if (tier == AppBlockTier.PEEK_2M) {
             // R-6: PEEK's contract prints ONCE on this screen, here,
-            // derived from the constants — never hardcoded, so an
-            // editable-times change reprints the truth for free.
-            val peekMin = MonolithRepository.PEEK_DURATION_SECONDS / 60
+            // derived from the SET length (issue #517, 4-A) — never
+            // hardcoded, so an editable-times change reprints the
+            // truth for free.
+            val peekMin = peekMinutes
             val coolMin = (MonolithRepository.PEEK_COOLDOWN_MILLIS / 60_000L).toInt()
             Text(
                 text = "PEEK — $peekMin MINUTES, THEN SHUT AGAIN · $coolMin MIN BETWEEN PEEKS",

@@ -40,3 +40,11 @@ the storage/digest surface the ruling deletes; no test guarding a
 surviving behaviour was cut, skipped or weakened.
 
 — BUILDER-100, BUG-B tree
+
+Addendum (same run): main moved again during the landing (batch of
+builder PRs incl. #713 for issue #534). Second composition onto
+b2f9a364: #534's new closePark signature carried a digest-dismiss
+branch calling the deleted toggleNotificationDigestSheet — composed
+out (parameters + branch), #534's parkIntro spend law kept verbatim
+(definition + all call sites re-signed to
+closePark(parkOpenState, viewModel, spendParkIntro = …)).
