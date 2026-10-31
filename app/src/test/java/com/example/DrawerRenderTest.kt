@@ -11,6 +11,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.CapturedNotificationEntity
@@ -285,7 +286,22 @@ class DrawerRenderTest {
         settle(900)
         capture("dr_drawer_day.png")
 
-        composeRule.onNodeWithText("Electrostatics Problem Set 12").performClick()
+        // The row is tapped through its own furniture tag,
+        // scrolled fully into view first. PR #692's first run is
+        // the evidence for why: the text-node tap "passed" (the
+        // node exists, the touch injected without error) yet no
+        // detail ever composed — in this rig's short window the
+        // row sits at the list's lower edge and the text centre's
+        // touch lands off the row's clickable bounds, silently
+        // swallowed. The claim is unchanged: the same tap on the
+        // same row must open its detail.
+        val electrostatics = db.monolithDao().getAllTasksSnapshot()
+            .first { it.title == "Electrostatics Problem Set 12" }
+        composeRule.onNodeWithTag("drawer_row_${electrostatics.id}")
+            .performScrollTo()
+        settle(300)
+        composeRule.onNodeWithTag("drawer_row_${electrostatics.id}")
+            .performClick()
         settle(600)
         capture("dr_drawer_detail_day.png")
         composeRule.onNodeWithTag("drawer_detail_back").performClick()
