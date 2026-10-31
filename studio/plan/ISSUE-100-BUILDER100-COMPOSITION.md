@@ -96,3 +96,12 @@ it. Third composition: #138's 19→20 kept as shipped history, the
 #100 drop renumbered to MIGRATION_20_21 / DB v21, conflicts resolved
 CUT-side (Deck keeps #90's DeckArmedUtilities extraction minus the
 HELD chips; listener capture path superseded by the snooze-hold).
+
+Gate cycle 4 (run 41204979419 on fdc45b7a): Compile SUCCESS;
+targeted 665 tests, 2 failed — Forest W2 (floor, as before) and
+RoutinesMigrationChainTest, MERGE-INTRODUCED in the third
+composition's terms: #138's v20 pin asserts captured_notifications
+SURVIVES metadata-only at the latest schema, which #100's v21 drop
+supersedes. The pin is removed and replaced by a supersession note
+in place; the absence assertion (same test, above it) is the
+latest-schema truth. Named here for K8/#166 per the test orders.

@@ -399,12 +399,12 @@ class RoutinesMigrationChainTest {
         // day_notes is exactly the specced two columns, date as PK.
         assertEquals(setOf("dateIso", "word"), columnsOf(raw, "day_notes"))
 
-        // Issue #138 CUT (19→20): captured_notifications survives
-        // as metadata only — the content columns are GONE at v20.
-        assertEquals(
-            setOf("id", "timestampMillis", "packageName", "appName", "isRead"),
-            columnsOf(raw, "captured_notifications")
-        )
+        // Issue #138's v20 pin (captured_notifications survives
+        // metadata-only) is SUPERSEDED by Issue #100's ruling at
+        // v21: MIGRATION_20_21 drops the table outright, and the
+        // absence assertion above is now the latest-schema truth.
+        // (#138's 19→20 rebuild stands as shipped history in the
+        // chain; nothing at v21 resurrects the table.)
         raw.query("PRAGMA table_info(day_notes)").use { cursor ->
             val nameIdx = cursor.getColumnIndex("name")
             val pkIdx = cursor.getColumnIndex("pk")
