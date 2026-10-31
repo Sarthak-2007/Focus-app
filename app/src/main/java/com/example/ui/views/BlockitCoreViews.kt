@@ -1789,6 +1789,34 @@ internal object SlideGestureMath {
         val s = 1f - t
         return 3f * s * s * p1 + 6f * s * t * (p2 - p1) + 3f * t * t * (1f - p2)
     }
+
+    /**
+     * One semi-implicit Euler substep of a return spring toward
+     * [target] (R5-0723): returns (newX, newVelocity). The return
+     * modes share the STEP, never the spring — each keeps its own
+     * stiffness/damping voice; what they gain is one stability-
+     * bounded integration (≤5ms substeps, the seat's own
+     * discipline) and an honest velocity carried in from the
+     * motion they interrupt, instead of a silent restart at rest.
+     */
+    fun springStep(
+        x: Float,
+        velocity: Float,
+        target: Float,
+        stiffness: Float,
+        damping: Float,
+        h: Float
+    ): Pair<Float, Float> {
+        val accel = stiffness * (target - x) - damping * velocity
+        val newVelocity = velocity + accel * h
+        return (x + newVelocity * h) to newVelocity
+    }
+
+    /** The settle predicate every return spring shares — home and
+     *  (nearly) still. These are the thresholds the abort and
+     *  refusal returns already used inline. */
+    fun springSettled(x: Float, velocity: Float): Boolean =
+        x <= 0.001f && abs(velocity) < 0.05f
 }
 
 /**
@@ -1882,6 +1910,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         gateArmed = false
         latchKnockFired = false
         retreatTouched = false
+        activePointerId = MotionEvent.INVALID_POINTER_ID
         // Slice E: an annulment hands the slide back — the seal
         // gate and the exit shading die with the attempt.
         sealedGate = false
@@ -1920,6 +1949,16 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
     private var retreatTouched: Boolean = false
 
     private var latchKnockFired: Boolean = false
+
+    // R5-0740: the pointer this attempt belongs to. A drag reads
+    // ONLY this pointer's coordinates (found by id, never assumed
+    // at index 0), and its lift — ACTION_POINTER_UP while other
+    // fingers remain — is the release. INVALID whenever no touch
+    // owns the cap. Before this, the gesture read event.x (index
+    // 0) blindly: a palm or second finger silently re-bound every
+    // coordinate mid-drag against the stale grab offset, and the
+    // release could be judged on a finger that never grabbed.
+    private var activePointerId: Int = MotionEvent.INVALID_POINTER_ID
 
     // Issue #126 F3: the seated cap's refusal-knock throttle.
     private var lastSeatedKnockMs: Long = 0L
@@ -2027,6 +2066,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         // die silently inside startRefusal's already-fired guard).
         attemptWarrant = readWarrant()
         refusalFired = false
+        dragVelocitySigned = 0f
         onPressStart?.invoke(attemptWarrant)
         if (attemptWarrant == WarrantState.OFF) {
             startRefusal(knockFirst = true)
@@ -2169,6 +2209,8 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                     movedBeyondSlop = false
                     prevDragDisplayed = displayed
                     prevDragTimeMs = event.eventTime
+                    activePointerId = event.getPointerId(0)
+                    dragVelocitySigned = 0f
                     downOnCap = true
                     grabOffsetPx = event.x - (capLeft + capWPx() * 0.5f)
                     mode = Mode.DRAG
@@ -2180,6 +2222,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                activePointerId = MotionEvent.INVALID_POINTER_ID
                 if (pendingResume) {
                     pendingResume = false
                     resumeReturnHome()
@@ -2212,6 +2255,25 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
     private fun fingerFraction(touchX: Float): Float {
         val center = touchX - grabOffsetPx
         return ((center - insetPx() - capWPx() * 0.5f) / travelPx()).coerceIn(0f, 1f)
+    }
+
+    /** R5-0740: the tracked pointer's index in [event], or -1 when
+     *  it is absent — already lifted, and its POINTER_UP is the
+     *  event that ends the gesture, never a silent re-bind to
+     *  whichever finger now sits at index 0. Attempts that carry
+     *  no claim (the accessibility mesh, a mid-flight restore)
+     *  read index 0: by construction it is the only pointer. */
+    private fun trackedPointerIndex(event: MotionEvent): Int =
+        if (activePointerId == MotionEvent.INVALID_POINTER_ID) 0
+        else event.findPointerIndex(activePointerId)
+
+    /** One MOVE sample on the drag path, from the tracked pointer. */
+    private fun dispatchMove(touchX: Float, eventTimeMs: Long) {
+        when (mode) {
+            Mode.DRAG -> dragMove(touchX, eventTimeMs)
+            Mode.REFUSAL_RETREAT -> retreatMove(touchX, eventTimeMs)
+            else -> Unit
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -2349,6 +2411,12 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                     }
                     return true
                 }
+                // A fresh DOWN during the spring-back takes the cap
+                // over: the spring-back is an animator riding on REST
+                // (issue #59 F5), so the takeover cancels it silently
+                // — its end callback never fires — and admission
+                // below stays REST-only.
+                cancelSpringBackSilently()
                 // A DOWN inside a running machine or a live drag is not
                 // a new attempt (a second pointer never hijacks a drag;
                 // a refused touch admits no new attempt until its UP).
@@ -2363,11 +2431,41 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                if (mode == Mode.DRAG) dragMove(event)
-                else if (mode == Mode.REFUSAL_RETREAT) retreatMove(event)
+                // R5-0740: follow the tracked pointer only, and
+                // consume EVERY sample the system batched into this
+                // event, oldest first — a fast flick's path lives
+                // in the history, and judging the gesture from the
+                // latest point alone throws that path away.
+                val idx = trackedPointerIndex(event)
+                if (idx >= 0) {
+                    for (h in 0 until event.historySize) {
+                        dispatchMove(
+                            event.getHistoricalX(idx, h),
+                            event.getHistoricalEventTime(h)
+                        )
+                    }
+                    dispatchMove(event.getX(idx), event.eventTime)
+                }
+                return true
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                // R5-0740: the tracked finger lifting while another
+                // remains IS this gesture's release — judged here,
+                // on this finger, exactly as its ACTION_UP would
+                // be. Any other pointer's lift changes nothing.
+                if (event.getPointerId(event.actionIndex) == activePointerId) {
+                    activePointerId = MotionEvent.INVALID_POINTER_ID
+                    when (mode) {
+                        Mode.DRAG -> endDrag(event, cancelled = false)
+                        Mode.REFUSAL_HOLD, Mode.REFUSAL_RETREAT, Mode.REFUSAL_RETURN ->
+                            parent?.requestDisallowInterceptTouchEvent(false)
+                        else -> Unit
+                    }
+                }
                 return true
             }
             MotionEvent.ACTION_UP -> {
+                activePointerId = MotionEvent.INVALID_POINTER_ID
                 when (mode) {
                     Mode.DRAG -> endDrag(event, cancelled = false)
                     Mode.REFUSAL_HOLD, Mode.REFUSAL_RETREAT, Mode.REFUSAL_RETURN -> {
@@ -2380,6 +2478,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
+                activePointerId = MotionEvent.INVALID_POINTER_ID
                 if (mode == Mode.DRAG) endDrag(event, cancelled = true)
                 parent?.requestDisallowInterceptTouchEvent(false)
                 return true
@@ -2399,8 +2498,10 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         latchKnockFired = false
         retreatTouched = false
         downTimeMs = event.eventTime
+        activePointerId = event.getPointerId(0)
         downXPx = event.x
         movedBeyondSlop = false
+        dragVelocitySigned = 0f
         prevDragDisplayed = displayed
         prevDragTimeMs = event.eventTime
 
@@ -2434,7 +2535,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         invalidate()
     }
 
-    private fun dragMove(event: MotionEvent) {
+    private fun dragMove(touchX: Float, eventTimeMs: Long) {
         // The verdict consulted is never older than the frame that
         // uses it: re-read on every MOVE (Joss (c)) — except in a
         // retreat-touched attempt, where the pin holds the verdict
@@ -2442,7 +2543,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         val prevWarrant = attemptWarrant
         attemptWarrant = readWarrant()
         if (retreatTouched) attemptWarrant = WarrantState.OFF
-        if (abs(event.x - downXPx) > dp(8f)) movedBeyondSlop = true
+        if (abs(touchX - downXPx) > dp(8f)) movedBeyondSlop = true
 
         // Mid-drag death above the stop: powered retreat to 0.65 in
         // 160ms (Curve A); a snap would teleport and break the lag law.
@@ -2452,7 +2553,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
             startRefusalRetreat()
             return
         }
-        applyDragPosition(event.x, event.eventTime)
+        applyDragPosition(touchX, eventTimeMs)
         invalidate()
     }
 
@@ -2469,22 +2570,39 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
      *  is the refusal's own door — nothing here can commit, because
      *  the warrant that drove us into retreat is OFF and every
      *  commit check re-reads it. */
-    private fun retreatMove(event: MotionEvent) {
-        if (fingerFraction(event.x) >= displayed) return
+    private fun retreatMove(touchX: Float, eventTimeMs: Long) {
+        if (fingerFraction(touchX) >= displayed) return
         stopIntegrator()
         mode = Mode.DRAG
         // The seat-seed bookkeeping restarts at the rejoin point:
         // the crossing MOVE inside dragMove then measures velocity
         // from the finger's own motion, not the machine's retreat.
         prevDragDisplayed = displayed
-        prevDragTimeMs = event.eventTime
-        dragMove(event)
+        prevDragTimeMs = eventTimeMs
+        dragMove(touchX, eventTimeMs)
     }
 
     // Velocity bookkeeping for the seat seed: the previous drag
     // frame's displayed value and its event time.
     private var prevDragDisplayed: Float = 0f
     private var prevDragTimeMs: Long = 0L
+
+    // R5-0723: the drag's SIGNED displayed velocity (frac/s), kept
+    // beside the seat's floored seed: a release, a refusal or a
+    // spring-back inherits the hand's actual motion — a fast
+    // retreat included — instead of restarting from rest. Reset
+    // at every attempt birth, so no attempt inherits a throw.
+    private var dragVelocitySigned: Float = 0f
+
+    // R5-0723: the refusal return's seed, captured at the refusal's
+    // first frame. The 300ms hold is a held breath, not amnesia:
+    // the return spring still owes the hand its velocity.
+    private var refusalSeedVelocity: Float = 0f
+
+    // R5-0723: the mesh's instantaneous rate (frac/s), sampled per
+    // frame — the mesh is curve-driven and holds no velocity
+    // field, so an abort mid-mesh seeds its return from this.
+    private var meshVelocity: Float = 0f
 
     /** Position the cap from the finger under the current warrant. */
     private fun applyDragPosition(touchX: Float, eventTimeMs: Long) {
@@ -2532,6 +2650,13 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         val dtSec = (eventTimeMs - prevDragTimeMs) / 1000f
         val moveVelocity = if (dtSec > 0.001f) {
             ((next - prevDragDisplayed) / dtSec).coerceIn(0f, 6f)
+        } else {
+            0f
+        }
+        // R5-0723: the signed twin of the seat seed — a retreat
+        // counts here, where the seat's floor law says it must not.
+        dragVelocitySigned = if (dtSec > 0.001f) {
+            ((next - prevDragDisplayed) / dtSec).coerceIn(-6f, 6f)
         } else {
             0f
         }
@@ -2623,7 +2748,9 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
 
         // Sub-catch release: the shipped spring-back survives for this
         // path alone (Cato's site law) — it is not the seat, not the
-        // refusal spring, and is not unified into the integrator.
+        // refusal spring. R5-0723: it now shares the integrator's
+        // CLOCK and the hand's release velocity, never their
+        // constants — the voice stays its own.
         mode = Mode.REST
         animateSpringBack(0f) { onPressEnd?.invoke() }
     }
@@ -2642,6 +2769,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         meshTarget = target
         modeStartNanos = System.nanoTime()
         velocity = 0f
+        meshVelocity = 0f
         startIntegrator()
         invalidate()
     }
@@ -2660,8 +2788,16 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         // Buttonhole abort: spring-back from the abort frame's sampled
         // fraction, on the same integrator (250ms class). Nothing was
         // dispatched — enforcement dispatches only at the latch.
+        // R5-0723: the return inherits the motion it interrupts —
+        // the seat's live spring velocity, or the mesh's sampled
+        // rate — instead of restarting from rest on the very frame
+        // the machine was moving fastest.
+        velocity = when (mode) {
+            Mode.SEAT -> velocity
+            Mode.MESH -> meshVelocity
+            else -> 0f
+        }.coerceIn(-6f, 6f)
         mode = Mode.ABORT_RETURN
-        velocity = 0f
         startIntegrator()
         invalidate()
     }
@@ -2674,6 +2810,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         // sat below the floor, and Joss's filing was a build gate,
         // not a deferral). The device session may only raise it.
         if (knockFirst) fireWeightedKnock(12, 0.70f, 220f)
+        refusalSeedVelocity = dragVelocitySigned
         mode = Mode.REFUSAL_HOLD
         holdUntilNanos = System.nanoTime() + 300_000_000L
         velocity = 0f
@@ -2720,7 +2857,13 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
             Mode.MESH -> {
                 val elapsedMs = (frameNanos - modeStartNanos) / 1_000_000f
                 val u = (elapsedMs / MonolithCurves.DURATION_140).coerceIn(0f, 1f)
+                val beforeMesh = displayed
                 displayed = modeFrom + (meshTarget - modeFrom) * SlideGestureMath.meshCurve(u)
+                // R5-0723: the mesh's instantaneous rate, sampled
+                // for the abort seed (the curve holds no velocity).
+                if (dt > 0f) {
+                    meshVelocity = ((displayed - beforeMesh) / dt).coerceIn(-6f, 6f)
+                }
                 if (u >= 1f) {
                     displayed = meshTarget
                     if (meshTarget >= 0.92f) {
@@ -2754,10 +2897,12 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                 var remaining = dt
                 while (remaining > 0f && mode == Mode.ABORT_RETURN) {
                     val h = min(remaining, 0.005f)
-                    val accel = 484f * (0f - displayed) - 39.6f * velocity
-                    velocity += accel * h
-                    displayed += velocity * h
-                    if (displayed <= 0.001f && abs(velocity) < 0.05f) {
+                    val (nx, nv) = SlideGestureMath.springStep(
+                        displayed, velocity, 0f, 484f, 39.6f, h
+                    )
+                    displayed = nx
+                    velocity = nv
+                    if (SlideGestureMath.springSettled(displayed, velocity)) {
                         displayed = 0f
                         velocity = 0f
                         mode = Mode.REST
@@ -2787,23 +2932,35 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                         onPressEnd?.invoke()
                     } else {
                         mode = Mode.REFUSAL_RETURN
-                        velocity = 0f
+                        velocity = refusalSeedVelocity
                     }
                 }
             }
             Mode.REFUSAL_RETURN -> {
                 // Fen's universal return spring (dampingRatio 0.78,
                 // stiffness 260, ~320ms) — the app's one
-                // "not committed" voice (Joss A6).
-                val accel = 260f * (0f - displayed) - 25.2f * velocity
-                velocity += accel * dt
-                displayed += velocity * dt
-                if (displayed <= 0.001f && abs(velocity) < 0.05f) {
-                    displayed = 0f
-                    velocity = 0f
-                    mode = Mode.REST
-                    stopIntegrator()
-                    onPressEnd?.invoke()
+                // "not committed" voice (Joss A6). R5-0723:
+                // substepped at ≤5ms like the abort return beside
+                // it — the raw frame step this branch used crossed
+                // the spring's stability bound at the loop's own
+                // 50ms clamp and integrated a different spring at
+                // every frame rate.
+                var remaining = dt
+                while (remaining > 0f && mode == Mode.REFUSAL_RETURN) {
+                    val h = min(remaining, 0.005f)
+                    val (nx, nv) = SlideGestureMath.springStep(
+                        displayed, velocity, 0f, 260f, 25.2f, h
+                    )
+                    displayed = nx
+                    velocity = nv
+                    if (SlideGestureMath.springSettled(displayed, velocity)) {
+                        displayed = 0f
+                        velocity = 0f
+                        mode = Mode.REST
+                        stopIntegrator()
+                        onPressEnd?.invoke()
+                    }
+                    remaining -= h
                 }
             }
             else -> stopIntegrator()
@@ -2919,6 +3076,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         // a dead sequence until process death.
         mode = Mode.REST
         displayed = 0f
+        activePointerId = MotionEvent.INVALID_POINTER_ID
         refusalFired = false
         super.onDetachedFromWindow()
     }
