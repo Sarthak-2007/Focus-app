@@ -136,7 +136,17 @@ class FinanceMidSessionTest {
     fun nonFinancePeekSemantics_unchanged() {
         val shop = entity(AppCategory.SHOPPING, AppBlockTier.LOCKED)
         assertFalse(peekOfferFor(InterceptPath.APP_TIER, shop, 0, false))
-        assertNull(peekWithheldFor(false, InterceptPath.APP_TIER, shop, 0, false))
+        // Floor lane (census #6, row 12): this line used to expect
+        // silence (null). Issue #154 composed its state line on top
+        // of #120 — a LOCKED tier on an honouring door now NAMES
+        // itself (PeekWithheld.TIER_LOCKED, "a state line, not a
+        // refusal"), with finance rows expressly carved out so
+        // their peek keeps its own withheld reasons below. The
+        // non-finance semantics #120 froze are the offer and the
+        // ration (asserted here, unchanged); the withheld answer
+        // for a locked non-finance row is #154's named state.
+        assertEquals(PeekWithheld.TIER_LOCKED,
+            peekWithheldFor(false, InterceptPath.APP_TIER, shop, 0, false))
         val chat = entity(AppCategory.MESSAGING, AppBlockTier.PEEK_2M)
         assertTrue(peekOfferFor(InterceptPath.APP_TIER, chat, 0, false))
         // The 20-minute ration still binds non-finance peeks.
