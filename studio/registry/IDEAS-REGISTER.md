@@ -132,3 +132,4 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | Launcher block screen: un-exitable launcher surface + separate allowed/peek screens | Sarthak's ruling 04:29 (not a seat idea — his order) | #22/#18 | BUILT-IN-PROGRESS (Umbau lane; first slice merged via PR #167) |
 
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
+| One-time widget pin offer at the first receipt (system pin prompt, dismissible forever, never re-asked) — the #155 glance only helps users who place widgets; the offer rides on trust earned by a held block | CONSUMER-1 (Consumer seat, #155) | #155 · Discussion #615 | PANEL-QUEUED |
