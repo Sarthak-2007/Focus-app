@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.HorizontalDivider
@@ -548,97 +549,16 @@ fun DrawerScreen(
         }
 
         if (searching) {
-            // ---------- SEARCH RESULTS (all years, paged) ----------
-            item(key = "search-back") {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // SEARCH gains the house BACK (AUDIT-drawer §2):
-                    // a mode you leave only by erasing your own
-                    // typing is a trap — BACK clears the query.
-                    Text(
-                        text = "BACK",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        color = scheme.onBackground,
-                        modifier = Modifier
-                            .clickable { onQueryChange("") }
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
-                            .testTag("drawer_search_back")
-                    )
-                }
-            }
-            if (drawerResults.isEmpty()) {
-                item {
-                    // Re-scoped (AUDIT-drawer §2): the promise and
-                    // the territory match — this search looks at
-                    // stored TASKS only, and now says so.
-                    Text(
-                        text = "NO STORED TASK UNDER “$drawerQuery”",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 13.sp,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 24.dp)
-                    )
-                }
-            } else {
-                val groups = buildDayGroups(
-                    rows = drawerResults,
-                    dayWords = emptyMap(),
-                    scopeMonth = null,
-                    includeTodayGroup = false,
-                    today = today
-                )
-                groups.forEach { group ->
-                    item(key = "search-head-${group.date}") {
-                        // SPITZ Charge 10a (closer): the search day
-                        // headings share the DayHeading constant —
-                        // 10.5sp meta voice, not a surviving 11sp.
-                        Text(
-                            text = headingLabel(group.date, withYear = true),
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 10.5.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 6.dp)
-                        )
-                    }
-                    items(group.rows, key = { "search-${it.id}" }) { task ->
-                        // A hit must show its reason (AUDIT-drawer
-                        // §2): when the match lives in a substep —
-                        // not the title or category — the row prints
-                        // that step as a second line. A result that
-                        // cannot show why it matched is a small
-                        // false print.
-                        val q = drawerQuery.trim()
-                        val matchedStep = if (
-                            q.isNotEmpty() &&
-                            !task.title.contains(q, ignoreCase = true) &&
-                            !task.categoryTag.contains(q, ignoreCase = true)
-                        ) {
-                            task.subSteps.firstOrNull {
-                                it.title.contains(q, ignoreCase = true)
-                            }?.title
-                        } else {
-                            null
-                        }
-                        StoredRow(
-                            task = task,
-                            matchedStepTitle = matchedStep,
-                            onClick = { selectedTaskId = task.id }
-                        )
-                    }
-                }
-                if (drawerSearchHasEarlier) {
-                    item {
-                        EarlierRow(onClick = onLoadEarlierSearch)
-                    }
-                }
-            }
+            drawerSearchResults(
+                scheme = scheme,
+                drawerQuery = drawerQuery,
+                drawerResults = drawerResults,
+                today = today,
+                drawerSearchHasEarlier = drawerSearchHasEarlier,
+                onLoadEarlierSearch = onLoadEarlierSearch,
+                onQueryChange = onQueryChange,
+                onSelectTask = { selectedTaskId = it }
+            )
         } else when (view) {
             // Unreachable: the CABINET and RECEIPTS pages return
             // early above, before this column exists. Present for
@@ -1499,6 +1419,117 @@ private fun DrawerDetailView(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Issue #90 (complexity F2 slice): the SEARCH RESULTS block of
+ * the Drawer's list column — extracted as a LazyListScope
+ * extension, in the pattern of F4's standingOrdersSlip.
+ * Behaviour-identical: same items, same keys, same testTags; the
+ * host's captures are explicit parameters and the row-tap state
+ * write rides a callback to the host's saveable state holder.
+ */
+private fun LazyListScope.drawerSearchResults(
+    scheme: androidx.compose.material3.ColorScheme,
+    drawerQuery: String,
+    drawerResults: List<FocusTaskEntity>,
+    today: LocalDate,
+    drawerSearchHasEarlier: Boolean,
+    onLoadEarlierSearch: () -> Unit,
+    onQueryChange: (String) -> Unit,
+    onSelectTask: (Int) -> Unit
+) {
+    // ---------- SEARCH RESULTS (all years, paged) ----------
+    item(key = "search-back") {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // SEARCH gains the house BACK (AUDIT-drawer §2):
+            // a mode you leave only by erasing your own
+            // typing is a trap — BACK clears the query.
+            Text(
+                text = "BACK",
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                color = scheme.onBackground,
+                modifier = Modifier
+                    .clickable { onQueryChange("") }
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                    .testTag("drawer_search_back")
+            )
+        }
+    }
+    if (drawerResults.isEmpty()) {
+        item {
+            // Re-scoped (AUDIT-drawer §2): the promise and
+            // the territory match — this search looks at
+            // stored TASKS only, and now says so.
+            Text(
+                text = "NO STORED TASK UNDER “$drawerQuery”",
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontSize = 13.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 24.dp)
+            )
+        }
+    } else {
+        val groups = buildDayGroups(
+            rows = drawerResults,
+            dayWords = emptyMap(),
+            scopeMonth = null,
+            includeTodayGroup = false,
+            today = today
+        )
+        groups.forEach { group ->
+            item(key = "search-head-${group.date}") {
+                // SPITZ Charge 10a (closer): the search day
+                // headings share the DayHeading constant —
+                // 10.5sp meta voice, not a surviving 11sp.
+                Text(
+                    text = headingLabel(group.date, withYear = true),
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.5.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+            items(group.rows, key = { "search-${it.id}" }) { task ->
+                // A hit must show its reason (AUDIT-drawer
+                // §2): when the match lives in a substep —
+                // not the title or category — the row prints
+                // that step as a second line. A result that
+                // cannot show why it matched is a small
+                // false print.
+                val q = drawerQuery.trim()
+                val matchedStep = if (
+                    q.isNotEmpty() &&
+                    !task.title.contains(q, ignoreCase = true) &&
+                    !task.categoryTag.contains(q, ignoreCase = true)
+                ) {
+                    task.subSteps.firstOrNull {
+                        it.title.contains(q, ignoreCase = true)
+                    }?.title
+                } else {
+                    null
+                }
+                StoredRow(
+                    task = task,
+                    matchedStepTitle = matchedStep,
+                    onClick = { onSelectTask(task.id) }
+                )
+            }
+        }
+        if (drawerSearchHasEarlier) {
+            item {
+                EarlierRow(onClick = onLoadEarlierSearch)
             }
         }
     }
