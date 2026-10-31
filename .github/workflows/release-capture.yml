@@ -13,9 +13,9 @@ jobs:
           java-version: '21'
       - name: Install SDK packages
         run: |
-          export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platforms;android-37" "platforms;android-36" "build-tools;36.0.0" "build-tools;35.0.0" || sdkmanager "platforms;android-37" "platforms;android-36" "build-tools;36.0.0" "build-tools;35.0.0"
+          SDKMANAGER="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
+          yes | "$SDKMANAGER" --licenses > /tmp/sdk-licenses.log 2>&1 || { echo "::warning::sdkmanager license step failed"; tail -20 /tmp/sdk-licenses.log; }
+          "$SDKMANAGER" "platforms;android-37.0" "build-tools;37.0.0"
       - name: Assemble debug APK
         run: |
           chmod +x ./gradlew
