@@ -1202,6 +1202,27 @@ internal fun doorMemoryLineText(priorInterceptsThisSession: Int): String? {
     return "${ordinalWord(priorInterceptsThisSession + 1)} TIME THIS SESSION"
 }
 
+/**
+ * The door's second memory (issue #264, B-264-25): how long
+ * since THIS APP was last reached for, read from the persisted
+ * intercept log — the count line says how often this session;
+ * this line says how long the urge waited between tries, which
+ * is the self-knowledge the moment can actually teach from.
+ * Prints whenever a prior reach exists in the log, even on a
+ * session's first visit to this door. No prior reach (0) prints
+ * nothing: the door claims no memory it doesn't have.
+ */
+internal fun doorLastReachLine(lastReachAtMillis: Long, nowMillis: Long): String? {
+    if (lastReachAtMillis <= 0L) return null
+    val agoSeconds = ((nowMillis - lastReachAtMillis) / 1000L).coerceAtLeast(0L)
+    return when {
+        agoSeconds < 60L -> "LAST REACH UNDER A MINUTE AGO"
+        agoSeconds < 3_600L -> "LAST REACH ${agoSeconds / 60L} MIN AGO"
+        agoSeconds < 86_400L -> "LAST REACH ${agoSeconds / 3_600L} H AGO"
+        else -> "LAST REACH ${agoSeconds / 86_400L} D AGO"
+    }
+}
+
 internal fun ordinalWord(n: Int): String = when (n) {
     1 -> "FIRST"
     2 -> "SECOND"
@@ -1884,6 +1905,20 @@ fun AirlockInterceptOverlay(
                 // visit's ordinal, THIS SESSION only, printed
                 // only when a prior booking exists.
                 doorMemoryLineText(state.priorInterceptsThisSession)?.let { line ->
+                    Text(
+                        text = line,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f)
+                    )
+                }
+
+                // Issue #264 (B-264-25): the door's second
+                // memory — how long since this app was last
+                // reached for, from the persisted intercept log.
+                // Prints whenever a prior reach exists, even on
+                // this session's first visit to the door.
+                doorLastReachLine(state.lastReachAtMillis, System.currentTimeMillis())?.let { line ->
                     Text(
                         text = line,
                         fontFamily = AtkinsonHyperlegibleFamily,
