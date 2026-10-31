@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.performClick
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -379,6 +380,9 @@ class VaultHistoryTruthTest {
         // strength. The gyro half above keeps assertIsDisplayed:
         // its lines are in view, and there displayed-ness is
         // part of the claim.
+        println("K8DIAG-BEGIN")
+        println(composeRule.onNodeWithTag("drawer_cabinet", useUnmergedTree = true).printToString())
+        println("K8DIAG-END")
         composeRule.onNodeWithText("STAMPED — IT STANDS IN THE CABINET").assertExists()
         composeRule.onNodeWithText(
             "STAMPED ×2 · LAST ${headingWithYear(LocalDate.of(2026, 10, 20))}"
