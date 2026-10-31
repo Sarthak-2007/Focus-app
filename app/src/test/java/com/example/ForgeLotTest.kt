@@ -36,6 +36,9 @@ import java.time.Duration
  * against a seeded cabinet, and reads the cabinet back through
  * MonolithRepository.forgedArtifactIds — lot and cabinet must
  * agree, because they are the same set read from two sides.
+ * And the draw is idempotent (issue #8, Werkbank Pin 1): a
+ * session that already carries a stamp never re-draws — the
+ * re-tick test at the foot of this file is its harness.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -80,8 +83,10 @@ class ForgeLotTest {
     /** A one-block span one tick from completion: 61 verified
      *  seconds against a 60-second target, wall and monotonic
      *  clocks in agreement, unsigned (a blank signature verifies —
-     *  see CryptoIntegrityManager.verifySessionState). */
-    private fun completingSpan(): FocusSessionEntity {
+     *  see CryptoIntegrityManager.verifySessionState). When
+     *  [alreadyForged] is set, the span carries that stamp into
+     *  its completing tick (the re-tick scenario). */
+    private fun completingSpan(alreadyForged: String? = null): FocusSessionEntity {
         val nowWall = System.currentTimeMillis()
         val nowMono = SystemClock.elapsedRealtime()
         return FocusSessionEntity(
@@ -95,14 +100,15 @@ class ForgeLotTest {
             totalStudyBlocks = 1,
             currentBlockIndex = 1,
             isActive = true,
-            completedSuccessfully = false
+            completedSuccessfully = false,
+            forgedArtifactId = alreadyForged
         )
     }
 
     /** Insert a fresh span and run the completing tick on it. */
-    private suspend fun completeOneSpan(): FocusSessionEntity {
+    private suspend fun completeOneSpan(alreadyForged: String? = null): FocusSessionEntity {
         val dao = db.monolithDao()
-        val id = dao.insertSession(completingSpan()).toInt()
+        val id = dao.insertSession(completingSpan(alreadyForged)).toInt()
         return repo.updateSessionProgress(dao.getSessionById(id)!!)
     }
 
@@ -176,5 +182,27 @@ class ForgeLotTest {
         val seventh = completeOneSpan()
         assertTrue(seventh.completedSuccessfully)
         assertNull(seventh.forgedArtifactId)
+    }
+
+    // Werkbank Pin 2, the missing third (issue #8): a session that
+    // already carries a stamp and is re-ticked through completion
+    // keeps its stamp — the draw must not run at all, so the filed
+    // record cannot be re-struck by a later tick. The cabinet here
+    // holds nothing but the span's own stamp, so an unguarded draw
+    // is guaranteed to land on a different artifact (the draw's
+    // complement excludes the stamp itself) and this test fails
+    // on the unguarded write.
+    @Test
+    fun alreadyStampedSession_reTick_keepsStamp() = runBlocking {
+        val dao = db.monolithDao()
+        val stamp = CurioCatalog.artifacts.first().id
+        val done = completeOneSpan(alreadyForged = stamp)
+        assertTrue(done.completedSuccessfully)
+        assertEquals(
+            "an already-stamped session must keep its stamp through completion",
+            stamp, done.forgedArtifactId
+        )
+        assertEquals(setOf(stamp), repo.forgedArtifactIds())
+        dao.deleteSessionById(done.id)
     }
 }
