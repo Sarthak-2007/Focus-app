@@ -102,6 +102,47 @@ class WatchStoreRobolectricTest {
     }
 
     @Test
+    fun sweep_completionAdvancesTheCompletedGeneration() {
+        // Issue #9 (Critic C-1): PARK's CHECK key is answered only
+        // by the sweep it dispatched — the snapshot records WHICH
+        // generation completed, in parity with LAST PROVED.
+        assertEquals(0, WatchStore.snapshots.value.lastCompletedSweepGen)
+        WatchStore.runSweep { true }
+        val gen = WatchStore.currentSweepGen()
+        awaitSnapshot { it.lastCompletedSweepGen == gen }
+        assertEquals(gen, WatchStore.snapshots.value.lastCompletedSweepGen)
+        assertNotNull(WatchStore.snapshots.value.lastProvedWallMillis)
+    }
+
+    @Test
+    fun sweep_thrownQueryStampsNothingAndBlocksCompletion() {
+        // Issue #9 (Critic C-9): a query that throws is a crashed
+        // question, not a measured "no" — it stamps nothing, the
+        // item keeps its (absent) word, and the set cannot
+        // complete on it.
+        WatchStore.runSweep { item ->
+            if (item == WatchItemId.DEVICE_ADMIN) {
+                throw RuntimeException("binder died")
+            }
+            true
+        }
+        // The other five land…
+        awaitSnapshot { snap ->
+            WatchItemId.PERMISSIONS
+                .filter { it != WatchItemId.DEVICE_ADMIN }
+                .all { snap.measurement(it) != null }
+        }
+        // …and after a settle, the crashed door is still
+        // unmeasured and nothing has completed.
+        Thread.sleep(250)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        val snap = WatchStore.snapshots.value
+        assertNull(snap.measurement(WatchItemId.DEVICE_ADMIN))
+        assertNull(snap.lastProvedWallMillis)
+        assertEquals(0, snap.lastCompletedSweepGen)
+    }
+
+    @Test
     fun bindWriters_stampTheirItems() {
         WatchStore.onAccessibilityBound(true)
         WatchStore.onNotificationListenerBound(false)
@@ -116,9 +157,9 @@ class WatchStoreRobolectricTest {
     }
 
     @Test
-    fun interceptors_deriveFromSettingsParentsAndSuspension() {
+    fun interceptors_deriveFromSettingsAndParentsOnly() {
         // Parents unmeasured: the lines are unmeasured (name only).
-        WatchStore.updateInterceptorInputs(shortsOn = true, sitesOn = true, safeBreak = false)
+        WatchStore.updateInterceptorInputs(shortsOn = true, sitesOn = true)
         var snap = WatchStore.snapshots.value
         assertNull(snap.measurement(WatchItemId.SHORTS_REELS))
 
@@ -145,13 +186,14 @@ class WatchStoreRobolectricTest {
         snap = WatchStore.snapshots.value
         assertEquals(InterceptorState.RUNNING, snap.measurement(WatchItemId.NOTIFICATIONS)?.interceptor)
 
-        // His suspension (the Safe Break): the blocking pair PAUSES;
-        // the listener's capture has no suspension and keeps running.
-        WatchStore.updateInterceptorInputs(safeBreak = true)
-        snap = WatchStore.snapshots.value
-        assertEquals(InterceptorState.PAUSED, snap.measurement(WatchItemId.SHORTS_REELS)?.interceptor)
-        assertEquals(InterceptorState.PAUSED, snap.measurement(WatchItemId.SOCIAL_SITES)?.interceptor)
-        assertEquals(InterceptorState.RUNNING, snap.measurement(WatchItemId.NOTIFICATIONS)?.interceptor)
+        // Audit R3 (safe-break-lived #1): there is NO Safe Break
+        // suspension input to flip — the sniper and the site blocker
+        // are strictly active during Safe Breaks (the accessibility
+        // service's own class doc), so with settings on and parents
+        // granted the pair can only ever read RUNNING here; the old
+        // PAUSED-under-break derivation was a printed lie and its
+        // input is deleted. (The break truth is covered end-to-end
+        // in SafeBreakTruthTest.)
 
         // The session ends: the line falls back to OFF on the same
         // binding — the capture stopped with the session.
@@ -161,7 +203,7 @@ class WatchStoreRobolectricTest {
         WatchStore.updateInterceptorInputs(sessionActive = true)
 
         // Setting off: OFF regardless of parents.
-        WatchStore.updateInterceptorInputs(shortsOn = false, safeBreak = false)
+        WatchStore.updateInterceptorInputs(shortsOn = false)
         snap = WatchStore.snapshots.value
         assertEquals(InterceptorState.OFF, snap.measurement(WatchItemId.SHORTS_REELS)?.interceptor)
 

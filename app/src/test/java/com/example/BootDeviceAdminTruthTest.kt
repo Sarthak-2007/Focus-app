@@ -15,6 +15,9 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.io.File
 
 /**
@@ -25,6 +28,8 @@ import java.io.File
  * the fix pane used a hardcoded Settings component, and boot work
  * ran in a bare uncaught coroutine.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
 class BootDeviceAdminTruthTest {
 
     // ---------------------------------------------------------------
@@ -227,8 +232,22 @@ class BootDeviceAdminTruthTest {
         assertTrue("a shield raise must precede the tick", firstShield in 0 until tick)
         assertTrue("a shield raise must follow the tick", lastShield > tick)
         // Exactly one finish per goAsync branch, each in a finally.
-        assertEquals(2, Regex("pendingResult\\.finish\\(\\)").findAll(source).count())
-        assertEquals(2, Regex("finally \\{").findAll(source).count())
+        // The counts are branch-relative, not absolute (#166, K8's
+        // seventh sitting): the receiver grew from two goAsync
+        // branches to four (quickboot/boot group, reboot,
+        // timezone, package-changed) and the hardcoded 2 went red
+        // on a receiver that honours the law in every branch —
+        // census #5: expected:<2> but was:<4>. The law is the
+        // invariant: finishes == branches == finallies, so the
+        // next honest branch arrives already guarded and a branch
+        // that forgets its finish (or its finally) still fails.
+        val branches = Regex("goAsync\\(\\)").findAll(source).count()
+        assertTrue("the receiver must take goAsync branches", branches > 0)
+        assertEquals(
+            branches,
+            Regex("pendingResult\\.finish\\(\\)").findAll(source).count()
+        )
+        assertEquals(branches, Regex("finally \\{").findAll(source).count())
     }
 
     companion object {

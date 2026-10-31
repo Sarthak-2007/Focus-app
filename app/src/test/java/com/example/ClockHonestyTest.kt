@@ -78,6 +78,24 @@ class ClockHonestyTest {
     }
 
     @Test
+    fun rollbackAcrossRebootDoesNotRewindTheHonestNow() {
+        // Issue #82 tightening (STURM3-16): the phone is powered OFF,
+        // the wall clock is rolled back a week, then it boots. The
+        // persisted anchor survives the reboot even though its
+        // monotonic pair does not — the first read of the new boot
+        // must floor at the anchored wall instant, never rewind to
+        // the travelled wall (which would rewind the token week).
+        val d = ClockHonesty.decide(
+            anchorWall, anchorMono, boot,
+            nowWallMillis = anchorWall - 7 * 24 * 3600_000L,
+            nowElapsedRealtimeMillis = 30_000L, // new boot: mono restarted
+            nowBootCount = boot + 1
+        )
+        assertEquals(anchorWall, d.honestNowMillis)
+        assertTrue(d.reanchor)
+    }
+
+    @Test
     fun newBootReanchorsAtFaceValue() {
         val d = ClockHonesty.decide(
             anchorWall, anchorMono, boot,

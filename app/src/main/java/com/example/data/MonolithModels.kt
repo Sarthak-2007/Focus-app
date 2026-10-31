@@ -1,6 +1,7 @@
 package com.example.data
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
@@ -97,10 +98,23 @@ enum class TaskQueueStatus(val label: String) {
  */
 data class StoredMonth(val year: Int, val month: Int)
 
-@Entity(tableName = "focus_tasks")
+@Entity(
+    tableName = "focus_tasks",
+    // #30 F1 (train inheritance): the Drawer's hot sort — tasks
+    // by completion instant — stops being a full table scan.
+    indices = [Index(value = ["completedAtMillis"])]
+)
 data class FocusTaskEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val title: String,
+    // Audit R6 #341 F67 (DB 23->24): the task's free NOTE text,
+    // split out of [notesOrSubsteps]. The two shared one
+    // delimiter-encoded column, so ordinary note text was parsed
+    // as substeps on every read (a note line reading "[x] ..."
+    // came back as a completed substep). [notesOrSubsteps] keeps
+    // ONLY the serialized substeps from this migration on; the
+    // note lives here, verbatim, never parsed. '' = no note.
+    val noteText: String = "",
     val notesOrSubsteps: String = "",
     // Truth Car 2 (MINUTES DIE — Sarthak's order): a task is a
     // name, torn off when done. New tasks are stored with 0 = no
@@ -114,7 +128,10 @@ data class FocusTaskEntity(
     // the >0 surfaces then printed as if the user had given it.
     val estimatedMinutes: Int = 0,
     val actualSecondsSpent: Int = 0,
-    val categoryTag: String = "Study",
+    // Issue #270: the default tag is "" — no category was given.
+    // (Was "Study": an app-assigned bucket on every construction,
+    // against Sarthak's 08:55 own-words-or-nameless ruling.)
+    val categoryTag: String = "",
     val queueOrder: Int = 0,
     val status: String = TaskQueueStatus.QUEUED.name,
     val completedAtMillis: Long = 0L,
@@ -196,59 +213,86 @@ data class FocusTaskEntity(
             }
         }
 
+        /**
+         * SPLIT's steps (issue #106, finding 5). The old generator
+         * never read [title] at all: it switched on category alone,
+         * and every task the composer creates is category "Study",
+         * so every task — "Revise History dates", "Learn French
+         * verbs" — was stamped with the same three problem-set steps
+         * ("Sketch diagram & list known variables" …) and presented
+         * as that task's own breakdown. Now the task's OWN words
+         * decide, in this order:
+         *
+         * 1. A title that already lists its parts ("Read Ch.4; make
+         *    notes; self-test") is split on its own separators —
+         *    those parts ARE the steps, verbatim.
+         * 2. A title/category that names a kind of work (code,
+         *    writing, exam, a problem set, language drill, reading /
+         *    revision) gets the method steps for THAT kind — the
+         *    problem-set triple survives only where the task is
+         *    actually problem work, which is the one place it was
+         *    ever a deliberate template.
+         * 3. Anything else gets three phases of the task itself,
+         *    named with its own title — begin it, finish it, check
+         *    it — never a borrowed subject's steps.
+         */
         fun defaultSubStepsForCategory(title: String, category: String): List<TaskSubStep> {
-            return when (category.lowercase(java.util.Locale.ROOT)) {
-                "code" -> listOf(
+            val cleanTitle = title.trim()
+            val listedParts = cleanTitle
+                .split(';', '•', '|')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+            if (listedParts.size >= 2) {
+                return listedParts.take(5).mapIndexed { idx, part ->
+                    TaskSubStep(idx, part, false)
+                }
+            }
+            val words = cleanTitle.lowercase(java.util.Locale.ROOT)
+            fun mentions(vararg needles: String) = needles.any { it in words }
+            return when {
+                category.lowercase(java.util.Locale.ROOT) == "code" ||
+                    mentions("code", "coding", "debug", "program", "algorithm") -> listOf(
                     TaskSubStep(0, "Trace base cases & data invariants", false),
                     TaskSubStep(1, "Implement core algorithm logic", false),
                     TaskSubStep(2, "Verify edge cases & complexity", false)
                 )
-                "writing" -> listOf(
+                category.lowercase(java.util.Locale.ROOT) == "writing" ||
+                    mentions("write", "essay", "draft", "report") -> listOf(
                     TaskSubStep(0, "Draft 3-bullet structural outline", false),
                     TaskSubStep(1, "Write core synthesis section", false),
                     TaskSubStep(2, "Tighten key takeaways & citations", false)
                 )
-                "exam" -> listOf(
+                category.lowercase(java.util.Locale.ROOT) == "exam" ||
+                    mentions("exam", "mock test", "quiz") -> listOf(
                     TaskSubStep(0, "First pass without reference notes", false),
                     TaskSubStep(1, "Flag & drill missed concepts", false),
                     TaskSubStep(2, "Final rapid recall check", false)
                 )
-                else -> listOf(
+                mentions("problem", "equation", "numerical", "diagram", "units") -> listOf(
                     TaskSubStep(0, "Sketch diagram & list known variables", false),
                     TaskSubStep(1, "Solve core problem set step-by-step", false),
                     TaskSubStep(2, "Check units & boundary conditions", false)
+                )
+                mentions("verb", "vocab", "grammar", "spelling", "french", "spanish", "german", "language") -> listOf(
+                    TaskSubStep(0, "Go through the list once, saying each item aloud", false),
+                    TaskSubStep(1, "Drill only the items you missed", false),
+                    TaskSubStep(2, "Final recall pass from memory, no notes", false)
+                )
+                mentions("revise", "revision", "read", "learn", "memori", "chapter", "notes", "history", "dates", "theory", "recall") -> listOf(
+                    TaskSubStep(0, "First pass through the material, marking what is unclear", false),
+                    TaskSubStep(1, "Second pass on the marked parts only", false),
+                    TaskSubStep(2, "Close the material and recall the key points from memory", false)
+                )
+                else -> listOf(
+                    TaskSubStep(0, "Begin: $cleanTitle", false),
+                    TaskSubStep(1, "Continue and complete: $cleanTitle", false),
+                    TaskSubStep(2, "Review what you did for: $cleanTitle", false)
                 )
             }
         }
     }
 }
 
-enum class DistractionTriggerReason(
-    val shortTag: String,
-    val label: String,
-    val coachingTip: String
-) {
-    MUSCLE_MEMORY(
-        shortTag = "Habit",
-        label = "Opened by Habit",
-        coachingTip = "Your thumb tapped this on autopilot. Take one slow breath and return to your next micro-step."
-    ),
-    STUCK_ON_PROBLEM(
-        shortTag = "Stuck",
-        label = "Stuck on a Hard Step",
-        coachingTip = "When a task feels heavy, your brain seeks quick novelty. Break the current task into a 10-minute micro-step."
-    ),
-    BORED_OR_TIRED(
-        shortTag = "Tired",
-        label = "Low Energy / Brain Fog",
-        coachingTip = "Doomscrolling drains working memory faster than resting. Stand up, drink water, or finish this short block."
-    ),
-    NEED_INFO(
-        shortTag = "Message",
-        label = "Checking Urgent Message / Code",
-        coachingTip = "If this app allows a 2m Peek, start the 2-minute pass below—the floating timer will keep you anchored."
-    )
-}
 
 enum class AppCategory(val label: String, val code: String) {
     SHORT_VIDEO("Short Video", "Video"),
@@ -348,7 +392,26 @@ data class FocusProfileEntity(
     val startHour: Int,
     val startMinute: Int,
     val endHour: Int,
-    val endMinute: Int
+    val endMinute: Int,
+    // Issue #253 lines 8 + 9: the full-context bundle (DB 20→21).
+    // A profile is a SNAPSHOT, not just a category stencil:
+    // appTiersCsv carries per-app tier rulings (an OPEN entry is
+    // the per-app exception), appLimitsCsv the per-app daily
+    // limits, sitesCsv the blocked-site set — all encoded by
+    // ProfileBundle. The three strictness/sound facts are
+    // nullable: null means this profile does not rule that
+    // surface (every pre-bundle row), a value means applying
+    // the profile writes that fact. Notifications are NOT in
+    // the bundle on purpose: the app's only notification facts
+    // are the seal's automatic DND engagement (session-scoped,
+    // not a preference) and a privacy consent a profile must
+    // never flip — there is no lawful stored carrier today.
+    val appTiersCsv: String = "",
+    val appLimitsCsv: String = "",
+    val sitesCsv: String = "",
+    val soundEnabled: Boolean? = null,
+    val sniperEnabled: Boolean? = null,
+    val browserBlockEnabled: Boolean? = null
 ) {
     /** Issue #32 F2 (write-boundary cure): hours/minutes inside
      *  their lawful ranges. endHour may be 24 — the existing
@@ -366,7 +429,12 @@ data class FocusProfileEntity(
     )
 }
 
-@Entity(tableName = "focus_sessions")
+@Entity(
+    tableName = "focus_sessions",
+    // #30 F1 (train inheritance): sessions are read by routine
+    // and by window end on the hot paths — both stop scanning.
+    indices = [Index(value = ["routineId"]), Index(value = ["windowEndMillis"])]
+)
 data class FocusSessionEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val intention: String,
@@ -479,6 +547,16 @@ data class FocusSessionEntity(
     // stale past the grace, the latch is set forever — a shield
     // that comes back late does not un-break the session's books.
     val shieldGapSeen: Boolean = false,
+    // Issue #525 (20→21): the boot-to-shield seconds this
+    // session's reboots left UNSHIELDED — the uptime between
+    // power-on and the shield's first protecting flip of each
+    // boot the session survived (ShieldRaiseStore's stamp),
+    // accumulated at every re-anchor. Booked, never credited:
+    // the elapsed derivation counts only the witnessed span
+    // past the raise, and the receipt prints this figure as
+    // its REBOOT line. 0 = no reboot crossed this session
+    // (every pre-v21 row).
+    val rebootGapSeconds: Int = 0,
     // Truth Car 2 (10→11, RC-01): the session's true end, wall
     // clock, stamped ONCE at the ending write (the elapsed path
     // in updateSessionProgress, the disarm doors, the routine
@@ -508,7 +586,73 @@ data class FocusSessionEntity(
     // through MonolithRepository.setSessionReflection.
     val failureCausePackage: String = "",
     val failureCauseKind: String = "",
-    val reflectionNote: String = ""
+    val reflectionNote: String = "",
+    // Audit R6 #340 F5/F48 (16→17): the FINISH seal. The arm-time
+    // hmacSignature covers only the session's first five fields;
+    // this second signature is minted at publish time over the
+    // finished receipt's own claims (№, outcome word, arm/end
+    // walls, sealed elapsed, held counts, deflection count,
+    // banked break seconds, gap + break facts) AND over the
+    // previous receipt's finish seal — so the receipts form a
+    // hash chain: editing, reordering or dropping one slip breaks
+    // every later verification loudly. '' = never sealed (every
+    // pre-v17 row, and any row whose publish never ran).
+    val finishSignature: String = "",
+    // The previous receipt's finish seal, embedded in this row's
+    // finish payload at sign time (the chain link itself, kept
+    // on the row so verification needs no ordering assumption).
+    val prevFinishSignature: String = "",
+    // Issue #261 (15→16, the mid-block Safe Break door — the
+    // transferred W9 DAYLIGHT DS3 finding): a Safe Break entered
+    // MID-BLOCK, at the man's tap, instead of only at a block
+    // flip. midBlockSafeBreak marks the CURRENT break's origin
+    // while it runs (false = the break in force, if any, began
+    // at a block flip; the flip's own rows never set it) — the
+    // break exits read it to choose resume-same-block over
+    // advance-to-next-block, a fact recorded on the row, never
+    // inferred from elapsed arithmetic. Cleared at every break
+    // exit. extraSafeBreakSeconds is the PLANNED extra break
+    // time this session has booked by entering mid-block breaks
+    // (the break length in force, stamped once per entry, never
+    // revised): spanTargetSeconds prices it, because a mid-block
+    // break is a break slot the (totalStudyBlocks − 1) scheduled
+    // slots do not contain. 0 / false ARE the truthful pre-v16
+    // values — before this door no break could start mid-block.
+    val midBlockSafeBreak: Boolean = false,
+    val extraSafeBreakSeconds: Int = 0,
+    // Batch 10 (12→13): appended after receiptNumber, in exactly
+    // MIGRATION_12_13's ADD COLUMN order (entity order = column
+    // order, per table — the composed-order law).
+    // Frist: the break length stamped on the row at seal, so the
+    // span prices the break that was SET, not a constant.
+    // Issue #264 B-264-18: the startSession funnel stamps the
+    // arming preset's breakMinutes at birth (0 = unstamped: arms
+    // that carry no break choice); effectiveBreakSeconds resolves
+    // the stamp against the repository's named constant, and the
+    // 600 default below keeps every row born outside the funnel
+    // (and every migrated row) at the pre-stamp truth.
+    val breakSeconds: Int = 600,
+    // Frist: ADD TIME's accumulated grant on this row; the span
+    // getters price it via effectiveTargetSeconds' extension term.
+    val extensionSecondsAdded: Int = 0,
+    // Frist: the per-extension event log ("+10@HH:MM" entries),
+    // list-never-sum on the slip (W-44).
+    val extensionLog: String = "",
+    // Voss (routine-edit, RC-03): the routine's WITHIN label,
+    // frozen at seal; null = no label. Nullable, NO default in
+    // the migration — the only nullable column of the eight.
+    val withinLabel: String? = null,
+    // Audit R6 #341 F05 (DB 23->24): the timer's END, backed up at
+    // birth outside the mutable progress row. The session row is
+    // rewritten every tick; this column is written exactly once,
+    // inside startSession's birth transaction, from the same facts
+    // the HMAC signs (start + target), and is the restore source
+    // when the live row's own arithmetic is ever lost or doubted:
+    // MonolithRepository.restorePlannedEndIfLost re-derives the
+    // end from the append-only session_event_logs STARTED event
+    // and this column, never from a tick's stale snapshot.
+    // 0 = no backup (stopwatch mode, or a pre-v24 row).
+    val plannedEndWallMillis: Long = 0L
 ) {
     // ONE derivation of session time (the Now Frame fix, Nadia x Freya):
     // every surface - Deck, desk clock, airlock, the enforcing service -
@@ -560,24 +704,43 @@ data class FocusSessionEntity(
         totalStudyBlocks = totalStudyBlocks.coerceIn(1, 64),
         currentBlockIndex = currentBlockIndex.coerceIn(1, totalStudyBlocks.coerceIn(1, 64)),
         safeBreakSecondsRemaining = safeBreakSecondsRemaining.coerceAtLeast(0),
+        breakSeconds = breakSeconds.coerceIn(0, MonolithRepository.MAX_BREAK_SECONDS),
         breakTakenSeconds = breakTakenSeconds.coerceAtLeast(0),
+        extraSafeBreakSeconds = extraSafeBreakSeconds.coerceAtLeast(0),
         penaltySecondsAdded = penaltySecondsAdded.coerceAtLeast(0),
         tasksCompletedCount = tasksCompletedCount.coerceAtLeast(0),
         receiptNumber = receiptNumber.coerceAtLeast(0)
     )
 
+    /** Issue #264 B-264-18: the break length in force for THIS
+     *  row — its own birth stamp when one was written, the
+     *  repository's named constant for every unstamped row. The
+     *  one reader every break-length consumer shares (span
+     *  pricing here, the progress machine and break verbs via
+     *  MonolithRepository.breakLengthSeconds, SessionWallClock). */
+    val effectiveBreakSeconds: Int
+        get() = if (breakSeconds > 0) breakSeconds
+            else MonolithRepository.SAFE_BREAK_DURATION_SECONDS
+
     // Issue #32 F5: the break length in the span TARGET is the
-    // repository's named constant — the same one spanElapsedSeconds
+    // length in force for the row — the same one spanElapsedSeconds
     // reads — never the magic 600 that used to sit here. Change
-    // SAFE_BREAK_DURATION_SECONDS and target and elapsed move
-    // together. (The audit's wider claim — that the span should
-    // price StudyModePreset breakMinutes 5/10/15 — does not hold
-    // against current code: Safe Break is a fixed 10-minute
-    // mechanism everywhere it is armed, MonolithRepository.kt's
-    // SAFE_BREAK_DURATION_SECONDS, and presets never arm it.)
+    // the row's effectiveBreakSeconds and target and elapsed move
+    // together. (Issue #264 B-264-18: the span now prices the
+    // session's own stamped break length — the arming preset's
+    // breakMinutes 5/10/15 — instead of the fixed 10 minutes the
+    // mechanism used to impose on every session.)
+    // Issue #261: the planned span also prices every mid-block
+    // Safe Break entered (extraSafeBreakSeconds, stamped at each
+    // entry) — a mid-block break is real span time the scheduled
+    // (blocks − 1) break slots do not contain, and a target that
+    // ignored it would let the desk clock and the planned-end
+    // derivation call the session finished while its resumed
+    // block still had the break's length left to run.
     val spanTargetSeconds: Int
         get() = safeTotalBlocks * effectiveTargetSeconds +
-            (safeTotalBlocks - 1).coerceAtLeast(0) * MonolithRepository.SAFE_BREAK_DURATION_SECONDS
+            (safeTotalBlocks - 1).coerceAtLeast(0) * effectiveBreakSeconds +
+            extraSafeBreakSeconds.coerceAtLeast(0)
 
     // Truth Car 3 (ST-02, Tamm): completed breaks contribute the
     // seconds ACTUALLY taken (breakTakenSeconds, booked at every
@@ -586,16 +749,27 @@ data class FocusSessionEntity(
     // an early-ended break would have jumped the span forward by
     // its untaken remainder at the flip. With every break taken in
     // full the two formulas agree to the second. The in-break term
-    // reads the length in force through the repository's constant
-    // today; when the car's breakSeconds stamp lands (Rurik,
-    // PILL-AND-TIMES §3.2) that term re-points at the row's stamp —
-    // the seam is declared in mail/rurik/2250.
+    // reads the length in force through the row's own stamp
+    // (effectiveBreakSeconds — the Truth Car seam, landed by
+    // issue #264 B-264-18).
     val spanElapsedSeconds: Int
         get() {
-            return if (isInSafeBreak) {
+            return if (isInSafeBreak && midBlockSafeBreak) {
+                // Issue #261: inside a MID-BLOCK break the current
+                // block has NOT finished — the span is the finished
+                // blocks, this block's frozen elapsed, the breaks
+                // already booked, and the running part of this one.
+                // (The flip-born branch below prices the current
+                // block whole, because at a flip it HAS finished.)
+                (safeCurrentBlockIndex - 1).coerceAtLeast(0) * effectiveTargetSeconds +
+                    elapsedSeconds.coerceAtLeast(0) +
+                    breakTakenSeconds.coerceAtLeast(0) +
+                    (effectiveBreakSeconds - safeBreakSecondsRemaining)
+                        .coerceAtLeast(0)
+            } else if (isInSafeBreak) {
                 safeCurrentBlockIndex * effectiveTargetSeconds +
                     breakTakenSeconds.coerceAtLeast(0) +
-                    (MonolithRepository.SAFE_BREAK_DURATION_SECONDS - safeBreakSecondsRemaining)
+                    (effectiveBreakSeconds - safeBreakSecondsRemaining)
                         .coerceAtLeast(0)
             } else {
                 (safeCurrentBlockIndex - 1).coerceAtLeast(0) * effectiveTargetSeconds +
@@ -606,6 +780,41 @@ data class FocusSessionEntity(
 
     val spanRemainingSeconds: Int
         get() = (spanTargetSeconds - spanElapsedSeconds).coerceAtLeast(0)
+
+    // #127 (glance-time-remaining, finding 1): the labelled scope of
+    // every number a glance can meet. Per-block remaining and whole-
+    // session (span) remaining are BOTH true — the lie was printing
+    // either one unlabelled, so two surfaces could answer the same
+    // question with different numbers. Every running surface that
+    // prints a time now also prints this caption's scope words, or
+    // the scope word for its own number, so a two-second glance
+    // always knows WHICH truth it is reading.
+    val glanceCaption: String
+        get() = when {
+            isStopwatchMode -> "ELAPSED · NO SET END"
+            isInSafeBreak ->
+                "BREAK ${formatSessionDuration(safeBreakSecondsRemaining)} LEFT" +
+                    " · SESSION ${formatSessionDuration(spanRemainingSeconds)} LEFT"
+            totalStudyBlocks > 1 ->
+                "BLOCK $currentBlockIndex/$totalStudyBlocks" +
+                    " · ${formatSessionDuration(remainingSeconds)} LEFT IN BLOCK" +
+                    " · SESSION ${formatSessionDuration(spanRemainingSeconds)} LEFT"
+            else -> "SESSION ${formatSessionDuration(spanRemainingSeconds)} LEFT"
+        }
+}
+
+/**
+ * #127: one duration print for glance surfaces. Under an hour it is
+ * MM:SS; at an hour or more it is H:MM:SS — never "170:00", which a
+ * glance reads as a broken clock, not as 2 hours 50 minutes.
+ */
+fun formatSessionDuration(totalSeconds: Int): String {
+    val s = totalSeconds.coerceAtLeast(0)
+    val h = s / 3600
+    val m = (s % 3600) / 60
+    val sec = s % 60
+    return if (h > 0) String.format(java.util.Locale.US, "%d:%02d:%02d", h, m, sec)
+    else String.format(java.util.Locale.US, "%02d:%02d", m, sec)
 }
 
 /**
@@ -627,7 +836,68 @@ data class EmergencyBreakSpendEntity(
     val heldSeconds: Int
 )
 
-@Entity(tableName = "intercept_logs")
+/**
+ * #110 (REISE's priced cure, folded into MIGRATION_12_13 by the
+ * batch-10 train): one accrual segment of a task — [seconds] of
+ * wall time credited to [taskId] during [sessionId], filed under
+ * [dateIso], the Drawer's filing day (DrawerDay) on which the
+ * credit was observed. Segments are append-only sums: repeated
+ * credits for the same (task, session, day) accumulate into one
+ * row (the DAO's upsert). The credit a segment records is the
+ * SAME observed credit that lands in FocusTaskEntity's lifetime
+ * scalar, written in the same branch of accrueActiveTaskSeconds —
+ * so for accrual after v13 the segments sum to the scalar by
+ * construction. Accrual from before v13 has NO segments and can
+ * never get any: it stays lifetime-only (printed TOTAL), never
+ * retro-split. A credit whose span straddles midnight files
+ * whole under its observation day.
+ */
+
+enum class DistractionTriggerReason(
+    val shortTag: String,
+    val label: String,
+    val coachingTip: String
+) {
+    MUSCLE_MEMORY(
+        shortTag = "Habit",
+        label = "Opened by Habit",
+        coachingTip = "Your thumb tapped this on autopilot. Take one slow breath and return to your next micro-step."
+    ),
+    STUCK_ON_PROBLEM(
+        shortTag = "Stuck",
+        label = "Stuck on a Hard Step",
+        coachingTip = "When a task feels heavy, your brain seeks quick novelty. Break the current task into a 10-minute micro-step."
+    ),
+    BORED_OR_TIRED(
+        shortTag = "Tired",
+        label = "Low Energy / Brain Fog",
+        coachingTip = "Doomscrolling drains working memory faster than resting. Stand up, drink water, or finish this short block."
+    ),
+    NEED_INFO(
+        shortTag = "Message",
+        label = "Checking Urgent Message / Code",
+        coachingTip = "If this app allows a 2m Peek, start the 2-minute pass below—the floating timer will keep you anchored."
+    )
+}
+
+@Entity(
+    tableName = "task_accrual_segments",
+    indices = [Index(value = ["taskId", "sessionId", "dateIso"], unique = true)]
+)
+data class TaskAccrualSegmentEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val taskId: Int,
+    val sessionId: Int,
+    val dateIso: String,
+    val seconds: Int
+)
+
+@Entity(
+    tableName = "intercept_logs",
+    // #30 F1 (train inheritance): intercept history reads are
+    // time-ordered — the timestamp stops being a full scan.
+    indices = [Index(value = ["timestampMillis"])]
+)
 data class InterceptLogEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val timestampMillis: Long = System.currentTimeMillis(),
@@ -635,19 +905,31 @@ data class InterceptLogEntity(
     val appName: String,
     val sessionIntention: String,
     val outcome: String,
-    val triggerReason: String = "Habit"
-)
+    // FIX-3a: the "Habit" default dies — a log row nobody
+    // explained books UNSTATED, never a fabricated reason.
+    val triggerReason: String = "UNSTATED",
+    // Issue #324 finding 3 (build half): the TYPED event, stored
+    // as enum NAMEs beside the legacy words (migration 18→19).
+    // Writers compute them at the write via InterceptOutcomeKind
+    // .fromStoredWord / InterceptTriggerKind.derive; rows that
+    // predate the typing carry UNKNOWN and derive on read below.
+    val outcomeKind: String = InterceptOutcomeKind.UNKNOWN.name,
+    val triggerKind: String = InterceptTriggerKind.UNKNOWN.name
+) {
+    /** This row's typed outcome: the persisted kind, falling
+     *  back to derivation from the legacy word for rows written
+     *  before the typing landed (their column reads UNKNOWN). */
+    val outcomeKindTyped: InterceptOutcomeKind
+        get() = InterceptOutcomeKind.fromKindName(outcomeKind)
+            .takeIf { it != InterceptOutcomeKind.UNKNOWN }
+            ?: InterceptOutcomeKind.fromStoredWord(outcome)
 
-@Entity(tableName = "captured_notifications")
-data class CapturedNotificationEntity(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val timestampMillis: Long = System.currentTimeMillis(),
-    val packageName: String,
-    val appName: String,
-    val senderTitle: String,
-    val messageBody: String,
-    val isRead: Boolean = false
-)
+    /** This row's typed trigger, same fallback as above. */
+    val triggerKindTyped: InterceptTriggerKind
+        get() = InterceptTriggerKind.fromKindName(triggerKind)
+            .takeIf { it != InterceptTriggerKind.UNKNOWN }
+            ?: InterceptTriggerKind.derive(triggerReason, packageName)
+}
 
 data class DailyFocusStat(
     val dayLabel: String,
@@ -756,7 +1038,12 @@ object BlockedBrowserDomains {
 /** One user-editable blocked website — the list the browser blocker enforces (Ren). */
 @Entity(tableName = "blocked_sites")
 data class BlockedSiteEntity(
-    @PrimaryKey val domain: String
+    @PrimaryKey val domain: String,
+    // Audit R6 #340 F10 (12→13): where a blocked visit is SENT
+    // instead of dead-ending at BACK + the Airlock wall — a
+    // per-site redirect destination (a full URL the user chose).
+    // '' = no destination: the classic BACK + Airlock stands.
+    val redirectTarget: String = ""
 )
 
 /** A real, persisted routine: a daily window on chosen days that arms a loadout session by itself (Ren). */
@@ -817,6 +1104,23 @@ object RoutineSchedule {
 
     private fun bitFor(calendar: java.util.Calendar): Int =
         (calendar.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
+
+    /** Audit R5 #259 (R5-0266): a window's end is a WALL-CLOCK time,
+     *  never start + elapsed duration. A routine stores wall-clock
+     *  start/end minutes; pricing the end as startMillis + durMs
+     *  made overnight windows end an hour late on spring-forward
+     *  nights and an hour early on fall-back nights. The end is the
+     *  start's local date-time plus the duration on the LOCAL
+     *  timeline, resolved in the system zone — identical to the old
+     *  arithmetic on every non-transition day. */
+    private fun wallEndMillis(startMillis: Long, durationMinutes: Int): Long {
+        val zone = java.time.ZoneId.systemDefault()
+        val startLocal = java.time.LocalDateTime.ofInstant(
+            java.time.Instant.ofEpochMilli(startMillis), zone
+        )
+        return startLocal.plusMinutes(durationMinutes.toLong())
+            .atZone(zone).toInstant().toEpochMilli()
+    }
 
     private fun atMinutes(day: java.util.Calendar, minutes: Int): Long {
         // Audit R6 #341 F29: java.time resolution, the same rules
@@ -880,18 +1184,62 @@ object RoutineSchedule {
         }
     }
 
+    /**
+     * Issue #155 (T9, re-close bench): the REFUSAL-AWARE next
+     * start — [effectiveNextStartMillis] (pause-aware) walked past
+     * every candidate window the machine itself would refuse to
+     * materialise. The heartbeat refuses a window on an excused
+     * date (ILL / REST / FAMILY day-word, filed under the window's
+     * filing date) and a tombstoned window (an annulled proving);
+     * a "next routine" claim derived without those two inputs
+     * names seals that will never happen — JUDGE-1's Reason-6
+     * premise ("stays true until a routine changes") falsified on
+     * exactly this point. This walk consumes the SAME refusal set
+     * the heartbeat's hand checks (RoutineHeartbeat: excused isos
+     * via DrawerDay.filingDate + dateIso; tombstones via
+     * SessionSealTransitions.isTombstoned), so a glance derived
+     * here can never disagree with the funnel.
+     *
+     * Bounded: at most [MAX_REFUSAL_WALK] refused candidates are
+     * stepped over; a routine whose every window inside that
+     * horizon is refused yields null, and the caller falls silent
+     * (WING-D C1: the line stands only where it names a real,
+     * refusal-aware next seal).
+     */
+    fun nextStartMillisRefusalAware(
+        routine: RoutineEntity,
+        nowMillis: Long,
+        excusedDateIsos: Set<String>,
+        isTombstoned: (routineId: Int, windowStartMillis: Long) -> Boolean
+    ): Long? {
+        var candidate = effectiveNextStartMillis(routine, nowMillis) ?: return null
+        repeat(MAX_REFUSAL_WALK) {
+            val refused =
+                DrawerDay.dateIso(DrawerDay.filingDate(candidate)) in excusedDateIsos ||
+                    isTombstoned(routine.id, candidate)
+            if (!refused) return candidate
+            candidate = effectiveNextStartMillis(routine, candidate) ?: return null
+        }
+        return null
+    }
+
+    /** How many refused candidates [nextStartMillisRefusalAware]
+     *  steps over before falling silent — a fortnight of daily
+     *  windows, or ~4 months of weekly ones. */
+    const val MAX_REFUSAL_WALK = 16
+
     /** End of the window containing [nowMillis], or of the next window if none contains it. */
     fun nextEndMillis(routine: RoutineEntity, nowMillis: Long): Long? {
         val r = routine.sanitized()
         if (r.daysMask == 0) return null
-        val durMs = durationMinutes(r) * 60_000L
+        val durMin = durationMinutes(r)
         val day = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
         // A window that started yesterday may still be running (overnight).
         day.add(java.util.Calendar.DAY_OF_YEAR, -1)
         repeat(9) {
             if (r.daysMask and (1 shl bitFor(day)) != 0) {
                 val start = atMinutes(day, r.startMinutes)
-                val end = start + durMs
+                val end = wallEndMillis(start, durMin)
                 if (nowMillis < end && end > nowMillis && start <= nowMillis) return end
                 if (start > nowMillis) return end
             }
@@ -910,13 +1258,13 @@ object RoutineSchedule {
     fun windowContaining(routine: RoutineEntity, nowMillis: Long): WindowInstance? {
         val r = routine.sanitized()
         if (r.daysMask == 0) return null
-        val durMs = durationMinutes(r) * 60_000L
+        val durMin = durationMinutes(r)
         val day = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
         day.add(java.util.Calendar.DAY_OF_YEAR, -1)
         repeat(2) {
             if (r.daysMask and (1 shl bitFor(day)) != 0) {
                 val start = atMinutes(day, r.startMinutes)
-                val end = start + durMs
+                val end = wallEndMillis(start, durMin)
                 if (nowMillis in start until end) {
                     return WindowInstance(
                         startMillis = start,
@@ -952,7 +1300,7 @@ object RoutineSchedule {
     /** The next window to start strictly after [nowMillis], as an instance. */
     fun nextWindow(routine: RoutineEntity, nowMillis: Long): WindowInstance? {
         val start = nextStartMillis(routine, nowMillis) ?: return null
-        val end = start + durationMinutes(routine) * 60_000L
+        val end = wallEndMillis(start, durationMinutes(routine))
         return WindowInstance(
             startMillis = start,
             endMillis = end,
@@ -979,12 +1327,12 @@ object RoutineSchedule {
     fun latestClosedWindow(routine: RoutineEntity, nowMillis: Long): WindowInstance? {
         val r = routine.sanitized()
         if (r.daysMask == 0) return null
-        val durMs = durationMinutes(r) * 60_000L
+        val durMin = durationMinutes(r)
         val day = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
         repeat(9) {
             if (r.daysMask and (1 shl bitFor(day)) != 0) {
                 val start = atMinutes(day, r.startMinutes)
-                val end = start + durMs
+                val end = wallEndMillis(start, durMin)
                 if (end <= nowMillis) {
                     return WindowInstance(
                         startMillis = start,
@@ -1005,14 +1353,16 @@ object RoutineSchedule {
      * fire — switched on AND carrying at least one day. This is the
      * ONE definition every reader shares: the chain-alarm derivation
      * (RoutineDerive.nextBoundary skips non-live routines) and
-     * Shield's "n ACTIVE" header both read it, so the printed count
+     * Shield's "n ARMED" header both read it, so the printed count
      * can never again include a daysMask == 0 routine the scheduler
      * silently skips.
      */
     fun isLive(routine: RoutineEntity): Boolean =
         routine.enabled && routine.sanitized().daysMask != 0
 
-    /** How many of [routines] are LIVE — Shield's "n ACTIVE" number. */
+    /** How many of [routines] are LIVE — Shield's "n ARMED" number
+     *  (R-6: ARMED, not ACTIVE — a live routine is armed to fire,
+     *  it is not presently blocking). */
     fun liveCount(routines: List<RoutineEntity>): Int =
         routines.count { isLive(it) }
 
@@ -1053,7 +1403,23 @@ data class GuardSettingsEntity(
     // not exist and the sniper fired (or not) on a value no store
     // held. Default true IS the truthful pre-v12 value: the sniper
     // fired unconditionally whenever a session was active.
-    val shortsReelsSniperEnabled: Boolean = true
+    val shortsReelsSniperEnabled: Boolean = true,
+    // Batch 10 (12→13, Frist — truth-3-times): the peek/break
+    // lengths become settings the lease and the break actually
+    // read, replacing the hardcoded 2 / 10 minutes. Bounds live
+    // in the setters (peek 0–30, break 0–60, clamped on write),
+    // not the schema. peekMinutes = 0 means PEEK IS OFF.
+    val peekMinutes: Int = 2,
+    val breakMinutes: Int = 10,
+    // Audit R6 #340 F68 (12→13): data consent for OTHER APPS'
+    // notification bodies, kept SEPARATE from the listener grant.
+    // The grant answers "may Monolith hold notifications"; this
+    // answers "may it KEEP the bodies". Values: UNSET / DECLINED /
+    // GRANTED. Anything but GRANTED stores sender-and-app lines
+    // only — the body is blanked at capture, never written — so
+    // the default posture is the private one and keeping bodies
+    // is an explicit, revocable choice of the user's.
+    val notificationBodyConsent: String = "UNSET"
 )
 
 /**
@@ -1071,8 +1437,72 @@ data class GuardSettingsEntity(
 @Entity(tableName = "day_notes")
 data class DayNoteEntity(
     @PrimaryKey val dateIso: String,
-    val word: String
+    val word: String,
+    // Audit R6 #341 F58 (DB 23->24): WHEN this word was declared,
+    // wall clock. A day word is the permanent explanation filed
+    // against a day; before this column the record carried no
+    // declaration time at all, so an overwrite left no trace of
+    // when either declaration happened. 0 = declared before the
+    // column existed (never backfilled — an invented time would
+    // be a fabricated record).
+    val declaredAtMillis: Long = 0L
 )
+
+/**
+ * Audit R6 #341 F05: one append-only timer event. The session row
+ * is one mutable record overwritten every tick; this log is the
+ * event-sourced backup Forest's timer was measured against: every
+ * lifecycle transition of a session (STARTED, SUPERSEDED, ENDED,
+ * USER_GAP) appends a row and no row is ever updated or deleted
+ * in production code. [detail] carries the kind's facts (for
+ * STARTED: the planned end; for USER_GAP: the return instant).
+ */
+@Entity(tableName = "session_event_logs")
+data class SessionEventLogEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val sessionId: Int,
+    val kind: String,
+    val atWallMillis: Long,
+    val atElapsedMillis: Long = 0L,
+    val detail: String = ""
+)
+
+/** The session-event vocabulary (Audit R6 #341 F05). */
+object SessionEventKind {
+    const val STARTED = "STARTED"
+    const val SUPERSEDED = "SUPERSEDED"
+    const val ENDED = "ENDED"
+    const val USER_GAP = "USER_GAP"
+}
+
+/**
+ * Audit R6 #341 F20: one append-only rule-change record. Tiers,
+ * routines and the site list used to be overwritten or deleted in
+ * place, so on a shared phone the owner could never tell who
+ * weakened a rule or when. Every mutation funnel in
+ * MonolithRepository appends exactly one row after the mutation
+ * lands — a failed mutation writes no row, and no update/delete
+ * path for this table exists.
+ */
+@Entity(tableName = "rule_change_log")
+data class RuleChangeLogEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val atWallMillis: Long,
+    val kind: String,
+    val target: String,
+    val oldValue: String = "",
+    val newValue: String = ""
+)
+
+/** The rule-change vocabulary (Audit R6 #341 F20). */
+object RuleChangeKind {
+    const val APP_TIER = "APP_TIER"
+    const val SITE_ADD = "SITE_ADD"
+    const val SITE_REMOVE = "SITE_REMOVE"
+    const val ROUTINE_ADD = "ROUTINE_ADD"
+    const val ROUTINE_UPDATE = "ROUTINE_UPDATE"
+    const val ROUTINE_DELETE = "ROUTINE_DELETE"
+}
 
 /**
  * The Partial Stamp's honest identity (Issue #110, finding 5).
