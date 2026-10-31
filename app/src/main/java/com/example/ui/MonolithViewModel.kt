@@ -471,6 +471,13 @@ data class AirlockInterceptState(
      *  withheld door's break appointment. Null when the
      *  schedule holds no next break. */
     val nextBreakAtMillis: Long? = null,
+    /** Audit R6 #340 F17: how many times this package was already
+     *  reached for TODAY (the DrawerDay filing day), counted by
+     *  the ViewModel from the persisted intercept log. The overlay
+     *  prices the wall from it: the configured breath base
+     *  (issue #318 F4) doubled per prior reach, capped at 120.
+     *  0 = the first reach of the day. */
+    val priorReachesToday: Int = 0,
     /** Issue #55: when this intercept fired, in the MONOTONIC
      *  `SystemClock.elapsedRealtime()` domain — the overlay's wall
      *  is deadline-derived from this instant, so a wall-clock jump
@@ -869,6 +876,19 @@ class MonolithViewModel(
     // only by applySmartLoadout below (the hand path — a routine
     // applying its own loadout does not move his selector).
     private val loadoutStore = com.example.data.LoadoutStore(appContext)
+
+    // Shield Rethink 2, Step 2: the intention line — his words,
+    // written on the Sheet, read back by the arm and the session
+    // plate verbatim. A sidecar fact (ShieldIntentionStore), never
+    // a session field: it may span days and must outlive sessions.
+    private val shieldIntentionStore = com.example.data.ShieldIntentionStore(appContext)
+    private val _shieldIntention = MutableStateFlow(shieldIntentionStore.intention())
+    val shieldIntention: StateFlow<String> = _shieldIntention.asStateFlow()
+
+    fun setShieldIntention(text: String) {
+        _shieldIntention.value = text
+        shieldIntentionStore.put(text)
+    }
     private val _loadoutCapIndex = MutableStateFlow(loadoutStore.capIndex())
     val loadoutCapIndex: StateFlow<Int> = _loadoutCapIndex.asStateFlow()
 
@@ -1208,6 +1228,41 @@ class MonolithViewModel(
     fun refreshDeckWarrant() {
         _deckWarrant.value = repository.standingWarrant()
     }
+
+    /** Shield Rethink 2, Step 1: the receipt line — the one place
+     *  enforcement is stated, derived from the Watch Store's
+     *  published beat (sight + last-verified), the live session and
+     *  the warrant. Facts are scoped to THIS session before the
+     *  pure print sees them: a verified stamp or heartbeat older
+     *  than the session's own start belongs to a previous hold and
+     *  is not this seal's proof. The guards leg reads the deck
+     *  warrant as-is — a stale warrant is not LIVE, so staleness
+     *  degrades the line to the partial form, never up. (Door B's
+     *  live test-block probe replaces this leg in Step 3.) */
+    val shieldReceiptLine: StateFlow<String> = combine(
+        watchSnapshots,
+        activeSession,
+        deckWarrant,
+        _themeNow
+    ) { snap, session, warrant, now ->
+        val sessionStart = session?.startWallTimeMillis
+        com.example.ui.components.shieldReceiptLine(
+            sessionActive = session?.isActive == true,
+            lawWrittenWallMillis = sessionStart,
+            sight = snap.engineSight,
+            beatWallMillis = snap.engineHeartbeatWall.takeIf { wall ->
+                wall > 0L && (sessionStart == null || wall >= sessionStart)
+            },
+            lastVerifiedWallMillis = snap.engineLastVerifiedWallMillis?.takeIf { verifiedAt ->
+                sessionStart == null || verifiedAt >= sessionStart
+            },
+            guardsVerified = warrant?.state == com.example.service.WarrantState.LIVE,
+            nowWallMillis = now
+        )
+    }.stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5000),
+        "OPEN — no block now"
+    )
 
     /** The synchronous verdict the slide reads at DOWN, at the gate,
      *  on every MOVE, and at the latch frame (Ines: ≤5ms, no wait). */
@@ -2588,8 +2643,40 @@ class MonolithViewModel(
         viewModelScope.launch { repository.setBrowserBlockerEnabled(newValue) }
     }
 
+    // Audit R6 #340 F13: the routine-conflict notice — set when a
+    // save is HELD for collision, cleared by the user's own tap.
+    private val _routineConflictNotice = MutableStateFlow<String?>(null)
+    val routineConflictNotice: StateFlow<String?> = _routineConflictNotice.asStateFlow()
+
+    fun dismissRoutineConflictNotice() {
+        _routineConflictNotice.value = null
+    }
+
     private fun persistRoutine(routine: com.example.data.RoutineEntity) {
         viewModelScope.launch {
+            // Audit R6 #340 F13: conflict detection IN the save
+            // path. An enabled routine whose window collides with
+            // another enabled routine under a DIFFERENT loadout is
+            // NOT saved silently — the save is held and the exact
+            // collision is printed, so no routine is ever starved
+            // in silence by RoutineDerive. The user's own edit
+            // (window, days, or loadout) is the resolution; there
+            // is no hidden precedence rule to discover at fire time.
+            val conflicts = com.example.data.RoutineConflictDetector.conflictsFor(
+                routine, repository.daoSnapshotRoutines()
+            )
+            if (conflicts.isNotEmpty()) {
+                val c = conflicts.first()
+                _routineConflictNotice.value =
+                    "ROUTINE HELD — \"${routine.name}\" overlaps \"${c.otherName}\" " +
+                    "by ${c.overlapMinutesPerWeek} min/week under a different loadout " +
+                    "(${routine.loadoutName} vs ${c.otherLoadoutName}). " +
+                    "The colliding save was not written. Change the window, " +
+                    "the days, or the loadout."
+                soundEngine.playFirmClick()
+                return@launch
+            }
+            _routineConflictNotice.value = null
             // Every edit re-stamps the schedule, then reconciles
             // immediately (CRUD trigger). Issue #82 (clock-attacks
             // F4): the stamp is the HONEST now — stamping raw wall
@@ -4111,6 +4198,17 @@ class MonolithViewModel(
             sessionLive = sessionIsLive(active)
         )
 
+        // Audit R6 #340 F17: the escalated wall — prior reaches at
+        // this package TODAY (the DrawerDay filing day), counted
+        // from the persisted intercept log the VM already holds,
+        // so the price survives process death and never resets
+        // mid-day. This reach's own log lands after the wall is
+        // set, so the ladder prices reach k+1 from k prior rows.
+        val dayStart = com.example.data.DrawerDay.dayStartMillis(System.currentTimeMillis())
+        val priorReachesToday = interceptLogs.value.count {
+            it.packageName == packageName && it.timestampMillis >= dayStart
+        }
+
         return AirlockInterceptState(
             isVisible = true,
             interceptedPackageName = packageName,
@@ -4132,6 +4230,7 @@ class MonolithViewModel(
             sessionIntention = active?.intention ?: "",
             selectedReason = DistractionTriggerReason.MUSCLE_MEMORY,
             interceptInstanceId = ++airlockInstanceSeq,
+            priorReachesToday = priorReachesToday,
             // ANCHOR (Issue #55, DECISION-NEEDED recorded in the
             // wave-3 report): the wall is anchored to the INTERCEPT
             // instant (deadline truth); service→overlay latency

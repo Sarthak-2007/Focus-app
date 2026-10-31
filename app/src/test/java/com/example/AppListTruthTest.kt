@@ -31,10 +31,16 @@ import org.robolectric.annotation.Config
  * held apps he never installed):
  *
  * - after two genuinely separate syncs (the two-strike law,
- *   issue #34) the table equals the faked installed set exactly,
- *   including the stored-rule-for-an-uninstalled-app case — and
- *   a pruned ruling is remembered and restored if the app
- *   returns (STOSS-34 surge wording, adopted in the merge);
+ *   issue #34) the table equals the faked installed set exactly
+ *   for UNRULED rows — and a pruned row's stored state is
+ *   remembered and restored if the app returns (STOSS-34 surge
+ *   wording, adopted in the merge). Since issue #142 F2 (the
+ *   union law) a row carrying a RULING is catalogue membership
+ *   by right and is never pruned for absence — discovery cannot
+ *   distinguish a truly uninstalled app from an installed but
+ *   launcher-invisible one, and the ruled row is the man's only
+ *   findable record of his ruling; that half is pinned by
+ *   sync_ruledRowForLauncherInvisibleApp_survivesEverySync;
  * - the man's own tier on a surviving app is never re-priced;
  * - an empty package query (the query failed) prunes NOTHING;
  * - the prune records itself for the one-time strip (Mikro M5);
@@ -110,11 +116,16 @@ class AppListTruthTest {
     @Test
     fun sync_tableEqualsInstalledSet_ghostPruned_userTierSurvives_pruneRecorded() = runBlocking {
         val dao = db.monolithDao()
-        // The rot, staged: a rule for an app that is not on the
-        // phone, and his own SHUT on an app that is.
+        // The rot, staged: an UNRULED row for an app that is not
+        // on the phone, and his own SHUT on an app that is. (The
+        // ghost carried a ruling when this test was first written;
+        // since issue #142 F2's union law a ruled row never prunes,
+        // so the prune mechanics are staged on the unruled row —
+        // the ruled half is pinned by the dedicated union test
+        // below.)
         dao.insertApps(
             listOf(
-                storedRow("com.ghost.app", "Ghost", AppBlockTier.LOCKED),
+                storedRow("com.ghost.app", "Ghost", AppBlockTier.OPEN),
                 storedRow("com.keeper.app", "Keeper", AppBlockTier.LOCKED)
             )
         )
@@ -156,21 +167,59 @@ class AppListTruthTest {
             "Fresh Chat",
             table.first { it.packageName == "com.fresh.chat" }.appName
         )
-        // The prune recorded itself — one app, and a ruling went
-        // with it (the ghost was SHUT).
-        assertEquals(PruneNote(appsRemoved = 1, rulesRemoved = true), repository.pendingPruneNote())
+        // The prune recorded itself — one app, and NO ruling went
+        // with it (the ghost was unruled; under the union law a
+        // ruling can no longer leave this way at all).
+        assertEquals(PruneNote(appsRemoved = 1, rulesRemoved = false), repository.pendingPruneNote())
 
         // The ghost returns on a later genuine look: it is reborn
-        // with its REMEMBERED ruling (SHUT), never a silent OPEN
+        // with its REMEMBERED state (OPEN, as filed when it was
+        // pruned), never re-priced by the category guess
         // (segment adopted from the STOSS-34 surge in the merge,
         // made window-aware like the rest of this test).
         fakeInstalled("com.ghost.app" to "Ghost")
         nextGenuineLook()
         repository.ensureSeededAndSyncPackages()
         assertEquals(
-            AppBlockTier.LOCKED,
+            AppBlockTier.OPEN,
             dao.getAllAppsSnapshot().first { it.packageName == "com.ghost.app" }.resolvedTier
         )
+    }
+
+    @Test
+    fun sync_ruledRowForLauncherInvisibleApp_survivesEverySync() = runBlocking {
+        // Issue #142 F2 — THE UNION LAW, end to end. The staged
+        // phone holds a SHUT ruling for an app the launcher query
+        // cannot see (installed but launcher-invisible: the exact
+        // state discovery cannot tell apart from uninstalled).
+        // Sync after genuine sync, the row must stay in the
+        // catalogue with its tier intact — findable, its ruling
+        // visible — and no strike or prune note may ever be filed
+        // against it.
+        val dao = db.monolithDao()
+        dao.insertApps(
+            listOf(
+                storedRow("com.hidden.app", "Hidden", AppBlockTier.LOCKED),
+                storedRow("com.keeper.app", "Keeper", AppBlockTier.LOCKED)
+            )
+        )
+        fakeInstalled("com.keeper.app" to "Keeper")
+
+        repeat(3) {
+            repository.ensureSeededAndSyncPackages()
+            val table = dao.getAllAppsSnapshot()
+            assertEquals(
+                setOf("com.hidden.app", "com.keeper.app"),
+                table.map { it.packageName }.toSet()
+            )
+            assertEquals(
+                AppBlockTier.LOCKED,
+                table.first { it.packageName == "com.hidden.app" }.resolvedTier
+            )
+            assertTrue(strikes().isEmpty())
+            assertNull(repository.pendingPruneNote())
+            nextGenuineLook()
+        }
     }
 
     @Test
@@ -258,7 +307,9 @@ class AppListTruthTest {
         // the new law on the way — no assertion deleted, the
         // intermediate law now pinned instead of assumed away.
         val dao = db.monolithDao()
-        dao.insertApps(listOf(storedRow("com.ghost.app", "Ghost", AppBlockTier.LOCKED)))
+        // The ghost is UNRULED: since issue #142 F2's union law
+        // only unruled rows can prune at all.
+        dao.insertApps(listOf(storedRow("com.ghost.app", "Ghost", AppBlockTier.OPEN)))
         fakeInstalled("com.keeper.app" to "Keeper")
 
         // Run 1: ghost still listed, strike recorded, no prune.
@@ -278,7 +329,7 @@ class AppListTruthTest {
             dao.getAllAppsSnapshot().map { it.packageName }.toSet()
         )
         assertEquals(
-            PruneNote(appsRemoved = 1, rulesRemoved = true),
+            PruneNote(appsRemoved = 1, rulesRemoved = false),
             repository.pendingPruneNote()
         )
 

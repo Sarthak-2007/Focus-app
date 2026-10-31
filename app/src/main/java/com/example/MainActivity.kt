@@ -137,9 +137,31 @@ class MainActivity : ComponentActivity() {
             )
         )
 
+        // Audit R6 #340 F67: POST_NOTIFICATIONS was declared in
+        // the manifest but never requested at runtime — on
+        // Android 13+ every summons/session notification was
+        // silently undeliverable. Ask exactly once (prefs-guarded);
+        // a refusal is respected, never re-nagged.
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            val askPrefs = getSharedPreferences("monolith_perm_asks", MODE_PRIVATE)
+            if (!askPrefs.getBoolean("post_notifications_asked", false)) {
+                askPrefs.edit().putBoolean("post_notifications_asked", true).apply()
+                requestPermissions(
+                    arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                    34067
+                )
+            }
+        }
+
         // Watch Store bind (issue #48): LAST PROVED restored before
         // any surface reads the store.
         WatchStore.bind(applicationContext)
+        // Audit R6 #340 F61: the scrubbed failure log binds at the
+        // same moment so repository/a11y funnels can record.
+        com.example.service.FailureLog.bind(applicationContext)
 
         // ISSUE-67: the repository comes from the single
         // construction point (AppContainer: DAO + live service
@@ -504,9 +526,16 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val disarmChallenge by viewModel.disarmChallenge.collectAsStateWithLifecycle()
     val weeklyEmergencyTokensRemaining by viewModel.weeklyEmergencyTokensRemaining.collectAsStateWithLifecycle()
     val ratchetWarningMessage by viewModel.ratchetWarningMessage.collectAsStateWithLifecycle()
+    val routineConflictNotice by viewModel.routineConflictNotice.collectAsStateWithLifecycle()
     val tierChangeForUndo by viewModel.tierChangeForUndo.collectAsStateWithLifecycle()
 
     val sealed = activeSession?.isActive == true
+    // Shield Rethink 2, Step 1: the receipt line for the Shield's
+    // dated truth line, and the wedge's grace carve-out — the same
+    // <=10s window the Deck's grace abort reads (elapsedSeconds).
+    val shieldReceiptLine by viewModel.shieldReceiptLine.collectAsStateWithLifecycle()
+    val shieldIntention by viewModel.shieldIntention.collectAsStateWithLifecycle()
+    val shieldInGracePeriod = activeSession?.let { it.isActive && it.elapsedSeconds <= 10 } == true
     // HB-1 / HB-2 (Truth Car 2; Band's header-band audit): ONE
     // predicate for the door. Until this car, the header's isSealed
     // drank from `sealed` alone while the VM's navigation law also
@@ -807,6 +836,13 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         // Settings.
         PermissionReturnService.arm(context, item)
         when (item) {
+            // Audit R6 #340 F44: AUTOSTART has no pane to be sent
+            // to — the tap IS the oath. It records the attestation
+            // in the Watch Store and returns; no Settings trip is
+            // faked for a gate the OS refuses to report.
+            com.example.service.WatchItemId.AUTOSTART -> {
+                com.example.service.WatchStore.attest(item)
+            }
             com.example.service.WatchItemId.ACCESSIBILITY ->
                 launchSettings(pinnedSettingsIntent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "ACCESSIBILITY")
             com.example.service.WatchItemId.USAGE_ACCESS ->
@@ -1108,11 +1144,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     selectedCategory = selectedCategory,
                                     shortsReelsSniperEnabled = shortsReelsSniperEnabled,
                                     browserUrlBlockerEnabled = browserUrlBlockerEnabled,
-                                    profiles = profiles,
-                                    selectedProfileName = selectedProfileName,
-                                    loadoutCapIndex = loadoutCapIndex,
                                     isSessionActive = sealed,
+                                    receiptLine = shieldReceiptLine,
+                                    intention = shieldIntention,
+                                    onIntentionChanged = viewModel::setShieldIntention,
+                                    isGracePeriod = shieldInGracePeriod,
                                     ratchetWarningMessage = ratchetWarningMessage,
+                                    routineConflictNotice = routineConflictNotice,
+                                    onDismissRoutineConflictNotice = viewModel::dismissRoutineConflictNotice,
                                     tierChangeForUndo = tierChangeForUndo,
                                     onUndoTierChange = viewModel::undoLastTierChange,
                                     soundEngine = viewModel.soundEngine,
@@ -1126,11 +1165,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                         }
                                     },
                                     onCycleDailyLimit = viewModel::cycleAppDailyLimit,
-                                    onApplySmartLoadout = viewModel::applySmartLoadout,
                                     onSetAppCategory = viewModel::setAppCategory,
-                                    onSelectProfile = viewModel::selectAndApplyProfile,
-                                    profileUndoAvailable = profileUndoAvailable,
-                                    onUndoProfileApply = viewModel::undoLastProfileApply,
                                     onToggleShortsReelsSniper = viewModel::toggleShortsReelsSniper,
                                     onToggleBrowserUrlBlocker = viewModel::toggleBrowserUrlBlocker,
                                     // #337 F1: shortcut binding state

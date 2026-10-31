@@ -16,6 +16,7 @@ import android.provider.Settings
 import android.util.Log
 import android.os.PowerManager
 import android.telecom.TelecomManager
+import com.example.service.FailureLog
 import com.example.service.MonolithAccessibilityService
 import com.example.widget.MonolithWidgetProvider
 import com.example.service.MonolithBootReceiver
@@ -171,6 +172,22 @@ internal fun expiredPeekPackages(
     .map { it.packageName }
     .toSet()
 
+/** Shield Rethink 2, Step 1 — Door A's sight states. The shield
+ *  loop stamps every beat with one of these; a receipt may claim
+ *  HELD only over a SIGHTED beat. IN_CALL is lawful non-sight (a
+ *  call owns the foreground and the query is not run); the two
+ *  BLIND states are the loop running without eyes. */
+enum class SightState { SIGHTED, BLIND_NO_ACCESS, BLIND_ERROR, IN_CALL }
+
+/** One foreground probe: what the query saw, and — when it saw a
+ *  blocked app in front — which one. [blockedPackage] is null both
+ *  for a sighted-clean foreground and for every blind outcome;
+ *  [sight] is what tells those apart. */
+data class ForegroundProbe(
+    val sight: SightState,
+    val blockedPackage: String?
+)
+
 /**
  * Issue #90 (complexity F5, classifier extraction): the ending
  * write's outcome classification in updateSessionProgress, as a
@@ -257,7 +274,7 @@ internal fun shieldBeatIsStale(
  * Settings / signing work on [Dispatchers.IO] or inside a Room
  * transaction (which runs on Room's own executor) — a caller may use
  * any dispatcher. Every NON-suspend function that touches the system
- * (usage stats, AppOps, Settings, SharedPreferences) is annotated
+ * (usage stats, AppOps, Settings / SharedPreferences) is annotated
  * [WorkerThread]: it blocks on IPC and must never run on the main
  * thread. Pure in-memory reads are the only un-annotated sync calls.
  *
@@ -1352,6 +1369,11 @@ class MonolithRepository(
      *  no' in logcat instead of being conflated with it. */
     private fun swallow(where: String, e: Exception) {
         Log.w(TAG, "$where failed; answering with the safe negative", e)
+        // Audit R6 #340 F61: the same failure also lands in the
+        // persistent scrubbed FailureLog (class-only, rate-limited)
+        // so it survives logcat rotation and can be handed over.
+        FailureLog.bind(context)
+        FailureLog.record("repository", where, e)
     }
 
     @WorkerThread
@@ -1480,16 +1502,47 @@ class MonolithRepository(
      * [expiredPeekPackages] the freshness filter is waived and the
      * usage window widened: the package is treated as
      * foreground-blocked on this poll regardless of lastTimeUsed age.
+     *
+     * This accessor keeps the historical collapsed contract (a
+     * package, or null for EVERY other outcome). Callers that print
+     * or certify anything must use [probeForegroundApp] instead —
+     * here null means four different things, and three of them are
+     * blindness, not emptiness.
      */
     @WorkerThread
     fun queryForegroundBlockedApp(
         blockedPackages: Set<String>,
         expiredPeekPackages: Set<String>
-    ): String? {
-        if (!hasUsageStatsPermission() || blockedPackages.isEmpty()) return null
+    ): String? = probeForegroundApp(blockedPackages, expiredPeekPackages).blockedPackage
+
+    /**
+     * Shield Rethink 2, Step 1 (Door A): the foreground query WITH
+     * its sight verdict attached. The old query returned null for a
+     * clean foreground, a revoked grant, a dead UsageStatsManager
+     * and a swallowed exception alike — and the shield loop flipped
+     * `protecting` over that null, certifying a shield that could
+     * be running blind. Here the outcomes are told apart:
+     * SIGHTED (the query answered; [ForegroundProbe.blockedPackage]
+     * may still be null — a clean foreground is a sighting),
+     * BLIND_NO_ACCESS (the usage grant is not ALLOWED — the door
+     * cannot see at all), BLIND_ERROR (the query itself failed).
+     * The door beneath is issue #332's event stream; a call no
+     * longer blinds it (#332 F2 exempts the call's own surfaces
+     * per-package via the safety floor), so sight during a call is
+     * real sight and IN_CALL survives only as a legacy verdict the
+     * loop no longer produces. An empty blocked set is SIGHTED:
+     * there is nothing to see, and the query's answer about it is
+     * complete.
+     */
+    fun probeForegroundApp(
+        blockedPackages: Set<String>,
+        expiredPeekPackages: Set<String>
+    ): ForegroundProbe {
+        if (blockedPackages.isEmpty()) return ForegroundProbe(SightState.SIGHTED, null)
+        if (!hasUsageStatsPermission()) return ForegroundProbe(SightState.BLIND_NO_ACCESS, null)
         return try {
             val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-                ?: return null
+                ?: return ForegroundProbe(SightState.BLIND_ERROR, null)
             val end = System.currentTimeMillis()
 
             // Issue #99 F1 (kept): the expired-peek waiver still
@@ -1506,23 +1559,23 @@ class MonolithRepository(
                             !SafetyFloor.isFloorPackage(it.packageName)
                     }
                     ?.maxByOrNull { it.lastTimeUsed }
-                // Issue #121: the time-critical gate binds this
-                // return too — an expired peek never re-covers a
-                // screen whose alarm is ringing right now.
+                // Issue #121 (composed, FIX-R2): the time-critical
+                // gate binds this return too — an expired peek never
+                // re-covers a screen whose alarm is ringing right
+                // now. A gated hit falls through to the event
+                // stream below instead of returning as blocked.
                 if (expiredHit != null &&
                     !TimeCriticalAlertGate.isAlertLiveFor(context, expiredHit.packageName)
                 ) {
-                    return expiredHit.packageName
+                    return ForegroundProbe(SightState.SIGHTED, expiredHit.packageName)
                 }
             }
 
-            // Issue #332 F1: the door now reads the real UsageEvents
-            // stream on a 20-second window (the Flipd supplement's
-            // benchmark) instead of daily-aggregate lastTimeUsed
-            // with an 8-second cutoff, which went blind to a blocked
-            // app the moment it settled into use.
+            // Issue #332 F1: the door reads the real UsageEvents
+            // stream on a 20-second window instead of the daily
+            // aggregate's lastTimeUsed with an 8-second cutoff.
             val usageEvents = usm.queryEvents(end - ForegroundDoor.WINDOW_MS, end)
-                ?: return null
+                ?: return ForegroundProbe(SightState.BLIND_ERROR, null)
             // Issue #290 F4 disposition (merge-time truth): the
             // event-stream cure landed on main first via issue
             // #332 (ForegroundDoor, below) — this branch's own
@@ -1535,29 +1588,51 @@ class MonolithRepository(
                 val pkg = event.packageName ?: continue
                 events.add(ForegroundDoor.FgEvent(pkg, event.eventType, event.timeStamp))
             }
-            // Issue #332 F2: a live call no longer suspends this
-            // door wholesale (the pre-cure early return made every
-            // call a complete enforcement holiday, uninstall guard
-            // included). The call's own surfaces are exempt —
-            // the safety floor covers dialer / incallui / telecom —
-            // and every other blocked app stays blocked mid-call,
-            // which is exactly Flipd's per-package construction.
+            // Issue #332 F2 (main, composed into the probe): a
+            // live call no longer suspends this door wholesale.
+            // The call's own surfaces are exempt — the safety
+            // floor covers dialer / incallui / telecom — and
+            // every other blocked app stays blocked mid-call.
             val foreground = ForegroundDoor.foregroundBlocked(events, blockedPackages)
-                ?: return null
-            // Issue #121: this is the shield door's half of the
-            // time-critical alert gate (the call bypass above can
-            // never fire for an alarm — it plays on the ALARM
-            // stream, not a call mode). A foreground package whose
-            // alarm is ringing, or whose calendar reminder is live,
-            // is NOT reported blocked, so the shield never covers
-            // the ringing screen it cannot dismiss. The exemption
-            // lasts exactly as long as the alert; the package is
-            // reported again the moment it ends. The seal itself is
-            // untouched: the package's tier never changes, and no
-            // other package passes.
-            if (TimeCriticalAlertGate.isAlertLiveFor(context, foreground)) null else foreground
+            // Issue #121 (composed): the time-critical alert gate
+            // binds the probe's verdict too — a foreground package
+            // whose alarm is ringing, or whose calendar reminder
+            // is live, is sighted but NOT reported blocked, so the
+            // shield never covers the ringing screen it cannot
+            // dismiss. The exemption lasts exactly as long as the
+            // alert; the seal itself is untouched.
+            ForegroundProbe(
+                SightState.SIGHTED,
+                if (foreground != null &&
+                    TimeCriticalAlertGate.isAlertLiveFor(context, foreground)
+                ) null else foreground
+            )
         } catch (e: Exception) {
-            swallow("queryForegroundBlockedApp", e)
+            swallow("probeForegroundApp", e)
+            ForegroundProbe(SightState.BLIND_ERROR, null)
+        }
+    }
+
+    /** Audit R6 #340 F42: the freshest foreground package, or
+     *  null when no app was used inside the freshness window —
+     *  a stale read must never pause accrual on a guess, so only
+     *  a read at most 90 s old is returned. Used by task accrual
+     *  to keep OPEN-tier foreground time out of a task's SPENT. */
+    @WorkerThread
+    fun queryForegroundPackage(): String? {
+        if (!hasUsageStatsPermission()) return null
+        return try {
+            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+                ?: return null
+            val end = System.currentTimeMillis()
+            val stats = usm.queryUsageStats(
+                UsageStatsManager.INTERVAL_DAILY, end - 15_000L, end
+            ) ?: return null
+            stats.filter { it.lastTimeUsed >= end - 90_000L }
+                .maxByOrNull { it.lastTimeUsed }
+                ?.packageName
+        } catch (e: Exception) {
+            swallow("queryForegroundPackage", e)
             null
         }
     }
@@ -1974,6 +2049,19 @@ class MonolithRepository(
     suspend fun isShortsReelsSniperEnabled(): Boolean =
         dao.getGuardSettingsSnapshot()?.shortsReelsSniperEnabled ?: true
 
+    // Audit R6 #340 F68: notification BODY consent, separate from
+    // capture consent. Default is UNSET — the listener stores no
+    // body until the user grants body storage explicitly.
+    suspend fun setNotificationBodyConsent(granted: Boolean) {
+        if (dao.getGuardSettingsSnapshot() == null) {
+            dao.insertGuardSettings(GuardSettingsEntity())
+        }
+        dao.updateNotificationBodyConsent(if (granted) "GRANTED" else "DENIED")
+    }
+
+    suspend fun notificationBodyConsent(): String =
+        dao.getGuardSettingsSnapshot()?.notificationBodyConsent ?: "UNSET"
+
     suspend fun updateRoutine(routine: RoutineEntity) {
         // Issue #32 F2: THE routine write funnel (ViewModel's
         // persistRoutine routes here) — sanitize at the boundary.
@@ -2332,6 +2420,11 @@ class MonolithRepository(
      *  bypassing this layer for its per-iteration app reads. */
     suspend fun allAppsSnapshot(): List<BlockedAppEntity> = dao.getAllAppsSnapshot()
 
+    /** Audit R6 #340 F13: the full routine table for the
+     *  conflict detector — the ViewModel checks a candidate save
+     *  against every OTHER routine before persisting. */
+    suspend fun daoSnapshotRoutines(): List<RoutineEntity> = dao.getAllRoutinesSnapshot()
+
     suspend fun cycleAppBlockTier(app: BlockedAppEntity): AppBlockTier {
         val cycled = when (app.resolvedTier) {
             AppBlockTier.LOCKED -> AppBlockTier.PEEK_2M
@@ -2355,6 +2448,9 @@ class MonolithRepository(
         }
         val isBlockedFlag = nextTier != AppBlockTier.OPEN
         dao.setAppTier(app.packageName, isBlockedFlag, nextTier.name)
+        // Audit R6 #340 F63: a re-ruled tier voids the episode
+        // claim — the terms changed under the standing episode.
+        com.example.service.InterceptClaim.release(app.packageName)
         // A ruling landed (#129 F1): the guess no longer stands
         // unreviewed for this package, whatever tier he chose —
         // choosing OPEN himself IS a review.
@@ -2378,6 +2474,11 @@ class MonolithRepository(
         val effectiveTier = EssentialApps.floorTier(packageName, tier)
         val isBlockedFlag = effectiveTier != AppBlockTier.OPEN
         dao.setAppTier(packageName, isBlockedFlag, effectiveTier.name)
+        // Audit R6 #340 F63: a re-ruled tier voids the episode
+        // claim — the terms changed under the standing episode.
+        // (On the gate's early return above no write happened, so
+        // no claim is voided — the episode stands on its terms.)
+        com.example.service.InterceptClaim.release(packageName)
         // Issue #129 F1: a ruling from the man retires the
         // unreviewed record for this package.
         clearUnreviewedOpen(listOf(packageName))
@@ -2549,6 +2650,11 @@ class MonolithRepository(
             activeUntilMono = leaseEndMono,
             peekEndMono = previousPeekEndMono
         )
+        // Audit R6 #340 F63: a granted lease VOIDS the package's
+        // episode claim — the sanctioned opening that follows is
+        // not a duplicate offence, and a later block (lease spent)
+        // must be able to claim a fresh episode.
+        com.example.service.InterceptClaim.release(packageName)
     }
 
     /**
@@ -3455,6 +3561,12 @@ class MonolithRepository(
             pending.sessionId, pending.outcomeWord,
             faulted = faulted, faultWallMillis = System.currentTimeMillis()
         )
+        // Audit R6 #340 F5/F48: the FINISH SEAL — minted here, the
+        // one place the claimed № and the finished row meet, over
+        // the slip's own claims and the previous receipt's seal
+        // (the chain link). A seal that cannot be minted faults
+        // THIS slip: fail closed, never a clean-looking re-mint.
+        val sealFaulted = sealFinishReceipt(row, number, pending)
         return ReceiptState(
             sessionId = pending.sessionId,
             number = number,
@@ -3470,7 +3582,7 @@ class MonolithRepository(
             routineLabelWithin = pending.routineLabelWithin,
             bankedBreakSeconds = pending.bankedBreakSeconds,
             shieldWasOff = pending.shieldWasOff,
-            faulted = faulted,
+            faulted = faulted || sealFaulted,
             deflections = pending.deflections,
             openExposureApps = pending.openExposureApps,
             restored = false,
@@ -3484,6 +3596,47 @@ class MonolithRepository(
             safeBreakSeconds = pending.safeBreakSeconds,
             endZoneId = armZoneStore.endZoneFor(pending.endedAtWallMs)
         )
+    }
+
+    /**
+     * Audit R6 #340 F5/F48: mint this receipt's finish seal and
+     * stamp it on the row. The payload is the slip's own claims
+     * (from [pending], the same derivation rehydration rebuilds)
+     * plus the row's gap/break facts, chained over the previous
+     * receipt's seal. Returns true when the seal could NOT be
+     * minted or stamped — the caller then publishes the slip
+     * FAULTED (fail closed), and the row is stamped with the
+     * UNSEALED sentinel so a later rehydration faults it too
+     * instead of presenting an unsealed slip as clean.
+     */
+    private suspend fun sealFinishReceipt(
+        row: FocusSessionEntity,
+        number: Int,
+        pending: PendingReceipt
+    ): Boolean {
+        return try {
+            val prev = dao.previousFinishSignature(number) ?: ""
+            val sig = CryptoIntegrityManager.signFinishState(
+                sessionId = pending.sessionId,
+                receiptNumber = number,
+                outcomeWord = pending.outcomeWord,
+                armWallMs = pending.armWallMs,
+                endedAtWallMs = pending.endedAtWallMs,
+                sealedElapsedSeconds = pending.sealedElapsedSeconds,
+                heldAppsAtSeal = pending.heldAppsAtSeal,
+                heldSitesAtSeal = pending.heldSitesAtSeal,
+                deflectionCount = pending.deflections.size,
+                bankedBreakSeconds = pending.bankedBreakSeconds,
+                shieldGapSeen = row.shieldGapSeen,
+                breakTakenSeconds = row.breakTakenSeconds,
+                prevFinishSignature = prev
+            )
+            dao.stampFinishSeal(pending.sessionId, sig, prev)
+            false
+        } catch (_: Exception) {
+            runCatching { dao.stampFinishSeal(pending.sessionId, "UNSEALED", "") }
+            true
+        }
     }
 
     /**
@@ -3589,6 +3742,29 @@ class MonolithRepository(
                     .coerceAtLeast(0L)
         }
         val pending = assemblePendingReceipt(sessionId, kind, endedAt) ?: return null
+        // Audit R6 #340 F5/F48: a sealed slip is re-verified on
+        // every rehydration. A seal that no longer matches the
+        // row's claims faults the slip — loudly, on the printed
+        // artefact — and is never re-minted here. Blank seals are
+        // pre-v13 legacy rows: they stand exactly as provable as
+        // the day they printed, no more and no less.
+        val sealBroken = row.finishSignature.isNotBlank() &&
+            !CryptoIntegrityManager.verifyFinishState(
+                sessionId = sessionId,
+                receiptNumber = number,
+                outcomeWord = pending.outcomeWord,
+                armWallMs = pending.armWallMs,
+                endedAtWallMs = pending.endedAtWallMs,
+                sealedElapsedSeconds = pending.sealedElapsedSeconds,
+                heldAppsAtSeal = pending.heldAppsAtSeal,
+                heldSitesAtSeal = pending.heldSitesAtSeal,
+                deflectionCount = pending.deflections.size,
+                bankedBreakSeconds = pending.bankedBreakSeconds,
+                shieldGapSeen = row.shieldGapSeen,
+                breakTakenSeconds = row.breakTakenSeconds,
+                prevFinishSignature = row.prevFinishSignature,
+                signature = row.finishSignature
+            )
         return ReceiptState(
             sessionId = sessionId,
             number = number,
@@ -3604,7 +3780,7 @@ class MonolithRepository(
             routineLabelWithin = pending.routineLabelWithin,
             bankedBreakSeconds = pending.bankedBreakSeconds,
             shieldWasOff = pending.shieldWasOff,
-            faulted = row.releaseFaultShield,
+            faulted = row.releaseFaultShield || sealBroken,
             deflections = pending.deflections,
             openExposureApps = pending.openExposureApps,
             restored = true,
@@ -5146,20 +5322,39 @@ class MonolithRepository(
         // WallAccrual's null id advances the anchor without crediting,
         // exactly as it does for a Safe Break.
         val activeTask = tasks.firstOrNull { it.resolvedStatus == TaskQueueStatus.ACTIVE }
+        // Audit R6 #340 F42: SPENT used to accrue straight through
+        // the session's own non-work states — a live PEEK lease and
+        // time in an OPEN-tier app credited the task in full, so a
+        // task could silently absorb distraction time. The Safe
+        // Break exclusion proved the bucket concept; it now covers
+        // every non-work state the session itself creates: break,
+        // live peek lease (exact, lease-timestamped), and a fresh
+        // foreground read of an OPEN-tier app.
         // W3 #134: a live call pauses the task's clock exactly as
         // a Safe Break does — the anchor advances without
         // crediting, so call minutes never land in a task's
-        // stored seconds either. (The QUEUED fallback an earlier
-        // main revision carried at this spot is deliberately NOT
-        // restored: it crowned the queue head ACTIVE on the next
-        // tick and billed it — issue #106, finding 4.)
+        // stored seconds either. (Composed at the FIX-R3 landing:
+        // the call gate `accrue` and the F42 non-work states gate
+        // the same anchor; nonWork already contains the Safe
+        // Break, so the composed gate is !accrue || nonWork. The
+        // QUEUED fallback the branch carried at this spot is
+        // deliberately NOT restored — main's #106 F4 note above
+        // killed it: it crowned the queue head ACTIVE on the next
+        // tick and billed it.)
+        val appsSnapshot = dao.getAllAppsSnapshot()
+        val peekLive = appsSnapshot.any { it.activePeekUntilElapsedRealtime > nowMono }
+        val foregroundTier = queryForegroundPackage()?.let { pkg ->
+            appsSnapshot.firstOrNull { it.packageName == pkg }?.resolvedTier
+        }
+        val nonWork = session.isInSafeBreak || peekLive ||
+            foregroundTier == AppBlockTier.OPEN
         val credit = taskAccrual.observe(
             sessionId = session.id,
-            accruingTaskId = if (!accrue || session.isInSafeBreak) null else activeTask?.id,
+            accruingTaskId = if (!accrue || nonWork) null else activeTask?.id,
             nowMonoMillis = nowMono
         )
         persistAccrualAnchor()
-        if (activeTask != null && accrue && !session.isInSafeBreak && credit > 0) {
+        if (activeTask != null && accrue && !nonWork && credit > 0) {
             dao.updateTask(
                 activeTask.copy(
                     actualSecondsSpent = activeTask.actualSecondsSpent + credit

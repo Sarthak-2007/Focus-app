@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         EmergencyBreakSpendEntity::class,
         DayNoteEntity::class
     ],
-    version = 16,
+    version = 17,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -286,6 +286,35 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
+         * AUDIT R6 #340 (16→17): schema only, zero data writes, no
+         * backfill — every default IS the truthful pre-v17 value.
+         * (Renumbered at the FIX-R3 landing: this cure was authored
+         * against v12, renumbered through v13/v14/v15 in flight and
+         * carried as 15→16 on the branch — but main took 15→16
+         * itself for issue #261's Safe Break columns above while
+         * this landing was blocked, so the seal chains after it as
+         * 16→17. Both column sets land; neither migration is lost.)
+         *
+         * focus_sessions +2 (F5/F48): the finish seal and its chain
+         * link. '' = never sealed — every pre-v17 receipt stands
+         * exactly as provable as it was the day it printed, and no
+         * seal is ever minted retroactively over old claims.
+         * blocked_sites +1 (F10): the per-site redirect target.
+         * '' = no destination; BACK + Airlock stands.
+         * guard_settings +1 (F68): notification-body consent, kept
+         * apart from the listener grant. 'UNSET' = bodies are NOT
+         * kept — the private posture is the default posture.
+         */
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN finishSignature TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN prevFinishSignature TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE blocked_sites ADD COLUMN redirectTarget TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE guard_settings ADD COLUMN notificationBodyConsent TEXT NOT NULL DEFAULT 'UNSET'")
+            }
+        }
+
+        /**
          * TOKEN-SPEC §6: the spend ledger arrives as an explicit
          * migration. There is NO backfill — today's in-memory spends
          * were never recorded, so v8 truthfully starts with an empty
@@ -373,7 +402,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance
