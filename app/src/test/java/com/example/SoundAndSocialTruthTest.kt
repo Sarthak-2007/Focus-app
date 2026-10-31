@@ -342,7 +342,36 @@ class SoundAndSocialTruthTest {
     /** The VM-level chain, on real objects: PARK's new switch
      *  calls the same toggle that writes guard_settings; the
      *  blocker reads the same column fresh per event; the VM's
-     *  published print is that column's mirror. */
+     *  published print is that column's mirror.
+     *
+     *  Floor-lane cure (#166, tenth sitting) — this was the
+     *  class's rotating name (red at census #7, run 41182938534:
+     *  31.1 s, "Timed out waiting for: and back ON, print
+     *  following", while its gated siblings passed in ~1 s).
+     *  Mechanism, from the code: the print is born `true`
+     *  (MonolithViewModel.kt:696); the init launch assigns it
+     *  from the store exactly once, only after the whole seed
+     *  pass plus a forced heartbeat tick (:1647); the toggle
+     *  negates the PRINT and launches its store write (:2653).
+     *  The first poll below is satisfiable born-equal — print
+     *  true, stored default true — before that assignment
+     *  exists, so under full-suite load the assignment could
+     *  land inside the second toggle's write latency, re-read
+     *  the store still OFF, and clobber the print back OFF with
+     *  no writer left to raise it: the final await's print half
+     *  starved for the full 30 s. The seed-settle gate cannot
+     *  discharge this case — its equality polls cannot tell a
+     *  spent assignment from the born-equal steady state.
+     *
+     *  The preamble below is a proof, not a bound. The store is
+     *  planted OFF before the VM exists; inside this case the
+     *  print's only writers are the init assignment and the
+     *  toggle, so the print reaching OFF is the assignment's
+     *  own signature — it has fired, and it fires once. One
+     *  toggle restores ON (print set + write launched), and the
+     *  original chain then runs with the assignment dead: each
+     *  store write is awaited before the next toggle, and no
+     *  third writer exists. No interleave remains. */
     @Test
     fun SocialToggleChainWritesTheFactTheBlockerReads() {
         val db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
@@ -350,8 +379,17 @@ class SoundAndSocialTruthTest {
             .build()
         try {
             val repository = MonolithRepository(context, db.monolithDao())
+            // The discharge (see the case doc): plant the fact
+            // OFF before the VM exists, so the init publication
+            // — the print's one uncontrolled writer — must show
+            // itself by following the plant, and is then spent.
+            runBlocking { repository.setBrowserBlockerEnabled(false) }
             val vm = MonolithViewModel(context, repository, TactileSoundEngine(context))
 
+            awaitTrue("the init publication lands (the print follows the planted fact OFF)") {
+                !vm.browserUrlBlockerEnabled.value
+            }
+            runBlocking { vm.toggleBrowserUrlBlocker() }
             awaitTrue("the VM publishes the persisted fact (fresh install: ON)") {
                 vm.browserUrlBlockerEnabled.value &&
                     runBlocking { repository.isBrowserBlockerEnabled() }
