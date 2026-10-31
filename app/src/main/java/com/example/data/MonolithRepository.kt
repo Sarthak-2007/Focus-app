@@ -411,6 +411,12 @@ class MonolithRepository(
         // lawful FLOW finish as the past-floor door.
         const val STOPWATCH_MAX_CAP_SECONDS = 4 * 60 * 60 // 4-Hour FLOW Cap
         const val SAFE_BREAK_DURATION_SECONDS = 10 * 60 // 10-Minute Safe Break
+        // Issue #264 B-264-18: the ceiling on a session's stamped
+        // break length (3 hours — Sarthak's Oct 30 22:33 ruling
+        // pairs ANY break length with any session length; the
+        // stamp's sanitizer coerces into this bound so a corrupt
+        // value can never price a span or arm an alarm beyond it).
+        const val MAX_BREAK_SECONDS = 3 * 60 * 60
         const val HMAC_TAMPER_PENALTY_SECONDS = 15 * 60 // 15-Minute Penalty Lock
 
         /** The outcome-reason constant of the emergency-break path
@@ -3072,7 +3078,8 @@ class MonolithRepository(
         studyBlocksCount: Int = 1,
         routineId: Int? = null,
         windowStartMillis: Long = 0L,
-        windowEndMillis: Long = 0L
+        windowEndMillis: Long = 0L,
+        breakMinutes: Int? = null
     ): FocusSessionEntity {
         // Issue #129 F2: the catalogue resyncs at EVERY session
         // birth, before the held counts are captured below. An app
@@ -3125,6 +3132,13 @@ class MonolithRepository(
             currentBlockIndex = 1,
             isInSafeBreak = false,
             safeBreakSecondsRemaining = 0,
+            // Issue #264 B-264-18: the break choice is stamped at
+            // birth, in the one funnel every session passes
+            // through — the arming preset's breakMinutes, converted
+            // and bounded. No break choice carried (routine arms,
+            // direct callers) stamps 0, and the row's reader falls
+            // back to the named constant: the pre-stamp truth.
+            breakSeconds = breakMinutes?.let { (it * 60).coerceIn(0, MAX_BREAK_SECONDS) } ?: 0,
             penaltySecondsAdded = 0,
             isActive = true,
             completedSuccessfully = false,
@@ -4222,16 +4236,15 @@ class MonolithRepository(
         servicePort.playBreakLatch(context, true)
     }
 
-    /** The Safe Break length in force for [session]. Today the one
-     *  named constant; when Truth Car 3's stamp lands (Rurik —
-     *  breakSeconds written on the row at creation, PILL-AND-TIMES
-     *  §3.2), this reader re-points at the row's own stamp and the
-     *  constant survives only as the default's ancestor. Every
-     *  break-length read in the progress machine and the break
-     *  verbs goes through here, so the stamp drops in at exactly
-     *  one place. */
+    /** The Safe Break length in force for [session]: the row's own
+     *  breakSeconds stamp (issue #264 B-264-18 — written at birth
+     *  from the arming preset's breakMinutes), with the named
+     *  constant surviving as the ancestor default for unstamped
+     *  rows. Every break-length read in the progress machine and
+     *  the break verbs goes through here, so the stamp rules at
+     *  exactly one place. */
     private fun breakLengthSeconds(session: FocusSessionEntity): Int =
-        SAFE_BREAK_DURATION_SECONDS
+        session.effectiveBreakSeconds
 
     /** The one write that carries a session out of a Safe Break
      *  into its next block: fresh anchors, a fresh signature over
@@ -4923,7 +4936,7 @@ class MonolithRepository(
                 elapsedSeconds = effectiveTarget,
                 callExcludedSeconds = callExcluded,
                 isInSafeBreak = true,
-                safeBreakSecondsRemaining = SAFE_BREAK_DURATION_SECONDS,
+                safeBreakSecondsRemaining = breakLengthSeconds(session),
                 lastTickElapsedRealtimeMillis = nowMono,
                 penaltySecondsAdded = penaltyAdd,
                 tamperDetected = tamper,
@@ -4942,7 +4955,7 @@ class MonolithRepository(
             com.example.service.BreakEndScheduler.schedule(
                 context,
                 safeBreakSession.id,
-                System.currentTimeMillis() + SAFE_BREAK_DURATION_SECONDS * 1000L
+                System.currentTimeMillis() + breakLengthSeconds(session) * 1000L
             )
             // ST-03: the entry speaks here, at the flip — the
             // latch releases as the block lets go into the break.

@@ -797,7 +797,7 @@ class MonolithShieldService : Service() {
                 // state retires to rest.
                 if (updated.isInSafeBreak) {
                     lastBreakElapsedSeconds =
-                        (MonolithRepository.SAFE_BREAK_DURATION_SECONDS -
+                        (updated.effectiveBreakSeconds -
                             updated.safeBreakSecondsRemaining).coerceAtLeast(0)
                     publishBreakDim(
                         BreakDimState(
