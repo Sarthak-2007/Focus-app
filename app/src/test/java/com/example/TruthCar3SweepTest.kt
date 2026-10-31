@@ -204,11 +204,23 @@ class TruthCar3SweepRoboTest {
          *  credential-encrypted five alone never covered the app's
          *  Room database, which is built in device-protected storage
          *  (Audit R2 #93): the platform maps device_* domains to that
-         *  separate tree. "Exclude everything" must iterate all ten. */
+         *  separate tree. "Exclude everything" iterates all NINE
+         *  domains the platform defines — the documented set
+         *  (developer.android.com, "Syntax for include and exclude
+         *  elements") is exactly these nine: device_* counterparts
+         *  exist only for root, file, database and sharedpref;
+         *  `external` (getExternalFilesDir) has no device-protected
+         *  counterpart, so there is no `device_external` domain to
+         *  exclude — an earlier ten-entry list demanded an exclude
+         *  line the platform schema cannot express, and both una04
+         *  rules tests failed on the correct, fully-excluding files
+         *  (the same cure the rule files' own FullBackupContent
+         *  note records). The app never writes external storage at
+         *  all, so the nine cover every root it uses. */
         val ALL_BACKUP_DOMAINS = listOf(
             "root", "file", "database", "sharedpref", "external",
             "device_root", "device_file", "device_database",
-            "device_sharedpref", "device_external"
+            "device_sharedpref"
         )
     }
 
