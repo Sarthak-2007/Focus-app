@@ -4,9 +4,22 @@ plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.google.devtools.ksp)
-  alias(libs.plugins.secrets)
   alias(libs.plugins.google.services)
 }
+
+// Ren's ruling, issue #25 (DURCH-VC, Oct 30 2026): versionCode is
+// EPOCH-MINUTES — minutes since the Unix epoch, computed here in the
+// build at build time, NEVER hand-set. It can never go lower than any
+// previous build (a later build is always a later minute), which kills
+// the L16 class permanently across parallel lanes/trains: no merged
+// tree can resurrect a lower hand-set value. Supersedes the hand-set
+// vc2 (and batch-9's vc1) upward. Scale: Oct 2026 ≈ 29.9 million;
+// Int.MAX_VALUE (2,147,483,647) is not reached for ≈ 4,026 years
+// (≈ year 6053), and Play's 2,100,000,000 cap is millennia away too.
+// This defaultConfig is the ONE definition point: every build route
+// (local assemble, CI debug, CI release proof, screenshots) inherits
+// it — no flavor, variant, or workflow override exists.
+val epochMinutesVersionCode: Int = (System.currentTimeMillis() / 60_000L).toInt()
 
 android {
   namespace = "com.example"
@@ -16,8 +29,8 @@ android {
     applicationId = "com.aistudio.monolith.kxtpzr"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = epochMinutesVersionCode
+    versionName = "1.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -56,8 +69,13 @@ android {
     }
   }
   compileOptions {
-    sourceCompatibility = JavaVersion.VERSION_11
-    targetCompatibility = JavaVersion.VERSION_11
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+    // Audit R6 #341 F02: java.time (DrawerDay, MonolithWeek, the
+    // schedule layer) is API 26+; without desugaring, minSdk 24
+    // devices died with NoClassDefFoundError at ViewModel
+    // construction. Desugaring backfills java.time on API 24-25.
+    isCoreLibraryDesugaringEnabled = true
   }
   buildFeatures {
     compose = true
@@ -102,15 +120,6 @@ tasks.withType<Test>().configureEach {
     "--add-exports=java.base/jdk.internal.access=ALL-UNNAMED"
   )
 }
-
-// Configure the Secrets Gradle Plugin to use .env and .env.example files
-// to match the convention used in Web projects.
-secrets {
-  propertiesFileName = ".env"
-  defaultPropertiesFileName = ".env.example"
-  ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
-}
-
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
 // Some unused dependencies are commented out below instead of being removed.
@@ -118,13 +127,16 @@ googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.W
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
   // implementation(platform(libs.firebase.bom))
-  // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   // implementation(libs.androidx.camera.camera2)
   // implementation(libs.androidx.camera.core)
   // implementation(libs.androidx.camera.lifecycle)
   // implementation(libs.androidx.camera.view)
   implementation(libs.androidx.compose.material3)
+  // Issue #336: the one icon system (MonolithIcons). Extended set:
+  // the current core artifact no longer carries Shield/Schedule/
+  // Visibility/VpnKey/Chevrons/DarkMode/FlashOn/Pause (CI-proven).
+  implementation(libs.androidx.compose.material.icons.extended)
   implementation(libs.androidx.compose.ui)
   implementation(libs.androidx.compose.ui.graphics)
   implementation(libs.androidx.core.ktx)
@@ -167,6 +179,7 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
+  coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
   // "ksp"(libs.moshi.kotlin.codegen)
 }
 

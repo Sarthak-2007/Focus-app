@@ -43,8 +43,25 @@ object SessionOutcome {
      *  gone for part of it — the books are BROKEN (Nocke §5). */
     const val ELAPSED_SHIELD_GAP = "ELAPSED_SHIELD_GAP"
 
+    /** Issue #129 F3: a manual session whose span elapsed with
+     *  the shield beating, but where an unguarded distraction
+     *  app (OPEN tier in a distraction category, an unreviewed
+     *  auto-OPEN app, or an app with no catalogue row) was used
+     *  for 30s+ inside the window. The session elapsed; it was
+     *  NOT clean, and the record now says so. The exposed apps'
+     *  names are booked at the ending write (see
+     *  MonolithRepository.EXPOSURE_LOG_PACKAGE). */
+    const val ELAPSED_OPEN_EXPOSURE = "ELAPSED_OPEN_EXPOSURE"
+
     /** FLOW ended by its lawful door past the floor. */
     const val STOPWATCH_ENDED = "STOPWATCH_ENDED"
+
+    /** Issue #290 F1: FLOW stopped by hand UNDER its 20-minute
+     *  floor — the withered record (Forest books a sub-minimum
+     *  stopwatch stop as a withered tree). Distinct from
+     *  ENDED_EARLY so the record names what actually happened;
+     *  never a finish (FLOW_FINISH requires STOPWATCH_ENDED). */
+    const val STOPWATCH_WITHERED = "STOPWATCH_WITHERED"
 
     /** The 60s valve was held to completion: the token was spent
      *  and the session BROKE. No receipt, no №, ever. */
@@ -52,6 +69,11 @@ object SessionOutcome {
 
     /** The free grace cancel inside the opening window. */
     const val GRACE_CANCEL = "GRACE_CANCEL"
+
+    /** Audit R6 #341 F30: a session that was still active when its
+     *  successor was born — closed at the birth transaction with its
+     *  true end stamp, never left unclassified. */
+    const val SUPERSEDED = "SUPERSEDED"
 
     /** Ended early by his hand (the disarm challenge). */
     const val ENDED_EARLY = "ENDED_EARLY"
@@ -98,6 +120,14 @@ object FinishKind {
 fun finishKindOf(row: FocusSessionEntity, isSleepLoadout: Boolean, nowWallMillis: Long): String? {
     if (row.isActive) return null
     if (row.routineId != null) {
+        // Audit R1 #40: VALVE_BROKE's law is "No receipt, no №,
+        // ever" — and it binds routine rows too. Before this
+        // guard the routine branch read routineOutcome alone: a
+        // valve-broken row that the finalise funnel later stamped
+        // ATTENDED/PARTIAL would mint exactly the receipt its
+        // outcome forbids. (Only the SLEEP sub-branch below ever
+        // looked at row.outcome.)
+        if (row.outcome == SessionOutcome.VALVE_BROKE) return null
         return when {
             row.routineOutcome == WindowJudgement.ATTENDED.name -> FinishKind.ROUTINE_ATTENDED
             row.routineOutcome == WindowJudgement.PARTIAL.name -> FinishKind.ROUTINE_PARTIAL
@@ -108,7 +138,8 @@ fun finishKindOf(row: FocusSessionEntity, isSleepLoadout: Boolean, nowWallMillis
         }
     }
     return when (row.outcome) {
-        SessionOutcome.ELAPSED_CLEAN, SessionOutcome.ELAPSED_SHIELD_GAP -> FinishKind.MANUAL_FINISH
+        SessionOutcome.ELAPSED_CLEAN, SessionOutcome.ELAPSED_SHIELD_GAP,
+        SessionOutcome.ELAPSED_OPEN_EXPOSURE -> FinishKind.MANUAL_FINISH
         SessionOutcome.STOPWATCH_ENDED ->
             if (row.completedSuccessfully) FinishKind.FLOW_FINISH else null
         else -> null
@@ -128,7 +159,10 @@ fun finishKindOf(row: FocusSessionEntity, isSleepLoadout: Boolean, nowWallMillis
  *  The voices themselves are untouched for every witnessed
  *  finish. */
 fun finishPulses(kind: String, row: FocusSessionEntity): Boolean = when (kind) {
-    FinishKind.MANUAL_FINISH -> row.outcome != SessionOutcome.ELAPSED_SHIELD_GAP
+    // An exposed finish is death-booked in the same sense as a
+    // shield gap (#129 F3): the record stands, the pulse does not.
+    FinishKind.MANUAL_FINISH -> row.outcome != SessionOutcome.ELAPSED_SHIELD_GAP &&
+        row.outcome != SessionOutcome.ELAPSED_OPEN_EXPOSURE
     FinishKind.FLOW_FINISH -> true
     FinishKind.ROUTINE_ATTENDED -> true
     FinishKind.ROUTINE_SLEEP_STANDDOWN -> false
@@ -150,9 +184,11 @@ fun isRoutineBornKind(kind: String): Boolean = when (kind) {
 
 /**
  * The intercept log's outcome vocabulary, enumerated from EVERY
- * writer in the tree (receipt audit item 11, Neu C-03: the cure
- * must enumerate the vocabulary, not assume it). The column is
- * free text at the writers; these are all the values that exist:
+ * writer in the tree (receipt audit item 11 / issue #10 A4,
+ * ported by WELLE-6 from e39ae62 — the one e39ae62 code cure
+ * current main had not absorbed by another route). The column
+ * is free text at the writers; these are all the values that
+ * exist:
  *
  * - [BLOCKED] — the harness/test spelling of a plain block
  *   ("Blocked" / "BLOCKED" in the test suites; matched
@@ -169,7 +205,10 @@ fun isRoutineBornKind(kind: String): Boolean = when (kind) {
  * (The repository's disarm path also writes intercept rows with
  * the disarm reason as outcome, but always under the system
  * package — assembly's system-row exclusion already keeps them
- * off the slip.)
+ * off the slip. A newer writer, "Left Airlock Without
+ * Choosing", is deliberately NOT in the allowlist: no choice
+ * was recorded, so the slip cannot back it as a block — it
+ * stays off until a ruling classifies it.)
  */
 object InterceptOutcome {
     const val BLOCKED = "Blocked"
@@ -197,6 +236,25 @@ fun isBlockedInterceptOutcome(outcome: String): Boolean =
  *  does not apply. Witnessed manual finishes keep the cliff. */
 fun receiptCliffExempt(kind: String): Boolean = isRoutineBornKind(kind)
 
+/** One row of the Vault's receipts index (issue #157): the facts
+ *  a claimed session's own row proves, nothing more — its №, its
+ *  session id, the instant it ended, its outcome word, and the
+ *  two warning facts the row itself carries (the release-fault
+ *  stamp and the shield-gap outcome). The slip is NOT stored; a
+ *  tap on this row re-derives it via the repository. */
+data class ReceiptIndexEntry(
+    val sessionId: Int,
+    val number: Int,
+    val endedAtWallMs: Long,
+    val outcomeWord: String,
+    val releaseFaultShield: Boolean,
+    val shieldWasOff: Boolean
+) {
+    /** The printed №, the slip's own voice: zero-padded to a
+     *  minimum of 3, never truncated. */
+    val numberPrint: String get() = "№ " + number.toString().padStart(3, '0')
+}
+
 /** One deflection on the slip: a blocked attempt the machine
  *  turned away during the session, reduced at assembly (window
  *  ∩ intention match ∩ BLOCKED outcome ∩ 30s-per-package
@@ -220,8 +278,28 @@ data class ReceiptDeflection(
     val appName: String,
     val packageName: String,
     val atWallMillis: Long,
-    val isSite: Boolean = false
-)
+    val isSite: Boolean = false,
+    // Issue #105 (F3, remainder after the A4 allowlist): the
+    // log's own outcome rides. Assembly admits only proven
+    // blocks (A4 — a peek never reaches the slip at all), but
+    // the three blocked outcomes are different events — a
+    // turned-away attempt, a plain block, and a task split
+    // into a micro-step — and the old print could not tell
+    // them apart. Default "" keeps hand-built slips valid:
+    // no outcome recorded, no word printed, none invented.
+    val outcome: String = ""
+) {
+    /** The outcome in the slip's dialect. "Stayed Focused"
+     *  gets its true name; any other logged blocked outcome
+     *  prints verbatim (upper-cased); a deflection carrying
+     *  no outcome prints no word. */
+    val outcomePrint: String
+        get() = when {
+            outcome.trim().equals("Stayed Focused", ignoreCase = true) -> "TURNED AWAY"
+            outcome.trim().equals("Used 2m Peek", ignoreCase = true) -> "PEEKED 2 MIN"
+            else -> outcome.trim().uppercase(java.util.Locale.US)
+        }
+}
 
 /**
  * The HELD line's figures, in the only form the slip may print
@@ -283,6 +361,34 @@ data class PendingReceipt(
     val bankedBreakSeconds: Int,
     val shieldWasOff: Boolean,
     val deflections: List<ReceiptDeflection>,
+    // Audit R3 #113, finding 4: the tamper penalty the row carries,
+    // threaded so the slip can NAME it — before this the penalty
+    // silently stretched the plan (it is inside spanTargetSeconds)
+    // and no surface ever mentioned it.
+    val penaltySecondsAdded: Int = 0,
+    /** Issue #129 F3: the unguarded apps actually used inside
+     *  this session's window (labels, longest-use first), read
+     *  back from the ending write's exposure booking. Empty for
+     *  every session not stamped ELAPSED_OPEN_EXPOSURE. */
+    val openExposureApps: List<String> = emptyList(),
+    // Audit R3b #145: the curio this finish forged, by name — the
+    // completion moment must not be silent about its own reward.
+    // Null when the span forged nothing (routine-born rows, valve
+    // breaks publish nothing at all); the sheet omits the line.
+    val forgedArtifactName: String? = null,
+    // W-41: the seal's held split, read off the row (see
+    // FocusSessionEntity.heldShutAtSeal). -1 on a pre-v14 row:
+    // the sheet falls back to the stored total.
+    val heldShutAtSeal: Int = -1,
+    val heldPeekAtSeal: Int = -1,
+    // Issue #105 (F1): the tasks this session's own row booked
+    // as finished (completedTasksSummary, split on its " • "
+    // join), in booking order — the slip prints the work it
+    // attests. (F4): the Safe Break seconds actually lived in
+    // this session (the row's breakTakenSeconds), NOT the
+    // valve ledger [bankedBreakSeconds] reads.
+    val completedTasks: List<String> = emptyList(),
+    val safeBreakSeconds: Int = 0,
     // W-41 seam (see ReceiptHeldFigures): null until the
     // persisted SHUT/PEEK split columns land; assembly is the
     // only fill point.
@@ -319,6 +425,37 @@ data class ReceiptState(
     val deflections: List<ReceiptDeflection>,
     val restored: Boolean,
     val receiptPublishedMonoMs: Long,
+    // Audit R3 #113, finding 4: see PendingReceipt — the slip
+    // prints the penalty its plan silently included.
+    val penaltySecondsAdded: Int = 0,
+    /** Issue #129 F3: see [PendingReceipt.openExposureApps]. */
+    val openExposureApps: List<String> = emptyList(),
+    // Audit R3b #145: see PendingReceipt.forgedArtifactName.
+    val forgedArtifactName: String? = null,
+    // W-41: see PendingReceipt.heldShutAtSeal.
+    val heldShutAtSeal: Int = -1,
+    val heldPeekAtSeal: Int = -1,
+    // Issue #152: the IANA zone the session was ARMED in, captured
+    // at the birth funnel (ArmZoneStore). Null when unknown (a
+    // session armed before the capture existed). The slip renders
+    // ARMED in this zone — with its offset printed — whenever it
+    // differs from the zone in force at render; a receipt's times
+    // must say where they live.
+    val armZoneId: String? = null,
+    // Issue #105 (F1/F4): see PendingReceipt.completedTasks /
+    // safeBreakSeconds — carried through publish + rehydrate.
+    val completedTasks: List<String> = emptyList(),
+    val safeBreakSeconds: Int = 0,
+    // Issue #152 residue (reopened): the IANA zone the session
+    // ENDED in, captured at the session-ending write into the
+    // same store's end slot (ArmZoneStore, keyed by the end
+    // instant). Null when unknown (a session that ended before
+    // the capture existed). The slip renders ENDED in this zone
+    // — with its offset printed — whenever it differs from the
+    // zone in force at render, exactly as ARMED renders in its
+    // own witness. Before this field existed ENDED was the one
+    // line on the slip still derived at print time.
+    val endZoneId: String? = null,
     // W-41 seam (see ReceiptHeldFigures): null until the
     // persisted SHUT/PEEK split columns land — while null, the
     // sheet prints NO HELD line (the old summed line booked
@@ -351,7 +488,15 @@ object Detention {
     const val FAULT_DEADLINE_MS = 1520L
 
     fun rackStartMs(pawlLiftMs: Long?): Long =
-        maxOf(HELD_FRAME_MS, pawlLiftMs ?: Long.MAX_VALUE / 4)
+        // Audit R1 #40: an unlifted pawl deems the rack started at
+        // the ceiling — NOT at Long.MAX_VALUE/4. The old sentinel
+        // leaked into the ViewModel's detention tail
+        // (rackStartMs(null) + RACK_AFTER_PAWL_MS fed straight to
+        // delay()), parking the finish state for ~2^61 ms: on the
+        // faulted branch the finish NEVER retired in that process.
+        // receiptAtMs(null) is unchanged (1800 either way — the
+        // clamp saw to that); only the tail is cured.
+        maxOf(HELD_FRAME_MS, pawlLiftMs ?: RECEIPT_CEILING_MS)
 
     fun receiptAtMs(pawlLiftMs: Long?): Long {
         val r0 = rackStartMs(pawlLiftMs)

@@ -23,13 +23,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DayNoteEntity::class,
         TaskAccrualSegmentEntity::class
     ],
-    version = 13,
-    // MOTOR #31 F3 (train inheritance): schema export ON — the
-    // migrations are verifiable against a canonical schema from
-    // this version forward. The schema directory is set in
-    // app/build.gradle.kts (room.schemaLocation); the generated
-    // 13.json is committed alongside this composition.
-    exportSchema = true
+    version = 17,
+    exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
     abstract fun monolithDao(): MonolithDao
@@ -193,6 +188,28 @@ abstract class MonolithDatabase : RoomDatabase() {
          * NOT created, by name: testDateEpochDay — the test-date
          * predicate stays STRUCK (Ren), as at v9, v10 and v11.
          */
+        /**
+         * ISSUE #287 (12→13): schema only, zero data writes, no
+         * backfill — every default IS the truthful pre-v13 value
+         * ('' = no culprit recorded, '' = no reflection stored).
+         *
+         * focus_sessions +3 (Forest head-to-head F5/F8): the
+         * failure-cause pair (package + kind) stamped at the
+         * ending write by the disarm doors, and the one
+         * user-authored reflection line stored against the
+         * finished session.
+         *
+         * NOT created, by name: testDateEpochDay — the test-date
+         * predicate stays STRUCK (Ren), as at v9–v12.
+         */
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN failureCausePackage TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN failureCauseKind TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN reflectionNote TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         val MIGRATION_11_12 = object : Migration(11, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE guard_settings ADD COLUMN shortsReelsSniperEnabled INTEGER NOT NULL DEFAULT 1")
@@ -201,42 +218,112 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
-         * Batch 10 (12→13): THE one composed migration. Neither
-         * lane's private 11→12 text survives anywhere — only their
-         * column deltas, re-based here: Frist's five (peek/break
-         * settings + the break/extension stamps) and Voss's one
-         * (withinLabel), plus the W-41 split pair (heldShutAtSeal /
-         * heldPeekAtSeal, Suki's Car-3 offer built at this merge;
-         * default -1 = not recorded, by analogy to the seal-count
-         * columns, so pre-split rows can never print a false HELD
-         * line). ADD COLUMN order mirrors the entity append order
-         * per table exactly. The one CREATE TABLE below is #110's
-         * accrual-segment table (REISE's cure, folded in by the
-         * batch-10 train): not a column delta but a new table,
-         * riding this migration because v13 is the first version
-         * that can capture accrual history at all — and history
-         * cannot be backfilled later.
+         * Issue #10 (W-41): the seal's held count, split by tier.
+         * heldShutAtSeal / heldPeekAtSeal record how many of the
+         * apps held at a session's birth were SHUT and how many
+         * were on the 2-minute PEEK tier, so the receipt can print
+         * the two facts separately instead of one merged figure.
+         * (13→14, not 12→13: v13 was taken by the failure-cause
+         * columns above while this cure was in flight — the split
+         * chains after it, and both land.)
+         *
+         * There is NO backfill — a pre-v14 row's split was never
+         * recorded, and inventing one from today's tiers would
+         * fabricate history. Old rows keep -1 ("uncaptured"); the
+         * receipt prints their stored total and omits the split,
+         * the same omission law heldAppsAtSeal has always obeyed.
          */
-        val MIGRATION_12_13 = object : Migration(12, 13) {
+        val MIGRATION_13_14 = object : Migration(13, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE guard_settings ADD COLUMN peekMinutes INTEGER NOT NULL DEFAULT 2")
-                db.execSQL("ALTER TABLE guard_settings ADD COLUMN breakMinutes INTEGER NOT NULL DEFAULT 10")
-                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN breakSeconds INTEGER NOT NULL DEFAULT 600")
-                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN extensionSecondsAdded INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN extensionLog TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN withinLabel TEXT")
-                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN heldShutAtSeal INTEGER NOT NULL DEFAULT -1")
-                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN heldPeekAtSeal INTEGER NOT NULL DEFAULT -1")
-                // #110 (REISE's priced cure, folded into this same
-                // composed migration by the batch-10 train): the
-                // accrual-segment table — one row per (task, session,
-                // filing day), so a task's stored seconds can be
-                // split truthfully over the days they accrued on
-                // instead of dumping the lifetime total on the
-                // completion day. NO backfill: accrual from before
-                // v13 has no segments and stays lifetime-only
-                // (printed TOTAL) forever — inventing a split for it
-                // would be a fabricated record.
+                // Defensive form (main-merge ruling on M-A1 OPEN-1):
+                // a device that ever installed a train-v13 build
+                // already carries these two columns at version 13;
+                // an unguarded ADD COLUMN would crash its upgrade
+                // with a duplicate-column error. The guard makes the
+                // step idempotent — identical result on every
+                // install history, no main-line behaviour change.
+                addColumnIfAbsent(db, "focus_sessions", "heldShutAtSeal",
+                    "ALTER TABLE focus_sessions ADD COLUMN heldShutAtSeal INTEGER NOT NULL DEFAULT -1")
+                addColumnIfAbsent(db, "focus_sessions", "heldPeekAtSeal",
+                    "ALTER TABLE focus_sessions ADD COLUMN heldPeekAtSeal INTEGER NOT NULL DEFAULT -1")
+            }
+        }
+
+        /**
+         * W3 #134, DURCH-D closure recomposition (14→15; renumbered
+         * again at landing — main took 13→14 itself for issue #10's
+         * held-split while this lane was in flight, exactly as it
+         * had taken 12→13 for #287 before that): schema only, zero
+         * data writes, no backfill — the default IS the truthful
+         * pre-v15 value (0 = no call seconds were ever excluded;
+         * before this column the progress machine never looked, so
+         * no past row can claim any).
+         *
+         * focus_sessions +1: callExcludedSeconds — the per-block
+         * seconds the call bypass was active, excluded from the
+         * booked elapsed by updateSessionProgress so call time
+         * is never certified as focus time.
+         */
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN callExcludedSeconds INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * Issue #261 (15→16): schema only, zero data writes, no
+         * backfill — both defaults ARE the truthful pre-v16 values
+         * (0 / false: before this door, no Safe Break could start
+         * mid-block, so no past row entered one or booked its
+         * planned length).
+         *
+         * focus_sessions +2, both for the mid-block Safe Break
+         * door (the transferred W9 DAYLIGHT DS3 finding):
+         * midBlockSafeBreak — the CURRENT break's origin marker,
+         * read by the break exits to resume the same block instead
+         * of advancing past it; extraSafeBreakSeconds — the
+         * planned length of every mid-block break entered, priced
+         * by spanTargetSeconds.
+         *
+         * NOT created, by name: testDateEpochDay — the test-date
+         * predicate stays STRUCK (Ren), as at v9–v15.
+         */
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN midBlockSafeBreak INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN extraSafeBreakSeconds INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * Batch 10 (16→17, composed at the main-merge sitting
+         * per M-A1 §0): the train’s composed 12→13 content,
+         * landed as a NEW link — main’s 12_13 (#287) is shipped
+         * history and is never redefined. Carries: Frist’s five
+         * (peek/break settings + the break/extension stamps) and
+         * Voss’s one (withinLabel), plus #110’s accrual-segment
+         * table (REISE cure) and #30 F1’s four secondary indices.
+         * The W-41 held pair is NOT here: main’s 13_14 already
+         * adds exactly those columns (identical type/default);
+         * running them twice is a duplicate-column crash. ADD
+         * COLUMNs run through the same defensive guard as
+         * 13_14, so a train-v13 install (which already has
+         * these columns at v13) upgrades cleanly too.
+         */
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfAbsent(db, "guard_settings", "peekMinutes",
+                    "ALTER TABLE guard_settings ADD COLUMN peekMinutes INTEGER NOT NULL DEFAULT 2")
+                addColumnIfAbsent(db, "guard_settings", "breakMinutes",
+                    "ALTER TABLE guard_settings ADD COLUMN breakMinutes INTEGER NOT NULL DEFAULT 10")
+                addColumnIfAbsent(db, "focus_sessions", "breakSeconds",
+                    "ALTER TABLE focus_sessions ADD COLUMN breakSeconds INTEGER NOT NULL DEFAULT 600")
+                addColumnIfAbsent(db, "focus_sessions", "extensionSecondsAdded",
+                    "ALTER TABLE focus_sessions ADD COLUMN extensionSecondsAdded INTEGER NOT NULL DEFAULT 0")
+                addColumnIfAbsent(db, "focus_sessions", "extensionLog",
+                    "ALTER TABLE focus_sessions ADD COLUMN extensionLog TEXT NOT NULL DEFAULT ''")
+                addColumnIfAbsent(db, "focus_sessions", "withinLabel",
+                    "ALTER TABLE focus_sessions ADD COLUMN withinLabel TEXT")
                 db.execSQL(
                     "CREATE TABLE IF NOT EXISTS `task_accrual_segments` (" +
                     "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
@@ -249,13 +336,6 @@ abstract class MonolithDatabase : RoomDatabase() {
                     "CREATE UNIQUE INDEX IF NOT EXISTS `index_task_accrual_segments_taskId_sessionId_dateIso` " +
                     "ON `task_accrual_segments` (`taskId`, `sessionId`, `dateIso`)"
                 )
-                // #30 F1 (MOTOR's price, train inheritance): the
-                // four secondary indices — the hot filter/sort
-                // paths stop being full table scans. They ride
-                // this migration because v13 is the open schema
-                // window; the entity declarations carry the same
-                // indices so fresh installs and Room's schema
-                // validation agree with the migrated shape.
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_focus_tasks_completedAtMillis` ON `focus_tasks` (`completedAtMillis`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_focus_sessions_routineId` ON `focus_sessions` (`routineId`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_focus_sessions_windowEndMillis` ON `focus_sessions` (`windowEndMillis`)")
@@ -270,6 +350,23 @@ abstract class MonolithDatabase : RoomDatabase() {
          * ledger and a full token; inventing a past spend would be a
          * fabricated record.
          */
+        /**
+         * Idempotent ADD COLUMN (main-merge defensive form, M-A1
+         * OPEN-1 ruling): runs [ddl] only when [column] is absent
+         * from [table], so a migration step survives an install
+         * whose earlier lineage already added the same column.
+         */
+        private fun addColumnIfAbsent(db: SupportSQLiteDatabase, table: String, column: String, ddl: String) {
+            var present = false
+            db.query("PRAGMA table_info($table)").use { cursor ->
+                val nameIdx = cursor.getColumnIndex("name")
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIdx) == column) { present = true; break }
+                }
+            }
+            if (!present) db.execSQL(ddl)
+        }
+
         val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
@@ -295,15 +392,50 @@ abstract class MonolithDatabase : RoomDatabase() {
          * IllegalStateException in testing, never a silent wipe on his
          * phone.
          */
+        /**
+         * Issue #83 (storage-hygiene F4): space reclamation. Every
+         * erase in this app was a bare DELETE, so deleted rows' pages
+         * stayed in the file forever and monolith_tactile_db grew
+         * monotonically for the life of the install. This callback
+         * puts the file on INCREMENTAL auto-vacuum: the first open
+         * that finds the file not already incremental performs the
+         * one full VACUUM the mode change requires, and every open
+         * hands a bounded slice of free pages back to the device.
+         * Best-effort by construction — a pragma failure must never
+         * cost the app its database open.
+         */
+        private val RECLAIM_CALLBACK = object : RoomDatabase.Callback() {
+            override fun onOpen(db: SupportSQLiteDatabase) {
+                super.onOpen(db)
+                try {
+                    val cursor = db.query("PRAGMA auto_vacuum")
+                    val mode = try {
+                        if (cursor.moveToFirst()) cursor.getInt(0) else 0
+                    } finally {
+                        cursor.close()
+                    }
+                    // auto_vacuum: 0 = NONE, 1 = FULL, 2 = INCREMENTAL.
+                    if (mode != 2) {
+                        db.execSQL("PRAGMA auto_vacuum = INCREMENTAL")
+                        db.execSQL("VACUUM")
+                    }
+                    db.execSQL("PRAGMA incremental_vacuum(512)")
+                } catch (_: Exception) {
+                    // Contained: reclamation is hygiene, not function.
+                }
+            }
+        }
+
         fun getInstance(context: Context): MonolithDatabase {
             return INSTANCE ?: synchronized(this) {
-                // MOTOR #31 (train inheritance, bench-verified on
-                // agent/issue-31): the second null-check inside the
-                // lock. Without it, two racing callers (boot
+                // The second check INSIDE the lock (issue #31
+                // finding 1): the pre-fix shape re-checked nothing
+                // after acquiring it, so two racing callers (boot
                 // receivers + the activity's first read are the
-                // realistic pair) could each build a database, the
-                // second overwriting INSTANCE and orphaning the
-                // first's open instance. Textbook DCL.
+                // realistic pair) could each build a database —
+                // the second overwriting INSTANCE and orphaning
+                // the first's open instance, its DAOs, and any
+                // transaction in flight on it.
                 INSTANCE?.let { return@synchronized it }
                 val appCtx = context.applicationContext
                 val storageContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -316,7 +448,8 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
+                    .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance
                 instance
@@ -324,12 +457,14 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
-         * MOTOR #31 (train inheritance): the test-only escape
-         * hatch — closes the singleton and nulls it under the same
-         * lock getInstance builds under, so tests can start from a
-         * cold database. Production paths never call it; production
-         * immortality is deliberate (Direct-Boot enforcement reads
-         * the singleton from boot receivers).
+         * Test-only escape hatch (issue #31 finding 4): closes
+         * the singleton and clears it under the same lock
+         * [getInstance] builds under, so a test can start from a
+         * cold database instead of inheriting whatever a previous
+         * test built. Production paths never call this — in
+         * production the singleton's immortality is deliberate
+         * (Direct-Boot enforcement reads it from boot receivers
+         * before any unlock exists).
          */
         fun closeAndResetForTests() {
             synchronized(this) {

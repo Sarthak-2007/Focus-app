@@ -52,8 +52,14 @@ class ReceiptNachdruckTest {
         endedAtWallMs = wall(10, 30),
         plannedSeconds = 5400,
         sealedElapsedSeconds = 5400,
-        heldAppsAtSeal = 0,
-        heldSitesAtSeal = 0,
+        // WELLE-6 landing adaptation: on current main the HELD
+        // line prints whenever both figures are captured (>= 0)
+        // and its "SITES" would false-positive the no-SITE-tag
+        // assertion below. -1 is main's uncaptured stamp — the
+        // sheet omits the HELD line whole — so the fixture keeps
+        // every assertion about deflection tags, as written.
+        heldAppsAtSeal = -1,
+        heldSitesAtSeal = -1,
         routineLabelWithin = null,
         bankedBreakSeconds = 0,
         shieldWasOff = false,
@@ -65,7 +71,10 @@ class ReceiptNachdruckTest {
 
     private fun show(state: ReceiptState) {
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            // WELLE-6 landing fix: main's theme (issue #63) has
+            // deliberately NO dynamicColor parameter — the
+            // recovered file's call predates that removal.
+            MyApplicationTheme(darkTheme = false) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()

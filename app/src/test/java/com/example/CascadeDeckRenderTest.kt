@@ -36,7 +36,9 @@ import org.robolectric.shadows.ShadowLooper
  * evidence for the phase gate's rendering, not for the arm
  * itself. What each frame must show:
  *  - PROVING (row exists, t=0 not declared): the slide tenancy
- *    still stands, no running chips, no sentence, no strike.
+ *    still stands, no running chips, no strike — and since issue
+ *    #98 + #126 F2 the sentence slot names the proving with its
+ *    live count (the silent black box is closed).
  *  - JAMMED: the slot names the unanswering link.
  *  - SEALED (t=0 declared): the running tenancy takes the zone.
  *  - A row with the phase Idle (a routine-born session): runs
@@ -59,15 +61,12 @@ class CascadeDeckRenderTest {
             File("app/shots-redirect.txt")
         ).firstOrNull { it.isFile }
         val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        // KONTO-2 round 5 (lettered from run 40995686279): the
-        // committed redirect names a lane-box path; on the CI runner
-        // that path cannot be created and every capture died
-        // FileNotFound. Honour the redirect only where it can
-        // actually be written; otherwise the tmpdir default.
-        val dir = File(target ?: System.getProperty("java.io.tmpdir") + "/monolith-shots")
-        dir.mkdirs()
-        if (dir.isDirectory && dir.canWrite()) dir
-        else File(System.getProperty("java.io.tmpdir") + "/monolith-shots").also { it.mkdirs() }
+        // issue #66 cluster-priority: hardcoded author path removed, same cure as ScreenshotHarnessTest.
+        // Finisher cure: a redirect target that cannot be created on this machine falls through
+        // to the next candidate (a committed lane-local path poisoned every CI capture).
+        listOfNotNull(target, System.getenv("MONOLITH_SHOTS_DIR"), "build/outputs/screenshots")
+            .map { File(it) }
+            .first { it.mkdirs() || it.isDirectory }
     }
 
     @Before
@@ -88,10 +87,9 @@ class CascadeDeckRenderTest {
         completedSuccessfully = false
     )
 
-    private fun setDeck(phase: ArmPhase, dark: Boolean) {
-        val session = fakeSession()
+    private fun setDeck(phase: ArmPhase, dark: Boolean, session: FocusSessionEntity? = fakeSession()) {
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = dark, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = dark) {
                 TactileDeckScreen(
                     activeSession = session,
                     dialMinutes = 50,
@@ -151,7 +149,6 @@ class CascadeDeckRenderTest {
             FileOutputStream(out).use { fos -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos) }
             bitmap.recycle()
         }
-        println("CASCADE-RENDER captured $name size=${out.length()}")
     }
 
     private fun proving(sessionId: Int?) = ArmPhase.Proving(
@@ -179,36 +176,57 @@ class CascadeDeckRenderTest {
     )
 
     @Test
-    fun provingKeepsTheSlideTenancyAndPrintsNothing() {
+    fun provingKeepsTheSlideTenancyAndNamesItself() {
         setDeck(proving(sessionId = 7), dark = false)
         // The row exists but t=0 has not fired: the slide zone
-        // still holds the slide (not the running chips), and the
-        // sentence slot is silent. The running chips are asserted
-        // by their testTags, not their text: a chip's label lives
-        // inside its clickable's merged semantics, where the text
-        // finder cannot see it in ANY state (proven the hard way —
-        // the sealed frame renders the valve in pixels while the
-        // text query finds nothing); the tag is the chip's
-        // designed handle, and the captures carry the text-level
-        // evidence.
+        // still holds the slide (not the running chips). The
+        // running chips are asserted by their testTags, not their
+        // text: a chip's label lives inside its clickable's merged
+        // semantics, where the text finder cannot see it in ANY
+        // state (proven the hard way — the sealed frame renders
+        // the valve in pixels while the text query finds nothing);
+        // the tag is the chip's designed handle, and the captures
+        // carry the text-level evidence.
+        // Issues #98 + #126 F2: the slot is no longer silent while
+        // real blocking already runs — it prints the proving word
+        // with the live proved count (the fabricated phase has
+        // SESSION confirmed, 1 of 3), and it is NOT the jam
+        // sentence. (At the #126-to-main merge the slot's wording
+        // is main's #98 form, "CHECKING THE SEAL — 1 OF 3 PROVED";
+        // the branch's duplicate wording was retired with its
+        // duplicated helper when the helpers moved to
+        // MonolithComponentLogic.)
         composeRule.onNodeWithTag("slide_to_start_view").assertExists()
         composeRule.onNodeWithTag("request_disarm_button").assertDoesNotExist()
         composeRule.onNodeWithTag("grace_abort_button").assertDoesNotExist()
+        composeRule.onNodeWithText("CHECKING THE SEAL — 1 OF 3 PROVED").assertIsDisplayed()
         composeRule.onNodeWithText("SHIELD DIDN'T ANSWER — STILL PROVING.").assertDoesNotExist()
         capture("cascade_proving_day.png")
     }
 
     @Test
+    fun idleDeckPrintsTheBlocksReading() {
+        // Issue #98: at idle (no session, dial 50, 2 blocks) the
+        // hero's total ("1H 50M") must stand beside its own
+        // multiplier reading — the count as a numeral with the
+        // × reading and the break between blocks priced in words.
+        setDeck(ArmPhase.Idle, dark = false, session = null)
+        composeRule.onNodeWithTag("blocks_reading").assertExists()
+        composeRule.onNodeWithText("2 BLOCKS × 50 MIN · 1 × 10 MIN BREAK BETWEEN").assertIsDisplayed()
+        capture("cascade_idle_blocks_day.png")
+    }
+
+    @Test
     fun jammedNamesTheUnansweringLink() {
         setDeck(jammed(), dark = false)
-        composeRule.onNodeWithText("SHIELD DIDN'T ANSWER — STILL PROVING.").assertIsDisplayed()
+        composeRule.onNodeWithText("THE SHIELD DIDN'T ANSWER — STILL CHECKING.").assertIsDisplayed()
         capture("cascade_jammed_day.png")
     }
 
     @Test
     fun jammedNamesTheUnansweringLinkAtNight() {
         setDeck(jammed(), dark = true)
-        composeRule.onNodeWithText("SHIELD DIDN'T ANSWER — STILL PROVING.").assertIsDisplayed()
+        composeRule.onNodeWithText("THE SHIELD DIDN'T ANSWER — STILL CHECKING.").assertIsDisplayed()
         capture("cascade_jammed_night.png")
     }
 

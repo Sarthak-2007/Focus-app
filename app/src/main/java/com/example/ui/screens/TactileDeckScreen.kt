@@ -1,8 +1,13 @@
 package com.example.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,12 +37,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
+import com.example.data.ClockText
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
@@ -50,6 +63,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.AppBlockTier
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
+import com.example.data.MonolithRepository
+import com.example.data.StudyChecklistItem
 import com.example.data.StudyModePreset
 import com.example.service.TactileSoundEngine
 import com.example.service.UsageAccess
@@ -64,9 +79,12 @@ import com.example.ui.components.RefusalSentenceSlot
 import com.example.ui.components.StripDensity
 import com.example.ui.components.RefusalSentence
 import com.example.ui.components.endsAtText
+import com.example.ui.components.isReducedMotion
+import com.example.ui.components.sessionEndsAtMillis
 import com.example.ui.components.imprintTenantText
 import com.example.ui.components.endsAtNumeralsFor
 import com.example.ui.components.jamSentenceFor
+import com.example.ui.components.provingSentenceFor
 import com.example.ui.components.refusalSentenceFor
 import com.example.ui.components.sealBarStateFor
 import com.example.ui.components.inkControlFill
@@ -74,7 +92,14 @@ import com.example.ui.components.onInkControlFill
 import com.example.ui.components.FullBleedSectionHeader
 import com.example.ui.components.rememberMixedTypographyText
 import com.example.ui.theme.AnonymousProFamily
+import com.example.ui.theme.BodyTextStyle
 import com.example.ui.theme.DialClockTextStyle
+import com.example.ui.theme.DisplayUnitTextStyle
+import com.example.ui.theme.NightColorOnSurface
+import com.example.ui.theme.NightColorSurfaceSheet
+import com.example.ui.theme.TokenColorSurfaceBright
+import com.example.ui.theme.TokenColorSurfaceVariant
+import com.example.ui.theme.TokenTrueBlack
 import com.example.ui.theme.MonolithCurves
 import com.example.ui.theme.AtkinsonHyperlegibleFamily
 import com.example.ui.views.RotaryWheelView
@@ -84,6 +109,17 @@ import java.util.Date
 import java.util.Locale
 
 /**
+ * The Deck eyebrow's break print (Audit R3, safe-break-lived #3):
+ * the break's exact clock, second-precise — "BREAK · 1:01 LEFT",
+ * never a ceiling-rounded minute count that reads "1 MIN" for the
+ * entire final minute. Pure, so the print is unit-tested.
+ */
+internal fun breakEyebrowText(safeBreakSecondsRemaining: Int): String {
+    val s = safeBreakSecondsRemaining.coerceAtLeast(0)
+    return String.format(Locale.US, "SAFE BREAK · %d:%02d LEFT", s / 60, s % 60)
+}
+
+/**
  * TAB 0: FOCUS COMMAND CONSOLE (DEVELOPER-GUIDE.pdf §1–§11)
  * - Full-bleed stacked sections. (Spacing is per-section;
  *   the old '12dp universal spacing' promise was false — F21.)
@@ -91,12 +127,30 @@ import java.util.Locale
  * - Pinned `SlideToStartView` commit bar below the scroll.
  * - When armed, transforms into the dark Armed Lockdown state with One-Way Ratchet enforcement.
  */
+/**
+ * The emergency break's price, printed under its Deck chip
+ * (issue #114, finding 5): the door ends the session and spends
+ * the week's only break — or, when the break is spent, it says
+ * so before the tap instead of after it. [tokensRemaining] is
+ * the live ledger-derived count the chip's badge already reads.
+ * Pure, tested.
+ */
+internal fun emergencyBreakPriceText(tokensRemaining: Int): String =
+    if (tokensRemaining > 0) {
+        "ENDS THIS SESSION · USES THIS WEEK'S ONLY EMERGENCY BREAK"
+    } else {
+        "THIS WEEK'S EMERGENCY BREAK IS ALREADY SPENT"
+    }
+
 @Composable
 fun TactileDeckScreen(
     activeSession: FocusSessionEntity?,
     dialMinutes: Int,
     studyBlocksCount: Int,
     activeTask: FocusTaskEntity?,
+    // R3b #163 F5: true when the NOW task already stood as
+    // yesterday's active task (the ViewModel's day-boundary note).
+    activeTaskFromYesterday: Boolean = false,
     queuedTasks: List<FocusTaskEntity>,
     capturedNotificationsCount: Int,
     soundEngine: TactileSoundEngine? = null,
@@ -116,12 +170,34 @@ fun TactileDeckScreen(
     // render harnesses that seat the Deck without a live break
     // keep composing; MainActivity wires the VM's verb.
     onEndSafeBreak: () -> Unit = {},
+    // Issue #261: the mid-block Safe Break entry — defaulted like
+    // onEndSafeBreak so render harnesses keep composing.
+    onStartSafeBreak: () -> Unit = {},
+    // Issue #283: the in-session extend verb — defaulted like
+    // onEndSafeBreak so render harnesses keep composing.
+    onExtendSession: () -> Unit = {},
+    // Issue #143 F4: the DND gate's line (armed at the arm, sealed
+    // truth during the session) — defaulted null so harnesses and
+    // previews compose the standing Deck unchanged.
+    dndLine: String? = null,
     weeklyEmergencyTokensRemaining: Int = 1,
+    // Issue #103 F1: true when the active session is a non-SLEEP
+    // routine session — those never take the generic grace path;
+    // ending one is judged by the routine funnel (MISSED / PARTIAL
+    // / ATTENDED). The host computes it from the live routine row;
+    // defaulted false so render harnesses keep the manual-session
+    // rendering. When true the grace chip must not promise a free,
+    // unrecorded cancel it cannot deliver.
+    isActiveRoutineJudged: Boolean = false,
     // Slice D (the proof strip, the sentence slot, the imprint): the
     // host owns the wire; the screen renders its word.
     appsCellCount: Int? = null,
     appsSplit: com.example.ui.MonolithViewModel.AppsSplit? = null,
     deckWarrant: Warrant? = null,
+    // Issue #70 F3: the first-run primer's gate (host-owned
+    // one-bit flag, mirroring the PARK intro) — true only until
+    // the first session has ever run.
+    deckPrimerPending: Boolean = false,
     sealFreeze: com.example.ui.MonolithViewModel.SealFreeze? = null,
     warrantProvider: () -> Warrant = {
         Warrant(
@@ -158,6 +234,13 @@ fun TactileDeckScreen(
     // receipt, with the sled gate's host seams (Schlitten §3).
     finishState: com.example.ui.MonolithViewModel.FinishState? = null,
     receiptState: com.example.data.ReceiptState? = null,
+    // Issue #135 F2: the LAST RECEIPT door — the most recent session
+    // that claimed a №, offered only while no receipt stands and no
+    // session runs (the standing slip and the running frame are
+    // their own surfaces; this door is for the slip the next arm
+    // cleared from memory).
+    lastReceiptSessionId: Int? = null,
+    onShowLastReceipt: (Int) -> Unit = {},
     onWitnessSledReturn: (Int) -> Unit = {},
     onTryStartSledReturn: (Int) -> Boolean = { false },
     sledInitialFraction: () -> Float = { 0f },
@@ -204,7 +287,11 @@ fun TactileDeckScreen(
             if (sealShot?.sessionId != session.id) {
                 val t0 = sealT0MonoMs
                 sealShot = if (t0 != null) {
-                    SealShotState(session.id, t0, preExisting = false)
+                    SealShotState(
+                        session.id, t0, preExisting = false,
+                        nightCalm = com.example.service.NightSignal
+                            .isNightAt(System.currentTimeMillis())
+                    )
                 } else {
                     exitPhase = 3
                     SealShotState(session.id, 0L, preExisting = true)
@@ -216,6 +303,22 @@ fun TactileDeckScreen(
         }
     }
     val shot = sealShot
+    // Audit R6 #341 F65: the seal shot's live blur is the single
+    // most GPU-expensive frame in the app, spent on the weakest
+    // GPUs. On a low-RAM device the shot keeps its scale/rise (near
+    // free) and drops the blur entirely instead of frame-dropping
+    // the signature moment.
+    val deckContext = androidx.compose.ui.platform.LocalContext.current
+    val lowRamDevice = remember {
+        (deckContext.getSystemService(android.content.Context.ACTIVITY_SERVICE)
+            as? android.app.ActivityManager)?.isLowRamDevice == true
+    }
+    // Issue #256: reduced motion — with the system animator scale
+    // at 0 the seal shot's vertigo/blur easings are never driven
+    // (same treatment as night calm below): the hero neither
+    // recedes nor blurs, while the phase latches still advance on
+    // the same 1050ms clock, so the seal's timing is unchanged.
+    val reducedMotion = remember { isReducedMotion(deckContext) }
     LaunchedEffect(shot) {
         if (shot == null || shot.preExisting) return@LaunchedEffect
         // The ghosts take their posts before the first shot frame.
@@ -223,12 +326,19 @@ fun TactileDeckScreen(
         while (!shot.heroLanded) {
             withFrameMillis { }
             val e = SystemClock.elapsedRealtime() - shot.t0Mono
-            shot.vertigoT = MonolithCurves.VertigoTransformEasing.transform(
-                (e / 1050f).coerceIn(0f, 1f)
-            )
-            shot.blurT = MonolithCurves.VertigoBlurEasing.transform(
-                (e / 1050f).coerceIn(0f, 1f)
-            )
+            // Night calm (#116 finding 4): at night the easings are
+            // never driven — vertigoT/blurT stay at rest (0), so the
+            // hero neither recedes nor blurs. The phase latches
+            // below still advance on the same 1050ms clock.
+            // Issue #256: reduced motion earns the same calm.
+            if (!shot.nightCalm && !reducedMotion) {
+                shot.vertigoT = MonolithCurves.VertigoTransformEasing.transform(
+                    (e / 1050f).coerceIn(0f, 1f)
+                )
+                shot.blurT = MonolithCurves.VertigoBlurEasing.transform(
+                    (e / 1050f).coerceIn(0f, 1f)
+                )
+            }
             if (e >= 180L) shot.departed = true
             if (e >= 400L) shot.groundStepped = true
             val phase = (e / 50L).toInt().coerceIn(0, 3)
@@ -288,20 +398,50 @@ fun TactileDeckScreen(
         // re-derives from it.
         finishState.frozenDisplaySeconds
     } else if (isSessionRunning) {
-        if (activeSession.isStopwatchMode) activeSession.elapsedSeconds else activeSession.remainingSeconds
+        when {
+            activeSession.isStopwatchMode -> activeSession.elapsedSeconds
+            // Audit R3b #148: during a Safe Break the per-block
+            // remainder is 0 — that block HAS finished — so the
+            // hero read 00:00 for ten minutes, a break displayed
+            // as FINISH. In a break the hero counts the break
+            // itself down (the shield's own rendering of the same
+            // fact), under the BREAK eyebrow the strip already
+            // prints.
+            activeSession.isInSafeBreak -> activeSession.safeBreakSecondsRemaining
+            else -> activeSession.remainingSeconds
+        }
     } else {
         dialMinutes * 60
     }
 
     val minsPart = displaySeconds / 60
     val secsPart = displaySeconds % 60
-    val primaryReadout = String.format(Locale.US, "%02d:%02d", minsPart, secsPart)
+    // Audit R3b #147: a running (or just-finished) stopwatch counts
+    // UP — the bare MM:SS read exactly like a countdown. The +
+    // prefix marks the direction on the hero readout; a timed
+    // session's countdown stays bare.
+    val countsUp = (finishState != null && finishState.frozenIsStopwatch) ||
+        (isSessionRunning && activeSession.isStopwatchMode)
+    val primaryReadout = if (countsUp) {
+        String.format(Locale.US, "+%02d:%02d", minsPart, secsPart)
+    } else {
+        String.format(Locale.US, "%02d:%02d", minsPart, secsPart)
+    }
 
     // True session span (BEYOND W3, verified against the engine): blocks
     // plus the 10-minute Safe Breaks BETWEEN them - n x block + (n-1) x 10.
     // The hero and the finish line both price from this and nowhere else;
     // the naive product understated a 3 x 50 morning by 20 minutes.
     val totalSpanMinutes = dialMinutes * studyBlocksCount + (studyBlocksCount - 1) * 10
+
+    // Issue #123 (dial-precision): the seat the wheel's physics has
+    // committed to, previewed while it travels ("LANDS 47"); the
+    // precise-entry row's open state and its typed text. Session
+    // length is set by his hand on this instrument — the wheel, the
+    // steppers and the typed entry are three grips on the same value.
+    var wheelSeatPreview by remember { mutableStateOf<Int?>(null) }
+    var preciseEntryOpen by remember { mutableStateOf(false) }
+    var preciseEntryText by remember { mutableStateOf("") }
 
     // Issue #6 F3 (audit §3, Vega T-1/T-2/T-3 — the floored,
     // inverted, invented fraction dies): timed progress is
@@ -310,8 +450,6 @@ fun TactileDeckScreen(
     // (stopwatch) has NO bar and NO fraction: NO END means no bar,
     // and the old /1200 denominator was invented by the mode that
     // denies it. Idle: no session exists, so no progress exists.
-    val progressIsFlow = finishState?.frozenIsStopwatch
-        ?: (isSessionRunning && activeSession.isStopwatchMode)
     val progressFraction = if (finishState != null) {
         if (finishState.frozenIsStopwatch) {
             0f
@@ -323,6 +461,15 @@ fun TactileDeckScreen(
     } else if (isSessionRunning) {
         if (activeSession.isStopwatchMode) {
             0f
+        } else if (activeSession.isInSafeBreak) {
+            // Audit R3b #148: in a break the bar prices the whole
+            // session span (the model's own span derivation — the
+            // break counts as session time), so it holds its
+            // ground and keeps moving instead of sitting at the
+            // finished block's empty remainder. Priced in the
+            // F3 form: elapsed/target, filling, no floors.
+            val spanTarget = activeSession.spanTargetSeconds.coerceAtLeast(1)
+            (activeSession.spanElapsedSeconds.toFloat() / spanTarget.toFloat()).coerceIn(0f, 1f)
         } else {
             val target = activeSession.effectiveTargetSeconds.coerceAtLeast(1)
             val elapsed = (target - activeSession.remainingSeconds).coerceAtLeast(0)
@@ -334,21 +481,14 @@ fun TactileDeckScreen(
 
     // =====================================================================
     // SLICE D — the strip's derivations (Uma/Rosa/Emil). TIME is a pure
-    // function of now + a span; it is re-derived at minute boundaries
-    // from a frame clock, never stored, never slid. The imprint's count
+    // function of now + a span; it is re-derived fresh at composition
+    // (#127 finding 3: the old minute-boundary frame clock is retired —
+    // it made the strip's ENDS drift up to a minute early against the
+    // Airlock's fresh read), never stored, never slid. The imprint's count
     // freezes at the seal (host-side, Emil's −1 law): the first
     // composition that sees a running session captures the then-live
     // count and the BLOCK verdict, keyed by the session's id.
     // =====================================================================
-    var nowFrame by remember { mutableStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            val now = System.currentTimeMillis()
-            nowFrame = now
-            kotlinx.coroutines.delay(60_000L - (now % 60_000L) + 50L)
-        }
-    }
-
     val liveWarrantState = deckWarrant?.state
     // The print tense law (Truth Car 3, UNA2-03/04): every warrant
     // print in this frame is judged against the warrant's READ
@@ -357,7 +497,18 @@ fun TactileDeckScreen(
     // it. liveWarrantState stays the raw wire word for the one
     // place that must follow the wire itself (the running BLOCK
     // cell's OFF, below).
-    val nowMono = SystemClock.elapsedRealtime()
+    // Issue #50 F4 cure: freshness is judged against a ticking
+    // state, not a raw clock read — a 5-second mono ticker bounds
+    // a stale LIVE print to 5s past its deadline instead of the
+    // ~60s the minute-aligned frame clock allowed.
+    var nowMonoTick by remember { mutableStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            nowMonoTick = SystemClock.elapsedRealtime()
+            kotlinx.coroutines.delay(5_000L)
+        }
+    }
+    val nowMono = nowMonoTick
     val warrantPrintState = com.example.service.WatchStore.printState(deckWarrant, nowMono)
     fun blockCellFor(state: WarrantState?): Pair<String, StripDensity> = when (state) {
         WarrantState.LIVE -> "ON" to StripDensity.PASS
@@ -372,7 +523,7 @@ fun TactileDeckScreen(
         // its PASS tone is a claim the wire stands behind — beside
         // a warrant that is not freshly LIVE the end prints at
         // UNKNOWN density, never PASS beside BLOCK OFF.
-        else -> endsAtText(nowFrame + totalSpanMinutes * 60_000L) to
+        else -> endsAtText(ClockText.is24Hour(LocalContext.current), sessionEndsAtMillis(System.currentTimeMillis(), totalSpanMinutes * 60)) to
             if (warrantPrintState == WarrantState.LIVE) StripDensity.PASS
             else StripDensity.UNKNOWN
     }
@@ -382,11 +533,27 @@ fun TactileDeckScreen(
     // whole press and release at the latch or the return to rest.
     // (Declared before the freeze: the seal retires a live latch.)
     var pressLatch by remember { mutableStateOf<PressLatch?>(null) }
+    // The armResetKey in force when the live latch was taken
+    // (event-time write, in onPressStart). A reset that lands
+    // after the DOWN retires the latch by derivation, not by a
+    // composition write (issue #50 F2).
+    var latchArmKey by remember { mutableStateOf(armResetKey) }
 
     // A committed press retires its latch at the SEAL, not at the
     // view's press-end (Emil E-5): between the latch frame and the
     // sealed composition, the latched print must keep standing.
     var commitInFlight by remember { mutableStateOf(false) }
+
+    // Storage hygiene for the F2 derivation: once a session is
+    // running the stored latch is cleared in an effect, so it
+    // can never revive when the session ends. Prints never wait
+    // for this — pressLatchLive already reads null while running.
+    LaunchedEffect(isSessionRunning) {
+        if (isSessionRunning && (pressLatch != null || commitInFlight)) {
+            pressLatch = null
+            commitInFlight = false
+        }
+    }
 
     // The seal freeze (Emil §3.2, as far as this slice can honestly
     // build it): the ViewModel captures the count and the verdict
@@ -406,39 +573,52 @@ fun TactileDeckScreen(
     var fbFrozenShut by rememberSaveable { mutableStateOf<Int?>(null) }
     var fbFrozenPeek by rememberSaveable { mutableStateOf<Int?>(null) }
     var fbFrozenState by rememberSaveable { mutableStateOf<String?>(null) }
-    if (isSessionRunning && activeSession != null) {
-        // The seal retires any live press latch: if the slide view
-        // detached mid-refusal (a routine armed during the refusal's
-        // 300ms), its onPressEnd never fires — the latch must not
-        // leak across the seal (Joss, review J-2).
-        if (pressLatch != null || commitInFlight) {
-            pressLatch = null
-            commitInFlight = false
+    // Issue #50 F2 cure (capture door, completed by STOSS-50):
+    // the fbFrozen capture / split fill-in / reset no longer write
+    // snapshot state during composition — they run in this effect,
+    // keyed on every input the capture reads. Semantics kept:
+    // capture-WHEN-KNOWN only (a null count never freezes), the
+    // VM's sealFreeze still outranks this fallback (its session
+    // never captures here), the split still fills in on its own
+    // later emission, and the reset still clears all five fields
+    // when no session is running. The one honest cost: the frozen
+    // values land one frame after the first running composition
+    // instead of inside it — that frame prints UNKNOWN, which is
+    // the truth until the capture exists. (The latch retirement
+    // at this same door was cured by derivation: pressLatchLive
+    // reads null from the sealing frame on, per E-13, and the
+    // LaunchedEffect(isSessionRunning) above clears the storage —
+    // if the slide view detached mid-refusal its onPressEnd never
+    // fires, and the latch still cannot leak across the seal,
+    // Joss review J-2.)
+    LaunchedEffect(
+        isSessionRunning, activeSession?.id, appsCellCount,
+        appsSplit, liveWarrantState, sealFreeze?.sessionId
+    ) {
+        val session = activeSession
+        if (isSessionRunning && session != null) {
+            if (sealFreeze?.sessionId != session.id &&
+                fbFrozenKey != session.id && appsCellCount != null
+            ) {
+                fbFrozenKey = session.id
+                fbFrozenCount = appsCellCount
+                fbFrozenShut = appsSplit?.shut
+                fbFrozenPeek = appsSplit?.peek
+                fbFrozenState = liveWarrantState?.name
+            }
+            if (fbFrozenKey == session.id &&
+                (fbFrozenShut == null || fbFrozenPeek == null) && appsSplit != null
+            ) {
+                fbFrozenShut = appsSplit.shut
+                fbFrozenPeek = appsSplit.peek
+            }
+        } else if (fbFrozenKey != null) {
+            fbFrozenKey = null
+            fbFrozenCount = null
+            fbFrozenShut = null
+            fbFrozenPeek = null
+            fbFrozenState = null
         }
-        if (sealFreeze?.sessionId != activeSession.id &&
-            fbFrozenKey != activeSession.id && appsCellCount != null
-        ) {
-            fbFrozenKey = activeSession.id
-            fbFrozenCount = appsCellCount
-            fbFrozenShut = appsSplit?.shut
-            fbFrozenPeek = appsSplit?.peek
-            fbFrozenState = liveWarrantState?.name
-        }
-        // The split can land an emission after the count; fill it
-        // in on its own pass so the frozen tenant is not silent
-        // for the session's whole life over a one-frame lag.
-        if (fbFrozenKey == activeSession.id &&
-            (fbFrozenShut == null || fbFrozenPeek == null) && appsSplit != null
-        ) {
-            fbFrozenShut = appsSplit.shut
-            fbFrozenPeek = appsSplit.peek
-        }
-    } else if (fbFrozenKey != null) {
-        fbFrozenKey = null
-        fbFrozenCount = null
-        fbFrozenShut = null
-        fbFrozenPeek = null
-        fbFrozenState = null
     }
 
     // The sealFreeze branches must test the freeze's presence, not
@@ -469,25 +649,15 @@ fun TactileDeckScreen(
     }
 
     // Annulment retires the press like the seal does (step 4):
-    // the attempt un-existed, so its frozen print un-exists with
-    // it — and the slide view is ordered home by the reset key
-    // in its update pass below. The retirement is BODY-LEVEL, in
-    // the first composition carrying the new key and before the
-    // derivations below (Emil, cascade review E-13): as a
-    // LaunchedEffect it ran one-to-two compositions late, and the
-    // dead attempt's latched WILL SHUT prints lingered past the
-    // annulment frame. The seal path above retires in-body on its
-    // frame; this is the same law at the other door — and it
-    // covers the latch-frame hand-back too, which increments the
-    // same key (Joss CHARGE 2's fix).
-    var seenArmResetKey by remember { mutableStateOf(armResetKey) }
-    if (armResetKey != seenArmResetKey) {
-        seenArmResetKey = armResetKey
-        if (pressLatch != null || commitInFlight) {
-            pressLatch = null
-            commitInFlight = false
-        }
-    }
+    // Issue #50 F2 cure (reset door) — no composition writes any
+    // more. The latch carries the armResetKey of its own DOWN
+    // frame (latchArmKey, stamped in onPressStart); derivations
+    // read pressLatchLive, which a changed key retires on the
+    // very frame the new key composes (E-13's same-frame law,
+    // kept — derivation, unlike a LaunchedEffect, is not one-to-
+    // two compositions late), and the next DOWN re-stamps the key.
+    // This covers the latch-frame hand-back too, which increments
+    // the same key (Joss CHARGE 2's fix).
 
     // UNA2-04: the frozen verdict owns the running BLOCK cell
     // while the wire agrees the bind held — but the instant the
@@ -513,13 +683,27 @@ fun TactileDeckScreen(
             else -> blockCellFor(frozenState)
         }
     } else idleBlockCell
+    // The latch as derivations may read it: retired by the
+    // seal (session running) and by any arm reset newer than
+    // its DOWN frame — derived, never written in composition.
+    val pressLatchLive: PressLatch? =
+        pressLatch?.takeIf { !isSessionRunning && latchArmKey == armResetKey }
     val appsCell = when {
         isSessionRunning -> {
             if (frozenCount != null) frozenCount.toString() to StripDensity.PASS
             else "UNKNOWN" to StripDensity.UNKNOWN
         }
-        pressLatch != null -> pressLatch!!.appsWord to pressLatch!!.appsDensity
-        appsCellCount != null -> appsCellCount.toString() to StripDensity.PASS
+        pressLatchLive != null -> pressLatchLive.appsWord to pressLatchLive.appsDensity
+        // Issue #98 (R3 arming journey): the count's PASS tone is a
+        // promise those apps WILL be blocked — it may only print at
+        // PASS beside a freshly LIVE warrant, exactly the law the
+        // TIME cell's rider (UNA2-03, above) already obeys. Beside
+        // BLOCK OFF/UNKNOWN the number still prints (it is a count,
+        // not a verdict) but at UNKNOWN density, so the strip's
+        // cells can no longer disagree in one frame.
+        appsCellCount != null -> appsCellCount.toString() to
+            if (warrantPrintState == WarrantState.LIVE) StripDensity.PASS
+            else StripDensity.UNKNOWN
         else -> "UNKNOWN" to StripDensity.UNKNOWN
     }
     val timeCell: Pair<String, StripDensity> = when {
@@ -527,10 +711,15 @@ fun TactileDeckScreen(
             if (activeSession.isStopwatchMode) {
                 "NO END" to StripDensity.PASS
             } else {
-                endsAtText(nowFrame + activeSession.spanRemainingSeconds * 1000L) to StripDensity.PASS
+                // #127 finding 3: fresh wall clock at THIS composition
+                // (the session flow re-emits every second), never the
+                // minute-boundary nowFrame — mixing a minute-stale
+                // clock with a per-second countdown drifted ENDS up
+                // to a minute early and disagreed with the Airlock.
+                endsAtText(ClockText.is24Hour(LocalContext.current), sessionEndsAtMillis(System.currentTimeMillis(), activeSession.spanRemainingSeconds)) to StripDensity.PASS
             }
         }
-        pressLatch != null -> pressLatch!!.timeText to pressLatch!!.timeDensity
+        pressLatchLive != null -> pressLatchLive.timeText to pressLatchLive.timeDensity
         else -> idleTimeCell
     }
     // Issue #4 — the seal bar's face, derived from the SAME cells
@@ -553,7 +742,7 @@ fun TactileDeckScreen(
         }
     )
     val sealNumerals = endsAtNumeralsFor(timeCell.first)
-    val imprintTenant = (if (!isSessionRunning) pressLatch?.tenant else null) ?: imprintTenantText(
+    val imprintTenant = pressLatchLive?.tenant ?: imprintTenantText(
         isSealed = isSessionRunning,
         shut = if (isSessionRunning) frozenShut else appsSplit?.shut,
         peek = if (isSessionRunning) frozenPeek else appsSplit?.peek,
@@ -566,13 +755,23 @@ fun TactileDeckScreen(
         wireNow = liveWarrantState
     )
 
+    // Issue #143 (F6): the day/night step cross-fades at the
+    // root instead of cutting in one frame — both flips (the
+    // ground step at session start, the release when the finish
+    // clears) pass through this one animated colour.
+    val animatedBackground by androidx.compose.animation.animateColorAsState(
+        targetValue = scheme.background,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 450),
+        label = "deckBackgroundNightFade"
+    )
+
     // Wrapper (Ren): the scroll column takes the flexible space and the
     // commit bar is PINNED beneath it — adding tasks can grow the content
     // forever and the start control can never be pushed off-screen again.
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(scheme.background)
+            .background(animatedBackground)
             .testTag("tactile_deck_screen")
     ) {
     val deckScrollState = rememberScrollState()
@@ -587,6 +786,33 @@ fun TactileDeckScreen(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // Issue #70 F3 — the first-run primer (Session-Zero order):
+        // three lines on the FIRST screen, in plain words, shown
+        // only while the warrant is OFF and no session has ever
+        // run; gone forever after the first session. No modal, no
+        // gate — arming works exactly as before; this only answers
+        // the three questions a first morning asks.
+        if (deckPrimerPending && activeSession == null &&
+            deckWarrant?.state == WarrantState.OFF
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Monolith shuts the apps you name while a study session runs.",
+                    style = BodyTextStyle,
+                    color = scheme.onBackground
+                )
+                Text(
+                    text = "Two switches make it work. Both live in PARK, at the far end of the rail.",
+                    style = BodyTextStyle,
+                    color = scheme.onBackground
+                )
+                Text(
+                    text = "Nothing leaves this phone.",
+                    style = BodyTextStyle,
+                    color = scheme.onSurfaceVariant
+                )
+            }
+        }
         // =====================================================================
         // SECTION 1: THE INSTRUMENT (Ren — hero card and dial are ONE object:
         // the readout lives in the same panel as the wheel that sets it.
@@ -608,18 +834,51 @@ fun TactileDeckScreen(
                 // the blur on its own re-ease, peaking mid-shot and
                 // gone at Settle. At rest every term is identity.
                 .then(
-                    if (shotActive && shot != null) {
-                        val vt = shot.vertigoT
-                        val blurDp = (6f * 4f * shot.blurT * (1f - shot.blurT)).dp
-                        Modifier
-                            .graphicsLayer {
-                                scaleX = 1f - 0.06f * vt
-                                scaleY = 1f - 0.06f * vt
-                                // Issue #6 F15: the ground rise is
-                                // DELETED, not moved (verdict) — the
-                                // page recedes, it does not climb.
+                        // #116 finding 4 rides the same gate: at
+                        // night the shot is CALM (nightCalm) — the
+                        // vertigo/blur branch is skipped entirely and
+                        // the seal lands without the room receding.
+                    if (shotActive && shot != null && !shot.nightCalm) {
+                        // Issue #50 F3 cure: vertigoT/blurT are read
+                        // inside the graphicsLayer block (draw phase),
+                        // so the 1050ms shot no longer recomposes the
+                        // whole screen every frame. The blur rides the
+                        // layer's renderEffect on API 31+; below that
+                        // the composition-read Modifier.blur remains
+                        // as the documented fallback. (Issue #6 F15
+                        // stands: no translationY — the page recedes,
+                        // it does not climb.)
+                        Modifier.graphicsLayer {
+                            val vt = shot.vertigoT
+                            scaleX = 1f - 0.06f * vt
+                            scaleY = 1f - 0.06f * vt
+                            if (android.os.Build.VERSION.SDK_INT >=
+                                android.os.Build.VERSION_CODES.S
+                            ) {
+                                val b = if (lowRamDevice) 0f else 24f * shot.blurT * (1f - shot.blurT)
+                                renderEffect = if (b > 0f) {
+                                    android.graphics.RenderEffect
+                                        .createBlurEffect(
+                                            b.dp.toPx(), b.dp.toPx(),
+                                            android.graphics.Shader.TileMode.CLAMP
+                                        )
+                                        .asComposeRenderEffect()
+                                } else {
+                                    null
+                                }
                             }
-                            .then(if (blurDp > 0.dp) Modifier.blur(blurDp) else Modifier)
+                        }.then(
+                            if (android.os.Build.VERSION.SDK_INT <
+                                android.os.Build.VERSION_CODES.S
+                            ) {
+                                val blurDp =
+                                    (if (lowRamDevice) 0f else 6f * 4f * shot.blurT * (1f - shot.blurT)).dp
+                                if (blurDp > 0.dp) Modifier.blur(blurDp)
+                                else Modifier
+                            } else {
+                                Modifier
+                            }
+                        )
                     } else {
                         Modifier
                     }
@@ -635,11 +894,30 @@ fun TactileDeckScreen(
                     // The Ellipsis fix (Wren): the engine runs the
                     // 10-minute Safe Breaks between blocks and no screen
                     // said so - the break was invisible. During a break
-                    // the eyebrow prints the word and the whole minutes
+                    // the eyebrow prints the word and the exact clock
                     // left; the break is a fact, so it renders.
                     text = when {
+                        // Exact seconds (Audit R3, safe-break-lived
+                        // #3): the old ceiling-minutes print read
+                        // "1 MIN" for the break's whole final minute
+                        // and then the next block had already
+                        // started — a countdown that cannot be used
+                        // to leave on time is decoration.
                         isSessionRunning && activeSession.isInSafeBreak ->
-                            "BREAK · ${(activeSession.safeBreakSecondsRemaining + 59) / 60} MIN"
+                            // R3b #164 F3 naming law (main) + #104 lane's
+                            // precise countdown: the free automatic pause is
+                            // the SAFE BREAK — never the bare word BREAK,
+                            // which belongs to the once-a-week emergency valve.
+                            breakEyebrowText(activeSession.safeBreakSecondsRemaining)
+                        // Audit R3b #146: a user returning late to a
+                        // later block is told when that block began —
+                        // startWallTimeMillis is re-anchored at the
+                        // break flip, so it IS the block's start; the
+                        // hero's elapsed readout beside it says how
+                        // far in he is. No more silent fait accompli.
+                        isSessionRunning && activeSession.currentBlockIndex > 1 ->
+                            "BLOCK ${activeSession.currentBlockIndex} · SINCE " +
+                                ClockText.timeOfDay(ClockText.is24Hour(LocalContext.current), activeSession.startWallTimeMillis)
                         // Issue #6 F4: SESSION RUNNING / TOTAL were
                         // wallpaper and die. A routine-born session
                         // prints its name; a hand-armed running
@@ -653,7 +931,15 @@ fun TactileDeckScreen(
                         // Idle prints the recipe — the hero's
                         // arithmetic, explained on the face that
                         // charges it (audit §3).
-                        else -> "$studyBlocksCount × $dialMinutes + BREAKS"
+                        else -> if (studyBlocksCount > 1) {
+                            "$studyBlocksCount × $dialMinutes + BREAKS"
+                        } else {
+                            // One block has no break (breaks live
+                            // BETWEEN blocks — totalSpanMinutes
+                            // prices (count − 1) × 10): the recipe
+                            // must not promise one (finisher pass).
+                            "$studyBlocksCount × $dialMinutes"
+                        }
                     },
                     fontFamily = AnonymousProFamily,
                     fontSize = 10.sp,
@@ -668,6 +954,28 @@ fun TactileDeckScreen(
                 // per fact.
             }
 
+            // Issue #135 F2: the LAST RECEIPT door, on the eyebrow's
+            // own line of the room — a quiet mono affordance, shown
+            // only when no receipt is standing and no session runs.
+            if (!isSessionRunning && receiptState == null && lastReceiptSessionId != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Text(
+                        text = "LAST RECEIPT",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 10.sp,
+                        letterSpacing = 2.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clickable { onShowLastReceipt(lastReceiptSessionId) }
+                            .testTag("last_receipt_button")
+                            .padding(vertical = 4.dp)
+                    )
+                }
+            }
+
             // The hero states the TOTAL, once (one fact, one rendering).
             // Span classes (BEYOND W3 / Aldo): N = "50 MIN", H = "2H 30M",
             // W = "FLOW" - digits at H2 72, units at H3 50 on the shared
@@ -680,18 +988,18 @@ fun TactileDeckScreen(
                 isStopwatchMode -> buildAnnotatedString { append("FLOW") }
                 totalSpanMinutes < 60 -> buildAnnotatedString {
                     append(totalSpanMinutes.toString())
-                    withStyle(SpanStyle(fontSize = 50.sp, letterSpacing = (-1.5).sp)) { append(" MIN") }
+                    withStyle(SpanStyle(fontSize = DisplayUnitTextStyle.fontSize, letterSpacing = DisplayUnitTextStyle.letterSpacing)) { append(" MIN") }
                 }
                 else -> buildAnnotatedString {
                     append((totalSpanMinutes / 60).toString())
-                    withStyle(SpanStyle(fontSize = 50.sp, letterSpacing = (-1.5).sp)) { append("H ") }
+                    withStyle(SpanStyle(fontSize = DisplayUnitTextStyle.fontSize, letterSpacing = DisplayUnitTextStyle.letterSpacing)) { append("H ") }
                     append(String.format(Locale.US, "%02d", totalSpanMinutes % 60))
-                    withStyle(SpanStyle(fontSize = 50.sp, letterSpacing = (-1.5).sp)) { append("M") }
+                    withStyle(SpanStyle(fontSize = DisplayUnitTextStyle.fontSize, letterSpacing = DisplayUnitTextStyle.letterSpacing)) { append("M") }
                 }
             }
             val heroTracking = if (!showRunningForm && isStopwatchMode) (-0.5).sp else (-2.0).sp
-            val heroGlyph = if (effectiveNight) Color(0xFFEDE3D8) else scheme.onBackground
-            val heroShadowGhost = if (effectiveNight) Color(0x80000000) else Color(0x99D8D1CB)
+            val heroGlyph = if (effectiveNight) NightColorOnSurface else scheme.onBackground
+            val heroShadowGhost = if (effectiveNight) TokenTrueBlack.copy(alpha = 0.5f) else TokenColorSurfaceVariant.copy(alpha = 0.6f)
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 // Issue #6 F10 — SINGLE-PRESS: the catch ghost dies;
                 // ONE shadow ghost survives, and ghosts are OFF on
@@ -702,13 +1010,63 @@ fun TactileDeckScreen(
                         text = heroAnnotated,
                         style = DialClockTextStyle.copy(color = heroShadowGhost, letterSpacing = heroTracking),
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.offset(y = (-1).dp)
+                        modifier = Modifier.offset(y = (-1).dp).clearAndSetSemantics {}
                     )
                 }
                 Text(
                     text = heroAnnotated,
                     style = DialClockTextStyle.copy(color = heroGlyph, letterSpacing = heroTracking),
                     textAlign = TextAlign.Center
+                )
+            }
+
+            // #127 finding 1: the hero's number is per-BLOCK (or, in a
+            // break, the break's — main's #148 derivation above); the
+            // strip's ENDS and the desk clock are per-SESSION. Both are
+            // true, so the hero now carries its scope in print directly
+            // under the digits: a glance reads which truth the big
+            // number is, and the session's own remaining time beside
+            // it. Same Anonymous Pro eyebrow register as the card's
+            // other print — no new surface, no redesign.
+            if (showRunningForm && activeSession != null) {
+                Text(
+                    text = activeSession.glanceCaption,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().testTag("deck_hero_glance_caption")
+                )
+            }
+
+            if (!showRunningForm && !isStopwatchMode) {
+                // Issue #98 (R3 arming journey): the multiplier,
+                // printed as a reading — the hero above states only
+                // the total span, and the wheel's hub carries the
+                // count as geometry alone (1,2,3,1,2,3,4,2 — 5 blocks
+                // read like 1). This line is the count's numeral
+                // home: "2 BLOCKS × 50 MIN", plus the breaks priced
+                // between them, in the same frame as the total it
+                // multiplies into. It recomposes with every hub tap,
+                // so cycling the count can no longer change the
+                // session by ~60 minutes in silence.
+                Text(
+                    text = if (studyBlocksCount > 1) {
+                        "$studyBlocksCount BLOCKS × $dialMinutes MIN · " +
+                            "${studyBlocksCount - 1} × 10 MIN BREAK BETWEEN"
+                    } else {
+                        "1 BLOCK × $dialMinutes MIN"
+                    },
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("blocks_reading")
                 )
             }
 
@@ -730,8 +1088,17 @@ fun TactileDeckScreen(
                         view.soundEngine = soundEngine
                         view.minutesValue = dialMinutes
                         view.studyBlocksCount = studyBlocksCount
-                        view.isLockedSession = shotActive
+                        // Issue #126 F2: the wheel is a session
+                        // parameter — while an attempt is proving,
+                        // its parameters are already captured by
+                        // onLatch, so a turn here would silently
+                        // not apply. Lock it for the wait's span
+                        // (the view consumes and drops, its sealed
+                        // grammar) instead of letting it spin free
+                        // and lie about being settable.
+                        view.isLockedSession = shotActive || provingThisSession
                         view.onMinutesChanged = { mins -> onDialMinutesChanged(mins) }
+                        view.onSeatTargetChanged = { seat -> wheelSeatPreview = seat }
                         view.onCycleBlocksCount = {
                             val nextBlocks = if (studyBlocksCount >= 8) 1 else studyBlocksCount + 1
                             onSetStudyBlocksCount(nextBlocks)
@@ -753,27 +1120,248 @@ fun TactileDeckScreen(
                     // hairline edge reads pressable; active state = ink fill.
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(12.dp))
                             .background(if (isStopwatchMode) inkControlFill() else scheme.surfaceVariant)
-                            .border(1.dp, if (isStopwatchMode) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(8.dp))
-                            .clickable {
+                            .border(1.dp, if (isStopwatchMode) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(12.dp))
+                            // Issue #126 F2: FLOW is the other
+                            // session parameter on this card — the
+                            // same proving lock as the wheel's.
+                            .clickable(enabled = !provingThisSession) {
                                 onSelectStudyPreset(StudyModePreset.STOPWATCH_FLOW)
                                 onDialMinutesChanged(5)
                             }
-                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                            .padding(horizontal = 10.dp)
                     ) {
-                        Text(
-                            text = "FLOW",
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = if (isStopwatchMode) onInkControlFill() else scheme.onBackground
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                // Issue #70 F5: the target measure
+                                // lives on the text block itself —
+                                // the strip the thumb sees IS the
+                                // target it hits (was: 5dp vertical
+                                // padding on the box, an under-48dp
+                                // target under an 11sp label).
+                                modifier = Modifier.padding(vertical = 13.dp),
+                                text = stringResource(R.string.deck_flow),
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = if (isStopwatchMode) onInkControlFill() else scheme.onBackground
+                            )
+                            // Audit R3b #147: the preset's one law —
+                            // its 20-minute floor — printed on the
+                            // key itself, from the preset's own
+                            // badge constant, before anyone arms.
+                            // It was defined in the catalogue and
+                            // rendered nowhere.
+                            Text(
+                                text = StudyModePreset.STOPWATCH_FLOW.badge.uppercase(Locale.US),
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 8.5.sp,
+                                letterSpacing = 0.5.sp,
+                                color = if (isStopwatchMode) {
+                                    onInkControlFill().copy(alpha = 0.75f)
+                                } else {
+                                    scheme.onSurfaceVariant
+                                }
+                            )
+                        }
                     }
                     // Pia: the FINISHES line dies here — TIME's only
                     // home is the strip's TIME cell (a pure function;
                     // this row's copy slid with every recomposition).
+                }
+                // Issue #123 (dial-precision), the printed truth under
+                // the wheel. Three facts the instrument used to leave
+                // to inference, now stated in words on the Deck:
+                // (a) the dial's number is PER BLOCK and the hero's is
+                // the TOTAL — the breakdown line prints both, plus the
+                // breaks between blocks, so 50 x 2 can never again
+                // read as 50 while meaning 110;
+                // (b) the block count is a numeral + word here, not
+                // hub geometry alone — a hub tap that changes it
+                // changes THIS line in the same frame, nothing silent;
+                // (c) while the wheel coasts, the seat it has committed
+                // to prints as LANDS — where you let go is shown
+                // before you land there.
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = when {
+                            isStopwatchMode -> "FLOW · OPEN SESSION · NO TOTAL"
+                            studyBlocksCount <= 1 -> "$dialMinutes MIN × 1 BLOCK = $totalSpanMinutes MIN TOTAL"
+                            else -> "$dialMinutes MIN × $studyBlocksCount BLOCKS + ${(studyBlocksCount - 1) * 10} MIN BREAKS = " +
+                                if (totalSpanMinutes < 60) "$totalSpanMinutes MIN TOTAL"
+                                else "${totalSpanMinutes / 60}H ${String.format(Locale.US, "%02d", totalSpanMinutes % 60)}M TOTAL"
+                        },
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        letterSpacing = 1.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("dial_breakdown_line")
+                    )
+                    wheelSeatPreview?.let { seat ->
+                        Text(
+                            text = if (seat < 10) "LANDS FLOW" else "LANDS $seat",
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onBackground,
+                            modifier = Modifier.testTag("dial_seat_preview")
+                        )
+                    }
+                    // Precise entry, the wheel's second grip: −/+ step
+                    // exactly one minute per tap (long, deliberate
+                    // steps for the 47 the rim used to refuse), and
+                    // TYPE opens a numeric field for the exact value.
+                    // The wheel stays the instrument; these are its
+                    // fine adjustment, not a replacement.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(scheme.surfaceVariant)
+                                .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                .clickable {
+                                    if (dialMinutes > 10) onDialMinutesChanged(dialMinutes - 1)
+                                }
+                                .padding(horizontal = 14.dp, vertical = 5.dp)
+                                .testTag("dial_step_down")
+                        ) {
+                            Text(
+                                text = "−1",
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onBackground
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (preciseEntryOpen) inkControlFill() else scheme.surfaceVariant)
+                                .border(1.dp, if (preciseEntryOpen) inkControlFill() else scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                .clickable {
+                                    preciseEntryText = if (dialMinutes >= 10) dialMinutes.toString() else ""
+                                    preciseEntryOpen = !preciseEntryOpen
+                                }
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                                .testTag("dial_precise_entry_toggle")
+                        ) {
+                            Text(
+                                text = "TYPE MINUTES",
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = if (preciseEntryOpen) onInkControlFill() else scheme.onBackground
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(scheme.surfaceVariant)
+                                .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                .clickable {
+                                    if (dialMinutes < 10) onDialMinutesChanged(10)
+                                    else if (dialMinutes < 180) onDialMinutesChanged(dialMinutes + 1)
+                                }
+                                .padding(horizontal = 14.dp, vertical = 5.dp)
+                                .testTag("dial_step_up")
+                        ) {
+                            Text(
+                                text = "+1",
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onBackground
+                            )
+                        }
+                    }
+                    if (preciseEntryOpen) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(scheme.surfaceVariant)
+                                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 10.dp, vertical = 7.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                if (preciseEntryText.isEmpty()) {
+                                    Text(
+                                        text = "10–180",
+                                        fontFamily = AnonymousProFamily,
+                                        fontSize = 13.sp,
+                                        color = scheme.onSurfaceVariant
+                                    )
+                                }
+                                BasicTextField(
+                                    value = preciseEntryText,
+                                    onValueChange = { raw ->
+                                        preciseEntryText = raw.filter { it.isDigit() }.take(3)
+                                    },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Number,
+                                        imeAction = ImeAction.Done
+                                    ),
+                                    keyboardActions = KeyboardActions(onDone = {
+                                        preciseEntryText.toIntOrNull()?.let { entered ->
+                                            onDialMinutesChanged(entered.coerceIn(10, 180))
+                                        }
+                                        preciseEntryOpen = false
+                                    }),
+                                    textStyle = TextStyle(
+                                        fontFamily = AnonymousProFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = scheme.onBackground
+                                    ),
+                                    cursorBrush = SolidColor(scheme.onBackground),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("dial_precise_entry_input")
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(inkControlFill())
+                                    .clickable {
+                                        preciseEntryText.toIntOrNull()?.let { entered ->
+                                            onDialMinutesChanged(entered.coerceIn(10, 180))
+                                        }
+                                        preciseEntryOpen = false
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 7.dp)
+                                    .testTag("dial_precise_entry_set")
+                            ) {
+                                Text(
+                                    text = "SET",
+                                    fontFamily = AnonymousProFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    letterSpacing = 1.sp,
+                                    color = onInkControlFill()
+                                )
+                            }
+                        }
+                    }
                 }
                 }
             } else {
@@ -808,120 +1396,40 @@ fun TactileDeckScreen(
             }
         }
 
+        // Issue #143 F4: the DND gate's line stands under the
+        // instrument — set at the arm (what the seal will do
+        // about the phone's voice), replaced at the seal (what
+        // it did), gone at the finish. Absent when the gate has
+        // nothing truthful to print.
+        if (dndLine != null) {
+            Text(
+                text = dndLine,
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp)
+                    .testTag("dnd_gate_line")
+            )
+        }
+
         // =====================================================================
         // SECTION 2: THE TASK — one quiet line (Ren). Sub-steps behind a tap.
         // =====================================================================
         if (activeTask != null) {
-            var stepsExpanded by remember { mutableStateOf(false) }
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        text = "NOW",
-                        fontFamily = AnonymousProFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 10.5.sp,
-                        letterSpacing = 1.sp,
-                        color = scheme.onBackground
-                    )
-                    Text(
-                        text = activeTask.title,
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 15.sp,
-                        color = scheme.onBackground,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .weight(1f)
-                            .then(
-                                if (activeTask.subSteps.isNotEmpty() && !shotActive) {
-                                    Modifier.clickable { stepsExpanded = !stepsExpanded }
-                                } else {
-                                    Modifier
-                                }
-                            )
-                    )
-                    // DONE is a verb, so it wears an action's body
-                    // (ESR-07): the same raised key-cap as the FLOW
-                    // key — bare mono text beside the static QUEUE
-                    // count read as print, declaring an unfinished
-                    // task done. (Truth patch, re-applied at the
-                    // slide merge over this lane's older Deck.)
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(scheme.surfaceVariant)
-                            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
-                            // Input death (Zug-II §4.6): the task
-                            // verbs' HANDLERS are removed by state
-                            // during the shot — not greyed, gone.
-                            .clickable(enabled = !shotActive) { onCompleteActiveTask(activeTask.id) }
-                            .padding(horizontal = 10.dp, vertical = 5.dp)
-                    ) {
-                        Text(
-                            text = "DONE",
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onBackground
-                        )
-                    }
-                    Text(
-                        text = "QUEUE ${queuedTasks.size}",
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier.then(
-                            if (!shotActive) Modifier.clickable { onOpenTaskSequencer() } else Modifier
-                        )
-                    )
-                }
-                if (stepsExpanded && activeTask.subSteps.isNotEmpty()) {
-                    activeTask.subSteps.forEachIndexed { idx, step ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(enabled = !shotActive) { onToggleTaskSubStep(activeTask.id, idx) }
-                                .padding(vertical = 3.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                // The shared two-digit voice (DRW-08,
-                                // Truth Car 2): the tenth sub-step
-                                // prints "10", never "010" — one
-                                // formatter cures Deck, Tasks leaf,
-                                // and Drawer detail together.
-                                text = com.example.data.twoDigitCount(idx + 1),
-                                fontFamily = AnonymousProFamily,
-                                fontSize = 11.sp,
-                                // E5b B3 (Horiz §2): a done step's
-                                // numeral exits the accent at the
-                                // seal — from exit phase 1 it reads
-                                // as ground print, permanently for
-                                // this session's frame.
-                                color = if (step.isDone && exitPhase < 1) {
-                                    scheme.primaryContainer
-                                } else {
-                                    scheme.onSurfaceVariant
-                                }
-                            )
-                            Text(
-                                text = step.title,
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontSize = 13.sp,
-                                color = if (step.isDone) scheme.onSurfaceVariant else scheme.onBackground,
-                                textDecoration = if (step.isDone) TextDecoration.LineThrough else TextDecoration.None
-                            )
-                        }
-                    }
-                }
-            }
+            DeckTaskSection(
+                task = activeTask,
+                queuedCount = queuedTasks.size,
+                shotActive = shotActive,
+                isSessionRunning = isSessionRunning,
+                exitPhaseProvider = { exitPhase },
+                onCompleteActiveTask = onCompleteActiveTask,
+                onOpenTaskSequencer = onOpenTaskSequencer,
+                onToggleTaskSubStep = onToggleTaskSubStep,
+                activeTaskFromYesterday = activeTaskFromYesterday
+            )
         }
 
         // =====================================================================
@@ -969,6 +1477,27 @@ fun TactileDeckScreen(
             }
         }
 
+        // Audit R3 #113, finding 1: the HELD door outlives the
+        // session. The chip above is seated only while a session
+        // runs, so the moment a session ended — watched or not —
+        // the captured notifications became unreachable: no screen
+        // could open the digest again, and even its clear/delete
+        // verbs live inside that sheet. On the idle Deck, when
+        // anything stands captured, the same chip stands here
+        // alone: the count is the fact, the tap opens the same
+        // digest (unsealed opens are live mode — the VM clears
+        // any latched freeze — and the repository's sealed gate
+        // no longer refuses the verbs). An empty capture earns no
+        // chip: a door to nothing would be its own small lie.
+        if (!isSessionRunning && capturedNotificationsCount > 0) {
+            BlockitActionChip(
+                wordLabel = "HELD",
+                monoBadge = capturedNotificationsCount.toString(),
+                onClick = onOpenNotificationDigest,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
     }
         // =====================================================================
         // SECTION 5: THE PINNED STACK (Slice D) — outside the scroll:
@@ -996,7 +1525,15 @@ fun TactileDeckScreen(
                     .height(72.dp),
                 contentAlignment = Alignment.Center
             ) {
-                if (!isSessionRunning || shotActive || heldFinish || receiptState != null) {
+                // Issue #125 (armed-wrong F3): during the grace
+                // window the ABORT chip owns this address even while
+                // the seal shot is still detaining the slide — the
+                // free exit must not be physically absent for the
+                // first ~1050ms of its own 10s. The Δy = 0 address
+                // discipline is unchanged: same Box, same chip.
+                val graceChipDue = isSessionRunning && !heldFinish && receiptState == null &&
+                    activeSession != null && activeSession.elapsedSeconds <= 10
+                if ((!isSessionRunning || shotActive || heldFinish || receiptState != null) && !graceChipDue) {
                     // The slide holds this address through the seal
                     // (as the seated ghost), through the finish's
                     // detention, and through its own return — the
@@ -1025,6 +1562,7 @@ fun TactileDeckScreen(
                                 // The latch captures from the slide's
                                 // own DOWN-frame read (Emil E-4), never
                                 // from this screen's async flow.
+                                latchArmKey = armResetKey
                                 pressLatch = PressLatch(
                                     tenant = imprintTenantText(
                                         isSealed = false,
@@ -1052,26 +1590,97 @@ fun TactileDeckScreen(
                             .testTag("slide_to_start_view")
                     )
                 } else {
-                    val withinGraceWindow = activeSession != null && activeSession.elapsedSeconds <= 10
+                    val withinGraceWindow = activeSession != null &&
+                        activeSession.elapsedSeconds <= MonolithRepository.GRACE_WINDOW_SECONDS
+                    // Issue #103 F3: past the stopwatch 20-minute
+                    // floor, this same tap is a FREE, instant,
+                    // successful finish — no hold, no token spent.
+                    // The chip must say so; it may not keep wearing
+                    // the valve's label and price.
+                    val stopwatchFloorMet = activeSession?.isStopwatchMode == true &&
+                        activeSession.elapsedSeconds >= MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
+                    // Issue #98 (merged): the badge counts the
+                    // seconds the user can actually still use — 10
+                    // at the settle frame, 1 on the last — derived
+                    // from the one constant the repository write
+                    // enforces (issue #103 F2).
+                    val graceBadge = "${(MonolithRepository.GRACE_WINDOW_SECONDS + 1 - (activeSession?.elapsedSeconds ?: 0)).coerceIn(1, MonolithRepository.GRACE_WINDOW_SECONDS)}s"
                     if (withinGraceWindow) {
+                        if (isActiveRoutineJudged) {
+                            // Issue #103 F1 / R3b #149: a non-SLEEP
+                            // routine session never takes the free
+                            // grace path — the repository diverts it
+                            // to its judging funnel (MISSED / PARTIAL
+                            // / ATTENDED). Same tap, same funnel (no
+                            // redesign under the routines freeze) —
+                            // the chip names the real cost instead of
+                            // promising a free grace cancel.
+                            BlockitActionChip(
+                                wordLabel = "END ROUTINE · WILL BE JUDGED",
+                                monoBadge = graceBadge,
+                                isPrimaryInk = true,
+                                onClick = onCancelWithinGraceWindow,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(72.dp),
+                                testTag = "routine_judged_end_button"
+                            )
+                        } else {
+                            BlockitActionChip(
+                                wordLabel = "GRACE WINDOW ABORT",
+                                monoBadge = graceBadge,
+                                isPrimaryInk = true,
+                                onClick = onCancelWithinGraceWindow,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(72.dp),
+                                testTag = "grace_abort_button"
+                            )
+                        }
+                    } else if (stopwatchFloorMet) {
                         BlockitActionChip(
-                            wordLabel = "GRACE WINDOW ABORT",
-                            monoBadge = "${10 - (activeSession?.elapsedSeconds ?: 0)}s",
-                            // E5b B6 (Horiz §2): the grace chip
-                            // exits the accent with the rest — it
-                            // takes the primary-ink form, and its
-                            // badge follows the app-wide badge rule.
+                            wordLabel = "FINISH STOPWATCH · NO BREAK SPENT",
+                            monoBadge = "PAST 20M FLOOR",
                             isPrimaryInk = true,
-                            onClick = onCancelWithinGraceWindow,
+                            onClick = onRequestDisarm,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(72.dp), // Issue #6 F6: the chair fills its 72dp zone in every state
-                            testTag = "grace_abort_button"
+                                .height(72.dp),
+                            testTag = "stopwatch_finish_button"
                         )
                     } else {
+                        // Audit R3b #147: past the stopwatch floor
+                        // this same tap is a clean, free finish —
+                        // requestDisarmChallenge completes the
+                        // session and never opens the valve. The
+                        // label says which door the tap opens:
+                        // FINISH SESSION with no token badge once
+                        // the floor is banked; the valve's true
+                        // name and price everywhere else.
+                        val stopwatchFloorMet = activeSession != null &&
+                            activeSession.isStopwatchMode &&
+                            activeSession.elapsedSeconds >=
+                                com.example.data.MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
                         BlockitActionChip(
-                            wordLabel = "EMERGENCY BREAK VALVE (60S HOLD)",
-                            monoBadge = "$weeklyEmergencyTokensRemaining/1 WEEK",
+                            wordLabel = if (stopwatchFloorMet) {
+                                "FINISH SESSION"
+                            } else {
+                                // Issue #114, finding 5: the door's
+                                // one name — EMERGENCY BREAK, the
+                                // same words its own overlay carries.
+                                "EMERGENCY BREAK (60S HOLD)"
+                            },
+                            // R3b #163 F4: a spent valve used to wear
+                            // the same badge as a live one ("0/1 WEEK"
+                            // read as a state, not a wait). The spent
+                            // badge now names the wait itself — the
+                            // week turns on Monday (MonolithWeek).
+                            monoBadge = when {
+                                stopwatchFloorMet -> ""
+                                weeklyEmergencyTokensRemaining > 0 ->
+                                    "$weeklyEmergencyTokensRemaining/1 WEEK"
+                                else -> "0/1 WEEK · BACK MONDAY"
+                            },
                             isPrimaryInk = true,
                             onClick = onRequestDisarm,
                             modifier = Modifier
@@ -1079,23 +1688,120 @@ fun TactileDeckScreen(
                                 .height(72.dp), // Issue #6 F6: the chair fills its 72dp zone in every state
                             testTag = "request_disarm_button"
                         )
+                        Text(
+                            text = emergencyBreakPriceText(weeklyEmergencyTokensRemaining),
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+                            modifier = Modifier.testTag("emergency_break_price")
+                        )
                     }
                 }
+            }
+            // Audit R3b #149: the grace-to-valve cliff, named. The
+            // slot above swaps its chip at 10 seconds with nothing
+            // saying the door changed; this standing line states
+            // both states, in both states — in-window it counts the
+            // free cancel down, past it the valve's terms stand
+            // printed before they are ever needed.
+            if (activeSession != null) {
+                val graceLeft = 10 - activeSession.elapsedSeconds
+                Text(
+                    text = when {
+                        graceLeft > 0 && activeSession.routineId != null ->
+                            "GRACE ${graceLeft}S — ABORT IS BOOKED BY THE ROUTINE · AFTER: VALVE, 60S HOLD"
+                        graceLeft > 0 ->
+                            "GRACE ${graceLeft}S — CANCEL FREE, NOTHING BOOKED · AFTER: VALVE, 60S HOLD"
+                        // R3b #163 F4 (fix-forward): the spent state
+                        // names its wait here too, exactly as the
+                        // valve chip's badge does — the week turns
+                        // on Monday (MonolithWeek).
+                        else ->
+                            "GRACE SPENT · VALVE: 60S HOLD · " +
+                                if (weeklyEmergencyTokensRemaining > 0) {
+                                    "$weeklyEmergencyTokensRemaining/1 WEEK"
+                                } else {
+                                    "0/1 WEEK · BACK MONDAY"
+                                }
+                    },
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 9.5.sp,
+                    letterSpacing = 0.8.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+            // Issue #283 (R5 supplement): the extend verb. A running
+            // session used to offer only endings (grace abort, the
+            // valve); the original's +15 lives here, under the
+            // standing grace/valve line, at the same 72dp chair
+            // height as the other session verbs. The repository
+            // caps it (no sale at 60+ minutes remaining).
+            if (activeSession != null && !activeSession.isStopwatchMode) {
+                Spacer(Modifier.height(8.dp))
+                BlockitActionChip(
+                    wordLabel = "EXTEND SESSION",
+                    monoBadge = "+15 MIN",
+                    isPrimaryInk = false,
+                    onClick = onExtendSession,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(72.dp),
+                    testTag = "extend_session_button"
+                )
+            }
+            // Issue #261: the Safe Break's missing door. Until this
+            // chip a break could only BEGIN at a block flip — the
+            // man inside a long block had no verb for the pause he
+            // needed mid-block. The chip stands for exactly the
+            // in-block life (active, timed, not already in a
+            // break) beside the extend verb; the tap freezes the
+            // block and enters the break, and the break's own
+            // END BREAK chip (utilities room) plus its timer bring
+            // him back to the SAME block — see
+            // startSafeBreakMidBlock in the repository. The badge
+            // prints the length in force today, no more: choosing
+            // the length is the parked doctrine half of #261.
+            if (activeSession != null && activeSession.isActive &&
+                !activeSession.isInSafeBreak && !activeSession.isStopwatchMode
+            ) {
+                Spacer(Modifier.height(8.dp))
+                BlockitActionChip(
+                    wordLabel = "TAKE SAFE BREAK",
+                    monoBadge = "${com.example.data.MonolithRepository.SAFE_BREAK_DURATION_SECONDS / 60} MIN",
+                    isPrimaryInk = false,
+                    onClick = onStartSafeBreak,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(72.dp),
+                    testTag = "take_safe_break_button"
+                )
             }
             Spacer(Modifier.height(8.dp))
             RefusalSentenceSlot(
                 // The slot's tenant by phase (step 4): a JAMMED
-                // attempt names its unanswering link; PROVING is
-                // silent (the machine is working, and the wire's
-                // standing sentence would be a second rendering of
-                // a fact the cascade is already judging); an
+                // attempt names its unanswering link; PROVING names
+                // itself with its live proved count (issues #98 +
+                // #126 F2 — the silent black box is closed: real
+                // blocking already runs during proving, so the frame
+                // must say the machine is checking, never render the
+                // idle form as if nothing had happened); an
                 // annulment's past-tense sentence stands until the
-                // controller clears it; a running session is
-                // silent; otherwise the wire's standing sentence.
+                // controller clears it; otherwise the wire's
+                // standing sentence. A RUNNING session used to be
+                // forced silent here (Audit R3 #113, finding 2) —
+                // exactly the case where the sentence matters most:
+                // refusalSentenceFor reads the LIVE warrant and
+                // returns null while the wire is whole, so the
+                // running Deck stays silent until a permission it
+                // depends on actually dies, then names it with its
+                // FIX verb. The stale guard inside
+                // refusalSentenceFor(warrant, nowMono) still owns
+                // the present tense: a stale read prints nothing.
                 sentence = when {
-                    armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase)
-                    armPhase is ArmPhase.Proving -> null
-                    isSessionRunning -> null
+                    armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase, nowMono)
+                    armPhase is ArmPhase.Proving -> provingSentenceFor(armPhase)
+                    isSessionRunning -> refusalSentenceFor(deckWarrant, nowMono)
                     armSentence != null -> armSentence
                     else -> refusalSentenceFor(deckWarrant, nowMono)
                 },
@@ -1129,6 +1835,181 @@ fun TactileDeckScreen(
 }
 
 /**
+ * SECTION 2 as its own composition scope (issue #50 F3/F5):
+ * the seal-shot's exitPhase ticks recompose this section only,
+ * never the whole Deck, and the sub-step expansion state is
+ * keyed by task id so it cannot bleed across tasks.
+ */
+@Composable
+private fun DeckTaskSection(
+    task: FocusTaskEntity,
+    queuedCount: Int,
+    shotActive: Boolean,
+    isSessionRunning: Boolean,
+    exitPhaseProvider: () -> Int,
+    onCompleteActiveTask: (Int) -> Unit,
+    onOpenTaskSequencer: () -> Unit,
+    onToggleTaskSubStep: (Int, Int) -> Unit,
+    // R3b #163 F5: true when the NOW task already stood as
+    // yesterday's active task (the ViewModel's day-boundary note).
+    activeTaskFromYesterday: Boolean = false
+) {
+    val scheme = MaterialTheme.colorScheme
+    // Issue #50 F5 cure: keyed on the task id — a new active
+    // task never inherits the previous task's expansion state.
+    var stepsExpanded by remember(task.id) { mutableStateOf(false) }
+    // Issue #128 finding 5 (ported into this section at the main
+    // merge — the branch's inline form died with the extraction):
+    // DONE under a live seal takes TWO taps, so one stray touch
+    // cannot complete the task and advance the queue — a false
+    // completion would falsify the session's task record. The
+    // first tap arms the cap (it re-prints SURE?); only a second
+    // tap on the armed cap completes. Unsealed, DONE stays one
+    // tap exactly as before. The arm dies on its own after ~2.6s
+    // and whenever the active task changes (keyed remember).
+    var doneArmed by remember(task.id) { mutableStateOf(false) }
+    LaunchedEffect(doneArmed) {
+        if (doneArmed) {
+            kotlinx.coroutines.delay(2600L)
+            doneArmed = false
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.deck_now),
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.5.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onBackground
+                )
+                Text(
+                    text = task.title,
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 15.sp,
+                    color = scheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .then(
+                            if (task.subSteps.isNotEmpty() && !shotActive) {
+                                Modifier.clickable { stepsExpanded = !stepsExpanded }
+                            } else {
+                                Modifier
+                            }
+                        )
+                )
+                // R3b #163 F5: a NOW task that already stood as
+                // yesterday's active task says so on its face —
+                // it never poses as a fresh start chosen today.
+                if (activeTaskFromYesterday) {
+                    Text(
+                        text = "FROM YESTERDAY",
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 9.5.sp,
+                        letterSpacing = 1.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("now_task_from_yesterday")
+                    )
+                }
+                // DONE is a verb, so it wears an action's body
+                // (ESR-07): the same raised key-cap as the FLOW
+                // key — bare mono text beside the static QUEUE
+                // count read as print, declaring an unfinished
+                // task done. (Truth patch, re-applied at the
+                // slide merge over this lane's older Deck.)
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(scheme.surfaceVariant)
+                        .border(1.dp, scheme.outlineVariant, RoundedCornerShape(12.dp))
+                        // Input death (Zug-II §4.6): the task
+                        // verbs' HANDLERS are removed by state
+                        // during the shot — not greyed, gone.
+                        // Issue #128 finding 5: while a session
+                        // runs, the first tap only arms the cap
+                        // (SURE?); the second completes.
+                        .clickable(enabled = !shotActive) {
+                            if (!isSessionRunning || doneArmed) {
+                                doneArmed = false
+                                onCompleteActiveTask(task.id)
+                            } else {
+                                doneArmed = true
+                            }
+                        }
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = if (isSessionRunning && doneArmed) stringResource(R.string.key_sure) else stringResource(R.string.label_done),
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        letterSpacing = 1.sp,
+                        color = scheme.onBackground
+                    )
+                }
+                Text(
+                    text = stringResource(R.string.deck_queue, queuedCount),
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.then(
+                        if (!shotActive) Modifier.clickable { onOpenTaskSequencer() } else Modifier
+                    )
+                )
+            }
+            if (stepsExpanded && task.subSteps.isNotEmpty()) {
+                task.subSteps.forEachIndexed { idx, step ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !shotActive) { onToggleTaskSubStep(task.id, idx) }
+                            .padding(vertical = 3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            // The shared two-digit voice (DRW-08,
+                            // Truth Car 2): the tenth sub-step
+                            // prints "10", never "010" — one
+                            // formatter cures Deck, Tasks leaf,
+                            // and Drawer detail together.
+                            text = com.example.data.twoDigitCount(idx + 1),
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            // E5b B3 (Horiz §2): a done step's
+                            // numeral exits the accent at the
+                            // seal — from exit phase 1 it reads
+                            // as ground print, permanently for
+                            // this session's frame.
+                            color = if (step.isDone && exitPhaseProvider() < 1) {
+                                scheme.primaryContainer
+                            } else {
+                                scheme.onSurfaceVariant
+                            }
+                        )
+                        Text(
+                            text = step.title,
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 13.sp,
+                            color = if (step.isDone) scheme.onSurfaceVariant else scheme.onBackground,
+                            textDecoration = if (step.isDone) TextDecoration.LineThrough else TextDecoration.None
+                        )
+                    }
+                }
+            }
+    }
+}
+
+/**
  * Slice E (Zug-II §5.3): the seal shot's ONE state object per
  * session. Its phases are never stored — DEPARTURE / RECESSION /
  * SETTLE are derived from (now − t0) — and its three booleans are
@@ -1141,7 +2022,16 @@ fun TactileDeckScreen(
 class SealShotState(
     val sessionId: Int,
     val t0Mono: Long,
-    val preExisting: Boolean
+    val preExisting: Boolean,
+    /**
+     * Night calm (Audit R3b #116, finding 4): true when the seal
+     * was armed inside clock night (the one NightSignal). A night
+     * seal runs the shot's TIMING — departure, ground step, settle
+     * — but never its vertigo or blur: a half-asleep user in bed
+     * gets a still room, not a receding, blurring one. Daytime
+     * seals keep the full shot, exactly as shipped.
+     */
+    val nightCalm: Boolean = false
 ) {
     var vertigoT: Float by mutableStateOf(if (preExisting) 1f else 0f)
     var blurT: Float by mutableStateOf(if (preExisting) 1f else 0f)

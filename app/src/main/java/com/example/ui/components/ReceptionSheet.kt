@@ -124,6 +124,16 @@ fun receptionDoorWord(print: PermPrint): String = when (print) {
     PermPrint.GRANTED -> "SET"
     PermPrint.MISSING -> "NOT SET"
     PermPrint.STALE -> "UNPROVED"
+    // The enum grew on main after this sheet was written (issue
+    // #58 F1 + issue #94, both landed while the lane was parked);
+    // the two new prints take the sheet's own locked words for
+    // the facts they name: a stale denial is still a door NOT
+    // SET (the lack is the fact — permPrintAt keeps MISSING_STALE
+    // distinct precisely so lack-consumers read it as missing),
+    // and an unprovable grant is UNPROVED, the same word the
+    // board prints and the word this sheet already gives STALE.
+    PermPrint.MISSING_STALE -> "NOT SET"
+    PermPrint.UNPROVED -> "UNPROVED"
     PermPrint.UNMEASURED -> "NOT CHECKED"
 }
 

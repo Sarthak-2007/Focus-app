@@ -1,5 +1,6 @@
 package com.example
 
+import com.example.data.DrawerDay
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
 import com.example.data.GuardSettingsEntity
@@ -62,14 +63,16 @@ class RoutineDeriveTest {
         startWall: Long = windowStart,
         elapsed: Int = 0,
         active: Boolean = false,
-        outcome: String? = null
+        outcome: String? = null,
+        endWall: Long = 0L
     ) = FocusSessionEntity(
         id = id, intention = "s$id", profileName = "Routine: X",
         targetDurationSeconds = 3600, elapsedSeconds = elapsed,
         startWallTimeMillis = startWall, startElapsedRealtimeMillis = 0L,
         isActive = active, completedSuccessfully = false,
         routineId = routineId, windowStartMillis = windowStart,
-        windowEndMillis = windowEnd, routineOutcome = outcome
+        windowEndMillis = windowEnd, routineOutcome = outcome,
+        endWallMillis = endWall
     )
 
     private val settings = GuardSettingsEntity()
@@ -80,11 +83,11 @@ class RoutineDeriveTest {
         active: FocusSessionEntity? = null,
         sessions: List<FocusSessionEntity> = emptyList(),
         settings: GuardSettingsEntity = this.settings,
-        // The default lives ONLY in this test wrapper (lead ruling):
-        // production signatures carry no default, so a forgotten
-        // production call site cannot silently seal routine names.
         // Defaulting to null keeps every pre-F-1 case above
-        // meaning exactly what it meant before F-1.
+        // meaning exactly what it meant before F-1. (Merged-tree
+        // note: M-A1 G1 gave the production signature the same
+        // default, so main's existing call sites keep compiling;
+        // under R1 a null head seals "", never a routine name.)
         headTaskTitle: String? = null
     ) = RoutineDerive.derive(
         routines, now, active, sessions, settings,
@@ -114,6 +117,12 @@ class RoutineDeriveTest {
         task(2, "Synthesize Lecture 9 Architecture Notes", TaskQueueStatus.QUEUED, 1),
         task(3, "Debug Dynamic Programming Memo Table", TaskQueueStatus.QUEUED, 2)
     )
+        excused: Set<String> = emptySet()
+    ) = RoutineDerive.derive(routines, now, active, sessions, settings, excusedDateIsos = excused)
+
+    /** The filing-date iso of an instant, as the Drawer files it. */
+    private fun filingIso(millis: Long): String =
+        DrawerDay.dateIso(DrawerDay.filingDate(millis))
 
     // --- Window states -------------------------------------------------
 
@@ -180,7 +189,9 @@ class RoutineDeriveTest {
     @Test
     fun saturday_monFriRoutine_simplyHasNoWindow() {
         val now = at(5, 10, 0) // Saturday
-        val d = derive(listOf(routine(mask = RoutineSchedule.MON_FRI)), now).derivations.single()
+        // Edited Monday, so Friday's window provably postdates the
+        // edit horizon (Issue #39 F3: a 0 stamp would judge UNKNOWN).
+        val d = derive(listOf(routine(mask = RoutineSchedule.MON_FRI, editedAt = at(0, 0, 0))), now).derivations.single()
         // No Saturday window exists and nothing is desired — Saturday
         // is simply not one of its days. The state is CLOSED_DUE
         // because FRIDAY's window (provably scheduled, never claimed)
@@ -224,6 +235,41 @@ class RoutineDeriveTest {
         val r = routine(editedAt = at(3, 0, 0)) // edited Thu 00:00; Wed window predates it
         val d = derive(listOf(r), now).derivations.single()
         assertEquals(WindowJudgement.UNKNOWN, d.judgement)
+    }
+
+    // --- Excused dates (issue #137, F1) --------------------------------
+
+    @Test
+    fun excusedClosedWindow_judgesNothing_neverMissed() {
+        val now = at(3, 8, 0) // Thu 08:00; latest closed = Wed window
+        val excused = setOf(filingIso(at(2, 9, 0))) // Wed's filing date
+        // Edited Monday, so the Wed window provably postdates the
+        // edit horizon — unexcused it would judge MISSED (issue #39
+        // F3); the null below is the J6b amnesty speaking, not the
+        // horizon's UNKNOWN.
+        val d = derive(listOf(routine(editedAt = at(0, 0, 0))), now, excused = excused).derivations.single()
+        assertNull(d.judgement)
+        assertEquals(WindowState.OUTSIDE, d.state)
+    }
+
+    @Test
+    fun excusedOpenWindow_desiresNoSession() {
+        val now = at(2, 10, 0) // Wed 10:00, inside DAY BLOCKS
+        val excused = setOf(filingIso(at(2, 9, 0)))
+        val d = derive(listOf(routine()), now, excused = excused).derivations.single()
+        assertNull(d.desiredSession)
+        assertEquals(WindowState.PAUSED, d.state)
+    }
+
+    @Test
+    fun unexcusedClosedWindow_stillMissed() {
+        // Control: a different date's excuse does not leak.
+        val now = at(3, 8, 0)
+        val excused = setOf(filingIso(at(0, 9, 0))) // Monday only
+        // Edited Monday (issue #39 F3 horizon), so MISSED is the
+        // judgement the excuse would have to suppress to leak.
+        val d = derive(listOf(routine(editedAt = at(0, 0, 0))), now, excused = excused).derivations.single()
+        assertEquals(WindowJudgement.MISSED, d.judgement)
     }
 
     // --- Pause semantics ---------------------------------------------------
@@ -293,6 +339,92 @@ class RoutineDeriveTest {
         assertNotNull(d.desiredSession)
         assertTrue(d.finaliseDue.isEmpty()) // J2: SLEEP is never finalised
         assertNull(d.judgement)
+    }
+
+    // --- Issue #39: false-record elimination ----------------------------
+
+    @Test
+    fun closedWindow_zeroEditStamp_isUnknown_neverInventedMiss() {
+        // F3: editedAt defaults to 0 = no edit recorded under the new
+        // engine (migration default). The Wed window cannot be proved
+        // scheduled, so no MISSED may be invented for it.
+        val now = at(3, 8, 0) // Thu 08:00; latest closed = Wed window
+        val d = derive(listOf(routine()), now).derivations.single()
+        assertEquals(WindowJudgement.UNKNOWN, d.judgement)
+        assertEquals(WindowState.OUTSIDE, d.state)
+    }
+
+    @Test
+    fun closedWindow_duplicateClaims_unstampedWins_regardlessOfOrder() {
+        // F4 (judge site): a stamped duplicate listed FIRST must not
+        // mask the unstamped claim — unstamped = pending, no judgement.
+        val now = at(3, 8, 0)
+        val stamped = session(20, 1, at(2, 9, 0), at(2, 19, 30), outcome = "PARTIAL")
+        val unstamped = session(21, 1, at(2, 9, 0), at(2, 19, 30))
+        val d = derive(listOf(routine()), now, null, listOf(stamped, unstamped)).derivations.single()
+        assertNull(d.judgement)
+    }
+
+    @Test
+    fun closedWindow_duplicateStampedClaims_lowestIdWins() {
+        // F4 fallback: both stamped — the earliest written (lowest
+        // id) is the judgement of record, not the first listed.
+        val now = at(3, 8, 0)
+        val later = session(31, 1, at(2, 9, 0), at(2, 19, 30), outcome = "ATTENDED")
+        val earlier = session(24, 1, at(2, 9, 0), at(2, 19, 30), outcome = "PARTIAL")
+        val d = derive(listOf(routine()), now, null, listOf(later, earlier)).derivations.single()
+        assertEquals(WindowJudgement.PARTIAL, d.judgement)
+    }
+
+    @Test
+    fun openWindow_duplicateClaims_unstampedWins_regardlessOfOrder() {
+        // F4 (open-window site): the stamped duplicate listed first
+        // would conclude the window (OUTSIDE); the unstamped claim
+        // is the live truth — work is owed (CLOSED_DUE).
+        val now = at(2, 12, 0)
+        val stamped = session(20, 1, at(2, 9, 0), at(2, 19, 30), outcome = "ATTENDED")
+        val unstamped = session(21, 1, at(2, 9, 0), at(2, 19, 30), elapsed = 600)
+        val d = derive(listOf(routine()), now, null, listOf(stamped, unstamped)).derivations.single()
+        assertEquals(WindowState.CLOSED_DUE, d.state)
+        assertNull(d.desiredSession)
+    }
+
+    @Test
+    fun overlaps_pausedSession_endWallStampCoversWhereElapsedEstimateMisses() {
+        // F5: paused session — 60 elapsed seconds but a wall span of
+        // 09:00–12:00. The elapsed estimate ends it at 09:01 and
+        // misses the 10:00–11:00 interval; the endWall stamp covers it.
+        val paused = session(
+            30, null, 0L, 0L, startWall = at(2, 9, 0), elapsed = 60, endWall = at(2, 12, 0)
+        )
+        assertTrue(RoutineDerive.overlapsAny(listOf(paused), at(2, 10, 0), at(2, 11, 0), exceptRoutineId = 1))
+    }
+
+    @Test
+    fun overlaps_legacyRowWithoutEndWallStamp_fallsBackToElapsedEstimate() {
+        // F5 legacy fallback: endWallMillis == 0 keeps the old
+        // start + elapsed span, in both directions.
+        val legacy = session(31, null, 0L, 0L, startWall = at(2, 9, 0), elapsed = 3600)
+        assertTrue(RoutineDerive.overlapsAny(listOf(legacy), at(2, 9, 30), at(2, 10, 30), exceptRoutineId = 1))
+        assertEquals(
+            false,
+            RoutineDerive.overlapsAny(listOf(legacy), at(2, 10, 30), at(2, 11, 0), exceptRoutineId = 1)
+        )
+    }
+
+    @Test
+    fun openWindow_heldByPausedSession_whoseElapsedEstimateHasEnded() {
+        // F5 end-to-end: a manual session that started 08:00, ran 60
+        // elapsed seconds across pauses, and wall-ended 10:30 still
+        // occupies the 09:00 window opening — the window is HELD,
+        // not idle, at 10:00.
+        val now = at(2, 10, 0)
+        val manual = session(
+            32, null, 0L, 0L, startWall = at(2, 8, 0), elapsed = 60, endWall = at(2, 10, 30)
+        )
+        val d = derive(listOf(routine()), now, null, listOf(manual)).derivations.single()
+        assertEquals(WindowState.OPEN_HELD, d.state)
+        assertNull(d.desiredSession)
     }
 
     @Test
@@ -390,27 +522,27 @@ class RoutineDeriveTest {
     }
 
     @Test
-    fun fastedBlock_openWindow_emptyQueue_fallsBackToRoutineName() {
+    fun fastedBlock_openWindow_emptyQueue_sealsEmptyIntention() {
         val now = at(0, 6, 0)
         val head = RoutineDerive.resolveHeadTitle(emptyList())
         val d = derive(listOf(fastedBlock()), now, headTaskTitle = head).derivations.single()
         assertNotNull(d.desiredSession)
-        assertEquals("FASTED BLOCK", d.desiredSession!!.intention)
+        assertEquals("", d.desiredSession!!.intention) // R1: no routine-name fallback — absent head seals "" (#124)
     }
 
     @Test
-    fun fastedBlock_blankHeadPassedDirectly_fallsBackToRoutineName() {
+    fun fastedBlock_blankHeadPassedDirectly_sealsEmptyIntention() {
         // Wave-2 (Seat F1-Verify, H2): derive() guards itself —
         // a blank head handed straight to derive (bypassing the
         // resolver) must never seal.
         val now = at(0, 6, 0)
         val d = derive(listOf(fastedBlock()), now, headTaskTitle = "   ").derivations.single()
         assertNotNull(d.desiredSession)
-        assertEquals("FASTED BLOCK", d.desiredSession!!.intention)
+        assertEquals("", d.desiredSession!!.intention) // R1: no routine-name fallback — absent head seals "" (#124)
     }
 
     @Test
-    fun fastedBlock_openWindow_deferredOnlyQueue_fallsBackToRoutineName() {
+    fun fastedBlock_openWindow_deferredOnlyQueue_sealsEmptyIntention() {
         val now = at(0, 6, 0)
         val deferredOnly = listOf(
             task(4, "Synthesize Lecture 9 Architecture Notes", TaskQueueStatus.DEFERRED, 0)
@@ -418,7 +550,7 @@ class RoutineDeriveTest {
         val head = RoutineDerive.resolveHeadTitle(deferredOnly)
         val d = derive(listOf(fastedBlock()), now, headTaskTitle = head).derivations.single()
         assertNotNull(d.desiredSession)
-        assertEquals("FASTED BLOCK", d.desiredSession!!.intention)
+        assertEquals("", d.desiredSession!!.intention) // R1: no routine-name fallback — absent head seals "" (#124)
     }
 
     @Test
@@ -465,18 +597,22 @@ class RoutineDeriveTest {
     }
 
     @Test
-    fun sleepRoutine_withHeadAvailable_stillSealsTheRoutineName() {
-        // Lead ruling (SLEEP exception): the head names work, never
-        // sleep — a SLEEP session titled by a task corrupts both
-        // records. Non-interference stands with it: SLEEP is still
-        // never finalised and judges nothing (J2).
+    fun sleepRoutine_withHeadAvailable_takesTheHeadTitle_R1() {
+        // R1 (lead ruling at the main-merge sitting): the split has
+        // no SLEEP carve-out — a present head names the session,
+        // SLEEP included; what R1 struck is the routine-NAME
+        // fallback when no head exists. (Train's old SLEEP exception
+        // sealed the name "SLEEP" here; that was the name fallback
+        // in its strongest form, and R1 strikes it everywhere.)
+        // Non-interference stands: SLEEP is still never finalised
+        // and judges nothing (J2).
         val now = at(2, 21, 0) // Wed 21:00, SLEEP 20:00–03:30
         val sleep = routine(id = 2, name = "SLEEP", start = 1200, end = 210, loadout = SmartLoadout.SLEEP.name)
         val head = RoutineDerive.resolveHeadTitle(seededMorningQueue())
         val d = derive(listOf(sleep), now, headTaskTitle = head).derivations.single()
         assertEquals(WindowState.OPEN_IDLE, d.state)
         assertNotNull(d.desiredSession)
-        assertEquals("SLEEP", d.desiredSession!!.intention)
+        assertEquals("Finish Chapter 4 Problem Set (#1–6)", d.desiredSession!!.intention)
         assertTrue(d.finaliseDue.isEmpty())
         assertNull(d.judgement)
     }

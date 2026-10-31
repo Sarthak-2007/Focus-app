@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Declared locales (issue #64): en only — a locale is listed only when real
+     translations exist for it. Structure lands ahead of the strings migration;
+     no machine-faked translations ship. -->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+</locale-config>

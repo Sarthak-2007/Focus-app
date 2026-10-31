@@ -1,31 +1,29 @@
 package com.example.ui.components
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import android.os.SystemClock
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.animateIntOffsetAsState
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -36,187 +34,112 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
-
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.onClick
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.data.BatterySnapshot
 import com.example.data.CapturedNotificationEntity
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
+import com.example.data.NightDimMath
+import com.example.ui.nightDesaturate
+import com.example.data.DistractionTriggerReason
+import com.example.data.deskClockBatteryNotice
+import com.example.data.deskClockKeepsScreenOn
+import com.example.data.readBatterySnapshot
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
+import com.example.service.InterceptPath
 import com.example.service.TactileSoundEngine
 import com.example.data.MonolithRepository
+import com.example.data.MonolithWeek
 import com.example.ui.AirlockInterceptState
 import com.example.ui.DisarmChallengeState
 import com.example.ui.PeekWithheld
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.MonolithCurves
 import com.example.ui.theme.NightBlockBarSurface
+import com.example.ui.theme.TokenTrueBlack
 import com.example.ui.theme.NightColorBackground
 import com.example.ui.theme.NightColorPrimary
 import com.example.ui.theme.NightColorPrimaryContainer
 import com.example.ui.theme.NightColorSurfaceBright
 import com.example.ui.theme.NightColorSurfaceVariant
+import com.example.ui.theme.AtkinsonHyperlegibleFamily
+import com.example.ui.views.Emergency60sValveView
+import kotlinx.coroutines.delay
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateIntOffsetAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import com.example.ui.theme.NightColorOnPrimaryContainer
 import com.example.ui.theme.NightColorSecondaryContainer
 import com.example.ui.theme.NightTextColorPrimary
 import com.example.ui.theme.PillBadgeTextStyle
 import com.example.ui.theme.PrimaryButtonTextStyle
 import com.example.ui.theme.SoraFamily
-import com.example.ui.theme.AtkinsonHyperlegibleFamily
-import com.example.ui.views.Emergency60sValveView
 import com.example.ui.views.TowerStreakView
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.util.Locale
-
-// FLOW §2.4.4 — the light cure, in constants (Salz's desk,
-// plan/REFINE-salz-aod.md §§1–3). Nacht's ceiling for the night
-// face is 0.25 relative luminance; NightColorPrimary (#FFE4CF)
-// prints 0.8125 at full strength — a 3.3× breach on a face that
-// now raises ITSELF and may stand all night. Composited over
-// the overlay's true-black ground: the content prints at 0.55
-// land at ≈0.216, and the exit line at 0.61 lands at ≈0.259
-// (Finisher cure, Kante K-5: the exit ceiling was raised from
-// 0.58 so the door invariant holds at standing too — see the
-// A-2 note below; the one verb line runs ~4% over Nacht's 0.25
-// ceiling, the priced cost Samt's D-4 recommended paying).
-// The auto-raise ships only under this cure; these two numbers
-// are the cure.
-private const val DESK_CLOCK_PRINT_ALPHA = 0.55f
-private const val DESK_CLOCK_EXIT_ALPHA = 0.61f
-
-// Issue #13, A-2 — the descent (item 14 / V4), completed:
-// DIM BY AREA. The hero and the tear rule descend 0.55 → 0.36
-// across the span; every number-carrying small line (sub-line,
-// block line, banner incl. the break line) FLOORS at 0.50 — a
-// number too dim to read is a number withheld. The EXIT line is
-// excepted from that floor: it carries no figure, and keeps its
-// descended 0.40.
-// THE DOOR INVARIANT, pinned (Mond, ratio form): at every span
-// fraction, exit luminance ≥ 1.10 × hero-print luminance. Both
-// prints are the same ink, so the invariant is kept by
-// construction: exitAlpha = max(0.40, heroAlpha × 1.10).
-// Wave-2 honesty fix (Seat Overlay-Review): that sentence was
-// FALSE at the standing alphas under the old 0.58 ceiling —
-// 0.58 / 0.55 = 1.055 < 1.10, so the cap bound wherever the
-// hero stood above ≈ 0.527 (fraction ≲ 0.12, the 60 s
-// suspension, and the dawn's return).
-// Finisher cure (Kante K-5, Samt D-4's priced cure): the
-// ceiling is now DESK_CLOCK_EXIT_ALPHA = 0.61 = 0.55 × 1.10
-// rounded up, so the cap never binds below the ratio and the
-// invariant holds at EVERY fraction by construction, as the
-// audit's ruled form requires. Cost, named: the exit line
-// lands at ≈ 0.259 relative luminance, ~4% over Nacht's 0.25
-// night ceiling — the door outranks the ceiling (Samt D-4).
-private const val DESK_CLOCK_HERO_FLOOR_ALPHA = 0.36f
-private const val DESK_CLOCK_NUMBER_FLOOR_ALPHA = 0.50f
-private const val DESK_CLOCK_EXIT_FLOOR_ALPHA = 0.40f
-private const val DOOR_INVARIANT_RATIO = 1.10f
-
-/** A-4's entry causes: the arrival motion is keyed to WHY the
- *  face rose, and the witness discriminator is the settle
- *  machine's own lastInteraction stamp (carried by the VM). */
-enum class DeskClockEntryCause { UNWATCHED, WATCHED, HAND, SEEDED }
-
-/** The face's print alphas at one instant (A-2/A-3, pure). */
-internal data class DeskClockAlphas(
-    val hero: Float,
-    val exit: Float,
-    val numberLine: Float
-)
 
 /**
- * The descent's whole law in one pure function (A-2 + A-3):
- * - the descent variable is NAMED: [spanElapsedFraction], the
- *   span-elapsed fraction, clamped to [0, 1];
- * - hero descends standing → 0.36 by that fraction; number
- *   lines descend standing → their 0.50 floor; the exit line
- *   follows the door invariant (≥ 1.10 × hero, floor 0.40,
- *   capped at the 0.58 ceiling — see the invariant's note at
- *   DOOR_INVARIANT_RATIO for where the cap binds);
- * - a raise or re-raise SUSPENDS the descent for 60 s
- *   ([descentSuspended]): the face opens at standing alphas;
- * - the DAWN RAMP (A-3): in the final 60 s every descended
- *   alpha lerps back to its standing constant, reaching full
- *   exactly at T-0 ([spanRemainingSeconds] in 1..60).
+ * The nightstand clock's window brightness (Audit R3b #116,
+ * finding 3): the clock is a KEPT nightstand display, but until
+ * now nothing in the app ever lowered brightness — it burned all
+ * night at whatever daytime brightness the phone was left on, in
+ * full-alpha cream. While the clock shows, the window is held at
+ * 5% brightness; on dismiss the override is released back to the
+ * system brightness. 0.05 is dim enough to read in a dark room
+ * and far too dim to light one.
  */
-internal fun deskClockPrintAlphas(
-    spanElapsedFraction: Float,
-    descentSuspended: Boolean,
-    spanRemainingSeconds: Int?,
-    isStopwatch: Boolean
-): DeskClockAlphas {
-    val fraction = spanElapsedFraction.coerceIn(0f, 1f)
-    var hero = DESK_CLOCK_PRINT_ALPHA +
-        (DESK_CLOCK_HERO_FLOOR_ALPHA - DESK_CLOCK_PRINT_ALPHA) * fraction
-    var number = DESK_CLOCK_PRINT_ALPHA +
-        (DESK_CLOCK_NUMBER_FLOOR_ALPHA - DESK_CLOCK_PRINT_ALPHA) * fraction
-    if (descentSuspended) {
-        hero = DESK_CLOCK_PRINT_ALPHA
-        number = DESK_CLOCK_PRINT_ALPHA
-    }
-    if (!isStopwatch && spanRemainingSeconds != null && spanRemainingSeconds in 1..60) {
-        val dawn = (60 - spanRemainingSeconds) / 60f
-        hero += (DESK_CLOCK_PRINT_ALPHA - hero) * dawn
-        number += (DESK_CLOCK_PRINT_ALPHA - number) * dawn
-    }
-    val exit = maxOf(DESK_CLOCK_EXIT_FLOOR_ALPHA, hero * DOOR_INVARIANT_RATIO)
-        .coerceAtMost(DESK_CLOCK_EXIT_ALPHA)
-    return DeskClockAlphas(hero = hero, exit = exit, numberLine = number)
-}
+const val DESK_CLOCK_SCREEN_BRIGHTNESS = 0.05f
 
-/** A-7: the tear fraction never prints below a hair and never
- *  past the span — elapsed can run past target in a delayed-
- *  finish window while the hero sits at 0:00. */
-internal const val TEAR_HAIR_FRACTION = 0.01f
-internal fun tearFraction(spanElapsedFraction: Float): Float =
-    spanElapsedFraction.coerceIn(TEAR_HAIR_FRACTION, 1f)
+/** The desk clock's dimmed cream: the time at 72% of the night
+ *  cream, the progress bar at 50% — with the window itself at 5%
+ *  brightness the face recedes instead of glowing. */
+const val DESK_CLOCK_TIME_ALPHA = 0.72f
+const val DESK_CLOCK_BAR_ALPHA = 0.50f
 
 /**
  * 1. ALWAYS-ON NIGHTSTAND DESK CLOCK OVERLAY (Decision #8)
- *
- * Issue #13 merge notes: keep-awake ownership MOVED to the VM's
- * session machinery (A-10(v)) — this face no longer touches
- * FLAG_KEEP_SCREEN_ON; the VM's surrender law (deadline, fade,
- * yield) drives it. Arrival/exit motion is A-4's cause table,
- * carried in [entryCause] / [exitIsFinish]; the surrender fade
- * (A-10(v): print fades 520 Curve C to 0 at true-off − 520 ms)
- * arrives as [surrenderFade].
  */
-// Wave-3 (Schliff F-4): the banner slot's measure is DERIVED,
-// never a magic height — two lines at this explicit line
-// height, plus the slot's 12 dp vertical padding each side
-// (the padding lives in the slot's modifier below).
-private val BANNER_LINE_HEIGHT = 19.sp
-
 @Composable
+f@Composable
 fun AlwaysOnDeskClockOverlay(
     visible: Boolean,
     activeSession: FocusSessionEntity?,
@@ -252,6 +175,11 @@ fun AlwaysOnDeskClockOverlay(
     // Wave-3 (Glanz G-3): a branch-U finish hides AFTER its
     // publish, with this snap exit.
     exitSnap: Boolean = false,
+    // Issue #143 F1/F5 (main): the break-dim depth at this
+    // instant, fed by the host from the shield's published
+    // phase — the sealed face drains toward monochrome on the
+    // same curve as the dim.
+    dimAlpha: Float = 0f,
     onDismiss: () -> Unit
 ) {
     // A-4 — arrival and exit, keyed to cause. Ground and print
@@ -268,6 +196,67 @@ fun AlwaysOnDeskClockOverlay(
     }
     val printAlpha = remember(raiseGeneration) {
         Animatable(if (entryStartsAtFull) 1f else 0f)
+    }
+
+    // Main's premise scaffolding (ported per M-A3 S12 — premise
+    // law): the battery read (30s cadence), the keep-screen-on
+    // flag under the #122 battery law, the 5% nightstand
+    // brightness (#116), and show-when-locked + turn-screen-on
+    // while — and only while — the clock shows (#111). Without
+    // it the clock dies to the screen timeout and holds no
+    // keyguard presence.
+    val clockView = LocalView.current
+    var batterySnap by remember { mutableStateOf<BatterySnapshot?>(null) }
+    LaunchedEffect(visible) {
+        if (visible) {
+            while (true) {
+                batterySnap = readBatterySnapshot(clockView.context)
+                delay(30_000L)
+            }
+        }
+    }
+    val keepScreenOn = batterySnap?.let { deskClockKeepsScreenOn(it) } ?: true
+    DisposableEffect(visible, keepScreenOn) {
+        var ctx: android.content.Context? = clockView.context
+        var activity: android.app.Activity? = null
+        while (ctx is android.content.ContextWrapper) {
+            if (ctx is android.app.Activity) { activity = ctx; break }
+            ctx = ctx.baseContext
+        }
+        val window = activity?.window
+        if (keepScreenOn) {
+            window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        window?.attributes = window.attributes.apply {
+            screenBrightness = DESK_CLOCK_SCREEN_BRIGHTNESS
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+            activity?.setShowWhenLocked(true)
+            activity?.setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window?.addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        }
+        onDispose {
+            window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            window?.attributes = window.attributes.apply {
+                screenBrightness =
+                    android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+                activity?.setShowWhenLocked(false)
+                activity?.setTurnScreenOn(false)
+            } else {
+                @Suppress("DEPRECATION")
+                window?.clearFlags(
+                    android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                        android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                )
+            }
+        }
     }
     LaunchedEffect(visible, entryCause, raiseGeneration) {
         if (visible) {
@@ -815,10 +804,1455 @@ fun AlwaysOnDeskClockOverlay(
     }
 }
 
+/**
+ * The desk clock's banner text (Truth Car 3, appendix / FLOW
+ * FL-06) under A-12 / C-2, answered from the code: L7's fallback
+ * chain is task → intention → routine name → absent. The chain
+ * gains its truer floor at this merge: a hand-started session
+ * with neither task nor intention still carries its loadout —
+ * profileName is stamped on every row at birth (the seal's
+ * snapshot; routine rows wear "Routine: <name>", hand rows the
+ * loadout's name) — so the floor is the row's own profile name,
+ * stripped of the routine prefix. Anonymity now stands only
+ * when even that is blank, which no arming path produces.
+ */
+internal fun deskClockBannerText(
+    taskTitle: String?,
+    intention: String?,
+    profileName: String? = null
+): String? =
+    taskTitle?.takeIf { it.isNotBlank() }
+        ?: intention?.takeIf { it.isNotBlank() }
+        ?: profileName
+            ?.removePrefix("Routine:")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+
+internal fun deskClockBurnInOffsetDp(step: Int): Pair<Float, Float> {
+    val theta = ((step % 60) + 60) % 60 * (2.0 * Math.PI / 60.0)
+    val dx = 26.0 * kotlin.math.sin(theta)
+    val dy = 13.0 * kotlin.math.sin(2.0 * theta)
+    return dx.toFloat() to dy.toFloat()
+}
+
+/**
+ * Issue #111 finding 4 — the hero number's name. A timed session
+ * counts DOWN (REMAINING), a stopwatch counts UP (ELAPSED), and
+ * with no live session the dial's own setting is what stands
+ * (SET TIME). The bare digits never carry the direction again.
+ */
+internal fun deskClockModeLabel(session: FocusSessionEntity?): String = when {
+    session != null && session.isActive && session.isStopwatchMode -> "ELAPSED"
+    session != null && session.isActive -> "REMAINING"
+    else -> "SET TIME"
+}
+
+/**
+ * Issue #111 finding 4 — the glance line: day + time of day, and
+ * for a timed session its end (start + the whole span, the model's
+ * own derivation — never now + remaining, which would slide); a
+ * stopwatch honestly states it has no set end; no session, no end
+ * is invented.
+ */
+internal fun deskClockGlanceLine(is24Hour: Boolean, nowMillis: Long, session: FocusSessionEntity?): String {
+    // #88: the day names follow the device locale and the time the
+    // system 12/24-hour setting (ClockText's pure core) — this line
+    // landed via #111 with a pinned Locale.US "HH:mm".
+    val dayTime = java.text.SimpleDateFormat("EEE d MMM", Locale.getDefault())
+        .format(java.util.Date(nowMillis)).uppercase(Locale.getDefault()) +
+        " • " + ClockText.timeOfDay(is24Hour, nowMillis)
+    return when {
+        session != null && session.isActive && !session.isStopwatchMode ->
+            dayTime + " • " + endsAtText(
+                is24Hour,
+                session.startWallTimeMillis + session.spanTargetSeconds * 1000L
+            )
+        session != null && session.isActive -> "$dayTime • NO SET END"
+        else -> dayTime
+    }
+}
+
+/**
+ * Issue #111 finding 3 — the Safe Break announcement. Non-null
+ * ONLY while the row says a break is actually running; the count
+ * is the break's OWN remaining seconds (safeBreakSecondsRemaining),
+ * never the span's. Outside a break this surface prints nothing
+ * about breaks — no standing decoration, no false alarm.
+ */
+internal fun deskClockBreakLine(session: FocusSessionEntity?): String? {
+    if (session == null || !session.isActive || !session.isInSafeBreak) return null
+    val left = session.safeBreakSecondsRemaining.coerceAtLeast(0)
+    return String.format(
+        Locale.US, "SAFE BREAK • %02d:%02d LEFT — STEP AWAY", left / 60, left % 60
+    )
+}
+
+/**
+ * Issue #111 finding 4 — the progress strip's one derivation.
+ * Timed: the span fraction, floored at 0.04 so a live session
+ * never reads empty. Stopwatch: there is NO target, so a fill-to-
+ * full bar was a lie that pinned at "finished" after 20 minutes —
+ * the bar now cycles within each 20-minute lap and can only touch
+ * full at the instant a lap rolls over. Idle: honestly empty.
+ */
+internal fun deskClockProgress(session: FocusSessionEntity?): Float = when {
+    session != null && session.isActive && !session.isStopwatchMode ->
+        (session.spanElapsedSeconds.toFloat() / session.spanTargetSeconds.coerceAtLeast(1))
+            .coerceIn(0.04f, 1f)
+    session != null && session.isActive ->
+        (session.elapsedSeconds % 1200).toFloat() / 1200f
+    else -> 0f
+}
+
+/**
+ * The desk clock's time-of-day print (WELLE-5 / #253-10): the
+ * overlay's hero numeral is the session span, and until this
+ * helper the surface never told the time of day at all — a
+ * "desk clock" that could not answer "what time is it?".
+ * 24-hour HH:mm, the slip's own convention (ReceiptSheet.hhmm).
+ */
+internal fun deskClockWallTimeText(nowMillis: Long): String =
+    java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+        .format(java.util.Date(nowMillis))
+
+/**
+ * Issue #143 F2 — the desk clock's eyebrow: the face NAMES its
+ * state. Idle keeps the standing nightstand line; sealed, the
+ * eyebrow says SEALED (and names a running Safe Break), so the
+ * two states can never be mistaken for each other across a dark
+ * room. Pure — unit-tested.
+ */
+internal fun deskClockEyebrow(sealed: Boolean, inBreak: Boolean): String = when {
+    sealed && inBreak -> "SEALED — SAFE BREAK • HOLD ANYWHERE TO EXIT"
+    sealed -> "SEALED — NIGHT FACE • HOLD ANYWHERE TO EXIT"
+    else -> "NIGHTSTAND DESK CLOCK • HOLD ANYWHERE TO EXIT"
+}
+
+/**
+ * Issue #143 F2 — the desk clock's state lines. Sealed and timed:
+ * BOTH numbers, elapsed and remaining, from the span derivation
+ * the hero already trusts. Sealed stopwatch: elapsed alone — a
+ * stopwatch has no remaining and none is invented. Idle: the one
+ * honest line, that this is the dial and not a session — no
+ * session numbers are fabricated for a session that does not
+ * exist. Pure — unit-tested.
+ */
+internal fun deskClockSealedLines(
+    sealed: Boolean,
+    elapsedSeconds: Int,
+    remainingSeconds: Int?
+): List<String> {
+    if (!sealed) return listOf("NO SESSION SEALED — THIS IS THE DIAL, NOT A SESSION")
+    val elapsed = String.format(
+        Locale.US, "ELAPSED %02d:%02d",
+        elapsedSeconds.coerceAtLeast(0) / 60, elapsedSeconds.coerceAtLeast(0) % 60
+    )
+    if (remainingSeconds == null) return listOf(elapsed)
+    val remaining = String.format(
+        Locale.US, "REMAINING %02d:%02d",
+        remainingSeconds.coerceAtLeast(0) / 60, remainingSeconds.coerceAtLeast(0) % 60
+    )
+    return listOf(elapsed, remaining)
+}
+
+/**
+ * Issue #143 F3 — the sealed Yield sheet's own answer. The sheet
+ * that stands when a held app is tapped used to speak only in
+ * generic wall words; it now answers IN THE SEALED STATE'S OWN
+ * WORDS: which block holds the phone, or that a Safe Break is
+ * running and how much quiet is left, and that the tapped app
+ * stays held either way. A session with no blocks to name
+ * (stopwatch) falls back to the session itself — never an
+ * invented block. Pure — unit-tested.
+ */
+internal fun sealedYieldLine(
+    appName: String,
+    inBreak: Boolean,
+    breakRemainingSeconds: Int,
+    blockIndex: Int,
+    blockCount: Int
+): String {
+    val app = appName.ifBlank { "THIS APP" }.uppercase(Locale.US)
+    return when {
+        inBreak -> {
+            val left = breakRemainingSeconds.coerceAtLeast(0)
+            String.format(
+                Locale.US,
+                "SEALED — SAFE BREAK RUNNING · %02d:%02d OF QUIET LEFT · %s STAYS HELD UNTIL THE NEXT BLOCK SEALS",
+                left / 60, left % 60, app
+            )
+        }
+        blockCount > 0 && blockIndex > 0 ->
+            "SEALED — BLOCK $blockIndex OF $blockCount · $app STAYS HELD UNTIL THIS BLOCK ENDS"
+        else -> "SEALED — $app STAYS HELD UNTIL THE SESSION ENDS"
+    }
+}
+
+/**
+ * The withheld peek's cooldown print (Truth Car 3, SIL-3; Hale
+ * W-30's words): whole minutes, ceiling — 61 seconds is "AGAIN
+ * IN 2 MIN", never a rounded-down promise.
+ */
+internal fun peekCooldownPrint(secondsRemaining: Int): String {
+    // Issue #55: an expired cooldown never prints "AGAIN IN 0 MIN" —
+    // that self-contradictory line was the cooldown trap's dead end.
+    if (secondsRemaining <= 0) return "PEEK COOLDOWN — OVER"
+    val minutes = (secondsRemaining + 59) / 60
+    return "PEEK COOLDOWN — AGAIN IN $minutes MIN"
+}
+
+/**
+ * Issue #55: the 5-second wall is DEADLINE-based, not tick-counted.
+ * Remaining seconds are always derived from the intercept's start
+ * instant, so scheduling drift can never stretch or shrink the wall,
+ * and a re-intercept (new instance) restarts from the full wall.
+ */
+internal fun airlockCountdownRemaining(
+    startedAtMillis: Long,
+    nowMillis: Long,
+    wallSeconds: Int = 5
+): Int {
+    val elapsedSeconds = ((nowMillis - startedAtMillis).coerceAtLeast(0L) / 1000L).toInt()
+    return (wallSeconds - elapsedSeconds).coerceIn(0, wallSeconds)
+}
+
+/** Issue #55: whole seconds until [deadlineMillis], ceiling — a
+ *  deadline-derived remainder that reaches 0 exactly at the deadline. */
+internal fun cooldownRemainingSeconds(deadlineMillis: Long, nowMillis: Long): Int {
+    val remainingMillis = deadlineMillis - nowMillis
+    if (remainingMillis <= 0L) return 0
+    return ((remainingMillis + 999L) / 1000L).toInt()
+}
+
+/**
+ * Issue #55: the peek unlocks the moment its ONLY blocker — the
+ * cooldown — has actually expired, even though the standing state's
+ * snapshot still says withheld. Any other withheld reason
+ * (a peek already running, peek off) never unlocks locally; the
+ * ViewModel's grant re-derives the offer from the repository
+ * regardless, so this local unlock can never sell a stale lease.
+ */
+internal fun peekUnlocked(
+    canUse2MinutePeek: Boolean,
+    withheld: PeekWithheld?,
+    cooldownRemainingSeconds: Int
+): Boolean =
+    canUse2MinutePeek ||
+        (withheld == PeekWithheld.COOLDOWN && cooldownRemainingSeconds <= 0)
+
+/**
+ * The door's own statement of the session's end (SIL-1, Hale
+ * W-28): a timed session states its span end — "SESSION " over
+ * [endsAtText]'s instant; a stopwatch states that it has no set
+ * end; no session, no line. The door never invents an end.
+ */
+internal fun airlockSessionLine(
+    is24Hour: Boolean,
+    endsAtMillis: Long?,
+    isStopwatch: Boolean,
+    stopwatchFloorAtMillis: Long? = null
+): String? = when {
+    endsAtMillis != null -> "SESSION " + endsAtText(is24Hour, endsAtMillis)
+    // Audit R3b #147: "NO SET END" was true and useless — a
+    // stopwatch session's one scheduled fact is its floor moment,
+    // when stopping becomes free. State it; once it has passed,
+    // state that the clean exit stands open.
+    isStopwatch && stopwatchFloorAtMillis != null &&
+        stopwatchFloorAtMillis > System.currentTimeMillis() ->
+        "SESSION RUNNING · CLEAN EXIT FROM " +
+            ClockText.timeOfDay(is24Hour, stopwatchFloorAtMillis)
+    isStopwatch && stopwatchFloorAtMillis != null ->
+        "SESSION RUNNING · CLEAN EXIT OPEN"
+    isStopwatch -> "SESSION RUNNING · NO SET END"
+    else -> null
+}
+
+/**
+ * The peek chip's badge (SIL-2, Hale W-29): the SET value, read
+ * from the same constant the lease machinery reads — never a
+ * hardcoded "2m" on the surface. (Rurik's editable store replaces
+ * the constant as the value's source; this function is the one
+ * print derivation that changes.)
+ */
+internal fun peekBadgeText(durationSeconds: Int): String = "${durationSeconds / 60}m"
+
+/**
+ * The peek's price, printed on the offer before it is taken
+ * (SIL-2, Hale W-29): the cooldown named in full, derived from
+ * the cooldown the repository will actually arm — never a
+ * hardcoded 20 on the surface.
+ */
+internal fun peekPriceText(cooldownMillis: Long): String {
+    val minutes = cooldownMillis / 60_000L
+    val unit = if (minutes == 1L) "MINUTE" else "MINUTES"
+    return "WHEN THE PEEK ENDS, A $minutes $unit COOLDOWN RUNS ON THIS APP"
+}
+
+/**
+ * Issue #325 (Audit R5, Zario visual): the stake line the door
+ * prints under the session's end — the week's emergency-break
+ * balance, on the surface where the decision happens (Zario draws
+ * its economy on every intercept; Monolith's balance lived only
+ * on the Deck). At zero the state is STATED, not hidden: a spent
+ * valve is a fact the user is owed at the wall, in words. A
+ * negative balance means the state was not carried (previews,
+ * tests) and the door prints nothing rather than inventing one.
+ */
+internal fun airlockStakeLine(emergencyBreaksRemaining: Int): String? = when {
+    emergencyBreaksRemaining < 0 -> null
+    emergencyBreaksRemaining == 0 ->
+        "EMERGENCY BREAK: NONE LEFT THIS WEEK — THE VALVE IS SPENT"
+    emergencyBreaksRemaining == 1 ->
+        "EMERGENCY BREAK: 1 LEFT THIS WEEK"
+    else ->
+        "EMERGENCY BREAK: $emergencyBreaksRemaining LEFT THIS WEEK"
+}
+
+/** English ordinal for the attempt mirror ("1ST", "2ND", "3RD",
+ *  "4TH" — the 11/12/13 teens take TH, never ST/ND/RD). */
+internal fun attemptOrdinal(n: Int): String {
+    val suffix = when {
+        n % 100 in 11..13 -> "TH"
+        n % 10 == 1 -> "ST"
+        n % 10 == 2 -> "ND"
+        n % 10 == 3 -> "RD"
+        else -> "TH"
+    }
+    return "$n$suffix"
+}
+
+/**
+ * Issue #254 F12 (Audit R5): the attempt mirror the door prints
+ * under the app name — which reach today this is, counted from
+ * the intercept ledger. The per-app count used to be buried in
+ * a buried row (BlockedAppEntity.interceptCount) and never stood
+ * at the decision point. 0 = not carried (previews, tests, or
+ * the count not yet read back): the door prints nothing rather
+ * than inventing a number.
+ */
+internal fun airlockAttemptLine(todayAttempts: Int): String? = when {
+    todayAttempts <= 0 -> null
+    else -> "${attemptOrdinal(todayAttempts)} REACH TODAY"
+}
+
+/**
+ * The cooldown's SCOPE, printed beside its price (issue #114,
+ * finding 3): the cooldown is per app — this app's timer says
+ * nothing about any other peek app's. Until this line existed the
+ * scope was discoverable only by rotating to the next app and
+ * finding a fresh wall there. Pure text; the scope itself is a
+ * policy Sarthak has not ruled on changing (see the issue-114
+ * report's DECISION-NEEDED), so the surface's job is to state it,
+ * never to imply a global lock it does not deliver.
+ */
+internal fun peekCooldownScopeText(): String =
+    "THE COOLDOWN IS PER APP — OTHER PEEK APPS KEEP THEIR OWN TIMERS"
+
+/**
+ * Issue #102 (peek-lived, finding 5): the peek offer's terms, in
+ * the app's own words, printed BEFORE the peek is taken. The peek
+ * chip is labelled "2-MINUTE PEEK" while the token-spending door
+ * is "EMERGENCY BREAK" — this line is what tells the user the two
+ * are different doors: the peek spends no weekly break and does
+ * not end the session. Pure, so the wording is unit-tested.
+ * (Ported from PR #351's peekTermsText — its pill/enforcer build
+ * was superseded by #114/#99 on main; this sentence was not.)
+ */
+internal fun peekTermsText(): String =
+    "THE PEEK DOES NOT SPEND YOUR EMERGENCY BREAK AND DOES NOT END THE SESSION"
+
+/**
+ * Issue #102 (peek-lived, finding 4): the withheld peek's reason
+ * stands on the door from the FIRST second — it is not gated on
+ * the breath countdown finishing. Before this, the reason block
+ * waited for `countdownSecs == 0`, so a user who returned from a
+ * peek (or hit a cooldown) stared at a wall that explained
+ * nothing for a second countdown. Pure decision, unit-tested;
+ * the countdown deliberately plays no part in it.
+ */
+internal fun peekWithheldReasonVisible(peekReady: Boolean): Boolean = !peekReady
+
+/**
+ * What waits at the end of the breath, printed DURING the breath
+ * (issue #114, finding 3): the wall's whole exchange — wait, then
+ * one tap buys the lease — stated before the countdown reaches
+ * zero, not revealed by it. [durationSeconds] is the lease's own
+ * constant, read at the call site, never hardcoded here.
+ */
+internal fun peekOfferPreviewText(durationSeconds: Int): String {
+    val minutes = durationSeconds / 60
+    return "AFTER THE BREATH: ONE TAP OPENS THIS APP FOR $minutes MINUTES"
+}
+
+/**
+ * Issue #324 (Audit R5, Zario head-to-head): the pause carries a
+ * SUBSTITUTE, not dead air. Zario feeds its Friction pause a
+ * micro-challenge pack — do this instead — while Monolith's wall
+ * offered two verbs and a numeral to wait out. The pack is local
+ * and fixed (no backend, no download, no tracking of whether it
+ * was done — the app is a blocker, not a tracker): one-minute
+ * off-phone actions, rotated deterministically by the intercept
+ * instance so consecutive reaches do not repeat the same line.
+ */
+internal val AIRLOCK_SUBSTITUTES: List<String> = listOf(
+    "DRINK A GLASS OF WATER",
+    "STAND UP AND STRETCH YOUR ARMS OVERHEAD",
+    "LOOK OUT OF THE WINDOW AT THE FARTHEST POINT YOU CAN SEE",
+    "SPLASH COLD WATER ON YOUR FACE",
+    "TAKE TEN SLOW BREATHS, OUT LONGER THAN IN",
+    "WALK TO THE DOOR AND BACK, TWICE",
+    "ROLL YOUR SHOULDERS AND NECK, SLOWLY",
+    "TIDY ONE CORNER OF THE DESK",
+    "STEP INTO DAYLIGHT AND LOOK AT THE SKY",
+    "WASH YOUR HANDS IN COLD WATER",
+    "SHAKE OUT YOUR HANDS AND ARMS",
+    "WATER A PLANT, OR OPEN A WINDOW FOR AIR"
+)
+
+/** The substitute for THIS intercept: a pure rotation over
+ *  [AIRLOCK_SUBSTITUTES] keyed on the per-intercept instance id
+ *  (issue #55's identity), so the same reach never re-rolls and
+ *  the next reach moves on. Negative ids fold in safely. */
+internal fun airlockSubstituteFor(interceptInstanceId: Long): String =
+    AIRLOCK_SUBSTITUTES[
+        Math.floorMod(interceptInstanceId, AIRLOCK_SUBSTITUTES.size.toLong()).toInt()
+    ]
+
+/** The substitute line as the wall prints it. */
+internal fun airlockSubstituteLine(interceptInstanceId: Long): String =
+    "INSTEAD, ONE MINUTE: ${airlockSubstituteFor(interceptInstanceId)}"
+
+/** The capture's own time, for a frozen row: HH:mm when the
+ *  capture is from today, d MMM · HH:mm when it is not — yesterday's
+ *  held rows legitimately sit in this morning's snapshot, and the
+ *  AS OF stamp dates the snapshot, not the rows. */
+private fun captureTimeLabel(is24Hour: Boolean, timestampMillis: Long): String {
+    val zone = java.time.ZoneId.systemDefault()
+    val captureDate = java.time.Instant.ofEpochMilli(timestampMillis).atZone(zone).toLocalDate()
+    // #88: the time half follows the system 12/24-hour setting; the
+    // day half names the day in the device locale when it is not today.
+    return if (captureDate == java.time.LocalDate.now(zone)) {
+        ClockText.timeOfDay(is24Hour, timestampMillis)
+    } else {
+        ClockText.dayAndTime(is24Hour, timestampMillis)
+    }
+}
+
+/**
+ * 2. CAPTURED NOTIFICATIONS DIGEST SHEET
+ *
+ * Two modes. LIVE (unsealed): the shipped sheet — live list, live
+ * count, CLEAR ALL — plus a per-row delete, so one capture can be
+ * triaged without wiping the table. FROZEN (sealed): a snapshot,
+ * not a feed — the header stamps HELD · AS OF {HH:mm}, there is no
+ * count and no CLEAR ALL (absent, not disabled), rows carry their
+ * own capture times and no affordance of any kind, and acting is
+ * refused at the repository besides. Reading is free; acting stays
+ * sealed. Closing is not an act on the held world and works in
+ * both modes.
+ */
+@Composable
+fun CapturedNotificationsDigestSheet(
+    visible: Boolean,
+    notifications: List<CapturedNotificationEntity>,
+    frozenAtMillis: Long? = null,
+    frozenMode: Boolean = false,
+    onClearAll: () -> Unit,
+    onDeleteItem: (Int) -> Unit = {},
+    onDismiss: () -> Unit
+) {
+    // CLEAR ALL is the one irreversible mass action in this sheet:
+    // it arms on the first tap and fires only on the second
+    // (issue #138). The arm resets whenever the sheet hides.
+    var clearAllArmed by remember { mutableStateOf(false) }
+    LaunchedEffect(visible) {
+        if (!visible) clearAllArmed = false
+    }
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(MonolithCurves.specC()),
+        exit = fadeOut(MonolithCurves.specA())
+    ) {
+        val scheme = MaterialTheme.colorScheme
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(scheme.scrim.copy(alpha = 0.65f))
+                .clickable(onClick = onDismiss)
+                .padding(12.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(scheme.surfaceBright)
+                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(24.dp))
+                    .clickable(enabled = false) {}
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (frozenMode) {
+                        if (frozenAtMillis != null) {
+                            Text(
+                                text = rememberMixedTypographyText(
+                                    wordPrefix = "HELD · AS OF ",
+                                    monoNumber = ClockText.timeOfDay(LocalContext.current, frozenAtMillis),
+                                    wordColor = scheme.onBackground,
+                                    monoColor = scheme.primaryContainer
+                                ),
+                                fontSize = 14.sp
+                            )
+                        } else {
+                            // The freeze is still landing: the frozen
+                            // frame with no stamp and no rows yet —
+                            // never one frame of the live list.
+                            Text(
+                                text = stringResource(R.string.label_held),
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = scheme.onBackground
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = rememberMixedTypographyText(
+                                wordPrefix = "HELD NOTIFICATIONS • ",
+                                monoNumber = notifications.size.toString(),
+                                wordColor = scheme.onBackground,
+                                monoColor = scheme.primaryContainer
+                            ),
+                            fontSize = 14.sp
+                        )
+                        BlockitActionChip(
+                            wordLabel = if (clearAllArmed) "TAP AGAIN TO CLEAR" else "CLEAR ALL",
+                            onClick = {
+                                if (clearAllArmed) {
+                                    clearAllArmed = false
+                                    onClearAll()
+                                } else {
+                                    clearAllArmed = true
+                                }
+                            }
+                        )
+                    }
+                }
+                if (frozenMode && frozenAtMillis != null) {
+                    Text(
+                        text = "Everything held so far, as of the time above — this list refreshes as new items are held. Nothing here opens.",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 13.sp,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
+                HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+
+                if (notifications.isEmpty()) {
+                    if (!frozenMode || frozenAtMillis != null) {
+                        Text(
+                            text = if (frozenMode) {
+                                "Nothing has been held."
+                            } else {
+                                "Zero notifications intercepted during focus."
+                            },
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 13.sp,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 24.dp)
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.height(220.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(notifications, key = { it.id }) { item ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(scheme.surfaceVariant)
+                                    .padding(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        // Both modes print the capture
+                                        // time (issue #138): a live row
+                                        // without its time hides whether
+                                        // it is fresh or hours old.
+                                        text = "${item.appName} • ${item.senderTitle} • ${captureTimeLabel(ClockText.is24Hour(LocalContext.current), item.timestampMillis)}",
+                                        fontFamily = AtkinsonHyperlegibleFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        color = scheme.onBackground,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    if (!frozenMode) {
+                                        Text(
+                                            text = stringResource(R.string.key_del),
+                                            fontFamily = AtkinsonHyperlegibleFamily,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            color = scheme.onSurfaceVariant,
+                                            modifier = Modifier.clickable { onDeleteItem(item.id) }
+                                        )
+                                    }
+                                }
+                                // A title-only capture has no body
+                                // (Truth Car 3, appendix): the row
+                                // prints the title alone, never an
+                                // invented sentence under it.
+                                if (item.messageBody.isNotBlank()) {
+                                    Text(
+                                        text = item.messageBody,
+                                        fontFamily = AtkinsonHyperlegibleFamily,
+                                        fontSize = 12.sp,
+                                        color = scheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                BlockitActionChip(
+                    wordLabel = "CLOSE DIGEST",
+                    isPrimaryInk = true,
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 5. AIRLOCK INTERCEPTION OVERLAY (Decision #16: 5s Breathing Delay Wall)
+ */
+@Composable
+fun AirlockInterceptOverlay(
+    state: AirlockInterceptState,
+    onSelectReason: (DistractionTriggerReason) -> Unit,
+    onTransmuteParticleTap: () -> Unit,
+    onReturnToFocus: () -> Unit,
+    onTake2MinutePeek: () -> Unit,
+    // The launcher doors (Sarthak's ruling, Oct 30 04:29 IST): the
+    // block screen is a launcher — from the door, the sealed phone's
+    // allowed and peek apps live one plate away, each on its own
+    // screen. Counts print from the rows' own tiers.
+    allowedAppsCount: Int = 0,
+    peekAppsCount: Int = 0,
+    onOpenAllowedApps: () -> Unit = {},
+    onOpenPeekApps: () -> Unit = {},
+    // Issue #119, finding 2: the emergency exit stands where the
+    // emergency happens. This chip opens the SAME DisarmChallenge
+    // overlay the Deck chip opens — identical cost (the week's one
+    // token), identical mechanism (the continuous 60s hold),
+    // identical effect (the session ends). Placement only; the
+    // valve's price and power are untouched.
+    onRequestEmergencyBreak: () -> Unit = {},
+    // Issue #318 F4: the breathing wall's length is a stored,
+    // per-configuration value (AirlockBreathStore), no longer a
+    // composable-local literal. Default = Decision #16's 5 seconds.
+    breathSeconds: Int = com.example.data.AirlockBreathStore.DEFAULT_SECONDS
+) {
+    // Issue #55 (HIGH): System Back must never bypass the wall toward
+    // the blocked app. While the airlock stands, Back is swallowed —
+    // the only exits are the composed RETURN TO FOCUS / peek actions.
+    BackHandler(enabled = state.isVisible) { }
+    AnimatedVisibility(
+        visible = state.isVisible,
+        enter = fadeIn(MonolithCurves.specB()),
+        exit = fadeOut(MonolithCurves.specA())
+    ) {
+        // Issue #55 (MEDIUM): the wall is PER-INTERCEPT. Both timers are
+        // keyed on the intercept INSTANCE (not package+visibility, which
+        // a same-package re-intercept left unchanged) and are
+        // deadline-derived, so a fresh intercept always restarts the
+        // full 5 seconds and drift can never stretch the wall.
+        val wallStartMono = remember(state.interceptInstanceId) {
+            state.interceptedAtMonoMillis.takeIf { it > 0L } ?: SystemClock.elapsedRealtime()
+        }
+        var countdownSecs by remember(state.interceptInstanceId) {
+            mutableIntStateOf(
+                airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), breathSeconds)
+            )
+        }
+        LaunchedEffect(state.interceptInstanceId, state.isVisible) {
+            countdownSecs =
+                airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), breathSeconds)
+            while (countdownSecs > 0) {
+                delay(200L)
+                countdownSecs =
+                    airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), breathSeconds)
+            }
+        }
+
+        // The withheld peek's cooldown, ticking live while the
+        // airlock stands (Truth Car 3, UNA2-01) — now derived from
+        // the state's absolute MONOTONIC deadline (Issue #55,
+        // verifier: the repository's own anchor + 20 min, ceiling
+        // math mirroring peekSecondsRemaining), so the on-screen
+        // unlock instant is never before the repository's grant
+        // instant. When it reaches zero the peek genuinely unlocks
+        // below (see peekUnlocked), instead of stranding the user
+        // on a frozen canUse flag at "0 MIN". States built without
+        // a deadline (tests, previews) fall back to the snapshot.
+        val cooldownDeadlineMono = remember(state.interceptInstanceId) {
+            state.peekCooldownEndsAtMonoMillis.takeIf { it > 0L }
+                ?: (SystemClock.elapsedRealtime() + state.peekCooldownRemainingSeconds * 1000L)
+        }
+        var cooldownSecs by remember(state.interceptInstanceId) {
+            mutableIntStateOf(state.peekCooldownRemainingSeconds)
+        }
+        LaunchedEffect(state.interceptInstanceId, state.isVisible) {
+            cooldownSecs = cooldownRemainingSeconds(cooldownDeadlineMono, SystemClock.elapsedRealtime())
+            while (cooldownSecs > 0) {
+                delay(200L)
+                cooldownSecs = cooldownRemainingSeconds(cooldownDeadlineMono, SystemClock.elapsedRealtime())
+            }
+        }
+        val peekReady = peekUnlocked(state.canUse2MinutePeek, state.peekWithheld, cooldownSecs)
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(NightColorBackground)
+                // Issue #55 (CRITICAL): the wall is modal — the root
+                // consumes every tap in the empty area around the card
+                // (same guard the digest sheet and primer already use),
+                // so nothing falls through to the UI underneath.
+                .clickable(enabled = false) {}
+                .padding(20.dp)
+                .testTag("airlock_intercept_overlay"),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(NightColorSurfaceBright)
+                    .border(1.dp, NightColorPrimary.copy(alpha = 0.2f), RoundedCornerShape(24.dp))
+                    .clickable(enabled = false) {}
+                    // Issue #55 (fresh-eyes): the card SCROLLS — with
+                    // the reason rows the content can outgrow short /
+                    // landscape / large-font screens, and Back is
+                    // deliberately swallowed, so an unscrollable card
+                    // would trap its own exits off-screen.
+                    .verticalScroll(rememberScrollState())
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.airlock_interception_badge, state.interceptReasonBadge.uppercase(Locale.US)),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.5.sp,
+                    color = NightColorPrimary
+                )
+
+                Text(
+                    text = state.interceptedAppName,
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 24.sp,
+                    color = NightColorPrimary
+                )
+
+                // Issue #254 F12 (Audit R5): the attempt mirror —
+                // under the app name, the door states which reach
+                // today this is, counted from the intercept ledger.
+                airlockAttemptLine(state.todayAttempts)?.let { line ->
+                    Text(
+                        text = line,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary,
+                        modifier = Modifier.testTag("airlock_attempt_line")
+                    )
+                }
+
+                // SIL-1 / Hale W-28: under the app name, the door
+                // states the session's end — its own statement,
+                // from the session's own numbers.
+                airlockSessionLine(
+                    ClockText.is24Hour(LocalContext.current),
+                    state.sessionEndsAtMillis,
+                    state.sessionIsStopwatch,
+                    state.stopwatchFloorAtMillis
+                )?.let { line ->
+                    Text(
+                        text = line,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f)
+                    )
+                }
+
+                // Issue #325 (Audit R5, Zario): the stake stands on
+                // the door — the week's break balance at the moment
+                // of decision, including the spent state at zero.
+                airlockStakeLine(state.emergencyBreaksRemaining)?.let { line ->
+                    Text(
+                        text = line,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f),
+                        modifier = Modifier.testTag("airlock_stake_line")
+                    )
+                }
+                // Issue #143 F3: the sealed state's own answer —
+                // the sheet the held app's tap raises now speaks
+                // AS the seal: which block holds the phone, or
+                // that a Safe Break is running and how much quiet
+                // is left, and that this app stays held either
+                // way. Before this the sheet answered a sealed
+                // tap with generic wall words only.
+                Text(
+                    text = sealedYieldLine(
+                        appName = state.interceptedAppName,
+                        inBreak = state.sessionInSafeBreak,
+                        breakRemainingSeconds = state.safeBreakSecondsRemaining,
+                        blockIndex = state.sessionBlockIndex,
+                        blockCount = state.sessionBlockCount
+                    ),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.5.sp,
+                    color = NightColorPrimary.copy(alpha = 0.9f),
+                    modifier = Modifier.testTag("airlock_sealed_yield_line")
+                )
+
+                // Hero Architectural Countdown Numeral (Space Mono)
+                // Issue #55: the transmute pulse is WIRED, not dead —
+                // tapping the numeral during the wall fires it (the
+                // ViewModel answers with a pitch-rising detent and
+                // counts the pulse). It grants nothing and shortens
+                // nothing; it is the wall's one permitted fidget.
+                Text(
+                    text = if (countdownSecs > 0) String.format(Locale.US, "0%d", countdownSecs) else "00",
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 88.sp,
+                    color = NightColorPrimary, // a readout numeral, not an accent (Round 1c)
+                    modifier = Modifier
+                        .clickable { onTransmuteParticleTap() }
+                        .testTag("airlock_countdown_numeral")
+                )
+
+                // UNA2-07: the label prints only over a declared
+                // intention — never "ACTIVE INTENTION: " standing
+                // over a blank.
+                if (state.sessionIntention.isNotBlank()) {
+                    Text(
+                        text = stringResource(R.string.active_intention, state.sessionIntention),
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f),
+                        // Issue #124: bounded at the moment of
+                        // temptation — a legacy over-long stored
+                        // intention ellipsises at two lines instead
+                        // of flooding the wall. (New rows are capped
+                        // at the arm snapshot in startSession.)
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                // Issue #324 (Audit R5, Zario): the pause is spent,
+                // not just charged — one rotating off-phone
+                // substitute stands on the wall itself, keyed to
+                // this intercept so it never repeats back-to-back.
+                Text(
+                    text = airlockSubstituteLine(state.interceptInstanceId),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontSize = 12.5.sp,
+                    color = NightColorPrimary.copy(alpha = 0.8f),
+                    modifier = Modifier.testTag("airlock_substitute_line")
+                )
+
+                // Issue #55 (MEDIUM): reason selection is REAL wiring,
+                // not a dead parameter. The user picks why they opened
+                // the app; the pick is stored via onSelectReason and is
+                // the triggerReason actually recorded on return/peek —
+                // no longer a silently fabricated MUSCLE_MEMORY default
+                // (it remains only the visibly pre-selected first chip).
+                Text(
+                    text = "WHY DID YOU OPEN IT?",
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.5.sp,
+                    color = NightColorPrimary.copy(alpha = 0.8f)
+                )
+                DistractionTriggerReason.values().toList().chunked(2).forEach { rowReasons ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        rowReasons.forEach { reason ->
+                            BlockitActionChip(
+                                wordLabel = reason.shortTag.uppercase(Locale.US),
+                                isPrimaryInk = state.selectedReason == reason,
+                                onClick = { onSelectReason(reason) },
+                                modifier = Modifier.weight(1f),
+                                testTag = "airlock_reason_${reason.name.lowercase(Locale.US)}"
+                            )
+                        }
+                    }
+                }
+
+                // Issue #99 F5: for LOCKED-tier apps the wall now
+                // gates something real — RETURN TO FOCUS itself.
+                // Before this the chip was live from second 5 and
+                // the countdown opened nothing at 00 for LOCKED
+                // apps. The delay IS the wall for the locked tier;
+                // PEEK-tier behaviour is unchanged (RETURN was and
+                // stays live, the peek offer is what its wall gates).
+                val returnLive = returnToFocusLive(state.isLockedTier, countdownSecs)
+                // R3b #162 F4: the Uninstall Guard door can honour no
+                // peek (InterceptPath.UNINSTALL_GUARD), so beside its
+                // single RETURN offer it prints the lawful road out —
+                // the same road the device-admin warning prescribes:
+                // end the block first; the emergency break is the door
+                // the app itself sanctions. A signpost to an existing
+                // valve, not a new exit.
+                if (state.interceptPath == InterceptPath.UNINSTALL_GUARD) {
+                    Text(
+                        text = "TO REMOVE MONOLITH: END THE BLOCK FIRST — THE EMERGENCY BREAK ON THE DECK IS THE LAWFUL DOOR.",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = NightColorPrimary.copy(alpha = 0.8f)
+                    )
+                }
+                BlockitActionChip(
+                    wordLabel = "RETURN TO FOCUS",
+                    isAccentArmed = true,
+                    onClick = { if (returnLive) onReturnToFocus() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (returnLive) Modifier else Modifier.alpha(0.45f)),
+                    testTag = "airlock_return_button"
+                )
+
+                if (peekReady) {
+                    // Audit R6 #341 F60: composed from the FIRST frame,
+                    // disabled and priced while the countdown runs.
+                    // Before this the chip (and its price line) only
+                    // appeared at second 0's end — the card grew
+                    // mid-decision, switch scanners restarted their
+                    // scan, and the offer could not even be READ
+                    // before the timer ran out.
+                    // Issue #114, finding 3 (composed with F60 above): the offer
+                    // line also stands during the breath — what waits at zero is
+                    // printed from the first second, while the price, scope and terms
+                    // print with the chip itself below, so the whole exchange is
+                    // readable during the countdown without duplicated lines.
+                    if (countdownSecs > 0) {
+                        Text(
+                            text = peekOfferPreviewText(MonolithRepository.PEEK_DURATION_SECONDS),
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 12.5.sp,
+                            color = NightColorPrimary.copy(alpha = 0.8f)
+                        )
+                    }
+                BlockitActionChip(
+                    wordLabel = "2-MINUTE PEEK",
+                    // Issue #114, finding 5: this door is NOT an
+                    // emergency — it is the routine, repeatable,
+                    // cooldown-priced peek. The EMERGENCY name now
+                    // belongs only to the session-ending weekly
+                    // break, so the two doors can never again be
+                    // confused at the moment of least capacity.
+                    // SIL-2 / W-29: the badge is the SET value,
+                    // read from the lease machinery's own
+                    // constant — no hardcoded minutes here.
+                    monoBadge = peekBadgeText(MonolithRepository.PEEK_DURATION_SECONDS),
+                    onClick = { if (countdownSecs == 0) onTake2MinutePeek() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (countdownSecs == 0) Modifier else Modifier.alpha(0.45f)),
+                    testTag = "airlock_peek_button"
+                )
+                // SIL-2 / W-29: the price stands on the offer,
+                // before the peek is taken — the cooldown the
+                // repository will arm, named in full.
+                Text(
+                    text = peekPriceText(MonolithRepository.PEEK_COOLDOWN_MILLIS),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontSize = 12.5.sp,
+                    color = NightColorPrimary.copy(alpha = 0.8f)
+                )
+                Text(
+                    text = peekCooldownScopeText(),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontSize = 12.5.sp,
+                    color = NightColorPrimary.copy(alpha = 0.8f)
+                )
+                // Issue #102, finding 5: the terms stand on
+                // the offer itself, before the tap.
+                Text(
+                    text = peekTermsText(),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontSize = 12.5.sp,
+                    color = NightColorPrimary.copy(alpha = 0.8f)
+                )
+                }
+
+                // The withheld peek prints its state AND its reason
+                // (Held Door Truth Baseline): cooldown with its
+                // live remaining time, or the running pill named.
+                // Doors that never owed a peek carry withheld ==
+                // null and print nothing here. Issue #102, finding
+                // 4: the reason is NOT gated on the breath countdown
+                // — it shows from the first second, not after a
+                // second countdown (see peekWithheldReasonVisible).
+                if (peekWithheldReasonVisible(peekReady)) {
+                    when (state.peekWithheld) {
+                        PeekWithheld.COOLDOWN -> {
+                            if (cooldownSecs > 0) {
+                                Text(
+                                    text = peekCooldownPrint(cooldownSecs),
+                                    fontFamily = AtkinsonHyperlegibleFamily,
+                                    fontSize = 12.5.sp,
+                                    color = NightColorPrimary.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
+                        PeekWithheld.ALREADY_ACTIVE -> Text(
+                            text = stringResource(R.string.peek_already_running),
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 12.5.sp,
+                            color = NightColorPrimary.copy(alpha = 0.8f)
+                        )
+                        PeekWithheld.PEEK_OFF -> Text(
+                            text = stringResource(R.string.peek_off),
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 12.5.sp,
+                            color = NightColorPrimary.copy(alpha = 0.8f)
+                        )
+                        // Issue #154: not a refusal — the door's
+                        // own state line for a LOCKED tier, naming
+                        // the tier and where tiers are set, so a
+                        // legitimate need meets a fact instead of
+                        // a blank wall.
+                        PeekWithheld.TIER_LOCKED -> Text(
+                            text = "LOCKED TIER — NO PEEK EXISTS HERE · PEEK APPS ARE SET IN THE SHIELD",
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 12.5.sp,
+                            color = NightColorPrimary.copy(alpha = 0.8f)
+                        )
+                        null -> Unit
+                    }
+                }
+
+                // THE VALVE, AT THE DOOR (issue #119, finding 2):
+                // one tap from the intercept to the same emergency
+                // break the Deck offers — no multi-screen detour
+                // through the Deck while the emergency is happening
+                // here. Always rendered: an emergency does not wait
+                // for the 5-second wall.
+                BlockitActionChip(
+                    wordLabel = "EMERGENCY BREAK VALVE (60S HOLD)",
+                    onClick = onRequestEmergencyBreak,
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "airlock_emergency_break_button"
+                )
+
+                // THE LAUNCHER DOORS: two plates, two screens —
+                // allowed apps on one, peek apps on the other.
+                // They open rooms inside the seal; neither is an
+                // exit, and neither grants anything by itself.
+                BlockitActionChip(
+                    wordLabel = "ALLOWED APPS",
+                    monoBadge = allowedAppsCount.toString(),
+                    onClick = onOpenAllowedApps,
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "airlock_allowed_apps_button"
+                )
+
+                BlockitActionChip(
+                    wordLabel = "PEEK APPS",
+                    monoBadge = peekAppsCount.toString(),
+                    onClick = onOpenPeekApps,
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "airlock_peek_apps_button"
+                )
+            }
+        }
+    }
+}
+
+/** Issue #99 F5 (pure, unit-tested): RETURN TO FOCUS is live
+ *  immediately for non-LOCKED tiers, and only once the 5s wall has
+ *  run for LOCKED-tier apps — the wall gates the return itself. */
+internal fun returnToFocusLive(isLockedTier: Boolean, countdownSecs: Int): Boolean =
+    !isLockedTier || countdownSecs <= 0
+
+/** Issue #99 F2 (pure, unit-tested): the pill's countdown print. */
+internal fun peekPillCountdownText(secondsRemaining: Int): String {
+    val s = secondsRemaining.coerceAtLeast(0)
+    return String.format(Locale.US, "%d:%02d", s / 60, s % 60)
+}
+
+/**
+ * Issue #99 F2: THE PEEK COUNTDOWN PILL — the canonical rendering of
+ * [com.example.ui.FloatingPeekPillState] (this cures #101-F3 by
+ * cross-reference: one pill, rendered here, collected in
+ * MainActivity). App name, remaining time derived from the lease,
+ * and a ✕ that ends the peek early via end2MinutePeekEarly.
+ */
+@Composable
+fun PeekCountdownPill(
+    state: com.example.ui.FloatingPeekPillState,
+    onEndEarly: () -> Unit
+) {
+    if (!state.isActive) return
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = 48.dp),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(24.dp))
+                .background(NightColorSurfaceBright)
+                .border(1.dp, NightColorPrimary.copy(alpha = 0.35f), RoundedCornerShape(24.dp))
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .testTag("peek_countdown_pill"),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = state.appName.ifBlank { "Peek" },
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+                color = NightColorPrimary
+            )
+            Text(
+                text = peekPillCountdownText(state.secondsRemaining),
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+                color = NightColorPrimary,
+                modifier = Modifier.testTag("peek_pill_countdown")
+            )
+            // #336: the close glyph is an ICON from the one system
+            // (MonolithIcons), not a text character.
+            androidx.compose.material3.Icon(
+                imageVector = com.example.ui.theme.MonolithIcons.Close,
+                contentDescription = "End peek early",
+                tint = NightColorPrimary,
+                modifier = Modifier
+                    .clickable { onEndEarly() }
+                    .testTag("peek_pill_end_button")
+                    .padding(horizontal = 4.dp)
+                    .size(16.dp)
+            )
+        }
+    }
+}
+
+/**
+ * 6. DISARM CHALLENGE OVERLAY (Unbreakable Lock + the weekly valve)
+ *
+ * Surface contract is TOKEN-SPEC §7 / Freya's buildspec point 2, one
+ * job per element: title EMERGENCY BREAK · body = consequence (worded
+ * by the count) · the valve = the mechanism · rule line UNDER the
+ * valve = mechanics · chip KEEP FOCUSING. The count itself arrives as
+ * [tokensRemaining], derived live from the repository's spend ledger
+ * (Amendment A — never a snapshot written into the state at open).
+ * Ledger-Direct (Freya, invention 1): the valve receives NO count —
+ * at 0 remaining it is simply not composed, and this overlay renders
+ * the SPENT face (buildspec point 8) in its place.
+ * Issue #103 F5: a refused completed hold prints its refusal
+ * sentence (state.refusalMessage) on either face — never in silence.
+ * Ledger-Direct (Freya, invention 1): the valve receives NO count.
+ * Issue #119, finding 1 (truth half): at 0 remaining the INTERACTIVE
+ * valve is not composed, but the valve's place is never left empty —
+ * an inert SPENT plate stands there, naming the state and the day
+ * the token returns (next Monday 00:00, MonolithWeek). The spent
+ * plate grants nothing: no hold, no tap, no exit. The one-token law
+ * itself is Sarthak's settled design and is not changed here.
+ */
+
+/**
+ * The SPENT valve's return line: the Monday the week's token comes
+ * back, from the one week definition. Pure java.time.
+ */
+internal fun emergencyTokenReturnText(nowMillis: Long = System.currentTimeMillis()): String {
+    val next = MonolithWeek.nextWeekAnchorMillis(nowMillis)
+    val date = Instant.ofEpochMilli(next).atZone(ZoneId.systemDefault())
+    return "Returns " + date.format(DateTimeFormatter.ofPattern("EEE d MMM", Locale.US))
+}
+@Composable
+fun DisarmChallengeOverlay(
+    state: DisarmChallengeState,
+    tokensRemaining: Int,
+    soundEngine: TactileSoundEngine? = null,
+    onDismissKeepFocusing: () -> Unit,
+    onCompleteDisarm: () -> Unit,
+    onHoldBanked: () -> Unit = {},
+    onHoldStarted: () -> Unit = {}
+) {
+    // Issue-60 (finding 1): banked valve progress is HOISTED here in
+    // rememberSaveable — it survives this overlay being dismissed and
+    // recomposed, rotation, and process death, and is handed back to
+    // each fresh valve view in its factory. Completion consumes it.
+    var hoistedBankedMs by rememberSaveable { mutableLongStateOf(0L) }
+    // Issue #55 (HIGH): Back must never exit toward the blocked app.
+    // On the disarm challenge, Back means exactly what the composed
+    // KEEP FOCUSING chip means — dismiss the challenge, stay in
+    // Monolith — never an activity finish.
+    BackHandler(enabled = state.isVisible) { onDismissKeepFocusing() }
+    AnimatedVisibility(
+        visible = state.isVisible,
+        enter = fadeIn(MonolithCurves.specC()),
+        exit = fadeOut(MonolithCurves.specA())
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(NightColorBackground.copy(alpha = 0.94f))
+                // Issue #55 (CRITICAL): modal — consume every tap
+                // outside the card, same guard as digest/primer.
+                .clickable(enabled = false) {}
+                .padding(16.dp)
+                .testTag("disarm_challenge_overlay"),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(NightColorSurfaceBright)
+                    .border(1.dp, NightColorPrimary.copy(alpha = 0.2f), RoundedCornerShape(24.dp))
+                    .clickable(enabled = false) {}
+                    .verticalScroll(rememberScrollState())
+                    .padding(22.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.emergency_break),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = NightColorPrimary
+                )
+
+                Text(
+                    text = if (tokensRemaining > 0) {
+                        "This ends the session early. It is the only break this week."
+                    } else {
+                        "This week's break is already spent."
+                    },
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontSize = 13.sp,
+                    color = NightColorPrimary
+                )
+
+                // Issue #103 F5: a refused hold announces itself.
+                // Printed OUTSIDE the valve conditional so it shows
+                // on both faces (valve composed, and SPENT at 0) —
+                // the valve's own progress has already reset to
+                // zero, so this sentence is the only sign the 60
+                // seconds did not count.
+                state.refusalMessage?.let { refusal ->
+                    Text(
+                        text = refusal,
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = NightColorPrimary,
+                        modifier = Modifier.testTag("valve_refusal_message")
+                    )
+                }
+
+                // Audit R3b #147: below the stopwatch floor, the
+                // valve is not the only door — waiting is. The
+                // overlay names the floor, the minutes left to it,
+                // and that reaching it makes the stop free, so the
+                // token is never presented as the sole way out.
+                if (state.sessionIsStopwatch && state.remainingFloorSeconds > 0) {
+                    val floorMinutes =
+                        (state.remainingFloorSeconds + 59) / 60
+                    Text(
+                        text = "Or wait: this is a stopwatch session with a " +
+                            "20-minute floor. $floorMinutes more minutes and " +
+                            "stopping is free — no break spent.",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 13.sp,
+                        color = NightColorPrimary
+                    )
+                }
+
+                if (tokensRemaining > 0) {
+                    AndroidView(
+                        factory = { ctx ->
+                            Emergency60sValveView(ctx).apply {
+                                isNightMode = true
+                                this.soundEngine = soundEngine
+                                requiredSeconds = state.requiredHoldSeconds
+                                restoreBankedProgress(hoistedBankedMs)
+                            }
+                        },
+                        update = { view ->
+                            view.requiredSeconds = state.requiredHoldSeconds
+                            view.onHoldBanked = onHoldBanked
+                            view.onBankedProgressChanged = { banked ->
+                                hoistedBankedMs = banked
+                            }
+                            view.onEmergencyBreakCompleted = {
+                                hoistedBankedMs = 0L
+                                onCompleteDisarm()
+                            }
+                            view.onHoldStarted = onHoldStarted
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(68.dp)
+                            .testTag("emergency_60s_valve")
+                    )
+
+                    // Issue #114, finding 5: the mechanics of the
+                    // week's only break are consequential print —
+                    // they stand at the same size and weight as the
+                    // consequence line above, not in the smallest,
+                    // dimmest type on the screen.
+                    Text(
+                        // Issue #55 (fresh-eyes): the seconds are the
+                        // valve's own requiredHoldSeconds, not a
+                        // hardcoded 60 that only agreed by accident.
+                        text = "Hold to fill ${state.requiredHoldSeconds} seconds. Every 15 seconds banks. If your hand slips, what isn't banked drains away. The banked part stays.",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 13.sp,
+                        color = NightColorPrimary
+                    )
+                } else {
+                    // SPENT face (issue #119, finding 1): the valve's
+                    // place, rendered inert — visible, truthful, and
+                    // granting nothing. No AndroidView, no hold, no
+                    // click target: the week's break is used, and the
+                    // plate says when the token returns.
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(68.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(
+                                1.dp,
+                                NightColorPrimary.copy(alpha = 0.35f),
+                                RoundedCornerShape(12.dp)
+                            )
+                            .testTag("emergency_valve_spent"),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = "VALVE SPENT — THIS WEEK'S BREAK IS USED",
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = NightColorPrimary.copy(alpha = 0.8f)
+                        )
+                        Text(
+                            text = emergencyTokenReturnText(),
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 11.sp,
+                            color = NightColorPrimary.copy(alpha = 0.75f)
+                        )
+                    }
+                }
+
+                BlockitActionChip(
+                    wordLabel = "KEEP FOCUSING",
+                    isPrimaryInk = true,
+                    onClick = onDismissKeepFocusing,
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "keep_focusing_button"
+                )
+            }
+        }
+    }
+}
+
+nternal fun deskClockPrintAlphas(
+    spanElapsedFraction: Float,
+    descentSuspended: Boolean,
+    spanRemainingSeconds: Int?,
+    isStopwatch: Boolean
+): DeskClockAlphas {
+    val fraction = spanElapsedFraction.coerceIn(0f, 1f)
+    var hero = DESK_CLOCK_PRINT_ALPHA +
+        (DESK_CLOCK_HERO_FLOOR_ALPHA - DESK_CLOCK_PRINT_ALPHA) * fraction
+    var number = DESK_CLOCK_PRINT_ALPHA +
+        (DESK_CLOCK_NUMBER_FLOOR_ALPHA - DESK_CLOCK_PRINT_ALPHA) * fraction
+    if (descentSuspended) {
+        hero = DESK_CLOCK_PRINT_ALPHA
+        number = DESK_CLOCK_PRINT_ALPHA
+    }
+    if (!isStopwatch && spanRemainingSeconds != null && spanRemainingSeconds in 1..60) {
+        val dawn = (60 - spanRemainingSeconds) / 60f
+        hero += (DESK_CLOCK_PRINT_ALPHA - hero) * dawn
+        number += (DESK_CLOCK_PRINT_ALPHA - number) * dawn
+    }
+    val exit = maxOf(DESK_CLOCK_EXIT_FLOOR_ALPHA, hero * DOOR_INVARIANT_RATIO)
+        .coerceAtMost(DESK_CLOCK_EXIT_ALPHA)
+    return DeskClockAlphas(hero = hero, exit = exit, numberLine = number)
+}
+
+internal fun tearFraction(spanElapsedFraction: Float): Float =
+    spanElapsedFraction.coerceIn(TEAR_HAIR_FRACTION, 1f)
+
+/**
+ * 1. ALWAYS-ON NIGHTSTAND DESK CLOCK OVERLAY (Decision #8)
+ *
+ * Issue #13 merge notes: keep-awake ownership MOVED to the VM's
+ * session machinery (A-10(v)) — this face no longer touches
+ * FLAG_KEEP_SCREEN_ON; the VM's surrender law (deadline, fade,
+ * yield) drives it. Arrival/exit motion is A-4's cause table,
+ * carried in [entryCause] / [exitIsFinish]; the surrender fade
+ * (A-10(v): print fades 520 Curve C to 0 at true-off − 520 ms)
+ * arrives as [surrenderFade].
+ */
+// Wave-3 (Schliff F-4): the banner slot's measure is DERIVED,
+// never a magic height — two lines at this explicit line
+// height, plus the slot's 12 dp vertical padding each side
+// (the padding lives in the slot's modifier below).
+
 /** The wall clock as this app prints it everywhere else:
  *  HH:mm, 24-hour (the ENDS / WITHIN grammar). */
 internal fun wallClockTimeText(wallMillis: Long): String =
     java.text.SimpleDateFormat("HH:mm", Locale.US).format(java.util.Date(wallMillis))
+
+/**
+ * Finisher cure (Politur P-2): THE one remaining-seconds
+ * derivation for a timed session, shared by the hero, the
+ * sub-line's last-minute promotion and the dawn ramp's key.
+ * For a routine row it counts to the STAND-DOWN's instant —
+ * the frozen windowEndMillis, the same derivation ENDS
+ * prints (A-12 C-1) — not to the span's arithmetic: the span
+ * target is built from whole FLOORED minutes at
+ * materialisation, so spanRemainingSeconds hits 0 up to
+ * 59 s before the window's end, every night (Daemmer DAE-1).
+ * Wave-2 keyed the hero and the ramp to the window but left
+ * deskClockSubLine reading spanRemainingSeconds, so inside
+ * the window's true last minute NOW either dropped up to
+ * ~59 s early or never dropped at all.
+ */
 
 /**
  * Finisher cure (Politur P-2): THE one remaining-seconds
@@ -845,6 +2279,10 @@ internal fun deskClockRemainingSeconds(session: FocusSessionEntity, nowWallMilli
 /** K-8 / DESIGN §1: the hero's label, inseparable from the
  *  figure — LEFT over a timed remainder, ELAPSED over a
  *  stopwatch, THE TIME NOW over the idle wall clock. */
+
+/** K-8 / DESIGN §1: the hero's label, inseparable from the
+ *  figure — LEFT over a timed remainder, ELAPSED over a
+ *  stopwatch, THE TIME NOW over the idle wall clock. */
 internal fun deskClockHeroLabel(activeSession: FocusSessionEntity?): String =
     if (activeSession == null || !activeSession.isActive) {
         "THE TIME NOW"
@@ -853,6 +2291,15 @@ internal fun deskClockHeroLabel(activeSession: FocusSessionEntity?): String =
     } else {
         "LEFT"
     }
+
+/**
+ * The desk clock's hero (FLOW §2.4.1–2 — ST-01 / FL-03). A live
+ * session reads its span: the span remaining for a timed
+ * session (never the per-block remainder — it is 0 through
+ * every Safe Break and this clock has no block context), the
+ * elapsed for a stopwatch. NO live session: the hero is the
+ * current time — never the composer's dial setting.
+ */
 
 /**
  * The desk clock's hero (FLOW §2.4.1–2 — ST-01 / FL-03). A live
@@ -887,7 +2334,22 @@ internal fun deskClockHeroText(activeSession: FocusSessionEntity?, nowWallMillis
 
 /** The current-time line: NOW HH:mm — the figure wears its
  *  label in the same string (K-8). */
+
+/** The current-time line: NOW HH:mm — the figure wears its
+ *  label in the same string (K-8). */
 internal fun deskClockNowLine(nowWallMillis: Long): String = "NOW " + wallClockTimeText(nowWallMillis)
+
+/**
+ * A-12 / C-1, answered from the code: a routine row's frozen
+ * windowEndMillis (MonolithModels.kt — the stand-down reads
+ * the same stamp) IS the end the machine will keep, and a
+ * routine span's target CAN differ from its window (the span
+ * derives from block targets + breaks; the window is the
+ * schedule's frozen snapshot). So for routine-born rows ENDS
+ * derives from windowEndMillis; for hand rows, from now + the
+ * span remaining — the face promises the end the stand-down
+ * will keep.
+ */
 
 /**
  * A-12 / C-1, answered from the code: a routine row's frozen
@@ -915,6 +2377,12 @@ internal fun deskClockEndsLine(session: FocusSessionEntity, nowWallMillis: Long)
  * "NOW HH:MM · ENDS HH:MM"; in the last minute NOW drops and
  * ENDS stands alone; a stopwatch reads "NOW HH:MM" alone.
  */
+
+/**
+ * §C-1 / A-6(ii) — the sub-line, whole: timed sessions read
+ * "NOW HH:MM · ENDS HH:MM"; in the last minute NOW drops and
+ * ENDS stands alone; a stopwatch reads "NOW HH:MM" alone.
+ */
 internal fun deskClockSubLine(session: FocusSessionEntity, nowWallMillis: Long): String {
     if (session.isStopwatchMode) return deskClockNowLine(nowWallMillis)
     // The promotion keys to the SAME remaining the hero counts
@@ -925,6 +2393,18 @@ internal fun deskClockSubLine(session: FocusSessionEntity, nowWallMillis: Long):
     }
     return deskClockNowLine(nowWallMillis) + " · " + deskClockEndsLine(session, nowWallMillis)
 }
+
+/**
+ * A-1 — the block line, state-only: suppressed during a break
+ * (the row's per-block remaining is 0 for the whole break and
+ * the break line owns those minutes); suppressed for a
+ * single-block span (no block context to name). For k < n its
+ * figure is the block's end in wall time — "BLOCK k OF n ·
+ * UNTIL HH:MM" (UNTIL is the house's phase-end word; ENDS
+ * belongs to the span alone). The FINAL block prints no
+ * figure: there the block's end IS the span's ENDS, already
+ * standing in the sub-line — one instant never prints twice.
+ */
 
 /**
  * A-1 — the block line, state-only: suppressed during a break
@@ -963,103 +2443,6 @@ internal fun deskClockBlockLine(session: FocusSessionEntity, nowWallMillis: Long
  * apart by more than the beat that separates them. The code
  * now does what the comment always said.
  */
-internal fun deskClockBreakLine(
-    isInSafeBreak: Boolean,
-    safeBreakSecondsRemaining: Int,
-    nowWallMillis: Long
-): String? {
-    if (!isInSafeBreak) return null
-    val rawEndWall = nowWallMillis + safeBreakSecondsRemaining.coerceAtLeast(0) * 1000L
-    // Salz C-18's cured sentence, kept truthful (batch-10 fix):
-    // UNTIL names the first minute mark AT OR AFTER the true end.
-    // A truncating HH:mm would print the minute BEFORE the end
-    // whenever seconds remain — the clock claiming the door
-    // shuts earlier than it does. Exact marks print as-is.
-    val rem = rawEndWall % 60_000L
-    val breakEndWall = if (rem == 0L) rawEndWall else rawEndWall + (60_000L - rem)
-    return "BREAK — PEEK APPS OPEN · UNTIL " + wallClockTimeText(breakEndWall)
-}
-
-/**
- * The desk clock's banner text (Truth Car 3, appendix / FLOW
- * FL-06) under A-12 / C-2, answered from the code: L7's fallback
- * chain is task → intention → routine name → absent. The chain
- * gains its truer floor at this merge: a hand-started session
- * with neither task nor intention still carries its loadout —
- * profileName is stamped on every row at birth (the seal's
- * snapshot; routine rows wear "Routine: <name>", hand rows the
- * loadout's name) — so the floor is the row's own profile name,
- * stripped of the routine prefix. Anonymity now stands only
- * when even that is blank, which no arming path produces.
- */
-internal fun deskClockBannerText(
-    taskTitle: String?,
-    intention: String?,
-    profileName: String? = null
-): String? =
-    taskTitle?.takeIf { it.isNotBlank() }
-        ?: intention?.takeIf { it.isNotBlank() }
-        ?: profileName
-            ?.removePrefix("Routine:")
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-
-/**
- * The withheld peek's cooldown print (Truth Car 3, SIL-3; Hale
- * W-30's words): whole minutes, ceiling — 61 seconds is "AGAIN
- * IN 2 MIN", never a rounded-down promise.
- */
-internal fun peekCooldownPrint(secondsRemaining: Int): String {
-    val minutes = (secondsRemaining.coerceAtLeast(0) + 59) / 60
-    return "PEEK COOLDOWN — AGAIN IN $minutes MIN"
-}
-
-/**
- * The door's own statement of the session's end (SIL-1, Hale
- * W-28): a timed session states its span end — "SESSION " over
- * [endsAtText]'s instant; a stopwatch states that it has no set
- * end; no session, no line. The door never invents an end.
- */
-internal fun airlockSessionLine(endsAtMillis: Long?, isStopwatch: Boolean): String? = when {
-    endsAtMillis != null -> "SESSION " + endsAtText(endsAtMillis)
-    isStopwatch -> "SESSION RUNNING · NO SET END"
-    else -> null
-}
-
-/**
- * The peek chip's badge (SIL-2, Hale W-29; FIX-8): the SET value,
- * read from the same constant the lease machinery reads — never
- * a hardcoded "2m" on the surface, and never a truncation:
- * minutes and seconds render honestly (90s → "1m30s", 45s →
- * "45s", 125s → "2m5s"). (Rurik's editable store replaces the
- * constant as the value's source; this function is the one
- * print derivation that changes.)
- */
-internal fun peekBadgeText(durationSeconds: Int): String {
-    val total = durationSeconds.coerceAtLeast(0)
-    val minutes = total / 60
-    val seconds = total % 60
-    return when {
-        minutes > 0 && seconds > 0 -> "${minutes}m${seconds}s"
-        minutes > 0 -> "${minutes}m"
-        else -> "${seconds}s"
-    }
-}
-
-/**
- * The peek's price, printed on the offer from frame one — before
- * it is taken (FIX-8, re-timing C-11/B-2; Hale W-29's supplied
- * text is replaced along with the name): the machine anchors
- * the cooldown at the lease's END, so from the tap the real
- * exclusion is lease + cooldown, and the sentence now says when
- * the clock starts. Derived from the cooldown the repository
- * will actually arm — never a hardcoded 20 on the surface.
- */
-internal fun peekPriceText(cooldownMillis: Long): String {
-    val minutes = cooldownMillis / 60_000L
-    val unit = if (minutes == 1L) "MINUTE" else "MINUTES"
-    return "WHEN THE PEEK ENDS, A $minutes $unit COOLDOWN STARTS ON THIS APP"
-}
 
 /**
  * The gate line (FIX-6): the wall as a captioned print, not a
@@ -1071,6 +2454,16 @@ internal fun peekGateLineText(secondsRemaining: Int): String {
     val secs = secondsRemaining.coerceAtLeast(0)
     return String.format(Locale.US, "PEEK OPENS IN %d:%02d", secs / 60, secs % 60)
 }
+
+/**
+ * The door's memory line (FIX-8, designer §5.7): the ordinal of
+ * THIS visit in the gate line's family — {prior booked + 1}
+ * TIME THIS SESSION. The scope word is THIS SESSION (Tor's
+ * ratification): the taper counts this session's booked
+ * intercepts, and a session is not a night. Printed only when
+ * at least one prior booking exists; the door claims no memory
+ * it doesn't have.
+ */
 
 /**
  * The door's memory line (FIX-8, designer §5.7): the ordinal of
@@ -1116,12 +2509,28 @@ internal fun ordinalWord(n: Int): String = when (n) {
  * itself can disagree with its anchor; this cannot. An end of
  * 0 (never anchored) or a passed end derives 0.
  */
+
+/**
+ * Seconds until an anchored monotonic end, derived at the
+ * frame that prints (FIX-5b): the ceiling form, the same
+ * arithmetic as peekSecondsRemaining — a counter that ticks
+ * itself can disagree with its anchor; this cannot. An end of
+ * 0 (never anchored) or a passed end derives 0.
+ */
 internal fun derivedSecondsUntil(endMono: Long, nowMono: Long): Int {
     if (endMono <= 0L) return 0
     val remainingMs = endMono - nowMono
     if (remainingMs <= 0L) return 0
     return ((remainingMs + 999L) / 1000L).toInt()
 }
+
+/**
+ * The break appointment (FIX-8, the Errand's kernel; designer
+ * §4.5 wording, Tor-ratified cell spec): the instant the
+ * session's own schedule already guarantees, at which the Safe
+ * Break's tier law opens this app — no lease, no cooldown.
+ * Derived from the carried instant; never a literal.
+ */
 
 /**
  * The break appointment (FIX-8, the Errand's kernel; designer
@@ -1139,1032 +2548,50 @@ internal fun breakAppointmentText(nextBreakAtMillis: Long): String =
  *  capture is from today, d MMM · HH:mm when it is not — yesterday's
  *  held rows legitimately sit in this morning's snapshot, and the
  *  AS OF stamp dates the snapshot, not the rows. */
-private fun captureTimeLabel(timestampMillis: Long): String {
-    val zone = java.time.ZoneId.systemDefault()
-    val captureDate = java.time.Instant.ofEpochMilli(timestampMillis).atZone(zone).toLocalDate()
-    val pattern = if (captureDate == java.time.LocalDate.now(zone)) "HH:mm" else "d MMM · HH:mm"
-    return java.text.SimpleDateFormat(pattern, java.util.Locale.US)
-        .format(java.util.Date(timestampMillis))
-}
+
+const val TEAR_HAIR_FRACTION = 0.01f
 
 /**
- * 2. CAPTURED NOTIFICATIONS DIGEST SHEET
+ * The break's one honest line on the clock (FLOW §2.3, as cured
+ * by §C-3): during a Safe Break the banner says the doors are
+ * open and until when, in wall time (A-11(c)'s one sentence,
+ * room side). Not in a break: null.
  *
- * Two modes. LIVE (unsealed): the shipped sheet — live list, live
- * count, CLEAR ALL — plus a per-row delete, so one capture can be
- * triaged without wiping the table. FROZEN (sealed): a snapshot,
- * not a feed — the header stamps HELD · AS OF {HH:mm}, there is no
- * count and no CLEAR ALL (absent, not disabled), rows carry their
- * own capture times and no affordance of any kind, and acting is
- * refused at the repository besides. Reading is free; acting stays
- * sealed. Closing is not an act on the held world and works in
- * both modes.
+ * Wave-2 fix (Salz C-18): the merged code printed a countdown
+ * ("n MIN LEFT") while this comment claimed a wall-time UNTIL.
+ * There is no stored break-end field on the row — the end is
+ * DERIVED at the derivation's instant (now + the remaining
+ * seconds the row does carry), which is the same instant the
+ * shade's countdown reads, so the two surfaces cannot drift
+ * apart by more than the beat that separates them. The code
+ * now does what the comment always said.
  */
-@Composable
-fun CapturedNotificationsDigestSheet(
-    visible: Boolean,
-    notifications: List<CapturedNotificationEntity>,
-    frozenAtMillis: Long? = null,
-    frozenMode: Boolean = false,
-    onClearAll: () -> Unit,
-    onDeleteItem: (Int) -> Unit = {},
-    onDismiss: () -> Unit
-) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(MonolithCurves.specC()),
-        exit = fadeOut(MonolithCurves.specA())
-    ) {
-        val scheme = MaterialTheme.colorScheme
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.65f))
-                .clickable(onClick = onDismiss)
-                .padding(12.dp),
-            contentAlignment = Alignment.BottomCenter
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(scheme.surfaceBright)
-                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(24.dp))
-                    .clickable(enabled = false) {}
-                    .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (frozenMode) {
-                        if (frozenAtMillis != null) {
-                            Text(
-                                text = rememberMixedTypographyText(
-                                    wordPrefix = "HELD · AS OF ",
-                                    monoNumber = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
-                                        .format(java.util.Date(frozenAtMillis)),
-                                    wordColor = scheme.onBackground,
-                                    monoColor = scheme.primaryContainer
-                                ),
-                                fontSize = 14.sp
-                            )
-                        } else {
-                            // The freeze is still landing: the frozen
-                            // frame with no stamp and no rows yet —
-                            // never one frame of the live list.
-                            Text(
-                                text = "HELD",
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = scheme.onBackground
-                            )
-                        }
-                    } else {
-                        Text(
-                            text = rememberMixedTypographyText(
-                                wordPrefix = "HELD NOTIFICATIONS • ",
-                                monoNumber = notifications.size.toString(),
-                                wordColor = scheme.onBackground,
-                                monoColor = scheme.primaryContainer
-                            ),
-                            fontSize = 14.sp
-                        )
-                        BlockitActionChip(
-                            wordLabel = "CLEAR ALL",
-                            onClick = onClearAll
-                        )
-                    }
-                }
-                if (frozenMode && frozenAtMillis != null) {
-                    Text(
-                        text = "Everything here is as of the time above. Nothing here opens. Anything newer waits until the session ends.",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 13.sp,
-                        color = scheme.onSurfaceVariant
-                    )
-                }
-                HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-
-                if (notifications.isEmpty()) {
-                    if (!frozenMode || frozenAtMillis != null) {
-                        Text(
-                            text = if (frozenMode) {
-                                "Nothing has been held."
-                            } else {
-                                "Zero notifications intercepted during focus."
-                            },
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 13.sp,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 24.dp)
-                        )
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.height(220.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(notifications, key = { it.id }) { item ->
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(scheme.surfaceVariant)
-                                    .padding(12.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = if (frozenMode) {
-                                            "${item.appName} • ${item.senderTitle} • ${captureTimeLabel(item.timestampMillis)}"
-                                        } else {
-                                            "${item.appName} • ${item.senderTitle}"
-                                        },
-                                        fontFamily = AtkinsonHyperlegibleFamily,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 12.sp,
-                                        color = scheme.onBackground,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    if (!frozenMode) {
-                                        Text(
-                                            text = "DEL",
-                                            fontFamily = AtkinsonHyperlegibleFamily,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 11.sp,
-                                            color = scheme.onSurfaceVariant,
-                                            modifier = Modifier.clickable { onDeleteItem(item.id) }
-                                        )
-                                    }
-                                }
-                                // A title-only capture has no body
-                                // (Truth Car 3, appendix): the row
-                                // prints the title alone, never an
-                                // invented sentence under it.
-                                if (item.messageBody.isNotBlank()) {
-                                    Text(
-                                        text = item.messageBody,
-                                        fontFamily = AtkinsonHyperlegibleFamily,
-                                        fontSize = 12.sp,
-                                        color = scheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                BlockitActionChip(
-                    wordLabel = "CLOSE DIGEST",
-                    isPrimaryInk = true,
-                    onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
-    }
+internal fun deskClockBreakLine(
+    isInSafeBreak: Boolean,
+    safeBreakSecondsRemaining: Int,
+    nowWallMillis: Long
+): String? {
+    if (!isInSafeBreak) return null
+    val rawEndWall = nowWallMillis + safeBreakSecondsRemaining.coerceAtLeast(0) * 1000L
+    // Salz C-18's cured sentence, kept truthful (batch-10 fix):
+    // UNTIL names the first minute mark AT OR AFTER the true end.
+    // A truncating HH:mm would print the minute BEFORE the end
+    // whenever seconds remain — the clock claiming the door
+    // shuts earlier than it does. Exact marks print as-is.
+    val rem = rawEndWall % 60_000L
+    val breakEndWall = if (rem == 0L) rawEndWall else rawEndWall + (60_000L - rem)
+    return "BREAK — PEEK APPS OPEN · UNTIL " + wallClockTimeText(breakEndWall)
 }
 
 /**
- * 4. SHIELD PERMISSION PRIMER MODAL
+ * The desk clock's banner text (Truth Car 3, appendix / FLOW
+ * FL-06) under A-12 / C-2, answered from the code: L7's fallback
+ * chain is task → intention → routine name → absent. The chain
+ * gains its truer floor at this merge: a hand-started session
+ * with neither task nor intention still carries its loadout —
+ * profileName is stamped on every row at birth (the seal's
+ * snapshot; routine rows wear "Routine: <name>", hand rows the
+ * loadout's name) — so the floor is the row's own profile name,
+ * stripped of the routine prefix. Anonymity now stands only
+ * when even that is blank, which no arming path produces.
  */
-@Composable
-fun ShieldPermissionPrimerModal(
-    visible: Boolean,
-    systemGuardStatus: com.example.data.SystemGuardStatus,
-    onOpenAccessibilitySettings: () -> Unit,
-    onOpenUsageAccessSettings: () -> Unit,
-    onConfirmAndArmAnyway: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(MonolithCurves.specC()),
-        exit = fadeOut(MonolithCurves.specA())
-    ) {
-        val scheme = MaterialTheme.colorScheme
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.7f))
-                .clickable(onClick = onDismiss)
-                .padding(12.dp),
-            contentAlignment = Alignment.BottomCenter
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(scheme.surfaceBright)
-                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(24.dp))
-                    .clickable(enabled = false) {}
-                    .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    text = "SYSTEM GUARD PRE-FLIGHT",
-                    fontFamily = AtkinsonHyperlegibleFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    color = scheme.onBackground
-                )
-                Text(
-                    text = "Grant Accessibility & Usage Access so Monolith can intercept distracting apps, or arm the session immediately.",
-                    fontFamily = AtkinsonHyperlegibleFamily,
-                    fontSize = 12.5.sp,
-                    color = scheme.onSurfaceVariant
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    BlockitActionChip(
-                        wordLabel = "ACCESSIBILITY",
-                        onClick = onOpenAccessibilitySettings,
-                        modifier = Modifier.weight(1f)
-                    )
-                    BlockitActionChip(
-                        wordLabel = "USAGE STATS",
-                        onClick = onOpenUsageAccessSettings,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                BlockitActionChip(
-                    wordLabel = "COMMIT & ARM SESSION NOW",
-                    isAccentArmed = true,
-                    onClick = onConfirmAndArmAnyway,
-                    modifier = Modifier.fillMaxWidth(),
-                    testTag = "confirm_arm_anyway_button"
-                )
-            }
-        }
-    }
-}
-
-/**
- * 5. AIRLOCK INTERCEPTION OVERLAY — THE HELD DOOR (issue #11;
- * designer skeleton, docs/designer-skeleton.md).
- *
- * THE SKELETON LAW: nothing on this face changes position, size,
- * or existence based on countdown state. Every slot is composed
- * at frame one, at its final bounds, for the whole visit;
- * countdown state may change a slot's contents (crossfade in
- * place) — never its bounds, never a sibling's. The card column
- * carries NO spacedBy (spacedBy collapsing around absent
- * children was the original defect's mechanism): all spacing is
- * explicit fixed slots and gaps. RETURN's bounds at wall-max,
- * wall-1, wall-0 and offer-armed are pixel-identical, and are
- * asserted so in HeldDoorStationarityTest.
- *
- * Slot stack (top → bottom): NAME 32 · gap 4 · INTENTION 24 ·
- * gap 4 · SESSION BLOCK 40 (two 20dp lines) · gap 12 · PEEK ZONE
- * 110 or 0 · gap 16 (peek-owing only) · RETURN 56 · gap 12 ·
- * HONEST EXIT 48 (Tor round 2: the innovator's 48dp touch height
- * at the designer's bare-text weight) · gap 8 · FOOTER BADGE 16.
- * Card padding 24 all sides. The card is BOTTOM-anchored (Tor
- * round 8): the peek zone's presence grows the card upward, so
- * RETURN's screen-space address — centre 136dp above the card's
- * bottom edge — is identical on every branch and every visit.
- */
-@Composable
-fun AirlockInterceptOverlay(
-    state: AirlockInterceptState,
-    onReturnToFocus: () -> Unit,
-    onTake2MinutePeek: () -> Unit,
-    onEndSessionInstead: () -> Unit,
-    onDoorStateRefresh: () -> Unit,
-    // FIX-7 (Ton §5.3): the overlay reports the derived instant
-    // the offer arms; the VM owns the engine call and its
-    // once-per-visit guard (onAirlockOfferArmed). Defaulted so
-    // other callers (tests, previews) need no wire.
-    onOfferArmed: () -> Unit = {}
-) {
-    AnimatedVisibility(
-        visible = state.isVisible,
-        // FIX-7b: entry is specA at 180ms (was specB's 420ms
-        // ghost); exit keeps specA 260ms. Opacity only — the full
-        // skeleton is composed at final geometry underneath.
-        enter = fadeIn(MonolithCurves.specA(180)),
-        exit = fadeOut(MonolithCurves.specA())
-    ) {
-        // FIX-5b: the clock state is a REDRAW TRIGGER ONLY. Every
-        // print below derives from the state's anchored ends at
-        // the recomposition this state provokes; no value is
-        // counted locally (both old self-ticking counters die).
-        // Keyed by the arrival nonce (P-4c): a same-package
-        // re-fire starts a fresh visit under its own anchors.
-        var nowMono by remember(state.interceptNonce) {
-            mutableLongStateOf(SystemClock.elapsedRealtime())
-        }
-        LaunchedEffect(state.isVisible, state.interceptNonce) {
-            if (!state.isVisible) return@LaunchedEffect
-            while (true) {
-                // Wave-2 (Feel-3, timing): 50ms, not 250ms — the
-                // gate's draining rule stepped visibly at quarter-
-                // second intervals. Printed seconds still derive
-                // from the anchored ends at whatever frame prints
-                // them; this loop only decides how smooth the
-                // drain looks.
-                delay(50L)
-                nowMono = SystemClock.elapsedRealtime()
-            }
-        }
-
-        val wallSecs = derivedSecondsUntil(state.wallEndsAtMono, nowMono)
-        val wallRemainingMs = (state.wallEndsAtMono - nowMono).coerceAtLeast(0L)
-        val cooldownSecs = derivedSecondsUntil(state.peekCooldownEndsAtMono, nowMono)
-
-        // FIX-5c: at derived 0 the face re-runs the offer
-        // derivation (VM side) — "AGAIN IN 0 MIN" never composes,
-        // because a cooldown at 0 has no cooldown tenant (below).
-        LaunchedEffect(state.peekWithheld, cooldownSecs, state.interceptNonce) {
-            if (state.peekWithheld == PeekWithheld.COOLDOWN && cooldownSecs == 0) {
-                onDoorStateRefresh()
-            }
-        }
-
-        val peekOwing = state.canUse2MinutePeek || state.peekWithheld != null
-
-        // Z1's tenant for this frame. Tenants crossfade inside
-        // Z1's unchanged 48dp bounds; the zone and every slot
-        // below it never move, whichever tenant stands.
-        val z1Tenant = when {
-            state.canUse2MinutePeek && wallSecs > 0 -> AirlockZ1Tenant.GATE
-            state.canUse2MinutePeek -> AirlockZ1Tenant.CHIP
-            state.peekWithheld == PeekWithheld.COOLDOWN && cooldownSecs == 0 ->
-                AirlockZ1Tenant.RESOLVING
-            state.peekWithheld != null -> AirlockZ1Tenant.WITHHELD
-            else -> AirlockZ1Tenant.EMPTY
-        }
-
-        // TalkBack (Tor round 3): announcements at door OPEN and
-        // at offer ARM only — never per-second, never assertive.
-        // One polite live region (composed inside the root Box
-        // below) whose text changes at exactly those two moments.
-        var announcement by remember(state.interceptNonce) { mutableStateOf("") }
-        LaunchedEffect(state.isVisible, state.interceptNonce) {
-            if (state.isVisible) {
-                announcement =
-                    "${state.interceptedAppName} is held. Return to focus is available."
-            }
-        }
-        LaunchedEffect(z1Tenant) {
-            if (z1Tenant == AirlockZ1Tenant.CHIP) {
-                announcement = "Peek is now available."
-                // FIX-7 (Ton §5.3): the arm beat is REPORTED from
-                // here, never sounded — the VM owns the engine
-                // call and its once-per-visit nonce guard. On a
-                // FIX-5c resolution the VM already fired it inside
-                // refreshAirlockDoorState and marked the nonce, so
-                // this report is a no-op there.
-                onOfferArmed()
-            }
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(NightColorBackground)
-                .padding(20.dp)
-                .testTag("airlock_intercept_overlay"),
-            // BOTTOM-ANCHORED (Tor round 8, superseding the
-            // skeleton's §3.4 top-anchor): the thumb's frame is
-            // screen space, so the card grows UPWARD into empty
-            // night and RETURN's screen address is invariant
-            // across states, branches (peek-owing or never-owed)
-            // and visits — its centre sits 136dp above the card's
-            // bottom edge (24 padding + 16 footer + 8 + 48 exit +
-            // 12 + 28 half-slab) on every branch, because the slot
-            // stack below RETURN never changes height. The stack
-            // itself is untouched by the anchor.
-            contentAlignment = Alignment.BottomCenter
-        ) {
-            // The TalkBack live region: visually absent, present
-            // in the semantics tree, polite — it speaks only when
-            // its text changes (door open, offer arm; see above).
-            Text(
-                text = announcement,
-                fontSize = 1.sp,
-                color = Color.Transparent,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .alpha(0f)
-                    .semantics { liveRegion = LiveRegionMode.Polite }
-            )
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(NightColorSurfaceBright)
-                    .border(1.dp, NightColorPrimary.copy(alpha = 0.38f), RoundedCornerShape(24.dp))
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // H1 — NAME (32dp): the face's one hero. What he
-                // opened, composed at the firing door (FIX-6 name
-                // slot): the app's real name, the feed's name, the
-                // browser's name, or what the guard caught him
-                // opening — never a door label restated.
-                Box(
-                    modifier = Modifier.fillMaxWidth().height(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = state.interceptedAppName,
-                        fontFamily = SoraFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 24.sp,
-                        color = NightColorPrimary,
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                // H2 — INTENTION (24dp): his words BARE, directly
-                // under the app name — the "ACTIVE INTENTION:"
-                // prefix dies (FIX-6). Blank intention → the slot
-                // stands empty and prints nothing (acquitted
-                // silence; FIX-3e killed the draft fallback).
-                Box(
-                    modifier = Modifier.fillMaxWidth().height(24.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (state.sessionIntention.isNotBlank()) {
-                        Text(
-                            text = state.sessionIntention,
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 16.sp,
-                            color = NightColorPrimary.copy(alpha = 0.92f),
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                // H3 — SESSION BLOCK (40dp, two 20dp lines).
-                // Line 1: the session line (SIL-1 form acquitted;
-                // FIX-2's span value). Line 2: the break
-                // appointment on PEEK-tier doors (FIX-8 kernel),
-                // or the site door's matched domain — the two
-                // never contend (a site door owes no break line).
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().height(20.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        airlockSessionLine(state.sessionEndsAtMillis, state.sessionIsStopwatch)?.let { line ->
-                            Text(
-                                text = line,
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontSize = 12.5.sp,
-                                color = NightColorPrimary.copy(alpha = 0.92f),
-                                textAlign = TextAlign.Center,
-                                maxLines = 1,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    }
-                    Box(
-                        modifier = Modifier.fillMaxWidth().height(20.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val subLine = state.nextBreakAtMillis?.let { breakAppointmentText(it) }
-                            ?: state.nameSubLine
-                        if (subLine != null) {
-                            Text(
-                                text = subLine,
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontSize = 12.5.sp,
-                                color = NightColorPrimary.copy(alpha = 0.92f),
-                                textAlign = TextAlign.Center,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Z — THE PEEK ZONE (110dp peek-owing, absent
-                // never-owed). Composed from frame one at full
-                // height on every peek-owing door — offer AND
-                // withheld alike (Tor's ratification of the
-                // designer's deviation from Schliff's 34dp: the
-                // FIX-5c resolution crossfades inside Z1, it never
-                // grows the zone). Never-owed doors print no peek
-                // line of any kind (Baseline law 4): the zone is
-                // absent, not blanked.
-                if (peekOwing) {
-                    Column(modifier = Modifier.fillMaxWidth().height(110.dp)) {
-                        // Z1 — ACTION (48dp).
-                        Box(
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Crossfade(
-                                targetState = z1Tenant,
-                                animationSpec = MonolithCurves.specA(180),
-                                label = "airlock_z1_tenant"
-                            ) { tenant ->
-                                Box(
-                                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    when (tenant) {
-                                        AirlockZ1Tenant.GATE -> {
-                                            // The gate stack: the wall
-                                            // as a captioned print over
-                                            // the draining rule — born
-                                            // occupying the slot the
-                                            // chip will inherit (P-1).
-                                            Column(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalAlignment = Alignment.CenterHorizontally
-                                            ) {
-                                                Text(
-                                                    text = peekGateLineText(wallSecs),
-                                                    fontFamily = AnonymousProFamily,
-                                                    fontWeight = FontWeight.Bold,
-                                                    fontSize = 15.sp,
-                                                    color = NightColorPrimary,
-                                                    textAlign = TextAlign.Center,
-                                                    maxLines = 1,
-                                                    modifier = Modifier.fillMaxWidth()
-                                                )
-                                                Spacer(modifier = Modifier.height(6.dp))
-                                                Box(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(2.dp)
-                                                        .background(NightColorPrimary.copy(alpha = 0.20f))
-                                                ) {
-                                                    val fraction = if (state.wallTotalSeconds > 0) {
-                                                        (wallRemainingMs.toFloat() /
-                                                            (state.wallTotalSeconds * 1000f))
-                                                            .coerceIn(0f, 1f)
-                                                    } else {
-                                                        0f
-                                                    }
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth(fraction)
-                                                            .height(2.dp)
-                                                            .background(NightColorPrimaryContainer)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                        AirlockZ1Tenant.CHIP -> PeekHoldChip(
-                                            badgeText = peekBadgeText(
-                                                MonolithRepository.PEEK_DURATION_SECONDS
-                                            ),
-                                            nonce = state.interceptNonce,
-                                            onTake = onTake2MinutePeek
-                                        )
-                                        AirlockZ1Tenant.WITHHELD -> {
-                                            // The withheld lines print
-                                            // from SECOND 0 — never
-                                            // gated by any wall (FIX-6).
-                                            Column(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalAlignment = Alignment.CenterHorizontally
-                                            ) {
-                                                // P-5: a homecoming is
-                                                // greeted as what it is
-                                                // before its price line.
-                                                if (state.justExpiredLease) {
-                                                    Text(
-                                                        text = "THE PEEK ENDED",
-                                                        fontFamily = AtkinsonHyperlegibleFamily,
-                                                        fontSize = 12.5.sp,
-                                                        color = NightColorPrimary.copy(alpha = 0.92f),
-                                                        textAlign = TextAlign.Center,
-                                                        maxLines = 1,
-                                                        modifier = Modifier.fillMaxWidth()
-                                                    )
-                                                }
-                                                when (state.peekWithheld) {
-                                                    PeekWithheld.COOLDOWN -> if (cooldownSecs > 0) {
-                                                        Text(
-                                                            text = peekCooldownPrint(cooldownSecs),
-                                                            fontFamily = AtkinsonHyperlegibleFamily,
-                                                            fontSize = 12.5.sp,
-                                                            color = NightColorPrimary.copy(alpha = 0.92f),
-                                                            textAlign = TextAlign.Center,
-                                                            maxLines = 1,
-                                                            modifier = Modifier.fillMaxWidth()
-                                                        )
-                                                    }
-                                                    PeekWithheld.ALREADY_ACTIVE -> Text(
-                                                        text = "A PEEK IS ALREADY RUNNING",
-                                                        fontFamily = AtkinsonHyperlegibleFamily,
-                                                        fontSize = 12.5.sp,
-                                                        color = NightColorPrimary.copy(alpha = 0.92f),
-                                                        textAlign = TextAlign.Center,
-                                                        maxLines = 1,
-                                                        modifier = Modifier.fillMaxWidth()
-                                                    )
-                                                    PeekWithheld.PEEK_OFF -> Text(
-                                                        text = "PEEK IS OFF",
-                                                        fontFamily = AtkinsonHyperlegibleFamily,
-                                                        fontSize = 12.5.sp,
-                                                        color = NightColorPrimary.copy(alpha = 0.92f),
-                                                        textAlign = TextAlign.Center,
-                                                        maxLines = 1,
-                                                        modifier = Modifier.fillMaxWidth()
-                                                    )
-                                                    null -> Unit
-                                                }
-                                            }
-                                        }
-                                        AirlockZ1Tenant.RESOLVING,
-                                        AirlockZ1Tenant.EMPTY -> Unit
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        // Z2 — PRICE (34dp): the re-timed price
-                        // sentence, standing from frame one on the
-                        // offer branch — during counting as well
-                        // as at offer, and through the hold (P-3a).
-                        // Held branch: empty-held.
-                        Box(
-                            modifier = Modifier.fillMaxWidth().height(34.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            androidx.compose.animation.AnimatedVisibility(
-                                visible = state.canUse2MinutePeek,
-                                enter = fadeIn(MonolithCurves.specA(180)),
-                                exit = fadeOut(MonolithCurves.specA(180))
-                            ) {
-                                Text(
-                                    text = peekPriceText(MonolithRepository.PEEK_COOLDOWN_MILLIS),
-                                    fontFamily = AtkinsonHyperlegibleFamily,
-                                    fontSize = 12.5.sp,
-                                    color = NightColorPrimary.copy(alpha = 0.92f),
-                                    textAlign = TextAlign.Center,
-                                    maxLines = 2,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        // Z3 — MEMORY (18dp): the taper's count in
-                        // the gate line's family, or empty-held.
-                        // A homecoming prints none — its ordinal
-                        // would count the lease's own expiry as a
-                        // reach (P-5).
-                        Box(
-                            modifier = Modifier.fillMaxWidth().height(18.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (!state.justExpiredLease) {
-                                doorMemoryLineText(state.priorInterceptsThisSession)?.let { line ->
-                                    Text(
-                                        text = line,
-                                        style = PillBadgeTextStyle,
-                                        color = NightColorPrimary.copy(alpha = 0.92f),
-                                        textAlign = TextAlign.Center,
-                                        maxLines = 1,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-                }
-
-                // R — RETURN (56dp slab): the face's only accent
-                // fill, its label in the scheme's own
-                // on-container ink #471602 (F-3, 5.37:1 — the
-                // shared chip's forced cream is not inherited).
-                // Live and tappable from frame one in every state;
-                // never gated, never dimmed, never re-labelled.
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(NightColorPrimaryContainer)
-                        .border(1.dp, NightColorPrimary.copy(alpha = 0.38f), RoundedCornerShape(12.dp))
-                        .clickable(onClick = onReturnToFocus)
-                        .testTag("airlock_return_button"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "RETURN TO FOCUS",
-                        style = PrimaryButtonTextStyle,
-                        color = NightColorOnPrimaryContainer,
-                        textAlign = TextAlign.Center,
-                        maxLines = 1
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // X — THE HONEST EXIT (48dp touch row): one quiet
-                // bare-text line under RETURN (FIX-8). It ends
-                // nothing, spends nothing, books nothing — it
-                // routes to the Disarm face, which carries the
-                // gravity. Quiet by form, never by illegibility.
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .clickable(onClick = onEndSessionInstead)
-                        .testTag("airlock_end_session_instead"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "END THE SESSION INSTEAD",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.5.sp,
-                        color = NightColorPrimary.copy(alpha = 0.92f),
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // F — FOOTER BADGE (16dp): the badge word ALONE —
-                // "AIRLOCK INTERCEPTION •" dies (FIX-6). On
-                // peek-tier doors the footer prints PEEK alone
-                // (Tor's ratification): the tier badge's literal
-                // "2m Peek" is the same hardcoded-duration lie
-                // FIX-8 cures on the chip, and never prints here.
-                // K-1 (Kante, Tor round 5): the ink is
-                // NightTextColorPrimary #D2C6BB ON THIS FACE ONLY —
-                // the shared NightTextColorSecondary #9C8E84
-                // measures 4.28:1 on this card and fails AA; the
-                // shared token itself is NOT changed.
-                Box(
-                    modifier = Modifier.fillMaxWidth().height(16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = if (peekOwing) {
-                            "PEEK"
-                        } else {
-                            state.interceptReasonBadge.uppercase(Locale.US)
-                        },
-                        style = PillBadgeTextStyle,
-                        color = NightTextColorPrimary,
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** Z1's tenants (designer §5): one slot, four lawful contents and
- *  the resolving instant between cooldown and offer. Tenancy is a
- *  crossfade inside fixed bounds — never a layout change. */
-private enum class AirlockZ1Tenant { GATE, CHIP, WITHHELD, RESOLVING, EMPTY }
-
-/**
- * The PEEK chip (innovator P-3a, adopted): taken by a 600ms
- * HOLD-TO-FILL, not a tap — a travelling thumb cannot spend a
- * lease. Press-and-hold fills the chip over 600ms; release early
- * drains the fill in 120ms and books nothing; reaching full
- * fires [onTake], whose grant-time re-derivation
- * (peekOfferFor, acquitted) remains the final word. RETURN is a
- * tap, PEEK is a hold, END is a 60-second valve: three acts,
- * three weights, each proportional to what the act spends.
- * Door-local by design — the shared BlockitActionChip stays
- * tap-only for every other face. TalkBack carries a custom
- * "Take the peek" action, so the gesture is never the only door.
- */
-@Composable
-private fun PeekHoldChip(
-    badgeText: String,
-    nonce: Long,
-    onTake: () -> Unit
-) {
-    val fill = remember(nonce) { Animatable(0f) }
-    val scope = rememberCoroutineScope()
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(48.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(NightColorSecondaryContainer)
-            .border(1.dp, NightColorPrimary.copy(alpha = 0.38f), RoundedCornerShape(12.dp))
-            .semantics {
-                onClick(label = "Take the peek") {
-                    onTake()
-                    true
-                }
-            }
-            .pointerInput(nonce) {
-                detectTapGestures(
-                    onPress = {
-                        var fired = false
-                        val fillJob = scope.launch {
-                            fill.animateTo(
-                                1f,
-                                tween(durationMillis = 600, easing = LinearEasing)
-                            )
-                            if (fill.value >= 0.999f) {
-                                fired = true
-                                onTake()
-                            }
-                        }
-                        tryAwaitRelease()
-                        if (!fired) {
-                            fillJob.cancel()
-                            scope.launch {
-                                fill.animateTo(
-                                    0f,
-                                    tween(durationMillis = 120, easing = LinearEasing)
-                                )
-                            }
-                        }
-                    }
-                )
-            }
-            .testTag("airlock_peek_button"),
-        contentAlignment = Alignment.Center
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(fill.value)
-                .fillMaxHeight()
-                .background(NightColorPrimaryContainer.copy(alpha = 0.45f))
-                .align(Alignment.CenterStart)
-        )
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Text(
-                text = "PEEK",
-                fontFamily = SoraFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 15.sp,
-                color = NightColorPrimary
-            )
-            Text(
-                text = " $badgeText",
-                fontFamily = AnonymousProFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 15.sp,
-                color = NightColorPrimary
-            )
-        }
-    }
-}
-
-/**
- * 6. DISARM CHALLENGE OVERLAY (Unbreakable Lock + the weekly valve)
- *
- * Surface contract is TOKEN-SPEC §7 / Freya's buildspec point 2, one
- * job per element: title EMERGENCY BREAK · body = consequence (worded
- * by the count) · the valve = the mechanism · rule line UNDER the
- * valve = mechanics · chip KEEP FOCUSING. The count itself arrives as
- * [tokensRemaining], derived live from the repository's spend ledger
- * (Amendment A — never a snapshot written into the state at open).
- * Ledger-Direct (Freya, invention 1): the valve receives NO count —
- * at 0 remaining it is simply not composed, and this overlay renders
- * the SPENT face (buildspec point 8) in its place.
- */
-@Composable
-fun DisarmChallengeOverlay(
-    state: DisarmChallengeState,
-    tokensRemaining: Int,
-    soundEngine: TactileSoundEngine? = null,
-    onDismissKeepFocusing: () -> Unit,
-    onCompleteDisarm: () -> Unit,
-    onHoldStarted: () -> Unit = {},
-    onCompleteCleanSession: () -> Unit = {}
-) {
-    AnimatedVisibility(
-        visible = state.isVisible,
-        enter = fadeIn(MonolithCurves.specC()),
-        exit = fadeOut(MonolithCurves.specA())
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(NightColorBackground.copy(alpha = 0.94f))
-                .padding(16.dp)
-                .testTag("disarm_challenge_overlay"),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(NightColorSurfaceBright)
-                    .border(1.dp, NightColorPrimary.copy(alpha = 0.2f), RoundedCornerShape(24.dp))
-                    .padding(22.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Text(
-                    text = "EMERGENCY BREAK",
-                    fontFamily = AtkinsonHyperlegibleFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp,
-                    color = NightColorPrimary
-                )
-
-                Text(
-                    text = when {
-                        // P-2c: the door-originated face's lawful
-                        // second body — a stopwatch past its floor
-                        // completes, it does not break.
-                        state.cleanCompletionAvailable ->
-                            "This session has run its floor. Ending it now is a completion, not a break."
-                        tokensRemaining > 0 ->
-                            "This ends the session early. It is the only break this week."
-                        else ->
-                            "This week's break is already spent."
-                    },
-                    fontFamily = AtkinsonHyperlegibleFamily,
-                    fontSize = 13.sp,
-                    color = NightColorPrimary
-                )
-
-                if (state.cleanCompletionAvailable) {
-                    // The completion's verb is a deliberate slab
-                    // tap standing between the door's footer line
-                    // and the act — never the footer's own tap
-                    // (P-2c). No valve, no token: nothing is spent
-                    // by finishing what already ran its floor.
-                    BlockitActionChip(
-                        wordLabel = "END THE SESSION",
-                        isPrimaryInk = true,
-                        onClick = onCompleteCleanSession,
-                        modifier = Modifier.fillMaxWidth(),
-                        testTag = "disarm_end_session_button"
-                    )
-                } else if (tokensRemaining > 0) {
-                    AndroidView(
-                        factory = { ctx ->
-                            Emergency60sValveView(ctx).apply {
-                                isNightMode = true
-                                this.soundEngine = soundEngine
-                            }
-                        },
-                        update = { view ->
-                            view.requiredSeconds = state.requiredHoldSeconds
-                            view.onEmergencyBreakCompleted = onCompleteDisarm
-                            view.onHoldStarted = onHoldStarted
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(68.dp)
-                            .testTag("emergency_60s_valve")
-                    )
-
-                    Text(
-                        text = "Hold to fill 60 seconds. Every 15 seconds banks. If your hand slips, what isn't banked drains away. The banked part stays.",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 11.sp,
-                        color = NightColorPrimary.copy(alpha = 0.75f)
-                    )
-                }
-
-                BlockitActionChip(
-                    wordLabel = "KEEP FOCUSING",
-                    isPrimaryInk = true,
-                    onClick = onDismissKeepFocusing,
-                    modifier = Modifier.fillMaxWidth(),
-                    testTag = "keep_focusing_button"
-                )
-            }
-        }
-    }
-}
-

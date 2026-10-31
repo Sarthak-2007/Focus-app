@@ -4,13 +4,6 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-// Wave-2 note (UNPROVEN until Ren's compile settles it): the
-// .assertExists() / .assertDoesNotExist() calls in this file are
-// MEMBER functions of SemanticsNodeInteraction, not top-level
-// extensions — that is why the two top-level imports were deleted
-// in 8a256a4. If the compile disagrees, restore both imports
-// exactly as they stood at batch-9 HEAD and record Class E as a
-// misdiagnosis (plan ISSUE-2-test-call-sites.md, Risk 1).
 import androidx.compose.ui.test.onNodeWithText
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -212,6 +205,19 @@ class TruthCar3SweepRoboTest {
     private val context: Context
         get() = ApplicationProvider.getApplicationContext()
 
+    companion object {
+        /** Every backup domain in BOTH storage trees. The
+         *  credential-encrypted five alone never covered the app's
+         *  Room database, which is built in device-protected storage
+         *  (Audit R2 #93): the platform maps device_* domains to that
+         *  separate tree. "Exclude everything" must iterate all ten. */
+        val ALL_BACKUP_DOMAINS = listOf(
+            "root", "file", "database", "sharedpref", "external",
+            "device_root", "device_file", "device_database",
+            "device_sharedpref", "device_external"
+        )
+    }
+
     // ---------------------------------------------------------------
     // UNA-04 — "DATA: ON THIS PHONE ONLY" is now true. Before the
     // cure the manifest set allowBackup="true" and both rules files
@@ -232,7 +238,7 @@ class TruthCar3SweepRoboTest {
         val sections = parseExcludeSections(context.resources.getXml(R.xml.data_extraction_rules))
         for (section in listOf("cloud-backup", "device-transfer")) {
             val excluded = sections[section] ?: error("no <$section> section in data_extraction_rules")
-            for (domain in listOf("root", "file", "database", "sharedpref", "external")) {
+            for (domain in ALL_BACKUP_DOMAINS) {
                 assertEquals(
                     "$section must exclude domain $domain at path .",
                     ".", excluded[domain]
@@ -246,7 +252,7 @@ class TruthCar3SweepRoboTest {
         val sections = parseExcludeSections(context.resources.getXml(R.xml.backup_rules))
         val excluded = sections["full-backup-content"]
             ?: error("no <full-backup-content> section in backup_rules")
-        for (domain in listOf("root", "file", "database", "sharedpref", "external")) {
+        for (domain in ALL_BACKUP_DOMAINS) {
             assertEquals(".", excluded[domain])
         }
     }
@@ -325,14 +331,13 @@ class TruthCar3SweepRoboTest {
     @Test
     fun una08_platePrintsStudyHoursNotStudyRecord() {
         composeRule.setContent {
-            MyApplicationTheme {
+            MyApplicationTheme(darkTheme = false) {
                 ParkDrawer(
                     visible = true,
                     snapshot = null,
                     isSealed = false,
                     isNight = false,
                     soundEnabled = true,
-                    shortsReelsSniperEnabled = true,
                     soundEngine = null,
                     themeReadout = "AUTO",
                     parkReturnTick = 0,
@@ -340,6 +345,7 @@ class TruthCar3SweepRoboTest {
                     onFixClick = {},
                     onCheckClick = {},
                     onToggleSound = {},
+                    shortsReelsSniperEnabled = true,
                     onToggleShortsReelsSniper = {},
                     // Wave-2 premise: social pair is scaffolding here —
                     // `true` is the persisted default; the toggle is not under test in this file.
@@ -349,7 +355,7 @@ class TruthCar3SweepRoboTest {
             }
         }
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("STUDY HOURS: IN YPT", substring = true).assertExists()
+        composeRule.onNodeWithText("STUDY HOURS: IN YEOLPUMTA", substring = true).assertExists()
         composeRule.onNodeWithText("STUDY RECORD: IN YPT", substring = true).assertDoesNotExist()
     }
 
@@ -364,14 +370,13 @@ class TruthCar3SweepRoboTest {
     @Test
     fun una05_plateDoesNotClaimFiredAsSet() {
         composeRule.setContent {
-            MyApplicationTheme {
+            MyApplicationTheme(darkTheme = false) {
                 ParkDrawer(
                     visible = true,
                     snapshot = null,
                     isSealed = false,
                     isNight = false,
                     soundEnabled = true,
-                    shortsReelsSniperEnabled = true,
                     soundEngine = null,
                     themeReadout = "AUTO",
                     parkReturnTick = 0,
@@ -379,6 +384,7 @@ class TruthCar3SweepRoboTest {
                     onFixClick = {},
                     onCheckClick = {},
                     onToggleSound = {},
+                    shortsReelsSniperEnabled = true,
                     onToggleShortsReelsSniper = {},
                     // Wave-2 premise: social pair is scaffolding here —
                     // `true` is the persisted default; the toggle is not under test in this file.
