@@ -132,3 +132,15 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | Launcher block screen: un-exitable launcher surface + separate allowed/peek screens | Sarthak's ruling 04:29 (not a seat idea — his order) | #22/#18 | BUILT-IN-PROGRESS (Umbau lane; first slice merged via PR #167) |
 
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
+
+## Glance failure faces (DESIGNER-W-3, WING-A — issue #155)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| Certainty grammar for glance states: proven = stamped word + future time + closed rule; unproven = light impression (regular weight, secondary ink) + past time + broken rule; alert orange spent only on proven-bad facts | DESIGNER-W-3 | #155 | PANEL-QUEUED (full filing #155 comment 6536655303; Discussion #630) |
+| F-A THE LIGHT IMPRESSION: UNPROVEN widget face composed — state word, broken rule, self-dating LAST PROVED evidence line, one tap (S, 0.5–1 d; needs PR #540 truth rule) | DESIGNER-W-3 | #155 | PANEL-QUEUED |
+| F-B THE BLANK SLIP: read-failure gets its own state word NOTHING PROVED, no evidence line (S, 0.5 d) | DESIGNER-W-3 | #155 | PANEL-QUEUED |
+| F-C THE WARMING PRESS: ARMING as its own face (SINCE HH:mm); ≥60 s stall becomes UNPROVEN; stalled shield card names the missing grant (M, 1–2 d; 60 s constant = W-2 consult) | DESIGNER-W-3 | #155 | PANEL-QUEUED |
+| F-D THE SLIP AFTER: post-mortem widget face for shield-gap endings only (THE SHIELD WAS OFF, OFF in TokenAlert, 45 min, NO tap offered); valve/break post-mortem killed — receipt law "no receipt, no №" binds the glance (M, 1–2 d; 45 min = W-2 consult) | DESIGNER-W-3 | #155 | PANEL-QUEUED (valve half PARKED-WITH-REASON — killed by design, receipt law) |
+| F-E THE PLATE: all four failure faces rendered at full press (Sora/Anonymous Pro/Atkinson, receipt character) (L, 3–4 d) | DESIGNER-W-3 | #155/#18 | PARKED-WITH-REASON (END-PHASE, with the #18 revamp per park 6525111973; compositions filed complete on #155) |
+| Lock-screen public version takes the failure grammar: unproven → "Open the app to check", no session claim (S–M, 0.5–1 d; words filed, build = JUDGE-2 T4 owner) | DESIGNER-W-3 | #155 | PANEL-QUEUED |
