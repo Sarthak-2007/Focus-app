@@ -53,6 +53,56 @@ class Issue155CompletionExpiryTest {
         ) as Notification
     }
 
+    private fun buildNotificationCard(
+        title: String,
+        subtitle: String,
+        ongoing: Boolean
+    ): Notification {
+        val service = Robolectric.buildService(MonolithShieldService::class.java)
+            .create().get()
+        val method = MonolithShieldService::class.java.getDeclaredMethod(
+            "buildNotification",
+            String::class.java,
+            String::class.java,
+            Boolean::class.javaPrimitiveType,
+            Boolean::class.javaPrimitiveType,
+            Long::class.javaPrimitiveType,
+            String::class.java,
+            Long::class.javaObjectType,
+            Int::class.javaObjectType
+        )
+        method.isAccessible = true
+        return method.invoke(
+            service, title, subtitle, ongoing, false, 0L, null, null, null
+        ) as Notification
+    }
+
+    private fun publicTextOf(n: Notification): String =
+        n.publicVersion?.extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+            ?: ""
+
+    @Test
+    fun lockScreenPublicVersionNeverClaimsProtectionWithoutTheWitness() {
+        // LEAD-4 A7 (WING-F stack): the public version is gated on
+        // the protecting witness itself, not the subtitle alone.
+        // In this harness the witness is down (no shield loop has
+        // flipped it), so even a standing-form card must carry the
+        // non-claim line on the lock screen — before the gate it
+        // read "Focus session protected" verbatim.
+        MonolithShieldService.protecting = false
+        val standing = buildNotificationCard(
+            "Monolith \u2022 Deep Work", "42:00 left in session \u2022 3 reaches blocked",
+            ongoing = true
+        )
+        assertEquals("Monolith session in progress", publicTextOf(standing))
+        val arming = buildNotificationCard("Monolith", "Arming shield\u2026", ongoing = true)
+        assertEquals("Monolith session in progress", publicTextOf(arming))
+        val complete = buildNotificationCard(
+            "Session Complete", "Your receipt is waiting in the Ledger.", ongoing = false
+        )
+        assertEquals("Session complete", publicTextOf(complete))
+    }
+
     @Test
     fun completionTimeoutIsFortyFiveMinutes() {
         assertEquals(45 * 60 * 1000L, MonolithShieldService.COMPLETION_TIMEOUT_MS)

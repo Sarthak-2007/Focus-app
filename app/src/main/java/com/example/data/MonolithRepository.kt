@@ -3940,6 +3940,10 @@ class MonolithRepository(
             )
         }
         dao.updateSession(next)
+        // Issue #155 (IQ-4 edge 8a): the widget's break line must
+        // fall the moment the break ends early — the glance follows
+        // the flip, not the period update.
+        MonolithWidgetProvider.requestUpdate(context)
         return next
     }
 
@@ -4008,6 +4012,9 @@ class MonolithRepository(
             System.currentTimeMillis() + length * 1000L
         )
         breakBoundaryKnock(false)
+        // Issue #155 (IQ-4 edge 8a): break START flips the widget
+        // to its break line at the flip, not at the period update.
+        MonolithWidgetProvider.requestUpdate(context)
         return entered
     }
 
@@ -4091,7 +4098,16 @@ class MonolithRepository(
         // is the finish machine's gap evidence. Other callers
         // (the VM ticker) never stamp it: a beat written by
         // anyone but the shield would be a forged witness.
-        val beatWall = if (stampShieldBeat) System.currentTimeMillis() else session.shieldLastBeatWallMillis
+        // Issue #155 (CRITIC-3 Charge C): a row whose gap latch
+        // has already seen blindness never earns a fresh beat
+        // again — its beat freezes at the last seeing tick, so
+        // the stale-beat evidence the latch was booked on cannot
+        // be laundered away by later blind ticks.
+        val beatWall = if (stampShieldBeat && !session.shieldGapSeen) {
+            System.currentTimeMillis()
+        } else {
+            session.shieldLastBeatWallMillis
+        }
         val (verifiedElapsed, tamper) = computeVerifiedSessionElapsed(session)
         // Issue #82 (clock-attacks F5): the tamper penalty is no
         // longer a one-way ratchet for CLOCK drift. Session elapsed
@@ -4314,6 +4330,9 @@ class MonolithRepository(
                     )
                 }
                 dao.updateSession(nextBlockSession)
+                // Issue #155 (IQ-4 edge 8a): break EXPIRY flips
+                // the widget off its break line at the flip.
+                MonolithWidgetProvider.requestUpdate(context)
                 nextBlockSession
             } else {
                 val updatedBreak = session.copy(
@@ -4385,6 +4404,10 @@ class MonolithRepository(
                 shieldLastBeatWallMillis = beatWall
             )
             dao.updateSession(safeBreakSession)
+            // Issue #155 (IQ-4 edge 8a): the block-flip break
+            // ENTRY flips the widget to its break line here too —
+            // every entry door knocks on the glance.
+            MonolithWidgetProvider.requestUpdate(context)
             // Issue #339 (Second-pass F3): the break's end is a
             // SCHEDULED event from this entry, not a tick
             // side-effect — arm the exact alarm + deduped
@@ -4692,7 +4715,7 @@ class MonolithRepository(
      */
     suspend fun completeEmergencyBreak(): BreakResult {
         val database = db() // ISSUE-67: injected database, no re-fetch
-        return database.withTransaction {
+        val result = database.withTransaction {
             val active = dao.getActiveSessionSnapshot()
                 ?: return@withTransaction BreakResult.NoActiveSession
             // Issue #147 REOPENED (Findings 2/3 seam): the floor
@@ -4748,6 +4771,16 @@ class MonolithRepository(
             }
             BreakResult.Completed
         }
+        // Issue #155 (IQ-4 edge 8b): the valve ends the session in
+        // this transaction, but the widget was never told — its
+        // correction rode the shield loop noticing !isActive, and
+        // a dead loop stranded SEALED until the period update.
+        // Refresh AFTER the commit, so the re-render reads the
+        // disarmed row.
+        if (result == BreakResult.Completed) {
+            MonolithWidgetProvider.requestUpdate(context)
+        }
+        return result
     }
 
     /**
@@ -4888,6 +4921,10 @@ class MonolithRepository(
             val routine = dao.getRoutineById(active.routineId)
             if (routine?.loadoutName != SmartLoadout.SLEEP.name) {
                 finaliseRoutineSession(active, System.currentTimeMillis())
+                // Issue #155 (IQ-4 edge 8b): the routine funnel is
+                // a disarm door too — the glance refreshes here as
+                // at the generic ending write below.
+                MonolithWidgetProvider.requestUpdate(context)
                 return
             }
         }
@@ -4995,6 +5032,12 @@ class MonolithRepository(
         // #152 residue: witness the end zone at this ending write
         // (keyed by the disarmed row's stamped end itself).
         captureEndZone(active.endWallMillis, disarmed.endWallMillis)
+        // Issue #155 (IQ-4 edge 8b): every disarm door refreshes
+        // the widget at the ending write — #540's (3c) funnels
+        // covered the extend/routine verbs, not the disarm doors,
+        // so a session ended here could leave SEALED standing on
+        // the home screen until the period update.
+        MonolithWidgetProvider.requestUpdate(context)
     }
 
     /**
