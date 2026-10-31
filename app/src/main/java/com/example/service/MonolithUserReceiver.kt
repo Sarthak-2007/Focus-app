@@ -31,8 +31,11 @@ import kotlinx.coroutines.launch
 class MonolithUserReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_USER_SWITCHED &&
-            intent.action != Intent.ACTION_USER_BACKGROUND
+        // The action strings are the platform contract (the same
+        // literals the manifest declares); Intent carries no
+        // public constant for USER_SWITCHED at this SDK.
+        if (intent.action != ACTION_USER_SWITCHED &&
+            intent.action != ACTION_USER_BACKGROUND
         ) {
             return
         }
@@ -49,5 +52,10 @@ class MonolithUserReceiver : BroadcastReceiver() {
                 pending.finish()
             }
         }
+    }
+
+    private companion object {
+        const val ACTION_USER_SWITCHED = "android.intent.action.USER_SWITCHED"
+        const val ACTION_USER_BACKGROUND = "android.intent.action.USER_BACKGROUND"
     }
 }
