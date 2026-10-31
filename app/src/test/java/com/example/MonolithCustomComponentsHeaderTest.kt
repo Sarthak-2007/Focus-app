@@ -45,7 +45,7 @@ class MonolithCustomComponentsHeaderTest {
     @Test
     fun guardLineNode_carriesParkSpokenLabel() {
         composeRule.setContent {
-            MyApplicationTheme {
+            MyApplicationTheme(darkTheme = false) {
                 MonolithPullDownHeader(
                     guardLine = GuardLinePrint("GUARD 6/6"),
                     isSealed = false,
@@ -64,7 +64,7 @@ class MonolithCustomComponentsHeaderTest {
     fun guardLineTap_stillFiresHostCallback() {
         val tapped = AtomicBoolean(false)
         composeRule.setContent {
-            MyApplicationTheme {
+            MyApplicationTheme(darkTheme = false) {
                 MonolithPullDownHeader(
                     guardLine = GuardLinePrint("GUARD 6/6"),
                     isSealed = false,
