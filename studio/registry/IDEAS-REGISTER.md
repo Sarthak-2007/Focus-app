@@ -281,3 +281,11 @@ Full spec: issue #155, comment 6536662125 · Discussion #632.
 | One counter, one name (REACHES STOPPED at both sizes); badge number carries held count or nothing — a number never changes meaning silently | DESIGNER-E-2 | #155 | PANEL-QUEUED |
 | Blocker-identity cuts on the glance family: reaches out of the collapsed line, "held count unavailable" deleted (absence over plumbing apologies), summons SESSION COMPLETE demoted to a knock repeating the Ledger words + 45 min expiry | DESIGNER-E-2 | #155 | PANEL-QUEUED |
 | Fonts as roles inside system templates (display = caps state word, body = one sentence, telemetry = labelled zero-padded numerals); RemoteViews rebuild for literal typefaces priced L and NOT recommended — truth before typeface | DESIGNER-E-2 | #155 | PARKED-WITH-REASON (RemoteViews half: truth risks to chronometer/redaction named in the #155 spec §1) |
+
+## Smallest glances — badge, collapse ladder, glance a11y (DESIGNER-E-5, WING-A)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| Badge ruling: the launcher-badge number means nothing — kill setNumber entirely; badge OFF via v3 channel (fallback ceiling: dot-only, presence = "a shield card is live now"); shipped number is a lifetime uncapped held total (MonolithDao snapshot, no session filter) with a silent reaches fallback on main | DESIGNER-E-5 | #155 | PANEL-QUEUED (ruling filed on #155, comment 6536803182; priced S / 1 day; PR #540 cures only the fallback leg) |
+| Widget collapse ladder: rungs composed per size (state word first, until-time second, intention last/dropped), 2x1 single-line, 1x1 doorbell (SEALED / OPEN / CHECK — time-without-state forbidden), min-resize floor as a designed refusal; provider gains onAppWidgetOptionsChanged | DESIGNER-E-5 | #155 | PANEL-QUEUED (spec on #155; priced M / 2–3 days, downstream of PR #540's WidgetSealTruth) |
+| Glance accessibility spec: one spoken sentence per state as root content description (full degrade sentence for UNPROVEN), real picker description, 14sp floor / 16sp doorbell, opaque receipt-paper field guaranteeing 4.5:1 body / 7:1 state word, state by word never colour, no green, UNPROVEN never de-emphasised | DESIGNER-E-5 | #155 | PANEL-QUEUED (spec on #155; priced S–M / 1–2 days, 0.5 day folded into the ladder build) |
