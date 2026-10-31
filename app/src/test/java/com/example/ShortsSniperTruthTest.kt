@@ -44,7 +44,7 @@ import org.robolectric.shadows.ShadowSystemClock
  *  1. The 11→12 migration lands the column on a real v11 row with
  *     the truthful default (1 — the sniper was always on), the row
  *     otherwise intact.
- *  2. The full chain (v7 entity file → Room at v12) validates and
+ *  2. The full chain (v7 entity file → Room at v14) validates and
  *     the switch round-trips through the DAO.
  *  3. The repository read is the store, not memory: a fresh
  *     repository instance — process death's honest simulation —
@@ -150,7 +150,7 @@ class ShortsSniperTruthTest {
     }
 
     /** The full v7 entity schema (the Slice E chain test's DDL,
-     *  verbatim) — Room opens it at v12 and validates everything. */
+     *  verbatim) — Room opens it at v14 and validates everything. */
     private fun createV7EntityFile() {
         val factory = FrameworkSQLiteOpenHelperFactory()
         val config = SupportSQLiteOpenHelper.Configuration.builder(context)
@@ -203,14 +203,17 @@ class ShortsSniperTruthTest {
                 MonolithDatabase.MIGRATION_9_10,
                 MonolithDatabase.MIGRATION_10_11,
                 MonolithDatabase.MIGRATION_11_12,
-                MonolithDatabase.MIGRATION_12_13, MonolithDatabase.MIGRATION_13_14
+                MonolithDatabase.MIGRATION_12_13,
+                MonolithDatabase.MIGRATION_13_14,
+                MonolithDatabase.MIGRATION_14_15,
+                MonolithDatabase.MIGRATION_15_16
             )
             .build()
         runBlocking {
             val dao = room.monolithDao()
             // The read forces the open: Room has migrated
-            // 7→8→9→10→11→12→13→14 AND validated the result against
-            // every v14 entity.
+            // 7→8→9→10→11→12→13→14→15→16 AND validated the result
+            // against every v16 entity.
             val settings = dao.getGuardSettingsSnapshot()
             assertNotNull(settings)
             assertTrue(settings!!.shortsReelsSniperEnabled)

@@ -9,6 +9,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -83,7 +84,15 @@ data class Warrant(
      *  treat 0 as age-unknown, never as fresh proof. Before this
      *  field, the Deck's prints could ride a warrant of unbounded
      *  age and nothing on the glass could tell. */
-    val readMono: Long = 0L
+    val readMono: Long = 0L,
+    /** The residency this verdict was derived under (cold-start
+     *  cure, issue #7): stamped by [WatchStore.deriveWarrant] from
+     *  the store's current residencyStartMono — the one construction
+     *  site — so a pure reader (the cured sentence table) can compute
+     *  the residency's age from the warrant itself, with no live
+     *  store access. 0 = no residency carried (a warrant built by
+     *  hand: a test, a preview default), never a fresh residency. */
+    val residencyStartMono: Long = 0L
 )
 
 /** The nine watch items, in board order (spec §4.1). The header's
@@ -159,7 +168,13 @@ data class WatchSnapshot(
      *  values, and a bare copy() of a data class is equal to the
      *  value it copies, so the old poke could never notify a
      *  collector. */
-    val pokeGen: Long = 0L
+    val pokeGen: Long = 0L,
+    /** Issue #122: the latest battery snapshot (level / saver /
+     *  charging / exemption), published by the BATTERY sweep
+     *  query and by the shield loop. PARK's BATTERY line prints
+     *  THIS, not the exemption bit alone. Null = never read —
+     *  the line then falls back to the perm print, as before. */
+    val battery: com.example.data.BatterySnapshot? = null
 ) {
     fun measurement(item: WatchItemId): WatchMeasurement? = items[item]
 
@@ -205,6 +220,15 @@ object WatchStore {
 
     /** A PASS measurement older than this (monotonic) is stale. */
     const val STALE_AFTER_MS: Long = 45_000L
+
+    /** Cold-start grace (issue #7): how long a fresh residency may
+     *  rest UNPROVEN while the accessibility pipeline is actively
+     *  probed before the Deck's sentence hardens. The stamp races
+     *  residency start on a cold open — the service may bind after
+     *  the Deck is already showing, and a quiet Deck generates no
+     *  a11y events to stamp it — so the warrant's readers give the
+     *  active self-probe this window to land its proof. */
+    const val RESIDENCY_GRACE_MS: Long = 4_000L
 
     // Issue #48: LAST PROVED's durable home — a tiny wall-clock
     // fact needs no table (the seal marker's SharedPreferences
@@ -256,11 +280,23 @@ object WatchStore {
     private val sweepScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var sweepGen = 0
 
-    /** The in-flight sweep's dispatch instant. A permission item
-     *  counts toward the completing set when its measurement landed
-     *  at or after this wall time — from the sweep's own query or
-     *  from a fresher lifecycle/heartbeat stamp of the same era. */
+    /** The in-flight sweep's dispatch instant, kept for the
+     *  coexistence window (Critic C-5): a completing set must have
+     *  landed within [STALE_AFTER_MS] of dispatch. It is NOT the
+     *  completion test — see [pendingSweepGen]. */
     @Volatile private var pendingSweepStartWall: Long = 0L
+
+    /** The in-flight sweep's generation (issue #9, Zahn Z-1). THE
+     *  completion test reads THIS, on the stamps themselves: a
+     *  permission item counts toward the completing set only when
+     *  its measurement's [WatchMeasurement.sweepGen] equals this
+     *  generation — i.e. the sweep's own query produced it.
+     *  Lifecycle/heartbeat stamps carry gen 0 and earlier sweeps'
+     *  late landings carry their own generation, so neither can
+     *  complete a set they never served. The wall-clock era test
+     *  this replaces let exactly those stamps "complete" a press's
+     *  proof and then badged the set with the press's generation. */
+    @Volatile private var pendingSweepGen: Int = 0
 
     // Interceptor inputs: the settings and the suspension, pushed by
     // the ViewModel (the settings live in guard_settings; the
@@ -285,9 +321,34 @@ object WatchStore {
     // event at or after that instant — proof it processed THIS visit.
     @Volatile private var residencyStartMono: Long = 0L
 
+    /** Whether a Deck residency is in force in this process. */
+    fun residencyActive(): Boolean = residencyStartMono > 0L
+
     fun noteResidencyStart() {
         residencyStartMono = SystemClock.elapsedRealtime()
         poke()
+        // Cold-start cure (issue #7, active self-probe): the stamp
+        // races residency start — on a cold open the service may
+        // not be bound yet when the Deck appears, and a quiet Deck
+        // generates no a11y events, so waiting for the event path
+        // to stamp lastRootMono can leave the warrant UNPROVEN
+        // forever. Probe the pipeline NOW instead of waiting for
+        // an event that may never come.
+        MonolithAccessibilityService.instance?.requestPipelineProbe()
+        // One delayed re-probe at +1500 ms: the first probe can
+        // still lose the race when the service binds just after
+        // residency start. It fires only if this same residency is
+        // still unstamped — a stamp that already landed (event path
+        // or first probe) needs no second proof, and a superseded
+        // residency (start changed since scheduling) is never
+        // probed on its predecessor's schedule.
+        val scheduledStartMono = residencyStartMono
+        sweepScope.launch {
+            delay(1_500L)
+            if (residencyStartMono == scheduledStartMono && !stampedThisResidency()) {
+                MonolithAccessibilityService.instance?.requestPipelineProbe()
+            }
+        }
     }
 
     /** The stamp test, exactly as the wire has always run it. */
@@ -376,6 +437,14 @@ object WatchStore {
         }
     }
 
+    /** Issue #122: publish the latest battery snapshot. The perm
+     *  measurement for BATTERY stays the exemption bit (that is
+     *  the FIX door's business); this carries the battery itself
+     *  for PARK's line. */
+    fun publishBattery(snapshot: com.example.data.BatterySnapshot) {
+        publish { current -> current.copy(battery = snapshot) }
+    }
+
     /**
      * The grant-check sweep: six permission queries dispatched in
      * parallel at t=0; each item re-stamps when its own query lands
@@ -393,6 +462,7 @@ object WatchStore {
         val gen: Int
         synchronized(this) {
             gen = ++sweepGen
+            pendingSweepGen = gen
             pendingSweepStartWall = System.currentTimeMillis()
         }
         for (item in WatchItemId.PERMISSIONS) {
@@ -466,7 +536,11 @@ object WatchStore {
             a11yStampedThisResidency = stamped,
             shieldProtecting = shieldProtecting,
             usage = usage,
-            readMono = readMono
+            readMono = readMono,
+            // Cold-start cure (issue #7): the warrant carries the
+            // residency it was derived under, so its age is readable
+            // from the warrant itself.
+            residencyStartMono = residencyStartMono
         )
     }
 
@@ -537,9 +611,20 @@ object WatchStore {
      *  GRANTED and not stale, over ALL SIX permission lines the
      *  board prints (issue #109, F4 — the header used to count only
      *  the four COUNTED and could print wholeness over a board
-     *  showing OVERLAY / BATTERY MISSING). */
-    fun countedWarranted(snapshot: WatchSnapshot, nowMono: Long): Int =
-        WatchItemId.PERMISSIONS.count { permPrintAt(snapshot, it, nowMono) == PermPrint.GRANTED }
+     *  showing OVERLAY / BATTERY MISSING).
+     *
+     *  GATED on measurement (issue #9, Zahn Z-2): if ANY of the six
+     *  is UNMEASURED the count does not exist and this returns
+     *  null — a count computed off a partial set is a fabrication
+     *  (a cold open's `GUARD 0/6` on an EMPTY snapshot reads as
+     *  "all six failed"; the truth is "nothing checked yet").
+     *  Callers print their NOT CHECKED form on null, never a
+     *  number. */
+    fun countedWarranted(snapshot: WatchSnapshot, nowMono: Long): Int? {
+        val prints = WatchItemId.PERMISSIONS.map { permPrintAt(snapshot, it, nowMono) }
+        if (prints.any { it == PermPrint.UNMEASURED }) return null
+        return prints.count { it == PermPrint.GRANTED }
+    }
 
     // ------------------------------------------------------------------
     // Internals
@@ -588,16 +673,28 @@ object WatchStore {
             }
         }
         // LAST PROVED: when every permission item carries a
-        // measurement from the in-flight sweep's era (at or after
-        // its dispatch), the set is complete and the instant is the
-        // last landing's wall time. A partial set never advances it.
+        // measurement stamped by the in-flight sweep ITSELF —
+        // sweepGen == the pending generation, tested on the stamp,
+        // not inferred from wall-clock era (issue #9, Zahn Z-1:
+        // the era test let gen-0 shield-loop re-stamps, presence
+        // alone every ~2s, and earlier sweeps' late landings
+        // "complete" a set they never served). A partial set never
+        // advances it. The set must also COEXIST (Critic C-5): a
+        // set whose span from dispatch exceeds STALE_AFTER_MS is
+        // not a set — past the window the sweep is abandoned; its
+        // late stamps remain ordinary measurements and complete
+        // nothing.
         val sweepStart = pendingSweepStartWall
         if (sweepStart > 0L) {
             val perms = WatchItemId.PERMISSIONS.mapNotNull { next.items[it] }
-            if (perms.size == WatchItemId.PERMISSIONS.size &&
-                perms.all { it.measuredWall >= sweepStart }
+            val completedAt = if (perms.size == WatchItemId.PERMISSIONS.size &&
+                perms.all { it.sweepGen == pendingSweepGen }
             ) {
-                val completedAt = perms.maxOf { it.measuredWall }
+                perms.maxOf { it.measuredWall }
+            } else {
+                null
+            }
+            if (completedAt != null && completedAt - sweepStart <= STALE_AFTER_MS) {
                 // Forward only (issue #48): LAST PROVED is a
                 // historical fact — a late-completing set from an
                 // older era never regresses it. On a real advance
@@ -608,6 +705,14 @@ object WatchStore {
                     persistLastProved(completedAt)
                 }
                 pendingSweepStartWall = 0L
+                pendingSweepGen = 0
+            } else if (wall - sweepStart > STALE_AFTER_MS) {
+                // Abandoned: the sweep never answered as a set.
+                // Its stamps stay as ordinary measurements; the
+                // pending generation is cleared so a late landing
+                // can never complete it after the fact.
+                pendingSweepStartWall = 0L
+                pendingSweepGen = 0
             }
         }
         _snapshots.value = next
@@ -615,10 +720,16 @@ object WatchStore {
 
     /**
      * The interceptor derivation (§4.3), computed at every emission:
-     *  RUNNING — setting on, every parent currently-warranted, no
-     *            suspension in force;
-     *  PAUSED  — setting on, warranted, and HIS suspension in force
-     *            (the Safe Break, for the two blocking interceptors);
+     *  RUNNING — setting on, every parent currently-warranted;
+     *  PAUSED  — retained in the vocabulary for a suspension that is
+     *            ever REAL (measured at the enforcement door); no
+     *            current input derives it. The Safe Break is NOT a
+     *            suspension of either blocking interceptor — the
+     *            sniper and the site blocker are documented, in the
+     *            accessibility service's own class doc, as strictly
+     *            active during Safe Breaks, and Audit R3
+     *            (safe-break-lived #1) caught this derivation
+     *            printing PAUSED for them while they intercepted;
      *  OFF     — setting off, or any parent MISSING or STALE.
      * A parent never measured makes the line unmeasured (it prints
      * its name only) — OFF would be a claim nobody measured.
@@ -655,11 +766,14 @@ object WatchStore {
         if (item == WatchItemId.NOTIFICATIONS && !sessionCapturing) {
             return InterceptorState.OFF
         }
-        val suspended = when (item) {
-            WatchItemId.NOTIFICATIONS -> false
-            else -> safeBreakActive
-        }
-        return if (suspended) InterceptorState.PAUSED else InterceptorState.RUNNING
+        // Audit R3 (safe-break-lived #1) — the suspension term stays
+        // DELETED even though the safeBreak input survives above (the
+        // ViewModel pushes it; nothing truthful derives from it): the
+        // accessibility service keeps intercepting SHORTS + REELS and
+        // SOCIAL SITES through a Safe Break, exactly as its class doc
+        // promises, so PAUSED from safeBreakActive was a false warrant.
+        // RUNNING is the truth in and out of a break alike.
+        return InterceptorState.RUNNING
     }
 
     private fun WatchSnapshot.withMeasurement(m: WatchMeasurement): WatchSnapshot =
@@ -675,6 +789,7 @@ object WatchStore {
         boundContext = null
         sweepGen = 0
         pendingSweepStartWall = 0L
+        pendingSweepGen = 0
         shortsSettingOn = true
         sitesSettingOn = true
         safeBreakActive = false

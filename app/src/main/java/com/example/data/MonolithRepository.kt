@@ -15,11 +15,13 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.os.PowerManager
+import android.telecom.TelecomManager
 import com.example.service.MonolithAccessibilityService
 import com.example.service.MonolithBootReceiver
 import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithNotificationListener
 import com.example.service.MonolithShieldService
+import com.example.service.TimeCriticalAlertGate
 import com.example.service.UsageAccess
 import com.example.service.Warrant
 import com.example.service.WatchItemId
@@ -117,6 +119,32 @@ data class PruneNote(
  */
 internal fun heldSitesCount(siteCount: Int, browserBlockerEnabled: Boolean): Int =
     if (browserBlockerEnabled) siteCount else 0
+
+/**
+ * W3 #130 finding 2 — the seed-upgrade for EXISTING installs
+ * (verifier correction, DURCH-D): the v1 site seed is once-ever
+ * (SEED_SITES_KEY), so an install seeded before "youtube.com"
+ * joined [BlockedBrowserDomains.defaultDomains] would keep the
+ * legacy list forever and never receive the host rule. This pure
+ * decision is the delivery path: given the install's stored
+ * domains, the domains the one-shot v2 upgrade must ADD.
+ *
+ * The trigger is hard evidence, not a guess: the legacy factory
+ * entry "youtube.com/shorts" still stands in the list, proving
+ * the factory seed is in force and unedited at that entry. The
+ * seeded-ever law (Audit R2 #96) bounds it the other way — a
+ * list WITHOUT the legacy entry is the user's own editing (he
+ * deleted the Shorts rule, or emptied the list, or built his
+ * own), and the upgrade adds NOTHING: a deletion is a ruling,
+ * never resurrected by an upgrade. A list already carrying the
+ * host is complete. Pure, so the matrix is unit-tested.
+ */
+internal fun youtubeHostSeedUpgrade(existingDomains: Collection<String>): List<String> =
+    if ("youtube.com/shorts" in existingDomains && "youtube.com" !in existingDomains) {
+        listOf("youtube.com")
+    } else {
+        emptyList()
+    }
 
 /** Issue #99 F1: how long after a peek lease's end its package still
  *  counts as "just expired" for eviction purposes. The shield polls
@@ -238,6 +266,24 @@ class MonolithRepository(
     val activeSessionFlow: Flow<FocusSessionEntity?> = dao.getActiveSessionFlow()
     val sessionHistoryFlow: Flow<List<FocusSessionEntity>> = dao.getSessionHistoryFlow()
     val interceptLogsFlow: Flow<List<InterceptLogEntity>> = dao.getInterceptLogsFlow()
+
+    /** Issue #254 F12 (Audit R5): today's reach count for one
+     *  package, counted from the intercept ledger itself via the
+     *  uncapped evidence query (getInterceptLogsBetween) — never
+     *  the 500-capped display flow above. The Airlock's attempt
+     *  mirror prints this number; a print that can disagree with
+     *  the ledger it names is a lie waiting for its frame. */
+    suspend fun interceptAttemptsToday(packageName: String, nowMillis: Long): Int {
+        val dayStart = java.util.Calendar.getInstance().apply {
+            timeInMillis = nowMillis
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        return dao.getInterceptLogsBetween(dayStart, nowMillis)
+            .count { it.packageName == packageName }
+    }
     val capturedNotificationsFlow: Flow<List<CapturedNotificationEntity>> = dao.getCapturedNotificationsFlow()
     val allTasksFlow: Flow<List<FocusTaskEntity>> = dao.getAllTasksFlow()
     val allSitesFlow: Flow<List<BlockedSiteEntity>> = dao.getAllSitesFlow()
@@ -258,6 +304,13 @@ class MonolithRepository(
         const val PEEK_DURATION_MILLIS = 120 * 1000L // 2-Minute Peek lease in ms
         const val PEEK_COOLDOWN_MILLIS = 20 * 60 * 1000L // 20-Minute Mandatory Cooldown
         const val STOPWATCH_MIN_FLOOR_SECONDS = 20 * 60 // 20-Minute Minimum Floor
+        /** The grace-cancel window, in VERIFIED elapsed seconds
+         *  (issue #103 F2): the Deck renders this same number, and
+         *  [disarmActiveSession] enforces it in the ending write —
+         *  a "Grace Cancel" arriving after it books the session's
+         *  real elapsed as an ordinary early end instead of
+         *  zeroing its history. */
+        const val GRACE_WINDOW_SECONDS = 10
         // Issue #290 F1: FLOW's terminal cap — a count-up session
         // auto-ends at 4 hours instead of running forever with no
         // terminal rule of its own (Forest's stopwatch auto-stops
@@ -277,6 +330,34 @@ class MonolithRepository(
          *  (TOKEN-SPEC §2 — stored on the spend row). */
         const val EMERGENCY_BREAK_HELD_SECONDS = 60
 
+        /** W3 #134 (phone-call-mid-session): the telephony surface.
+         *  The call bypass has always covered calls that already
+         *  exist (AudioManager call modes); placing a call starts
+         *  in MODE_NORMAL inside the dialer, so a LOCKED Phone app
+         *  was intercepted like any distraction and the user could
+         *  not dial out mid-session. The dialer package is exempt
+         *  at every door, in every loadout: telephony is a safety
+         *  surface, not a distraction category. Identification is
+         *  the system's own default dialer where TelecomManager
+         *  names one, plus the stock dialer packages as the
+         *  fallback — package-scoped, never a name substring, so
+         *  no other app can wear the exemption. */
+        private val KNOWN_DIALER_PACKAGES = setOf(
+            "com.google.android.dialer",
+            "com.android.dialer",
+            "com.samsung.android.dialer"
+        )
+
+        fun isDialerPackage(context: Context, packageName: String): Boolean {
+            if (packageName in KNOWN_DIALER_PACKAGES) return true
+            return try {
+                val tm = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+                tm?.defaultDialerPackage == packageName
+            } catch (_: Exception) {
+                false
+            }
+        }
+
         /** The shipped routine-session recogniser (TOKEN-SPEC §4.1):
          *  a session started by a routine carries this profile prefix.
          *  Kept for recognising legacy pre-rebuild rows (arbitration
@@ -285,8 +366,10 @@ class MonolithRepository(
 
         // Attendance evidence mask bits (Sten §1.6.1). E1 is set at
         // materialise; E2 on foreground return; E3 by finalise when a
-        // blocked attempt landed inside the window; E4 when the 60s
-        // valve hold starts.
+        // blocked attempt landed inside the window; E4 when a 60s
+        // valve hold BANKS its first 15-second chamber (issue #103
+        // F4) — a momentary grip stamps nothing, so an abandoned
+        // valve attempt cannot manufacture attendance minutes.
         const val EVIDENCE_E1_START = 1
         const val EVIDENCE_E2_FOREGROUND = 2
         const val EVIDENCE_E3_INTERCEPT = 4
@@ -306,6 +389,8 @@ class MonolithRepository(
         /** Chrome's prefs file + PARK's first-run bit (chrome C4). */
         const val CHROME_PREFS_NAME = "monolith_chrome"
         const val PARK_INTRO_DONE_KEY = "park_intro_done"
+        /** Issue #70 F3: the Deck primer's first-run bit. */
+        const val DECK_PRIMER_DONE_KEY = "deck_primer_done"
 
         /** Audit R1 #41: the shared WallAccrual anchor's disk
          *  home (see seedAccrualFromDisk / persistAccrualAnchor). */
@@ -363,6 +448,13 @@ class MonolithRepository(
         const val SEED_PREFS_NAME = "monolith_seed"
         const val SEED_SITES_KEY = "seeded_sites_v1"
         const val SEED_TASKS_KEY = "seeded_tasks_v1"
+
+        /** W3 #130 F2 (verifier correction): the one-shot flag for
+         *  the youtube.com host seed-upgrade — set the first time
+         *  the upgrade has been CONSIDERED on an install that ran
+         *  the v1 seed, whether or not it added the host, so the
+         *  consideration never repeats (see youtubeHostSeedUpgrade). */
+        const val SEED_SITES_V2_KEY = "seeded_sites_v2_youtube_host"
 
         /** The prune note's prefs home (Ordner lane, Mikro M5): a
          *  record of what the catalog reconcile removed, kept until
@@ -449,8 +541,14 @@ class MonolithRepository(
             nowBootCount = boot
         )
         if (decision.reanchor) {
+            // Issue #82 tightening: persist the DECISION's honest
+            // now, not the raw wall clock. On a powered-off rollback
+            // the decision is floored at the old anchor; persisting
+            // the raw (rolled-back) wall instead would re-anchor to
+            // the travelled clock and the floor would last one read.
+            // In every other reanchor case honest == wall, unchanged.
             prefs.edit()
-                .putLong(CLOCK_ANCHOR_WALL_KEY, nowWall)
+                .putLong(CLOCK_ANCHOR_WALL_KEY, decision.honestNowMillis)
                 .putLong(CLOCK_ANCHOR_MONO_KEY, nowMono)
                 .putInt(CLOCK_ANCHOR_BOOT_KEY, boot)
                 .apply()
@@ -536,6 +634,26 @@ class MonolithRepository(
             }
             seedPrefs.edit().putBoolean(SEED_SITES_KEY, true).apply()
 
+        }
+        // W3 #130 F2 seed-upgrade (verifier correction, DURCH-D):
+        // an install that ran the v1 seed before "youtube.com"
+        // joined the defaults never re-seeds, so the host rule
+        // must be DELIVERED — once, and only where the legacy
+        // factory entry proves the seed stands unedited (the pure
+        // decision above; a user's deletion is never resurrected).
+        // A fresh install reaches this line with the current
+        // defaults just seeded, so the decision adds nothing and
+        // the flag simply closes. Runs under the same seed lock.
+        if (!seedPrefs.getBoolean(SEED_SITES_V2_KEY, false)) {
+            if (seedPrefs.getBoolean(SEED_SITES_KEY, false)) {
+                val upgradeAdds = youtubeHostSeedUpgrade(
+                    dao.getAllSitesSnapshot().map { it.domain }
+                )
+                if (upgradeAdds.isNotEmpty()) {
+                    dao.insertSites(upgradeAdds.map { BlockedSiteEntity(it) })
+                }
+            }
+            seedPrefs.edit().putBoolean(SEED_SITES_V2_KEY, true).apply()
         }
         if (dao.getGuardSettingsSnapshot() == null) {
             dao.insertGuardSettings(GuardSettingsEntity())
@@ -905,30 +1023,46 @@ class MonolithRepository(
             if (!seedPrefs.getBoolean(SEED_TASKS_KEY, false)) {
                 seedPrefs.edit().putBoolean(SEED_TASKS_KEY, true).apply()
             }
-            // Deduplicate any duplicate tasks or sessions created by prior race conditions.
+            // Deduplicate ONLY true duplicates created by a prior
+            // double-insert race (issue #106, finding 1).
             // PERMANENCE GUARD: a COMPLETED task is a stored record (the
             // Drawer) — repeat-titled completions are the normal shape of
             // a year, and this pass must never delete one. Stored rows are
             // skipped entirely: not deleted, and not registered as a
             // dedup key against anything.
-            val seenTaskTitles = mutableSetOf<String>()
+            // The old key was title+status alone, so two DIFFERENT user
+            // tasks that happen to share a title ("Revision", "Read
+            // Chapter 4" for two subjects — both QUEUED) silently lost
+            // the later one at every launch, with no undo. A title is
+            // not an identity. A row is only a true duplicate when
+            // EVERY field that could distinguish two tasks matches an
+            // earlier row — title, status, category, sub-steps, estimate,
+            // seconds spent, queue order and completion stamps — i.e.
+            // the same insertion written twice, never two tasks the man
+            // wrote. Anything short of that is kept, both of them.
+            val seenExactTasks = mutableSetOf<String>()
             for (task in existingTasks.sortedBy { it.id }) {
                 if (task.resolvedStatus == TaskQueueStatus.COMPLETED) continue
-                val key = "${task.title.lowercase(java.util.Locale.ROOT)}|${task.status}"
-                if (!seenTaskTitles.add(key)) {
+                val key = listOf(
+                    task.title.lowercase(java.util.Locale.ROOT), task.status, task.categoryTag,
+                    task.notesOrSubsteps, task.estimatedMinutes.toString(),
+                    task.actualSecondsSpent.toString(), task.queueOrder.toString(),
+                    task.completedAtMillis.toString(),
+                    task.completedInSessionId.toString(),
+                    task.startedAtSessionElapsedSec?.toString() ?: "null"
+                ).joinToString("|")
+                if (!seenExactTasks.add(key)) {
                     dao.deleteTaskById(task.id)
                 }
             }
-            val allSessions = dao.getSessionHistorySnapshot()
-            val seenSessionKeys = mutableSetOf<String>()
-            for (sess in allSessions.sortedBy { it.id }) {
-                if (!sess.isActive) {
-                    val key = "${sess.intention}|${sess.targetDurationSeconds}|${sess.completedTasksSummary}"
-                    if (!seenSessionKeys.add(key)) {
-                        dao.deleteSessionById(sess.id)
-                    }
-                }
-            }
+            // Audit R6 #341 F04: the session dedup pass that used to
+            // live here is DELETED. Sessions are events, not catalogue
+            // rows: two sessions sharing intention + duration + task
+            // summary are two sessions (the normal shape of a daily
+            // practice), and keying deletion on user-visible content
+            // silently collapsed a history of daily sessions to one
+            // row on every cold start. No pass may delete a session
+            // for resembling another.
         }
         drainDayWordsLocked()
         }
@@ -968,6 +1102,20 @@ class MonolithRepository(
     fun parkIntroPending(): Boolean =
         context.getSharedPreferences(CHROME_PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(PARK_INTRO_DONE_KEY, false).not()
+
+    // Issue #70 F3: the Deck primer's gate — the same one-bit
+    // pattern as the PARK intro. Pending until the first session
+    // has ever run; the Deck prints its three lines only while
+    // this is pending (and no session is live and the warrant is
+    // OFF), then never again.
+    fun deckPrimerPending(): Boolean =
+        context.getSharedPreferences(CHROME_PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(DECK_PRIMER_DONE_KEY, false).not()
+
+    fun markDeckPrimerDone() {
+        context.getSharedPreferences(CHROME_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putBoolean(DECK_PRIMER_DONE_KEY, true).apply()
+    }
 
     // ------------------------------------------------------------------
     // THE PRUNE NOTE (Mikro M5): accumulate — read — clear.
@@ -1180,10 +1328,31 @@ class MonolithRepository(
         }
     }
 
+    /** W3 #134: the progress machine reads the call signal through
+     *  this seam — the same test-seam shape as [breakBoundaryKnock]
+     *  — so the call-accounting tests can hold a call open without
+     *  a telephony stack. Production reads the AudioManager probe
+     *  itself, always. */
+    internal var callActiveProbe: () -> Boolean = { isPhoneOrVoipCallActive() }
+
+    /** The dialer exemption's instance door (W3 #134): the
+     *  companion holds the one identification; callers with a
+     *  repository at hand (the shield's blocked-set filter, the
+     *  loadouts) come through here. */
+    fun isDialerPackage(packageName: String): Boolean =
+        isDialerPackage(context, packageName)
+
     /**
      * Active Phone & VoIP Call Bypass:
      * Monitors AudioManager call states (MODE_RINGTONE, MODE_IN_CALL, MODE_IN_COMMUNICATION)
      * so incoming cellular, WhatsApp, or Telegram voice and video calls are never blocked mid-ring.
+     * W3 #134: this same signal now also drives the session clock —
+     * while it is active, [updateSessionProgress] excludes the
+     * tick's seconds from the booked elapsed (call time is not
+     * focus time), holds any finish or Safe Break flip until the
+     * call ends, and pauses the Safe Break countdown. Outgoing
+     * calls are covered separately: the dialer package itself is
+     * exempt at every door (see [isDialerPackage]).
      */
     @WorkerThread
     fun isPhoneOrVoipCallActive(): Boolean {
@@ -1284,7 +1453,14 @@ class MonolithRepository(
                             !SafetyFloor.isFloorPackage(it.packageName)
                     }
                     ?.maxByOrNull { it.lastTimeUsed }
-                if (expiredHit != null) return expiredHit.packageName
+                // Issue #121: the time-critical gate binds this
+                // return too — an expired peek never re-covers a
+                // screen whose alarm is ringing right now.
+                if (expiredHit != null &&
+                    !TimeCriticalAlertGate.isAlertLiveFor(context, expiredHit.packageName)
+                ) {
+                    return expiredHit.packageName
+                }
             }
 
             // Issue #332 F1: the door now reads the real UsageEvents
@@ -1313,7 +1489,20 @@ class MonolithRepository(
             // the safety floor covers dialer / incallui / telecom —
             // and every other blocked app stays blocked mid-call,
             // which is exactly Flipd's per-package construction.
-            ForegroundDoor.foregroundBlocked(events, blockedPackages)
+            val foreground = ForegroundDoor.foregroundBlocked(events, blockedPackages)
+                ?: return null
+            // Issue #121: this is the shield door's half of the
+            // time-critical alert gate (the call bypass above can
+            // never fire for an alarm — it plays on the ALARM
+            // stream, not a call mode). A foreground package whose
+            // alarm is ringing, or whose calendar reminder is live,
+            // is NOT reported blocked, so the shield never covers
+            // the ringing screen it cannot dismiss. The exemption
+            // lasts exactly as long as the alert; the package is
+            // reported again the moment it ends. The seal itself is
+            // untouched: the package's tier never changes, and no
+            // other package passes.
+            if (TimeCriticalAlertGate.isAlertLiveFor(context, foreground)) null else foreground
         } catch (e: Exception) {
             swallow("queryForegroundBlockedApp", e)
             null
@@ -1396,9 +1585,22 @@ class MonolithRepository(
         WatchItemId.DEVICE_ADMIN -> isDeviceAdminActive()
         WatchItemId.NOTIFICATION_LISTENER -> servicePort.notificationListenerBound
         WatchItemId.OVERLAY -> hasOverlayPermission()
-        WatchItemId.BATTERY -> isBatteryOptimizationIgnored()
+        WatchItemId.BATTERY -> {
+            // Issue #122: the sweep's BATTERY query also reads the
+            // battery ITSELF and publishes it, so PARK's line can
+            // print level / saver / charging — the perm bit stays
+            // the exemption (the FIX door's business), but it is no
+            // longer the only battery fact the user can check.
+            val snapshot = batterySnapshot()
+            WatchStore.publishBattery(snapshot)
+            snapshot.exemptionIgnored
+        }
         else -> false
     }
+
+    /** Issue #122: the one battery read (level, saver, charging,
+     *  exemption) every surface shares — see BatteryState.kt. */
+    fun batterySnapshot(): BatterySnapshot = readBatterySnapshot(context)
 
     /** Battery: whether the OS is told to leave Monolith alone.
      *  The read the dissolved Guard screen never had — its BATTERY &
@@ -1855,7 +2057,9 @@ class MonolithRepository(
 
     /**
      * Stamps an attendance-evidence bit on the active routine session
-     * (E2 foreground return, E4 valve hold start). first/last evidence
+     * (E2 foreground return, E4 valve hold BANKED — the valve only
+     * calls this once a 15-second chamber has locked, never on a
+     * momentary grip; issue #103 F4). first/last evidence
      * stamps track the earliest/latest E2/E4 instants. No-ops for
      * manual sessions and when nothing is active.
      */
@@ -1955,6 +2159,9 @@ class MonolithRepository(
                         }
                     )
                 )
+                // #152 residue: witness the end zone at this
+                // ending write (see captureEndZone).
+                captureEndZone(session.endWallMillis, session.windowEndMillis)
             }
             return@withContext null
         }
@@ -1964,9 +2171,18 @@ class MonolithRepository(
         val remainderSec = ((session.windowEndMillis -
             maxOf(session.windowStartMillis, session.startWallTimeMillis)) / 1000L).coerceAtLeast(0L)
         val yardstickSec = if (lateFire) remainderSec else windowSec
+        // Issue #137, F1c/F5: a window on an excused date (its
+        // filing date carries ILL / REST / FAMILY) can never be
+        // stamped MISSED — the sub-floor arm books UNKNOWN, the
+        // existing "prints nothing, books nothing" judgement, so
+        // the durable row never contradicts the declared word.
+        // Attendance he actually gave still judges ATTENDED /
+        // PARTIAL on its own evidence.
+        val excused = session.windowStartMillis > 0L && isExcusedFilingDate(session.windowStartMillis)
         val outcome = when {
             attended < ATTENDANCE_FLOOR_SECONDS ->
-                if (lateFire) WindowJudgement.LATE_FIRE else WindowJudgement.MISSED
+                if (excused) WindowJudgement.UNKNOWN
+                else if (lateFire) WindowJudgement.LATE_FIRE else WindowJudgement.MISSED
             attended >= yardstickSec - ATTENDANCE_FLOOR_SECONDS -> WindowJudgement.ATTENDED
             else -> WindowJudgement.PARTIAL
         }
@@ -1990,7 +2206,17 @@ class MonolithRepository(
                 }
             )
         )
+        // #152 residue: witness the end zone at this ending write.
+        captureEndZone(session.endWallMillis, nowMillis)
         outcome.name
+    }
+
+    /** Issue #137, F1: true when the filing date of [millis]
+     *  (DrawerDay's 03:30 rule — the date the Drawer files words
+     *  under) carries an excuse word in either word store. */
+    suspend fun isExcusedFilingDate(millis: Long): Boolean {
+        val iso = DrawerDay.dateIso(DrawerDay.filingDate(millis))
+        return DayWordStore.isExcuse(allDayWords()[iso])
     }
 
     /**
@@ -2012,6 +2238,8 @@ class MonolithRepository(
                     }
                 )
             )
+            // #152 residue: witness the end zone at this ending write.
+            captureEndZone(session.endWallMillis, session.windowEndMillis)
         }
     }
 
@@ -2115,6 +2343,19 @@ class MonolithRepository(
         // routine materialisation (which applies the loadout BEFORE
         // its session starts), the preset lands whole, as before.
         val sealed = dao.getActiveSessionSnapshot()?.isActive == true
+        // Issue #121: the SLEEP loadout's structural time-critical
+        // set (alarm / calendar class by capability and exact
+        // identity — TimeCriticalApps), resolved once per
+        // application and shared with the Shield preview and the
+        // ratchet warning, so preview and commit cannot diverge.
+        val timeCriticalPackages =
+            if (loadout == SmartLoadout.SLEEP) {
+                TimeCriticalApps.resolveTimeCriticalPackages(
+                    context, allApps.map { it.packageName }
+                )
+            } else {
+                emptySet()
+            }
         val updated = allApps.map { app ->
             // Issue #107: the tier rule is LoadoutRules.tierFor —
             // the same pure function the Shield preview prints its
@@ -2128,7 +2369,18 @@ class MonolithRepository(
             // F4: tierFor also takes the current tier, so a loadout
             // never loosens LOCKED->OPEN on a category guess; the
             // sealed-session gate then clamps whatever remains.
-            val desired = LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category, app.resolvedTier)
+            // W3 #134 (composition with #107 + #304 + #121): telephony is a
+            // safety surface — the dialer's desired tier is OPEN at
+            // this commit point (tierFor itself stays pure for the
+            // preview, and its own #119 floor already caps the
+            // dialler at PEEK); the sealed-session gate then clamps
+            // the desired tier exactly as for every other app, so
+            // #304's no-loosening law governs a sealed session.
+            val desired = if (isDialerPackage(app.packageName)) {
+                AppBlockTier.OPEN
+            } else {
+                LoadoutRules.tierFor(loadout, app.packageName, app.appName, app.category, app.resolvedTier, timeCriticalPackages)
+            }
             val tier = SessionTierGate.clampWhileSealed(app.resolvedTier, desired, sealed)
             app.copy(blockTier = tier.name).normalized()
         }
@@ -2560,6 +2812,23 @@ class MonolithRepository(
                 dao.getAllSitesSnapshot().size,
                 dao.getGuardSettingsSnapshot()?.browserBlockerEnabled ?: true
             )
+            // Audit R6 #341 F30: the predecessor is CLOSED, not just
+            // flagged off. Before this, deactivateAllSessions() left
+            // the previous active row with outcome='' and
+            // endWallMillis=0 forever — no path could ever classify
+            // it, earn it a receipt, or count it in history. Stamp
+            // its terminal verdict (SUPERSEDED) and true end in the
+            // same transaction that births its successor.
+            val predecessor = dao.getActiveSessionSnapshot()
+            if (predecessor != null && predecessor.isActive) {
+                dao.updateSession(
+                    predecessor.copy(
+                        isActive = false,
+                        outcome = SessionOutcome.SUPERSEDED,
+                        endWallMillis = System.currentTimeMillis()
+                    )
+                )
+            }
             dao.deactivateAllSessions()
             val id = dao.insertSession(
                 session.copy(
@@ -2910,6 +3179,34 @@ class MonolithRepository(
             emptyList()
         }
 
+        // Issue #105 (F1): the finished tasks are the row's OWN
+        // booked summary — completeTaskAndAdvance appends each
+        // finished task to completedTasksSummary, and until now
+        // assembly never read it, so the slip attested a session
+        // while naming none of the work finished inside it.
+        val completedTasks = row.completedTasksSummary
+            .split(" • ")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+
+        // Issue #105 (F2, assembly side): the deflection match
+        // must survive the session's intention ever having been
+        // re-titled. The write side is cured on main by #124's
+        // total freeze (landed via PR #453): completeTaskAndAdvance
+        // and promoteTaskToActive never rewrite a session's
+        // intention at all — a superset of the seal guard #106's
+        // F2 cure carries, and the two agree (no session write on
+        // task finish/promotion). Assembly additionally accepts
+        // logs stamped with the title of any task this session
+        // booked as finished: those attempts happened under
+        // that task's watch, inside this window — so deflections
+        // booked under a title a pre-freeze build re-titled away
+        // are not silently dropped from the slip either.
+        val knownIntentions = buildSet {
+            add(row.intention)
+            completedTasks.forEach { entry -> add(entry.substringBefore(" (").trim()) }
+        }.filter { it.isNotEmpty() }.toSet()
+
         val lastByPackage = mutableMapOf<String, Long>()
         val deflections = dao.getInterceptLogsBetween(row.startWallTimeMillis, windowEnd)
             .filter { log ->
@@ -2919,7 +3216,7 @@ class MonolithRepository(
                 // row the filter removes can never eat a real
                 // block's dedupe slot. Only proven blocks print:
                 // a peek (he was LET IN) is not a deflection.
-                log.sessionIntention == row.intention &&
+                log.sessionIntention in knownIntentions &&
                     log.packageName != "com.monolith.system" &&
                     log.packageName != EXPOSURE_LOG_PACKAGE &&
                     isBlockedInterceptOutcome(log.outcome) &&
@@ -2939,7 +3236,11 @@ class MonolithRepository(
                     it.appName,
                     it.packageName,
                     it.timestampMillis,
-                    isSite = it.appName in siteDomains
+                    isSite = it.appName in siteDomains,
+                    // Issue #105 (F3): the outcome rides — the
+                    // slip prints which kind of block each
+                    // admitted attempt was.
+                    outcome = it.outcome
                 )
             }
 
@@ -2974,7 +3275,11 @@ class MonolithRepository(
             },
             // W-41: the row's stored split, threaded through.
             heldShutAtSeal = row.heldShutAtSeal,
-            heldPeekAtSeal = row.heldPeekAtSeal
+            heldPeekAtSeal = row.heldPeekAtSeal,
+            // Issue #105 (F1/F4): the session's booked work and
+            // its lived Safe Breaks, from the row's own ledgers.
+            completedTasks = completedTasks,
+            safeBreakSeconds = row.breakTakenSeconds
         )
     }
 
@@ -3086,7 +3391,10 @@ class MonolithRepository(
             forgedArtifactName = pending.forgedArtifactName,
             heldShutAtSeal = pending.heldShutAtSeal,
             heldPeekAtSeal = pending.heldPeekAtSeal,
-            armZoneId = armZoneStore.zoneFor(pending.armWallMs)
+            armZoneId = armZoneStore.zoneFor(pending.armWallMs),
+            completedTasks = pending.completedTasks,
+            safeBreakSeconds = pending.safeBreakSeconds,
+            endZoneId = armZoneStore.endZoneFor(pending.endedAtWallMs)
         )
     }
 
@@ -3110,6 +3418,20 @@ class MonolithRepository(
         return rehydrateReceipt(sessionId, number)
     }
 
+    /** Issue #135 F2's door, called by the ViewModel's
+     *  publishReceipt: a session that already claimed its №
+     *  rebuilds SETTLED from its row — it never re-claims and
+     *  never re-enters the finish controller. The rebuild itself
+     *  is #157's [rehydrateReceipt] by session id (which already
+     *  returns null for a row that claimed nothing); this name
+     *  is the one the #135 call site was written against — the
+     *  merge train landed the call without its callee, leaving
+     *  main uncompilable (CI run 41057949156); restored here on
+     *  the #152 branch so the branch — and main on merge —
+     *  compiles again. */
+    suspend fun receiptForSession(sessionId: Int): ReceiptState? =
+        rehydrateReceipt(sessionId)
+
     /** Issue #157: re-derive ANY claimed session's slip by its
      *  session id — the Vault receipts index's tap. The № is the
      *  one stamped on the session's own row at claim (RC-04); a
@@ -3119,18 +3441,6 @@ class MonolithRepository(
         if (row.receiptNumber <= 0) return null
         return rehydrateReceipt(sessionId, row.receiptNumber)
     }
-
-    /** Issue #135 F2 (re-issue): the Deck's LAST RECEIPT door -
-     *  the standing slip for ONE session, rebuilt settled from
-     *  its row. The ViewModel's publishReceipt facade calls this
-     *  first: a session that claimed its № re-derives its slip
-     *  here (the #157 rehydration - restored, its fault read from
-     *  the row's own fault shield) and never re-claims; a session
-     *  that claimed nothing returns null and the caller falls
-     *  through to discovery. Re-issue is a read: it claims
-     *  nothing and stamps nothing. */
-    suspend fun receiptForSession(sessionId: Int): ReceiptState? =
-        rehydrateReceipt(sessionId)
 
     /** The Vault's receipts index (issue #157): every claimed
      *  session, newest № first, carrying only what its row
@@ -3215,7 +3525,10 @@ class MonolithRepository(
             forgedArtifactName = pending.forgedArtifactName,
             heldShutAtSeal = pending.heldShutAtSeal,
             heldPeekAtSeal = pending.heldPeekAtSeal,
-            armZoneId = armZoneStore.zoneFor(pending.armWallMs)
+            armZoneId = armZoneStore.zoneFor(pending.armWallMs),
+            completedTasks = pending.completedTasks,
+            safeBreakSeconds = pending.safeBreakSeconds,
+            endZoneId = armZoneStore.endZoneFor(pending.endedAtWallMs)
         )
     }
 
@@ -3403,16 +3716,76 @@ class MonolithRepository(
         // once, and a countdown tick (which never reaches this
         // function) stays silent.
         breakBoundaryKnock(true)
+        // Issue #339 (Second-pass F3): every break exit crosses
+        // here exactly once — disarm the break-end alarm; if the
+        // alarm already fired, its ledger entry stands and the
+        // cancel is a no-op.
+        com.example.service.BreakEndScheduler.cancel(context)
         return session.copy(
             currentBlockIndex = (session.currentBlockIndex + 1).coerceAtMost(session.totalStudyBlocks),
             isInSafeBreak = false,
+            midBlockSafeBreak = false,
             safeBreakSecondsRemaining = 0,
             breakTakenSeconds = breakTakenSeconds,
+            // W3 #134: the call ledger is per-block, like the
+            // anchors this write re-bases — the next block's
+            // verified elapsed counts from the fresh anchor, so
+            // the exclusion must restart with it or one block's
+            // call would tax the next block's clock.
+            callExcludedSeconds = 0,
             elapsedSeconds = 0,
             startWallTimeMillis = wallNow,
             startElapsedRealtimeMillis = nowMono,
             bootCount = currentBoot,
             accumulatedBeforeRebootSeconds = 0,
+            lastTickElapsedRealtimeMillis = nowMono,
+            hmacSignature = freshHmac,
+            shieldLastBeatWallMillis = beatWall
+        )
+    }
+
+    /** Issue #261: the exit write for a MID-BLOCK Safe Break —
+     *  the sibling of [advancePastBreak] for the break that did
+     *  not begin at a flip. The block has NOT finished, so nothing
+     *  advances: the index stands, the frozen elapsed stands, and
+     *  the block RESUMES from exactly where the entry froze it.
+     *  The resume re-bases both anchors to this instant and banks
+     *  the frozen elapsed in accumulatedBeforeRebootSeconds — the
+     *  verified-elapsed derivation (banked + mono since the mono
+     *  anchor) then counts the resumed block from the frozen
+     *  figure, and the break's own seconds are never re-counted
+     *  as focus. The HMAC re-signs over the fresh anchor pair, as
+     *  at every re-anchor in this machine. The per-block call
+     *  ledger restarts (advancePastBreak's law): the frozen
+     *  figure already excludes the call seconds booked against
+     *  it, so carrying the ledger over would exclude them twice.
+     *  The break's boundary voice and its end-alarm disarm are
+     *  the same single crossing the flip-born exit makes — both
+     *  exits speak the engage knock exactly once here. */
+    private fun resumeBlockFromMidBreak(
+        session: FocusSessionEntity,
+        nowMono: Long,
+        currentBoot: Int,
+        beatWall: Long,
+        breakTakenSeconds: Int
+    ): FocusSessionEntity {
+        val wallNow = System.currentTimeMillis()
+        val freshHmac = CryptoIntegrityManager.signSessionState(
+            wallNow, nowMono, currentBoot, session.targetDurationSeconds, false
+        )
+        breakBoundaryKnock(true)
+        com.example.service.BreakEndScheduler.cancel(context)
+        return session.copy(
+            isInSafeBreak = false,
+            midBlockSafeBreak = false,
+            safeBreakSecondsRemaining = 0,
+            breakTakenSeconds = breakTakenSeconds,
+            callExcludedSeconds = 0,
+            elapsedSeconds = session.elapsedSeconds,
+            accumulatedBeforeRebootSeconds = session.elapsedSeconds.coerceAtLeast(0),
+            startWallTimeMillis = wallNow,
+            startElapsedRealtimeMillis = nowMono,
+            bootCount = currentBoot,
             lastTickElapsedRealtimeMillis = nowMono,
             hmacSignature = freshHmac,
             shieldLastBeatWallMillis = beatWall
@@ -3447,15 +3820,97 @@ class MonolithRepository(
         )
         val taken = (breakLengthSeconds(row) - remaining)
             .coerceIn(0, breakLengthSeconds(row))
-        val next = advancePastBreak(
-            session = row,
-            nowMono = nowMono,
-            currentBoot = querySystemBootCountOrNull() ?: row.bootCount,
-            beatWall = row.shieldLastBeatWallMillis,
-            breakTakenSeconds = row.breakTakenSeconds + taken
-        )
+        // Issue #261: the exit follows the break's ORIGIN, recorded
+        // on the row at entry — a mid-block break resumes the block
+        // it froze; a flip-born break advances past the finished
+        // block. The taken booking is identical either way.
+        val next = if (row.midBlockSafeBreak) {
+            resumeBlockFromMidBreak(
+                session = row,
+                nowMono = nowMono,
+                currentBoot = querySystemBootCountOrNull() ?: row.bootCount,
+                beatWall = row.shieldLastBeatWallMillis,
+                breakTakenSeconds = row.breakTakenSeconds + taken
+            )
+        } else {
+            advancePastBreak(
+                session = row,
+                nowMono = nowMono,
+                currentBoot = querySystemBootCountOrNull() ?: row.bootCount,
+                beatWall = row.shieldLastBeatWallMillis,
+                breakTakenSeconds = row.breakTakenSeconds + taken
+            )
+        }
         dao.updateSession(next)
         return next
+    }
+
+    /** Issue #261 (transferred W9 DAYLIGHT DS3 finding): START a
+     *  Safe Break NOW, mid-block — the door the register found
+     *  missing. Until this verb a Safe Break had exactly one entry
+     *  point, the block flip inside [updateSessionProgress]: a man
+     *  fading in the second hour of a three-hour block was offered
+     *  a 2-minute peek or the session-ending weekly valve, never
+     *  the break itself. The exit side already existed
+     *  ([endSafeBreakEarly], the Deck's END BREAK chip); this is
+     *  its missing entry twin.
+     *
+     *  The block FREEZES, it does not finish: the row enters the
+     *  break with its focus elapsed booked at this instant (the
+     *  verified figure minus the block's call exclusions — call
+     *  time is never focus time), its block index untouched, and
+     *  the origin marked (midBlockSafeBreak) with the break's
+     *  planned length stamped into the span price
+     *  (extraSafeBreakSeconds). Every break exit — the countdown's
+     *  expiry flip and the hand's early end alike — reads the
+     *  origin mark and RESUMES this block (see
+     *  [resumeBlockFromMidBreak]) instead of advancing past it.
+     *  The break's length is the length in force
+     *  ([breakLengthSeconds]) — the free-length doctrine is a
+     *  separate, parked half of #261 and this verb does not
+     *  pre-empt it.
+     *
+     *  Refuses quietly (returns the row unchanged), mirroring the
+     *  end verb's law, when there is nothing to enter: no active
+     *  session, a different session, a session already in a break,
+     *  a stopwatch session (FLOW has no blocks and no breaks), a
+     *  row whose verified clock reads tampered (a freeze must
+     *  never launder a forged elapsed into a banked one), or a
+     *  block that has already reached its target — that crossing
+     *  belongs to the progress machine's flip/finish, not to a
+     *  mid-block door. A routine session enters the same way its
+     *  flip-born breaks already run: entering a break declares no
+     *  success, so the routines fence is not engaged. The entry
+     *  speaks the release knock and arms the break-end alarm,
+     *  exactly as the flip's entry does (ST-03 / issue #339) —
+     *  one entry shape, whoever opens the door. */
+    suspend fun startSafeBreakMidBlock(sessionId: Int): FocusSessionEntity? {
+        val row = dao.getActiveSessionSnapshot() ?: return null
+        if (row.id != sessionId || !row.isActive || row.isInSafeBreak ||
+            row.isStopwatchMode
+        ) return row
+        val (verifiedElapsed, tamper) = computeVerifiedSessionElapsed(row)
+        if (tamper) return row
+        val focusElapsed = (verifiedElapsed - row.callExcludedSeconds).coerceAtLeast(0)
+        if (focusElapsed >= row.effectiveTargetSeconds) return row
+        val nowMono = SystemClock.elapsedRealtime()
+        val length = breakLengthSeconds(row)
+        val entered = row.copy(
+            elapsedSeconds = focusElapsed,
+            isInSafeBreak = true,
+            midBlockSafeBreak = true,
+            safeBreakSecondsRemaining = length,
+            extraSafeBreakSeconds = row.extraSafeBreakSeconds + length,
+            lastTickElapsedRealtimeMillis = nowMono
+        )
+        dao.updateSession(entered)
+        com.example.service.BreakEndScheduler.schedule(
+            context,
+            entered.id,
+            System.currentTimeMillis() + length * 1000L
+        )
+        breakBoundaryKnock(false)
+        return entered
     }
 
     /**
@@ -3463,6 +3918,9 @@ class MonolithRepository(
      * 1. Monotonic clock, reboot recovery & HMAC signature verification (+15m Penalty Lock on tamper)
      * 2. Count-Up Stopwatch Mode (counts upward past the 20m minimum lock floor)
      * 3. Multi-Block Study Cycles (1 to 4 blocks) with automatic 10-minute Safe Breaks in between
+     * 4. Call accounting (W3 #134): while the call bypass signal is active, tick seconds are
+     *    excluded from the booked elapsed (callExcludedSeconds), no finish or Safe Break flip
+     *    fires, and a running Safe Break's countdown holds — call time is never focus time.
      */
     /**
      * Issue #283 (R5 supplement): the in-session extend verb the
@@ -3580,7 +4038,66 @@ class MonolithRepository(
             session.hmacSignature
         }
 
-        accrueActiveTaskSeconds(session, nowMono)
+        // Issue #122 (finding 4): battery death IS an ending. On
+        // the reboot branch only — the battery-death signature,
+        // where monotonic time cannot account for the downtime —
+        // a non-routine timed session whose planned wall end
+        // passed while the phone was off ends HERE, truthfully,
+        // instead of re-anchoring and re-locking the user for
+        // time that ran out hours ago. The ending is booked as
+        // ELAPSED_SHIELD_GAP (the span ran out while the shield
+        // was gone): no success bit, no forged artifact, no
+        // pulse, elapsed stays at its last PROVEN value, and the
+        // end stamp is the planned end — not the recharge
+        // instant that discovered it. Routine rows are excluded:
+        // the heartbeat's window finalise owns their endings.
+        if (rebootDetected && session.routineId == null &&
+            SessionWallClock.wallDeadlinePassed(session, System.currentTimeMillis())
+        ) {
+            val plannedEnd = SessionWallClock.plannedEndWallMillis(session)!!
+            val ended = session.copy(
+                isActive = false,
+                completedSuccessfully = false,
+                isInSafeBreak = false,
+                safeBreakSecondsRemaining = 0,
+                startElapsedRealtimeMillis = newStartMono,
+                bootCount = newBootCount,
+                accumulatedBeforeRebootSeconds = newAccumulated,
+                lastTickElapsedRealtimeMillis = nowMono,
+                hmacSignature = newHmac,
+                penaltySecondsAdded = penaltyAdd,
+                tamperDetected = tamper,
+                shieldLastBeatWallMillis = beatWall,
+                outcome = SessionOutcome.ELAPSED_SHIELD_GAP,
+                endWallMillis = if (session.endWallMillis == 0L) plannedEnd else session.endWallMillis
+            )
+            dao.updateSession(ended)
+            return ended
+        }
+
+        // W3 #134 (phone-call-mid-session): the call bypass signal
+        // the doors already trust, read once per tick. While a
+        // call is live, the tick's wall seconds join the block's
+        // persisted exclusion ledger and every booking below runs
+        // on focusElapsed — call time is not focus time, so it
+        // cannot advance the block, complete the session, or be
+        // certified ELAPSED_CLEAN. Inside a Safe Break the ledger
+        // does not grow (break seconds are not focus seconds and
+        // the next block re-bases it anyway); the break branch
+        // below holds its countdown instead.
+        val callActive = callActiveProbe()
+        val callExcluded = if (callActive && !session.isInSafeBreak) {
+            callExcludedAfter(
+                storedExcludedSeconds = session.callExcludedSeconds,
+                lastTickMonoMillis = session.lastTickElapsedRealtimeMillis,
+                nowMonoMillis = nowMono
+            )
+        } else {
+            session.callExcludedSeconds
+        }
+        val focusElapsed = (verifiedElapsed - callExcluded).coerceAtLeast(0)
+
+        accrueActiveTaskSeconds(session, nowMono, accrue = !callActive)
 
         if (session.isStopwatchMode) {
             // Issue #290 F1: FLOW's own terminal law — at the cap
@@ -3609,10 +4126,14 @@ class MonolithRepository(
                     }
                 )
                 dao.updateSession(capped)
+                // #152 residue: witness the end zone at this
+                // ending write (keyed by the stamped end itself).
+                captureEndZone(session.endWallMillis, capped.endWallMillis)
                 return capped
             }
             val updated = session.copy(
-                elapsedSeconds = verifiedElapsed,
+                elapsedSeconds = focusElapsed,
+                callExcludedSeconds = callExcluded,
                 startWallTimeMillis = newStartWall,
                 startElapsedRealtimeMillis = newStartMono,
                 bootCount = newBootCount,
@@ -3633,6 +4154,20 @@ class MonolithRepository(
         // two tickers drive this function, and a per-call decrement
         // drained a 600s break in ~400 wall seconds (Bus, 09:30 IST).
         if (session.isInSafeBreak) {
+            // W3 #134: a call that straddles the break must not
+            // spend it. The countdown is derived from the stored
+            // (remaining, lastTick) pair, so holding is one write:
+            // the remainder untouched, the tick anchor advanced —
+            // the drain resumes from exactly this remainder when
+            // the call ends.
+            if (callActive) {
+                val heldBreak = session.copy(
+                    lastTickElapsedRealtimeMillis = nowMono,
+                    shieldLastBeatWallMillis = beatWall
+                )
+                dao.updateSession(heldBreak)
+                return heldBreak
+            }
             // Audit R1 #41: the tick computes the (remaining,
             // anchor) PAIR and the pair is what persists — the
             // old code stored the truncated remaining beside the
@@ -3653,15 +4188,29 @@ class MonolithRepository(
             return if (nextBreakRemaining == 0) {
                 // Expiry: the break ran its full length in force,
                 // and the taken ledger books exactly that (ST-02's
-                // honesty condition — see breakTakenSeconds).
-                val nextBlockSession = advancePastBreak(
-                    session = session,
-                    nowMono = nowMono,
-                    currentBoot = newBootCount,
-                    beatWall = beatWall,
-                    breakTakenSeconds = session.breakTakenSeconds +
-                        breakLengthSeconds(session)
-                )
+                // honesty condition — see breakTakenSeconds). The
+                // exit follows the break's ORIGIN (issue #261): a
+                // mid-block break resumes its frozen block; a
+                // flip-born break advances past the finished one.
+                val nextBlockSession = if (session.midBlockSafeBreak) {
+                    resumeBlockFromMidBreak(
+                        session = session,
+                        nowMono = nowMono,
+                        currentBoot = newBootCount,
+                        beatWall = beatWall,
+                        breakTakenSeconds = session.breakTakenSeconds +
+                            breakLengthSeconds(session)
+                    )
+                } else {
+                    advancePastBreak(
+                        session = session,
+                        nowMono = nowMono,
+                        currentBoot = newBootCount,
+                        beatWall = beatWall,
+                        breakTakenSeconds = session.breakTakenSeconds +
+                            breakLengthSeconds(session)
+                    )
+                }
                 dao.updateSession(nextBlockSession)
                 nextBlockSession
             } else {
@@ -3686,16 +4235,46 @@ class MonolithRepository(
         // the target is inside the session's HMAC, and mutating it
         // mid-session would invalidate the seal — that piece is
         // priced and parked, not improvised.
-        val remainingNow = effectiveTarget - verifiedElapsed
+        // W3 #134 (composition): the crossing is read on
+        // focusElapsed, not the raw verified figure — call time
+        // is not focus time, so a call cannot carry the block
+        // into (or through) its last minute.
+        val remainingNow = effectiveTarget - focusElapsed
         val remainingPrev = effectiveTarget - session.elapsedSeconds
         if (remainingPrev > 60 && remainingNow in 1..60) {
             blockWarningKnock()
         }
 
-        val blockFinished = verifiedElapsed >= effectiveTarget
+        val blockFinished = focusElapsed >= effectiveTarget
+        // W3 #134: the target was already met when the call began
+        // (focusElapsed crossed it in the cadence before the ring)
+        // — neither the Safe Break flip nor the finish may fire
+        // underneath the conversation. Book the frozen progress
+        // and stay in the block, active: the flip, the seal's
+        // release, the completion notification and the end stamp
+        // all wait for the first tick after hang-up, when the
+        // user can actually see the session change state. The
+        // shield loop reads isActive and keeps protecting.
+        if (callActive && blockFinished) {
+            val heldFinish = session.copy(
+                elapsedSeconds = focusElapsed.coerceAtMost(effectiveTarget),
+                callExcludedSeconds = callExcluded,
+                startElapsedRealtimeMillis = newStartMono,
+                bootCount = newBootCount,
+                accumulatedBeforeRebootSeconds = newAccumulated,
+                lastTickElapsedRealtimeMillis = nowMono,
+                hmacSignature = newHmac,
+                penaltySecondsAdded = penaltyAdd,
+                tamperDetected = tamper,
+                shieldLastBeatWallMillis = beatWall
+            )
+            dao.updateSession(heldFinish)
+            return heldFinish
+        }
         if (blockFinished && session.currentBlockIndex < session.totalStudyBlocks) {
             val safeBreakSession = session.copy(
                 elapsedSeconds = effectiveTarget,
+                callExcludedSeconds = callExcluded,
                 isInSafeBreak = true,
                 safeBreakSecondsRemaining = SAFE_BREAK_DURATION_SECONDS,
                 lastTickElapsedRealtimeMillis = nowMono,
@@ -3704,6 +4283,16 @@ class MonolithRepository(
                 shieldLastBeatWallMillis = beatWall
             )
             dao.updateSession(safeBreakSession)
+            // Issue #339 (Second-pass F3): the break's end is a
+            // SCHEDULED event from this entry, not a tick
+            // side-effect — arm the exact alarm + deduped
+            // 'Break's over' notification for the end instant, so
+            // a dead or stalled process cannot swallow the return.
+            com.example.service.BreakEndScheduler.schedule(
+                context,
+                safeBreakSession.id,
+                System.currentTimeMillis() + SAFE_BREAK_DURATION_SECONDS * 1000L
+            )
             // ST-03: the entry speaks here, at the flip — the
             // latch releases as the block lets go into the break.
             // This branch runs once per entry (the row it writes
@@ -3766,7 +4355,8 @@ class MonolithRepository(
         )
 
         val updated = session.copy(
-            elapsedSeconds = verifiedElapsed.coerceAtMost(effectiveTarget),
+            elapsedSeconds = focusElapsed.coerceAtMost(effectiveTarget),
+            callExcludedSeconds = callExcluded,
             startWallTimeMillis = newStartWall,
             startElapsedRealtimeMillis = newStartMono,
             bootCount = newBootCount,
@@ -3802,6 +4392,9 @@ class MonolithRepository(
             }
         )
         dao.updateSession(updated)
+        // #152 residue: witness the end zone at this ending write
+        // (a no-op unless this tick first-stamped the end).
+        captureEndZone(session.endWallMillis, updated.endWallMillis)
         // #129 F3: book the exposure names at the stamping write
         // (first stamp only — a re-tick of an ended row must not
         // book them twice). The rows ride the intercept log under
@@ -3928,10 +4521,17 @@ class MonolithRepository(
     // asks; every surface's number is a rendering of this truth.
     // =========================================================================
 
-    /** Remaining breaks for the week containing [nowMillis]. */
-    suspend fun emergencyBreaksRemaining(nowMillis: Long = System.currentTimeMillis()): Int {
-        val anchor = MonolithWeek.weekAnchorMillis(nowMillis)
-        return emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(anchor).size)
+    /** Remaining breaks for the week containing [nowMillis].
+     *  Issue #82 tightening: the default is a [Long.MIN_VALUE]
+     *  sentinel resolving to the HONEST now — never the raw wall
+     *  clock — so a caller that forgets the argument cannot silently
+     *  reopen the date-travel token renewal (F3) on this surface.
+     *  Explicit instants (tests) are honoured exactly as before. */
+    suspend fun emergencyBreaksRemaining(nowMillis: Long = Long.MIN_VALUE): Int {
+        val effectiveNow = if (nowMillis == Long.MIN_VALUE) honestNowMillis() else nowMillis
+        val anchor = MonolithWeek.weekAnchorMillis(effectiveNow)
+        val nextAnchor = MonolithWeek.nextWeekAnchorMillis(effectiveNow)
+        return emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(anchor, nextAnchor).size)
     }
 
     /**
@@ -3941,16 +4541,21 @@ class MonolithRepository(
      * must never render last week's count. The one-minute re-check also
      * picks up timezone changes on the same tick.
      */
-    private fun weekAnchorTickFlow(): Flow<Long> = flow {
+    private fun weekAnchorTickFlow(): Flow<Pair<Long, Long>> = flow {
         var lastAnchor: Long? = null
         while (true) {
             // Issue #82 (clock-attacks F3): the displayed week is
             // the honest week — date travel must not refresh the
             // token on any surface either.
-            val anchor = MonolithWeek.weekAnchorMillis(honestNowMillis())
+            val now = honestNowMillis()
+            val anchor = MonolithWeek.weekAnchorMillis(now)
             if (anchor != lastAnchor) {
                 lastAnchor = anchor
-                emit(anchor)
+                // Issue #39 F1: the week's end travels with its
+                // anchor — both bounds derive from the SAME honest
+                // instant, so the spends query never sees a pair
+                // straddling a rollover.
+                emit(anchor to MonolithWeek.nextWeekAnchorMillis(now))
             }
             delay(60_000L)
         }
@@ -3960,8 +4565,8 @@ class MonolithRepository(
     @OptIn(ExperimentalCoroutinesApi::class)
     fun observeEmergencyBreaksRemaining(): Flow<Int> =
         weekAnchorTickFlow()
-            .flatMapLatest { anchor ->
-                dao.observeSpendsForWeek(anchor).map { spends ->
+            .flatMapLatest { (anchor, nextAnchor) ->
+                dao.observeSpendsForWeek(anchor, nextAnchor).map { spends ->
                     emergencyBreaksRemainingFromSpendCount(spends.size)
                 }
             }
@@ -3977,8 +4582,11 @@ class MonolithRepository(
      * runs inside the transaction). A hold that completes across the
      * Monday boundary spends against the COMPLETION instant's week
      * (§4.2). Banks, slips and abandoned attempts never reach this
-     * function and write nothing (§4.3); the grace-cancel path never
-     * passes through here (§4.4).
+     * function and write no SPEND (§4.3); the grace-cancel path never
+     * passes through here (§4.4). One scoped exception outside this
+     * ledger (issue #103 F4): a BANKED chamber — never a momentary
+     * grip, slip or un-banked abandon — stamps E4 attendance
+     * evidence via [recordAttendanceEvidence].
      */
     suspend fun completeEmergencyBreak(): BreakResult {
         val database = db() // ISSUE-67: injected database, no re-fetch
@@ -4019,7 +4627,8 @@ class MonolithRepository(
             // not travel, so the anchor stays in the real week.
             val now = honestNowMillis()
             val anchor = MonolithWeek.weekAnchorMillis(now)
-            if (dao.getSpendsForWeek(anchor).size >= 1) {
+            val nextAnchor = MonolithWeek.nextWeekAnchorMillis(now)
+            if (dao.getSpendsForWeek(anchor, nextAnchor).size >= 1) {
                 return@withTransaction BreakResult.RefusedNoToken
             }
             dao.insertEmergencyBreakSpend(
@@ -4061,6 +4670,13 @@ class MonolithRepository(
             // Issue #287 F5: the routine-break door stamps the
             // culprit too — same ending-write law as the manual door.
             val (causePackage, causeKind) = failureCauseFor(active, "EMERGENCY_VALVE")
+            // #152 residue: the stamped end is computed once so
+            // the end-zone witness keys on the exact same instant.
+            val endStamp = if (active.endWallMillis == 0L) {
+                System.currentTimeMillis()
+            } else {
+                active.endWallMillis
+            }
             dao.updateSession(
                 active.copy(
                     elapsedSeconds = active.elapsedSeconds,
@@ -4072,13 +4688,10 @@ class MonolithRepository(
                     failureCauseKind = causeKind,
                     // RC-01: an ending write (unpublishable, but
                     // the row's end is the row's end).
-                    endWallMillis = if (active.endWallMillis == 0L) {
-                        System.currentTimeMillis()
-                    } else {
-                        active.endWallMillis
-                    }
+                    endWallMillis = endStamp
                 )
             )
+            captureEndZone(active.endWallMillis, endStamp)
             return
         }
         val routine = dao.getRoutineById(active.routineId)
@@ -4124,7 +4737,7 @@ class MonolithRepository(
      * meaningless). Returns the updated row, or null when no
      * session is active.
      */
-    suspend fun extendActiveSession(extraMinutes: Int): FocusSessionEntity? =
+    suspend fun extendActiveSessionByMinutes(extraMinutes: Int): FocusSessionEntity? =
         withContext(Dispatchers.IO) {
             val active = dao.getActiveSessionSnapshot() ?: return@withContext null
             if (extraMinutes <= 0 || active.isStopwatchMode) return@withContext active
@@ -4183,8 +4796,15 @@ class MonolithRepository(
         // end instead of laundering itself through the string.
         val lawElapsed = max(verifiedElapsed, active.elapsedSeconds)
         val isGraceCancel = outcomeReason.contains("Grace Cancel", ignoreCase = true) &&
-            lawElapsed <= 10
-        val bankedElapsed = if (isGraceCancel) 0 else lawElapsed
+            lawElapsed <= GRACE_WINDOW_SECONDS
+        // W3 #134: the disarm doors bank the same focus-only
+        // elapsed the progress machine books — the raw verified
+        // figure still contains any call minutes, and banking it
+        // here would re-certify them at the ending write. (The
+        // row's own elapsedSeconds is already focus-booked by the
+        // progress machine, so the max stays focus-only.)
+        val focusElapsed = (verifiedElapsed - active.callExcludedSeconds).coerceAtLeast(0)
+        val bankedElapsed = if (isGraceCancel) 0 else max(focusElapsed, active.elapsedSeconds)
         val partialStampId = if (!completed && !isGraceCancel && bankedElapsed >= 60) {
             // Issue #110, finding 5: the id is the named constant
             // whose catalog entry (PARTIAL_STAMP_ARTIFACT) the
@@ -4268,6 +4888,9 @@ class MonolithRepository(
                 )
             }
         }
+        // #152 residue: witness the end zone at this ending write
+        // (keyed by the disarmed row's stamped end itself).
+        captureEndZone(active.endWallMillis, disarmed.endWallMillis)
     }
 
     /**
@@ -4298,7 +4921,13 @@ class MonolithRepository(
                 set(Calendar.MILLISECOND, 0)
             }
             val startOfDay = cal.timeInMillis
-            val endOfDay = startOfDay + 86_400_000L
+            // Audit R6 #341 F66: the bucket end is the NEXT LOCAL
+            // MIDNIGHT, never startOfDay + 86_400_000 — on the 23h
+            // spring-forward day the fixed length double-counted the
+            // first hour of the next day, and on the 25h fall-back
+            // day it dropped 23:00-24:00 sessions from every bucket.
+            val endCal = (cal.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
+            val endOfDay = endCal.timeInMillis
             val daySessions = sessions.filter { it.startWallTimeMillis in startOfDay until endOfDay }
             val totalSecs = daySessions.sumOf { it.elapsedSeconds }
             val totalMins = totalSecs / 60
@@ -4376,23 +5005,38 @@ class MonolithRepository(
      * During a Safe Break the anchor advances without crediting —
      * break minutes never land in a task's stored seconds.
      */
-    private suspend fun accrueActiveTaskSeconds(session: FocusSessionEntity, nowMono: Long) {
+    private suspend fun accrueActiveTaskSeconds(
+        session: FocusSessionEntity,
+        nowMono: Long,
+        accrue: Boolean = true
+    ) {
         seedAccrualFromDisk(nowMono)
         val tasks = dao.getAllTasksSnapshot()
+        // ONLY an ACTIVE task accrues (issue #106, finding 4). The old
+        // QUEUED fallback crowned the queue head on the next tick —
+        // status flipped to ACTIVE and seconds started landing on it —
+        // so a task merely jotted down mid-session (kept QUEUED by
+        // addTaskToQueue's session guard) was hijacked into NOW by the
+        // ticker itself. No ACTIVE task means no task is billed:
+        // WallAccrual's null id advances the anchor without crediting,
+        // exactly as it does for a Safe Break.
         val activeTask = tasks.firstOrNull { it.resolvedStatus == TaskQueueStatus.ACTIVE }
-            ?: tasks.firstOrNull { it.resolvedStatus == TaskQueueStatus.QUEUED }
+        // W3 #134: a live call pauses the task's clock exactly as
+        // a Safe Break does — the anchor advances without
+        // crediting, so call minutes never land in a task's
+        // stored seconds either. (The QUEUED fallback an earlier
+        // main revision carried at this spot is deliberately NOT
+        // restored: it crowned the queue head ACTIVE on the next
+        // tick and billed it — issue #106, finding 4.)
         val credit = taskAccrual.observe(
             sessionId = session.id,
-            accruingTaskId = if (session.isInSafeBreak) null else activeTask?.id,
+            accruingTaskId = if (!accrue || session.isInSafeBreak) null else activeTask?.id,
             nowMonoMillis = nowMono
         )
         persistAccrualAnchor()
-        if (activeTask != null && !session.isInSafeBreak &&
-            (credit > 0 || activeTask.resolvedStatus != TaskQueueStatus.ACTIVE)
-        ) {
+        if (activeTask != null && accrue && !session.isInSafeBreak && credit > 0) {
             dao.updateTask(
                 activeTask.copy(
-                    status = TaskQueueStatus.ACTIVE.name,
                     actualSecondsSpent = activeTask.actualSecondsSpent + credit
                 )
             )
@@ -4418,7 +5062,20 @@ class MonolithRepository(
         val existing = dao.getAllTasksSnapshot()
         val hasActive = existing.any { it.resolvedStatus == TaskQueueStatus.ACTIVE }
 
-        val shouldBeActive = promoteToActive || !hasActive
+        // Issue #106, finding 4: "no ACTIVE row exists" is NOT by
+        // itself a reason to crown the new task. While a session is
+        // running, a task typed into the composer is a jot-down for
+        // later — crowning it would move NOW onto it, push its title
+        // into the session's intention (the ViewModel's activeTask
+        // collector) and start billing session time to it. So the
+        // no-active force-promotion applies only while NO session
+        // runs: a first task added to an empty queue outside a
+        // session still becomes ACTIVE, as it always has. An
+        // explicit promoteToActive (the Airlock micro-step verb,
+        // whose whole act is "promote this to #1 now") is honoured
+        // in both worlds.
+        val sessionRunning = dao.getActiveSessionSnapshot()?.isActive == true
+        val shouldBeActive = promoteToActive || (!hasActive && !sessionRunning)
         if (shouldBeActive && hasActive) {
             existing.filter { it.resolvedStatus == TaskQueueStatus.ACTIVE }.forEach { prevActive ->
                 dao.updateTask(
@@ -4547,6 +5204,9 @@ class MonolithRepository(
             // later airlock lines claimed the session was armed
             // with, and it ran with NO seal check at all (ESR-02's
             // exact charge against this function).
+            // Issue #106, finding 2 is cured HERE, in a stronger
+            // form than the Wave-3B sealed-only refusal: no advance
+            // — sealed or not — ever rewrites the intention.
             return@withContext promoted
         }
         null
@@ -4847,7 +5507,9 @@ class MonolithRepository(
     private val dayWordStore by lazy { DayWordStore(context) }
 
     /** Issue #152: the arm-zone capture for receipts (see
-     *  ArmZoneStore). Written at the one birth funnel below. */
+     *  ArmZoneStore). Written at the one birth funnel below.
+     *  Issue #152 residue: the same store's end slot carries the
+     *  end-zone witness — see [captureEndZone]. */
     private val armZoneStore by lazy { ArmZoneStore(context) }
 
     fun dayWords(): Map<String, String> = dayWordStore.all()
@@ -4868,6 +5530,22 @@ class MonolithRepository(
      *  never be undeclared. The table row is deleted only when the
      *  prefs removal committed — if that failed, nothing about the
      *  clear is presented as done. */
+    /** Issue #152 residue: capture the zone a session is ending
+     *  in, at the ending write itself — first stamp only, in the
+     *  same act that first stamps the row's endWallMillis. Every
+     *  ending write that stamps an end instant calls this with
+     *  the row's pre-write end (0 = unstamped) and the stamped
+     *  end, so the witness can never name a zone for an end that
+     *  was stamped earlier, in another zone. The witness lives
+     *  in the SAME store as the arm witness (ArmZoneStore's end
+     *  slot, keyed by the end instant) — no new store, no schema
+     *  change. */
+    private fun captureEndZone(endBefore: Long, stampedEnd: Long) {
+        if (endBefore == 0L && stampedEnd > 0L) {
+            armZoneStore.putEnd(stampedEnd, java.time.ZoneId.systemDefault().id)
+        }
+    }
+
     suspend fun declareDayWord(dateIso: String, word: String?): Boolean {
         // Issue #152 (honest-travel-day F1): never rewrite a past
         // day across a landing. Filing dates are local, so after a
@@ -4881,14 +5559,23 @@ class MonolithRepository(
         // as declared). Same-zone changes stay free all day, and
         // words with no zone witness (declared before the witness
         // existed) are not refused on a guess.
-        if (word != null) {
-            val existing = allDayWords()[dateIso]
-            val witnessedZone = dayWordStore.declaredZone(dateIso)
-            if (existing != null && existing != word && witnessedZone != null &&
-                witnessedZone != java.time.ZoneId.systemDefault().id
-            ) {
-                return false
-            }
+        //
+        // Issue #152 residue (reopened): the refusal covers a
+        // CLEAR too. The original guard fired only when
+        // `word != null`, so a witnessed past day's word could
+        // still be DELETED across a landing — a rewrite of the
+        // past day by erasure, the same lie by the other door.
+        // Clearing a witnessed past day from a different zone is
+        // refused identically. A same-word re-declare is NOT a
+        // rewrite and stays lawful — and DayWordStore.put now
+        // keeps the original witness for it, so it cannot launder
+        // the date into the arrival zone either.
+        val existing = allDayWords()[dateIso]
+        val witnessedZone = dayWordStore.declaredZone(dateIso)
+        val crossZone = witnessedZone != null &&
+            witnessedZone != java.time.ZoneId.systemDefault().id
+        if (existing != null && crossZone && word != existing) {
+            return false
         }
         val committed = dayWordStore.put(dateIso, word)
         if (committed && word == null) {

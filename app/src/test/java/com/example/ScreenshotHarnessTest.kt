@@ -251,7 +251,7 @@ class ScreenshotHarnessTest {
             captureTo(File(shotsDir, name))
         }
 
-        // The Drawer cabinet (chrome C10): from the landing's CURIOS row.
+        // The Drawer cabinet (chrome C10): from the landing's CABINET row (issue #115; was CURIOS).
         composeRule.runOnUiThread { viewModel.navigateTo(MonolithDestination.VAULT) }
         settle(900)
         composeRule.onNodeWithTag("drawer_curios_row").performClick()

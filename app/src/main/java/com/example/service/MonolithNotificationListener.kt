@@ -61,6 +61,17 @@ object NotificationCapturePolicy {
             Notification.CATEGORY_SERVICE,
             Notification.CATEGORY_TRANSPORT,
             Notification.CATEGORY_CALL,
+            // Issue #121: calendar reminders and events stand with
+            // calls and alarms in the time-critical class — a
+            // reminder captured and cancelled here is an alert the
+            // user never sees, and calendar apps do not post
+            // reminders as CATEGORY_ALARM. Spared HERE, at the
+            // capture decision, so they never enter storage and are
+            // never cancelled; this composes with any later removal
+            // of the content-storage path (#100) because the
+            // exemption sits strictly upstream of it.
+            Notification.CATEGORY_REMINDER,
+            Notification.CATEGORY_EVENT,
             Notification.CATEGORY_ALARM -> false
             else -> true
         }
@@ -149,6 +160,20 @@ class CaptureDedupeTracker {
  * - Saves captured notifications to Room persistent disk storage so they survive background
  *   restarts and can be read, cleared, or tapped to open after studying.
  */
+/**
+ * The hold rule (Audit R3, safe-break-lived #2): a notification is
+ * held — digested and cancelled — when its app's tier is not OPEN,
+ * EXCEPT that a Safe Break releases the apps the break itself
+ * unlocks: a PEEK-tier app is freely open for the break's length
+ * (the accessibility service's Safe Break rule), so holding its
+ * notifications while its owner chats inside it made the "unlock"
+ * half a lie — messages arrived silently into the HELD digest.
+ * LOCKED apps stay held through the break, exactly as they stay
+ * locked. Pure, so the rule is unit-tested without the service.
+ */
+internal fun notificationHeldDuringSession(isInSafeBreak: Boolean, tier: AppBlockTier): Boolean =
+    tier != AppBlockTier.OPEN && !(isInSafeBreak && tier == AppBlockTier.PEEK_2M)
+
 class MonolithNotificationListener : NotificationListenerService() {
 
     private val scope = CoroutineScope(
@@ -180,6 +205,29 @@ class MonolithNotificationListener : NotificationListenerService() {
         @Volatile
         var instance: MonolithNotificationListener? = null
             internal set
+
+        /**
+         * Issue #121: the categories of [packageName]'s currently
+         * active notifications, read from the bound listener — the
+         * notification proof the screen doors consult through
+         * [TimeCriticalAlertGate] before covering a ringing alarm
+         * or a tapped calendar reminder. Reads only the LIVE shade
+         * (never the stored digest), so it is independent of the
+         * captured-content storage path. Empty when no listener is
+         * bound (no proof, never a guess).
+         */
+        fun activeAlertCategoriesFor(packageName: String): Set<String> {
+            val live = instance ?: return emptySet()
+            return try {
+                live.activeNotifications
+                    ?.filter { it.packageName == packageName }
+                    ?.mapNotNull { it.notification?.category }
+                    ?.toSet()
+                    ?: emptySet()
+            } catch (_: Exception) {
+                emptySet()
+            }
+        }
     }
 
     override fun onListenerConnected() {
@@ -297,7 +345,7 @@ class MonolithNotificationListener : NotificationListenerService() {
             // the POST TIME, not about now — a coroutine scheduled
             // after the session ended still captures a message
             // that arrived while the session was running.
-            dao.getSessionCoveringInstant(postTimeMillis) ?: return@launch
+            val coveringSession = dao.getSessionCoveringInstant(postTimeMillis) ?: return@launch
 
             val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
             // Issue #120: FINANCE is never captured and never
@@ -311,7 +359,9 @@ class MonolithNotificationListener : NotificationListenerService() {
             if (appRule != null && appRule.category == AppCategory.FINANCE.name) {
                 return@launch
             }
-            if (appRule != null && appRule.resolvedTier != AppBlockTier.OPEN) {
+            if (appRule != null &&
+                notificationHeldDuringSession(coveringSession.isInSafeBreak, appRule.resolvedTier)
+            ) {
                 val storedTitle = title.ifEmpty { appRule.appName }
                 if (key != null) {
                     // Dedupe, second gate (inside the coroutine, so
@@ -374,7 +424,12 @@ class MonolithNotificationListener : NotificationListenerService() {
                     try {
                         cancelNotification(key)
                     } catch (error: Exception) {
-                        Log.w(TAG, "cancelNotification failed for $pkg", error)
+                        // #338 F2: diagnostics stay content-free —
+                        // no package names in logcat. Freedom's
+                        // release build logs blocked packages and
+                        // URLs; this line was Monolith's one leak
+                        // of that kind.
+                        Log.w(TAG, "cancelNotification failed", error)
                     }
                 }
             }
@@ -434,7 +489,7 @@ class MonolithNotificationListener : NotificationListenerService() {
         scope.launch {
             val dao = com.example.AppContainer.dao(applicationContext) /* ISSUE-67: single construction point */
             val target = seen ?: run {
-                val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
+                val appRule = dao.getAppByPackage(pkg)
                 SeenCapture(
                     fingerprint = NotificationCapturePolicy.contentFingerprint(rawTitle, text),
                     packageName = pkg,
