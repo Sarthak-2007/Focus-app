@@ -41,6 +41,11 @@ import org.robolectric.annotation.Config
  * The Guard row is shared by the whole class sandbox, so every
  * test sets its value explicitly and the class restores the
  * shipped default (2) after each test.
+ *
+ * PIN scope: PLUMBING — the write path (DAO targeted UPDATE,
+ * repository setter, provider read-point) against the real
+ * Room store under Robolectric. No render, no post, no
+ * source-text assertion.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
