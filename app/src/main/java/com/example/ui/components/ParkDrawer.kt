@@ -968,7 +968,15 @@ fun ParkDrawer(
                                 "THIS ANDROID OFFERS NO PROMPT"
                         },
                         onClick = {
-                            if (!tileAdded) {
+                            // The system prompt exists only from
+                            // API 33 (the subLine above already
+                            // names the edit-screen route below
+                            // it); requestAdd is gated the same
+                            // way, and mainExecutor (API 28) is
+                            // only read inside this check.
+                            if (!tileAdded &&
+                                android.os.Build.VERSION.SDK_INT >= 33
+                            ) {
                                 com.example.service.TilePlacement.requestAdd(
                                     tileContext, tileContext.mainExecutor
                                 )

@@ -5,6 +5,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.graphics.drawable.Icon
 import android.os.Build
+import androidx.annotation.RequiresApi
 import com.example.R
 import java.util.concurrent.Executor
 import java.util.function.Consumer
@@ -47,7 +48,11 @@ object TilePlacement {
     fun systemPromptAvailable(sdkInt: Int): Boolean = sdkInt >= 33
 
     /** Whether the system prompt's answer records the tile as
-     *  placed: it was just added, or it was already there. */
+     *  placed: it was just added, or it was already there. The
+     *  result constants live on StatusBarManager (API 29+); the
+     *  only caller is [requestAdd]'s own callback, inside the
+     *  API-33 gate, so the annotation states the standing truth. */
+    @RequiresApi(Build.VERSION_CODES.Q)
     fun resultRecordsAdded(result: Int): Boolean =
         result == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED ||
             result == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED
@@ -71,11 +76,13 @@ object TilePlacement {
 
     /**
      * Fire the system's add-tile prompt. No-op below API 33
-     * (callers print the edit-screen route instead). The answer
+     * (callers print the edit-screen route instead — the call
+     * site checks the same boundary before calling). The answer
      * arrives on [executor]; an added / already-added answer is
      * recorded before [onResult] runs, so any surface reading
      * the fact afterwards reads it fresh.
      */
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     fun requestAdd(
         context: Context,
         executor: Executor,
