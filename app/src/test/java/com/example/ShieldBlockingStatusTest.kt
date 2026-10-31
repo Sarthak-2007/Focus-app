@@ -26,6 +26,10 @@ import java.util.Calendar
  * the contract. Written by MONTEUR (BUILDER, Vogt's issue #7
  * cell); NOT run in this cell (nobody compiles — declared).
  *
+ * PIN SCOPE: SOURCE — pure derivation truth table over
+ * computeShieldBlockingStatus / routineCapWord /
+ * groupedForCatalogue; no Android runtime.
+ *
  * Week of the fixtures: Mon 2026-10-26 … Sun 2026-11-01, local
  * zone — the same Calendar math production uses.
  */
