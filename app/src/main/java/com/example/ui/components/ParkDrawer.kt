@@ -911,6 +911,49 @@ fun ParkDrawer(
                             }
                         }
                     )
+                    // Issue #274: the QUICK SETTINGS TILE line —
+                    // the second verb row on this board, in the
+                    // AUTOSTART row's mould. The tile has existed
+                    // since PR #492 but nothing ever offered to
+                    // place it; a FIX key cannot perform this verb
+                    // either (there is no settings pane that adds
+                    // a QS tile — the system's own add-tile sheet
+                    // is the only door). The word is the tile
+                    // service's lifecycle testimony (TilePlacement:
+                    // onTileAdded/onTileRemoved record the fact;
+                    // the prompt's own answer records it too) —
+                    // ADDED prints only on that testimony, and
+                    // testimony is not proof: if the platform
+                    // ever drops the tile silently, tapping the
+                    // line re-runs the prompt and its answer
+                    // re-derives the fact. The tile's settled law
+                    // is untouched — it still cannot end a
+                    // session. Below Android 13 no system prompt
+                    // exists, so the line names the panel's edit
+                    // screen as the route instead of pretending
+                    // a tap can ask.
+                    val tileContext = LocalContext.current
+                    val tileAdded = com.example.service.TilePlacement.isAdded(tileContext)
+                    ParkBoardRow(
+                        name = "QUICK SETTINGS TILE",
+                        word = com.example.service.TilePlacement.word(tileAdded),
+                        wordIsLack = !tileAdded,
+                        subLine = when {
+                            tileAdded -> null
+                            com.example.service.TilePlacement.systemPromptAvailable(
+                                android.os.Build.VERSION.SDK_INT
+                            ) -> "TAP — THE SYSTEM ASKS, YOU DECIDE"
+                            else -> "ADD IT FROM THE PANEL'S EDIT SCREEN — " +
+                                "THIS ANDROID OFFERS NO PROMPT"
+                        },
+                        onClick = {
+                            if (!tileAdded) {
+                                com.example.service.TilePlacement.requestAdd(
+                                    tileContext, tileContext.mainExecutor
+                                )
+                            }
+                        }
+                    )
                 } else {
                     // Never measured: the board prints its names
                     // only — except the two sled-backed rows
@@ -1618,11 +1661,13 @@ private fun ParkBoardRow(
     // Issue #14 Setup Ledger: an optional second line under the
     // row (the WAS SET AT SETUP — SINCE LOST print).
     subLine: String? = null,
-    // Audit R6 #340 F44: exactly one row on the board is tappable —
-    // the AUTOSTART oath row. Every other row stays print, as the
-    // board's law (print and reading, the FIX key the only object)
-    // demands; the oath is a verb no FIX key can perform, since
-    // there is no settings pane to be sent to.
+    // Audit R6 #340 F44: the board's rows stay print, as its law
+    // (print and reading, the FIX key the only object) demands —
+    // with exactly two verb-row exceptions, each a verb no FIX
+    // key can perform because there is no settings pane to be
+    // sent to: the AUTOSTART oath row (F44) and the QUICK
+    // SETTINGS TILE row (issue #274 — the system's add-tile
+    // sheet is the only door that adds a tile).
     onClick: (() -> Unit)? = null
 ) {
     val scheme = MaterialTheme.colorScheme
