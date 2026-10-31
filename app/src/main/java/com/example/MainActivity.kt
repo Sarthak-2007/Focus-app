@@ -956,26 +956,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         }
     }
 
-    // PARK's on-open diagnostic (§3.3): opening PARK fires the old
-    // refreshSystemGuard() sweep. Its result renders NOWHERE — the
-    // board renders the Watch Store — unless a diagnostic line is
-    // invoked; the sweep itself is the point (clock/HMAC/boot facts
-    // stay warm for the day a diagnostic needs them).
-    //
-    // Hof P-1 cure (issue #9): opening PARK ALSO re-runs the Watch
-    // Store's grant-check sweep — the sweep the board actually
-    // reads. Before this, PARK opened on whatever the last Deck
-    // entry or resume had measured and never re-proved anything
-    // itself: grants decayed to STALE in front of the reader with
-    // no verb anywhere on the surface. The drawer's own CHECK key
-    // (ParkDrawer) fires this same sweep on demand.
-    LaunchedEffect(parkOpen) {
-        if (parkOpen) {
-            viewModel.refreshSystemGuard()
-            viewModel.runWatchSweep()
-        }
-    }
-
     // The intro is spent on DELIVERY, not on dismissal (issue-156,
     // F3): once PARK stands open over a measured board, the intro
     // has been delivered — mark it done. Declared after the latch

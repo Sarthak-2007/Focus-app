@@ -5029,6 +5029,7 @@ class MonolithViewModel(
             peekCooldownEndsAtMonoMillis =
                 appEntity?.let { repository.getPeekCooldownDeadlineMono(it) } ?: 0L,
             canUse2MinutePeek = canPeek,
+            peekCooldownRemainingSeconds = cooldownLeft,
             // FIX-5b: anchored ends, never counters — the wall's
             // end and the cooldown's end enter state as monotonic
             // instants; every print derives from them.
