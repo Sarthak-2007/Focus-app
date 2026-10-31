@@ -59,6 +59,14 @@ import org.robolectric.annotation.Config
  * channel-route pins below therefore guard the surviving
  * single-creator property in main's landed form; the lifecycle
  * pins (id, expiry, cancel) stand as originally written.
+ *
+ * HARNESS NOTE (same pass): the original shadow reads scanned
+ * `allNotifications` for PostedNotification elements (.id /
+ * .notification) — the Robolectric version now pinned returns
+ * raw Notification elements there, so those three reads are
+ * expressed through the shadow's id-keyed `getNotification(id)`
+ * lookup instead. Every assertion's meaning is preserved (the
+ * id-keyed lookup is the more direct form of the same claim).
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -107,7 +115,7 @@ class InterceptFallbackExpiryTest {
         val shadow = Shadows.shadowOf(manager(base))
         assertTrue(
             "fallback must post under its own id",
-            shadow.allNotifications.any { it.id == InterceptLaunch.FALLBACK_NOTIFICATION_ID }
+            shadow.getNotification(InterceptLaunch.FALLBACK_NOTIFICATION_ID) != null
         )
         assertNull(
             "nothing may post under the summons id from the intercept door",
@@ -119,9 +127,9 @@ class InterceptFallbackExpiryTest {
     fun fallbackCardExpiresOnTheEstateMomentCardClock() {
         val base = ApplicationProvider.getApplicationContext<Context>()
         InterceptLaunch.launch(throwingContext(base), interceptIntent(base), "Instagram")
-        val posted = Shadows.shadowOf(manager(base)).allNotifications
-            .first { it.id == InterceptLaunch.FALLBACK_NOTIFICATION_ID }
-            .notification
+        val posted = Shadows.shadowOf(manager(base))
+            .getNotification(InterceptLaunch.FALLBACK_NOTIFICATION_ID)
+            ?: error("fallback must post under its own id")
         assertEquals(
             MonolithShieldService.COMPLETION_TIMEOUT_MS,
             posted.timeoutAfter
@@ -192,7 +200,7 @@ class InterceptFallbackExpiryTest {
         InterceptLaunch.launch(throwingContext(base), interceptIntent(base), "Instagram")
         val shadow = Shadows.shadowOf(manager(base))
         assertTrue(
-            shadow.allNotifications.any { it.id == InterceptLaunch.FALLBACK_NOTIFICATION_ID }
+            shadow.getNotification(InterceptLaunch.FALLBACK_NOTIFICATION_ID) != null
         )
 
         val launched = InterceptLaunch.launch(base, interceptIntent(base), "Instagram")
