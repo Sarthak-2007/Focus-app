@@ -66,7 +66,9 @@ class SuitcaseViewsIssue60Test {
         assertEquals(1, toggles)
     }
 
-    // Finding 3: all three controls clickable, labelled, performClick works.
+    // Finding 3: sled + rocker clickable, labelled, performClick
+    // acts. (The valve left this test under the issue #70 ruling —
+    // see valve_isAnnounceOnly_activationStartsNothing below.)
     @Test
     fun allControls_areClickableLabelledAndPerformClickActs() {
         val sled = SledSwitchView(context).laidOut(200, 80)
@@ -85,10 +87,53 @@ class SuitcaseViewsIssue60Test {
         row.currentTier = AppBlockTier.LOCKED
         assertTrue(row.performClick())
         assertEquals(AppBlockTier.PEEK_2M, chosen)
+    }
 
+    // Issue #70 — RULING-DRIVEN RE-PIN (ruling 6544472638, Oct 31
+    // 2026). This test previously asserted the issue-60 seam:
+    // valve clickable, described "Emergency break valve", with
+    // performClick starting the same hold. The ruling supersedes
+    // that seam: the valve is ANNOUNCE-ONLY — it speaks its name
+    // and its price and offers no activation shortcut, because the
+    // continuous 60-second physical hold is the law. The behaviour
+    // changed by ruling; this test follows the ruling at equal
+    // strength: where it once proved activation STARTS the hold,
+    // it now proves activation starts NOTHING, and the physical
+    // hold path stands untouched.
+    @Test
+    fun valve_isAnnounceOnly_activationStartsNothing() {
         val valve = Emergency60sValveView(context).laidOut(600, 120)
-        assertTrue(valve.isClickable)
-        assertEquals("Emergency break valve", valve.contentDescription.toString())
+        assertTrue(valve.isFocusable)
+        assertFalse(valve.isClickable)
+        assertEquals(
+            "Emergency break. Hold for 60 seconds to open.",
+            valve.contentDescription.toString()
+        )
+
+        var holdStarts = 0
+        var completions = 0
+        valve.onHoldStarted = { holdStarts++ }
+        valve.onEmergencyBreakCompleted = { completions++ }
+
+        // Assistive activation is not a way in — not once, not ever.
+        repeat(3) { valve.performClick() }
+        assertEquals(0, holdStarts)
+        assertEquals(0L, valve.currentHeldMs)
+        assertEquals(0L, valve.currentBankedMs)
+        assertEquals(0, completions)
+
+        // The physical hold is untouched: a finger DOWN starts it,
+        // a second DOWN while holding does not restart it, UP
+        // releases it, and a fresh DOWN starts it again.
+        valve.onTouchEvent(ev(MotionEvent.ACTION_DOWN, 100f, 60f))
+        assertEquals(1, holdStarts)
+        valve.onTouchEvent(ev(MotionEvent.ACTION_DOWN, 100f, 60f))
+        assertEquals(1, holdStarts)
+        valve.onTouchEvent(ev(MotionEvent.ACTION_UP, 100f, 60f))
+        valve.onTouchEvent(ev(MotionEvent.ACTION_DOWN, 100f, 60f))
+        assertEquals(2, holdStarts)
+        valve.onTouchEvent(ev(MotionEvent.ACTION_UP, 100f, 60f))
+        assertEquals(0, completions)
     }
 
     // Finding 1: banked progress restores into a fresh view (whole
