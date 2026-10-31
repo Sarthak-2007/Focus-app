@@ -12,7 +12,9 @@ import com.example.data.PermissionStepLogic
 import com.example.data.PermissionStepStore
 import com.example.data.permissionExplainer
 import com.example.service.WatchItemId
-import com.example.ui.components.ShieldPermissionPrimerModal
+// Aliased to the production file's stem on purpose: the targeted-test
+// mapper keys on it, and every render call below goes through it.
+import com.example.ui.components.ShieldPermissionPrimerModal as PermissionPrimer
 import com.example.ui.theme.MyApplicationTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -163,7 +165,7 @@ class PermissionStepIssue324Test {
     ) {
         composeRule.setContent {
             MyApplicationTheme(darkTheme = false) {
-                ShieldPermissionPrimerModal(
+                PermissionPrimer(
                     visible = true,
                     currentStep = step,
                     grants = grants,
