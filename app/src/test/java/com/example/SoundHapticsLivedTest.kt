@@ -94,6 +94,26 @@ class SoundHapticsLivedTest {
         return MonolithViewModel(context, repository, engine) to db
     }
 
+    /** Teardown cure (BUILDER-112, on the merged head 6718147e):
+     *  main's own documented poison path — SoundAndSocialTruthTest's
+     *  round-4 floor cure. A bare `finally { db.close() }` can land
+     *  while the ViewModel's coroutines (init fact-load, wiring
+     *  collectors) are still in flight; the close then throws
+     *  IllegalStateException from SQLiteConnectionPool (targeted run
+     *  41201923095: SoundToggleSpeaksExactlyOncePerFlipUnderTheNewFact
+     *  failed at the close, line 264 — every assertion in the test
+     *  had already passed). Drain first, exactly as the sibling
+     *  suite does: idle the main looper across a settle window so
+     *  the in-flight work finishes against the live pool. No
+     *  assertion in any test changes. */
+    private fun closeDb(db: MonolithDatabase) {
+        repeat(40) {
+            ShadowLooper.idleMainLooper()
+            Thread.sleep(25L)
+        }
+        db.close()
+    }
+
     private fun setMusicVolume(volume: Int) {
         val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         // Public API only: ShadowAudioManager.setStreamVolume is
@@ -183,7 +203,7 @@ class SoundHapticsLivedTest {
             settlePark()
             composeRule.onNodeWithText("ON · SILENT").assertExists()
         } finally {
-            db.close()
+            closeDb(db)
         }
     }
 
@@ -198,7 +218,7 @@ class SoundHapticsLivedTest {
             composeRule.onAllNodesWithText("ON · SILENT").assertCountEquals(0)
             composeRule.onAllNodesWithText("ON")[0].assertExists()
         } finally {
-            db.close()
+            closeDb(db)
         }
     }
 
@@ -261,7 +281,7 @@ class SoundHapticsLivedTest {
                 760f to 705, engine.lastEnqueuedTransientForTest()
             )
         } finally {
-            db.close()
+            closeDb(db)
         }
     }
 
@@ -281,7 +301,7 @@ class SoundHapticsLivedTest {
                 760f to 705, engine.lastEnqueuedTransientForTest()
             )
         } finally {
-            db.close()
+            closeDb(db)
         }
     }
 
