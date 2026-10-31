@@ -1016,39 +1016,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // on the destination so every return path obeys it.
     var shieldExcursion by remember { mutableStateOf(false) }
 
-    /** Book the setup stamp ONLY (Letzt §1.2 unbundling, G-01):
-     *  DONE's stamping press dispatches this FIRST, before the
-     *  tear's sound or motion — the write, the commit, the
-     *  publish, in the house order. The sheet is still standing
-     *  when this returns; dismissal is stampSetupAndEnter(),
-     *  called by the sheet only after the tear has run. The
-     *  Setup Ledger lands in the same act (write-once mask,
-     *  fresh-GRANTED only by construction — doorsMaskAt reads
-     *  permPrintAt, whose GRANTED is never stale, C-14), and
-     *  the handover is armed from the same instant's snapshot
-     *  (whole case only, C-13). Idempotent: the guard makes a
-     *  second call a no-op, so the stamp can never book twice. */
-    fun stampSetupOnly() {
-        if (setupStamped) return
-        val nowMono = SystemClock.elapsedRealtime()
-        setupStore.stampSetup(doorsMaskAt(watchSnapshot, nowMono))
-        setupStamped = true
-        armedHandover = if (receptionTotal(watchSnapshot, nowMono).count == 4) {
-            GuardLinePrint("GUARD 4/4 — ONE ACT LEFT: SLIDE.")
-        } else {
-            null
-        }
-        if (viewModel.parkIntroPending()) {
-            viewModel.markParkIntroDone()
-        }
-    }
-
-    /** Exit only — the stamp is stampSetupOnly()'s business,
-     *  so the sheet's DONE predicate stays auditable (§1.1). */
-    fun stampSetupAndEnter() {
-        receptionOpen = false
-        viewModel.navigateTo(MonolithDestination.DECK)
-    }
 
     // Chit resolution: judged on the first measurement taken
     // AFTER departure, whenever it lands (return sweep, Deck
@@ -2304,8 +2271,22 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     val shieldDestination = MonolithDestination.SHIELD
                     viewModel.navigateTo(shieldDestination)
                 },
-                onStamp = { stampSetupOnly() },
-                onDone = { stampSetupAndEnter() },
+                onStamp = {
+                    stampSetupOnly(
+                        setupStamped = setupStamped,
+                        watchSnapshot = watchSnapshot,
+                        setupStore = setupStore,
+                        viewModel = viewModel,
+                        onSetupStamped = { setupStamped = true },
+                        onArmedHandover = { armedHandover = it }
+                    )
+                },
+                onDone = {
+                    stampSetupAndEnter(
+                        viewModel = viewModel,
+                        onCloseReception = { receptionOpen = false }
+                    )
+                },
                 chit = chitUi,
                 onDeparture = { door, print ->
                     setupStore.writeDepartureChit(door, print)
@@ -2547,6 +2528,61 @@ private fun parkIntroSpendForDismissal(
     deliveredAtMonoMs = deliveredAtMonoMs,
     nowMonoMs = SystemClock.elapsedRealtime()
 )
+
+/**
+ * Issue #90 (complexity F3 slice): the setup-stamp pair, hoisted
+ * out of MonolithRootApp. Behaviour-identical: the host's state
+ * arrives as parameters and its writes ride callbacks, in each
+ * body's standing order — the stamp write, the stamped flag,
+ * the handover (its value computed by the verbatim expression
+ * at the verbatim position, then handed over), the park-intro
+ * booking; the exit fun closes the sheet before navigating, as
+ * before. Both funs keep their own KDocs, below.
+ */
+/** Book the setup stamp ONLY (Letzt §1.2 unbundling, G-01):
+ *  DONE's stamping press dispatches this FIRST, before the
+ *  tear's sound or motion — the write, the commit, the
+ *  publish, in the house order. The sheet is still standing
+ *  when this returns; dismissal is stampSetupAndEnter(),
+ *  called by the sheet only after the tear has run. The
+ *  Setup Ledger lands in the same act (write-once mask,
+ *  fresh-GRANTED only by construction — doorsMaskAt reads
+ *  permPrintAt, whose GRANTED is never stale, C-14), and
+ *  the handover is armed from the same instant's snapshot
+ *  (whole case only, C-13). Idempotent: the guard makes a
+ *  second call a no-op, so the stamp can never book twice. */
+private fun stampSetupOnly(
+    setupStamped: Boolean,
+    watchSnapshot: com.example.service.WatchSnapshot,
+    setupStore: com.example.data.SetupStore,
+    viewModel: MonolithViewModel,
+    onSetupStamped: () -> Unit,
+    onArmedHandover: (GuardLinePrint?) -> Unit
+) {
+    if (setupStamped) return
+    val nowMono = SystemClock.elapsedRealtime()
+    setupStore.stampSetup(doorsMaskAt(watchSnapshot, nowMono))
+    onSetupStamped()
+    val handover = if (receptionTotal(watchSnapshot, nowMono).count == 4) {
+        GuardLinePrint("GUARD 4/4 — ONE ACT LEFT: SLIDE.")
+    } else {
+        null
+    }
+    onArmedHandover(handover)
+    if (viewModel.parkIntroPending()) {
+        viewModel.markParkIntroDone()
+    }
+}
+
+/** Exit only — the stamp is stampSetupOnly()'s business,
+ *  so the sheet's DONE predicate stays auditable (§1.1). */
+private fun stampSetupAndEnter(
+    viewModel: MonolithViewModel,
+    onCloseReception: () -> Unit
+) {
+    onCloseReception()
+    viewModel.navigateTo(MonolithDestination.DECK)
+}
 
 /** Stop order for KIN-TAB-IN's direction: the incoming screen
  *  translates in the direction the stops are printed. */
