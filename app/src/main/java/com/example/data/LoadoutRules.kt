@@ -30,28 +30,35 @@ object LoadoutRules {
         val lower = "$packageName $appName".lowercase(Locale.ROOT)
         val rawTier = when (loadout) {
             SmartLoadout.STUDY -> when {
-                // Issue #133 (study-on-phone-itself, finding 1): the
-                // study surfaces themselves — browsers (Chrome-hosted
-                // classes, PDFs, Classroom) and YouTube lectures —
-                // are OPEN in the loadout built for them; the old
-                // rule rationed them to 2m Peek, unusable for a
-                // 50-minute lecture. YouTube's guessed category is
-                // SHORT_VIDEO, so this check comes before the
-                // category locks; the Shorts/Reels sniper (armed
-                // separately by the STUDY pick) stays the guard on
-                // the short-form feed inside YouTube.
-                categoryName == AppCategory.BROWSERS.name ||
-                    lower.contains("youtube") || lower.contains("chrome") ->
+                // Issue #133 (study-on-phone-itself, finding 1), as
+                // reconciled with #129 F4 (Review ruling on #129,
+                // filed on #166 at 6543839617): the class-carrying
+                // browsers BY NAME — Chrome (the class host) and
+                // YouTube (lectures) — are OPEN in the loadout built
+                // for them; the old rule rationed them to 2m Peek,
+                // unusable for a 50-minute lecture. #133's original
+                // category-wide claim (every BROWSERS app OPEN) is
+                // narrowed by the ruling: a browser that is not one
+                // of the named class carriers falls through to the
+                // F4 corridor below and lands on PEEK_2M. YouTube's
+                // guessed category is SHORT_VIDEO, so this check
+                // comes before the category locks; the Shorts/Reels
+                // sniper (armed separately by the STUDY pick) stays
+                // the guard on the short-form feed inside YouTube.
+                lower.contains("youtube") || lower.contains("chrome") ->
                     AppBlockTier.OPEN
                 categoryName == AppCategory.EDUCATION.name ->
                     AppBlockTier.OPEN
                 categoryName == AppCategory.MESSAGING.name ->
                     AppBlockTier.PEEK_2M
                 // Issue #129 F4 (ported from the earlier lane):
-                // EVERY browser is a corridor, not just Chrome by
-                // name — a browser lands on PEEK_2M, so the one
+                // every browser NOT claimed by name above is a
+                // corridor — it lands on PEEK_2M, so the one
                 // honest search gets a knock and the open corridor
-                // does not stand for the whole session.
+                // does not stand for the whole session. (This
+                // branch was unreachable while the #133 branch
+                // claimed the whole BROWSERS category ahead of it;
+                // the reconciliation ruling restored it.)
                 categoryName == AppCategory.BROWSERS.name ->
                     AppBlockTier.PEEK_2M
                 categoryName == AppCategory.SHORT_VIDEO.name ||
