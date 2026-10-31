@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Issue #274 (Audit R5 — Platform execution): static launcher
+     shortcuts. Before this file existed the launcher long-press menu
+     carried no Monolith actions at all. One shortcut: open Monolith
+     (the Deck when idle; MainActivity routes to the live session /
+     block surface while sealed). -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="open_monolith"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_open_short"
+        android:shortcutLongLabel="@string/shortcut_open_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.example"
+            android:targetClass="com.example.MainActivity" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+</shortcuts>

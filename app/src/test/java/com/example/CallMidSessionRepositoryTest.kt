@@ -180,7 +180,6 @@ class CallMidSessionRepositoryTest {
         // last tick was 601s ago and a call covers that span.
         // The row carries a previous block's 45 excluded call
         // seconds, to prove the break exit resets the ledger.
-        val nowMono = SystemClock.elapsedRealtime()
         val row = sessionRow(
             targetSeconds = 1500,
             focusSecondsBeforeCall = 1500,
@@ -190,7 +189,18 @@ class CallMidSessionRepositoryTest {
             totalStudyBlocks = 2,
             currentBlockIndex = 1,
             callExcludedSeconds = 45
-        ).copy(lastTickElapsedRealtimeMillis = nowMono - 601_000L)
+        ).copy(
+            // AUDIT-CLOCK census seat (d) cure (#166): this
+            // anchor is read in the row's own frame — the
+            // sessionRow helper advances the shadow clock six
+            // hours while building the row, so a nowMono
+            // captured before the call sat ~6h before the
+            // row's own start anchor (negative in-sandbox).
+            // Read fresh, after the row exists: the last tick
+            // stands 601s in the row's past, as the fixture
+            // claims.
+            lastTickElapsedRealtimeMillis = SystemClock.elapsedRealtime() - 601_000L
+        )
         val id = dao.insertSession(row).toInt()
         try {
             repository.callActiveProbe = { true }

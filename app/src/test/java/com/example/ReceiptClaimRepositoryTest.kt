@@ -6,6 +6,7 @@ import com.example.data.AppBlockTier
 import com.example.data.BlockedAppEntity
 import com.example.data.FinishKind
 import com.example.data.FocusSessionEntity
+import com.example.data.InterceptLogEntity
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
 import com.example.data.SessionOutcome
@@ -80,7 +81,7 @@ class ReceiptClaimRepositoryTest {
      * RELATIVE to wherever it stands when the story starts.
      */
     @Test
-    fun claimAndPublishStory() = runBlocking {
+    fun claimAndPublishStory(): Unit = runBlocking {
         val repo = repository()
         val db = MonolithDatabase.getInstance(context)
         val dao = db.monolithDao()
@@ -184,7 +185,7 @@ class ReceiptClaimRepositoryTest {
     }
 
     @Test
-    fun truthCar2_rowStampAndAssembly() = runBlocking {
+    fun truthCar2_rowStampAndAssembly(): Unit = runBlocking {
         val repo = repository()
         val db = MonolithDatabase.getInstance(context)
         val dao = db.monolithDao()
@@ -230,6 +231,83 @@ class ReceiptClaimRepositoryTest {
         dao.deleteSessionById(b)
         dao.deleteSessionById(flowId)
         dao.deleteSessionById(stamped)
+    }
+
+    /**
+     * Issue #105 — assembly reads the session row's OWN ledgers:
+     * F1 the booked finished tasks ride the pending receipt in
+     * booking order; F4 the lived Safe Break seconds ride as
+     * safeBreakSeconds (not the valve ledger); F3 each admitted
+     * deflection carries its outcome; F2 (assembly side) a
+     * deflection stamped with a finished task's title — the
+     * session's intention before any re-title — is NOT dropped,
+     * while a peek (never a proven block) stays off the slip.
+     * Window and packages are unique to this test so the shared
+     * sandbox file cannot cross-talk with the other stories.
+     */
+    @Test
+    fun issue105_assemblyReadsTheRowsOwnLedgers() = runBlocking {
+        val repo = repository()
+        val db = MonolithDatabase.getInstance(context)
+        val dao = db.monolithDao()
+
+        val id = dao.insertSession(
+            endedRow(SessionOutcome.ELAPSED_CLEAN).copy(
+                startWallTimeMillis = 50_000_000L,
+                completedTasksSummary = "Algebra (30m est) • Physics (20m est)",
+                tasksCompletedCount = 2,
+                breakTakenSeconds = 270
+            )
+        ).toInt()
+        dao.insertInterceptLog(
+            InterceptLogEntity(
+                timestampMillis = 51_000_000L,
+                packageName = "com.i105.blocked",
+                appName = "BlockApp105",
+                sessionIntention = "Deep Study",
+                outcome = "Blocked"
+            )
+        )
+        dao.insertInterceptLog(
+            InterceptLogEntity(
+                timestampMillis = 52_000_000L,
+                packageName = "com.i105.turned",
+                appName = "TurnApp105",
+                sessionIntention = "Algebra",
+                outcome = "Stayed Focused"
+            )
+        )
+        dao.insertInterceptLog(
+            InterceptLogEntity(
+                timestampMillis = 52_500_000L,
+                packageName = "com.i105.peek",
+                appName = "PeekApp105",
+                sessionIntention = "Deep Study",
+                outcome = "Used 2m Peek"
+            )
+        )
+
+        val pending = repo.assemblePendingReceipt(id, FinishKind.MANUAL_FINISH, 53_600_000L)
+        assertNotNull(pending)
+        assertEquals(
+            listOf("Algebra (30m est)", "Physics (20m est)"),
+            pending!!.completedTasks
+        )
+        assertEquals(270, pending.safeBreakSeconds)
+        assertEquals(
+            "the peek never reaches the slip; both proven blocks do",
+            2, pending.deflections.size
+        )
+        val byApp = pending.deflections.associateBy { it.appName }
+        assertEquals("Blocked", byApp["BlockApp105"]!!.outcome)
+        assertEquals("BLOCKED", byApp["BlockApp105"]!!.outcomePrint)
+        assertEquals(
+            "stamped under the finished task's title, kept (F2)",
+            "Stayed Focused", byApp["TurnApp105"]!!.outcome
+        )
+        assertEquals("TURNED AWAY", byApp["TurnApp105"]!!.outcomePrint)
+
+        dao.deleteSessionById(id)
     }
 
     @Test
@@ -363,7 +441,7 @@ class ReceiptClaimRepositoryTest {
      * has always assumed.
      */
     @Test
-    fun faultedClaim_stampsFaultWithTheClaim() = runBlocking {
+    fun faultedClaim_stampsFaultWithTheClaim(): Unit = runBlocking {
         val repo = repository()
         val db = MonolithDatabase.getInstance(context)
         val dao = db.monolithDao()
