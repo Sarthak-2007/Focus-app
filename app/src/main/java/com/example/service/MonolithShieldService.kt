@@ -1457,7 +1457,7 @@ class MonolithShieldService : Service() {
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             )
             val notification = NotificationCompat.Builder(this, BREAK_ALERT_CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setSmallIcon(R.drawable.ic_stat_shield)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text))
@@ -1591,7 +1591,7 @@ class MonolithShieldService : Service() {
             inSafeBreak = inSafeBreak
         )
         val publicVersion = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_shield)
             .setContentTitle("Monolith")
             .setContentText(publicText)
             .setOngoing(ongoing)
@@ -1601,7 +1601,7 @@ class MonolithShieldService : Service() {
             .setContentIntent(pendingIntent)
             .build()
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_shield)
             .setContentTitle(title)
             .setContentText(subtitle)
             .setOngoing(ongoing)
@@ -1783,7 +1783,7 @@ class MonolithShieldService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val notification = NotificationCompat.Builder(this, SUMMONS_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_shield)
             .setContentTitle(title)
             .setContentText(text)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
