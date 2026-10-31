@@ -1120,12 +1120,11 @@ internal val PEEK_TERMS_LINE: String =
         "THEN ${MonolithRepository.PEEK_COOLDOWN_MILLIS / 60_000} MINUTES SHUT BEFORE THE NEXT PEEK"
 
 /**
- * Issue #107 (#1): the staged loadout's preview. Prints the
- * loadout's own subtitle (dead text until tonight), its extra
- * side-effects for STUDY, and the exact cost in hand-set rulings —
- * counted by LoadoutRules, the same function that commits. Nothing
- * applies until APPLY LOADOUT is tapped; KEEP MY RULES stages
- * nothing and changes nothing.
+ * Issue #107 (#1)'s staged-loadout preview panel is NOT carried in
+ * this composition: Shield Rethink 2, Step 2 deletes the loadout
+ * surface from the Sheet (FIX-R2, PR #388 recomposition). The
+ * LoadoutRules / SmartLoadout machinery stays in the data layer,
+ * orphaned for the routines payload, exactly as Step 2 ruled.
  */
 // ------------------------------------------------------------------
 // Issue #90 (complexity F4, section extractions): the banner pair
@@ -1315,67 +1314,6 @@ private fun RoutinesSection(
        
 }
 
-@Composable
-private fun LoadoutPreviewPanel(
-    loadout: SmartLoadout,
-    preview: LoadoutRules.Preview,
-    onApply: () -> Unit,
-    onKeepMine: () -> Unit
-) {
-    val scheme = MaterialTheme.colorScheme
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 8.dp)
-            .testTag("loadout_preview"),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Text(
-            text = loadout.title.uppercase(),
-            fontFamily = SoraFamily,
-            fontWeight = FontWeight.Bold,
-            fontSize = 14.sp,
-            color = scheme.onBackground
-        )
-        Text(
-            text = loadout.subtitle,
-            fontFamily = AtkinsonHyperlegibleFamily,
-            fontSize = 12.sp,
-            color = scheme.onBackground,
-            modifier = Modifier.testTag("loadout_preview_subtitle")
-        )
-        if (loadout == SmartLoadout.STUDY) {
-            Text(
-                text = "ALSO SWITCHES ON: SHORTS & REELS SNIPER + BROWSER URL BLOCKER",
-                fontFamily = AnonymousProFamily,
-                fontSize = 11.sp,
-                color = scheme.onBackground,
-                modifier = Modifier.testTag("loadout_preview_side_effects")
-            )
-        }
-        Text(
-            text = "REPLACES ${preview.changed} HAND-SET RULING(S) — " +
-                "LANDS ON ${preview.shut} SHUT · ${preview.peek} PEEK · ${preview.open} OPEN",
-            fontFamily = AnonymousProFamily,
-            fontSize = 11.sp,
-            color = scheme.onSurfaceVariant,
-            modifier = Modifier.testTag("loadout_preview_cost")
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            BlockitActionChip(
-                wordLabel = "APPLY LOADOUT",
-                isPrimaryInk = true,
-                onClick = onApply,
-                testTag = "loadout_apply"
-            )
-            BlockitActionChip(
-                wordLabel = "KEEP MY RULES",
-                onClick = onKeepMine,
-                testTag = "loadout_keep_mine"
-            )
-        }
-    }
-}
 
 private fun fmtRoutineTime(minutes: Int): String =
     "%02d:%02d".format(minutes / 60, minutes % 60)
