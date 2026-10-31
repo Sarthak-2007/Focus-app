@@ -24,6 +24,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
+ * PIN scope: PLUMBING — pins the full migration chain's schema
+ * validation, no behaviour.
+ *
  * Routines rebuild — Migration chain 7→8→9.
  *
  * 8a: a v7-shaped file runs BOTH migrations: the token ledger appears
@@ -43,6 +46,7 @@ import org.robolectric.annotation.Config
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
+// PIN-SCOPE: PLUMBING — Room migration chain 7→21, schema validation (working-rules adoption, Oct 31 18:06 IST).
 class RoutinesMigrationChainTest {
 
     private val context: Context
@@ -335,15 +339,24 @@ class RoutinesMigrationChainTest {
                 MonolithDatabase.MIGRATION_11_12, MonolithDatabase.MIGRATION_12_13,
                 MonolithDatabase.MIGRATION_13_14,
                 MonolithDatabase.MIGRATION_14_15,
-                MonolithDatabase.MIGRATION_15_16
+                MonolithDatabase.MIGRATION_15_16,
+                MonolithDatabase.MIGRATION_16_17,
+                MonolithDatabase.MIGRATION_17_18,
+                MonolithDatabase.MIGRATION_18_19,
+                MonolithDatabase.MIGRATION_19_20,
+                MonolithDatabase.MIGRATION_20_21,
+                MonolithDatabase.MIGRATION_21_22,
+                MonolithDatabase.MIGRATION_22_23,
+                MonolithDatabase.MIGRATION_23_24
             )
             .build()
 
         runBlocking {
             val dao = room.monolithDao()
             // This read forces the open: Room has now migrated
-            // 7→8→9→10→11→12→13→14→15→16 AND validated the resulting
-            // schema against every v16 entity, day_notes included.
+            // 7→8→9→10→11→12→13→14→15→16→17→18→19→20→21→22→23→24 AND
+            // validated the resulting schema against every v24
+            // entity, day_notes included.
             assertTrue(dao.getAllDayNotesSnapshot().isEmpty())
             dao.insertDayNotes(listOf(DayNoteEntity("2026-10-29", "REST")))
             assertEquals(
@@ -370,12 +383,16 @@ class RoutinesMigrationChainTest {
             tables.containsAll(
                 setOf(
                     "blocked_apps", "focus_profiles", "focus_sessions", "intercept_logs",
-                    "captured_notifications", "focus_tasks", "blocked_sites", "guard_settings",
+"focus_tasks", "blocked_sites", "guard_settings",
                     "routines", "emergency_break_spends", "day_notes"
                 )
             )
         )
         assertFalse(tables.contains("routine_attendance"))
+        // Issue #100 CUT: the notification-content store is GONE at
+        // v23 — MIGRATION_22_23 dropped the table the v7 fixture
+        // created; no content store may stand at the latest schema.
+        assertFalse(tables.contains("captured_notifications"))
 
         // The struck predicate exists NOWHERE — every table scanned.
         for (table in tables) {
@@ -386,8 +403,17 @@ class RoutinesMigrationChainTest {
             )
         }
 
-        // day_notes is exactly the specced two columns, date as PK.
-        assertEquals(setOf("dateIso", "word"), columnsOf(raw, "day_notes"))
+        // day_notes columns, date as PK. (Audit R6 #341 F58, v24:
+        // declaredAtMillis joins the specced two — the declaration
+        // instant the record never carried before v24.)
+        assertEquals(setOf("dateIso", "word", "declaredAtMillis"), columnsOf(raw, "day_notes"))
+
+        // Issue #138's v20 pin (captured_notifications survives
+        // metadata-only) is SUPERSEDED by Issue #100's ruling at
+        // v23: MIGRATION_22_23 drops the table outright, and the
+        // absence assertion above is now the latest-schema truth.
+        // (#138's 19→20 rebuild stands as shipped history in the
+        // chain; nothing at v23 resurrects the table.)
         raw.query("PRAGMA table_info(day_notes)").use { cursor ->
             val nameIdx = cursor.getColumnIndex("name")
             val pkIdx = cursor.getColumnIndex("pk")

@@ -79,6 +79,20 @@ class TokenBreakRoutineSeamTest {
         db.openHelper.writableDatabase.execSQL(
             "DELETE FROM intercept_logs WHERE packageName = 'com.monolith.system'"
         )
+        // Same hygiene for the routine row itself (floor lane,
+        // census #6, row 25): 'DAY BLOCKS' is the factory seed's
+        // own name (MonolithRepository.routineTargets), this file
+        // is the shared singleton, and a prior FAILED run of this
+        // very test never reaches its cleanup delete — so the name
+        // must start absent, proven by assertion, before the
+        // insert below. Without the reset, the .single {} read
+        // throws 'more than one matching element' forever: the
+        // failure was self-perpetuating. Issue #66's deterministic
+        // reset, extended to the table that read consumes.
+        db.openHelper.writableDatabase.execSQL(
+            "DELETE FROM routines WHERE name = 'DAY BLOCKS'"
+        )
+        assertEquals(0, dao.getAllRoutinesSnapshot().count { it.name == "DAY BLOCKS" })
 
         dao.insertRoutines(
             listOf(
