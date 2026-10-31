@@ -10,6 +10,11 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
 import com.example.R
+import com.example.data.MonolithDatabase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Issue #339 (Second-pass F3): the break-end alarm's delivery.
@@ -17,8 +22,25 @@ import com.example.R
  * the [BreakEndScheduler] ledger is checked before posting and
  * stamped after, so a re-delivered alarm (process death, reboot
  * re-arm) can never double-fire the return call.
+ *
+ * Issue #155 (WING-F lifecycle edges): the delivery is also gated
+ * on the session the break belonged to still being the live
+ * session ([BreakEndScheduler.sessionGateAllows]). A session that
+ * ended mid-break (stop / emergency valve / finalise / supersede)
+ * never cancelled this alarm, and the ungated receiver announced
+ * a return to a session that no longer existed. The gate read is
+ * async (goAsync, the boot/package receivers' posture); a FAILED
+ * read fails open — an unprovable gate must not swallow the
+ * return call #339 exists to guarantee — while a read that proves
+ * the session gone or replaced suppresses the card. Deliveries
+ * carrying no session id (alarms armed before the gate existed)
+ * skip the read entirely: the gate allows id 0 against every
+ * store state (pinned in BreakEndSessionGateTest), so those post
+ * on the spot, exactly as the ungated receiver did.
  */
 class BreakEndReceiver : BroadcastReceiver() {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onReceive(context: Context, intent: Intent?) {
         val breakEndsWallMillis =
@@ -30,6 +52,39 @@ class BreakEndReceiver : BroadcastReceiver() {
         ) {
             return
         }
+        val scheduledSessionId =
+            intent?.getIntExtra(BreakEndScheduler.EXTRA_SESSION_ID, 0) ?: 0
+        if (scheduledSessionId == 0) {
+            // No session to gate on: sessionGateAllows(0, ·) is
+            // unconditionally true, so the read could only ever
+            // allow — post inline, the pre-gate behaviour.
+            postBreakOver(context, breakEndsWallMillis)
+            return
+        }
+        val appContext = context.applicationContext
+        val pendingResult = goAsync()
+        scope.launch {
+            try {
+                val gateAllows = try {
+                    val active = MonolithDatabase.getInstance(appContext)
+                        .monolithDao().getActiveSessionSnapshot()
+                        ?.takeIf { it.isActive }
+                    BreakEndScheduler.sessionGateAllows(scheduledSessionId, active?.id)
+                } catch (_: Exception) {
+                    // Fail open on an unreadable store (see KDoc):
+                    // suppression requires proof the session is gone.
+                    true
+                }
+                if (gateAllows) {
+                    postBreakOver(appContext, breakEndsWallMillis)
+                }
+            } finally {
+                pendingResult.finish()
+            }
+        }
+    }
+
+    private fun postBreakOver(context: Context, breakEndsWallMillis: Long) {
         val manager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
                 ?: return
