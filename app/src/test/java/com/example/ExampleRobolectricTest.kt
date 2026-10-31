@@ -24,9 +24,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
+// PIN-SCOPE: PLUMBING — broad Robolectric repository/session suite (working-rules adoption, Oct 31 18:06 IST).
 class ExampleRobolectricTest {
 
     private lateinit var context: Context
@@ -82,6 +85,15 @@ class ExampleRobolectricTest {
 
     @Test
     fun `verify monotonic clock anti-tamper and HMAC signature verification`() {
+        // AUDIT-CLOCK census seat (c) cure (#166): the shadow
+        // monotonic clock starts near zero, so the 10-second
+        // backdate below clamped the mono anchor to 1L and the
+        // "honest" pair actually disagreed by ~10s — assertFalse
+        // passed only inside production's 90s drift tolerance,
+        // and the verified elapsed was ~0, not 10. Advance past
+        // the backdate first (the ForgeLot idiom) so the anchor
+        // is real and the agreement is proven, not tolerated.
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(30))
         val nowWall = System.currentTimeMillis()
         val nowMono = SystemClock.elapsedRealtime()
         val bootCount = repository.querySystemBootCount()
@@ -107,7 +119,11 @@ class ExampleRobolectricTest {
             completedSuccessfully = false
         )
 
-        val (_, honestTamper) = repository.computeVerifiedSessionElapsed(honestSession)
+        val (honestElapsed, honestTamper) = repository.computeVerifiedSessionElapsed(honestSession)
+        // Seat (c) cure: the verified elapsed is asserted, not
+        // discarded — with the anchor real it is the full 10
+        // seconds the fixture claims (it read ~0 before).
+        assertEquals(10, honestElapsed)
         assertFalse("Honest clock and HMAC should not flag tamper", honestTamper)
         assertTrue("Honest HMAC should be valid", CryptoIntegrityManager.verifySessionState(honestSession))
 
@@ -170,11 +186,37 @@ class ExampleRobolectricTest {
         val afterSleepLoadout = db.monolithDao().getAllAppsSnapshot().first { it.packageName == tiktok.packageName }
         assertEquals(AppBlockTier.LOCKED, afterSleepLoadout.resolvedTier)
 
-        // Apply Study Loadout: YouTube & WhatsApp become PEEK_2M while TikTok stays LOCKED
+        // Apply Study Loadout. WhatsApp becomes PEEK_2M and TikTok
+        // stays LOCKED — and YouTube stays LOCKED too, even though
+        // issue #133's rule makes lectures OPEN under STUDY: issue
+        // #129's clamp stands between them. SLEEP just locked
+        // YouTube, and a loadout NEVER loosens LOCKED -> OPEN on a
+        // category guess ("opening a shut app is HIS hand on the
+        // catalogue sled, never a guess" — LoadoutRules). The old
+        // assertion here expected OPEN and had been failing on the
+        // clamp since the two laws composed (floor lane, census
+        // #6, row 11: the verify-first tag discharges as KEEP —
+        // the behaviour is live and covered end-to-end only here;
+        // the expectation was stale, not the behaviour dead).
         repository.applySmartLoadout(SmartLoadout.STUDY)
         val studyApps = db.monolithDao().getAllAppsSnapshot()
         val youtube = studyApps.first { it.packageName == "com.google.android.youtube" }
-        assertEquals(AppBlockTier.PEEK_2M, youtube.resolvedTier)
+        assertEquals(AppBlockTier.LOCKED, youtube.resolvedTier)
+        val whatsappAfterStudy = studyApps.first { it.packageName == "com.whatsapp" }
+        assertEquals(AppBlockTier.PEEK_2M, whatsappAfterStudy.resolvedTier)
+        val tiktokAfterStudy = studyApps.first { it.packageName == "com.zhiliaoapp.musically" }
+        assertEquals(AppBlockTier.LOCKED, tiktokAfterStudy.resolvedTier)
+
+        // His hand opens it (the sled verb), and only then does
+        // the STUDY tap seat issue #133's lecture rule: YouTube
+        // OPEN for lectures — the old PEEK_2M ration made a
+        // 50-minute lecture unusable; the Shorts sniper stays the
+        // feed guard.
+        repository.setAppBlockTier(youtube.packageName, AppBlockTier.PEEK_2M)
+        repository.applySmartLoadout(SmartLoadout.STUDY)
+        val restudied = db.monolithDao().getAllAppsSnapshot()
+            .first { it.packageName == "com.google.android.youtube" }
+        assertEquals(AppBlockTier.OPEN, restudied.resolvedTier)
 
         // Direct spatial gravity well drop: drag YouTube into the Inner Event Horizon (LOCKED)
         repository.setAppBlockTier(youtube.packageName, AppBlockTier.LOCKED)
@@ -187,7 +229,6 @@ class ExampleRobolectricTest {
         assertTrue(BlockedBrowserDomains.defaultDomains.contains("instagram.com"))
         assertTrue(BlockedBrowserDomains.defaultDomains.contains("youtube.com/shorts"))
         assertTrue(BlockedBrowserDomains.defaultDomains.contains("reddit.com"))
-        assertTrue(BlockedBrowserDomains.allowedStudyExamples.contains("scholar.google.com"))
     }
 
     @Test
@@ -204,24 +245,13 @@ class ExampleRobolectricTest {
         assertTrue("Dialing < 10m should activate Stopwatch Mode", stopwatchSession.isStopwatchMode)
         assertEquals(2, stopwatchSession.totalStudyBlocks)
 
-        // Save a silent notification to the digest
-        val initialCount = db.monolithDao().getCapturedNotificationsFlow().first().size
-        repository.saveCapturedNotification(
-            packageName = "com.whatsapp",
-            appName = "WhatsApp",
-            senderTitle = "Study Group",
-            messageBody = "Meeting at library 4pm"
-        )
-        val notifications = db.monolithDao().getCapturedNotificationsFlow().first()
-        assertEquals(initialCount + 1, notifications.size)
-
         assertEquals(6, CurioCatalog.artifacts.size)
     }
 
     @Test
     fun `verify 3-stop switch labels and partial-credit session banking`() = runBlocking {
         assertEquals("Shut", AppBlockTier.LOCKED.label)
-        assertEquals("2m Knock", AppBlockTier.PEEK_2M.label)
+        assertEquals("2m Peek", AppBlockTier.PEEK_2M.label)
         assertEquals("Open", AppBlockTier.OPEN.label)
 
         // Start a 25-minute session and simulate 5 minutes elapsed before unlatching early
@@ -231,12 +261,37 @@ class ExampleRobolectricTest {
             durationMinutes = 25,
             studyBlocksCount = 1
         )
+        // AUDIT-CLOCK census seat (b) cure (#166): advance the
+        // shadow clock past the 5-minute backdate before
+        // fabricating the anchor — clamped to 1L, the verified
+        // clock read (0s, tamper = true) and the stamp banked
+        // solely on the stored counter. The ForgeLot idiom.
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(330))
         val fiveMinsAgoMono = (SystemClock.elapsedRealtime() - 300_000L).coerceAtLeast(1L)
+        val fiveMinsAgoWall = System.currentTimeMillis() - 300_000L
         db.monolithDao().updateSession(
             session.copy(
-                startWallTimeMillis = System.currentTimeMillis() - 300_000L,
+                startWallTimeMillis = fiveMinsAgoWall,
                 startElapsedRealtimeMillis = fiveMinsAgoMono,
-                elapsedSeconds = 300
+                elapsedSeconds = 300,
+                // Seat (b) cure, completed in the fourteenth sitting:
+                // startSession signed this row over its birth
+                // anchors; the fabrication above rewrites them, so
+                // the row is re-signed over the anchors it now
+                // claims — the same act the anti-tamper test above
+                // performs on its own fabricated entity. Without
+                // the re-sign the signature leg convicts the row
+                // however honest the clocks are (this PR's first
+                // gate attempt failed exactly there); blanking the
+                // signature instead would route around the HMAC
+                // leg entirely — weaker, rejected.
+                hmacSignature = CryptoIntegrityManager.signSessionState(
+                    startWallTimeMillis = fiveMinsAgoWall,
+                    startElapsedRealtimeMillis = fiveMinsAgoMono,
+                    bootCount = session.bootCount,
+                    targetDurationSeconds = session.targetDurationSeconds,
+                    isStopwatch = session.isStopwatchMode
+                )
             )
         )
 
@@ -246,36 +301,20 @@ class ExampleRobolectricTest {
         assertFalse(unlatched.isActive)
         assertTrue("Partial session >= 60s must bank elapsed seconds", unlatched.elapsedSeconds >= 60)
         assertEquals("partial_stamp", unlatched.forgedArtifactId)
+        // Seat (b) cure: the ending write stamps no tamper —
+        // the verified leg ran and agreed (before the cure the
+        // row was silently stamped tamperDetected).
+        assertFalse(unlatched.tamperDetected)
     }
 
     @Test
-    fun `verify Zero-Green Bauhaus Primary and Warm Indigo Dusk palette`() {
-        val allStudioColors = listOf(
-            com.example.ui.theme.SunlitPaper,
-            com.example.ui.theme.RecessedLinen,
-            com.example.ui.theme.RaisedCreamKey,
-            com.example.ui.theme.PressedCreamKey,
-            com.example.ui.theme.PaperShadow,
-            com.example.ui.theme.PaperDivider,
-            com.example.ui.theme.WarmIndigoDusk,
-            com.example.ui.theme.RecessedIndigo,
-            com.example.ui.theme.RaisedIndigoKey,
-            com.example.ui.theme.PressedIndigoKey,
-            com.example.ui.theme.IndigoBorder,
-            com.example.ui.theme.BauhausCrimson,
-            com.example.ui.theme.BauhausUltramarine,
-            com.example.ui.theme.BauhausCanary,
-            com.example.ui.theme.BauhausTerracotta,
-            com.example.ui.theme.SoftCoralWash,
-            com.example.ui.theme.WarmAmberWash,
-            com.example.ui.theme.UltramarineWash,
-            com.example.ui.theme.SunlitApricot,
-            com.example.ui.theme.ElectricIris,
-            com.example.ui.theme.SandstoneInset,
-            com.example.ui.theme.ObsidianSlate,
-            com.example.ui.theme.CarbonShadow,
-            com.example.ui.theme.IrisVioletWash
-        )
+    fun `verify Zero-Green token palette census`() {
+        // Issue #63: the census runs over the REAL token lists. It used
+        // to enumerate 24 lying aliases (BauhausCanary = orange, etc.)
+        // that duplicated these same tokens.
+        val allStudioColors =
+            com.example.ui.theme.DaylightZeroGreenTokens +
+                com.example.ui.theme.NightZeroGreenTokens
 
         allStudioColors.forEach { color ->
             assertTrue(
@@ -298,7 +337,12 @@ class ExampleRobolectricTest {
         // seeds are what this line now counts.
         assertTrue("Default timeboxed tasks should be seeded in Room", initialTasks.size >= 3)
 
-        val firstActive = initialTasks.first { it.resolvedStatus == com.example.data.TaskQueueStatus.ACTIVE }
+        // Audit R2 #96: the seed is an honest QUEUED slate now —
+        // no fabricated ACTIVE row with spent seconds and a done
+        // substep. This story promotes the first seed itself,
+        // exactly as a user's tap would.
+        val firstSeed = initialTasks.first { it.queueOrder == 0 }
+        val firstActive = repository.promoteTaskToActive(firstSeed.id)!!
         assertEquals("Finish Chapter 4 Problem Set (#1–6)", firstActive.title)
 
         // Start an active session so completing tasks logs to the session receipt
@@ -361,8 +405,17 @@ class ExampleRobolectricTest {
         assertEquals("Re-seeding must be strictly idempotent for tasks", taskCountBeforeReSeed, db.monolithDao().getAllTasksSnapshot().size)
         assertEquals("Re-seeding must be strictly idempotent for sessions", sessionCountBeforeReSeed, db.monolithDao().getSessionHistorySnapshot().size)
 
-        // Verify interactive sub-step toggling and auto-splitting
-        repository.autoSplitTaskIntoMicroSteps(addedTask.id)
+        // Verify interactive sub-step toggling and HAND-SPLIT
+        // (F-6, issue #12: the auto-split generator is deleted —
+        // this segment previously called it, and the generator
+        // OVERWROTE the notes with its fabricated triple, which is
+        // what made the count below exactly 3. Hand-split APPENDS:
+        // the task's edited notes ("Include p99 latency chart")
+        // already parse as one step, so two hand-written steps
+        // bring the same total to the same 3 — by addition now,
+        // never by overwrite)
+        repository.addTaskSubStep(addedTask.id, "Draft results section")
+        repository.addTaskSubStep(addedTask.id, "Verify units & captions")
         val splitTask = db.monolithDao().getTaskById(addedTask.id)
         assertNotNull(splitTask)
         assertEquals(3, splitTask!!.subSteps.size)

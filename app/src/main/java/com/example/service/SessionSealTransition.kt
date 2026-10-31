@@ -1,8 +1,10 @@
 package com.example.service
 
+import android.util.Log
 import android.content.Context
+import android.content.SharedPreferences
 import android.os.SystemClock
-import com.example.data.MonolithDatabase
+import com.example.MLog
 import com.example.data.MonolithRepository
 import kotlinx.coroutines.delay
 import java.util.concurrent.atomic.AtomicBoolean
@@ -123,6 +125,25 @@ class SessionSealTransitionImpl(
      *  writes back the union, so the pair of operations locks. */
     private val markerLock = Any()
 
+    /** The one accessor for the seal prefs file (issue #83).
+     *  The file lives in DEVICE-PROTECTED storage: the boot-path
+     *  recovery (F-K1) and the heartbeat read the marker and the
+     *  annulment tombstones from processes born before the first
+     *  unlock, where a credential-protected file reads as absent
+     *  — a sealed session looked unsealed and a tombstoned window
+     *  looked clean (the split-brain the Room DB already avoided
+     *  by living in device-protected storage). Every seal-prefs
+     *  read and write in this class goes through here. */
+    private fun prefs(): SharedPreferences =
+        // Issue #83 completion (STURM3-04): routed through the shared
+        // accessor so the legacy credential-protected seal file is
+        // migrated across on first access — this class's writer and
+        // MonolithRepository's readers now share the one migrated
+        // device-protected file, never two split files.
+        com.example.data.DeviceProtectedPrefs.get(
+            appContext, MonolithRepository.SEAL_PREFS_NAME
+        )
+
     /** The seal marker (F-K1): committed synchronously BEFORE
      *  the Throw sounds, so a process dying mid-seal leaves
      *  proof on disk that the seal landed — recovery then adopts
@@ -137,8 +158,8 @@ class SessionSealTransitionImpl(
     private fun writeSealMarker(sessionId: Int) {
         synchronized(sealed) { sealed += sessionId }
         synchronized(markerLock) {
-            appContext.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
+            val prefs = prefs()
+            fun attemptCommit(): Boolean = prefs.edit()
                 .putInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, sessionId)
                 .putLong(MonolithRepository.SEAL_MARKER_WALL_KEY, System.currentTimeMillis())
                 .putStringSet(
@@ -146,11 +167,24 @@ class SessionSealTransitionImpl(
                     persistedSealedIds() + sessionId.toString()
                 )
                 .commit()
+            // Truth (issue #76): commit()'s Boolean is the only
+            // evidence the proof reached disk. The original code
+            // discarded it, so a failed commit left this process
+            // (and the in-memory claim above) believing a seal that
+            // recovery — which reads disk — would never find. Now:
+            // commit, retry once, and if disk still refuses, strike
+            // the in-memory claim and throw rather than let a Throw
+            // sound over a seal that was never proven.
+            if (!attemptCommit() && !attemptCommit()) {
+                synchronized(sealed) { sealed -= sessionId }
+                Log.e("SessionSealTransition", "seal marker commit() failed twice for session $sessionId")
+                throw IllegalStateException("seal marker not on disk for session $sessionId")
+            }
         }
     }
 
     private fun persistedSealedIds(): Set<String> =
-        appContext.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+        prefs()
             .getStringSet(MonolithRepository.SEAL_MARKER_SESSIONS_KEY, emptySet())
             .orEmpty()
 
@@ -166,13 +200,11 @@ class SessionSealTransitionImpl(
     private fun clearSealMarker(sessionId: Int) {
         synchronized(sealed) { sealed -= sessionId }
         synchronized(markerLock) {
-            val prefs = appContext.getSharedPreferences(
-                MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE
-            )
+            val stored = prefs()
             val ids = persistedSealedIds()
-            val namesThis = prefs.getInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, -1) == sessionId
+            val namesThis = stored.getInt(MonolithRepository.SEAL_MARKER_SESSION_KEY, -1) == sessionId
             if (!namesThis && sessionId.toString() !in ids) return
-            val editor = prefs.edit()
+            val editor = stored.edit()
             val remaining = ids - sessionId.toString()
             if (sessionId.toString() in ids) {
                 editor.putStringSet(MonolithRepository.SEAL_MARKER_SESSIONS_KEY, remaining)
@@ -190,9 +222,8 @@ class SessionSealTransitionImpl(
     }
 
     private fun loadPersistedTombstones(): MutableSet<Pair<Int, Long>> {
-        val raw = appContext.getSharedPreferences(
-            MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE
-        ).getStringSet(TOMBSTONES_KEY, emptySet()).orEmpty()
+        val raw = prefs()
+            .getStringSet(TOMBSTONES_KEY, emptySet()).orEmpty()
         return raw.mapNotNull { entry ->
             val parts = entry.split(':')
             val id = parts.getOrNull(0)?.toIntOrNull()
@@ -212,7 +243,7 @@ class SessionSealTransitionImpl(
             tombstones.removeAll { (_, start) -> now - start > TOMBSTONE_KEEP_MS }
             tombstones.map { (id, start) -> "$id:$start" }.toSet()
         }
-        appContext.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+        prefs()
             .edit()
             .putStringSet(TOMBSTONES_KEY, live)
             .commit()
@@ -223,9 +254,31 @@ class SessionSealTransitionImpl(
         t0Mono: Long,
         sealRow: suspend () -> Boolean,
         publish: () -> Unit
+    ): Boolean = executeSealProvenance(sessionId, t0Mono, sealRow, publish, unattended = false)
+
+    /**
+     * Issue #150 (recovery closure): provenance for the Throw.
+     * The interface's [executeSeal] is the Deck door — the user is
+     * present, hand on the phone, arming their own block — so its
+     * Throw is an attended voice. The proving doors ([prove],
+     * reached from the routine heartbeat's proveAndSeal and from
+     * relaunch recovery) fire with nobody touching the phone:
+     * their Throw is unattended, and Do Not Disturb must bind it
+     * in the engine exactly as it binds the break boundaries and
+     * the finish cascade. The interface signature is unchanged
+     * (test fakes override it); provenance travels on this impl.
+     */
+    private suspend fun executeSealProvenance(
+        sessionId: Int,
+        t0Mono: Long,
+        sealRow: suspend () -> Boolean,
+        publish: () -> Unit,
+        unattended: Boolean
     ): Boolean {
         if (!claim(sessionId)) return false
-        val ok = runCatching { sealRow() }.getOrDefault(false)
+        val ok = runCatching { sealRow() }
+            .onFailure { MLog.e("sealRow failed for session $sessionId; seal not written", it) }
+            .getOrDefault(false)
         if (!ok) {
             // The claim stays spent (Klinke G5): a dead attempt
             // cannot seal late, and no Throw ever sounds over an
@@ -241,12 +294,14 @@ class SessionSealTransitionImpl(
         // the claim stays spent (above), so nothing re-seals in
         // this process, and recovery re-proves from the true
         // marker-absent state.
-        val published = runCatching { publish() }.isSuccess
+        val published = runCatching { publish() }
+            .onFailure { MLog.w("seal publish() failed for session $sessionId", it) }
+            .isSuccess
         if (!published) {
             clearSealMarker(sessionId)
             return false
         }
-        engine.playSealThrow()
+        engine.playSealThrow(unattended = unattended)
         return true
     }
 
@@ -321,7 +376,9 @@ class SessionSealTransitionImpl(
                 // Witnesses are re-read live every sample; a
                 // confirmed link whose witness dies pre-t=0
                 // re-pends (the cascade's law, mirrored).
-                val row = runCatching { repository.activeSessionSnapshot() }.getOrNull()
+                val row = runCatching { repository.activeSessionSnapshot() }
+                    .onFailure { MLog.d("prove-loop session snapshot read failed: ${it.message}") }
+                    .getOrNull()
                 l1 = if (row != null && row.id == sessionId && row.isActive) l1 ?: now else null
                 val sNow = shieldMono(sessionId)
                 l2 = if (sNow == null) null else (l2 ?: sNow)
@@ -332,11 +389,12 @@ class SessionSealTransitionImpl(
                     val lastConfirm = maxOf(l1, l2, l3)
                     val t0 = maxOf(lastConfirm, latchMono + DWELL_MS)
                     if (now >= t0) {
-                        val sealedOk = executeSeal(
+                        val sealedOk = executeSealProvenance(
                             sessionId = sessionId,
                             t0Mono = t0,
                             sealRow = { repository.sealSession(sessionId, t0) },
-                            publish = {}
+                            publish = {},
+                            unattended = true
                         )
                         return if (sealedOk) SealVerdict.SEALED else SealVerdict.ANNULLED
                     }
@@ -352,8 +410,11 @@ class SessionSealTransitionImpl(
                 if (now >= latchMono + ANNUL_MS) {
                     cancelSealPrime()
                     if (!annulOnFailure) return SealVerdict.JAMMED
-                    val dead = runCatching { repository.sessionById(sessionId) }.getOrNull()
+                    val dead = runCatching { repository.sessionById(sessionId) }
+                        .onFailure { MLog.w("recover: sessionById($sessionId) read failed", it) }
+                        .getOrNull()
                     runCatching { repository.annulProvingSession(sessionId) }
+                        .onFailure { MLog.e("recover: annulProvingSession($sessionId) failed", it) }
                     if (dead?.routineId != null) {
                         synchronized(tombstones) {
                             tombstones += (dead.routineId to dead.windowStartMillis)
@@ -435,9 +496,8 @@ object SessionSealTransitions {
         synchronized(this) {
             instance?.let { it.resyncSoundFromPersistedFact(); return it }
             val appContext = context.applicationContext
-            val repo = repository ?: MonolithRepository(
-                appContext, MonolithDatabase.getInstance(appContext).monolithDao()
-            )
+            // ISSUE-67: construction via the single point.
+            val repo = repository ?: com.example.AppContainer.repository(appContext)
             val eng = engine ?: TactileSoundEngine(appContext)
             val built = SessionSealTransitionImpl(appContext, eng, repo)
             built.resyncSoundFromPersistedFact()

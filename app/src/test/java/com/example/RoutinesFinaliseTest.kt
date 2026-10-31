@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.DesiredSession
+import com.example.data.DrawerDay
 import com.example.data.FocusSessionEntity
 import com.example.data.InterceptLogEntity
 import com.example.data.MonolithDatabase
@@ -123,6 +124,36 @@ class RoutinesFinaliseTest {
     }
 
     @Test
+    fun excusedWindow_subFloor_booksUnknown_neverMissed() = runBlocking {
+        // Issue #137, F1c/F5: the window's filing date carries ILL,
+        // so the durable stamp can never be MISSED. A fixed midday
+        // window three days back keeps this date clear of the other
+        // tests' now-based windows.
+        context.getSharedPreferences(
+            MonolithRepository.DAY_WORDS_PREFS_NAME, android.content.Context.MODE_PRIVATE
+        ).edit().clear().commit()
+        val cal = java.util.Calendar.getInstance().apply {
+            add(java.util.Calendar.DAY_OF_YEAR, -3)
+            set(java.util.Calendar.HOUR_OF_DAY, 12)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val start = cal.timeInMillis
+        val end = start + hour
+        repository.declareDayWord(
+            DrawerDay.dateIso(DrawerDay.filingDate(start)), "ILL"
+        )
+        val routineId = insertRoutine()
+        val id = insertSession(routineId, start, end)
+        val outcome = repository.finaliseRoutineSession(row(id), System.currentTimeMillis())
+        assertEquals("UNKNOWN", outcome)
+        val sealed = row(id)
+        assertEquals("UNKNOWN", sealed.routineOutcome)
+        assertFalse(sealed.isActive)
+    }
+
+    @Test
     fun storedTickElapsed_isNeverInherited_bookedIsEvidenceOnly() = runBlocking {
         // Freya T5: the shield died mid-window; the row carries a fat
         // tick-accrued elapsed. Finalise must ignore it entirely.
@@ -231,18 +262,38 @@ class RoutinesFinaliseTest {
 
     @Test
     fun history_excludesUnfinalisedRoutineRowsAndLegacyRows() = runBlocking {
+        // Boundary-proof fixtures (#91): compute7DayHistory()
+        // re-reads the real clock and buckets by CALENDAR day
+        // (startOfDay .. startOfDay+24h). Fixtures placed at
+        // now-minus land in YESTERDAY's bucket whenever the test
+        // runs in the first hour after midnight, so the old shape
+        // failed deterministically ~00:00-01:00. Instead every
+        // fixture is placed at a fixed offset inside TODAY — the
+        // same start-of-day anchor production derives at call
+        // time (Calendar with H/M/S/ms zeroed, as in
+        // MonolithRepository.compute7DayHistory) — so the bucket
+        // each fixture lands in is independent of the run time.
+        val dayStart = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
         val now = System.currentTimeMillis()
         val routineId = insertRoutine()
-        // Finalised routine session: 1200 s PARTIAL, started today.
-        val fin = insertSession(routineId, now - hour, now - 30 * minute)
-        for (i in 0..3) intercept(now - hour + i * 5 * minute)
+        // Finalised routine session booking 1200 s, started today
+        // (window 10:00-10:30 today; four intercepts 5 min apart
+        // from the window start cover 20 minutes = 1200 s).
+        val finStart = dayStart + 10 * hour
+        val fin = insertSession(routineId, finStart, finStart + 30 * minute)
+        for (i in 0..3) intercept(finStart + i * 5 * minute)
         repository.finaliseRoutineSession(row(fin), now)
         // Unfinalised routine session carrying junk elapsed: worth 0.
-        insertSession(routineId, now - 2 * hour, now - hour, elapsed = 9_999)
+        insertSession(routineId, dayStart + 8 * hour, dayStart + 9 * hour, elapsed = 9_999)
         // Legacy A3 row: routineId null, prefix profile, window 0.
-        insertSession(null, 0L, 0L, startWall = now - 30 * minute, elapsed = 8_888, profileName = "Routine: Old")
+        insertSession(null, 0L, 0L, startWall = dayStart + 12 * hour, elapsed = 8_888, profileName = "Routine: Old")
         // Manual session: counts in full.
-        insertSession(null, 0L, 0L, startWall = now - 20 * minute, elapsed = 600, profileName = "Manual")
+        insertSession(null, 0L, 0L, startWall = dayStart + 12 * hour + 20 * minute, elapsed = 600, profileName = "Manual")
         val today = repository.compute7DayHistory().last()
         assertEquals((1200 + 600) / 60, today.totalMinutes)
     }

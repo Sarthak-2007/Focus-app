@@ -52,7 +52,7 @@ class SealTransitionDirectTest {
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
-        context.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+        com.example.data.DeviceProtectedPrefs.get(context, MonolithRepository.SEAL_PREFS_NAME)
             .edit().clear().commit()
         SoundEffectsSetting.setEnabled(context, false)
         db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
@@ -64,7 +64,7 @@ class SealTransitionDirectTest {
     @After
     fun tearDown() {
         db.close()
-        context.getSharedPreferences(MonolithRepository.SEAL_PREFS_NAME, Context.MODE_PRIVATE)
+        com.example.data.DeviceProtectedPrefs.get(context, MonolithRepository.SEAL_PREFS_NAME)
             .edit().clear().commit()
     }
 
