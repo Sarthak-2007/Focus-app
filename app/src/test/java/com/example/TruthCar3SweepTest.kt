@@ -4,13 +4,6 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-// Wave-2 note (UNPROVEN until Ren's compile settles it): the
-// .assertExists() / .assertDoesNotExist() calls in this file are
-// MEMBER functions of SemanticsNodeInteraction, not top-level
-// extensions — that is why the two top-level imports were deleted
-// in 8a256a4. If the compile disagrees, restore both imports
-// exactly as they stood at batch-9 HEAD and record Class E as a
-// misdiagnosis (plan ISSUE-2-test-call-sites.md, Risk 1).
 import androidx.compose.ui.test.onNodeWithText
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -22,7 +15,9 @@ import com.example.data.RoutineDerive
 import com.example.data.RoutineEntity
 import com.example.data.RoutineSchedule
 import com.example.data.SmartLoadout
+import com.example.service.InterceptPath
 import com.example.service.TactileSoundEngine
+import com.example.ui.peekOfferFor
 import com.example.service.matchBlockedDomain
 import com.example.ui.MonolithViewModel
 import com.example.ui.components.ParkDrawer
@@ -30,11 +25,15 @@ import com.example.ui.theme.MyApplicationTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import android.os.Looper
+import kotlinx.coroutines.runBlocking
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.xmlpull.v1.XmlPullParser
@@ -80,14 +79,10 @@ class TruthCar3SweepTest {
         // The defaults are the SEEDED stored list, his to empty —
         // they enforce only when they are in the list passed in,
         // never by substitution upstream.
-        // Test-floor cure: the seeded defaults carry "youtube.com/shorts",
-        // never bare "youtube.com" — a /watch URL matches none of them and
-        // the matcher correctly returned null. Assert the default that
-        // actually exists, against the URL shape it was seeded for.
         assertEquals(
-            "youtube.com/shorts",
+            "youtube.com",
             matchBlockedDomain(
-                "https://www.youtube.com/shorts/abc",
+                "https://www.youtube.com/watch?v=abc",
                 BlockedBrowserDomains.defaultDomains
             )
         )
@@ -256,7 +251,24 @@ class TruthCar3SweepRoboTest {
         }
     }
 
-    /** section tag -> (domain -> path) for every <exclude> inside it. */
+    /** section tag -> (domain -> path) for every <exclude> inside it.
+     *
+     *  K1-W5 cure (#5, Oct 31): the instrument, not the app, was
+     *  broken. Both rule files declare their attributes UNPREFIXED —
+     *  that is the platform schema for full-backup-content and
+     *  data-extraction-rules, and the platform's own parser reads
+     *  them under a null namespace. This helper looked them up in
+     *  the android: namespace only, so every lookup returned null,
+     *  no exclude was ever recorded, and both una04 tests died at
+     *  their "no section" error on a tree whose rules exclude
+     *  everything — a proof that could not PASS, the mirror image
+     *  of a proof that cannot fail (STICH charge 1's shape, one
+     *  level down). Attributes are now read null-namespace first,
+     *  android: as fallback, and a section is recorded the moment
+     *  its tag is seen, so the "no section" error means the section
+     *  is truly absent. Discrimination is unchanged: strip the
+     *  excludes (the pre-cure sample files) and every assertion in
+     *  the una04 tests still fails. */
     private fun parseExcludeSections(parser: XmlPullParser): Map<String, Map<String, String>> {
         val androidNs = "http://schemas.android.com/apk/res/android"
         val result = mutableMapOf<String, MutableMap<String, String>>()
@@ -265,16 +277,12 @@ class TruthCar3SweepRoboTest {
         while (event != XmlPullParser.END_DOCUMENT) {
             when (event) {
                 XmlPullParser.START_TAG -> when (parser.name) {
-                    "cloud-backup", "device-transfer", "full-backup-content" ->
+                    "cloud-backup", "device-transfer", "full-backup-content" -> {
                         section = parser.name
+                        result.getOrPut(parser.name) { mutableMapOf() }
+                    }
                     "exclude" -> {
                         val s = section
-                        // Test-floor cure: both rules files declare these
-                        // attributes WITHOUT a namespace; the namespaced
-                        // lookup returned null for every <exclude>, the
-                        // sections map stayed empty, and the test died on
-                        // its own error(). Null-namespace first, android
-                        // namespace as fallback.
                         val domain = parser.getAttributeValue(null, "domain")
                             ?: parser.getAttributeValue(androidNs, "domain")
                         val path = parser.getAttributeValue(null, "path")
@@ -336,13 +344,13 @@ class TruthCar3SweepRoboTest {
                     isSealed = false,
                     isNight = false,
                     soundEnabled = true,
-                    shortsReelsSniperEnabled = true,
                     soundEngine = null,
                     themeReadout = "AUTO",
                     parkReturnTick = 0,
                     onDismiss = {},
                     onFixClick = {},
                     onToggleSound = {},
+                    shortsReelsSniperEnabled = true,
                     onToggleShortsReelsSniper = {},
                     // Wave-2 premise: social pair is scaffolding here —
                     // `true` is the persisted default; the toggle is not under test in this file.
@@ -374,13 +382,13 @@ class TruthCar3SweepRoboTest {
                     isSealed = false,
                     isNight = false,
                     soundEnabled = true,
-                    shortsReelsSniperEnabled = true,
                     soundEngine = null,
                     themeReadout = "AUTO",
                     parkReturnTick = 0,
                     onDismiss = {},
                     onFixClick = {},
                     onToggleSound = {},
+                    shortsReelsSniperEnabled = true,
                     onToggleShortsReelsSniper = {},
                     // Wave-2 premise: social pair is scaffolding here —
                     // `true` is the persisted default; the toggle is not under test in this file.
@@ -420,11 +428,98 @@ class TruthCar3SweepRoboTest {
 
             val vm = freshViewModel()
             vm.applySmartLoadout(SmartLoadout.SLEEP)
+
+            // K1-W5 cure (#5, Oct 31): applySmartLoadout persists
+            // ASYNCHRONOUSLY by design — Audit R1 #38 moved the
+            // commit() onto IO and rests the cap on the pick only
+            // once the store confirms it, so an unpersisted pick is
+            // never presented as resting. The old test asserted in
+            // the same instant as the tap and raced the very
+            // persistence it was proving: on the cured tree it
+            // failed at the first post-tap assert (job log, run
+            // 41115539923: AssertionError at this test, line 411).
+            // Drive the boundary instead: idle the main looper —
+            // the viewModelScope resumption posts there — until the
+            // store holds the pick and the cap rests on it. The
+            // loop is iteration-bounded, not clock-bounded; on a
+            // tree where the hand path stops persisting it expires
+            // and the asserts below still fail, so the proof keeps
+            // its teeth.
+            var spins = 0
+            while (spins < 400) {
+                shadowOf(Looper.getMainLooper()).idle()
+                if (LoadoutStore(context).lastHandLoadout() == SmartLoadout.SLEEP &&
+                    vm.loadoutCapIndex.value == 2
+                ) break
+                Thread.sleep(25)
+                spins++
+            }
+
             assertEquals(2, vm.loadoutCapIndex.value)
 
             // Recreation: a NEW ViewModel (new process, new
             // composition) reads the stored fact at birth.
             assertEquals(2, freshViewModel().loadoutCapIndex.value)
+        } finally {
+            db.close()
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // UNA2-01, the charge-level proof the proof standard named —
+    // PeekLeaseForUnlistedPackageArmsNothing — and the merged tree
+    // never carried (STICH charge 6; cured here, K1-W5, #5,
+    // Oct 31). The sessions proved the offer COMPONENT
+    // (TruthCar3InterceptTest.peekOfferNeverDefaultsOnForAnUnlistedPackage)
+    // and the joint report entered the charge CURED with NO PROOF
+    // EXISTS at charge level. This asserts the charge's end-state
+    // itself: for a package with no row, the lease writer arms
+    // nothing — no row appears, no lease is set, no cooldown
+    // anchor moves on any row — and no door offers it a peek.
+    // Discrimination: the gate half does not compile on the
+    // proofbase (peekOfferFor IS the cure), and the store half
+    // fails against any future upsert-shaped writer.
+    // ---------------------------------------------------------------
+
+    @Test
+    fun peekLeaseForUnlistedPackageArmsNothing() {
+        val db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val dao = db.monolithDao()
+            val repository = MonolithRepository(context, dao)
+            // One listed row, so "nothing moved" has something to bite on.
+            runBlocking {
+                dao.insertApp(
+                    com.example.data.BlockedAppEntity(
+                        packageName = "com.listed.app",
+                        appName = "Listed",
+                        category = "Social",
+                        isBlocked = true,
+                        blockTier = com.example.data.AppBlockTier.PEEK_2M.name
+                    )
+                )
+            }
+            runBlocking { repository.startPeekLease("com.unlisted.app") }
+            val rows = runBlocking { dao.getAllAppsSnapshot() }
+            assertTrue(
+                "the lease writer created a row for an unlisted package",
+                rows.none { it.packageName == "com.unlisted.app" }
+            )
+            assertTrue(
+                "a peek lease or cooldown anchor moved for an unlisted package",
+                rows.all {
+                    it.activePeekUntilElapsedRealtime == 0L &&
+                        it.lastPeekEndElapsedRealtime == 0L
+                }
+            )
+            for (path in InterceptPath.entries) {
+                assertFalse(
+                    "door $path offered a peek to an unlisted package",
+                    peekOfferFor(path, null, 0, false)
+                )
+            }
         } finally {
             db.close()
         }

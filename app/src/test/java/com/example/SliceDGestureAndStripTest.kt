@@ -120,13 +120,17 @@ class StripDerivationsTest {
         state: WarrantState,
         bound: Boolean = true,
         stamped: Boolean = true,
-        usage: UsageAccess = UsageAccess.ALLOWED
+        usage: UsageAccess = UsageAccess.ALLOWED,
+        readMono: Long = 0L,
+        residencyStartMono: Long = 0L
     ) = Warrant(
         state = state,
         a11yBound = bound,
         a11yStampedThisResidency = stamped,
         shieldProtecting = false,
-        usage = usage
+        usage = usage,
+        readMono = readMono,
+        residencyStartMono = residencyStartMono
     )
 
     @Test
@@ -137,7 +141,7 @@ class StripDerivationsTest {
         )
         // Room (i): held, unstamped.
         assertEquals(
-            "BIND HELD · UNSEEN" to "PROOF: BIND ONLY",
+            "BIND HELD · NOT SEEN" to "PROOF: BIND ONLY",
             seamMarksFor(warrant(WarrantState.UNPROVEN, stamped = false))
         )
         // Held and stamped, a grant unproven: still BIND ONLY,
@@ -150,7 +154,7 @@ class StripDerivationsTest {
         // NOTE (Rosa, review F1): this state is function-correct but
         // production-unreachable on the shipped substrate —
         // liveWarrant maps every !a11yBound to OFF, so the
-        // process-start window prints POSITIVE on mere absence
+        // process-start window prints OFF CONFIRMED on mere absence
         // until the substrate gains Rosa's tri-state bind leg.
         // Flagged to Ren with her evidence; the function is ready.
         assertEquals(
@@ -159,15 +163,15 @@ class StripDerivationsTest {
         )
         // OFF: the bind fact is stated truthfully from the legs.
         assertEquals(
-            "BIND NOT HELD" to "PROOF: POSITIVE",
+            "BIND NOT HELD" to "PROOF: OFF CONFIRMED",
             seamMarksFor(warrant(WarrantState.OFF, bound = false, stamped = false))
         )
         assertEquals(
-            "BIND HELD · THIS VISIT" to "PROOF: POSITIVE",
+            "BIND HELD · THIS VISIT" to "PROOF: OFF CONFIRMED",
             seamMarksFor(warrant(WarrantState.OFF, usage = UsageAccess.DENIED))
         )
         assertEquals(
-            "BIND HELD · UNSEEN" to "PROOF: POSITIVE",
+            "BIND HELD · NOT SEEN" to "PROOF: OFF CONFIRMED",
             seamMarksFor(warrant(WarrantState.OFF, stamped = false, usage = UsageAccess.DENIED))
         )
         assertNull(seamMarksFor(null))
@@ -175,28 +179,55 @@ class StripDerivationsTest {
 
     @Test
     fun causeTablePicksOneSentenceByCausalPriority() {
-        // A11y death outranks everything.
+        // A11y death outranks everything. Timed overload with a
+        // fresh readMono/nowMono pair (TECH-1 B-Blocker-1): the
+        // no-clock overload reads SystemClock, a throwing stub in
+        // plain JVM tests. This warrant carries no residency, so
+        // no cold-open grace silence is owed and OFF stands at once.
         assertEquals(
-            "BLOCKING IS OFF — TAP TO FIX",
-            refusalSentenceFor(warrant(WarrantState.OFF, bound = false, stamped = false, usage = UsageAccess.DENIED))?.text
+            R.string.sentence_blocking_off,
+            refusalSentenceFor(
+                warrant(WarrantState.OFF, bound = false, stamped = false, usage = UsageAccess.DENIED, readMono = 10_000L),
+                10_000L
+            )?.textRes
         )
-        // Bound but unstamped: can't check.
-        assertEquals(
-            RefusalAction.RETRY_CHECK,
-            refusalSentenceFor(warrant(WarrantState.UNPROVEN, stamped = false))?.action
+        // Bound but unstamped, usage ALLOWED, and NO residency
+        // carried (this helper's hand-built warrant): the cured
+        // table (issue #7) prints BLOCKING IS OFF at once.
+        // WHY THE OLD EXPECTATION WAS THE BUG: this row used to
+        // expect RefusalAction.RETRY_CHECK — the fog sentence that
+        // printed "can't check, tap to retry" AT REST on a cold
+        // open, forever, on a guard whose only fault was that no
+        // a11y event had happened yet; the retry could never fix
+        // it, because nothing was broken that a tap repairs. The
+        // fog row is deleted, not reworded: an unstamped warrant
+        // carrying no residency is age-unknown, never fresh, so no
+        // grace silence is owed and bound-but-blind is off in fact.
+        // (A carried, in-grace residency IS silent — that half of
+        // the cured table is proven in ColdStartWarrantTest.)
+        val unstampedNoResidency = refusalSentenceFor(
+            warrant(WarrantState.UNPROVEN, stamped = false), 10_000L
         )
+        assertEquals(R.string.sentence_blocking_off, unstampedNoResidency?.textRes)
+        assertEquals(RefusalAction.FIX_ACCESSIBILITY, unstampedNoResidency?.action)
         // Usage positively denied names its own pane.
-        val usageSentence = refusalSentenceFor(warrant(WarrantState.OFF, usage = UsageAccess.DENIED))
-        assertEquals("USAGE ACCESS IS OFF — TAP TO FIX", usageSentence?.text)
+        val usageSentence = refusalSentenceFor(warrant(WarrantState.OFF, usage = UsageAccess.DENIED, readMono = 10_000L), 10_000L)
+        assertEquals(R.string.sentence_usage_off, usageSentence?.textRes)
         assertEquals(RefusalAction.FIX_USAGE, usageSentence?.action)
-        // Usage never granted: can't check.
-        assertEquals(
-            RefusalAction.RETRY_CHECK,
-            refusalSentenceFor(warrant(WarrantState.UNPROVEN, usage = UsageAccess.UNSET))?.action
-        )
+        // Usage never granted (issue #6 C3): the sentence names
+        // the Usage pane — the door its tap has always opened.
+        val unsetSentence = refusalSentenceFor(warrant(WarrantState.UNPROVEN, usage = UsageAccess.UNSET, readMono = 10_000L), 10_000L)
+        assertEquals(R.string.sentence_usage_off, unsetSentence?.textRes)
+        assertEquals(RefusalAction.FIX_USAGE, unsetSentence?.action)
+        // UNSET + unstamped + UNPROVEN (the C3 lie's other door): the
+        // RETRY row must not claim this warrant — its tap opens the
+        // Usage pane, so the Usage sentence is the only honest print.
+        val unsetUnstamped = refusalSentenceFor(warrant(WarrantState.UNPROVEN, stamped = false, usage = UsageAccess.UNSET, readMono = 10_000L), 10_000L)
+        assertEquals(R.string.sentence_usage_off, unsetUnstamped?.textRes)
+        assertEquals(RefusalAction.FIX_USAGE, unsetUnstamped?.action)
         // Healthy wire: the slot stands empty.
-        assertNull(refusalSentenceFor(warrant(WarrantState.LIVE)))
-        assertNull(refusalSentenceFor(null))
+        assertNull(refusalSentenceFor(warrant(WarrantState.LIVE, readMono = 10_000L), 10_000L))
+        assertNull(refusalSentenceFor(null, 10_000L))
     }
 
     @Test
@@ -207,15 +238,15 @@ class StripDerivationsTest {
         // state; over a wire that reads OFF at the print instant
         // the words stand but carry their tense — " · AS SEALED".
         assertEquals(
-            "7 HELD",
+            "7 HELD · THIS PHONE ONLY",
             imprintTenantText(true, 7, 0, WarrantState.OFF)
         )
         assertEquals(
-            "1 HELD",
+            "1 HELD · THIS PHONE ONLY",
             imprintTenantText(true, 1, 0, WarrantState.LIVE)
         )
         assertEquals(
-            "7 HELD · AS SEALED",
+            "7 HELD · THIS PHONE ONLY · AS SEALED",
             imprintTenantText(true, 7, 0, WarrantState.LIVE, wireNow = WarrantState.OFF)
         )
         assertNull(imprintTenantText(true, null, 0, WarrantState.LIVE))
@@ -245,7 +276,7 @@ class StripDerivationsTest {
             imprintTenantText(false, 3, 2, WarrantState.LIVE)
         )
         assertEquals(
-            "3 HELD · 2 PEEK",
+            "3 HELD · 2 PEEK · THIS PHONE ONLY",
             imprintTenantText(true, 3, 2, WarrantState.LIVE)
         )
         assertEquals(
@@ -258,7 +289,7 @@ class StripDerivationsTest {
             imprintTenantText(false, 0, 1, WarrantState.LIVE)
         )
         assertEquals(
-            "3 PEEK",
+            "3 PEEK · THIS PHONE ONLY",
             imprintTenantText(true, 0, 3, WarrantState.LIVE)
         )
         assertNull(imprintTenantText(false, 0, 0, WarrantState.LIVE))
@@ -268,8 +299,13 @@ class StripDerivationsTest {
     @Test
     fun endsAtIsAPureFunctionOfTheEndInstant() {
         val millis = 1_700_000_000_000L
-        val expected = "ENDS " + SimpleDateFormat("HH:mm", Locale.US).format(Date(millis))
-        assertEquals(expected, endsAtText(millis))
-        assertEquals(endsAtText(millis), endsAtText(millis))
+        // #88: endsAtText takes the device's 12/24-hour choice as a
+        // boolean, so both branches pin exactly (test JVM default
+        // locale is en, matching the Locale.US expectations below).
+        val expected24 = "ENDS " + SimpleDateFormat("HH:mm", Locale.US).format(Date(millis))
+        assertEquals(expected24, endsAtText(true, millis))
+        assertEquals(endsAtText(true, millis), endsAtText(true, millis))
+        val expected12 = "ENDS " + SimpleDateFormat("h:mm a", Locale.US).format(Date(millis))
+        assertEquals(expected12, endsAtText(false, millis))
     }
 }

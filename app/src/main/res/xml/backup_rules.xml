@@ -1,10 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  UNA-04 (Truth Car 3): pre-Android-12 Auto Backup rules (this file is
-  ignored on API 31+; data_extraction_rules.xml governs there). The
-  plate promises "DATA: ON THIS PHONE ONLY" and the manifest sets
-  allowBackup="false"; these excludes state the same law inside the
-  rules file itself, so no domain is ever eligible.
+  UNA-04 (Truth Car 3) + Audit R2 #93: pre-Android-12 Auto Backup rules
+  (this file is ignored on API 31+; data_extraction_rules.xml governs
+  there). The plate promises "DATA: ON THIS PHONE ONLY" and the manifest
+  sets allowBackup="false"; these excludes state the same law inside the
+  rules file itself, so no domain is ever eligible — in EITHER storage
+  tree. The app's Room database is deliberately built in
+  device-protected storage (MonolithDatabase uses
+  createDeviceProtectedStorageContext for Direct Boot), and the platform
+  maps device_* domains to that separate tree, so the five
+  credential-encrypted domains alone never covered it: all nine valid domains
+  are excluded here.
+  FullBackupContent cure (#166): an earlier draft also listed a
+  "device_external" exclude. That domain does not exist - Android's
+  documented set (developer.android.com/identity/data/autobackup,
+  "Syntax for include and exclude elements") is exactly nine:
+  root, file, database, sharedpref, external, device_root,
+  device_file, device_database, device_sharedpref. The device_*
+  counterparts exist only for root, file, database and sharedpref;
+  external (getExternalFilesDir()) has no device-protected
+  counterpart, so device-protected external storage cannot be
+  excluded through this mechanism - the invalid line was removed,
+  not renamed. The app never writes external storage at all (no
+  getExternalFilesDir use anywhere in the tree), and every root it
+  does use stays excluded below.
 -->
 <full-backup-content>
     <exclude domain="root" path="." />
@@ -12,4 +31,8 @@
     <exclude domain="database" path="." />
     <exclude domain="sharedpref" path="." />
     <exclude domain="external" path="." />
+    <exclude domain="device_root" path="." />
+    <exclude domain="device_file" path="." />
+    <exclude domain="device_database" path="." />
+    <exclude domain="device_sharedpref" path="." />
 </full-backup-content>

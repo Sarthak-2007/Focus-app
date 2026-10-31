@@ -21,6 +21,57 @@ concurrency:
 # pinned to ubuntu-24.04 — no floating tags, no floating image.
 
 jobs:
+  # Compile gate (issue #166; compile-is-binary ruling, Oct 31):
+  # the build job below runs unit tests BEFORE assemble (issue #24
+  # finding 1), so on a floor-red head its assemble step is skipped
+  # and no compile-green read exists — the merge gate was
+  # unsatisfiable by construction. This job is the gate's read:
+  # assemble debug + unit-test compile as their own job, first-class
+  # and independent — it executes no tests, and no other job's
+  # verdict can skip, poison, or be poisoned by it (the issue-#382
+  # screenshots precedent: a parallel job with its own budget whose
+  # verdict stands alone). The gate reads THIS job's conclusion on
+  # the PR head: green here means app + test code compile on that
+  # head, whatever the unit-test floor says.
+  compile:
+    name: Compile (assemble + test-compile)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Issue #85 F3: checkout credentials must not persist into
+          # the git config while build code executes.
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'  # issue #66 cluster-priority: same cure as agent/issue-2 f789cef — Robolectric 4.16 refuses SDK 36 on JDK 17
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Install SDK platform 36.1
+        run: |
+          SDKMANAGER="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
+          yes | "$SDKMANAGER" --licenses > /tmp/sdk-licenses.log 2>&1 || { echo "::warning::sdkmanager license step failed — see log tail"; tail -20 /tmp/sdk-licenses.log; }
+          "$SDKMANAGER" "platforms;android-36.1" "build-tools;36.1.0"
+
+      - name: Compile — assemble debug + unit-test compile
+        id: compile
+        run: |
+          chmod +x gradlew
+          ./gradlew --console=plain assembleDebug compileDebugUnitTestKotlin
+
+      - name: Compile summary
+        if: always()
+        run: |
+          {
+            echo "## Compile verdict — ${{ github.ref_name }} · ${{ github.sha }}"
+            echo "- Assemble debug + unit-test compile: ${{ steps.compile.outcome }}"
+            echo "- This job executes NO tests. Its conclusion is the compile-is-binary gate's read on this head: green = app + test code compile here, independent of the unit-test floor (issue #166)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   build:
     runs-on: ubuntu-24.04
     # Wave-2 (issue #3): the 360-minute platform default meant one
@@ -30,8 +81,12 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Issue #85 F3: checkout credentials must not persist into
+          # the git config while build code executes.
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '21'  # issue #66 cluster-priority: same cure as agent/issue-2 f789cef — Robolectric 4.16 refuses SDK 36 on JDK 17
@@ -89,17 +144,22 @@ jobs:
           chmod +x gradlew
           ./gradlew --console=plain testDebugUnitTest
 
-      # Test-floor: the raw test XMLs/reports are the census. Upload
-      # them on EVERY run (green or red) so a failure count never has
-      # to be reconstructed from log archaeology again.
-      - name: Upload test results
+      # Issue #166: the JUnit XML is the floor's eyes. Until now the
+      # per-name test results existed only in this job's condensed
+      # log (exception + one frame per failure); the full stacks in
+      # app/build/test-results die with the runner. Upload them on
+      # EVERY run - pass or fail - through the same artifact channel
+      # the lint report already proved egress-robust (proof job), so
+      # a floor-red head's failures can be dispositioned name-by-name
+      # from the XML instead of reconstructed from a log tail.
+      - name: Upload unit-test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: unit-test-results-${{ github.run_id }}
+          name: unit-test-results-${{ github.sha }}
           path: |
-            app/build/test-results/testDebugUnitTest
-            app/build/reports/tests/testDebugUnitTest
+            app/build/test-results/testDebugUnitTest/**
+            app/build/reports/tests/testDebugUnitTest/**
           retention-days: 7
           if-no-files-found: ignore
 
@@ -135,6 +195,14 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 3
 
+      # Issue #382: the screenshot gallery lives in its OWN job
+      # (below), not in this one. First attempt put it here as a
+      # step after Unit tests: the harness's minutes are then paid
+      # twice (once inside the suite, once filtered) and run
+      # 41029752820's build job hit the 25-minute timeout with the
+      # step cancelled. The separate job runs in parallel with its
+      # own budget — see the `screenshots` job at the end.
+
       # Wave-2 (Feel/Finisher pass), corrected by issue #24: the run
       # page tells the truth in plain words without anyone opening a
       # log. Since finding 1 was fixed, the artifact is built and
@@ -155,7 +223,8 @@ jobs:
             fi
             echo "- Signing: committed debug keystore, SHA-256 ${{ steps.keystore.outputs.fingerprint }} — the key that signed the installed builds, so this APK installs over the Monolith on Sarthak's phone (versionCode permitting)."
             echo "- APK signer gate (apksigner on the built APK): ${{ steps.apksigner.outcome }} - ${{ steps.apksigner.outputs.apk_fingerprint }}"
-            echo "- APK versionCode: ${{ steps.apksigner.outputs.version_code }} (batch-9 shipped 1 - an update must never go lower)"
+            echo "- APK versionCode: ${{ steps.apksigner.outputs.version_code }} (epoch-minutes scheme, issue #25 ruling: computed in the build, never hand-set, never lower than any previous build)"
+            echo "- Screenshots: separate job in this same run — its artifact is screens-${{ github.sha }} when the harness passes (Robolectric renders of THIS tree; states the harness cannot render are named on issue #382, never faked)."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Issue #24 (finding 3): the debug job above proves the phone
@@ -182,8 +251,12 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Issue #85 F3: checkout credentials must not persist into
+          # the git config while build code executes.
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '21'
@@ -248,4 +321,62 @@ jobs:
             echo "- Release assemble (release compile + proguard + signing path): ${{ steps.release.outcome }}"
             echo "- The release APK was signed with a throwaway key made inside this runner and DISCARDED — do not install it. Real release signing is issue #25."
             echo "- Instrumented tests are not run (template-only androidTest; emulator job priced as STANDS-BLOCKED in issue #24)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Issue #382 (Sarthak's ask, Oct 30 05:20 IST): screens with every
+  # build. A dedicated job, parallel to `build`, with its own time
+  # budget: the harness's minutes are paid exactly once, here, and
+  # neither the #166 shared floor (the build job's red suite) nor
+  # this job's verdict can block or poison the other. The upload is
+  # gated on THIS job's harness outcome — a red harness publishes
+  # nothing — and the output dir is a fresh build dir inside a
+  # fresh checkout, so no stale PNG can ride along; if no PNG
+  # lands, the upload errors instead of warning.
+  screenshots:
+    name: Screenshots (screens with every build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Install SDK platform 36.1
+        run: |
+          SDKMANAGER="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
+          yes | "$SDKMANAGER" --licenses > /tmp/sdk-licenses.log 2>&1 || { echo "::warning::sdkmanager license step failed — see log tail"; tail -20 /tmp/sdk-licenses.log; }
+          "$SDKMANAGER" "platforms;android-36.1" "build-tools;36.1.0"
+
+      - name: Screenshots (ScreenshotHarnessTest)
+        id: screens
+        env:
+          SCREENSHOTS_DIR: ${{ github.workspace }}/app/build/outputs/screenshots
+        run: |
+          chmod +x gradlew
+          ./gradlew --console=plain testDebugUnitTest --tests "com.example.ScreenshotHarnessTest"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.screens.outcome == 'success'
+        with:
+          name: screens-${{ github.sha }}
+          path: app/build/outputs/screenshots
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Screenshots summary
+        if: always()
+        run: |
+          {
+            echo "## Screenshots verdict — ${{ github.ref_name }} · ${{ github.sha }}"
+            echo "- Harness (ScreenshotHarnessTest): ${{ steps.screens.outcome }}"
+            if [ "${{ steps.screens.outcome }}" = "success" ]; then
+              echo "- Artifact: screens-${{ github.sha }} — Robolectric renders of THIS tree, one PNG per harness-captured screen (states the harness cannot render are named on issue #382, never faked)."
+            else
+              echo "- ⚠️ No screenshots artifact in this run — the harness did not pass."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

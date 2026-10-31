@@ -1,0 +1,43 @@
+# Issue #66 — Wave-3 Report (tests-2, cluster C9, lead: NACHLASS)
+
+Branch: `agent/issue-66` · Base: origin/main e29acdf · Seat-bundle: all 20 seats held by the issue-66 cell lead (thin seats marked LEAD-COVERED — none dropped).
+
+## Per-finding disposition
+
+1. **[CRITICAL] ScreenshotHarnessTest — FIXED-IN-CODE.** Verified: 917 lines, most `@Test`s assertion-free, hardcoded default `/home/hatch/workspace/clone-inspect/shots` (old line 98), `settle()` swallowed `waitForIdle`, `wheelMidDrag` swallowed failure via `runCatching`, `zzAccentCensus` silently skipped missing PNGs. Fix: `captureTo()` now asserts PNG exists, >1 KB, PNG signature on every capture; default dir is `$MONOLITH_SHOTS_DIR` or `build/outputs/screenshots`; settle failure is logged; wheel drag runs unwrapped (missing wheel = red); census records every missing input as a failure. Class header now honestly names it a screenshot factory whose captures are real tests.
+2. **[HIGH] TetradRenderTest — FIXED-IN-CODE.** Verified: 0 assertions, hardcoded `/home/hatch/.../shots/tetrad` (old line 44). Rewritten: output under `build/outputs/tetrad-render` (or `$MONOLITH_SHOTS_DIR/tetrad`); asserts size 864×864, non-blank (distinct colours >10, non-background samples >500), day≠night (>1,000 differing samples), count 4≠8 and 1≠4 (>100).
+3. **[HIGH] ExampleInstrumentedTest — FIXED-IN-CODE.** Verified: untouched 22-line IDE template, package-name only (old line 20). Replaced with real on-device assertions: LAUNCHER intent resolves for the installed app, `MainActivity` exported, `MonolithShieldService` declared, app label non-blank. Note: androidTest does not run in CI's unit-test job — it is device/emulator verification, stated in the file header.
+4. **[HIGH] TokenBreakRoutineSeamTest — FIXED-IN-CODE.** Verified: singleton DB (`MonolithDatabase.getInstance`, old lines 45/142) and the second test degraded at old line 163 (`if (spendsBefore == 0) Completed else RefusedNoToken`). Production seam note: `MonolithRepository.completeEmergencyBreak` (MonolithRepository.kt:2226) re-fetches the singleton internally, so an in-memory swap would test a seam production never uses. Fix = deterministic reset: `resetWeekLedger()` empties + asserts the week's spend ledger at every test's start; the legacy test now asserts `Completed` + the spend row unconditionally and cleans up. No assertion branches on leftover state.
+5. **[MEDIUM] Seal "rowIdentity" golden — FIXED-IN-CODE.** Real file found: `SealThrowIdentityTest.kt` (audit's "Seal rowIdentityTest.kt:54" is the PDF-garbled name; the test is `goldenHashPinnedFromFirstGreenRun`). Verified: header admitted the golden was "pinned from the first green run's own output" and it compared against `TactileSoundEngine.SEAL_BUFFER_GOLDEN_SHA256`, a constant produced by the code under test. Fix: that production constant is **deleted**; the test now builds `referenceRender()` — an independent re-implementation typed in the test file from the documented spec constants (360 Hz, weights {0.6, 0.28, 0.37, 2.2}, exp(−0.0114)/exp(−0.0313), bolt seed/support/gain, combs 1310/1372 g=0.836, pre-delay 794, wet 0.25119, catch 39 690), importing no production constant and calling no production render code — plus a hand-computed spot check (sample 0 ≡ 0). Production-vs-reference equality is asserted sample-for-sample and by PCM16 SHA-256 of the reference.
+
+## Cluster priority: test-compile census
+
+- `git fetch origin agent/issue-2` diffed: issue-2's fixes to ScreenshotHarnessTest (ParkDrawer social pair), ShortsToggleRenderTest, SoundAndSocialTruthTest, TruthCar3CaptureBodyTest (StatusBarNotification 10-arg SDK-36 form), TruthCar3SweepTest (member `assertExists`/`assertDoesNotExist`, ParkDrawer pairs) plus `studio/tools/check_test_callsites.py` are **applied here verbatim** (they were FIXED-ELSEWHERE on `agent/issue-2` @ f789cef/8a256a4; this branch carries them so its own CI compiles, and the census script PASSes on this tree: 38 production declarations, 0 unchecked positional call-sites, banned imports absent).
+- Same mechanical cures applied here as cluster-priority work: CI JDK 17→21 (identical to agent/issue-2 f789cef — Robolectric 4.16 refuses SDK 36 on JDK 17, which is why tests never executed); hardcoded author paths removed from CascadeDeckRenderTest.kt and DrawerRenderTest.kt (same pattern as findings 1–2, other slices' render tests).
+
+## Seat verdicts (20/20)
+
+- **Crazy-ideas (LEAD-COVERED):** The census-as-failure and reference-render moves turn two fake proofs into real ones; wilder idea filed for later — render tests should diff against committed miniature goldens, not full frames. — *issue-66 cell*
+- **Maximum-implementation-potential (LEAD-COVERED):** Every finding got the strongest available fix, not the smallest: golden deleted from production, not just renamed. — *issue-66 cell*
+- **Brutal critic (LEAD-COVERED):** The old suite lied in five distinct ways; the worst was a hash that could never be wrong about the thing that mattered. Anything still asserting nothing should be hunted next round. — *issue-66 cell*
+- **Improver (LEAD-COVERED):** Deterministic reset beats the in-memory swap here precisely because production hardcodes the singleton — improving the test without faking the seam. — *issue-66 cell*
+- **Designer (LEAD-COVERED):** Tetrad day/night and count distinctions are now pixel-proven, so the wheel's visual states have a regression net. — *issue-66 cell*
+- **Consumer (LEAD-COVERED):** As the person who'd trust a green run: before, green meant "nothing crashed while writing PNGs to one laptop"; now green means captures exist, are PNGs, and the seal matches an independent render. — *issue-66 cell*
+- **Student (LEAD-COVERED):** Each fixed file teaches its own lesson in its header — tautology, vacuous skip, degraded assertion — so the next reader learns why, not just what. — *issue-66 cell*
+- **User (LEAD-COVERED):** No user-facing behaviour changed except the dead golden constant's removal; risk to the app itself is near zero, value is all in proof quality. — *issue-66 cell*
+- **User-experience (LEAD-COVERED):** The instrumented test now checks what a user touches first — the launcher entry — instead of a package string. — *issue-66 cell*
+- **Purpose-questioning (LEAD-COVERED):** Asked of every screenshot test "what would make you fail?" — each now has an answer; the ones that only produce pictures admit it in writing. — *issue-66 cell*
+- **Thoughtful (LEAD-COVERED):** Kept the harness instead of deleting it: the frames have real judging value, they just may not wear the word "proof" unearned. — *issue-66 cell*
+- **Deep-thinker (LEAD-COVERED):** The Seal fix is the deep one: independence means re-typing spec constants in the test, and the file now warns against "deduplicating" them back into tautology. — *issue-66 cell*
+- **Enthusiastic designer (LEAD-COVERED):** The wheel renders are asserted to actually differ across counts and modes — the tetrad's whole visual point, finally checked. — *issue-66 cell*
+- **Wow-level designer (LEAD-COVERED):** Census failing on missing inputs protects the accent law's wow factor from silently unverified screens. — *issue-66 cell*
+- **Designer-29-years (LEAD-COVERED):** Twenty-nine years says: a test that writes to `/home/hatch/...` is a postcard from one machine, not engineering. Fixed everywhere the pattern appeared in render tests. — *issue-66 cell*
+- **Intentionality designer (LEAD-COVERED):** Every remaining output path is a deliberate choice (env override or build dir), documented at the declaration. — *issue-66 cell*
+- **Synchronous collaboration (LEAD-COVERED):** Issue-2's call-site fixes were adopted verbatim with provenance named, not re-invented — the fleet's census now agrees on one tree. — *issue-66 cell*
+- **Implementation-quality (LEAD-COVERED):** Fixes are small, local, and comment-carrying; no production logic changed except deleting the self-pinned constant. — *issue-66 cell*
+- **Technical execution specialist (LEAD-COVERED):** JDK 21 is the unglamorous fix that makes any of this execute in CI at all; census script PASS is the static proof, CI is the court. — *issue-66 cell*
+- **Interaction-detail specialist (LEAD-COVERED):** `wheelMidDrag` no longer swallows its own failure — the one interaction render in the harness can now actually go red. — *issue-66 cell*
+
+## Out-of-scope / pre-existing (named, not hidden)
+
+- CI verdict and any pre-existing test failures outside tests-2 scope are reported in the closing issue comment with run URL; nothing outside this slice was rewritten beyond the two mechanical path cures and the JDK line named above.

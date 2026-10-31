@@ -1,5 +1,11 @@
 # LIE REGISTER 3 — THE MERGED TRUNK
 
+> **PROVENANCE WARNING (Issue #71, re-measured e29acdf):** this
+> register's ground was the external tree
+> ~/workspace/clone-inspect/Focus-app/ as Ren's hand merge left it,
+> not this repo. Charges are historical claims about that tree;
+> verify each against current main before citing.
+
 *Filed by Hale, Critics coordinator, Oct 29 2026, under Pipeline
 Law 9 (WORK-QUEUE item 2). The ground was the merged trunk only —
 ~/workspace/clone-inspect/Focus-app/ as Ren's hand merge left it:
