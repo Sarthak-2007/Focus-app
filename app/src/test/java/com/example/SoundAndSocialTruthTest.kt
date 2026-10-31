@@ -5,9 +5,10 @@ import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.MonolithDatabase
@@ -384,10 +385,14 @@ class SoundAndSocialTruthTest {
         try {
             val repository = MonolithRepository(context, db.monolithDao())
             val vm = MonolithViewModel(context, repository, TactileSoundEngine(context))
-            awaitTrue("the VM publishes the persisted fact before render") {
-                vm.browserUrlBlockerEnabled.value ==
-                    runBlocking { repository.isBrowserBlockerEnabled() }
-            }
+            // The seed-settle gate (DIAG-D3 §c2(iii)) replaces the
+            // old one-shot equality poll: born-equal (published
+            // true, stored default true) satisfied that poll
+            // before the VM's init seed assignment had even run,
+            // and the assignment — which lands only after the
+            // whole seed pass — could then clobber the published
+            // print mid-chain and eat a toggle (see the helper).
+            awaitPublishedFactSettled(vm, repository, db.monolithDao())
             setParkContent(vm)
 
             composeRule.onNodeWithTag("park_social_sled").assertExists()
@@ -439,10 +444,39 @@ class SoundAndSocialTruthTest {
                     ?.interceptor == InterceptorState.RUNNING
             }
 
+            // Same settle gate as the rendered case: the tap
+            // below reads the published print through the toggle,
+            // so the init seed assignment must have landed and
+            // the print must rest on the stored fact before it.
+            awaitPublishedFactSettled(vm, repository, db.monolithDao())
+
             setParkContent(vm)
             settlePark()
             composeRule.onNodeWithTag("park_social_sled").assertExists()
-            composeRule.onNodeWithText("OFF").assertDoesNotExist()
+            // The premise, re-pinned to current law (#166, K8's
+            // seventh sitting). The original premise — no OFF word
+            // anywhere on the composed board before the toggle —
+            // was written before issue #109 F1 and has been
+            // unmeetable since: the NOTIFICATIONS interceptor is
+            // OFF by law whenever no session is capturing (printing
+            // RUNNING there was the false print caught on a real
+            // phone), so the board lawfully carries that row's OFF
+            // from the first frame, session or none. Census #4
+            // caught the old premise failing on exactly that row's
+            // (NOTIFICATIONS, OFF) texts; a waited form of the same
+            // premise (this PR's first run) proved the OFF never
+            // leaves in 30 s. What this case actually guards is
+            // attribution — the OFF that follows the toggle must be
+            // the SOCIAL row's — so premise and verdict are both
+            // read on the social row's own (name, word) pair,
+            // waited on this class's driven loop like every other
+            // condition here. The setParkContent comment records
+            // the same discipline for the SHORTS row (its setting
+            // staged ON so its word cannot print OFF either).
+            awaitTrue("the composed SOCIAL SITES row does not print OFF before the toggle") {
+                composeRule.onAllNodes(boardRowPairs("SOCIAL SITES", "OFF"))
+                    .fetchSemanticsNodes().isEmpty()
+            }
 
             tapParkSled()
 
@@ -455,7 +489,15 @@ class SoundAndSocialTruthTest {
                 !runBlocking { repository.isBrowserBlockerEnabled() }
             }
             settlePark()
-            composeRule.onNodeWithText("OFF").assertExists()
+            // The verdict, on the same pair: the SOCIAL row itself
+            // must print OFF. (The old tail — some OFF exists
+            // anywhere — could be satisfied by the NOTIFICATIONS
+            // row's lawful OFF even if the social row never moved;
+            // this form cannot.)
+            awaitTrue("the composed SOCIAL SITES row prints OFF after the toggle") {
+                composeRule.onAllNodes(boardRowPairs("SOCIAL SITES", "OFF"))
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
         } finally {
             closeDb(db)
         }
@@ -519,6 +561,77 @@ class SoundAndSocialTruthTest {
         // sheet, passing/failing for timing reasons unrelated to
         // the behaviour under test.
         throw AssertionError("Park sheet did not settle (compose never idled) within 5s")
+    }
+
+    /** A board row pairing: a merged node whose texts carry both
+     *  the row's name and the given word (census #4's own failure
+     *  text shows rows merge exactly so — '[NOTIFICATIONS, OFF…').
+     *  Attribution-grade: unlike a bare OFF-text search, it cannot
+     *  be satisfied by another row's word. */
+    private fun boardRowPairs(name: String, word: String): SemanticsMatcher =
+        SemanticsMatcher("board row $name prints $word") { node ->
+            if (SemanticsProperties.Text !in node.config) {
+                false
+            } else {
+                val texts = node.config[SemanticsProperties.Text].map { it.text }
+                name in texts && word in texts
+            }
+        }
+
+    /** DIAG-D3 §c2(iii) — the seed-settle gate, landed for the
+     *  two rendered social cases. The VM's init launch assigns
+     *  the published browser-blocker print only AFTER the whole
+     *  seed pass (ensureSeededAndSyncPackages) returns, and the
+     *  flow is born `true` — the stored fact's own fresh-install
+     *  value — so a one-shot "published == stored" poll passes
+     *  before the assignment even exists. When the assignment
+     *  then lands mid-chain (after a first tap flipped the print
+     *  and launched its write), it re-reads the store — possibly
+     *  before that write lands — and clobbers the print back;
+     *  the next tap, which negates the PRINT, writes the same
+     *  value again and the chain's await times out (census #4:
+     *  "and a second touch writes it back ON" — the class's
+     *  rotating failure, run to run). The gate waits for proof
+     *  the assignment has landed: the seed pass's own products
+     *  are visible (profiles are seeded inside the same pass)
+     *  AND the published/stored pair reads equal across two
+     *  consecutive driven polls. After it, the only writer of
+     *  the print in these cases is the toggle itself.
+     *
+     *  The landed-proof reads the profiles TABLE, never the VM's
+     *  profiles flow: that flow is collection-driven and stays
+     *  dark until a composition collects it, so a flow-based gate
+     *  starves pre-composition — PR #697's first run died in this
+     *  gate at 30 s in both cases on exactly that. The seed pass
+     *  writes the table directly; the table is the product. */
+    private fun awaitPublishedFactSettled(
+        vm: MonolithViewModel,
+        repository: MonolithRepository,
+        dao: com.example.data.MonolithDao
+    ) {
+        awaitTrue("the VM's init seed pass has landed (profiles seeded)") {
+            runBlocking { dao.getAllProfilesSnapshot() }.isNotEmpty()
+        }
+        val deadline = System.currentTimeMillis() + 30_000L
+        var lastPair: Pair<Boolean, Boolean>? = null
+        while (System.currentTimeMillis() < deadline) {
+            val pair = vm.browserUrlBlockerEnabled.value to
+                runBlocking { repository.isBrowserBlockerEnabled() }
+            if (pair.first == pair.second && pair == lastPair) return
+            lastPair = pair
+            ShadowLooper.idleMainLooper()
+            if (parkComposed) {
+                try {
+                    composeRule.waitForIdle()
+                } catch (t: Throwable) {
+                    // See awaitTrue.
+                }
+            }
+            Thread.sleep(25L)
+        }
+        throw AssertionError(
+            "Timed out waiting for: the published fact to settle on the stored fact"
+        )
     }
 
     /** Poll-with-looper-idle until [condition] holds (the
