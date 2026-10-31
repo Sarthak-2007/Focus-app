@@ -12,7 +12,16 @@ import org.robolectric.annotation.Config
  * Issue #94 (audit R2, oem-battery-reality F1): the OEM autostart gate
  * mapping and the honest battery rule — a granted AOSP battery read is
  * proved only where no unreadable OEM toggle stands behind it.
+ *
+ * Robolectric runner (BUILDER-341, PR #746 gate cure): the #341 F28
+ * cases construct real android.content.Intent objects
+ * (OemPolicy.miuiBatterySaverIntents), which the plain JVM mock
+ * cannot do ("Method setComponent in android.content.Intent not
+ * mocked", run 41205786544). The runner changes the harness only —
+ * every assertion in this file stands exactly as written.
  */
+@RunWith(org.robolectric.RobolectricTestRunner::class)
+@Config(sdk = [36])
 class OemPolicyTest {
 
     @Test

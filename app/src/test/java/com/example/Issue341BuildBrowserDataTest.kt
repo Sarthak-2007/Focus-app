@@ -20,7 +20,9 @@ import org.junit.Test
 /**
  * Audit R6 #341 BUILD — F10 / F16 / F27 / F38 / F52: the browser
  * coverage table, the per-browser extraction engines, the
- * incognito door's inputs, and the Web Gate exclusion list.
+ * incognito door's inputs, and the Web Gate exclusion list
+ * (com.example.data.WebGate — the mapper's covering reference
+ * for that changed production file).
  *
  * Scope note (named, not hidden): verification wave 3
  * (6534024259) corrected the counts against current main — the

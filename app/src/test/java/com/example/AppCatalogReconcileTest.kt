@@ -573,18 +573,26 @@ class AppCatalogReconcileTest {
 
     // PIN scope: PLUMBING.
     // ---- Audit R6 #341 F13 (verification wave 1: ALREADY-CURED —
-    // these cases pin the landed mechanism; the desk draft's case
-    // title misstated it, corrected here: the ROW does not survive
-    // a genuine uninstall — the RULING does, tombstoned, and is
-    // restored on rediscovery). ----
+    // these cases pin the landed mechanism, re-based on the CURRENT
+    // law by BUILDER-341 at the PR #746 rebase: the #142 F2 UNION
+    // LAW (in main before this branch forked) already made ruled
+    // rows catalogue membership by right — a ruled row is never
+    // counted absent, never earns a strike, never prunes, however
+    // the discovery queries answer; the ruling outlives absence IN
+    // THE ROW ITSELF, and the tombstone/restore path below covers
+    // its return after a genuine removal. F13's underlying truth —
+    // a launcher-hidden app must not lose HIS ruling — is exactly
+    // what the union law guarantees, so the pin asserts it in the
+    // union law's own terms.) ----
 
     @Test
     fun reconcile_launcherHiddenApp_rulingSurvivesFirstAndSecondAbsence() {
         val ruled = row("com.hidden.ruled", "Hidden Ruled", AppBlockTier.LOCKED)
         val other = InstalledPackage("com.other", "Other App", true)
         // First absence (a launcher hiding the app reads exactly
-        // like an uninstall to one sync): the row is NOT pruned —
-        // it is only noted pending.
+        // like an uninstall to one sync): under the union law the
+        // ruled row is not even counted absent — no prune, and no
+        // pending note either; the ruling stands in the row.
         val first = AppCatalogReconcile.reconcile(
             existing = listOf(ruled),
             installed = listOf(other),
@@ -593,12 +601,9 @@ class AppCatalogReconcileTest {
             previouslyAbsent = emptySet()
         )
         assertTrue(first.toPrune.isEmpty())
-        assertEquals(setOf("com.hidden.ruled"), first.pendingPrune.toSet())
-        // Second consecutive absence: the ROW is pruned (it is
-        // genuinely gone as far as two syncs can tell) — what
-        // survives is the ruling, via the tombstone the caller
-        // persists (rememberPrunedRules) — pinned by the restore
-        // case below.
+        assertTrue(first.pendingPrune.isEmpty())
+        // Second consecutive absence changes nothing: membership
+        // by right does not expire on a strike count.
         val second = AppCatalogReconcile.reconcile(
             existing = listOf(ruled),
             installed = listOf(other),
@@ -606,21 +611,37 @@ class AppCatalogReconcileTest {
             categorize = categorize,
             previouslyAbsent = setOf("com.hidden.ruled")
         )
-        assertEquals(setOf("com.hidden.ruled"), second.toPrune.toSet())
+        assertTrue(second.toPrune.isEmpty())
+        assertTrue(second.pendingPrune.isEmpty())
     }
 
     @Test
-    fun reconcile_genuinelyUninstalledApp_rulePrunedAndRemembered() {
-        val ruled = row("com.gone.app", "Gone App", AppBlockTier.PEEK_2M)
-        val plan = AppCatalogReconcile.reconcile(
-            existing = listOf(ruled),
+    fun reconcile_genuinelyUninstalledApp_unruledRowPrunedOnSecondAbsence() {
+        // The two-strike prune governs rows carrying NO ruling
+        // (OPEN): first absence noted pending, second absence
+        // prunes. (The ruled-row half is the union-law case above;
+        // rememberPrunedRules tombstoning is exercised by the
+        // caller's restore path, pinned by the rediscovery case
+        // below.)
+        val unruled = row("com.gone.app", "Gone App", AppBlockTier.OPEN)
+        val first = AppCatalogReconcile.reconcile(
+            existing = listOf(unruled),
+            installed = listOf(InstalledPackage("com.other", "Other App", true)),
+            usageMinutes = emptyMap(),
+            categorize = categorize,
+            previouslyAbsent = emptySet()
+        )
+        assertTrue(first.toPrune.isEmpty())
+        assertEquals(setOf("com.gone.app"), first.pendingPrune.toSet())
+        val second = AppCatalogReconcile.reconcile(
+            existing = listOf(unruled),
             installed = listOf(InstalledPackage("com.other", "Other App", true)),
             usageMinutes = emptyMap(),
             categorize = categorize,
             previouslyAbsent = setOf("com.gone.app")
         )
-        assertEquals(setOf("com.gone.app"), plan.toPrune.toSet())
-        assertTrue(plan.pendingPrune.isEmpty())
+        assertEquals(setOf("com.gone.app"), second.toPrune.toSet())
+        assertTrue(second.pendingPrune.isEmpty())
     }
 
     @Test

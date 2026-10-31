@@ -60,7 +60,7 @@ class Issue341BuildAccessibilityTest {
         setValve()
         // The live region node exists and is POLITE (assertive
         // would shout over the user's own screen reader).
-        composeRule.onNodeWithTag("emergency_valve_live_region")
+        composeRule.onNodeWithTag("emergency_valve_live_region", useUnmergedTree = true)
             .assertExists()
             .assert(
                 SemanticsMatcher.expectValue(
@@ -75,7 +75,7 @@ class Issue341BuildAccessibilityTest {
         // Exactly ONE live-region node serves the valve — the
         // bucketed text changes at 15-second bank steps, so there
         // is no per-tick announcement surface to spam from.
-        composeRule.onAllNodesWithTag("emergency_valve_live_region")
+        composeRule.onAllNodesWithTag("emergency_valve_live_region", useUnmergedTree = true)
             .assertCountEquals(1)
     }
 }
