@@ -10,6 +10,11 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
 import com.example.R
+import com.example.data.MonolithDatabase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Issue #339 (Second-pass F3): the break-end alarm's delivery.
@@ -17,8 +22,21 @@ import com.example.R
  * the [BreakEndScheduler] ledger is checked before posting and
  * stamped after, so a re-delivered alarm (process death, reboot
  * re-arm) can never double-fire the return call.
+ *
+ * Issue #155 (WING-F lifecycle edges): the delivery is also gated
+ * on the session the break belonged to still being the live
+ * session ([BreakEndScheduler.sessionGateAllows]). A session that
+ * ended mid-break (stop / emergency valve / finalise / supersede)
+ * never cancelled this alarm, and the ungated receiver announced
+ * a return to a session that no longer existed. The gate read is
+ * async (goAsync, the boot/package receivers' posture); a FAILED
+ * read fails open — an unprovable gate must not swallow the
+ * return call #339 exists to guarantee — while a read that proves
+ * the session gone or replaced suppresses the card.
  */
 class BreakEndReceiver : BroadcastReceiver() {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onReceive(context: Context, intent: Intent?) {
         val breakEndsWallMillis =
@@ -30,8 +48,33 @@ class BreakEndReceiver : BroadcastReceiver() {
         ) {
             return
         }
-        BreakEndScheduler.markNotified(context, breakEndsWallMillis)
+        val scheduledSessionId =
+            intent?.getIntExtra(BreakEndScheduler.EXTRA_SESSION_ID, 0) ?: 0
+        val appContext = context.applicationContext
+        val pendingResult = goAsync()
+        scope.launch {
+            try {
+                val gateAllows = try {
+                    val active = MonolithDatabase.getInstance(appContext)
+                        .monolithDao().getActiveSessionSnapshot()
+                        ?.takeIf { it.isActive }
+                    BreakEndScheduler.sessionGateAllows(scheduledSessionId, active?.id)
+                } catch (_: Exception) {
+                    // Fail open on an unreadable store (see KDoc):
+                    // suppression requires proof the session is gone.
+                    true
+                }
+                if (gateAllows) {
+                    BreakEndScheduler.markNotified(appContext, breakEndsWallMillis)
+                    postBreakOver(appContext)
+                }
+            } finally {
+                pendingResult.finish()
+            }
+        }
+    }
 
+    private fun postBreakOver(context: Context) {
         val manager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
                 ?: return
@@ -61,6 +104,11 @@ class BreakEndReceiver : BroadcastReceiver() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setAutoCancel(true)
+            // Issue #155 (WING-F lifecycle edges): this is news
+            // about one instant, not a standing status — like the
+            // F3 completion card it expires instead of posing as
+            // current forever in the shade.
+            .setTimeoutAfter(BREAK_OVER_TIMEOUT_MS)
             .setContentIntent(contentIntent)
             .build()
         manager.notify(NOTIFICATION_ID, notification)
@@ -69,5 +117,9 @@ class BreakEndReceiver : BroadcastReceiver() {
     companion object {
         const val CHANNEL_ID = "BreakEnded"
         const val NOTIFICATION_ID = 820000
+
+        /** Issue #155: the break-over card self-expires on the
+         *  same 45-minute horizon as the F3 completion card. */
+        const val BREAK_OVER_TIMEOUT_MS = 45 * 60 * 1000L
     }
 }
