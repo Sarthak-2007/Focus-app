@@ -278,11 +278,30 @@ class ExampleRobolectricTest {
         // solely on the stored counter. The ForgeLot idiom.
         ShadowSystemClock.advanceBy(Duration.ofSeconds(330))
         val fiveMinsAgoMono = (SystemClock.elapsedRealtime() - 300_000L).coerceAtLeast(1L)
+        val fiveMinsAgoWall = System.currentTimeMillis() - 300_000L
         db.monolithDao().updateSession(
             session.copy(
-                startWallTimeMillis = System.currentTimeMillis() - 300_000L,
+                startWallTimeMillis = fiveMinsAgoWall,
                 startElapsedRealtimeMillis = fiveMinsAgoMono,
-                elapsedSeconds = 300
+                elapsedSeconds = 300,
+                // Seat (b) cure, completed in the fourteenth sitting:
+                // startSession signed this row over its birth
+                // anchors; the fabrication above rewrites them, so
+                // the row is re-signed over the anchors it now
+                // claims — the same act the anti-tamper test above
+                // performs on its own fabricated entity. Without
+                // the re-sign the signature leg convicts the row
+                // however honest the clocks are (this PR's first
+                // gate attempt failed exactly there); blanking the
+                // signature instead would route around the HMAC
+                // leg entirely — weaker, rejected.
+                hmacSignature = CryptoIntegrityManager.signSessionState(
+                    startWallTimeMillis = fiveMinsAgoWall,
+                    startElapsedRealtimeMillis = fiveMinsAgoMono,
+                    bootCount = session.bootCount,
+                    targetDurationSeconds = session.targetDurationSeconds,
+                    isStopwatch = session.isStopwatchMode
+                )
             )
         )
 
