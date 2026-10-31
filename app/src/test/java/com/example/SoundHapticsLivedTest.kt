@@ -338,7 +338,7 @@ class SoundHapticsLivedTest {
         composeRule.setContent {
             val socialOn by vm.browserUrlBlockerEnabled.collectAsState()
             val snapshot by WatchStore.snapshots.collectAsState()
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 ParkDrawer(
                     visible = true,
                     snapshot = snapshot,
