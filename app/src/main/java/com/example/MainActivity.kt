@@ -2171,89 +2171,137 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onCloseLauncher = { launcherOpen = false }
             )
 
-            AirlockInterceptOverlay(
-                state = airlockState,
-                onSelectReason = viewModel::selectDistractionReason,
-                onTransmuteParticleTap = viewModel::incrementAirlockParticlePulse,
-                // Issue #114, finding 2: RETURN TO FOCUS now
-                // returns. The ViewModel closes the sheet and books
-                // the intercept; the host then sends Monolith's
-                // whole task to the back, so the user lands on
-                // whatever they were doing before the intercept
-                // yanked them in — not stranded on the Deck having
-                // to navigate back by hand for choosing the honest
-                // door. Blocking itself is untouched: the session
-                // stays sealed and the shield keeps enforcing.
-                onReturnToFocus = {
-                    viewModel.transmuteImpulseAndReturn()
-                    (context as? android.app.Activity)?.moveTaskToBack(true)
-                },
-                onTake2MinutePeek = viewModel::start2MinutePeek,
-                peekMinutes = guardSettings?.peekMinutes ?: 2,
-                // FIX-8 / P-2: the honest exit routes to the
-                // door-originated Disarm entry — the face stands
-                // in front of the still-standing door.
-                onEndSessionInstead = viewModel::requestDisarmChallengeFromDoor,
-                // FIX-7: the overlay reports the arm instant; the
-                // VM sounds the arm beat under its nonce guard.
-                onOfferArmed = viewModel::onAirlockOfferArmed,
-                allowedAppsCount = allApps.count {
-                    it.resolvedTier == com.example.data.AppBlockTier.OPEN &&
-                        it.category != com.example.data.AppCategory.BROWSERS.name &&
-                        it.packageName != "com.android.vending"
-                },
-                peekAppsCount = allApps.count {
-                    it.resolvedTier == com.example.data.AppBlockTier.PEEK_2M
-                },
+            AirlockTailOverlays(
+                airlockState = airlockState,
+                viewModel = viewModel,
+                context = context,
+                guardSettings = guardSettings,
+                allApps = allApps,
+                floatingPeekPill = floatingPeekPill,
+                disarmChallenge = disarmChallenge,
+                weeklyEmergencyTokensRemaining = weeklyEmergencyTokensRemaining,
+                breakDimAlpha = breakDimAlpha,
                 onOpenAllowedApps = {
-                    viewModel.leaveAirlockViaLauncherDoors()
                     launcherPage = LauncherPage.ALLOWED
                     launcherOpen = true
                 },
                 onOpenPeekApps = {
-                    viewModel.leaveAirlockViaLauncherDoors()
                     launcherPage = LauncherPage.PEEK
                     launcherOpen = true
-                },
-                onRequestEmergencyBreak = viewModel::requestDisarmFromAirlock,
-                // Issue #125 (F5 remainder): the door's grace abort
-                // runs the same grace cancel as the Deck's chip.
-                onGraceAbort = viewModel::confirmGraceAbortFromAirlock,
-                // Issue #318 F4: the wall breathes for the stored,
-                // configured length — not a composable-local 5.
-                breathSeconds = remember {
-                    com.example.data.AirlockBreathStore(context).breathSeconds()
                 }
             )
 
-            // Issue #99 F2: the peek countdown pill — the one
-            // rendering of floatingPeekPill (canonical; #101-F3
-            // cross-ref). Shows while a peek lease runs in Monolith.
-            PeekCountdownPill(
-                state = floatingPeekPill,
-                onEndEarly = viewModel::end2MinutePeekEarly
-            )
-
-            DisarmChallengeOverlay(
-                state = disarmChallenge,
-                tokensRemaining = weeklyEmergencyTokensRemaining,
-                soundEngine = viewModel.soundEngine,
-                onDismissKeepFocusing = viewModel::dismissDisarmChallenge,
-                onCompleteDisarm = { viewModel.completeEmergencyBreakFromValve() },
-                onHoldBanked = viewModel::recordValveHoldBanked,
-                onCompleteCleanSession = viewModel::completeStopwatchCompletionFromDisarmFace
-            )
-
-            // Issue #143 F1/F6: the break dim stands over the
-            // whole room — topmost, and strictly visual (no
-            // pointer handlers): the descent into the break and
-            // the fade out at its end. Everything beneath it —
-            // Deck, desk clock, the Yield sheet — stays tappable;
-            // only the light is taken away.
-            BreakDimScrim(alpha = breakDimAlpha)
-
         }
     }
+}
+
+/**
+ * Issue #90 (complexity F3, overlay slice 6): the airlock
+ * tail of MonolithRootApp's overlay layer — the intercept
+ * overlay, the peek countdown pill, the disarm challenge,
+ * and the break-dim scrim — extracted as one composable, in
+ * the tail's standing composition order (its own comments
+ * travel with it). Behaviour-identical: every value the tail
+ * consumes arrives as a parameter; the view model's method
+ * references ride the viewModel parameter; the breath
+ * length's remember travels verbatim inside; and the two
+ * launcher-door write pairs (page + open, in each door's
+ * standing order after the view-model exit call) ride the
+ * onOpenAllowedApps / onOpenPeekApps callbacks. With this
+ * slice the overlay-host extraction is complete.
+ */
+@Composable
+private fun AirlockTailOverlays(
+    airlockState: com.example.ui.AirlockInterceptState,
+    viewModel: MonolithViewModel,
+    context: android.content.Context,
+    guardSettings: com.example.data.GuardSettingsEntity?,
+    allApps: List<com.example.data.BlockedAppEntity>,
+    floatingPeekPill: com.example.ui.FloatingPeekPillState,
+    disarmChallenge: com.example.ui.DisarmChallengeState,
+    weeklyEmergencyTokensRemaining: Int,
+    breakDimAlpha: Float,
+    onOpenAllowedApps: () -> Unit,
+    onOpenPeekApps: () -> Unit
+) {
+    AirlockInterceptOverlay(
+        state = airlockState,
+        onSelectReason = viewModel::selectDistractionReason,
+        onTransmuteParticleTap = viewModel::incrementAirlockParticlePulse,
+        // Issue #114, finding 2: RETURN TO FOCUS now
+        // returns. The ViewModel closes the sheet and books
+        // the intercept; the host then sends Monolith's
+        // whole task to the back, so the user lands on
+        // whatever they were doing before the intercept
+        // yanked them in — not stranded on the Deck having
+        // to navigate back by hand for choosing the honest
+        // door. Blocking itself is untouched: the session
+        // stays sealed and the shield keeps enforcing.
+        onReturnToFocus = {
+            viewModel.transmuteImpulseAndReturn()
+            (context as? android.app.Activity)?.moveTaskToBack(true)
+        },
+        onTake2MinutePeek = viewModel::start2MinutePeek,
+        peekMinutes = guardSettings?.peekMinutes ?: 2,
+        // FIX-8 / P-2: the honest exit routes to the
+        // door-originated Disarm entry — the face stands
+        // in front of the still-standing door.
+        onEndSessionInstead = viewModel::requestDisarmChallengeFromDoor,
+        // FIX-7: the overlay reports the arm instant; the
+        // VM sounds the arm beat under its nonce guard.
+        onOfferArmed = viewModel::onAirlockOfferArmed,
+        allowedAppsCount = allApps.count {
+            it.resolvedTier == com.example.data.AppBlockTier.OPEN &&
+                it.category != com.example.data.AppCategory.BROWSERS.name &&
+                it.packageName != "com.android.vending"
+        },
+        peekAppsCount = allApps.count {
+            it.resolvedTier == com.example.data.AppBlockTier.PEEK_2M
+        },
+        onOpenAllowedApps = {
+            viewModel.leaveAirlockViaLauncherDoors()
+            onOpenAllowedApps()
+        },
+        onOpenPeekApps = {
+            viewModel.leaveAirlockViaLauncherDoors()
+            onOpenPeekApps()
+        },
+        onRequestEmergencyBreak = viewModel::requestDisarmFromAirlock,
+        // Issue #125 (F5 remainder): the door's grace abort
+        // runs the same grace cancel as the Deck's chip.
+        onGraceAbort = viewModel::confirmGraceAbortFromAirlock,
+        // Issue #318 F4: the wall breathes for the stored,
+        // configured length — not a composable-local 5.
+        breathSeconds = remember {
+            com.example.data.AirlockBreathStore(context).breathSeconds()
+        }
+    )
+
+    // Issue #99 F2: the peek countdown pill — the one
+    // rendering of floatingPeekPill (canonical; #101-F3
+    // cross-ref). Shows while a peek lease runs in Monolith.
+    PeekCountdownPill(
+        state = floatingPeekPill,
+        onEndEarly = viewModel::end2MinutePeekEarly
+    )
+
+    DisarmChallengeOverlay(
+        state = disarmChallenge,
+        tokensRemaining = weeklyEmergencyTokensRemaining,
+        soundEngine = viewModel.soundEngine,
+        onDismissKeepFocusing = viewModel::dismissDisarmChallenge,
+        onCompleteDisarm = { viewModel.completeEmergencyBreakFromValve() },
+        onHoldBanked = viewModel::recordValveHoldBanked,
+        onCompleteCleanSession = viewModel::completeStopwatchCompletionFromDisarmFace
+    )
+
+    // Issue #143 F1/F6: the break dim stands over the
+    // whole room — topmost, and strictly visual (no
+    // pointer handlers): the descent into the break and
+    // the fade out at its end. Everything beneath it —
+    // Deck, desk clock, the Yield sheet — stays tappable;
+    // only the light is taken away.
+    BreakDimScrim(alpha = breakDimAlpha)
 }
 
 /**
