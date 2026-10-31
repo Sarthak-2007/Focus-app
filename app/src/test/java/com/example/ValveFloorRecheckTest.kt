@@ -80,13 +80,21 @@ class ValveFloorRecheckTest {
         )
         assertEquals(
             "precondition: production week ledger empty after reset",
-            0, db.monolithDao().getSpendsForWeek(anchor).size
+            // FX-K5-2 (merge with main): getSpendsForWeek now takes
+            // the week's next anchor as its window end — the pairing
+            // production itself uses (MonolithRepository).
+            0, db.monolithDao().getSpendsForWeek(
+                anchor, MonolithWeek.nextWeekAnchorMillis(anchor)
+            ).size
         )
         assertEquals(
             "precondition: wall week ledger empty after reset",
             0,
             db.monolithDao()
-                .getSpendsForWeek(MonolithWeek.weekAnchorMillis(System.currentTimeMillis()))
+                .getSpendsForWeek(
+                    MonolithWeek.weekAnchorMillis(System.currentTimeMillis()),
+                    MonolithWeek.nextWeekAnchorMillis(System.currentTimeMillis())
+                )
                 .size
         )
         assertEquals(
