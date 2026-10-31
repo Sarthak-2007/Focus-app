@@ -147,7 +147,12 @@ class SessionSealTransitionImpl(
     /** The seal marker (F-K1): committed synchronously BEFORE
      *  the Throw sounds, so a process dying mid-seal leaves
      *  proof on disk that the seal landed — recovery then adopts
-     *  instead of re-sounding a Throw for a seal already heard.
+     *  instead of re-sounding a Throw for a seal already sealed.
+     *  (Issue #112, finding 1: the marker testifies the seal
+     *  LANDED and the Throw FIRED — its haptic always fires, so
+     *  the event is always felt; only its timbre rides on the
+     *  phone's volume/DND state, which [AudibilityProbe] now
+     *  reads and PARK prints. The marker never claimed "heard".)
      *  Issue #48: the in-memory add is synchronized (isSealed and
      *  recover already read/add under the same lock; this write
      *  raced them), and the marker records EVERY sealed session
