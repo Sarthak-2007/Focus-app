@@ -13,6 +13,8 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 
 /**
+ * PIN scope: SOURCE.
+ *
  * TOKEN-SPEC §8 test 1 — the week anchor. Pure java.time, no Android:
  * the anchor is the Monday 03:30 local instant of the containing
  * FILING week (issue #523, finding C-6 — the week turns on his 03:30

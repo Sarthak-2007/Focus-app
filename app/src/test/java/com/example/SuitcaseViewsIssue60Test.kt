@@ -19,6 +19,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
+ * PIN scope: RENDER.
+ *
  * Issue-60 (Audit R1 · blockit-suitcase-views) — one test per finding.
  */
 @RunWith(RobolectricTestRunner::class)

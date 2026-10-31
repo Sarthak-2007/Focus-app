@@ -9,6 +9,8 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 
 /**
+ * PIN scope: SOURCE.
+ *
  * Issue #523, finding 6-2 — the token week guard. Pure state
  * machine: a week that SKIPS past the last corroborated instant
  * while a spend stands against that instant's week is refused
