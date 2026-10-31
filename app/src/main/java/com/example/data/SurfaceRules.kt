@@ -192,3 +192,144 @@ class SurfaceRuleStore(context: Context) {
         private const val KEY_LEARNED_URL_BARS = "learned_url_bar_rules"
     }
 }
+
+/**
+ * Audit R6 #341 — the BROWSER COVERAGE TABLE (F10 / F16 / F27 /
+ * F38). Browser coverage used to be a hardcoded package set plus
+ * one global URL-bar id list tried against every browser. It is
+ * now a shipped DATA TABLE in the SurfaceRules tradition (data,
+ * not code — the #335 settlement): each row names a browser, the
+ * extraction ENGINE its address bar answers to, the engine's
+ * extra URL-bar id suffixes, and the private-mode BADGES its
+ * windows print. Adding a browser is adding a row.
+ *
+ * Engines (F16 — the per-browser extraction split):
+ * - CHROMIUM: the shared Chromium bar ids (the defaults).
+ * - FIREFOX: the mozac toolbar id (in the defaults) — its own
+ *   engine row so a Firefox id change touches one row.
+ * - GENERIC: no known bar id — extraction rides the generic
+ *   address-bar leg (an unfocused EditText whose whole text is a
+ *   URL), which the service already runs for suffix-less bars.
+ *
+ * Stock OEM browsers (F27): Mi Browser, Vivo Browser, HeyTap
+ * Browser (Oppo/Realme), Huawei Browser and the AOSP stock
+ * browser are rows here — before this table they were in NO set,
+ * so the stock browser on Xiaomi/Vivo/Oppo phones could never be
+ * site-blocked while the board printed SOCIAL SITES: RUNNING.
+ */
+enum class BrowserEngine { CHROMIUM, FIREFOX, GENERIC }
+
+data class BrowserProfile(
+    val packageName: String,
+    val engine: BrowserEngine,
+    /** Extra URL-bar id suffixes for this browser's engine,
+     *  beyond [DEFAULT_URL_BAR_SUFFIXES]. */
+    val urlBarSuffixes: List<String> = emptyList(),
+    /** Lowercase window-text phrases that mean THIS browser is
+     *  showing a private/incognito window (F38). Empty = this
+     *  browser prints no detectable badge; its private state is
+     *  UNKNOWN, never silently "normal". */
+    val incognitoBadges: List<String> = emptyList(),
+    /** True for the browser that ships on the phone (F27). */
+    val stockOem: Boolean = false
+)
+
+val BROWSER_PROFILES: List<BrowserProfile> = listOf(
+    BrowserProfile("com.android.chrome", BrowserEngine.CHROMIUM,
+        incognitoBadges = listOf("gone incognito", "incognito tab")),
+    BrowserProfile("com.brave.browser", BrowserEngine.CHROMIUM,
+        incognitoBadges = listOf("private tab", "you are in a private tab")),
+    BrowserProfile("org.mozilla.firefox", BrowserEngine.FIREFOX,
+        incognitoBadges = listOf("private browsing", "you're in private browsing", "you are in private browsing")),
+    BrowserProfile("com.microsoft.emmx", BrowserEngine.CHROMIUM,
+        incognitoBadges = listOf("inprivate")),
+    BrowserProfile("com.sec.android.app.sbrowser", BrowserEngine.CHROMIUM,
+        incognitoBadges = listOf("secret mode")),
+    BrowserProfile("com.opera.browser", BrowserEngine.CHROMIUM,
+        incognitoBadges = listOf("private mode")),
+    BrowserProfile("com.opera.mini.native", BrowserEngine.GENERIC,
+        incognitoBadges = listOf("private mode")),
+    BrowserProfile("com.opera.gx", BrowserEngine.CHROMIUM,
+        incognitoBadges = listOf("private mode")),
+    BrowserProfile("com.duckduckgo.mobile.android", BrowserEngine.GENERIC),
+    BrowserProfile("com.kiwibrowser.browser", BrowserEngine.CHROMIUM,
+        incognitoBadges = listOf("gone incognito", "incognito tab")),
+    BrowserProfile("mark.via.gp", BrowserEngine.GENERIC),
+    BrowserProfile("com.yandex.browser", BrowserEngine.CHROMIUM,
+        incognitoBadges = listOf("incognito mode")),
+    BrowserProfile("com.UCMobile.intl", BrowserEngine.GENERIC),
+    BrowserProfile("com.vivaldi.browser", BrowserEngine.CHROMIUM,
+        incognitoBadges = listOf("private tab")),
+    BrowserProfile("com.opera.browser.beta", BrowserEngine.CHROMIUM,
+        incognitoBadges = listOf("private mode")),
+    // F27: the stock OEM browsers — policed from this build on.
+    BrowserProfile("com.mi.globalbrowser", BrowserEngine.GENERIC, stockOem = true,
+        incognitoBadges = listOf("incognito mode")),
+    BrowserProfile("com.vivo.browser", BrowserEngine.GENERIC, stockOem = true,
+        incognitoBadges = listOf("private mode", "secret mode")),
+    BrowserProfile("com.heytap.browser", BrowserEngine.GENERIC, stockOem = true,
+        incognitoBadges = listOf("private mode")),
+    BrowserProfile("com.huawei.browser", BrowserEngine.GENERIC, stockOem = true,
+        incognitoBadges = listOf("private mode")),
+    BrowserProfile("com.android.browser", BrowserEngine.GENERIC, stockOem = true,
+        incognitoBadges = listOf("incognito tab"))
+)
+
+/** The coverage table's row for [packageName], or null — a
+ *  package with no row is an unsupported browser, never silently
+ *  supported (F10). Learned browsers (#335) extend coverage at
+ *  runtime through SurfaceRuleStore, not through this table. */
+fun browserProfileFor(packageName: String): BrowserProfile? =
+    BROWSER_PROFILES.firstOrNull { it.packageName == packageName }
+
+/** F16: the URL-bar id suffixes an ENGINE's toolbars use, beyond
+ *  the shared defaults — Firefox's mozac toolbar ids are not
+ *  Chromium's bar ids, and extraction keyed to one global list
+ *  missed every browser whose bar the list didn't name. */
+fun engineUrlBarSuffixes(engine: BrowserEngine): List<String> = when (engine) {
+    BrowserEngine.CHROMIUM -> listOf(":id/url_bar", ":id/omnibox_url_text")
+    BrowserEngine.FIREFOX -> listOf(
+        ":id/mozac_browser_toolbar_url_view",
+        ":id/mozac_browser_toolbar_edit_view"
+    )
+    BrowserEngine.GENERIC -> listOf(":id/url_bar", ":id/address_bar")
+}
+
+/** The URL-bar suffixes extraction must try for [packageName]:
+ *  the shipped defaults + the browser's own suffixes (its
+ *  profile's explicit list, else its ENGINE's list) + any suffix
+ *  learned for this browser on-device (F16). */
+fun urlBarSuffixesForBrowser(
+    packageName: String,
+    learnedSuffixes: List<String>
+): List<String> {
+    val profile = browserProfileFor(packageName)
+    val engineSuffixes = when {
+        profile == null -> emptyList()
+        profile.urlBarSuffixes.isNotEmpty() -> profile.urlBarSuffixes
+        else -> engineUrlBarSuffixes(profile.engine)
+    }
+    return (DEFAULT_URL_BAR_SUFFIXES + engineSuffixes + learnedSuffixes).distinct()
+}
+
+/** F38: what can honestly be said about a browser window's
+ *  private state. UNKNOWN is a real answer: a browser whose
+ *  profile carries no badge table cannot be pronounced normal. */
+enum class IncognitoState { PRIVATE, NORMAL, UNKNOWN }
+
+/**
+ * F38 detection: [windowTextLowercase] is the browser window's
+ * collected text (the service's browserContentText). A badge hit
+ * means PRIVATE; no hit means NORMAL only when this browser HAS
+ * a badge table to miss; no table means UNKNOWN.
+ */
+fun incognitoStateFor(packageName: String, windowTextLowercase: String): IncognitoState {
+    val profile = browserProfileFor(packageName) ?: return IncognitoState.UNKNOWN
+    if (profile.incognitoBadges.isEmpty()) return IncognitoState.UNKNOWN
+    val text = windowTextLowercase.lowercase()
+    return if (profile.incognitoBadges.any { text.contains(it) }) {
+        IncognitoState.PRIVATE
+    } else {
+        IncognitoState.NORMAL
+    }
+}
