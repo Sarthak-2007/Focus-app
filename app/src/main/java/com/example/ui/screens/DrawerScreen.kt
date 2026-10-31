@@ -289,8 +289,25 @@ fun DrawerScreen(
     val selectedTask: FocusTaskEntity? =
         (drawerRows + drawerResults).firstOrNull { it.id == selectedTaskId }
     var cabinetArtifactId by rememberSaveable { mutableStateOf("") }
+    // Issue #110, finding 5: the Partial Stamp joins the cabinet
+    // only when a real session carries it — an honest row for a
+    // real record, never a seventh curio on offer. The joined list
+    // is computed ONCE, here: the cabinet's list renders it and the
+    // detail lookup below resolves against it. (Floor lane, #166
+    // row 29: the lookup previously read the curios-only list
+    // while the stamp was appended to a second, list-local copy —
+    // the stamp's row rendered and took the tap, the detail could
+    // never resolve, and the detail the finding built was
+    // unreachable. One list, both readers.)
+    val cabinetArtifacts = if (
+        PARTIAL_STAMP_ID in forgedArtifactIds || forgeStats.containsKey(PARTIAL_STAMP_ID)
+    ) {
+        artifacts + PARTIAL_STAMP_ARTIFACT
+    } else {
+        artifacts
+    }
     val cabinetArtifact: KineticArtifact? =
-        artifacts.firstOrNull { it.id == cabinetArtifactId }
+        cabinetArtifacts.firstOrNull { it.id == cabinetArtifactId }
     // #158 F3, kept on the saveable stack: the surface the MONTH
     // view was entered from, so its BACK returns there — never a
     // silent month reload.
@@ -622,17 +639,6 @@ fun DrawerScreen(
                 }
             }
             if (artifact == null) {
-                // Issue #110, finding 5: the Partial Stamp joins
-                // the cabinet's list only when a real session
-                // carries it — an honest row for a real record,
-                // never a seventh curio on offer.
-                val cabinetArtifacts = if (
-                    PARTIAL_STAMP_ID in forgedArtifactIds || forgeStats.containsKey(PARTIAL_STAMP_ID)
-                ) {
-                    artifacts + PARTIAL_STAMP_ARTIFACT
-                } else {
-                    artifacts
-                }
                 items(cabinetArtifacts, key = { "cabinet-${it.id}" }) { item ->
                     val forged = item.id in forgedArtifactIds
                     val stat = forgeStats[item.id]
