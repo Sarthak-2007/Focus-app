@@ -22,15 +22,20 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Truth Car 3, appendix APP-2: the notification listener's stored
- * capture body is the notification's own text or NOTHING — the old
- * code stored an invented sentence ("Suppressed notification
- * during study session") as if the sender had written it. A
- * title-only notification from a blocked app must land in the
- * digest with an EMPTY body.
+ * Truth Car 3, appendix APP-2 — as completed by the issue #138
+ * CUT: the original law was that a stored capture body is the
+ * notification's own text or NOTHING (the old code stored an
+ * invented sentence, "Suppressed notification during study
+ * session", as if the sender had written it). Sarthak's #138
+ * ruling cut content storage entirely, so the law now reads
+ * stronger: a notification from a blocked app lands in the digest
+ * as METADATA ONLY (app + capture time) — no sender, no body,
+ * invented or otherwise. This test keeps its original scenario
+ * (a title-only notification) and pins the metadata landing.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
+// PIN-SCOPE: POST — listener capture landing, metadata-only under the #138 CUT (working-rules adoption, Oct 31 18:06 IST).
 class TruthCar3CaptureBodyTest {
 
     private val context: Context
@@ -105,8 +110,12 @@ class TruthCar3CaptureBodyTest {
         }
         assertTrue("the capture never landed", rows.isNotEmpty())
         val row = rows.first { it.packageName == "com.example.chat" }
-        assertEquals("Mum", row.senderTitle)
-        assertEquals("", row.messageBody)
+        // Metadata only (issue #138 CUT): the app that was held,
+        // and nothing of the message — the entity has no sender or
+        // body field to assert a value on (that absence is pinned
+        // in NotificationListenerCaptureTest).
+        assertEquals("Chat", row.appName)
+        assertTrue(row.timestampMillis > 0L)
         } finally {
             sessionId?.let { dao.deleteSessionById(it.toInt()) }
             dao.deleteAppsByPackage(listOf("com.example.chat"))

@@ -10,12 +10,10 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.data.AppBlockTier
 import com.example.data.BlockedAppEntity
 import com.example.data.FocusSessionEntity
-import com.example.data.GuardSettingsEntity
 import com.example.data.MonolithDatabase
 import com.example.service.MonolithNotificationListener
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -28,14 +26,14 @@ import org.robolectric.annotation.Config
  * Issue #45 (C5), end-to-end through the real listener and the
  * real Room database:
  * - an unchanged update of a held notification inserts nothing,
- * - a changed update replaces the held row (exactly one copy,
- *   current content),
+ * - a changed update replaces the held row (exactly one copy),
  * - a removal for our own listener cancel keeps the held copy,
  * - a real removal (the sender recalled it) deletes the held row
  *   so the message cannot resurrect in the digest.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
+// PIN-SCOPE: POST — listener post/remove path end-to-end through the real service + Room (working-rules adoption, Oct 31 18:06 IST).
 class NotificationListenerCaptureTest {
 
     private val context: Context
@@ -94,41 +92,8 @@ class NotificationListenerCaptureTest {
         return Robolectric.buildService(MonolithNotificationListener::class.java).create().get()
     }
 
-    /** Audit R6 #340 F68: capturing a notification and STORING
-     *  ITS BODY are two different consents — unless the guard
-     *  settings stand GRANTED, the listener blanks every body at
-     *  the capture boundary. Tests in this class whose subject is
-     *  dedupe/replace semantics over real bodies grant the consent
-     *  exactly the way the settings verb does (row first, then the
-     *  targeted UPDATE). Floor lane (census #6, row 14): the
-     *  fixture never granted it, so the changed-update replace
-     *  read an empty body forever — expected "edited", was "". */
-    private suspend fun grantBodyConsent() {
-        if (dao.getGuardSettingsSnapshot() == null) {
-            dao.insertGuardSettings(GuardSettingsEntity())
-        }
-        dao.updateNotificationBodyConsent("GRANTED")
-    }
-
-    private suspend fun revokeBodyConsent() {
-        if (dao.getGuardSettingsSnapshot() == null) {
-            dao.insertGuardSettings(GuardSettingsEntity())
-        }
-        dao.updateNotificationBodyConsent("UNSET")
-    }
-
-    /** The consent is a row in the shared singleton file: leave it
-     *  UNSET, the state the fixture found, for the next class. */
-    @After
-    fun leaveBodyConsentUnset() = runBlocking {
-        if (dao.getGuardSettingsSnapshot() != null) {
-            dao.updateNotificationBodyConsent("UNSET")
-        }
-    }
-
     @Test
     fun unchangedUpdateInsertsNothingAndChangedUpdateReplaces() = runBlocking {
-        grantBodyConsent()
         val listener = armedListener()
         val postTime = System.currentTimeMillis()
 
@@ -136,6 +101,7 @@ class NotificationListenerCaptureTest {
         var rows = awaitRows { it.isNotEmpty() }
         assertTrue("the capture never landed", rows.isNotEmpty())
         assertEquals(1, rows.size)
+        val firstRowId = rows.single().id
         // Let the dedupe tracker settle (it records just after the
         // insert lands) before replaying the update.
         delay(300L)
@@ -147,12 +113,14 @@ class NotificationListenerCaptureTest {
         assertEquals("an unchanged update must not duplicate the held copy", 1, rows.size)
 
         // Changed content under the same key: the held row is
-        // replaced — still exactly one row, with the new body and
-        // the original postTime as its timestamp.
+        // replaced — still exactly one row (a fresh row id, since
+        // the superseded row is deleted and re-inserted), with the
+        // original postTime as its timestamp. (Issue #138 CUT: the
+        // row carries no body, so replacement is read off the id,
+        // not off stored content.)
         listener.onNotificationPosted(sbn("Mum", "edited", postTime))
-        rows = awaitRows { it.any { row -> row.messageBody == "edited" } }
+        rows = awaitRows { it.size == 1 && it.single().id != firstRowId }
         assertEquals(1, rows.size)
-        assertEquals("edited", rows.single().messageBody)
         assertEquals(postTime, rows.single().timestampMillis)
     }
 
@@ -163,7 +131,7 @@ class NotificationListenerCaptureTest {
      * after a process restart, when the rebind sweep re-walks a
      * still-live held notification) re-posting the identical
      * capture must insert NOTHING: the table's own stored
-     * quadruple is the durable dedupe.
+     * identity (package + postTime) is the durable dedupe.
      */
     @Test
     fun recaptureByFreshListenerInstanceDoesNotDuplicateHeldRow() = runBlocking {
@@ -190,15 +158,15 @@ class NotificationListenerCaptureTest {
         )
     }
 
-    /** Audit R6 #340 F68, pinned: with body consent NOT granted,
-     *  a capture still lands — but the held copy keeps sender +
-     *  title only, its body blanked at the capture boundary,
-     *  never stored-then-hidden. (This gate had no test anywhere
-     *  in the suite; the row-14 failure above is what an unpinned
-     *  consent law does to a neighbouring fixture.) */
+    /** Issue #138 CUT, pinned (supersedes Audit R6 #340 F68's
+     *  consent-gated body storage): a capture still lands, but the
+     *  held row is METADATA ONLY — package, app name, capture
+     *  time. No consent state changes this: the entity carries no
+     *  sender/body field at all, which the reflection assertion
+     *  below pins so a future field cannot quietly restore
+     *  content storage. */
     @Test
-    fun captureWithoutBodyConsentStoresTitleOnly() = runBlocking {
-        revokeBodyConsent()
+    fun captureStoresMetadataOnlyUnderTheCut() = runBlocking {
         val listener = armedListener()
         val postTime = System.currentTimeMillis()
 
@@ -206,8 +174,16 @@ class NotificationListenerCaptureTest {
         val rows = awaitRows { it.isNotEmpty() }
         assertTrue("the capture never landed", rows.isNotEmpty())
         assertEquals(1, rows.size)
-        assertEquals("Mum", rows.single().senderTitle)
-        assertEquals("", rows.single().messageBody)
+        assertEquals("com.example.chat", rows.single().packageName)
+        assertEquals("Chat", rows.single().appName)
+        assertEquals(postTime, rows.single().timestampMillis)
+
+        val fieldNames = com.example.data.CapturedNotificationEntity::class.java
+            .declaredFields.map { it.name }.toSet()
+        assertTrue(
+            "content storage must stay cut: no senderTitle/messageBody field",
+            fieldNames.none { it == "senderTitle" || it == "messageBody" }
+        )
     }
 
     @Test

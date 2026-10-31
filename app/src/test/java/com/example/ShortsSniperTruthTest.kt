@@ -57,6 +57,7 @@ import org.robolectric.shadows.ShadowSystemClock
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
+// PIN-SCOPE: PLUMBING — migration chain to v19 + settings persistence (working-rules adoption, Oct 31 18:06 IST).
 class ShortsSniperTruthTest {
 
     private val context: Context
@@ -220,7 +221,8 @@ class ShortsSniperTruthTest {
                 MonolithDatabase.MIGRATION_15_16,
                 MonolithDatabase.MIGRATION_16_17,
                 MonolithDatabase.MIGRATION_17_18,
-                MonolithDatabase.MIGRATION_18_19
+                MonolithDatabase.MIGRATION_18_19,
+                MonolithDatabase.MIGRATION_19_20
             )
             .build()
         runBlocking {

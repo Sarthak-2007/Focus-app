@@ -17,6 +17,7 @@ import org.junit.Test
  * reads only the inlined Notification flag/category constants, so
  * no Android runtime is needed here.
  */
+// PIN-SCOPE: SOURCE — pure capture policy + in-memory dedupe tracker (working-rules adoption, Oct 31 18:06 IST).
 class NotificationCapturePolicyTest {
 
     @Test
@@ -103,8 +104,6 @@ class NotificationCapturePolicyTest {
     private fun seen(title: String, body: String, postTime: Long = 1_000L) = SeenCapture(
         fingerprint = NotificationCapturePolicy.contentFingerprint(title, body),
         packageName = "com.example.chat",
-        senderTitle = title,
-        messageBody = body,
         postTimeMillis = postTime
     )
 
@@ -127,7 +126,7 @@ class NotificationCapturePolicyTest {
         val tracker = CaptureDedupeTracker()
         tracker.record("k1", seen("Mum", "hi"))
         val dropped = tracker.forget("k1")
-        assertEquals("Mum", dropped?.senderTitle)
+        assertEquals("com.example.chat", dropped?.packageName)
         assertNull(tracker.seen("k1"))
         assertFalse(
             tracker.isUnchanged("k1", NotificationCapturePolicy.contentFingerprint("Mum", "hi"))

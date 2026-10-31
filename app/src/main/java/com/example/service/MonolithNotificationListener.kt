@@ -110,17 +110,16 @@ object NotificationCapturePolicy {
 
 /**
  * Issue #45 (C5): one held capture, remembered by the sbn.key that
- * produced it. [senderTitle] and [messageBody] are the values AS
- * STORED (senderTitle after the app-name fallback), and
- * [postTimeMillis] is the row's timestampMillis — together with
- * the package they are the quadruple the DAO matches stored rows
- * by, for both the dedupe-replace and the removal delete.
+ * produced it. [postTimeMillis] is the row's timestampMillis —
+ * together with the package it is the pair the DAO matches stored
+ * rows by, for both the dedupe-replace and the removal delete.
+ * The [fingerprint] lives ONLY in this in-memory tracker (it dies
+ * with the process and is never persisted): since the issue #138
+ * CUT the stored row itself carries no content to match against.
  */
 data class SeenCapture(
     val fingerprint: String,
     val packageName: String,
-    val senderTitle: String,
-    val messageBody: String,
     val postTimeMillis: Long
 )
 
@@ -157,8 +156,11 @@ class CaptureDedupeTracker {
  *   [isMediaPlaybackNotification]): a song is not a message, and
  *   cancelling the notification would strip the player's
  *   pause/skip controls from the shade and lock screen.
- * - Saves captured notifications to Room persistent disk storage so they survive background
- *   restarts and can be read, cleared, or tapped to open after studying.
+ * - Saves a held notification's METADATA (app + capture time) to Room persistent
+ *   storage so the held count and digest survive background restarts. Notification
+ *   CONTENT — sender and body — is never stored (issue #138 CUT, Sarthak's ruling):
+ *   title/text are read in memory only to judge the hold (dedupe fingerprint,
+ *   one-time-code exemption) and are never written to disk.
  */
 /**
  * The hold rule (Audit R3, safe-break-lived #2): a notification is
@@ -194,7 +196,7 @@ class MonolithNotificationListener : NotificationListenerService() {
     companion object {
         private const val TAG = "MonolithNotifListener"
 
-        // Issue #45 (C5) retention bounds for the plaintext digest:
+        // Issue #45 (C5) retention bounds for the held-metadata table:
         // a held row lives at most 7 days and the table holds at
         // most the newest 200 rows. Pruned on the insert path
         // after every insert — see pruneCaptured().
@@ -348,13 +350,12 @@ class MonolithNotificationListener : NotificationListenerService() {
             // that arrived while the session was running.
             val coveringSession = dao.getSessionCoveringInstant(postTimeMillis) ?: return@launch
 
-            // Audit R6 #340 F68: capturing a notification and
-            // STORING ITS BODY are two different consents. Unless
-            // body consent stands GRANTED, the held copy keeps
-            // sender + title only — the body is blanked at the
-            // capture boundary, never stored-then-hidden.
-            val storedBody =
-                if (dao.getGuardSettingsSnapshot()?.notificationBodyConsent == "GRANTED") text else ""
+            // Issue #138 CUT (supersedes Audit R6 #340 F68's
+            // consent-gated body storage): notification content is
+            // NEVER stored — no sender, no body, under any consent.
+            // Title/text were snapshotted above only to judge the
+            // hold in memory (dedupe fingerprint, OTP exemption);
+            // the row written below is metadata: package, app, time.
 
             val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
             // Issue #120: FINANCE is never captured and never
@@ -371,7 +372,6 @@ class MonolithNotificationListener : NotificationListenerService() {
             if (appRule != null &&
                 notificationHeldDuringSession(coveringSession.isInSafeBreak, appRule.resolvedTier)
             ) {
-                val storedTitle = title.ifEmpty { appRule.appName }
                 if (key != null) {
                     // Dedupe, second gate (inside the coroutine, so
                     // two rapid identical posts that both passed the
@@ -380,14 +380,13 @@ class MonolithNotificationListener : NotificationListenerService() {
                     val previous = dedupe.seen(key)
                     if (previous?.fingerprint == fingerprint) return@launch
                     // Changed content for a key already held: the
-                    // old stored row is superseded — find it by its
-                    // stored quadruple and delete it, so the digest
-                    // holds exactly one, current, copy.
+                    // old metadata row is superseded — find it by
+                    // its stored identity (package + postTime) and
+                    // delete it, so the digest holds exactly one,
+                    // current, row per held notification.
                     if (previous != null) {
                         dao.findCapturedNotificationMatching(
                             previous.packageName,
-                            previous.senderTitle,
-                            previous.messageBody,
                             previous.postTimeMillis
                         )?.let { stale -> dao.deleteCapturedNotification(stale.id) }
                     }
@@ -402,35 +401,31 @@ class MonolithNotificationListener : NotificationListenerService() {
                 // and the Deck's HELD chip both print this table's
                 // SIZE, so every re-capture of a still-live held
                 // notification (the rebind sweep re-walks the shade;
-                // a never-cancelled OTP copy stays live by design)
+                // a never-cancelled OTP entry stays live by design)
                 // inflated the badge by one per restart. The table
                 // itself is the durable dedupe: the same stored
-                // quadruple the replace/removal paths already treat
-                // as a capture's identity, checked before inserting.
-                // An existing identical row means this exact capture
-                // is already held — record the tracker and fall
-                // through to the cancel below, but insert nothing.
+                // identity (package + postTime) the replace/removal
+                // paths already treat as a capture's identity,
+                // checked before inserting. An existing identical
+                // row means this exact capture is already held —
+                // record the tracker and fall through to the cancel
+                // below, but insert nothing.
                 val alreadyHeld = dao.findCapturedNotificationMatching(
-                    pkg, storedTitle, storedBody, postTimeMillis
+                    pkg, postTimeMillis
                 ) != null
                 if (!alreadyHeld) {
                     dao.insertCapturedNotification(
                         CapturedNotificationEntity(
                         // The row's timestamp is the capture
                         // snapshot — sbn.postTime — not the time
-                        // this coroutine happened to run.
+                        // this coroutine happened to run. Metadata
+                        // only (issue #138 CUT): no sender, no body
+                        // is stored — Truth Car 3's "never invent a
+                        // body" law is now the stronger "never
+                        // store content at all".
                         timestampMillis = postTimeMillis,
                         packageName = pkg,
-                        appName = appRule.appName,
-                        senderTitle = storedTitle,
-                        // The captured body is the notification's
-                        // own text or nothing (Truth Car 3,
-                        // appendix): a title-only notification
-                        // stores an EMPTY body — the digest prints
-                        // the title alone. The old fallback
-                        // sentence was invented copy wearing the
-                        // sender's name.
-                        messageBody = storedBody
+                        appName = appRule.appName
                         )
                     )
                 }
@@ -441,17 +436,15 @@ class MonolithNotificationListener : NotificationListenerService() {
                         SeenCapture(
                             fingerprint = fingerprint,
                             packageName = pkg,
-                            senderTitle = storedTitle,
-                            messageBody = storedBody,
                             postTimeMillis = postTimeMillis
                         )
                     )
                 }
-                // Issue #120: a one-time code is copied, never
-                // cancelled — the original keeps its shade entry
-                // (and any action it carries) because the code
-                // expires in minutes while the session runs far
-                // longer.
+                // Issue #120: a one-time code is recorded as held
+                // (metadata only), never cancelled — the original
+                // keeps its shade entry (and any action it carries)
+                // because the code expires in minutes while the
+                // session runs far longer.
                 if (!otpLike) {
                     try {
                         cancelNotification(key)
@@ -501,43 +494,26 @@ class MonolithNotificationListener : NotificationListenerService() {
     }
 
     private fun handleRemoval(sbn: StatusBarNotification?) {
-        val notification = sbn?.notification ?: return
+        sbn?.notification ?: return
         val pkg = sbn.packageName ?: return
         // Snapshot synchronously, same discipline as the post path.
         val key = sbn.key
         val postTimeMillis = sbn.postTime
-        val extras = notification.extras
-        val rawTitle = extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
-        val text = extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
 
-        // The held copy's identity: prefer the capture this
-        // instance recorded (its senderTitle carries the app-name
-        // fallback applied at insert). Fall back to the removed
-        // notification's own snapshot — resolved against the app
-        // rule below for the same fallback — when this instance
-        // never saw the post (e.g. after a process restart).
+        // The held row's identity is package + postTime (issue
+        // #138 CUT: no content is stored, so none is needed to
+        // match). Prefer the capture this instance recorded; the
+        // fallback is the removed notification's own package +
+        // postTime, which is the same identity whether or not this
+        // instance ever saw the post (e.g. after a process
+        // restart) — so no extras are read here at all.
         val seen = key?.let { dedupe.forget(it) }
 
         scope.launch {
             val dao = com.example.AppContainer.dao(applicationContext) /* ISSUE-67: single construction point */
-            val target = seen ?: run {
-                val appRule = dao.getAppByPackage(pkg)
-                SeenCapture(
-                    fingerprint = NotificationCapturePolicy.contentFingerprint(rawTitle, text),
-                    packageName = pkg,
-                    senderTitle = rawTitle.ifEmpty { appRule?.appName ?: rawTitle },
-                    // F68: match the body AS STORED (blanked
-                    // without body consent), not the raw text.
-                    messageBody =
-                        if (dao.getGuardSettingsSnapshot()?.notificationBodyConsent == "GRANTED") text else "",
-                    postTimeMillis = postTimeMillis
-                )
-            }
             dao.deleteCapturedNotificationMatching(
-                target.packageName,
-                target.senderTitle,
-                target.messageBody,
-                target.postTimeMillis
+                seen?.packageName ?: pkg,
+                seen?.postTimeMillis ?: postTimeMillis
             )
         }
     }

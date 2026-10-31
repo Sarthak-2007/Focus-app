@@ -5307,18 +5307,18 @@ class MonolithRepository(
         }
     }
 
+    /** Issue #138 CUT: the saved capture is metadata only —
+     *  package + app name (+ the row's own timestamp). There is
+     *  deliberately no sender/body parameter: notification content
+     *  is never stored. */
     suspend fun saveCapturedNotification(
         packageName: String,
-        appName: String,
-        senderTitle: String,
-        messageBody: String
+        appName: String
     ) {
         dao.insertCapturedNotification(
             CapturedNotificationEntity(
                 packageName = packageName,
-                appName = appName,
-                senderTitle = senderTitle,
-                messageBody = messageBody
+                appName = appName
             )
         )
     }

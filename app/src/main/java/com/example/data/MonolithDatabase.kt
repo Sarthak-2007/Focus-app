@@ -23,7 +23,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DayNoteEntity::class,
         TaskAccrualSegmentEntity::class
     ],
-    version = 19,
+    version = 20,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -453,6 +453,36 @@ abstract class MonolithDatabase : RoomDatabase() {
             if (!present) db.execSQL(ddl)
         }
 
+        /**
+         * Issue #138 CUT (19→20): notification-content storage is
+         * removed under Sarthak's ruling — the captured_notifications
+         * table is rebuilt WITHOUT senderTitle and messageBody, so
+         * every content copy stored by earlier versions is destroyed
+         * by this migration, not carried forward. The metadata a
+         * held row legitimately keeps (id, capture time, package,
+         * app name, read flag) is copied across unchanged. (Numbered
+         * 19→20 because #324's intercept stop-reason migration took
+         * 18→19 on main while this branch was in flight.)
+         */
+        val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `captured_notifications_new` (" +
+                    "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`timestampMillis` INTEGER NOT NULL, " +
+                    "`packageName` TEXT NOT NULL, " +
+                    "`appName` TEXT NOT NULL, " +
+                    "`isRead` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "INSERT INTO `captured_notifications_new` (id, timestampMillis, packageName, appName, isRead) " +
+                    "SELECT id, timestampMillis, packageName, appName, isRead FROM `captured_notifications`"
+                )
+                db.execSQL("DROP TABLE IF EXISTS `captured_notifications`")
+                db.execSQL("ALTER TABLE `captured_notifications_new` RENAME TO `captured_notifications`")
+            }
+        }
+
         val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
@@ -534,7 +564,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance

@@ -54,6 +54,7 @@ import java.time.LocalDate
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], qualifiers = "w450dp-h1000dp")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
+// PIN-SCOPE: RENDER — digest sheet + drawer composables rendered/captured (working-rules adoption, Oct 31 18:06 IST).
 class DrawerRenderTest {
 
     @get:Rule
@@ -366,20 +367,19 @@ class DrawerRenderTest {
     private fun sampleCaptures(): List<CapturedNotificationEntity> {
         val today = LocalDate.now()
         return listOf(
+            // Issue #138 CUT: held rows are metadata only (app +
+            // time) — there is no sender/body left to sample.
             CapturedNotificationEntity(
                 id = 1, timestampMillis = at(today, 9, 12),
-                packageName = "com.whatsapp", appName = "WhatsApp",
-                senderTitle = "Maa", messageBody = "Beta khana kha liya? Take a break when the block ends."
+                packageName = "com.whatsapp", appName = "WhatsApp"
             ),
             CapturedNotificationEntity(
                 id = 2, timestampMillis = at(today, 8, 47),
-                packageName = "com.google.android.youtube", appName = "YouTube",
-                senderTitle = "Physics Wallah", messageBody = "New one-shot is live: Rotational Mechanics in 90 minutes."
+                packageName = "com.google.android.youtube", appName = "YouTube"
             ),
             CapturedNotificationEntity(
                 id = 3, timestampMillis = at(today.minusDays(1), 22, 31),
-                packageName = "org.telegram.messenger", appName = "Telegram",
-                senderTitle = "Study Group", messageBody = "Tomorrow's mock is at 9. Bring your own OMR sheets."
+                packageName = "org.telegram.messenger", appName = "Telegram"
             )
         )
     }
