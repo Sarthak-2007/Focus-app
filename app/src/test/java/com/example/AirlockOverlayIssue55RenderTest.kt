@@ -108,7 +108,7 @@ class AirlockOverlayIssue55RenderTest {
                 peekCooldownEndsAtMonoMillis = 1L
             )
         )
-        composeRule.onNodeWithTag("airlock_peek_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("airlock_peek_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("PEEK COOLDOWN — AGAIN IN 0 MIN").assertDoesNotExist()
     }
 
@@ -190,7 +190,7 @@ class AirlockOverlayIssue55RenderTest {
                 )
             }
         }
-        composeRule.onNodeWithTag("airlock_peek_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("airlock_peek_button").performScrollTo().assertIsDisplayed()
 
         // Same package re-intercepts while the overlay stands: new
         // instance, fresh stamp — the wall restarts in full.
@@ -206,7 +206,7 @@ class AirlockOverlayIssue55RenderTest {
         // first frame (disabled during the countdown) so the card
         // never grows mid-decision — it EXISTS here now; what the
         // countdown still withholds is the spend, not the sight.
-        composeRule.onNodeWithTag("airlock_peek_button").assertIsDisplayed()
-        composeRule.onNodeWithText("05").assertIsDisplayed()
+        composeRule.onNodeWithTag("airlock_peek_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("05").performScrollTo().assertIsDisplayed()
     }
 }
