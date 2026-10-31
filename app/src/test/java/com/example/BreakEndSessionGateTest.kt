@@ -57,7 +57,7 @@ class BreakEndSessionGateTest {
 
     @Test
     fun breakOverCardExpiresOnTheF3Horizon() {
-        assertEquals(45 * 60 * 1000L, BreakEndReceiver.BREAK_OVER_TIMEOUT_MS)
+        assertEquals(45 * 60 * 1000L, BreakEndReceiver.BREAK_END_TIMEOUT_MS)
     }
 
     private fun receiverSource(): String = listOf(
@@ -76,6 +76,6 @@ class BreakEndSessionGateTest {
         val source = receiverSource()
         assertTrue(source.contains("EXTRA_SESSION_ID"))
         assertTrue(source.contains("sessionGateAllows"))
-        assertTrue(source.contains("setTimeoutAfter(BREAK_OVER_TIMEOUT_MS)"))
+        assertTrue(source.contains("setTimeoutAfter(BREAK_END_TIMEOUT_MS)"))
     }
 }

@@ -109,17 +109,27 @@ object BreakEndScheduler {
     fun sessionGateAllows(scheduledSessionId: Int, activeSessionId: Int?): Boolean =
         scheduledSessionId <= 0 || activeSessionId == scheduledSessionId
 
+
     fun lastNotified(context: Context): Long =
         context.applicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getLong(KEY_LAST_NOTIFIED, 0L)
 
     fun markNotified(context: Context, breakEndsWallMillis: Long) {
+        // Issue #155 WING-F (SMALL-2): commit(), not apply(). This
+        // ledger IS the exactly-once claim for the break-end call;
+        // apply()'s in-memory update is instant but its disk flush
+        // is asynchronous, so a process death in the flush window
+        // resurrected the pre-mark value and the re-delivered alarm
+        // posted "Break's over" a second time. The app's other
+        // claim-stamps already hold this standard (WatchStore's
+        // LAST PROVED and the seal marker both commit() for exactly
+        // this reason), and the write is one long, once per break.
         context.applicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putLong(KEY_LAST_NOTIFIED, breakEndsWallMillis)
-            .apply()
+            .commit()
     }
 
     /** SDK gate kept beside the scheduler for the receiver's

@@ -128,4 +128,44 @@ class UndoDeleteStoreTest {
         store.clear()
         assertNull(store.load())
     }
+
+    // ---- Audit R6 #341 F68: the bounded stack ----
+    // PIN scope: PLUMBING.
+
+    @Test
+    fun secondDelete_insideWindow_firstTaskStillRestorable() {
+        store.clear()
+        val first = task().copy(id = 101, title = "First deleted")
+        val second = task().copy(id = 102, title = "Second deleted")
+        assertTrue(store.save(first, deletedAtWallMillis = 10_000L, deletedAtElapsedMillis = 1_000L))
+        assertTrue(store.save(second, deletedAtWallMillis = 11_000L, deletedAtElapsedMillis = 2_000L))
+        // The second delete DISPLACED the first — it did not
+        // destroy it. The top of the stack is the second task…
+        assertEquals(second, store.load()?.first)
+        // …the first is buried, still in its window…
+        assertEquals(listOf(first), store.buriedSnapshots().map { it.first })
+        // …and undoing the second promotes the first back to the
+        // top, restorable in turn.
+        store.popTopAndPromote()
+        assertEquals(first, store.load()?.first)
+    }
+
+    @Test
+    fun stackOverflow_forfeitsOldest_andRecordsTheForfeiture() {
+        store.clear()
+        // Depth is top + 3 buried = 4 standing copies; the fifth
+        // delete forfeits the oldest buried copy — RECORDED,
+        // never silent (the F68 charge was the silent overwrite).
+        for (i in 1..5) {
+            assertTrue(
+                store.save(
+                    task().copy(id = 200 + i, title = "Deleted $i"),
+                    deletedAtWallMillis = 10_000L + i * 1_000L,
+                    deletedAtElapsedMillis = 1_000L + i * 1_000L
+                )
+            )
+        }
+        assertEquals(1, store.forfeitureCount())
+        assertEquals(3, store.buriedSnapshots().size)
+    }
 }

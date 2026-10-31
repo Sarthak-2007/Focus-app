@@ -54,18 +54,31 @@ class SlideGestureMathTest {
     @Test
     fun travelLimitsByWarrantState() {
         assertEquals(1f, SlideGestureMath.travelLimit(WarrantState.LIVE), 0f)
-        assertEquals(0.84f, SlideGestureMath.travelLimit(WarrantState.UNPROVEN), 0f)
+        // Issue #515 F2: an unproven wire is not a stop — travel
+        // is free like a live wire's; only OFF clamps.
+        assertEquals(1f, SlideGestureMath.travelLimit(WarrantState.UNPROVEN), 0f)
         assertEquals(0.65f, SlideGestureMath.travelLimit(WarrantState.OFF), 0f)
     }
 
     @Test
-    fun commitNeedsCatchContactAndLiveWire() {
-        assertTrue(SlideGestureMath.commits(0.84f, true, WarrantState.LIVE))
-        assertTrue(SlideGestureMath.commits(0.90f, true, WarrantState.LIVE))
-        assertFalse(SlideGestureMath.commits(0.839f, true, WarrantState.LIVE))
-        assertFalse(SlideGestureMath.commits(0.90f, false, WarrantState.LIVE))
-        assertFalse(SlideGestureMath.commits(0.90f, true, WarrantState.UNPROVEN))
-        assertFalse(SlideGestureMath.commits(0.90f, true, WarrantState.OFF))
+    fun commitNeedsCatchAndLiveWireAtRelease() {
+        // Issue #125 F2 (Sarthak's ruling): the commit is judged
+        // at RELEASE — displayed at or past the catch on a
+        // not-positively-dead release-frame read. The predicate
+        // has no contact term: crossing the catch under contact
+        // seats nothing any more, and drag-back below the catch
+        // before release cancels (the view's endDrag owns both
+        // calls). The UNPROVEN line is issue #515 F2 as
+        // adjudicated (Ren (clone), #515 comment 6545245897):
+        // Sarthak's #125 text rules timing only and never
+        // addressed warrant state; an UNPROVEN release at the
+        // catch seats and the proving cascade judges it. Only
+        // OFF, the positively dead wire, never commits.
+        assertTrue(SlideGestureMath.commitsOnRelease(0.84f, WarrantState.LIVE))
+        assertTrue(SlideGestureMath.commitsOnRelease(0.90f, WarrantState.LIVE))
+        assertFalse(SlideGestureMath.commitsOnRelease(0.839f, WarrantState.LIVE))
+        assertTrue(SlideGestureMath.commitsOnRelease(0.90f, WarrantState.UNPROVEN))
+        assertFalse(SlideGestureMath.commitsOnRelease(0.90f, WarrantState.OFF))
     }
 
     @Test

@@ -226,4 +226,139 @@ object CryptoIntegrityManager {
         }
         return MessageDigest.isEqual(expectedBytes, storedBytes)
     }
+
+    // ------------------------------------------------------------------
+    // THE FINISH SEAL (Audit R6 #340 F5 + F48)
+    //
+    // The arm signature above covers five start-time fields and
+    // nothing the receipt actually prints. The finish seal is the
+    // second signature the audit demanded: minted at publish time
+    // over the finished slip's own claims, and CHAINED — the
+    // payload embeds the previous receipt's finish seal, so the
+    // ledger is one tamper-evident body: an edit, reorder or
+    // deletion anywhere breaks every later verification loudly.
+    //
+    // Fail-closed law (the anti-Blockit rule): a finish seal that
+    // does not verify marks the receipt FAULTED at read time. It
+    // is never silently re-minted over edited fields.
+    // ------------------------------------------------------------------
+
+    /** The canonical finish payload (v1). Field order is law —
+     *  changing it invalidates every seal already minted, exactly
+     *  as a format change should. */
+    fun finishPayload(
+        sessionId: Int,
+        receiptNumber: Int,
+        outcomeWord: String,
+        armWallMs: Long,
+        endedAtWallMs: Long,
+        sealedElapsedSeconds: Int,
+        heldAppsAtSeal: Int,
+        heldSitesAtSeal: Int,
+        deflectionCount: Int,
+        bankedBreakSeconds: Int,
+        shieldGapSeen: Boolean,
+        breakTakenSeconds: Int,
+        prevFinishSignature: String
+    ): String = listOf(
+        "F1",
+        sessionId.toString(),
+        receiptNumber.toString(),
+        outcomeWord,
+        armWallMs.toString(),
+        endedAtWallMs.toString(),
+        sealedElapsedSeconds.toString(),
+        heldAppsAtSeal.toString(),
+        heldSitesAtSeal.toString(),
+        deflectionCount.toString(),
+        bankedBreakSeconds.toString(),
+        shieldGapSeen.toString(),
+        breakTakenSeconds.toString(),
+        prevFinishSignature
+    ).joinToString("|")
+
+    fun signFinishState(
+        sessionId: Int,
+        receiptNumber: Int,
+        outcomeWord: String,
+        armWallMs: Long,
+        endedAtWallMs: Long,
+        sealedElapsedSeconds: Int,
+        heldAppsAtSeal: Int,
+        heldSitesAtSeal: Int,
+        deflectionCount: Int,
+        bankedBreakSeconds: Int,
+        shieldGapSeen: Boolean,
+        breakTakenSeconds: Int,
+        prevFinishSignature: String
+    ): String {
+        val payloadBytes = finishPayload(
+            sessionId, receiptNumber, outcomeWord, armWallMs, endedAtWallMs,
+            sealedElapsedSeconds, heldAppsAtSeal, heldSitesAtSeal,
+            deflectionCount, bankedBreakSeconds, shieldGapSeen,
+            breakTakenSeconds, prevFinishSignature
+        ).toByteArray(StandardCharsets.UTF_8)
+        return try {
+            val mac = Mac.getInstance(HMAC_ALGO)
+            val hwKey = getOrCreateHardwareHmacKeyOrNull()
+            if (hwKey != null) {
+                try {
+                    mac.init(hwKey)
+                } catch (_: Exception) {
+                    mac.init(processFallbackKey)
+                }
+            } else {
+                mac.init(processFallbackKey)
+            }
+            Base64.encodeToString(mac.doFinal(payloadBytes), Base64.NO_WRAP)
+        } catch (_: Exception) {
+            val mac = Mac.getInstance(HMAC_ALGO)
+            mac.init(processFallbackKey)
+            Base64.encodeToString(mac.doFinal(payloadBytes), Base64.NO_WRAP)
+        }
+    }
+
+    /** Strict: a blank or malformed finish signature NEVER
+     *  verifies. (The arm path's blank exemption is a parked
+     *  decision about a different signature; the finish seal's
+     *  whole point is that an unsealed-or-broken slip must not
+     *  present as clean. Callers exempt pre-v13 legacy rows by
+     *  checking blankness themselves before calling this.) */
+    fun verifyFinishState(
+        sessionId: Int,
+        receiptNumber: Int,
+        outcomeWord: String,
+        armWallMs: Long,
+        endedAtWallMs: Long,
+        sealedElapsedSeconds: Int,
+        heldAppsAtSeal: Int,
+        heldSitesAtSeal: Int,
+        deflectionCount: Int,
+        bankedBreakSeconds: Int,
+        shieldGapSeen: Boolean,
+        breakTakenSeconds: Int,
+        prevFinishSignature: String,
+        signature: String
+    ): Boolean {
+        if (signature.isBlank()) return false
+        val storedBytes = try {
+            Base64.decode(signature, Base64.NO_WRAP)
+        } catch (_: Exception) {
+            return false
+        }
+        if (storedBytes.isEmpty()) return false
+        val payloadBytes = finishPayload(
+            sessionId, receiptNumber, outcomeWord, armWallMs, endedAtWallMs,
+            sealedElapsedSeconds, heldAppsAtSeal, heldSitesAtSeal,
+            deflectionCount, bankedBreakSeconds, shieldGapSeen,
+            breakTakenSeconds, prevFinishSignature
+        ).toByteArray(StandardCharsets.UTF_8)
+        val existingKey = getExistingHardwareHmacKeyOrNull()
+        val expectedBytes = when {
+            existingKey != null -> hmacSha256OrNull(existingKey, payloadBytes) ?: return false
+            canHoldHardwareKey() -> return false
+            else -> hmacSha256OrNull(processFallbackKey, payloadBytes) ?: return false
+        }
+        return MessageDigest.isEqual(expectedBytes, storedBytes)
+    }
 }
