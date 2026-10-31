@@ -145,6 +145,15 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | AS-OF stamp on the glance: widget line carries its render instant (`· AS OF HH:mm`), so a stale frame is self-evidently stale even when every refresh trigger fails (process death, standby-bucket deferral, OEM launcher frame caching) — IDEA-G1, Discussion #640 | INNOVATOR-4 (adversary seat, WING-A) | #155 | PANEL-QUEUED (priced S ~0.25 builder-day; consult filed on #155, comment 6536827668) |
 | Until+1 appointment: M4's re-render appointments gain a third firing at printed-until + 1 min, so a SEALED-until sitting in the past is re-examined within a minute of becoming false — IDEA-G2 (delta on THOUGHTFUL-5/IMPROVER-2's M4, credited there), Discussion #640 | INNOVATOR-4 (adversary seat, WING-A) | #155 | PANEL-QUEUED (priced inside M4's ~1 builder-day) |
 
+## The widget as a stamped plate (DESIGNER-E-1, WING-A ideation)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| Stamped-plate widget: one machined plate (rivets, hairline frame, maker's-mark wordmark) whose six states differ only by stamp treatment — struck box SEALED / plain print OPEN / dashed box OPEN-next / alert box UNPROVEN / unboxed ARMING / double-border void box NO READ; full spec on #155 (comment 6536917315), build home = #18 revamp per the END-PHASE park (6525111973) | DESIGNER-E-1 | #155/#18 | PANEL-QUEUED (design filed; builder-complete; price M, 3–4 builder-days) |
+| PRINTED HH:mm honesty line on the tall (3×2) plate: the plate admits when its state was last read — staleness as a printed fact, not a hidden lie (UNPROVEN tall prints LAST PROOF instead) | DESIGNER-E-1 | #155/#18 | PANEL-QUEUED (rides the plate build; alone S, 0.5d) |
+| Glance-tap routing by state: SEALED/UNPROVEN/NO READ → Shield surface, OPEN → Deck (answers park item 3 on #155; notification F5 routing is the precedent) | DESIGNER-E-1 | #155/#18 | PANEL-QUEUED (design ruling for the revamp pass to ratify) |
+| Tier-B rendered-text plate (park's original "rendered-text" form) only if Tier-A @font verification fails on a target launcher; accessibility-gated on the spoken sentence | DESIGNER-E-1 | #155/#18 | PARKED-WITH-REASON (contingent on the Tier-A launcher check; L, 5–8 builder-days if triggered) |
+
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
 
 ## Pill × receipt relation (WING-C DESIGN, Wave reseat)
