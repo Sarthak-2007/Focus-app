@@ -483,6 +483,23 @@ internal fun peekWarningTickDue(secondsRemaining: Int): Boolean =
 internal fun completionPulseDelayMs(e0ElapsedMs: Long): Long =
     (700L - e0ElapsedMs).coerceAtLeast(0L)
 
+/**
+ * Issue #147 (reopened, Findings 2/3 seam): the ONE derivation of a
+ * stopwatch session's distance to its 20-minute floor, from a
+ * session row's banked elapsed. Every print of that distance — the
+ * valve overlay's wait-to-free line at open, and its refresh while
+ * the overlay sits open — derives through here, so no surface can
+ * carry its own arithmetic and drift from the others. Zero at or
+ * past the floor: the overlay's line renders only above zero, so a
+ * floor crossed mid-visit retires the line instead of leaving a
+ * stale "N more minutes" standing over a stop that is already free.
+ * (The booking itself is re-judged in the repository against
+ * lawElapsed = max(verified, banked) — this derivation serves the
+ * print, never the charge.)
+ */
+internal fun stopwatchRemainingFloorSeconds(bankedElapsedSeconds: Int): Int =
+    (MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS - bankedElapsedSeconds).coerceAtLeast(0)
+
 data class DisarmChallengeState(
     val isVisible: Boolean = false,
     val requiredHoldSeconds: Int = 60,
@@ -495,10 +512,14 @@ data class DisarmChallengeState(
     val refusalMessage: String? = null,
     // Audit R3b #147: the stopwatch floor, carried into the valve
     // overlay so it can state the wait-to-free path instead of
-    // presenting the token as the only door. These two are FACTS
-    // about the session at open time (its mode, its banked
-    // distance to the floor) — not a token count; the count rule
-    // below stands untouched.
+    // presenting the token as the only door. The mode is a FACT
+    // about the session, fixed at open time. The remaining-floor
+    // figure is SEEDED at open time and then REFRESHED from the
+    // live session row for as long as the overlay is visible
+    // (#147 reopened: a frozen seed could still be printing
+    // "N more minutes" after the floor had crossed — the print
+    // must never lag the state). Neither is a token count; the
+    // count rule below stands untouched.
     val sessionIsStopwatch: Boolean = false,
     val remainingFloorSeconds: Int = 0
     // No token count lives here (TOKEN-SPEC §5, Amendment A): a count
@@ -1579,6 +1600,29 @@ class MonolithViewModel(
             activeSession.collect { session ->
                 if (session == null) {
                     armProving.onActiveSessionGone()
+                }
+            }
+        }
+        // Issue #147 REOPENED (Findings 2/3 seam): while the valve
+        // overlay is open on a stopwatch session, its remaining-floor
+        // print is refreshed from the live session row — the row's
+        // banked elapsed advances on the per-second progress tick,
+        // so a floor crossed mid-visit counts the print down and
+        // retires it at zero instead of leaving the open-time
+        // snapshot ("N more minutes") standing over a stop that has
+        // already become free. Print only: the booking re-check
+        // lives in the repository (completeEmergencyBreak).
+        viewModelScope.launch {
+            activeSession.collect { session ->
+                val challenge = _disarmChallenge.value
+                if (challenge.isVisible && challenge.sessionIsStopwatch &&
+                    session != null && session.isStopwatchMode
+                ) {
+                    val refreshed = stopwatchRemainingFloorSeconds(session.elapsedSeconds)
+                    if (refreshed != challenge.remainingFloorSeconds) {
+                        _disarmChallenge.value =
+                            challenge.copy(remainingFloorSeconds = refreshed)
+                    }
                 }
             }
         }
@@ -3720,7 +3764,7 @@ class MonolithViewModel(
         val current = activeSession.value ?: return
         val isBelowFloor = current.isStopwatchMode &&
             current.elapsedSeconds < MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
-        val remainingFloor = (MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS - current.elapsedSeconds).coerceAtLeast(0)
+        val remainingFloor = stopwatchRemainingFloorSeconds(current.elapsedSeconds)
 
         // If Stopwatch Mode has passed the mandatory 20-minute floor, allow clean completion.
         // Issue #103 F3: this door is free and instant — no hold, no
@@ -3772,18 +3816,24 @@ class MonolithViewModel(
      * The valve's completion callback (TOKEN-SPEC §5): the repository
      * decides. Only on [BreakResult.Completed] — after the spend +
      * disarm transaction has committed — does the seal sound, the
-     * overlay close and the shield stop. On a refusal the session
-     * stays sealed and the overlay stays open — but NOT in silence
-     * (issue #103 F5, superseding Amendment B's silent transition):
-     * the valve has already erased its own 60s of progress, so the
-     * refusal announces itself with a latch sound and a printed
-     * sentence in the overlay ([DisarmChallengeState.refusalMessage])
-     * saying the hold did not count and nothing was spent.
+     * overlay close and the shield stop.
+     * [BreakResult.CompletedCleanlyAtFloor] (#147 reopened) takes the
+     * same teardown: the repository found the stopwatch floor already
+     * met at completion and ended the session cleanly instead — no
+     * spend was written, but the session IS over, so the overlay
+     * closes and the shield stops exactly as for a break. On a
+     * refusal the session stays sealed and the overlay stays open —
+     * but NOT in silence (issue #103 F5, superseding Amendment B's
+     * silent transition): the valve has already erased its own 60s
+     * of progress, so the refusal announces itself with a latch
+     * sound and a printed sentence in the overlay
+     * ([DisarmChallengeState.refusalMessage]) saying the hold did
+     * not count and nothing was spent.
      */
     fun completeEmergencyBreakFromValve() {
         viewModelScope.launch {
             when (repository.completeEmergencyBreak()) {
-                BreakResult.Completed -> {
+                BreakResult.Completed, BreakResult.CompletedCleanlyAtFloor -> {
                     soundEngine.playHarmonicSeal(arming = false)
                     _isAlwaysOnDeskClockVisible.value = false
                     _disarmChallenge.value = DisarmChallengeState(isVisible = false)
