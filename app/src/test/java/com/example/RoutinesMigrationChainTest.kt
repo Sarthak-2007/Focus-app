@@ -339,7 +339,8 @@ class RoutinesMigrationChainTest {
                 MonolithDatabase.MIGRATION_15_16,
                 MonolithDatabase.MIGRATION_16_17,
                 MonolithDatabase.MIGRATION_17_18,
-                MonolithDatabase.MIGRATION_18_19
+                MonolithDatabase.MIGRATION_18_19,
+                MonolithDatabase.MIGRATION_19_20
             )
             .build()
 
@@ -393,8 +394,8 @@ class RoutinesMigrationChainTest {
         // day_notes is exactly the specced two columns, date as PK.
         assertEquals(setOf("dateIso", "word"), columnsOf(raw, "day_notes"))
 
-        // Issue #138 CUT (18→19): captured_notifications survives
-        // as metadata only — the content columns are GONE at v19.
+        // Issue #138 CUT (19→20): captured_notifications survives
+        // as metadata only — the content columns are GONE at v20.
         assertEquals(
             setOf("id", "timestampMillis", "packageName", "appName", "isRead"),
             columnsOf(raw, "captured_notifications")
