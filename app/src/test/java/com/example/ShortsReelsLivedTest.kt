@@ -106,7 +106,35 @@ class ShortsReelsLivedTest {
             // the gate's full current prefix — stricter, same
             // intent: the switch + the store + the captured feed
             // fact, still no lease anywhere in it.
-            source.contains("if (shortsSniperArmed(guardSettings, pkgName, surfaceStore) && snapshot.facts.sniperFeedVisible)")
+            // #166 re-pin 3 (K8, seventh sitting): Audit R6 #340
+            // F62 composed a second trigger fact onto the gate —
+            // the tab TAP is itself an offence — so the condition
+            // is now a two-line head ending in a disjunction of
+            // the two captured feed facts. PR #587's re-pin died
+            // on exactly that reshape. The pin below is the gate's
+            // full current head, verbatim; below it, the invariant
+            // itself is asserted shape-free, so the next honest
+            // reshape of the condition cannot silently re-open
+            // #131's charge: whatever the head's shape, no lease
+            // term may appear inside the sniper gate's condition.
+            source.contains(
+                "if (shortsSniperArmed(guardSettings, pkgName, surfaceStore) &&\n" +
+                    "            (snapshot.facts.sniperFeedVisible || snapshot.facts.sniperTabClicked)"
+            )
+        )
+        val gateStart = source.indexOf(
+            "if (shortsSniperArmed(guardSettings, pkgName, surfaceStore)"
+        )
+        assertTrue(
+            "the sniper gate must still exist, armed by the persisted switch alone",
+            gateStart >= 0
+        )
+        val gateHead = source.substring(
+            gateStart, source.indexOf(") {", gateStart)
+        )
+        assertFalse(
+            "the sniper gate's condition consults the lease — #131's charge re-opened",
+            gateHead.contains("lease")
         )
         // #130 composition (see the class doc): the site gate must
         // NOT be blanket-silenced by a package lease any more —
