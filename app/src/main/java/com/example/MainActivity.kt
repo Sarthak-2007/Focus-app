@@ -2116,39 +2116,13 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 deskClockYielded = deskClockYielded
             )
 
-            // THE RECEIPT SLIP (Slice E, F-L1/F-B1): viewport-
-            // hosted over the Deck's room, dismissed ONLY by the
-            // next DOWN on its scrim (issue #157) — navigation and
-            // PARK merely unmount it via the DECK gate below, and
-            // it re-stands untouched on return. The two sheets
-            // (this and the digest) never stack: PARK and the
-            // digest live in their own invocations.
-            val standingReceipt = receiptState
-            if (standingReceipt != null &&
-                dismissedReceiptSessionId != standingReceipt.sessionId &&
-                currentDestination == MonolithDestination.DECK
-            ) {
-                com.example.ui.components.ReceiptSheet(
-                    receipt = standingReceipt,
-                    onDismiss = {
-                        dismissedReceiptSessionId = standingReceipt.sessionId
-                        viewModel.dismissReceipt(standingReceipt.sessionId)
-                    }
-                )
-            }
-
-            // A PAST SLIP, re-presented from the Vault's receipts
-            // index (issue #157): the SAME sheet composable,
-            // verbatim, over whatever screen invoked it. Its
-            // dismissal is its own — it never touches the standing
-            // receipt's flag above.
-            val presentedReceipt by viewModel.presentedReceipt.collectAsStateWithLifecycle()
-            presentedReceipt?.let { pastReceipt ->
-                com.example.ui.components.ReceiptSheet(
-                    receipt = pastReceipt,
-                    onDismiss = { viewModel.dismissPresentedReceipt() }
-                )
-            }
+            ReceiptOverlays(
+                receiptState = receiptState,
+                dismissedReceiptSessionId = dismissedReceiptSessionId,
+                currentDestination = currentDestination,
+                viewModel = viewModel,
+                onDismissStandingReceipt = { dismissedReceiptSessionId = it }
+            )
 
             // THE RECEPTION (Empfang lane, Oct 30 — grafted seat):
             // hosted in the overlay layer, BELOW the airlock and
@@ -2426,6 +2400,62 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             BreakDimScrim(alpha = breakDimAlpha)
 
         }
+    }
+}
+
+/**
+ * Issue #90 (complexity F3, overlay slice 2): the two receipt
+ * sheets of MonolithRootApp's overlay layer — the standing
+ * slip and the Vault-re-presented past slip — extracted as
+ * one composable, in their standing composition order (their
+ * own comments travel with them). Behaviour-identical: the
+ * host's values arrive as parameters; the standing sheet's
+ * dismissal flag write rides a callback at its standing
+ * position, before the view-model dismissal on the next line;
+ * the presented slip's flow collection is declared by this
+ * block itself and travels verbatim, riding the viewModel
+ * parameter.
+ */
+@Composable
+private fun ReceiptOverlays(
+    receiptState: com.example.data.ReceiptState?,
+    dismissedReceiptSessionId: Int,
+    currentDestination: MonolithDestination,
+    viewModel: MonolithViewModel,
+    onDismissStandingReceipt: (Int) -> Unit
+) {
+    // THE RECEIPT SLIP (Slice E, F-L1/F-B1): viewport-
+    // hosted over the Deck's room, dismissed ONLY by the
+    // next DOWN on its scrim (issue #157) — navigation and
+    // PARK merely unmount it via the DECK gate below, and
+    // it re-stands untouched on return. The two sheets
+    // (this and the digest) never stack: PARK and the
+    // digest live in their own invocations.
+    val standingReceipt = receiptState
+    if (standingReceipt != null &&
+        dismissedReceiptSessionId != standingReceipt.sessionId &&
+        currentDestination == MonolithDestination.DECK
+    ) {
+        com.example.ui.components.ReceiptSheet(
+            receipt = standingReceipt,
+            onDismiss = {
+                onDismissStandingReceipt(standingReceipt.sessionId)
+                viewModel.dismissReceipt(standingReceipt.sessionId)
+            }
+        )
+    }
+
+    // A PAST SLIP, re-presented from the Vault's receipts
+    // index (issue #157): the SAME sheet composable,
+    // verbatim, over whatever screen invoked it. Its
+    // dismissal is its own — it never touches the standing
+    // receipt's flag above.
+    val presentedReceipt by viewModel.presentedReceipt.collectAsStateWithLifecycle()
+    presentedReceipt?.let { pastReceipt ->
+        com.example.ui.components.ReceiptSheet(
+            receipt = pastReceipt,
+            onDismiss = { viewModel.dismissPresentedReceipt() }
+        )
     }
 }
 
