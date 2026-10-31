@@ -764,6 +764,14 @@ class MonolithRepository(
         const val PROFILE_UNDO_KEY = "profile_undo_snapshot_v1"
         const val PROFILE_UNDO_DIAL_KEY = "profile_undo_dial_minutes_v1"
         const val PROFILE_UNDO_NAME_KEY = "profile_undo_name_v1"
+        // Issue #253 lines 8 + 9: the bundle half of the undo
+        // snapshot — per-app limits, the site set, and the
+        // sound/sniper/browser facts as they stood before the
+        // apply, so undo restores the whole pre-apply context,
+        // not just the tiers.
+        const val PROFILE_UNDO_LIMITS_KEY = "profile_undo_limits_v1"
+        const val PROFILE_UNDO_SITES_KEY = "profile_undo_sites_v1"
+        const val PROFILE_UNDO_FACTS_KEY = "profile_undo_facts_v1"
         const val PRUNE_NOTE_COUNT_KEY = "prune_note_count"
         const val PRUNE_NOTE_RULES_KEY = "prune_note_rules_removed"
 
@@ -3081,15 +3089,59 @@ class MonolithRepository(
             }
             .toMap()
         if (saved.isEmpty()) return false
+        val prefs = profileUndoPrefs()
+        // Issue #253 lines 8 + 9: the bundle half of the snapshot,
+        // when the apply that wrote it carried one — per-app
+        // limits ride back with the tiers.
+        val savedLimits = prefs.getString(PROFILE_UNDO_LIMITS_KEY, null)
+            ?.lineSequence()
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.mapNotNull { line ->
+                val parts = line.split("|")
+                if (parts.size == 2) parts[0] to parts[1].toIntOrNull() else null
+            }
+            ?.mapNotNull { (pkg, mins) -> mins?.let { pkg to it } }
+            ?.toMap()
+            ?: emptyMap()
         val restored = dao.getAllAppsSnapshot().map { app ->
             val (tier, blocked) = saved[app.packageName] ?: return@map app
-            app.copy(blockTier = tier, isBlocked = blocked)
+            val withTier = app.copy(blockTier = tier, isBlocked = blocked)
+            savedLimits[app.packageName]
+                ?.let { withTier.copy(dailyLimitMinutes = it) } ?: withTier
         }
         dao.insertApps(restored)
-        profileUndoPrefs().edit()
+        // The site set and the ruled facts ride back too, when
+        // they were snapshotted.
+        prefs.getString(PROFILE_UNDO_SITES_KEY, null)?.let { sitesCsv ->
+            val target = ProfileBundle.parseSites(sitesCsv).toSet()
+            val now = dao.getAllSitesSnapshot()
+            now.filter { it.domain.lowercase() !in target }
+                .forEach { dao.deleteSite(it.domain) }
+            val nowDomains = now.map { it.domain.lowercase() }.toSet()
+            val adds = target.filter { it !in nowDomains }
+            if (adds.isNotEmpty()) {
+                dao.insertSites(adds.map { BlockedSiteEntity(it) })
+            }
+        }
+        prefs.getString(PROFILE_UNDO_FACTS_KEY, null)?.let { facts ->
+            val parsed = facts.split(";").mapNotNull {
+                val kv = it.split("=", limit = 2)
+                if (kv.size == 2) kv[0] to (kv[1] == "1") else null
+            }.toMap()
+            parsed["sound"]?.let {
+                com.example.service.SoundEffectsSetting.setEnabled(context, it)
+            }
+            parsed["sniper"]?.let { setShortsReelsSniperEnabled(it) }
+            parsed["browser"]?.let { setBrowserBlockerEnabled(it) }
+        }
+        prefs.edit()
             .remove(PROFILE_UNDO_KEY)
             .remove(PROFILE_UNDO_DIAL_KEY)
             .remove(PROFILE_UNDO_NAME_KEY)
+            .remove(PROFILE_UNDO_LIMITS_KEY)
+            .remove(PROFILE_UNDO_SITES_KEY)
+            .remove(PROFILE_UNDO_FACTS_KEY)
             .apply()
         return true
     }
@@ -3125,7 +3177,18 @@ class MonolithRepository(
         // named CRITICAL; the loadout half was cured by #304, this
         // door was not). Unsealed, the profile lands whole.
         val sealed = dao.getActiveSessionSnapshot()?.isActive == true
-        // Snapshot BEFORE the overwrite (issue #139 F4).
+        // Issue #253 lines 8 + 9: the bundle the profile carries
+        // beyond the stencil — per-app tier rulings, per-app
+        // limits, the site set, and the sound/sniper/browser
+        // facts it rules (null = does not rule that surface).
+        val bundleTiers = ProfileBundle.parseAppTiers(profile.appTiersCsv)
+        val bundleLimits = ProfileBundle.parseAppLimits(profile.appLimitsCsv)
+        val bundleSites = ProfileBundle.parseSites(profile.sitesCsv)
+        val currentSites = dao.getAllSitesSnapshot()
+        // Snapshot BEFORE the overwrite (issue #139 F4) — tiers in
+        // the v1 key, and (lines 8 + 9) the limits, site set and
+        // ruled facts alongside, so undo restores the whole
+        // pre-apply context the bundle is about to move.
         profileUndoPrefs().edit()
             .putString(
                 PROFILE_UNDO_KEY,
@@ -3133,10 +3196,26 @@ class MonolithRepository(
                     "${app.packageName}|${app.blockTier}|${if (app.isBlocked) "1" else "0"}"
                 }
             )
+            .putString(
+                PROFILE_UNDO_LIMITS_KEY,
+                currentApps.joinToString("\n") { app ->
+                    "${app.packageName}|${app.dailyLimitMinutes}"
+                }
+            )
+            .putString(
+                PROFILE_UNDO_SITES_KEY,
+                ProfileBundle.formatSites(currentSites.map { it.domain })
+            )
+            .putString(
+                PROFILE_UNDO_FACTS_KEY,
+                "sound=${if (com.example.service.SoundEffectsSetting.isEnabled(context)) 1 else 0}" +
+                    ";sniper=${if (isShortsReelsSniperEnabled()) 1 else 0}" +
+                    ";browser=${if (isBrowserBlockerEnabled()) 1 else 0}"
+            )
             .apply()
         val updated = currentApps.map { app ->
             val shouldBlock = app.category in activeCategories
-            val rawTier = when {
+            val stencilTier = when {
                 // Issue #139 F2: clock + navigation are exempt — a
                 // profile can never lock how he wakes or gets home.
                 isProfileExempt(app.packageName) -> AppBlockTier.OPEN
@@ -3151,6 +3230,18 @@ class MonolithRepository(
                 app.category == AppCategory.FINANCE.name -> AppBlockTier.PEEK_2M
                 else -> AppBlockTier.LOCKED
             }
+            // Issue #253 line 8: a per-app ruling saved in the
+            // profile beats the category stencil — that is what
+            // makes the profile a snapshot (and an OPEN entry the
+            // per-app exception). The invariants still bind the
+            // ruling exactly as they bind the stencil: the
+            // clock/navigation exemption is supreme (no profile
+            // may ever lock them, saved ruling or not) and the
+            // dialler floor applies before the copy.
+            val rawTier = when {
+                isProfileExempt(app.packageName) -> AppBlockTier.OPEN
+                else -> bundleTiers[app.packageName] ?: stencilTier
+            }
             // Issue #32 F4: tier is the truth; isBlocked is derived
             // by normalized() — note shouldBlock (category match) and
             // tier != OPEN can differ for MESSAGING (PEEK), and the
@@ -3163,10 +3254,87 @@ class MonolithRepository(
             // no bulk door can loosen while a session runs.
             val floored = EssentialApps.floorTier(app.packageName, rawTier)
             val tier = SessionTierGate.clampWhileSealed(app.resolvedTier, floored, sealed)
-            app.copy(blockTier = tier.name).normalized()
+            val limited = bundleLimits[app.packageName]
+                ?.let { app.copy(dailyLimitMinutes = it) } ?: app
+            limited.copy(blockTier = tier.name).normalized()
         }
         dao.insertApps(updated)
+        // Issue #253 line 9: the site set the profile carries
+        // replaces the standing set — under the same one-way law
+        // as every bulk door: while a session is sealed the
+        // profile's sites may only be ADDED (a removal would
+        // loosen mid-session); unsealed, the set lands whole.
+        if (profile.sitesCsv.isNotBlank()) {
+            val currentDomains = currentSites.map { it.domain.lowercase() }.toSet()
+            if (sealed) {
+                val adds = bundleSites.filter { it !in currentDomains }
+                if (adds.isNotEmpty()) {
+                    dao.insertSites(adds.map { BlockedSiteEntity(it) })
+                }
+            } else {
+                val target = bundleSites.toSet()
+                currentSites
+                    .filter { it.domain.lowercase() !in target }
+                    .forEach { dao.deleteSite(it.domain) }
+                val adds = bundleSites.filter { it !in currentDomains }
+                if (adds.isNotEmpty()) {
+                    dao.insertSites(adds.map { BlockedSiteEntity(it) })
+                }
+            }
+        }
+        // Issue #253 line 9: the facts the profile rules land
+        // through their own stores' verbs — a null rules nothing.
+        profile.soundEnabled?.let {
+            com.example.service.SoundEffectsSetting.setEnabled(context, it)
+        }
+        profile.sniperEnabled?.let { setShortsReelsSniperEnabled(it) }
+        profile.browserBlockEnabled?.let { setBrowserBlockerEnabled(it) }
     }
+
+    /**
+     * Issue #253 line 8: save the CURRENT switchboard state as a
+     * profile — the "save current as profile" verb the stencil
+     * model never had. The snapshot records every app's tier and
+     * daily limit, the standing site set, and the sound / sniper
+     * / browser-blocker facts as they stand, so applying the
+     * saved profile later reproduces this exact context (through
+     * the same invariants and sealed clamp as any profile).
+     */
+    suspend fun captureCurrentAsProfile(name: String): FocusProfileEntity =
+        withContext(Dispatchers.IO) {
+            val apps = dao.getAllAppsSnapshot()
+            val sites = dao.getAllSitesSnapshot()
+            val profile = FocusProfileEntity(
+                name = name,
+                codeName = "SNAPSHOT",
+                description = "Saved from the switchboard state at capture time.",
+                defaultMinutes = 50,
+                blockedCategoriesCsv = apps
+                    .filter { it.resolvedTier != AppBlockTier.OPEN }
+                    .map { it.category }
+                    .distinct()
+                    .joinToString(","),
+                scheduleLabel = "",
+                isScheduleEnabled = false,
+                startHour = 0,
+                startMinute = 0,
+                endHour = 0,
+                endMinute = 0,
+                appTiersCsv = ProfileBundle.formatAppTiers(
+                    apps.associate { it.packageName to it.resolvedTier }
+                ),
+                appLimitsCsv = ProfileBundle.formatAppLimits(
+                    apps.filter { it.dailyLimitMinutes > 0 }
+                        .associate { it.packageName to it.dailyLimitMinutes }
+                ),
+                sitesCsv = ProfileBundle.formatSites(sites.map { it.domain }),
+                soundEnabled = com.example.service.SoundEffectsSetting.isEnabled(context),
+                sniperEnabled = isShortsReelsSniperEnabled(),
+                browserBlockEnabled = isBrowserBlockerEnabled()
+            )
+            val id = dao.insertProfile(profile)
+            profile.copy(id = id.toInt())
+        }
 
     suspend fun toggleProfileSchedule(profile: FocusProfileEntity) {
         dao.updateProfile(profile.copy(isScheduleEnabled = !profile.isScheduleEnabled))

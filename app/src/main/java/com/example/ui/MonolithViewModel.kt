@@ -4802,6 +4802,19 @@ class MonolithViewModel(
 
     /** Issue #139 F4: one-tap undo of the last profile application —
      *  restores the hand-set per-app tiers and the dial he had. */
+    /** Issue #253 line 8: save the current switchboard state as
+     *  a profile (tiers, limits, sites, sound/sniper/browser
+     *  facts) — the snapshot verb the stencil model never had.
+     *  Named by capture time; the profile then applies like any
+     *  other through the profile doors. */
+    fun saveCurrentAsProfile() {
+        viewModelScope.launch {
+            val stamp = java.text.SimpleDateFormat("HH:mm", java.util.Locale.ROOT)
+                .format(java.util.Date())
+            repository.captureCurrentAsProfile("Snapshot $stamp")
+        }
+    }
+
     fun undoLastProfileApply() {
         viewModelScope.launch {
             if (repository.restoreProfileUndoSnapshot()) {

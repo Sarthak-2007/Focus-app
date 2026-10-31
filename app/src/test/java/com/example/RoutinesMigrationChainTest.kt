@@ -43,7 +43,7 @@ import org.robolectric.annotation.Config
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
-// PIN-SCOPE: PLUMBING — Room migration chain 7→19, schema validation (working-rules adoption, Oct 31 18:06 IST).
+// PIN-SCOPE: PLUMBING — Room migration chain 7→21, schema validation (working-rules adoption, Oct 31 18:06 IST).
 class RoutinesMigrationChainTest {
 
     private val context: Context
@@ -340,7 +340,8 @@ class RoutinesMigrationChainTest {
                 MonolithDatabase.MIGRATION_16_17,
                 MonolithDatabase.MIGRATION_17_18,
                 MonolithDatabase.MIGRATION_18_19,
-                MonolithDatabase.MIGRATION_19_20
+                MonolithDatabase.MIGRATION_19_20,
+                MonolithDatabase.MIGRATION_20_21
             )
             .build()
 
