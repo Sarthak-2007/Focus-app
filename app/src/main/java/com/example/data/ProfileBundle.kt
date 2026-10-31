@@ -72,6 +72,7 @@ object ProfileBundle {
             .map { it.trim().lowercase(Locale.ROOT) }
             .filter { it.isNotEmpty() }
             .distinct()
+            .sorted()
     }
 
     fun formatSites(sites: Collection<String>): String =
