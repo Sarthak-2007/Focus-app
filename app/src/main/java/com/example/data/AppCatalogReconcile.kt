@@ -373,6 +373,21 @@ object AppCatalogReconcile {
         return elapsed >= 0L && elapsed < windowMillis
     }
 
+    /** Issue #69 F4: a non-forced sync inside the collapse
+     *  window skips the PackageManager enumeration ITSELF, not
+     *  only the reconcile after it — the repeat look cannot
+     *  change any data (the reconcile would be skipped anyway),
+     *  so enumerating the whole package table for it is pure
+     *  startup cost. A forced sync always enumerates. */
+    fun isEnumerationSkipped(
+        forceCatalogSync: Boolean,
+        lastSuccessfulSyncMillis: Long,
+        nowMillis: Long,
+        windowMillis: Long = SYNC_COLLAPSE_WINDOW_MILLIS
+    ): Boolean = !forceCatalogSync && isCollapseRepeat(
+        lastSuccessfulSyncMillis, nowMillis, windowMillis
+    )
+
     /** Catalog view of profiled installs: one row per PACKAGE
      *  (the table's primary key is still the bare package name),
      *  first label seen wins. A package present in ANY profile is

@@ -198,14 +198,13 @@ internal fun classifyElapsedOutcome(
     if (!allBlocksCompleted) return session.outcome
     if (isRoutineSession) return session.outcome
     val impliedNowWall = session.startWallTimeMillis + verifiedElapsedSeconds * 1000L
-    val beatRef = maxOf(
-        session.shieldLastBeatWallMillis,
-        session.startWallTimeMillis,
-        appLastUpdateMillis
-    )
     return if (session.shieldGapSeen ||
-        (session.shieldLastBeatWallMillis > 0L &&
-            impliedNowWall - beatRef > MonolithRepository.SHIELD_GAP_THRESHOLD_MILLIS) ||
+        shieldBeatIsStale(
+            shieldLastBeatWallMillis = session.shieldLastBeatWallMillis,
+            startWallTimeMillis = session.startWallTimeMillis,
+            appLastUpdateMillis = appLastUpdateMillis,
+            impliedNowMillis = impliedNowWall
+        ) ||
         !usageStatsPermissionHeld
     ) {
         SessionOutcome.ELAPSED_SHIELD_GAP
@@ -214,6 +213,34 @@ internal fun classifyElapsedOutcome(
     } else {
         SessionOutcome.ELAPSED_CLEAN
     }
+}
+
+/**
+ * The shield-gap law's staleness test, pure (issue #69 F3): the
+ * beat is stale when the monotonic-implied now sits past the
+ * 10 s threshold beyond the reference — the reference never
+ * sits before the session started or before the current build
+ * landed (update downtime is not a gap). A beat of 0 is a
+ * pre-v10 row: no beat evidence exists, so the test alone can
+ * never call it stale (the latch adopts such rows instead).
+ * Shared by the outcome classifier, the gap latch and the
+ * ViewModel ticker's one-lawful-writer guard, so all three
+ * judge staleness by exactly the same law.
+ */
+internal fun shieldBeatIsStale(
+    shieldLastBeatWallMillis: Long,
+    startWallTimeMillis: Long,
+    appLastUpdateMillis: Long,
+    impliedNowMillis: Long,
+    thresholdMillis: Long = MonolithRepository.SHIELD_GAP_THRESHOLD_MILLIS
+): Boolean {
+    if (shieldLastBeatWallMillis == 0L) return false
+    val beatRef = maxOf(
+        shieldLastBeatWallMillis,
+        startWallTimeMillis,
+        appLastUpdateMillis
+    )
+    return impliedNowMillis - beatRef > thresholdMillis
 }
 
 /**
@@ -697,16 +724,33 @@ class MonolithRepository(
             // drain) is idempotent and still runs. A forced call,
             // and any call after the window, is a genuinely
             // separate look and reconciles normally.
-            val collapseRepeat = !forceCatalogSync &&
-                AppCatalogReconcile.isCollapseRepeat(
-                    lastSuccessfulSyncMillis = loadLastCatalogSyncMillis(),
-                    nowMillis = System.currentTimeMillis()
-                )
+            val collapseRepeat = AppCatalogReconcile.isEnumerationSkipped(
+                forceCatalogSync = forceCatalogSync,
+                lastSuccessfulSyncMillis = loadLastCatalogSyncMillis(),
+                nowMillis = System.currentTimeMillis()
+            )
+            // Issue #69 F4 (startup half): the collapse check now
+            // gates the ENUMERATION itself, not only the reconcile
+            // after it. The ViewModel init pays this sync twice in
+            // seconds (ensureSeededAndSyncPackages, then again via
+            // refreshSystemGuard); on the old shape the repeat call
+            // still ran the full PackageManager + LauncherApps
+            // enumeration before the guard let it skip the
+            // reconcile. Inside the collapse window both
+            // enumerations are skipped, so the repeat costs no PM
+            // work at all; `installed` is empty, the reconcile
+            // below stays skipped exactly as before, and every
+            // other seeding step in this pass still runs. Data and
+            // behaviour identical — one enumeration, not two.
             val pm = context.packageManager
             val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
                 addCategory(Intent.CATEGORY_LAUNCHER)
             }
-            val resolvedList = pm.queryIntentActivities(mainIntent, 0)
+            val resolvedList = if (collapseRepeat) {
+                emptyList()
+            } else {
+                pm.queryIntentActivities(mainIntent, 0)
+            }
             // The main activity per package (its launch intent's
             // component), resolved once per package — the reconcile's
             // dedupe rule lets it win over shortcut activities.
@@ -744,7 +788,10 @@ class MonolithRepository(
             try {
                 val launcherApps =
                     context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as? LauncherApps
-                if (launcherApps != null) {
+                // Issue #69 F4: the per-profile enumeration is
+                // gated by the same collapse check — a repeat sync
+                // inside the window enumerates nothing, anywhere.
+                if (launcherApps != null && !collapseRepeat) {
                     for (profile in launcherApps.profiles) {
                         val activities = try {
                             launcherApps.getActivityList(null, profile)
@@ -3553,12 +3600,8 @@ class MonolithRepository(
         // (#95: update downtime is not a gap) and never before the
         // session started; the judgement itself runs on the
         // monotonic-implied now (#82), so clock travel forges and
-        // launders nothing.
-        val beatRef = maxOf(
-            active.shieldLastBeatWallMillis,
-            active.startWallTimeMillis,
-            appLastUpdateMillis()
-        )
+        // launders nothing. The test itself is the shared pure
+        // law (issue #69 F3): [shieldBeatIsStale].
         val impliedNow = ClockHonesty.impliedNowMillis(
             startWallMillis = active.startWallTimeMillis,
             accumulatedBeforeRebootSeconds = active.accumulatedBeforeRebootSeconds,
@@ -3567,9 +3610,42 @@ class MonolithRepository(
             elapsedSeconds = active.elapsedSeconds,
             nowElapsedRealtimeMillis = nowElapsedRealtimeMillis
         )
-        if (impliedNow - beatRef <= SHIELD_GAP_THRESHOLD_MILLIS) return false
+        if (!shieldBeatIsStale(
+                shieldLastBeatWallMillis = active.shieldLastBeatWallMillis,
+                startWallTimeMillis = active.startWallTimeMillis,
+                appLastUpdateMillis = appLastUpdateMillis(),
+                impliedNowMillis = impliedNow
+            )
+        ) return false
         dao.latchShieldGap(active.id)
         return true
+    }
+
+    /** Issue #69 F3: is the shield's beat stale past the same
+     *  10 s law the gap latch uses? The ViewModel ticker reads
+     *  this before persisting session progress: while the shield
+     *  is alive it is the beat's only lawful writer (it persists
+     *  every iteration), so the ticker must not duplicate its
+     *  write; when the beat is stale the ticker remains the
+     *  fallback writer, so a dead shield never stalls the
+     *  session silently. No active row reads as stale (true):
+     *  with no beat evidence, never suppress the fallback. */
+    suspend fun isShieldBeatStale(nowElapsedRealtimeMillis: Long): Boolean {
+        val active = dao.getActiveSessionSnapshot() ?: return true
+        val impliedNow = ClockHonesty.impliedNowMillis(
+            startWallMillis = active.startWallTimeMillis,
+            accumulatedBeforeRebootSeconds = active.accumulatedBeforeRebootSeconds,
+            startElapsedRealtimeMillis = active.startElapsedRealtimeMillis,
+            lastTickElapsedRealtimeMillis = active.lastTickElapsedRealtimeMillis,
+            elapsedSeconds = active.elapsedSeconds,
+            nowElapsedRealtimeMillis = nowElapsedRealtimeMillis
+        )
+        return shieldBeatIsStale(
+            shieldLastBeatWallMillis = active.shieldLastBeatWallMillis,
+            startWallTimeMillis = active.startWallTimeMillis,
+            appLastUpdateMillis = appLastUpdateMillis(),
+            impliedNowMillis = impliedNow
+        )
     }
 
     /** Issue #81 F4: latch the gap NOW, without the staleness law.
