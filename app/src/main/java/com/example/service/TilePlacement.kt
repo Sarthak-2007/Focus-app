@@ -7,7 +7,7 @@ import android.graphics.drawable.Icon
 import android.os.Build
 import com.example.R
 import java.util.concurrent.Executor
-import java.util.function.IntConsumer
+import java.util.function.Consumer
 
 /**
  * Issue #274 (Audit R5 — Platform execution), the standing half
@@ -91,7 +91,7 @@ object TilePlacement {
                 appContext.getString(R.string.tile_label),
                 Icon.createWithResource(appContext, R.mipmap.ic_launcher),
                 executor,
-                IntConsumer { result ->
+                Consumer { result: Int ->
                     if (resultRecordsAdded(result)) recordAdded(appContext)
                     onResult(result)
                 }
