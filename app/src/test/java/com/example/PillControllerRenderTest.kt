@@ -106,15 +106,17 @@ class PillControllerRenderTest {
             // The same two ops under their int codes: the shadow's
             // string-keyed and int-keyed mode stores are not the same
             // shelf in every Robolectric version, and the framework
-            // reads canDrawOverlays through the int op.
+            // reads canDrawOverlays through the int op. The int codes
+            // come from strOpToOp — the OP_* int constants are not
+            // public API in this SDK surface.
             shadowOf(appOps).setMode(
-                AppOpsManager.OP_SYSTEM_ALERT_WINDOW,
+                AppOpsManager.strOpToOp(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW),
                 uid,
                 context.packageName,
                 AppOpsManager.MODE_ALLOWED
             )
             shadowOf(appOps).setMode(
-                AppOpsManager.OP_GET_USAGE_STATS,
+                AppOpsManager.strOpToOp(AppOpsManager.OPSTR_GET_USAGE_STATS),
                 uid,
                 context.packageName,
                 AppOpsManager.MODE_ALLOWED
@@ -135,7 +137,7 @@ class PillControllerRenderTest {
             rawMode
         )
         val rawModeInt = appOps.unsafeCheckOpNoThrow(
-            AppOpsManager.OP_SYSTEM_ALERT_WINDOW,
+            AppOpsManager.strOpToOp(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW),
             Process.myUid(),
             context.packageName
         )
