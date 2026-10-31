@@ -75,6 +75,10 @@
     <string name="sequencer_reopen">REOPEN</string>
     <string name="sequencer_nothing_queued">NOTHING QUEUED</string>
     <string name="sequencer_done_tear">DONE — TEAR</string>
+    <string name="sequencer_dismiss">DISMISS</string>
+    <string name="sequencer_write_step">Write a step...</string>
+    <string name="sequencer_add_step">ADD STEP</string>
+    <string name="sequencer_close">CLOSE</string>
     <string name="shield_schedule_reset">SCHEDULE RESET TO YOUR DAY — TAP ANY ROW TO CHANGE IT</string>
     <string name="shield_filter_apps">Filter apps…</string>
     <string name="shield_no_app">NO APP BY THAT NAME ON THIS PHONE</string>
