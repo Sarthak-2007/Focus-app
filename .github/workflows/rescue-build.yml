@@ -195,7 +195,7 @@ jobs:
       # from the XML instead of reconstructed from a log tail.
       - name: Upload unit-test results
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unit-test-results-${{ github.sha }}
           path: |
@@ -230,7 +230,7 @@ jobs:
             exit 1
           fi
           echo "APK signer verified: $FP - versionCode $VC"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: monolith-debug
           path: app/build/outputs/apk/debug/app-debug.apk
@@ -251,7 +251,7 @@ jobs:
       # full run log. Always uploaded, green or red.
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unit-test-results
           path: |
@@ -345,7 +345,7 @@ jobs:
       # dispositioned name-by-name instead of buried in a log.
       - name: Upload lint report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: lint-results-debug
           path: |
@@ -424,7 +424,7 @@ jobs:
           chmod +x gradlew
           ./gradlew --console=plain testDebugUnitTest --tests "com.example.ScreenshotHarnessTest"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.screens.outcome == 'success'
         with:
           name: screens-${{ github.sha }}
@@ -535,7 +535,7 @@ jobs:
       # per-name results are the gate reader's evidence.
       - name: Upload unit-test results
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unit-test-results-${{ github.sha }}
           path: |
