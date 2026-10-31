@@ -690,156 +690,15 @@ fun ShieldMatrixScreen(
             )
         }
 
-        // =====================================================================
-        // SECTION 4: SEARCH & CATEGORY FILTER STRIP
-        // =====================================================================
-        item {
-            // Dens F6: SHOWING prints only when the catalogue is
-            // actually filtered — an unfiltered count here was a
-            // second home for the tally's numbers.
-            if (filteredApps.size != allApps.size) {
-                FullBleedSectionHeader(
-                    titleWord = "ALL APPS",
-                    rightWordPrefix = "SHOWING ",
-                    rightMonoNumber = filteredApps.size.toString()
-                )
-            } else {
-                FullBleedSectionHeader(titleWord = "ALL APPS")
-            }
-            Text(
-                text = "APPS ON THIS PHONE ONLY — NOTHING HERE CAN HOLD AN APP ON ANOTHER DEVICE",
-                fontFamily = AnonymousProFamily,
-                fontSize = 10.sp,
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.testTag("shield_catalog_scope_line")
-            )
-        }
-
-        // Issue #142: the search bar and the category chips PIN to
-        // the top of the list (stickyHeader). Finding an app used
-        // to start with scrolling back up the page; now the strip
-        // stays where the results are, and the query can be refined
-        // or cleared in place (the ✕ at the bar's end).
-        stickyHeader {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(scheme.background)
-                    .padding(vertical = 8.dp)
-            ) {
-            // Recessed 12dp search bar
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(scheme.surfaceVariant)
-                    .padding(horizontal = 12.dp),
-                contentAlignment = Alignment.CenterStart
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.weight(1f)) {
-                        if (searchQuery.isEmpty()) {
-                            Text(
-                                text = "Filter apps by name or package…",
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontSize = 13.sp,
-                                color = scheme.onSurfaceVariant
-                            )
-                        }
-                        BasicTextField(
-                            value = searchQuery,
-                            onValueChange = onSearchQueryChanged,
-                            singleLine = true,
-                            textStyle = TextStyle(
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                color = scheme.onBackground
-                            ),
-                            // The accent law (chrome C7): a caret is furniture,
-                            // not a commit — it wears ink, never the accent.
-                            cursorBrush = SolidColor(scheme.onBackground),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("shield_search_input")
-                        )
-                    }
-                    if (searchQuery.isNotEmpty()) {
-                        Text(
-                            text = "✕",
-                            fontFamily = AnonymousProFamily,
-                            fontSize = 13.sp,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .clickable { onSearchQueryChanged("") }
-                                .padding(start = 8.dp)
-                                .testTag("shield_search_clear")
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            // Chips keep their natural width and the row scrolls — full words,
-            // never the old 3-letter truncations (Ren).
-            // Filters as words (S2/T8): state = ink + an underline bar —
-            // position and weight, not five bordered pills.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                FilterWord(
-                    label = "ALL",
-                    selected = selectedCategory == null,
-                    onClick = { onSelectCategory(null) }
-                )
-                AppCategory.entries.forEach { cat ->
-                    FilterWord(
-                        label = cat.label.uppercase(),
-                        selected = selectedCategory == cat,
-                        onClick = { onSelectCategory(if (selectedCategory == cat) null else cat) }
-                    )
-                }
-            }
-            // The zero-result line pins WITH the search strip
-            // (issue #142, closure fix): the answer stays on screen
-            // while the query is refined, instead of living in a
-            // list item the catalogue can scroll past. The line's
-            // semantics are unchanged - an empty list is answered
-            // in print, never with a void (Liv/Gust); a search hit
-            // under another category says exactly that (fresh-eyes
-            // L7); the existence check uses the SAME match as the
-            // filter (appMatchesQuery, #107/#142), and the search
-            // line never claims an app is absent from the phone.
-            if (filteredApps.isEmpty()) {
-                val existsOutsideFilter = searchQuery.isNotBlank() && allApps.any {
-                    com.example.ui.appMatchesQuery(it, searchQuery)
-                }
-                Text(
-                    text = when {
-                        searchQuery.isNotBlank() && existsOutsideFilter ->
-                            "THAT NAME IS ON THIS PHONE — NOT IN THIS CATEGORY"
-                        searchQuery.isNotBlank() && selectedCategory != null ->
-                            "NO MATCH FOR THAT SEARCH IN ${selectedCategory.label.uppercase()} — TRY THE APP'S NAME OR ITS PACKAGE NAME"
-                        searchQuery.isNotBlank() ->
-                            "NO MATCH FOR THAT SEARCH — TRY THE APP'S NAME OR ITS PACKAGE NAME"
-                        selectedCategory != null ->
-                            "NO APPS IN THIS CATEGORY ON THIS PHONE"
-                        else -> "NO APPS ON THIS PHONE"
-                    },
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 11.sp,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .padding(top = 8.dp)
-                        .testTag("shield_no_match_line")
-                )
-            }
-            }
-        }
+        shieldSearchFilterStrip(
+            scheme = scheme,
+            filteredApps = filteredApps,
+            allApps = allApps,
+            searchQuery = searchQuery,
+            onSearchQueryChanged = onSearchQueryChanged,
+            selectedCategory = selectedCategory,
+            onSelectCategory = onSelectCategory
+        )
 
         // Issue #107 (#2): the PEEK terms again directly above the
         // sleds that sell it — the middle stop's contract, at the
@@ -1496,6 +1355,179 @@ private fun LazyListScope.standingOrdersSlip(
 
         item {
             SlipHeaderRow(right = tallyText(shutCount, peekCount, open = null))
+        }
+    }
+}
+
+/**
+ * Issue #90 (complexity F4 slice): SECTION 4 — the search &
+ * category filter strip (the ALL APPS header item and the
+ * pinned stickyHeader: search bar, category words, the
+ * zero-result line) of ShieldMatrixScreen's list — extracted
+ * as a LazyListScope extension, in the pattern of
+ * standingOrdersSlip. Behaviour-identical: same items, same
+ * keys, same testTags; the host's values arrive as parameters
+ * and the strip's two writes ride the host's own callback
+ * parameters (onSearchQueryChanged / onSelectCategory) by
+ * name — no line inside the section is rewired.
+ */
+private fun LazyListScope.shieldSearchFilterStrip(
+    scheme: androidx.compose.material3.ColorScheme,
+    filteredApps: List<BlockedAppEntity>,
+    allApps: List<BlockedAppEntity>,
+    searchQuery: String,
+    onSearchQueryChanged: (String) -> Unit,
+    selectedCategory: AppCategory?,
+    onSelectCategory: (AppCategory?) -> Unit
+) {
+    // =====================================================================
+    // SECTION 4: SEARCH & CATEGORY FILTER STRIP
+    // =====================================================================
+    item {
+        // Dens F6: SHOWING prints only when the catalogue is
+        // actually filtered — an unfiltered count here was a
+        // second home for the tally's numbers.
+        if (filteredApps.size != allApps.size) {
+            FullBleedSectionHeader(
+                titleWord = "ALL APPS",
+                rightWordPrefix = "SHOWING ",
+                rightMonoNumber = filteredApps.size.toString()
+            )
+        } else {
+            FullBleedSectionHeader(titleWord = "ALL APPS")
+        }
+        Text(
+            text = "APPS ON THIS PHONE ONLY — NOTHING HERE CAN HOLD AN APP ON ANOTHER DEVICE",
+            fontFamily = AnonymousProFamily,
+            fontSize = 10.sp,
+            color = scheme.onSurfaceVariant,
+            modifier = Modifier.testTag("shield_catalog_scope_line")
+        )
+    }
+
+    // Issue #142: the search bar and the category chips PIN to
+    // the top of the list (stickyHeader). Finding an app used
+    // to start with scrolling back up the page; now the strip
+    // stays where the results are, and the query can be refined
+    // or cleared in place (the ✕ at the bar's end).
+    stickyHeader {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(scheme.background)
+                .padding(vertical = 8.dp)
+        ) {
+        // Recessed 12dp search bar
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(scheme.surfaceVariant)
+                .padding(horizontal = 12.dp),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.weight(1f)) {
+                    if (searchQuery.isEmpty()) {
+                        Text(
+                            text = "Filter apps by name or package…",
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 13.sp,
+                            color = scheme.onSurfaceVariant
+                        )
+                    }
+                    BasicTextField(
+                        value = searchQuery,
+                        onValueChange = onSearchQueryChanged,
+                        singleLine = true,
+                        textStyle = TextStyle(
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = scheme.onBackground
+                        ),
+                        // The accent law (chrome C7): a caret is furniture,
+                        // not a commit — it wears ink, never the accent.
+                        cursorBrush = SolidColor(scheme.onBackground),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("shield_search_input")
+                    )
+                }
+                if (searchQuery.isNotEmpty()) {
+                    Text(
+                        text = "✕",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 13.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clickable { onSearchQueryChanged("") }
+                            .padding(start = 8.dp)
+                            .testTag("shield_search_clear")
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+        // Chips keep their natural width and the row scrolls — full words,
+        // never the old 3-letter truncations (Ren).
+        // Filters as words (S2/T8): state = ink + an underline bar —
+        // position and weight, not five bordered pills.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            FilterWord(
+                label = "ALL",
+                selected = selectedCategory == null,
+                onClick = { onSelectCategory(null) }
+            )
+            AppCategory.entries.forEach { cat ->
+                FilterWord(
+                    label = cat.label.uppercase(),
+                    selected = selectedCategory == cat,
+                    onClick = { onSelectCategory(if (selectedCategory == cat) null else cat) }
+                )
+            }
+        }
+        // The zero-result line pins WITH the search strip
+        // (issue #142, closure fix): the answer stays on screen
+        // while the query is refined, instead of living in a
+        // list item the catalogue can scroll past. The line's
+        // semantics are unchanged - an empty list is answered
+        // in print, never with a void (Liv/Gust); a search hit
+        // under another category says exactly that (fresh-eyes
+        // L7); the existence check uses the SAME match as the
+        // filter (appMatchesQuery, #107/#142), and the search
+        // line never claims an app is absent from the phone.
+        if (filteredApps.isEmpty()) {
+            val existsOutsideFilter = searchQuery.isNotBlank() && allApps.any {
+                com.example.ui.appMatchesQuery(it, searchQuery)
+            }
+            Text(
+                text = when {
+                    searchQuery.isNotBlank() && existsOutsideFilter ->
+                        "THAT NAME IS ON THIS PHONE — NOT IN THIS CATEGORY"
+                    searchQuery.isNotBlank() && selectedCategory != null ->
+                        "NO MATCH FOR THAT SEARCH IN ${selectedCategory.label.uppercase()} — TRY THE APP'S NAME OR ITS PACKAGE NAME"
+                    searchQuery.isNotBlank() ->
+                        "NO MATCH FOR THAT SEARCH — TRY THE APP'S NAME OR ITS PACKAGE NAME"
+                    selectedCategory != null ->
+                        "NO APPS IN THIS CATEGORY ON THIS PHONE"
+                    else -> "NO APPS ON THIS PHONE"
+                },
+                fontFamily = AnonymousProFamily,
+                fontSize = 11.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier
+                    .padding(top = 8.dp)
+                    .testTag("shield_no_match_line")
+            )
+        }
         }
     }
 }
