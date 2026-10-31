@@ -109,6 +109,12 @@ class SeedAndDayWordDrainTest {
             setOf("FASTED BLOCK", "DAY BLOCKS", "SLEEP"),
             dao.getAllRoutinesSnapshot().map { it.name }.toSet()
         )
+        // Issue #96 F1: seeded routines are born disabled — a fresh
+        // install auto-seals nothing until he enables them himself.
+        assertTrue(
+            "seeded routines must be born disabled (#96 F1)",
+            dao.getAllRoutinesSnapshot().none { it.enabled }
+        )
         assertTrue(dao.getAllAppsSnapshot().isNotEmpty())
         assertTrue(dao.getAllProfilesSnapshot().isNotEmpty())
         assertTrue(dao.getAllTasksSnapshot().isNotEmpty())
