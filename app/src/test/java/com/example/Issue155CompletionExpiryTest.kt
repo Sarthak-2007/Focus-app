@@ -323,12 +323,34 @@ class Issue155CompletionExpiryTest {
         // A destroyed shield is a shield-down moment: the widget
         // refresh fires in onDestroy exactly as on STOP dispatch,
         // so a stale SEALED cannot outlive the service.
+        // The pin scopes to the brace-matched onDestroy body, not a
+        // fixed char window: the #651 composition grew the body past
+        // the old 900-char window and the pin failed by construction
+        // while the call stood inside the body (#166, K8 sitting 5).
+        // Presence in the body is the guarded claim — and stricter
+        // than the window, which would also pass a call moved just
+        // past the body's end.
         val source = shieldSource()
         val fnIdx = source.indexOf("override fun onDestroy()")
         assertTrue(fnIdx >= 0)
-        val window = source.substring(fnIdx, minOf(fnIdx + 900, source.length))
+        val openBrace = source.indexOf('{', fnIdx)
+        assertTrue(openBrace >= 0)
+        var depth = 0
+        var end = openBrace
+        while (end < source.length) {
+            when (source[end]) {
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) break
+                }
+            }
+            end++
+        }
+        assertTrue(depth == 0)
+        val body = source.substring(openBrace, minOf(end + 1, source.length))
         assertTrue(
-            window.contains("MonolithWidgetProvider.requestUpdate(applicationContext)")
+            body.contains("MonolithWidgetProvider.requestUpdate(applicationContext)")
         )
     }
 
