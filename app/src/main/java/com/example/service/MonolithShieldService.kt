@@ -305,6 +305,12 @@ class MonolithShieldService : Service() {
     // title or a countdown of its own.
     @Volatile private var lastBaseTitle: String? = null
     @Volatile private var lastBaseSubtitle: String? = null
+    // Issue #155 (IQ-3 reseat, re-close bench): the standing card's
+    // break state, remembered beside its base title/subtitle so a
+    // battery re-post during a Safe Break rebuilds the card with the
+    // break's public face — never the standing "protected" line
+    // while PEEK apps are lawfully open.
+    @Volatile private var lastBaseInSafeBreak: Boolean = false
 
     /** Battery events that change what the shield may honestly
      *  promise: the battery running out, the charger arriving or
@@ -346,7 +352,7 @@ class MonolithShieldService : Service() {
         if (!protecting) return
         val title = lastBaseTitle ?: return
         val subtitle = lastBaseSubtitle ?: return
-        updateNotification(title, subtitle)
+        updateNotification(title, subtitle, inSafeBreak = lastBaseInSafeBreak)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -1150,7 +1156,8 @@ class MonolithShieldService : Service() {
                         subtitle = standingSubtitle,
                         bigText = bigText,
                         chronometerEndMillis = chronometerEndMillis,
-                        badgeNumber = badgeNumber
+                        badgeNumber = badgeNumber,
+                        inSafeBreak = updated.isInSafeBreak
                     )
                 }
 
@@ -1474,7 +1481,8 @@ class MonolithShieldService : Service() {
         timeoutAfterMs: Long = 0,
         bigText: String? = null,
         chronometerEndMillis: Long? = null,
-        badgeNumber: Int? = null
+        badgeNumber: Int? = null,
+        inSafeBreak: Boolean = false
     ): Notification {
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -1521,13 +1529,23 @@ class MonolithShieldService : Service() {
         // version is now gated on the SAME protecting truth as
         // the card it shadows: no standing witness, or a missing
         // grant, means no protection claim — ever.
-        val publicText = when {
-            !ongoing -> "Session complete"
-            subtitle.contains("Arming shield") -> "Monolith session in progress"
-            !protecting -> "Monolith session in progress"
-            missing.isNotEmpty() -> "Monolith session in progress"
-            else -> "Focus session protected"
-        }
+        // Issue #155 (IQ-3 reseat, re-close bench): the same gate
+        // left one face unmatched — a Safe Break. During a break
+        // the witness stands and no grant is missing, so the old
+        // chain fell through to "Focus session protected" while
+        // PEEK apps were lawfully open: a whole claim for a partial
+        // seal, on the lock screen. The break now has its own
+        // branch in shieldPublicText, fed by the explicit
+        // inSafeBreak this builder is handed by the loop's break
+        // branch (and by the battery re-post's remembered state) —
+        // never by a subtitle substring.
+        val publicText = shieldPublicText(
+            ongoing = ongoing,
+            arming = subtitle.contains("Arming shield"),
+            protecting = protecting,
+            missingCount = missing.size,
+            inSafeBreak = inSafeBreak
+        )
         val publicVersion = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle("Monolith")
@@ -1659,7 +1677,7 @@ class MonolithShieldService : Service() {
             NOTIFICATION_ID,
             buildNotification(
                 title, warnedSubtitle, ongoing, autoCancel, timeoutAfterMs,
-                warnedBigText, chronometerEndMillis, badgeNumber
+                warnedBigText, chronometerEndMillis, badgeNumber, inSafeBreak
             )
         )
     }
@@ -1841,6 +1859,37 @@ class MonolithShieldService : Service() {
          *  block has started) is shorter-lived than the
          *  completion receipt's. */
         const val BREAK_OVER_TIMEOUT_MS = 600_000L
+
+        /**
+         * Issue #155: the shield card's LOCK-SCREEN (public version)
+         * line — the one sentence about the session a stranger
+         * holding the phone may read. Pure, so the whole state table
+         * is pinned by plain unit tests (Issue155PublicTextTest);
+         * buildNotification feeds it the live probes.
+         *
+         * The claim "Focus session protected" is earned by exactly
+         * one state: ongoing, past arming, the protecting witness
+         * standing, no grant missing, and NOT in a Safe Break. A
+         * break is a partial seal — PEEK apps are lawfully open —
+         * so the break prints its own line and never the whole
+         * claim (IQ-3 reseat consult, re-close bench). Every
+         * not-yet / no-longer / degraded state prints the non-claim
+         * line; a finished session prints its completion line.
+         */
+        fun shieldPublicText(
+            ongoing: Boolean,
+            arming: Boolean,
+            protecting: Boolean,
+            missingCount: Int,
+            inSafeBreak: Boolean
+        ): String = when {
+            !ongoing -> "Session complete"
+            arming -> "Monolith session in progress"
+            !protecting -> "Monolith session in progress"
+            missingCount > 0 -> "Monolith session in progress"
+            inSafeBreak -> "Monolith \u2014 on a break \u00b7 peek apps open"
+            else -> "Focus session protected"
+        }
         /** Issue #155 (F5): present (true) on the shield card's content
          *  intent; MainActivity routes such a launch to SHIELD. */
         const val EXTRA_FROM_SHIELD_NOTIFICATION = "com.example.EXTRA_FROM_SHIELD_NOTIFICATION"
