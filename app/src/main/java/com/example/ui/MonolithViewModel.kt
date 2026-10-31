@@ -503,6 +503,14 @@ data class AirlockInterceptState(
      *  this visit (FIX-8): one count drives both the taper and
      *  the memory line, so the two can never disagree. */
     val priorInterceptsThisSession: Int = 0,
+    /** Issue #264 (B-264-25): when this package was last reached
+     *  for, wall clock, read from the persisted intercept log —
+     *  the same snapshot the FIX-8 count reads, with "Peek
+     *  Expired" echoes excluded (an expiry is not a reach). 0 =
+     *  no prior reach in the log. The door prints the distance
+     *  as its second memory line: the count says how often this
+     *  session, this says how long the urge waited. */
+    val lastReachAtMillis: Long = 0L,
     /** The session schedule's next break instant, wall clock
      *  (FIX-8 errand kernel); null when none is owed. */
     val nextBreakAtMillis: Long? = null,
@@ -5016,6 +5024,13 @@ class MonolithViewModel(
         } else {
             0
         }
+        // Issue #264 (B-264-25): this package's last reach from
+        // the same log snapshot the count reads — booked before
+        // this visit by construction (the arrival booking lands
+        // after the state), "Peek Expired" echoes excluded.
+        val lastReachAtMillis = interceptLogs.value
+            .filter { it.packageName == packageName && it.outcome != "Peek Expired" }
+            .maxOfOrNull { it.timestampMillis } ?: 0L
         val wallSeconds = if (canPeek) taperWallSeconds(priorCount, justExpiredLease) else 0
 
         // P-4c: a fresh nonce per arrival — a same-package re-fire
@@ -5043,6 +5058,7 @@ class MonolithViewModel(
                 repository.peekCooldownEndsAtElapsedRealtime(it)
             } ?: 0L,
             priorInterceptsThisSession = priorCount,
+            lastReachAtMillis = lastReachAtMillis,
             // FIX-8 errand kernel: the break appointment exists
             // only on PEEK-tier doors — exactly where a break
             // actually opens this app (designer §4.5).
@@ -5199,6 +5215,13 @@ class MonolithViewModel(
         } else {
             0
         }
+        // Issue #264 (B-264-25): this package's last reach from
+        // the same log snapshot the count reads — booked before
+        // this visit by construction (the arrival booking lands
+        // after the state), "Peek Expired" echoes excluded.
+        val lastReachAtMillis = interceptLogs.value
+            .filter { it.packageName == packageName && it.outcome != "Peek Expired" }
+            .maxOfOrNull { it.timestampMillis } ?: 0L
         val wallSeconds = if (canPeek) taperWallSeconds(priorCount, justExpiredLease) else 0
 
         // P-4c: a fresh nonce per arrival — a same-package re-fire
@@ -5242,6 +5265,7 @@ class MonolithViewModel(
                 repository.peekCooldownEndsAtElapsedRealtime(it)
             } ?: 0L,
             priorInterceptsThisSession = priorCount,
+            lastReachAtMillis = lastReachAtMillis,
             // FIX-8 errand kernel: the break appointment exists
             // only on PEEK-tier doors — exactly where a break
             // actually opens this app (designer §4.5).
