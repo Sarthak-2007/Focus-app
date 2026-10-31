@@ -914,7 +914,7 @@ fun ShieldMatrixScreen(
         // exactly once, and the row keeps its full wiring.
         catalogueGroups.forEach { (tier, groupApps) ->
             item(key = "catalogue_group_${tier.name}") {
-                CatalogueGroupHeader(tier = tier)
+                CatalogueGroupHeader(tier = tier, peekMinutes = peekMinutes)
             }
             items(groupApps, key = { it.packageName }) { app ->
                 CatalogueAppRow(
@@ -2212,7 +2212,7 @@ private fun CatalogueAppRow(
  *  tally, and a number with two homes is a duplication
  *  (R-13; critic Salz C-11.1). */
 @Composable
-private fun CatalogueGroupHeader(tier: AppBlockTier) {
+private fun CatalogueGroupHeader(tier: AppBlockTier, peekMinutes: Int = 2) {
     Column {
         Text(
             text = tierWord(tier),
