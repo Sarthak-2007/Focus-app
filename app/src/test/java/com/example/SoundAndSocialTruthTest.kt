@@ -392,7 +392,7 @@ class SoundAndSocialTruthTest {
             // and the assignment — which lands only after the
             // whole seed pass — could then clobber the published
             // print mid-chain and eat a toggle (see the helper).
-            awaitPublishedFactSettled(vm, repository)
+            awaitPublishedFactSettled(vm, repository, db.monolithDao())
             setParkContent(vm)
 
             composeRule.onNodeWithTag("park_social_sled").assertExists()
@@ -448,7 +448,7 @@ class SoundAndSocialTruthTest {
             // below reads the published print through the toggle,
             // so the init seed assignment must have landed and
             // the print must rest on the stored fact before it.
-            awaitPublishedFactSettled(vm, repository)
+            awaitPublishedFactSettled(vm, repository, db.monolithDao())
 
             setParkContent(vm)
             settlePark()
@@ -561,13 +561,21 @@ class SoundAndSocialTruthTest {
      *  are visible (profiles are seeded inside the same pass)
      *  AND the published/stored pair reads equal across two
      *  consecutive driven polls. After it, the only writer of
-     *  the print in these cases is the toggle itself. */
+     *  the print in these cases is the toggle itself.
+     *
+     *  The landed-proof reads the profiles TABLE, never the VM's
+     *  profiles flow: that flow is collection-driven and stays
+     *  dark until a composition collects it, so a flow-based gate
+     *  starves pre-composition — PR #697's first run died in this
+     *  gate at 30 s in both cases on exactly that. The seed pass
+     *  writes the table directly; the table is the product. */
     private fun awaitPublishedFactSettled(
         vm: MonolithViewModel,
-        repository: MonolithRepository
+        repository: MonolithRepository,
+        dao: com.example.data.MonolithDao
     ) {
         awaitTrue("the VM's init seed pass has landed (profiles seeded)") {
-            vm.profiles.value.isNotEmpty()
+            runBlocking { dao.getAllProfilesSnapshot() }.isNotEmpty()
         }
         val deadline = System.currentTimeMillis() + 30_000L
         var lastPair: Pair<Boolean, Boolean>? = null
