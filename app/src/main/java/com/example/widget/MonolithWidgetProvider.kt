@@ -11,6 +11,7 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.MonolithDatabase
 import com.example.data.RoutineSchedule
+import com.example.service.MonolithShieldService
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -77,16 +78,43 @@ class MonolithWidgetProvider : AppWidgetProvider() {
             val now = System.currentTimeMillis()
             val session = dao.getActiveSessionSnapshot()?.takeIf { it.isActive }
             if (session != null) {
-                when {
+                // Issue #155, verifier residue (2): SEALED is a
+                // claim about the SHIELD, not about the row. It
+                // prints only when the shield's own truth proves
+                // it — protecting witness standing for this session
+                // AND a fresh persisted beat (WidgetSealTruth).
+                // A live row beside a dead/blind shield prints the
+                // honest unproven line, never SEALED.
+                // Issue #155 (IQ-1 unified latch, WING-F): no
+                // accessibility input is read here at all. The
+                // shield's flip requires both doors and its demote
+                // fires on either door closing, so the protecting
+                // witness implies the accessibility door — the
+                // widget never derives it a second time (the fork
+                // IQ-1 rejected is removed, not re-homed).
+                val sealedProven = WidgetSealTruth.sealedProven(
+                    isActive = session.isActive,
+                    protecting = MonolithShieldService.protecting,
+                    protectingSessionId = MonolithShieldService.protectingSessionId,
+                    sessionId = session.id,
+                    beatWallMillis = session.shieldLastBeatWallMillis,
+                    nowWallMillis = now
+                )
+                if (!sealedProven) {
+                    // Issue #155 (IQ-2 VC-2 + IQ-5 F-4): no
+                    // row-asserted "SESSION LIVE", short enough to
+                    // read whole at the smallest (3x1) placement.
+                    "SHIELD UNPROVEN \u2022 OPEN THE APP TO CHECK"
+                } else when {
                     session.isStopwatchMode ->
-                        "SEALED \u2022 ${session.intention} \u2022 STOPWATCH, NO SET END"
+                        sealedLine(session.intention, "STOPWATCH, NO SET END")
                     session.windowEndMillis > now ->
-                        "SEALED \u2022 ${session.intention} \u2022 until ${hhmm(session.windowEndMillis)}"
+                        sealedLine(session.intention, "until ${hhmm(session.windowEndMillis)}")
                     else -> {
                         // Manual timed session: the end is now plus the
                         // whole-span remainder the model itself derives.
                         val end = now + session.spanRemainingSeconds * 1000L
-                        "SEALED \u2022 ${session.intention} \u2022 until ${hhmm(end)}"
+                        sealedLine(session.intention, "until ${hhmm(end)}")
                     }
                 }
             } else {
@@ -98,7 +126,19 @@ class MonolithWidgetProvider : AppWidgetProvider() {
                     }
                     .minByOrNull { it.second }
                 if (next != null) {
-                    "OPEN \u2022 NEXT SEAL ${next.first.name} ${hhmm(next.second)}"
+                    // Issue #155 (IQ-2 VC-3): routine-marked and
+                    // day-qualified — "NEXT SEAL" stated the app's
+                    // future act (Monolith is hand-armed; a routine
+                    // is the user's, the app does not seal itself),
+                    // and a bare HH:mm let tomorrow read as today.
+                    // Issue #155 (WING-F): a blank routine name
+                    // drops its segment: no doubled spaces and
+                    // no dangling gap where the name would sit.
+                    if (next.first.name.isBlank()) {
+                        "OPEN \u2022 NEXT ROUTINE ${dayLabel(next.second, now)} ${hhmm(next.second)}"
+                    } else {
+                        "OPEN \u2022 NEXT ROUTINE ${next.first.name} ${dayLabel(next.second, now)} ${hhmm(next.second)}"
+                    }
                 } else {
                     "OPEN"
                 }
@@ -109,8 +149,30 @@ class MonolithWidgetProvider : AppWidgetProvider() {
         }
     }
 
+    /** Issue #155 (WING-F): the SEALED line's segments — a blank
+     *  intention drops out instead of leaving a doubled separator
+     *  ("SEALED •  • until …") on the home screen. */
+    private fun sealedLine(intention: String, tail: String): String =
+        listOfNotNull("SEALED", intention.takeIf { it.isNotBlank() }, tail)
+            .joinToString(" \u2022 ")
+
     private fun hhmm(millis: Long): String =
         SimpleDateFormat("HH:mm", Locale.US).format(Date(millis))
+
+    /** Issue #155 (IQ-2 VC-3): TODAY / TOMORROW / day name for a
+     *  future start, so the widget's clock time never reads as
+     *  sooner than it is. */
+    private fun dayLabel(startMillis: Long, nowMillis: Long): String {
+        val start = java.util.Calendar.getInstance().apply { timeInMillis = startMillis }
+        val nowCal = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
+        fun sameDay(a: java.util.Calendar, b: java.util.Calendar): Boolean =
+            a.get(java.util.Calendar.YEAR) == b.get(java.util.Calendar.YEAR) &&
+                a.get(java.util.Calendar.DAY_OF_YEAR) == b.get(java.util.Calendar.DAY_OF_YEAR)
+        if (sameDay(start, nowCal)) return "TODAY"
+        nowCal.add(java.util.Calendar.DAY_OF_YEAR, 1)
+        if (sameDay(start, nowCal)) return "TOMORROW"
+        return SimpleDateFormat("EEE", Locale.US).format(Date(startMillis)).uppercase(Locale.US)
+    }
 
     companion object {
         /**

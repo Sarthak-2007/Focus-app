@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -149,6 +150,20 @@ fun FocusSequencerScreen(
         orderedQueue.sumOf { it.estimatedMinutes }
     }
 
+    // Issue #106, finding 3: the undo banner lives at the TOP of
+    // this list (item index 2 — Horizon, composer, banner). A
+    // delete taken low in the queue used to birth it off-screen,
+    // where its whole 5-second life expired unseen. When a delete
+    // lands, the list scrolls the banner into view the moment it
+    // appears, so its full window is usable from where the user
+    // actually is.
+    val listState = rememberLazyListState()
+    LaunchedEffect(deletedTaskForUndo) {
+        if (deletedTaskForUndo != null) {
+            listState.scrollToItem(2)
+        }
+    }
+
     fun submitTask() {
         val clean = newTaskTitle.trim()
         if (clean.isNotEmpty()) {
@@ -158,7 +173,12 @@ fun FocusSequencerScreen(
             // Issue #53 F4: and it asks nothing about category —
             // the tag is "" (uncategorised), never a fabricated
             // "Study" the user never chose.
-            onAddTask(clean, 0, "", "", orderedQueue.isEmpty())
+            // Issue #106, finding 4: an empty queue is a reason to
+            // crown the new task only while NO session runs — a
+            // mid-session jot-down is for later, never a hijack of
+            // NOW (the repository enforces the same guard for its
+            // other callers).
+            onAddTask(clean, 0, "", "", orderedQueue.isEmpty() && !isSessionActive)
             newTaskTitle = ""
         }
     }
@@ -176,6 +196,7 @@ fun FocusSequencerScreen(
     }
 
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
             .background(scheme.background)

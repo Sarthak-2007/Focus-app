@@ -6,6 +6,7 @@
     <string name="device_admin_description">Shows a warning when Monolith\'s device admin is about to be turned off. It only adds friction and a warning — Android still lets you deactivate it and uninstall Monolith; it does not prevent either.</string>
     <string name="device_admin_add_explanation">Turning this on only lets Monolith show a warning if you later go to turn its device admin off. It adds friction and a warning — it does not prevent deactivation or uninstall, and Android still lets you do both.</string>
     <string name="accessibility_service_summary">Guards a sealed focus session: blocked apps, Shorts/Reels and blocked sites are intercepted, including in split-screen and picture-in-picture. Open Monolith to configure what is blocked.</string>
+    <string name="widget_description">Seal status at a glance: sealed, open, or the next seal.</string>
     <string name="notification_channel_name">Monolith Active Shield</string>
     <string name="notification_channel_desc">Shows the active focus session\'s countdown and shield status.</string>
     <!-- Issue #115: one name per destination — the rail's words.
@@ -56,7 +57,6 @@
     <string name="deflection_line">%1$s · %2$s</string>
     <string name="receipt_shield_gap">THE SHIELD WAS OFF FOR PART OF THAT SESSION</string>
     <string name="receipt_shield_still_blocked">SHIELD — STILL BLOCKED (SERVICE DIDN\'T STOP)</string>
-    <string name="receipt_footer_log">THE MACHINE KEEPS ITS OWN LOG · YOUR STUDY RECORD LIVES IN YPT</string>
     <string name="drawer_stored">STORED</string>
     <string name="drawer_estimate">ESTIMATE %1$d MIN</string>
     <string name="drawer_spent">SPENT %1$s</string>

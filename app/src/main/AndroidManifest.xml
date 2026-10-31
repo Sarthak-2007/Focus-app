@@ -15,6 +15,12 @@
          inexact arm whenever it is absent (the heartbeat
          reconciles). -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Issue #143 F4: declared so the DND gate can read the
+         interruption filter and, ONLY where the user has granted
+         notification-policy access in system settings, engage /
+         restore Do-Not-Disturb around a seal. The declaration
+         alone grants nothing; DndGate checks the live grant. -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Declared so MainActivity can fire Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS directly (issue #26) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -113,6 +119,36 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+        <!-- Issue #305 (F2): launcher icon variants. Both aliases ship
+             DISABLED — .MainActivity's own entry stays the one live
+             launcher icon until the PARK picker row (the priced F2
+             residue) enables a variant via PackageManager. Re-authored
+             2026-10-31 (K7) from lost commit b486565. -->
+        <activity-alias
+            android:name=".LauncherIconMark"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_mark"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".LauncherIconMonogram"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_monogram"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <!-- Direct-Boot Aware Foreground Service for active focus session & call-aware usage polling -->
         <!-- Issue #328 (Audit R5, Zario): stopWithTask=false — a
