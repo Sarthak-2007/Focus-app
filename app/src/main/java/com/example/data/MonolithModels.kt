@@ -585,6 +585,12 @@ data class FocusSessionEntity(
     // order, per table — the composed-order law).
     // Frist: the break length stamped on the row at seal, so the
     // span prices the break that was SET, not a constant.
+    // Issue #264 B-264-18: the startSession funnel stamps the
+    // arming preset's breakMinutes at birth (0 = unstamped: arms
+    // that carry no break choice); effectiveBreakSeconds resolves
+    // the stamp against the repository's named constant, and the
+    // 600 default below keeps every row born outside the funnel
+    // (and every migrated row) at the pre-stamp truth.
     val breakSeconds: Int = 600,
     // Frist: ADD TIME's accumulated grant on this row; the span
     // getters price it via effectiveTargetSeconds' extension term.
@@ -647,6 +653,7 @@ data class FocusSessionEntity(
         totalStudyBlocks = totalStudyBlocks.coerceIn(1, 64),
         currentBlockIndex = currentBlockIndex.coerceIn(1, totalStudyBlocks.coerceIn(1, 64)),
         safeBreakSecondsRemaining = safeBreakSecondsRemaining.coerceAtLeast(0),
+        breakSeconds = breakSeconds.coerceIn(0, MonolithRepository.MAX_BREAK_SECONDS),
         breakTakenSeconds = breakTakenSeconds.coerceAtLeast(0),
         extraSafeBreakSeconds = extraSafeBreakSeconds.coerceAtLeast(0),
         penaltySecondsAdded = penaltySecondsAdded.coerceAtLeast(0),
@@ -654,15 +661,24 @@ data class FocusSessionEntity(
         receiptNumber = receiptNumber.coerceAtLeast(0)
     )
 
+    /** Issue #264 B-264-18: the break length in force for THIS
+     *  row — its own birth stamp when one was written, the
+     *  repository's named constant for every unstamped row. The
+     *  one reader every break-length consumer shares (span
+     *  pricing here, the progress machine and break verbs via
+     *  MonolithRepository.breakLengthSeconds, SessionWallClock). */
+    val effectiveBreakSeconds: Int
+        get() = if (breakSeconds > 0) breakSeconds
+            else MonolithRepository.SAFE_BREAK_DURATION_SECONDS
+
     // Issue #32 F5: the break length in the span TARGET is the
-    // repository's named constant — the same one spanElapsedSeconds
+    // length in force for the row — the same one spanElapsedSeconds
     // reads — never the magic 600 that used to sit here. Change
-    // SAFE_BREAK_DURATION_SECONDS and target and elapsed move
-    // together. (The audit's wider claim — that the span should
-    // price StudyModePreset breakMinutes 5/10/15 — does not hold
-    // against current code: Safe Break is a fixed 10-minute
-    // mechanism everywhere it is armed, MonolithRepository.kt's
-    // SAFE_BREAK_DURATION_SECONDS, and presets never arm it.)
+    // the row's effectiveBreakSeconds and target and elapsed move
+    // together. (Issue #264 B-264-18: the span now prices the
+    // session's own stamped break length — the arming preset's
+    // breakMinutes 5/10/15 — instead of the fixed 10 minutes the
+    // mechanism used to impose on every session.)
     // Issue #261: the planned span also prices every mid-block
     // Safe Break entered (extraSafeBreakSeconds, stamped at each
     // entry) — a mid-block break is real span time the scheduled
@@ -672,7 +688,7 @@ data class FocusSessionEntity(
     // block still had the break's length left to run.
     val spanTargetSeconds: Int
         get() = safeTotalBlocks * effectiveTargetSeconds +
-            (safeTotalBlocks - 1).coerceAtLeast(0) * MonolithRepository.SAFE_BREAK_DURATION_SECONDS +
+            (safeTotalBlocks - 1).coerceAtLeast(0) * effectiveBreakSeconds +
             extraSafeBreakSeconds.coerceAtLeast(0)
 
     // Truth Car 3 (ST-02, Tamm): completed breaks contribute the
@@ -682,10 +698,9 @@ data class FocusSessionEntity(
     // an early-ended break would have jumped the span forward by
     // its untaken remainder at the flip. With every break taken in
     // full the two formulas agree to the second. The in-break term
-    // reads the length in force through the repository's constant
-    // today; when the car's breakSeconds stamp lands (Rurik,
-    // PILL-AND-TIMES §3.2) that term re-points at the row's stamp —
-    // the seam is declared in mail/rurik/2250.
+    // reads the length in force through the row's own stamp
+    // (effectiveBreakSeconds — the Truth Car seam, landed by
+    // issue #264 B-264-18).
     val spanElapsedSeconds: Int
         get() {
             return if (isInSafeBreak && midBlockSafeBreak) {
@@ -698,12 +713,12 @@ data class FocusSessionEntity(
                 (safeCurrentBlockIndex - 1).coerceAtLeast(0) * effectiveTargetSeconds +
                     elapsedSeconds.coerceAtLeast(0) +
                     breakTakenSeconds.coerceAtLeast(0) +
-                    (MonolithRepository.SAFE_BREAK_DURATION_SECONDS - safeBreakSecondsRemaining)
+                    (effectiveBreakSeconds - safeBreakSecondsRemaining)
                         .coerceAtLeast(0)
             } else if (isInSafeBreak) {
                 safeCurrentBlockIndex * effectiveTargetSeconds +
                     breakTakenSeconds.coerceAtLeast(0) +
-                    (MonolithRepository.SAFE_BREAK_DURATION_SECONDS - safeBreakSecondsRemaining)
+                    (effectiveBreakSeconds - safeBreakSecondsRemaining)
                         .coerceAtLeast(0)
             } else {
                 (safeCurrentBlockIndex - 1).coerceAtLeast(0) * effectiveTargetSeconds +
