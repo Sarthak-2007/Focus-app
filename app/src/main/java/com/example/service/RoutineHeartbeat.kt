@@ -3,6 +3,8 @@ package com.example.service
 import android.content.Context
 import android.os.SystemClock
 import android.util.Log
+import com.example.data.DayWordStore
+import com.example.data.DrawerDay
 import com.example.data.GuardSettingsEntity
 import com.example.data.RoutineDerive
 import com.example.data.SmartLoadout
@@ -177,12 +179,23 @@ object RoutineHeartbeat {
         val sessionsById = sessions.associateBy { it.id }
         val settings = dao.getGuardSettingsSnapshot()
 
+        // Excused dates (issue #137, F1): filing dates whose declared
+        // day word is an excuse word (ILL / REST / FAMILY), read
+        // through the repository's union of both word stores (prefs
+        // capture + drained day_notes table), so a drained word
+        // excuses exactly as a fresh one does.
+        val excusedDateIsos = repository.allDayWords().entries
+            .filter { DayWordStore.isExcuse(it.value) }
+            .map { it.key }
+            .toSet()
+
         val result = RoutineDerive.derive(
             routines = routines,
             nowMillis = now,
             activeSession = active,
             sessions = sessions,
-            settings = settings ?: GuardSettingsEntity()
+            settings = settings ?: GuardSettingsEntity(),
+            excusedDateIsos = excusedDateIsos
         )
 
         // 1. Finalise everything derive() declares due — known routines
@@ -225,7 +238,14 @@ object RoutineHeartbeat {
             // window stays refused: the tombstone persists across
             // process death (issue #48). It is checked BEFORE
             // materialising, never after.
-            if (transition.isTombstoned(desired.routineId, desired.windowStartMillis)) {
+            // Issue #137, F1b: never auto-start a session for a
+            // window on an excused date — checked here at the hand
+            // as well as in derive(), so no caller of this funnel
+            // can materialise over a declared sick day.
+            val desiredExcused = DrawerDay.dateIso(
+                DrawerDay.filingDate(desired.windowStartMillis)
+            ) in excusedDateIsos
+            if (desiredExcused || transition.isTombstoned(desired.routineId, desired.windowStartMillis)) {
                 materialised = false
             } else {
                 val session = repository.materialiseRoutineSession(desired)

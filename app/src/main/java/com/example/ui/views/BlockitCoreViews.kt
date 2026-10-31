@@ -599,6 +599,7 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
 
     internal val hubPressDepthForTest: Float get() = hubPressDepth
     internal val hubPressAnimatorForTest: ValueAnimator? get() = hubPressAnimator
+    internal val closureAnimatorForTest: ValueAnimator? get() = closureAnimator
 
     companion object {
         /** Issue #59: built ONCE, shared — never allocated per frame. */
@@ -1678,6 +1679,9 @@ class RotaryWheelView(context: Context) : BlockitCanvasView(context) {
 
     override fun onDetachedFromWindow() {
         stopPhysics()
+        // Issue #59 (finding 1 residue): the tetrad closure animator
+        // was the one animator detach never cancelled.
+        closureAnimator?.cancel()
         // Nabe R4's pre-priced fix: a press interrupted by detach
         // never parks mid-dip — the return runs from here.
         if (hubPressDepth > 0f) startHubReturn()
@@ -2870,6 +2874,14 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
             invalidate()
         }
         anim.addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationCancel(animation: android.animation.Animator) {
+                // A cancel must never become a completion: drop the
+                // pending callback here too, so the end-after-cancel
+                // the framework dispatches next finds nothing to fire
+                // (belt and braces with cancelSpringBackSilently,
+                // which clears it before every view-owned cancel).
+                if (springBackAnimator === animation) springBackEndCallback = null
+            }
             override fun onAnimationEnd(animation: android.animation.Animator) {
                 // Exactly-once, current-animator-only, and never on
                 // a silent cancel (the callback is already null then,

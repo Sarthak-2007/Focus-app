@@ -20,6 +20,7 @@ import com.example.data.DistractionTriggerReason
 import com.example.data.FocusProfileEntity
 import com.example.data.FocusSessionEntity
 import com.example.data.FocusTaskEntity
+import com.example.data.InterceptInsight
 import com.example.data.InterceptLogEntity
 import com.example.data.KineticArtifact
 import com.example.data.MonolithRepository
@@ -415,6 +416,16 @@ data class AirlockInterceptState(
      *  tests): the stake line prints nothing rather than inventing
      *  a balance. */
     val emergencyBreaksRemaining: Int = -1,
+    /** Issue #143 F3: the sealed state's own facts for the Yield
+     *  sheet's answer — whether a Safe Break is running (and its
+     *  remaining seconds), and the session's block position. Read
+     *  off the live row at the intercept instant, like every other
+     *  fact on this state; a stopwatch carries 0/0 and the sheet
+     *  falls back to the session's own words. */
+    val sessionInSafeBreak: Boolean = false,
+    val safeBreakSecondsRemaining: Int = 0,
+    val sessionBlockIndex: Int = 0,
+    val sessionBlockCount: Int = 0,
     /** Audit R3b #147: a stopwatch session has no set end, but it
      *  DOES have a floor moment — the wall instant its clean exit
      *  opens (start + the 20-minute floor, on the session's own
@@ -444,15 +455,43 @@ internal fun peekSecondsRemaining(leaseEndMono: Long, nowMono: Long): Int? {
     return ((remainingMs + 999L) / 1000L).toInt()
 }
 
+/**
+ * Issue #147 (reopened, Findings 2/3 seam): the ONE derivation of a
+ * stopwatch session's distance to its 20-minute floor, from a
+ * session row's banked elapsed. Every print of that distance — the
+ * valve overlay's wait-to-free line at open, and its refresh while
+ * the overlay sits open — derives through here, so no surface can
+ * carry its own arithmetic and drift from the others. Zero at or
+ * past the floor: the overlay's line renders only above zero, so a
+ * floor crossed mid-visit retires the line instead of leaving a
+ * stale "N more minutes" standing over a stop that is already free.
+ * (The booking itself is re-judged in the repository against
+ * lawElapsed = max(verified, banked) — this derivation serves the
+ * print, never the charge.)
+ */
+internal fun stopwatchRemainingFloorSeconds(bankedElapsedSeconds: Int): Int =
+    (MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS - bankedElapsedSeconds).coerceAtLeast(0)
+
 data class DisarmChallengeState(
     val isVisible: Boolean = false,
     val requiredHoldSeconds: Int = 60,
+    // Issue #103 F5: when a completed 60s hold is REFUSED, the
+    // refusal must announce itself — the valve view resets its own
+    // progress the instant it fires completion, so without this
+    // sentence the user is left staring at a fresh valve with no
+    // sign the hold did not count. Set only on a refusal verdict;
+    // cleared whenever the challenge (re)opens or completes.
+    val refusalMessage: String? = null,
     // Audit R3b #147: the stopwatch floor, carried into the valve
     // overlay so it can state the wait-to-free path instead of
-    // presenting the token as the only door. These two are FACTS
-    // about the session at open time (its mode, its banked
-    // distance to the floor) — not a token count; the count rule
-    // below stands untouched.
+    // presenting the token as the only door. The mode is a FACT
+    // about the session, fixed at open time. The remaining-floor
+    // figure is SEEDED at open time and then REFRESHED from the
+    // live session row for as long as the overlay is visible
+    // (#147 reopened: a frozen seed could still be printing
+    // "N more minutes" after the floor had crossed — the print
+    // must never lag the state). Neither is a token count; the
+    // count rule below stands untouched.
     val sessionIsStopwatch: Boolean = false,
     val remainingFloorSeconds: Int = 0
     // No token count lives here (TOKEN-SPEC §5, Amendment A): a count
@@ -460,7 +499,14 @@ data class DisarmChallengeState(
     // for the visit's whole life. The overlay derives its count from
     // the repository flow (weeklyEmergencyTokensRemaining below) for
     // as long as it is visible.
-)
+) {
+    companion object {
+        const val REFUSAL_NO_TOKEN =
+            "HOLD DID NOT COUNT — THIS WEEK'S BREAK IS ALREADY SPENT. NOTHING WAS CHARGED; THE SESSION STAYS SEALED."
+        const val REFUSAL_NO_SESSION =
+            "HOLD DID NOT COUNT — THERE IS NO ACTIVE SESSION TO BREAK. NOTHING WAS SPENT."
+    }
+}
 
 /**
  * Issue #141: one sled tier commit, staged for its undo window.
@@ -564,6 +610,13 @@ class MonolithViewModel(
 
     private val _isAlwaysOnDeskClockVisible = MutableStateFlow(false)
     val isAlwaysOnDeskClockVisible: StateFlow<Boolean> = _isAlwaysOnDeskClockVisible.asStateFlow()
+
+    // Issue #143 F4: the Do-Not-Disturb gate's line. Set at arm
+    // (what WILL happen), replaced at the seal (what DID happen),
+    // cleared when the session ends and the gate restores. Null =
+    // nothing truthful to print (unreadable state, or no arm yet).
+    private val _dndLine = MutableStateFlow<String?>(null)
+    val dndLine: StateFlow<String?> = _dndLine.asStateFlow()
 
     private val _burnInFigure8MinuteStep = MutableStateFlow(0)
     val burnInFigure8MinuteStep: StateFlow<Int> = _burnInFigure8MinuteStep.asStateFlow()
@@ -840,6 +893,19 @@ class MonolithViewModel(
 
     val interceptLogs: StateFlow<List<InterceptLogEntity>> = repository.interceptLogsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
+     * Issues #251/#253/#254/#255 (Audit R5, DURCH-E): the intercept
+     * log read back — per-app tallies and resist rates, per-trigger
+     * tallies, attempts per hour and the danger hour — derived by
+     * [InterceptInsight.derive] from the same rows that feed
+     * [totalInterceptions]. No surface consumes this yet on purpose:
+     * where (or whether) it is printed is the redesign's call
+     * (issue #18); the computation itself was the missing piece.
+     */
+    val interceptInsight: StateFlow<InterceptInsight> = interceptLogs
+        .map { logs -> InterceptInsight.derive(logs) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), InterceptInsight.EMPTY)
 
     // Issue #143: the finish + ground flows are declared BEFORE
     // the theme evaluation on purpose — its combine reads them
@@ -1509,6 +1575,54 @@ class MonolithViewModel(
                 }
             }
         }
+        // Issue #147 REOPENED (Findings 2/3 seam): while the valve
+        // overlay is open on a stopwatch session, its remaining-floor
+        // print is refreshed from the live session row — the row's
+        // banked elapsed advances on the per-second progress tick,
+        // so a floor crossed mid-visit counts the print down and
+        // retires it at zero instead of leaving the open-time
+        // snapshot ("N more minutes") standing over a stop that has
+        // already become free. Print only: the booking re-check
+        // lives in the repository (completeEmergencyBreak).
+        viewModelScope.launch {
+            activeSession.collect { session ->
+                val challenge = _disarmChallenge.value
+                if (challenge.isVisible && challenge.sessionIsStopwatch &&
+                    session != null && session.isStopwatchMode
+                ) {
+                    val refreshed = stopwatchRemainingFloorSeconds(session.elapsedSeconds)
+                    if (refreshed != challenge.remainingFloorSeconds) {
+                        _disarmChallenge.value =
+                            challenge.copy(remainingFloorSeconds = refreshed)
+                    }
+                }
+            }
+        }
+        // Issue #143 F4: the DND gate follows the seal's life,
+        // however the session was born (Deck arm or routine) and
+        // however it ends (finish, disarm, valve, annul — every
+        // ending funnels through this row going inactive). On the
+        // seal: engage if the gate's decision said Monolith may,
+        // then print the sealed truth. On the end: restore ONLY a
+        // gate Monolith itself engaged, and clear the line.
+        viewModelScope.launch {
+            var wasActive = false
+            activeSession.collect { session ->
+                val isActive = session?.isActive == true
+                if (isActive && !wasActive) {
+                    val engaged = com.example.service.DndGate.engageAtSeal(appContext)
+                    _dndLine.value = com.example.service.DndGate.sealedLine(
+                        engagedByMonolith = engaged ||
+                            com.example.service.DndGate.engagedByMonolith(appContext),
+                        currentFilter = com.example.service.DndGate.currentFilter(appContext)
+                    )
+                } else if (!isActive && wasActive) {
+                    com.example.service.DndGate.restoreAfterSession(appContext)
+                    _dndLine.value = null
+                }
+                wasActive = isActive
+            }
+        }
         // The seal freeze: capture at the session's birth, once —
         // and, for cascade arms, RE-capture at the seal itself
         // (the collector below), because birth is not the seal
@@ -1711,8 +1825,24 @@ class MonolithViewModel(
                     // completion, its stats, its desk-clock hide —
                     // is CUT (E4); the finish machine owns all
                     // three now.
-                    repository.latchShieldGapIfStale(SystemClock.elapsedRealtime())
-                    repository.updateSessionProgress(current)
+                    val tickMono = SystemClock.elapsedRealtime()
+                    repository.latchShieldGapIfStale(tickMono)
+                    // Issue #69 F3 — one lawful writer: the shield
+                    // loop persists progress every iteration (its
+                    // own header names it the beat's only lawful
+                    // writer); this ticker used to write the same
+                    // row every second as well — ~2 session
+                    // writes/s and two writers contending on one
+                    // row, for zero extra accuracy (accrual is
+                    // wall-derived and caller-count-invariant).
+                    // The ticker persists now ONLY when the
+                    // shield's beat is stale past the same 10 s
+                    // law the gap latch uses — a dead shield (an
+                    // FGS start failure) still advances the
+                    // session here instead of stalling it silently.
+                    if (repository.isShieldBeatStale(tickMono)) {
+                        repository.updateSessionProgress(current)
+                    }
                 }
 
                 // The peek pill's remaining time is DERIVED from the
@@ -2194,7 +2324,7 @@ class MonolithViewModel(
      *  the seal shot runs (t0 → t0+1050), and while a finish
      *  detains the Deck (E0 → issuance). The refusal precedes the
      *  detent sound: a refused tap must not sound like travel. */
-    fun navigationLocked(): Boolean {
+    private fun hardNavigationLocked(): Boolean {
         val phase = armProving.phase.value
         if (phase is ArmPhase.Proving || phase is ArmPhase.Jammed) return true
         if (phase is ArmPhase.SealedRunning &&
@@ -2207,10 +2337,28 @@ class MonolithViewModel(
         return false
     }
 
+    /** The full lock: the hard locks above, plus the seal itself
+     *  (issue #128 finding 1). A live session holds the phone on
+     *  the Deck for its whole life — not just the shot's first
+     *  1050ms — so one stray tap on the rail cannot walk away
+     *  mid-session into screens full of live controls. PARK's
+     *  tap-time guard (MainActivity.openPark) already read the
+     *  seal; the rail destinations never did. */
+    fun navigationLocked(): Boolean =
+        hardNavigationLocked() || activeSession.value?.isActive == true
+
     private var lastNavRefusalMono = 0L
 
     fun navigateTo(destination: MonolithDestination) {
-        if (destination != _currentDestination.value && navigationLocked()) {
+        // Sealed return: travelling TO the Deck under a seal is
+        // not an escape, it is the way back — the seal alone never
+        // refuses it. The hard locks refuse even that, exactly as
+        // before.
+        val refused = destination != _currentDestination.value &&
+            (hardNavigationLocked() ||
+                (activeSession.value?.isActive == true &&
+                    destination != MonolithDestination.DECK))
+        if (refused) {
             val now = SystemClock.elapsedRealtime()
             if (now - lastNavRefusalMono >= 250L) {
                 lastNavRefusalMono = now
@@ -2265,6 +2413,21 @@ class MonolithViewModel(
         if (!session.isActive || !session.isInSafeBreak) return
         viewModelScope.launch {
             repository.endSafeBreakEarly(session.id)
+        }
+    }
+
+    /** Issue #261: the Deck's TAKE SAFE BREAK chip — the entry
+     *  twin of [endSafeBreakEarly]. Starts a Safe Break mid-block
+     *  at the tap; the repository freezes the block (it does not
+     *  finish it) and every break exit resumes it. The boundary's
+     *  voice is NOT fired here either: it fires inside the
+     *  repository's entry itself, so a hand-entered break and a
+     *  flip-born one speak identically, exactly once. */
+    fun startSafeBreakMidBlock() {
+        val session = activeSession.value ?: return
+        if (!session.isActive || session.isInSafeBreak || session.isStopwatchMode) return
+        viewModelScope.launch {
+            repository.startSafeBreakMidBlock(session.id)
         }
     }
 
@@ -2350,7 +2513,21 @@ class MonolithViewModel(
         }
     }
 
+    /** Issue #128 finding 3 (ratchet only — the routine model
+     *  itself is under Sarthak's RETHINK FREEZE, Oct 30 05:07):
+     *  while a session is live, every routine edit is refused
+     *  before it can re-stamp scheduleEditedAtMillis, dismiss the
+     *  reset note, or force a heartbeat reconcile. The schedule
+     *  the seal was struck under is the schedule that stands
+     *  until the phone unseals; edits resume untouched after. */
+    private fun routineEditRefusedUnderSeal(): Boolean {
+        if (activeSession.value?.isActive != true) return false
+        triggerRatchetWarning("ONE-WAY RATCHET • ROUTINE SCHEDULE IS FROZEN DURING ACTIVE VAULT")
+        return true
+    }
+
     fun toggleRoutine(routine: com.example.data.RoutineEntity) {
+        if (routineEditRefusedUnderSeal()) return
         // Audit R5 #306 F2: a routine whose window is live is
         // forced-on. The bare flip let the person being blocked kill
         // the scheduled protection in one tap at exactly the moment
@@ -2370,6 +2547,7 @@ class MonolithViewModel(
     }
 
     fun cycleRoutineLoadout(routine: com.example.data.RoutineEntity) {
+        if (routineEditRefusedUnderSeal()) return
         // Audit R1 #38: the seat order lives in ONE place —
         // LoadoutStore.CAP_ORDER — not re-hardcoded here.
         val order = com.example.data.LoadoutStore.CAP_ORDER
@@ -2380,6 +2558,7 @@ class MonolithViewModel(
     }
 
     fun adjustRoutineTime(routine: com.example.data.RoutineEntity, isStart: Boolean, deltaMinutes: Int) {
+        if (routineEditRefusedUnderSeal()) return
         val start = if (isStart) {
             (routine.startMinutes + deltaMinutes + 1440) % 1440
         } else routine.startMinutes
@@ -2397,6 +2576,7 @@ class MonolithViewModel(
     }
 
     fun toggleRoutineDay(routine: com.example.data.RoutineEntity, dayIndex: Int) {
+        if (routineEditRefusedUnderSeal()) return
         // Audit R5 #306 F2: removing TODAY from a routine whose
         // window is live is a disable by another name — refused
         // while the window runs, on the same forced-on rule as
@@ -2792,7 +2972,7 @@ class MonolithViewModel(
      *  repository re-signs the row in the same write. */
     fun extendActiveSession(extraMinutes: Int = 10) {
         viewModelScope.launch {
-            repository.extendActiveSession(extraMinutes)
+            repository.extendActiveSessionByMinutes(extraMinutes)
         }
     }
 
@@ -3465,6 +3645,15 @@ class MonolithViewModel(
         _receiptState.value = null
         _finishNightHold.value = false
         sledReturnGate.clear()
+        // Issue #143 F4: arming CONSULTS Do-Not-Disturb — the
+        // check the app never made. The line states what the seal
+        // will do about the phone's own voice (already quiet /
+        // Monolith will silence + restore / Monolith cannot and
+        // says so), printed on the Deck from this instant; the
+        // gate itself acts at the seal (init collector above).
+        _dndLine.value = com.example.service.DndGate.armLine(
+            com.example.service.DndGate.currentDecision(appContext)
+        )
         armProving.onLatch(
             intention = _intentionText.value,
             profileName = _selectedProfileName.value,
@@ -3489,9 +3678,26 @@ class MonolithViewModel(
         }
     }
 
-    /** The 60 s valve's hold-start hook: stamps E4 on the active
-     *  routine session (the hold itself is attendance evidence). */
+    /** The 60 s valve's hold-start hook (main, issue-60 seam):
+     *  stamps E4 on the active routine session. Kept from main;
+     *  NOT wired at the MainActivity call site in this merge —
+     *  issue #103 F4 rules that E4 attendance evidence stamps only
+     *  when a chamber BANKS (see recordValveHoldBanked), so a
+     *  momentary grip can never manufacture attendance. */
     fun recordValveHoldStarted() {
+        viewModelScope.launch {
+            repository.recordAttendanceEvidence(
+                MonolithRepository.EVIDENCE_E4_HOLD_START, System.currentTimeMillis()
+            )
+        }
+    }
+
+    /** The 60 s valve's bank hook: stamps E4 on the active routine
+     *  session. Fired only when a 15-second chamber BANKS (issue
+     *  #103 F4) — a momentary grip, slip or un-banked abandon
+     *  stamps nothing, so the valve cannot be touched briefly to
+     *  manufacture attendance evidence. */
+    fun recordValveHoldBanked() {
         viewModelScope.launch {
             repository.recordAttendanceEvidence(
                 MonolithRepository.EVIDENCE_E4_HOLD_START, System.currentTimeMillis()
@@ -3509,9 +3715,13 @@ class MonolithViewModel(
         val current = activeSession.value ?: return
         val isBelowFloor = current.isStopwatchMode &&
             current.elapsedSeconds < MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
-        val remainingFloor = (MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS - current.elapsedSeconds).coerceAtLeast(0)
+        val remainingFloor = stopwatchRemainingFloorSeconds(current.elapsedSeconds)
 
-        // If Stopwatch Mode has passed the mandatory 20-minute floor, allow clean completion
+        // If Stopwatch Mode has passed the mandatory 20-minute floor, allow clean completion.
+        // Issue #103 F3: this door is free and instant — no hold, no
+        // token — and the Deck chip that leads here says exactly
+        // that ("FINISH STOPWATCH · NO BREAK SPENT / PAST 20M
+        // FLOOR") instead of wearing the valve's label and price.
         if (current.isStopwatchMode && !isBelowFloor) {
             soundEngine.playHarmonicSeal(arming = false)
             viewModelScope.launch {
@@ -3557,16 +3767,24 @@ class MonolithViewModel(
      * The valve's completion callback (TOKEN-SPEC §5): the repository
      * decides. Only on [BreakResult.Completed] — after the spend +
      * disarm transaction has committed — does the seal sound, the
-     * overlay close and the shield stop. On
-     * [BreakResult.RefusedNoToken] the session stays sealed and the
-     * overlay stays open: its count is derived from the repository
-     * flow, so it transitions in place to the SPENT rendering
-     * (Amendment B) — silently, no seal.
+     * overlay close and the shield stop.
+     * [BreakResult.CompletedCleanlyAtFloor] (#147 reopened) takes the
+     * same teardown: the repository found the stopwatch floor already
+     * met at completion and ended the session cleanly instead — no
+     * spend was written, but the session IS over, so the overlay
+     * closes and the shield stops exactly as for a break. On a
+     * refusal the session stays sealed and the overlay stays open —
+     * but NOT in silence (issue #103 F5, superseding Amendment B's
+     * silent transition): the valve has already erased its own 60s
+     * of progress, so the refusal announces itself with a latch
+     * sound and a printed sentence in the overlay
+     * ([DisarmChallengeState.refusalMessage]) saying the hold did
+     * not count and nothing was spent.
      */
     fun completeEmergencyBreakFromValve() {
         viewModelScope.launch {
             when (repository.completeEmergencyBreak()) {
-                BreakResult.Completed -> {
+                BreakResult.Completed, BreakResult.CompletedCleanlyAtFloor -> {
                     soundEngine.playHarmonicSeal(arming = false)
                     _isAlwaysOnDeskClockVisible.value = false
                     _disarmChallenge.value = DisarmChallengeState(isVisible = false)
@@ -3575,9 +3793,19 @@ class MonolithViewModel(
                         appContext, com.example.service.RoutineHeartbeat.Source.SESSION_EDGE
                     )
                 }
-                BreakResult.RefusedNoToken, BreakResult.NoActiveSession -> {
-                    // Session stays sealed; the overlay remains open and
-                    // re-renders from the repository flow. Nothing sounds.
+                BreakResult.RefusedNoToken -> {
+                    soundEngine.playMechanicalLatch(false)
+                    _disarmChallenge.value = _disarmChallenge.value.copy(
+                        isVisible = true,
+                        refusalMessage = DisarmChallengeState.REFUSAL_NO_TOKEN
+                    )
+                }
+                BreakResult.NoActiveSession -> {
+                    soundEngine.playMechanicalLatch(false)
+                    _disarmChallenge.value = _disarmChallenge.value.copy(
+                        isVisible = true,
+                        refusalMessage = DisarmChallengeState.REFUSAL_NO_SESSION
+                    )
                 }
             }
         }
@@ -3794,12 +4022,25 @@ class MonolithViewModel(
             // same one the desk clock reads) — never for a stopwatch.
             sessionEndsAtMillis = active
                 ?.takeIf { !it.isStopwatchMode }
-                ?.let { System.currentTimeMillis() + it.spanRemainingSeconds * 1000L },
+                // #127 finding 3: the shared derivation the Deck strip
+                // also calls, so Airlock and Deck can never print ENDS
+                // times a minute apart for the same session again.
+                ?.let {
+                    com.example.ui.components.sessionEndsAtMillis(
+                        System.currentTimeMillis(), it.spanRemainingSeconds
+                    )
+                },
             sessionIsStopwatch = active?.isStopwatchMode == true,
             // Issue #325: the stake rides onto the door — the
             // ledger-derived balance at this instant, never a
             // remembered or decremented-here copy.
             emergencyBreaksRemaining = weeklyEmergencyTokensRemaining.value,
+            // Issue #143 F3: the sealed state's own facts, off the
+            // same live row — the Yield sheet answers with these.
+            sessionInSafeBreak = active?.isInSafeBreak == true,
+            safeBreakSecondsRemaining = active?.safeBreakSecondsRemaining ?: 0,
+            sessionBlockIndex = active?.currentBlockIndex ?: 0,
+            sessionBlockCount = active?.totalStudyBlocks ?: 0,
             stopwatchFloorAtMillis = active
                 ?.takeIf { it.isStopwatchMode }
                 ?.let {
