@@ -1,20 +1,53 @@
 name: rescue-build
 
+# Venue model (Sarthak's new merge gate, Oct 31 10:39–10:41 IST;
+# issue #166 owns the change):
+#   - A pull request is judged on TWO reads only: the quick compile
+#     check (the `compile` job — binary, a red or unrun compile
+#     blocks) and the tests for the part that actually changed (the
+#     `targeted` job). No full suite, no screenshot gauntlet, no
+#     full lint per PR.
+#   - The FULL venue (build = full suite + APK, proof = lint +
+#     release, screenshots) runs on pushes to main — the post-batch
+#     main run is where the test floor is judged and the census
+#     counts — and on batch/train compositions. Composition
+#     branches are named `batch/*` or `train/*`: pushes to them get
+#     the full venue, and a PR whose head branch carries one of
+#     those names gets the full venue instead of the targeted job.
+#     workflow_dispatch is the manual full-venue run on any ref.
+#   - Paper-only changes (markdown, studio/ records, docs — no app
+#     code, no test code, no build or workflow files) skip every
+#     job via paths-ignore below and merge on read/review alone.
+#     paths-ignore skips a run only when EVERY changed file is
+#     paper, so a mixed PR still runs its venue in full.
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
+      - 'batch/**'
+      - 'train/**'
+    paths-ignore:
+      - '**.md'
+      - 'studio/**'
+      - 'docs/**'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'studio/**'
+      - 'docs/**'
 
 # Issue #24: least privilege — this workflow only reads the repo.
 permissions:
   contents: read
 
 # Issue #24: per-PR/per-ref concurrency. PR syncs cancel their own stale
-# runs; a push to main is NEVER cancelled by another event (the group key
-# differs and cancel-in-progress is false outside pull_request).
+# runs; a push to a batch/train branch cancels its own superseded run;
+# a push to main is NEVER cancelled by another event (the group key
+# differs and cancel-in-progress is false for main pushes).
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main') }}
 
 # Issue #24 (finding 5): every action is pinned to a commit SHA (the v4
 # tag each resolves to, verified via ls-remote) and the runner image is
@@ -72,7 +105,15 @@ jobs:
             echo "- This job executes NO tests. Its conclusion is the compile-is-binary gate's read on this head: green = app + test code compile here, independent of the unit-test floor (issue #166)."
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # Full venue (see the venue model at the top of this file): the
+  # full unit suite + the phone APK. Runs on main pushes, batch/
+  # train compositions, and manual dispatch — never on an ordinary
+  # PR, where the gate is compile + targeted tests only. Consequence
+  # stated plainly: phone-bound debug APKs now come from full-venue
+  # runs; a slim PR run uploads no APK.
   build:
+    name: Full suite + APK (batch/main venue)
+    if: ${{ github.event_name != 'pull_request' || startsWith(github.head_ref, 'batch/') || startsWith(github.head_ref, 'train/') }}
     runs-on: ubuntu-24.04
     # Wave-2 (issue #3): the 360-minute platform default meant one
     # hung daemon could eat a large share of the monthly minutes.
@@ -247,6 +288,8 @@ jobs:
   # as STANDS-BLOCKED in issue #24's closing record.
   proof:
     name: Lint + release proof
+    # Full venue only (new merge gate): no full lint per PR.
+    if: ${{ github.event_name != 'pull_request' || startsWith(github.head_ref, 'batch/') || startsWith(github.head_ref, 'train/') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -334,6 +377,8 @@ jobs:
   # lands, the upload errors instead of warning.
   screenshots:
     name: Screenshots (screens with every build)
+    # Full venue only (new merge gate): no screenshot gauntlet per PR.
+    if: ${{ github.event_name != 'pull_request' || startsWith(github.head_ref, 'batch/') || startsWith(github.head_ref, 'train/') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
 
@@ -379,4 +424,103 @@ jobs:
             else
               echo "- ⚠️ No screenshots artifact in this run — the harness did not pass."
             fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # New merge gate (Sarthak's ruling, Oct 31 10:39–10:41 IST): an
+  # ordinary pull request is judged on the quick compile check (the
+  # `compile` job) plus the tests for the part that actually
+  # changed — never the full suite. This job is the second half of
+  # that read. The mapping is mechanical and its limits are stated,
+  # not hidden:
+  #   - a test file changed in the diff runs, by name;
+  #   - a main-source file changed in the diff selects test classes
+  #     whose names contain the file's stem (MonolithRepository.kt
+  #     selects *MonolithRepository* test classes) — the tests sit
+  #     flat in com.example, so no package mirror exists to walk;
+  #   - if nothing maps, the job passes and its summary says so in
+  #     plain words: the compile job is this PR's gate read, and
+  #     the full suite judges the change at the batch/main venue.
+  # Batch/train PRs skip this job — the full venue runs for them.
+  targeted:
+    name: Targeted tests (changed part)
+    if: ${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'batch/') && !startsWith(github.head_ref, 'train/') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Issue #85 F3: checkout credentials must not persist into
+          # the git config while build code executes. fetch-depth 0:
+          # the mapping step diffs base...head from git itself.
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Install SDK platform 36.1
+        run: |
+          SDKMANAGER="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
+          yes | "$SDKMANAGER" --licenses > /tmp/sdk-licenses.log 2>&1 || { echo "::warning::sdkmanager license step failed — see log tail"; tail -20 /tmp/sdk-licenses.log; }
+          "$SDKMANAGER" "platforms;android-36.1" "build-tools;36.1.0"
+
+      - name: Map the changed part to tests
+        id: map
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          git diff --name-only "$BASE...$HEAD" > changed.txt
+          echo "Changed files:"; cat changed.txt
+          : > filters.txt
+          while IFS= read -r f; do
+            case "$f" in
+              app/src/test/java/*.kt)
+                echo "$f" | sed -e 's|^app/src/test/java/||' -e 's|\.kt$||' -e 's|/|.|g' >> filters.txt ;;
+              app/src/main/java/*.kt)
+                stem=$(basename "$f" .kt)
+                find app/src/test/java -name "*${stem}*.kt" | sed -e 's|^app/src/test/java/||' -e 's|\.kt$||' -e 's|/|.|g' >> filters.txt ;;
+            esac
+          done < changed.txt
+          sort -u filters.txt -o filters.txt
+          echo "count=$(grep -c . filters.txt || true)" >> "$GITHUB_OUTPUT"
+          echo "Mapped test classes:"; cat filters.txt
+
+      - name: Targeted unit tests
+        id: tests
+        if: ${{ steps.map.outputs.count != '0' }}
+        run: |
+          chmod +x gradlew
+          ARGS=""
+          while IFS= read -r c; do ARGS="$ARGS --tests $c"; done < filters.txt
+          ./gradlew --console=plain testDebugUnitTest $ARGS
+
+      # Same artifact channel as the build job: the targeted run's
+      # per-name results are the gate reader's evidence.
+      - name: Upload unit-test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unit-test-results-${{ github.sha }}
+          path: |
+            app/build/test-results/testDebugUnitTest/**
+            app/build/reports/tests/testDebugUnitTest/**
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Targeted summary
+        if: always()
+        run: |
+          {
+            echo "## Targeted verdict — ${{ github.ref_name }} · ${{ github.sha }}"
+            if [ "${{ steps.map.outputs.count }}" = "0" ]; then
+              echo "- No test classes map to this diff (no changed test files; no stem-matched tests for changed main files). The compile job is this PR's gate read; the full suite judges this change at the batch/main venue."
+            else
+              echo "- Mapped test classes: ${{ steps.map.outputs.count }} (listed in the Map step's log)"
+              echo "- Targeted verdict: ${{ steps.tests.outcome }}"
+            fi
+            echo "- Full suite, screenshots, and lint did NOT run on this PR — by design (new merge gate). They judge this change on the batch composition and on main after it lands."
           } >> "$GITHUB_STEP_SUMMARY"
