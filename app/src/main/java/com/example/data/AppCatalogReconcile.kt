@@ -40,9 +40,14 @@ import java.util.Locale
  *   preset or category default — a user's LOCKED never silently
  *   reopens because an app was transiently unlaunchable (disabled,
  *   launcher-less, in another profile).
- * - a stored row whose package is corroborated-gone is PRUNED (so
- *   no reader of this table can count a ghost forever: not the
- *   Shield list, not the Deck's held count, not PARK's census);
+ * - a stored row carrying NO ruling (OPEN) whose package is
+ *   corroborated-gone is PRUNED (so no reader of this table can
+ *   count an unruled ghost forever: not the Shield list, not the
+ *   Deck's held count, not PARK's census). A row carrying a ruling
+ *   is exempt — catalogue membership is the discovered set UNION
+ *   the rule rows (issue #142 F2, the union law at [reconcile]:
+ *   a ruled app always appears in the catalogue, even while it is
+ *   launcher-invisible on the phone that still holds it);
  * - an installed package with no row is DISCOVERED, uncapped, born
  *   with its remembered rule if it has one, else its factory
  *   preset, else its category default;
@@ -373,6 +378,21 @@ object AppCatalogReconcile {
         return elapsed >= 0L && elapsed < windowMillis
     }
 
+    /** Issue #69 F4: a non-forced sync inside the collapse
+     *  window skips the PackageManager enumeration ITSELF, not
+     *  only the reconcile after it — the repeat look cannot
+     *  change any data (the reconcile would be skipped anyway),
+     *  so enumerating the whole package table for it is pure
+     *  startup cost. A forced sync always enumerates. */
+    fun isEnumerationSkipped(
+        forceCatalogSync: Boolean,
+        lastSuccessfulSyncMillis: Long,
+        nowMillis: Long,
+        windowMillis: Long = SYNC_COLLAPSE_WINDOW_MILLIS
+    ): Boolean = !forceCatalogSync && isCollapseRepeat(
+        lastSuccessfulSyncMillis, nowMillis, windowMillis
+    )
+
     /** Catalog view of profiled installs: one row per PACKAGE
      *  (the table's primary key is still the bare package name),
      *  first label seen wins. A package present in ANY profile is
@@ -410,12 +430,43 @@ object AppCatalogReconcile {
             return AppCatalogPlan(emptyList(), emptyList(), emptyList(), emptyList())
         }
 
+        // THE UNION LAW (issue #142 F2, BUENDEL spot-check cure):
+        // catalogue membership is the reconcile's discovered set
+        // UNION the rule rows. A row carrying a ruling (its stored
+        // tier resolves to anything but OPEN) is membership by
+        // right: it is never counted absent, never earns a strike
+        // and is never pruned, however the discovery queries answered.
+        // Discovery only sees LAUNCHABLE packages (the PM launcher
+        // query and LauncherApps activity lists in the repository),
+        // so an app that is installed but launcher-invisible —
+        // launcher-less, its launcher entry disabled, ruled on by
+        // package while background-only — used to be pruned after
+        // two strikes while still on the phone: its catalogue entry
+        // vanished, its tier became invisible, and the ruling lived
+        // on only as a prefs tombstone, unfindable until the app
+        // happened to re-enter the launcher-visible set. A Package-
+        // Manager install probe cannot repair this instead: without
+        // QUERY_ALL_PACKAGES (not held, by design), Android 11+
+        // package visibility makes getApplicationInfo fail for
+        // exactly the launcher-invisible packages at stake. The
+        // union therefore lives here, in the membership derivation
+        // itself. Rows carrying NO ruling (OPEN) remain what the
+        // two-strike law below has always governed: pure cache
+        // entries for corroborated-gone packages, pruned as before.
+        val ruledPackages = existing
+            .filter { it.resolvedTier != AppBlockTier.OPEN }
+            .map { it.packageName }
+            .toSet()
+
         // Two consecutive absences or the row stays. The first
         // absence is only noted (pendingPrune) for the caller to
         // persist; a package present again clears its own note by
         // simply not being absent.
         val absent = existing
-            .filter { it.packageName !in installedByPackage }
+            .filter {
+                it.packageName !in installedByPackage &&
+                    it.packageName !in ruledPackages
+            }
             .map { it.packageName }
         val toPrune = absent.filter { it in previouslyAbsent }
         val pendingPrune = absent.filter { it !in previouslyAbsent }
@@ -446,6 +497,16 @@ object AppCatalogReconcile {
                     // (5s wall, 2-minute lease) is exactly the
                     // ceremony an OTP or UPI approval needs.
                     AppCategory.MESSAGING, AppCategory.MUSIC, AppCategory.FINANCE -> AppBlockTier.PEEK_2M
+                    // Shield Rethink 2, Step 2 — THE INVERSION, in the
+                    // same fail-closed birth #129 settled: the unruled
+                    // remainder is born SHUT. Before this, an app no
+                    // remembered ruling, factory preset or deliberate
+                    // category policy had an opinion about was born
+                    // OPEN — the majority of the phone, reachable
+                    // during a hold until he happened to rule it. Now
+                    // exceptions (PEEK / OPEN) are named — by him from
+                    // the Sheet, or by a reasoned category policy like
+                    // #120/#132 above — never by absence of a guess.
                     // Issue #129 (unlisted-distraction, CRITICAL),
                     // settled at the STURM-4 fix-forward: the safe
                     // default for a BLOCKER is fail-closed. Every

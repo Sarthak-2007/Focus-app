@@ -158,6 +158,44 @@ fun detectorLineFor(health: DetectorHealthSnapshot, nowMono: Long): GuardLinePri
 }
 
 /**
+ * Issue #94 F4 (Audit R2, oem-battery-reality): the ROUTINE CHAIN
+ * line — the reader the liveness stamp never had. The heartbeat
+ * stamps `lastRoutineTickMillis` at the end of every reconcile
+ * pass (RoutineHeartbeat step 6), and until this function nothing
+ * read it: an OEM kill of the chain was invisible in-app, the
+ * exact false-assurance family F1 named for the BATTERY line.
+ *
+ * The claim is deliberately narrow — it speaks ONLY while a
+ * routine window is enforcing (RoutineSchedule.isEnforcingAt):
+ * outside a window the chain legitimately sleeps until the next
+ * boundary, hours away, and a "dead" print there would be a lie
+ * of the opposite sign. Inside a window the shield loop ticks
+ * the heartbeat on a 30 s cadence, so the stale line is two tick
+ * intervals: a stamp older than that means at least two expected
+ * passes never landed — the chain is dead, and the line says so
+ * with the stamp's age instead of silence.
+ *
+ * Pure, like [guardLineFor]: (stamp, window, now) in, print out.
+ * Null = no window is enforcing — no line, no claim.
+ */
+const val ROUTINE_CHAIN_STALE_MS: Long = 60_000L
+
+fun routineChainLineFor(
+    lastTickMillis: Long,
+    windowActive: Boolean,
+    nowMillis: Long
+): GuardLinePrint? {
+    if (!windowActive) return null
+    if (lastTickMillis <= 0L) return GuardLinePrint("ROUTINE — DEAD · NEVER TICKED")
+    val ageMs = nowMillis - lastTickMillis
+    return if (ageMs > ROUTINE_CHAIN_STALE_MS) {
+        GuardLinePrint("ROUTINE — DEAD · LAST TICK ${ageMs / 1000}S AGO")
+    } else {
+        GuardLinePrint("ROUTINE — LIVE")
+    }
+}
+
+/**
  * Issue #339 (Second-pass F4): the permission-criticality
  * taxonomy. Freedom's engine publishes availability as a
  * first-class state — 'active', 'disabled' (ONLY when

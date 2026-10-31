@@ -25,9 +25,17 @@ fun webGateVerdict(
     urlText: String,
     blockAll: Boolean,
     allowedHosts: List<String>,
-    blockedDomains: List<String>
+    blockedDomains: List<String>,
+    excludedHosts: List<String> = emptyList()
 ): WebGateVerdict {
-    if (matchBlockedDomain(urlText, blockedDomains) != null) {
+    // Audit R6 #341 F52: an excluded host is carved out of the
+    // blocklist BEFORE the blocklist speaks — the exclusion list
+    // is checked first, exactly as Freedom's matcher does. (In
+    // block-all mode the host still needs the allowlist below;
+    // an exclusion exempts from the LIST, not from the gate.)
+    if (matchBlockedDomain(urlText, blockedDomains) != null &&
+        !hostExcluded(extractUrlHost(urlText), excludedHosts)
+    ) {
         return WebGateVerdict.BLOCK_LISTED
     }
     if (!blockAll) return WebGateVerdict.ALLOW
@@ -40,6 +48,20 @@ fun webGateVerdict(
         .filter { it.isNotEmpty() }
         .any { allowedHost -> host == allowedHost || host.endsWith(".$allowedHost") }
     return if (allowed) WebGateVerdict.ALLOW else WebGateVerdict.BLOCK_ALL
+}
+
+/**
+ * Audit R6 #341 F52: the exclusion test — is [host] carved out by
+ * the user's exclusion list (exact host or a subdomain of an
+ * excluded host)? Pure; shared by the gate and both site doors.
+ */
+fun hostExcluded(host: String?, excludedHosts: List<String>): Boolean {
+    if (host.isNullOrEmpty()) return false
+    val clean = host.trim().lowercase().removePrefix("www.")
+    return excludedHosts.asSequence()
+        .map { it.trim().lowercase().removePrefix("*.").substringBefore('/').removePrefix("www.") }
+        .filter { it.isNotEmpty() }
+        .any { excluded -> clean == excluded || clean.endsWith(".$excluded") }
 }
 
 /** Normalise a user-typed allowed host the way the matcher reads
@@ -101,9 +123,38 @@ class WebGateStore(context: Context) {
         cachedAllowed = next
     }
 
+    // Audit R6 #341 F52: the exclusion list — hosts carved out of
+    // the ordinary blocklist matcher (see hostExcluded). Stored
+    // beside the allowlist; the two lists answer different
+    // questions and never merge.
+    @Volatile
+    private var cachedExcluded: List<String>? = null
+
+    fun excludedHosts(): List<String> {
+        cachedExcluded?.let { return it }
+        val value = (prefs.getStringSet(KEY_EXCLUDED, emptySet()) ?: emptySet()).sorted()
+        cachedExcluded = value
+        return value
+    }
+
+    fun addExcludedHost(raw: String): Boolean {
+        val host = normaliseAllowedHost(raw) ?: return false
+        val next = (excludedHosts() + host).distinct().sorted()
+        prefs.edit().putStringSet(KEY_EXCLUDED, next.toSet()).apply()
+        cachedExcluded = next
+        return true
+    }
+
+    fun removeExcludedHost(host: String) {
+        val next = excludedHosts() - host
+        prefs.edit().putStringSet(KEY_EXCLUDED, next.toSet()).apply()
+        cachedExcluded = next
+    }
+
     companion object {
         private const val PREFS_NAME = "web_gate"
         private const val KEY_BLOCK_ALL = "block_all"
         private const val KEY_ALLOWED = "allowed_hosts"
+        private const val KEY_EXCLUDED = "excluded_hosts"
     }
 }

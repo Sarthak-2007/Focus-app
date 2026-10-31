@@ -48,7 +48,16 @@ class ChromeWaveUnitTest {
             for (stamped in listOf(false, true)) {
                 for (usage in UsageAccess.entries) {
                     for (protecting in listOf(false, true)) {
-                        val w = WatchStore.deriveWarrant(bound, stamped, usage, protecting)
+                        // readMono is handed in explicitly (0 = no
+                        // instant carried, warrantAgeMs's own
+                        // age-unknown value): the parameter's
+                        // default reads SystemClock.elapsedRealtime(),
+                        // which a plain unit test cannot do — and
+                        // the state table under test never consults
+                        // it. Production callers keep the default,
+                        // which stamps the read instant (issue #7's
+                        // cold-start cure reads the age off it).
+                        val w = WatchStore.deriveWarrant(bound, stamped, usage, protecting, readMono = 0L)
                         assertEquals(
                             "bound=$bound stamped=$stamped usage=$usage",
                             referenceWarrantState(bound, stamped, usage),
@@ -164,7 +173,7 @@ class ChromeWaveUnitTest {
         // All six measured at 10_000; read at 60_000 -> all stale,
         // the first in board order is named with the suffix.
         assertEquals(
-            "GUARD 0/6 — ACCESSIBILITY STALE",
+            "GUARD 0/6 — USAGE ACCESS STALE",
             guardLineFor(snap, nowMono = 60_000L)?.text
         )
     }
