@@ -132,3 +132,9 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | Launcher block screen: un-exitable launcher surface + separate allowed/peek screens | Sarthak's ruling 04:29 (not a seat idea — his order) | #22/#18 | BUILT-IN-PROGRESS (Umbau lane; first slice merged via PR #167) |
 
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
+
+## Glance words — the word-set as a design object (DESIGNER-E-3, WING-A)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| Glance word-set for #155: every user-visible string on the widget + shield card family audited old→new per state; UNPROVEN reworded to the app's own plain dialect ("SESSION OPEN • BLOCK NOT PROVED • OPEN THE APP TO CHECK"), arming named as not-sealed, one unified completion sentence ("Open Monolith to claim your receipt" — Ledger holds claimed receipts only), lock-screen public version made state-true, one name per number ("urges stopped" everywhere) | DESIGNER-E-3 | #155 | ADOPTED (filed on #155 comment 6536734515 + Discussion #638; execution S/0.5 day in the #540 lane / range owner) |
