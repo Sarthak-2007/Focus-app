@@ -73,3 +73,11 @@ w2_noCurrencyOrBillingSurfaceInMainCode (main's own VM comments —
 "coin flip", "the only coin" — trip its scan; this diff adds no such
 line) and SoundAndSocialTruthTest SocialToggleRenderedAndWritesThrough
 (a named member of the Oct 30 floor census's SoundAndSocial set).
+
+Addendum 2 (same run): main moved again — #324's lane landed its own
+MIGRATION_18_19 (intercept_logs typed columns), so the CUT drop
+renumbered a final time to MIGRATION_19_20, DB v20; chain tests
+extended. ShieldService composed with main's #278 stopwatch
+chronometer (kept) + the snoozedCount badge (CUT). MainActivity kept
+main's new shoppingWarningVisible state; its re-added frozenDigest
+collection was removed with the digest.

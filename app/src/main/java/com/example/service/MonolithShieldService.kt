@@ -797,7 +797,7 @@ class MonolithShieldService : Service() {
                 // state retires to rest.
                 if (updated.isInSafeBreak) {
                     lastBreakElapsedSeconds =
-                        (MonolithRepository.SAFE_BREAK_DURATION_SECONDS -
+                        (updated.effectiveBreakSeconds -
                             updated.safeBreakSecondsRemaining).coerceAtLeast(0)
                     publishBreakDim(
                         BreakDimState(
@@ -885,6 +885,20 @@ class MonolithShieldService : Service() {
                         System.currentTimeMillis() + remainingSec * 1000L
                     }
                 }
+                // Audit R5 #278 (line 52): the stopwatch arm above
+                // gets no end chronometer — it counts up, not down —
+                // so its standing card carried NO visual progress,
+                // only this loop's text snapshot. It gets a count-UP
+                // system chronometer, anchored at the elapsed start
+                // derived from the same elapsedSeconds the text
+                // prints, so the ticking face and the printed count
+                // can never disagree about where the count stands.
+                val chronometerStartMillis: Long? =
+                    if (updated.isStopwatchMode) {
+                        System.currentTimeMillis() - updated.elapsedSeconds * 1000L
+                    } else {
+                        null
+                    }
                 // Issue #155 (F4) as amended by Issue #100's CUT,
                 // composed by BUILDER-100 (Oct 31): the badge's held
                 // number is the notification listener's IN-MEMORY
@@ -1154,7 +1168,8 @@ class MonolithShieldService : Service() {
                         bigText = bigText,
                         chronometerEndMillis = chronometerEndMillis,
                         badgeNumber = badgeNumber,
-                        inSafeBreak = updated.isInSafeBreak
+                        inSafeBreak = updated.isInSafeBreak,
+                        chronometerStartMillis = chronometerStartMillis
                     )
                 }
 
@@ -1486,7 +1501,8 @@ class MonolithShieldService : Service() {
         bigText: String? = null,
         chronometerEndMillis: Long? = null,
         badgeNumber: Int? = null,
-        inSafeBreak: Boolean = false
+        inSafeBreak: Boolean = false,
+        chronometerStartMillis: Long? = null
     ): Notification {
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -1584,6 +1600,17 @@ class MonolithShieldService : Service() {
             builder.setWhen(chronometerEndMillis)
             builder.setShowWhen(true)
         }
+        if (chronometerStartMillis != null) {
+            // Audit R5 #278 (line 52): a stopwatch session counts
+            // UP — the system chronometer ticks from the elapsed
+            // start anchor, so the standing card carries live
+            // visual progress between the loop's re-posts instead
+            // of a frozen text snapshot.
+            builder.setUsesChronometer(true)
+            builder.setChronometerCountDown(false)
+            builder.setWhen(chronometerStartMillis)
+            builder.setShowWhen(true)
+        }
         if (badgeNumber != null) {
             builder.setNumber(badgeNumber)
         }
@@ -1625,12 +1652,13 @@ class MonolithShieldService : Service() {
         builder.addAction(0, "Open Monolith", pendingIntent)
         // Issue #274: a live countdown must be a system chronometer,
         // not hand-rendered static text re-posted every second. When
-        // the caller passed no explicit end (#155 seam above), fall
-        // back to the mirror: when it knows the session's end
-        // wall-clock, the system itself ticks the countdown -
-        // accurate on the lock screen and AOD even between
-        // shield-loop iterations.
-        if (chronometerEndMillis == null) {
+        // the caller passed no explicit end (#155 seam above) and no
+        // count-up start anchor either (a stopwatch card must never
+        // borrow a stale countdown from the mirror), fall back to
+        // the mirror: when it knows the session's end wall-clock,
+        // the system itself ticks the countdown — accurate on the
+        // lock screen and AOD even between shield-loop iterations.
+        if (chronometerEndMillis == null && chronometerStartMillis == null) {
             val endWallMs = SessionMirror.read(this).endWallMs
             if (endWallMs > System.currentTimeMillis()) {
                 builder.setWhen(endWallMs)
@@ -1661,7 +1689,8 @@ class MonolithShieldService : Service() {
         bigText: String? = null,
         chronometerEndMillis: Long? = null,
         badgeNumber: Int? = null,
-        inSafeBreak: Boolean = false
+        inSafeBreak: Boolean = false,
+        chronometerStartMillis: Long? = null
     ) {
         // Issue #122: only the standing (ongoing) protection
         // promise is remembered for battery re-posts \u2014 a detached
@@ -1683,7 +1712,8 @@ class MonolithShieldService : Service() {
             NOTIFICATION_ID,
             buildNotification(
                 title, warnedSubtitle, ongoing, autoCancel, timeoutAfterMs,
-                warnedBigText, chronometerEndMillis, badgeNumber, inSafeBreak
+                warnedBigText, chronometerEndMillis, badgeNumber, inSafeBreak,
+                chronometerStartMillis
             )
         )
     }

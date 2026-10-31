@@ -338,7 +338,8 @@ class RoutinesMigrationChainTest {
                 MonolithDatabase.MIGRATION_15_16,
                 MonolithDatabase.MIGRATION_16_17,
                 MonolithDatabase.MIGRATION_17_18,
-                MonolithDatabase.MIGRATION_18_19
+                MonolithDatabase.MIGRATION_18_19,
+                MonolithDatabase.MIGRATION_19_20
             )
             .build()
 
@@ -380,7 +381,7 @@ class RoutinesMigrationChainTest {
         )
         assertFalse(tables.contains("routine_attendance"))
         // Issue #100 CUT: the notification-content store is GONE at
-        // v19 — MIGRATION_18_19 dropped the table the v7 fixture
+        // v20 — MIGRATION_19_20 dropped the table the v7 fixture
         // created; no content store may stand at the latest schema.
         assertFalse(tables.contains("captured_notifications"))
 

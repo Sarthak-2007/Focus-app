@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DayNoteEntity::class,
         TaskAccrualSegmentEntity::class
     ],
-    version = 19,
+    version = 20,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -375,6 +375,60 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
+         * Issue #324, finding 3 build half (18→19): the intercept
+         * log's typed event. Two TEXT columns land on
+         * intercept_logs — outcomeKind / triggerKind, storing the
+         * InterceptOutcomeKind / InterceptTriggerKind enum NAMEs —
+         * and existing rows are BACKFILLED from the facts they
+         * already carry: the outcome word (matched case-insensitively
+         * over the full writer vocabulary enumerated in
+         * ReceiptState) and the trigger shortTag. The backfill is a
+         * pure derivation, not an invention: a word no writer
+         * produces stays UNKNOWN, session-end rows (reserved system
+         * package, disarm reason as word) become SESSION_END, and
+         * the reserved-package rows' trigger is SYSTEM. The legacy
+         * word columns are untouched and remain the receipt
+         * assembly's source.
+         *
+         * Renumber history (migration-train rulings on #324): the
+         * step was authored as 15→16; PR #588 landed its own 15→16
+         * first, so it renumbered to 16→17 (ruling v3, 6534867475);
+         * main then took 16→17 itself (#340 seal, above) and 17→18
+         * (batch-10 composition, above) while this PR waited out
+         * the merge hold — so it lands as 18→19, the next free
+         * link, named on #324 and #341 before it opened.
+         */
+        val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE intercept_logs ADD COLUMN outcomeKind TEXT NOT NULL DEFAULT 'UNKNOWN'")
+                db.execSQL("ALTER TABLE intercept_logs ADD COLUMN triggerKind TEXT NOT NULL DEFAULT 'UNKNOWN'")
+                db.execSQL(
+                    "UPDATE intercept_logs SET outcomeKind = CASE " +
+                        "WHEN packageName = 'com.monolith.system' THEN 'SESSION_END' " +
+                        "WHEN UPPER(outcome) = 'BLOCKED' THEN 'BLOCKED' " +
+                        "WHEN UPPER(outcome) = 'STAYED FOCUSED' THEN 'STAYED_FOCUSED' " +
+                        "WHEN UPPER(outcome) = 'SPLIT INTO 10M MICRO-STEP' THEN 'SPLIT_INTO_MICRO_STEP' " +
+                        "WHEN UPPER(outcome) = 'USED 2M PEEK' THEN 'USED_PEEK' " +
+                        "WHEN UPPER(outcome) = 'INTERCEPTED' THEN 'INTERCEPTED' " +
+                        "WHEN UPPER(outcome) = 'LEFT AIRLOCK WITHOUT CHOOSING' THEN 'LEFT_WITHOUT_CHOOSING' " +
+                        "WHEN UPPER(outcome) = 'OPENED LAUNCHER' THEN 'OPENED_LAUNCHER' " +
+                        "WHEN UPPER(outcome) = 'UNINSTALL ATTEMPT — RETURNED' THEN 'UNINSTALL_ATTEMPT_RETURNED' " +
+                        "WHEN UPPER(outcome) = 'OPEN EXPOSURE' THEN 'OPEN_EXPOSURE' " +
+                        "ELSE 'UNKNOWN' END"
+                )
+                db.execSQL(
+                    "UPDATE intercept_logs SET triggerKind = CASE " +
+                        "WHEN packageName IN ('com.monolith.system', 'com.monolith.exposure') THEN 'SYSTEM' " +
+                        "WHEN triggerReason = 'Habit' THEN 'HABIT' " +
+                        "WHEN triggerReason = 'Stuck' THEN 'STUCK' " +
+                        "WHEN triggerReason = 'Tired' THEN 'TIRED' " +
+                        "WHEN triggerReason = 'Message' THEN 'MESSAGE' " +
+                        "ELSE 'UNKNOWN' END"
+                )
+            }
+        }
+
+        /**
          * Issue #100 (notifications-lived) — Sarthak's ruling:
          * notification-content storage is CUT. The captured
          * notifications table (plaintext message bodies, stored
@@ -385,12 +439,12 @@ abstract class MonolithDatabase : RoomDatabase() {
          *
          * BUILDER-100 composition note (Oct 31): authored as
          * 14→15 on the CUT branch, renumbered 15→16 by DURCH-C,
-         * renumbered again to 18→19 at this landing — main took
-         * 15→16 itself for #261's Safe Break columns, 16→17 for
-         * #340 and 17→18 for batch-10 while this lane was in
-         * flight. Same drop, same ruling; only the number moved.
+         * 18→19 at this landing's first composition, and 19→20 at
+         * the second — main took 15→16 (#261), 16→17 (#340),
+         * 17→18 (batch-10) and 18→19 (#324) while this lane was
+         * in flight. Same drop, same ruling; only the number moved.
          */
-        val MIGRATION_18_19 = object : Migration(18, 19) {
+        val MIGRATION_19_20 = object : Migration(19, 20) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("DROP TABLE IF EXISTS captured_notifications")
             }
@@ -501,7 +555,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance

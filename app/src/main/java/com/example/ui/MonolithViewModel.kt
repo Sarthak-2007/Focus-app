@@ -586,7 +586,22 @@ data class AirlockInterceptState(
      *  interceptAttemptsToday, over dao.getInterceptLogsBetween).
      *  0 = not carried (previews, tests, or the count not yet read
      *  back): the door prints nothing rather than inventing one. */
-    val todayAttempts: Int = 0
+    val todayAttempts: Int = 0,
+    /** Issue #125 (armed-wrong F5 remainder): the armed session's
+     *  VERIFIED elapsed seconds at the intercept instant, read off
+     *  the live row like every other fact on this state. -1 = not
+     *  carried (no session, previews, tests): the door's grace
+     *  abort prints nothing rather than inventing a window. The
+     *  overlay ages this snapshot from [interceptedAtMonoMillis]
+     *  on the monotonic clock, so its countdown derives from the
+     *  same anchor the repository's grace law reads — never from
+     *  a counter that ticks itself. */
+    val sessionElapsedSecondsAtIntercept: Int = -1,
+    /** Issue #125: true when the armed session is routine-born —
+     *  its grace tap is judged by the routine funnel, never a free
+     *  cancel, and the door's chip must say so (the Deck's own
+     *  distinction, TactileDeckScreen's routine_judged_end_button). */
+    val sessionIsRoutine: Boolean = false
 )
 
 /**
@@ -1164,6 +1179,12 @@ class MonolithViewModel(
     private val _soundEnabled = MutableStateFlow(SoundEffectsSetting.isEnabled(appContext))
     val soundEnabled: StateFlow<Boolean> = _soundEnabled.asStateFlow()
 
+    // #253 line 1: the session soundscape's printed state is
+    // likewise born from its persisted fact (SoundscapeSetting).
+    private val _soundscapeEnabled =
+        MutableStateFlow(com.example.service.SoundscapeSetting.isEnabled(appContext))
+    val soundscapeEnabled: StateFlow<Boolean> = _soundscapeEnabled.asStateFlow()
+
     private val _deletedTaskForUndo = MutableStateFlow<FocusTaskEntity?>(null)
     val deletedTaskForUndo: StateFlow<FocusTaskEntity?> = _deletedTaskForUndo.asStateFlow()
     private var undoDismissJob: Job? = null
@@ -1610,6 +1631,25 @@ class MonolithViewModel(
         _updateNoteVisible.value = false
     }
 
+    // Issue #129 D-2 (panel verdict, 64–4): the one-time SHOPPING
+    // fail-closed warning. The dismissed flag is the persisted
+    // store read once at init (a side-effect-free read, unlike
+    // the install-open registration above); visibility is the
+    // pure owed-check over the live catalogue — display-only,
+    // no enforcement reads or writes anywhere on this path.
+    private val _shoppingWarningDismissed =
+        MutableStateFlow(repository.shoppingWarningDismissed())
+    val shoppingWarningVisible: StateFlow<Boolean> = combine(
+        apps, _shoppingWarningDismissed
+    ) { list, dismissed ->
+        com.example.data.ShoppingFailClosedWarning.owed(list, dismissed)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    fun dismissShoppingWarning() {
+        repository.dismissShoppingWarning()
+        _shoppingWarningDismissed.value = true
+    }
+
     fun dismissRoutineResetNote() {
         viewModelScope.launch { repository.dismissRoutineResetNote() }
     }
@@ -1698,7 +1738,18 @@ class MonolithViewModel(
                 com.example.service.MonolithAccessibilityService.instance != null,
             accessibilityArmedSessionId =
                 com.example.service.MonolithAccessibilityService.armedSessionId,
-            nowWallMillis = System.currentTimeMillis()
+            // The third witness (critic Nagel N-1): sampled live
+            // here, in the same frame as the other two — one
+            // AppOps mode check, the same cost standingWarrant
+            // already pays at these triggers.
+            usageAccess = repository.usageAccess(),
+            // The ACCESS leg's liveness stamp (critic Nagel N-2):
+            // the last accessibility event that acquired a root
+            // window, aged by the derivation under its own law.
+            accessibilityLastRootMono =
+                com.example.service.MonolithAccessibilityService.lastRootMono,
+            nowWallMillis = System.currentTimeMillis(),
+            nowMonoMillis = android.os.SystemClock.elapsedRealtime()
         )
     }
     /** Shield Rethink 2, Step 1: the receipt line — the one place
@@ -2285,6 +2336,17 @@ class MonolithViewModel(
                 } else if (!isActive && wasActive) {
                     com.example.service.DndGate.restoreAfterSession(appContext)
                     _dndLine.value = null
+                }
+                // #253 line 1: the session soundscape follows the
+                // same edges — it rises with the seal and dies
+                // with the session, however the session was born
+                // and however it ends. The engine itself reads
+                // the SoundscapeSetting fact at start, so this
+                // wiring carries no copy of the setting.
+                if (isActive && !wasActive) {
+                    soundEngine.startSoundscape()
+                } else if (!isActive && wasActive) {
+                    soundEngine.stopSoundscape()
                 }
                 wasActive = isActive
                 if (_airlockState.value.isVisible && !sessionIsLive(session)) {
@@ -3300,6 +3362,25 @@ class MonolithViewModel(
         _soundEnabled.value = if (committed) next else SoundEffectsSetting.isEnabled(appContext)
         if (_soundEnabled.value) soundEngine.playRotaryDetent(720.0)
         return _soundEnabled.value
+    }
+
+    /** #253 line 1: the soundscape toggle — same law as
+     *  [toggleSound]: the write commits the FACT first
+     *  (SoundscapeSetting) and the print follows the disk. A live
+     *  session hears the change at the tap: ON starts the lane
+     *  (the engine re-reads the fact), OFF retracts it, and the
+     *  lane's own fade rule carries the edge. */
+    fun toggleSoundscape(): Boolean {
+        val next = !com.example.service.SoundscapeSetting.isEnabled(appContext)
+        val committed = com.example.service.SoundscapeSetting.setEnabled(appContext, next)
+        _soundscapeEnabled.value =
+            if (committed) next else com.example.service.SoundscapeSetting.isEnabled(appContext)
+        if (_soundscapeEnabled.value) {
+            if (activeSession.value?.isActive == true) soundEngine.startSoundscape()
+        } else {
+            soundEngine.stopSoundscape()
+        }
+        return _soundscapeEnabled.value
     }
 
     /** ST-02 (Truth Car 3): the Deck's END BREAK chip. Ends the
@@ -4432,6 +4513,7 @@ class MonolithViewModel(
     }
 
     fun applySmartLoadout(loadout: SmartLoadout) {
+        bloomNightLanding() // Ruhe R-3 verb
         // Issue #304 F1: mid-session, the repository lands this
         // loadout tightening-only (SessionTierGate) — say so with
         // the ratchet's own warning instead of letting the tap
@@ -4988,7 +5070,11 @@ class MonolithViewModel(
                 // session's end is not stated at all.
                 ?.takeIf { !it.isStopwatchMode && live }
                 ?.let { System.currentTimeMillis() + it.spanRemainingSeconds * 1000L },
-            sessionIsStopwatch = active?.isStopwatchMode == true
+            sessionIsStopwatch = active?.isStopwatchMode == true,
+            // Issue #125 (F5 remainder): the grace facts ride onto
+            // the door from the same live row.
+            sessionElapsedSecondsAtIntercept = active?.elapsedSeconds ?: -1,
+            sessionIsRoutine = active?.routineId != null
         )
 
         // C-11 (Tor round 7, ruled in full): BOOK AT ARRIVAL. The
@@ -5203,7 +5289,12 @@ class MonolithViewModel(
                         (MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS - it.elapsedSeconds)
                             .coerceAtLeast(0) * 1000L
                 },
-            todayAttempts = todayAttempts
+            todayAttempts = todayAttempts,
+            // Issue #125 (F5 remainder): the grace facts ride onto
+            // the door from the same live row, on the re-derive too —
+            // a restored door carries the same abort a live door does.
+            sessionElapsedSecondsAtIntercept = active?.elapsedSeconds ?: -1,
+            sessionIsRoutine = active?.routineId != null
         )
     }
 
@@ -5554,6 +5645,23 @@ class MonolithViewModel(
     fun requestDisarmFromAirlock() {
         _airlockState.value = _airlockState.value.copy(isVisible = false)
         requestDisarmChallenge()
+    }
+
+    /**
+     * Issue #125 (armed-wrong F5 remainder): the Airlock's grace
+     * abort. The door dismisses and the SAME grace cancel the Deck
+     * and off-Deck chips call runs — identical reason string, so
+     * the repository's grace classification (verified elapsed ≤
+     * [MonolithRepository.GRACE_WINDOW_SECONDS]) books it exactly
+     * as a Deck abort; a routine-born row diverts to its judging
+     * funnel inside that same path, as on the Deck. Nothing here
+     * widens the window: a tap that arrives after it is a late
+     * "Grace Cancel" and books as an early ending, exactly as a
+     * late Deck tap does today.
+     */
+    fun confirmGraceAbortFromAirlock() {
+        _airlockState.value = _airlockState.value.copy(isVisible = false)
+        confirmDisarmSession("Accidental Start Grace Cancel")
     }
 
 

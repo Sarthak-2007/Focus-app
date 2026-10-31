@@ -45,12 +45,13 @@ class Issue155CompletionExpiryTest {
             String::class.java,
             Long::class.javaObjectType,
             Int::class.javaObjectType,
-            Boolean::class.javaPrimitiveType
+            Boolean::class.javaPrimitiveType,
+            Long::class.javaObjectType
         )
         method.isAccessible = true
         return method.invoke(
             service, "Session Complete", "Your receipt is waiting in the Ledger.",
-            ongoing, autoCancel, timeoutAfterMs, null, null, null, false
+            ongoing, autoCancel, timeoutAfterMs, null, null, null, false, null
         ) as Notification
     }
 
@@ -72,11 +73,12 @@ class Issue155CompletionExpiryTest {
             String::class.java,
             Long::class.javaObjectType,
             Int::class.javaObjectType,
-            Boolean::class.javaPrimitiveType
+            Boolean::class.javaPrimitiveType,
+            Long::class.javaObjectType
         )
         method.isAccessible = true
         return method.invoke(
-            service, title, subtitle, ongoing, false, 0L, null, null, null, inSafeBreak
+            service, title, subtitle, ongoing, false, 0L, null, null, null, inSafeBreak, null
         ) as Notification
     }
 

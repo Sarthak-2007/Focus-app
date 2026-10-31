@@ -490,285 +490,17 @@ fun DrawerScreen(
         return
     }
 
-    // ------------------------------------------------------------------
-    // CABINET — the curios, re-homed (chrome C10). Ruled rows like
-    // everything else in the Drawer; forged state from real
-    // sessions; sealed = read-only (the detail reads, SELECT does
-    // not answer).
-    // ------------------------------------------------------------------
     if (view == DrawerView.CABINET) {
-        val artifact = cabinetArtifact
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(scheme.background)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .testTag("drawer_cabinet"),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(bottom = 100.dp)
-        ) {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = stringResource(R.string.drawer_cabinet),
-                        fontFamily = AnonymousProFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        letterSpacing = 2.sp,
-                        color = scheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = stringResource(R.string.label_back),
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        color = scheme.onBackground,
-                        modifier = Modifier
-                            .clickable(
-                                role = androidx.compose.ui.semantics.Role.Button
-                            ) {
-                                if (cabinetArtifact != null) {
-                                    cabinetArtifactId = ""
-                                } else {
-                                    viewName = DrawerView.LANDING.name
-                                }
-                            }
-                            .sizeIn(minHeight = 48.dp)
-                            .padding(vertical = 14.dp)
-                            .testTag("cabinet_back")
-                    )
-                }
-            }
-            if (artifact == null) {
-                items(cabinetArtifacts, key = { "cabinet-${it.id}" }) { item ->
-                    val forged = item.id in forgedArtifactIds
-                    val stat = forgeStats[item.id]
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(
-                                role = androidx.compose.ui.semantics.Role.Button
-                            ) { cabinetArtifactId = item.id }
-                            .sizeIn(minHeight = 48.dp)
-                            .padding(vertical = 6.dp)
-                            .testTag("cabinet_row_${item.id}"),
-                        verticalArrangement = Arrangement.spacedBy(3.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = item.serialCode.uppercase(Locale.US),
-                                fontFamily = AnonymousProFamily,
-                                fontSize = 10.5.sp,
-                                letterSpacing = 1.sp,
-                                color = scheme.onSurfaceVariant
-                            )
-                            if (forged) {
-                                Text(
-                                    // The stamp is STAMPED, never
-                                    // FORGED; a repeat forge counts.
-                                    text = when {
-                                        item.id == PARTIAL_STAMP_ID -> "STAMPED"
-                                        stat != null && stat.count > 1 -> "FORGED ×${stat.count}"
-                                        else -> "FORGED"
-                                    },
-                                    fontFamily = AnonymousProFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 10.5.sp,
-                                    letterSpacing = 1.sp,
-                                    color = scheme.onBackground
-                                )
-                            }
-                        }
-                        // Audit R3b #145: an un-forged artifact's
-                        // name and subtitle are the reward's text —
-                        // they are earned, not previewed. The row
-                        // shows the serial (its public identity) and
-                        // the unforged fact; the name prints only
-                        // once a real span has forged it.
-                        if (forged) {
-                            Text(
-                                text = item.name,
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 14.sp,
-                                color = scheme.onBackground
-                            )
-                            Text(
-                                text = item.subtitle,
-                                fontFamily = AnonymousProFamily,
-                                fontSize = 10.5.sp,
-                                color = scheme.onSurfaceVariant
-                            )
-                        } else {
-                            Text(
-                                text = "NOT YET FORGED",
-                                fontFamily = AnonymousProFamily,
-                                fontSize = 10.5.sp,
-                                letterSpacing = 1.sp,
-                                color = scheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-                }
-                // DRW-01: the true rule, printed once as the
-                // cabinet's standing line — exactly what the
-                // forge does (Repository: a manual span finished
-                // in full forges one artifact, the forge chooses
-                // which; routine-born spans forge nothing). No
-                // per-artifact prices, no thresholds nothing
-                // enforces.
-                item {
-                    Text(
-                        // Audit R3b #145, reopened defect A: the
-                        // sentence lives in CABINET_FORGE_RULE so
-                        // its exact wording is test-pinned; its
-                        // MANUAL / IN FULL scoping is the truth the
-                        // earlier unscoped print denied.
-                        text = CABINET_FORGE_RULE,
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 10.5.sp,
-                        letterSpacing = 1.sp,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier.testTag("cabinet_forge_rule")
-                    )
-                }
-            } else {
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        // The serial plate is print. (Truth Car 2,
-                        // DRW-07: the five-tap egg that toggled a
-                        // "HARMONIC SYNTH UNLOCKED" line is gone —
-                        // the synth it named was removed from the
-                        // app, and an achieved state for a feature
-                        // that does not exist is not an easter egg,
-                        // it is a false print.)
-                        Text(
-                            text = artifact.serialCode.uppercase(Locale.US),
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier.testTag("cabinet_serial_plate")
-                        )
-                        // Audit R3b #145: name, subtitle and lore
-                        // are the earned text — an un-forged
-                        // artifact's detail is its serial plate and
-                        // the unforged fact, nothing more. What is
-                        // not yet earned is not previewed.
-                        if (artifact.id in forgedArtifactIds) {
-                            Text(
-                                text = artifact.name,
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 17.sp,
-                                color = scheme.onBackground
-                            )
-                            Text(
-                                text = artifact.subtitle,
-                                fontFamily = AnonymousProFamily,
-                                fontSize = 11.sp,
-                                letterSpacing = 1.sp,
-                                color = scheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = artifact.lore,
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontSize = 13.sp,
-                                color = scheme.onBackground
-                            )
-                        }
-                        // DRW-01: the "REQUIRES … MIN · …
-                        // INTERCEPTIONS" price tag is gone — no
-                        // code ever read those numbers. The true
-                        // rule prints once, on the cabinet's list
-                        // (below), not as a per-artifact price.
-                        Text(
-                            text = when {
-                                artifact.id == PARTIAL_STAMP_ID &&
-                                    artifact.id in forgedArtifactIds ->
-                                    "STAMPED — IT STANDS IN THE CABINET"
-                                artifact.id == PARTIAL_STAMP_ID ->
-                                    "NOT YET STAMPED"
-                                artifact.id in forgedArtifactIds ->
-                                    "FORGED — IT STANDS IN THE CABINET"
-                                else -> "NOT YET FORGED"
-                            },
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onBackground
-                        )
-                        // Issue #110, finding 5: the forge record —
-                        // how many sessions forged (or stamped) it,
-                        // and the most recent one's date, from the
-                        // stored session rows. A cabinet that names
-                        // real days is a record; one that doesn't
-                        // was decoration.
-                        val detailStat = forgeStats[artifact.id]
-                        if (detailStat != null && detailStat.count > 0) {
-                            val lastDate = java.time.Instant
-                                .ofEpochMilli(detailStat.lastForgedAtMillis)
-                                .atZone(java.time.ZoneId.systemDefault())
-                                .toLocalDate()
-                            Text(
-                                text = if (artifact.id == PARTIAL_STAMP_ID) {
-                                    "STAMPED ×${detailStat.count} · LAST ${headingLabel(lastDate, withYear = true)}"
-                                } else {
-                                    "FORGED ×${detailStat.count} · LAST ${headingLabel(lastDate, withYear = true)}"
-                                },
-                                fontFamily = AnonymousProFamily,
-                                fontSize = 11.sp,
-                                letterSpacing = 1.sp,
-                                color = scheme.onSurfaceVariant,
-                                modifier = Modifier.testTag("cabinet_forge_record_${artifact.id}")
-                            )
-                        }
-                        // Audit R3b #145: provenance under the
-                        // summary — every forge of this artifact,
-                        // dated, with the span's intention and its
-                        // outcome. A duplicate forge is a second
-                        // line, never a silent no-op; a shield-gap
-                        // forge says so.
-                        val forgeRecords = curioForgeRecords[artifact.id].orEmpty()
-                        forgeRecords.forEach { record ->
-                            val forgeDay = java.text.SimpleDateFormat(
-                                "d MMM yyyy", Locale.US
-                            ).format(java.util.Date(record.startWallTimeMillis))
-                            // Reopened defect B: the mark derives
-                            // from the shield-gap fact via
-                            // curioForgeGapMark — a FLOW forge's
-                            // outcome is STOPWATCH_ENDED even when
-                            // its shieldGapSeen latch is set, so an
-                            // outcome-only test marked nothing.
-                            val gapMark = curioForgeGapMark(record)
-                            Text(
-                                text = "$forgeDay · ${record.intention}$gapMark",
-                                fontFamily = AnonymousProFamily,
-                                fontSize = 10.5.sp,
-                                color = scheme.onSurfaceVariant
-                            )
-                        }
-                        // DRW-06: no SELECT verb, no SELECTED
-                        // state — the selection was consumed by
-                        // nothing, survived nothing, and chose
-                        // between toys that do not exist. The
-                        // detail now ends at the record.
-                    }
-                }
-            }
-        }
+        DrawerCabinetView(
+            scheme = scheme,
+            cabinetArtifacts = cabinetArtifacts,
+            cabinetArtifact = cabinetArtifact,
+            forgedArtifactIds = forgedArtifactIds,
+            forgeStats = forgeStats,
+            curioForgeRecords = curioForgeRecords,
+            onCabinetArtifactIdChanged = { cabinetArtifactId = it },
+            onBackToLanding = { viewName = DrawerView.LANDING.name }
+        )
         return
     }
 
@@ -1330,6 +1062,306 @@ fun DrawerScreen(
  * never offered here (the filing zone owns them), and under seal
  * the heading is print only — filing is an edit.
  */
+/**
+ * Issue #90 (complexity F2 slice): the CABINET view — extracted
+ * out of DrawerScreen's body as its own composable, in the pattern
+ * of the already-extracted DayHeading/FilingDayLine/StoredRow.
+ * Behaviour-identical: same rows, same keys, same testTags; the
+ * host's captures are explicit parameters and the two state
+ * writes (artifact selection, back-to-landing) ride callbacks to
+ * the host's saveable state holders.
+ */
+@Composable
+private fun DrawerCabinetView(
+    scheme: androidx.compose.material3.ColorScheme,
+    cabinetArtifacts: List<KineticArtifact>,
+    cabinetArtifact: KineticArtifact?,
+    forgedArtifactIds: Set<String>,
+    forgeStats: Map<String, ForgeStat>,
+    curioForgeRecords: Map<String, List<FocusSessionEntity>>,
+    onCabinetArtifactIdChanged: (String) -> Unit,
+    onBackToLanding: () -> Unit
+) {
+    // ------------------------------------------------------------------
+    // CABINET — the curios, re-homed (chrome C10). Ruled rows like
+    // everything else in the Drawer; forged state from real
+    // sessions; sealed = read-only (the detail reads, SELECT does
+    // not answer).
+    // ------------------------------------------------------------------
+    val artifact = cabinetArtifact
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(scheme.background)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .testTag("drawer_cabinet"),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(bottom = 100.dp)
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(R.string.drawer_cabinet),
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    letterSpacing = 2.sp,
+                    color = scheme.onSurfaceVariant
+                )
+                Text(
+                    text = stringResource(R.string.label_back),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = scheme.onBackground,
+                    modifier = Modifier
+                        .clickable(
+                            role = androidx.compose.ui.semantics.Role.Button
+                        ) {
+                            if (cabinetArtifact != null) {
+                                onCabinetArtifactIdChanged("")
+                            } else {
+                                onBackToLanding()
+                            }
+                        }
+                        .sizeIn(minHeight = 48.dp)
+                        .padding(vertical = 14.dp)
+                        .testTag("cabinet_back")
+                )
+            }
+        }
+        if (artifact == null) {
+            items(cabinetArtifacts, key = { "cabinet-${it.id}" }) { item ->
+                val forged = item.id in forgedArtifactIds
+                val stat = forgeStats[item.id]
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(
+                            role = androidx.compose.ui.semantics.Role.Button
+                        ) { onCabinetArtifactIdChanged(item.id) }
+                        .sizeIn(minHeight = 48.dp)
+                        .padding(vertical = 6.dp)
+                        .testTag("cabinet_row_${item.id}"),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = item.serialCode.uppercase(Locale.US),
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 10.5.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onSurfaceVariant
+                        )
+                        if (forged) {
+                            Text(
+                                // The stamp is STAMPED, never
+                                // FORGED; a repeat forge counts.
+                                text = when {
+                                    item.id == PARTIAL_STAMP_ID -> "STAMPED"
+                                    stat != null && stat.count > 1 -> "FORGED ×${stat.count}"
+                                    else -> "FORGED"
+                                },
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.5.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onBackground
+                            )
+                        }
+                    }
+                    // Audit R3b #145: an un-forged artifact's
+                    // name and subtitle are the reward's text —
+                    // they are earned, not previewed. The row
+                    // shows the serial (its public identity) and
+                    // the unforged fact; the name prints only
+                    // once a real span has forged it.
+                    if (forged) {
+                        Text(
+                            text = item.name,
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 14.sp,
+                            color = scheme.onBackground
+                        )
+                        Text(
+                            text = item.subtitle,
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 10.5.sp,
+                            color = scheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(
+                            text = "NOT YET FORGED",
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 10.5.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onSurfaceVariant
+                        )
+                    }
+                }
+                HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+            }
+            // DRW-01: the true rule, printed once as the
+            // cabinet's standing line — exactly what the
+            // forge does (Repository: a manual span finished
+            // in full forges one artifact, the forge chooses
+            // which; routine-born spans forge nothing). No
+            // per-artifact prices, no thresholds nothing
+            // enforces.
+            item {
+                Text(
+                    // Audit R3b #145, reopened defect A: the
+                    // sentence lives in CABINET_FORGE_RULE so
+                    // its exact wording is test-pinned; its
+                    // MANUAL / IN FULL scoping is the truth the
+                    // earlier unscoped print denied.
+                    text = CABINET_FORGE_RULE,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 10.5.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("cabinet_forge_rule")
+                )
+            }
+        } else {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // The serial plate is print. (Truth Car 2,
+                    // DRW-07: the five-tap egg that toggled a
+                    // "HARMONIC SYNTH UNLOCKED" line is gone —
+                    // the synth it named was removed from the
+                    // app, and an achieved state for a feature
+                    // that does not exist is not an easter egg,
+                    // it is a false print.)
+                    Text(
+                        text = artifact.serialCode.uppercase(Locale.US),
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        letterSpacing = 1.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("cabinet_serial_plate")
+                    )
+                    // Audit R3b #145: name, subtitle and lore
+                    // are the earned text — an un-forged
+                    // artifact's detail is its serial plate and
+                    // the unforged fact, nothing more. What is
+                    // not yet earned is not previewed.
+                    if (artifact.id in forgedArtifactIds) {
+                        Text(
+                            text = artifact.name,
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = scheme.onBackground
+                        )
+                        Text(
+                            text = artifact.subtitle,
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = artifact.lore,
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontSize = 13.sp,
+                            color = scheme.onBackground
+                        )
+                    }
+                    // DRW-01: the "REQUIRES … MIN · …
+                    // INTERCEPTIONS" price tag is gone — no
+                    // code ever read those numbers. The true
+                    // rule prints once, on the cabinet's list
+                    // (below), not as a per-artifact price.
+                    Text(
+                        text = when {
+                            artifact.id == PARTIAL_STAMP_ID &&
+                                artifact.id in forgedArtifactIds ->
+                                "STAMPED — IT STANDS IN THE CABINET"
+                            artifact.id == PARTIAL_STAMP_ID ->
+                                "NOT YET STAMPED"
+                            artifact.id in forgedArtifactIds ->
+                                "FORGED — IT STANDS IN THE CABINET"
+                            else -> "NOT YET FORGED"
+                        },
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        letterSpacing = 1.sp,
+                        color = scheme.onBackground
+                    )
+                    // Issue #110, finding 5: the forge record —
+                    // how many sessions forged (or stamped) it,
+                    // and the most recent one's date, from the
+                    // stored session rows. A cabinet that names
+                    // real days is a record; one that doesn't
+                    // was decoration.
+                    val detailStat = forgeStats[artifact.id]
+                    if (detailStat != null && detailStat.count > 0) {
+                        val lastDate = java.time.Instant
+                            .ofEpochMilli(detailStat.lastForgedAtMillis)
+                            .atZone(java.time.ZoneId.systemDefault())
+                            .toLocalDate()
+                        Text(
+                            text = if (artifact.id == PARTIAL_STAMP_ID) {
+                                "STAMPED ×${detailStat.count} · LAST ${headingLabel(lastDate, withYear = true)}"
+                            } else {
+                                "FORGED ×${detailStat.count} · LAST ${headingLabel(lastDate, withYear = true)}"
+                            },
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("cabinet_forge_record_${artifact.id}")
+                        )
+                    }
+                    // Audit R3b #145: provenance under the
+                    // summary — every forge of this artifact,
+                    // dated, with the span's intention and its
+                    // outcome. A duplicate forge is a second
+                    // line, never a silent no-op; a shield-gap
+                    // forge says so.
+                    val forgeRecords = curioForgeRecords[artifact.id].orEmpty()
+                    forgeRecords.forEach { record ->
+                        val forgeDay = java.text.SimpleDateFormat(
+                            "d MMM yyyy", Locale.US
+                        ).format(java.util.Date(record.startWallTimeMillis))
+                        // Reopened defect B: the mark derives
+                        // from the shield-gap fact via
+                        // curioForgeGapMark — a FLOW forge's
+                        // outcome is STOPWATCH_ENDED even when
+                        // its shieldGapSeen latch is set, so an
+                        // outcome-only test marked nothing.
+                        val gapMark = curioForgeGapMark(record)
+                        Text(
+                            text = "$forgeDay · ${record.intention}$gapMark",
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 10.5.sp,
+                            color = scheme.onSurfaceVariant
+                        )
+                    }
+                    // DRW-06: no SELECT verb, no SELECTED
+                    // state — the selection was consumed by
+                    // nothing, survived nothing, and chose
+                    // between toys that do not exist. The
+                    // detail now ends at the record.
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun DayHeading(
     group: DrawerDayGroup,

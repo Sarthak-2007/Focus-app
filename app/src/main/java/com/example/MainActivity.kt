@@ -452,6 +452,145 @@ private fun openPark(
 // first; if the OEM throws, the generic Settings home is the
 // fallback; if even that fails, the user is TOLD, in words,
 // instead of being stranded on a dead tap.
+private fun launchSettings(context: Context, intent: Intent, what: String) {
+    runCatching { context.startActivity(intent) }
+        .onFailure {
+            runCatching { context.startActivity(pinnedSettingsIntent(Settings.ACTION_SETTINGS)) }
+                .onFailure {
+                    android.widget.Toast.makeText(
+                        context,
+                        "COULDN'T OPEN SETTINGS FOR $what — OPEN ANDROID SETTINGS AND GRANT IT FROM APPS",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+
+        }
+}
+
+// The FIX key's panes: the exact Settings pane per grant; device
+// admin instead fires the official activation intent for this
+// app's own admin (issue #44), with Security Settings as fallback.
+private fun openFixPane(
+    context: Context,
+    permissionStepStore: com.example.data.PermissionStepStore,
+    viewModel: MonolithViewModel,
+    parkIntroDeliveredThisOpen: Boolean,
+    onParkIntroFixTrip: () -> Unit,
+    item: com.example.service.WatchItemId
+) {
+    // Issue #534 F2: a FIX trip is the intro's other spend —
+    // the user engaged with the board, so the intro has done
+    // its work even if the dwell has not elapsed. Spend at the
+    // trip itself; the flag also lets the eventual dismissal
+    // judge the same way.
+    if (parkIntroDeliveredThisOpen && viewModel.parkIntroPending()) {
+        onParkIntroFixTrip()
+        viewModel.markParkIntroDone()
+    }
+    // Issue #324 finding 4: record the step BEFORE the trip —
+    // the persisted in-flight step is what a process death
+    // during the Settings stay resumes from.
+    permissionStepStore.beginTrip(item)
+    // Issue #308: arm the return trip BEFORE the pane opens —
+    // the service polls this item's grant and brings the user
+    // back the moment it lands, instead of stranding them in
+    // Settings.
+    PermissionReturnService.arm(context, item)
+    when (item) {
+        // Audit R6 #340 F44: AUTOSTART has no pane to be sent
+        // to — the tap IS the oath. It records the attestation
+        // in the Watch Store and returns; no Settings trip is
+        // faked for a gate the OS refuses to report.
+        com.example.service.WatchItemId.AUTOSTART -> {
+            com.example.service.WatchStore.attest(item)
+        }
+        com.example.service.WatchItemId.ACCESSIBILITY ->
+            launchSettings(context, pinnedSettingsIntent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "ACCESSIBILITY")
+        com.example.service.WatchItemId.USAGE_ACCESS ->
+            launchSettings(context, pinnedSettingsIntent(Settings.ACTION_USAGE_ACCESS_SETTINGS), "USAGE ACCESS")
+        com.example.service.WatchItemId.DEVICE_ADMIN -> {
+            // Issue #44: ask Android for THIS admin through the
+            // official activation intent — the old hardcoded
+            // com.android.settings component only opened a
+            // generic list (and broke wherever that class name
+            // differed) and never actually requested the admin.
+            // Security Settings is only the fallback for when
+            // the official intent itself cannot be fired.
+            val requestAdmin = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                putExtra(
+                    DevicePolicyManager.EXTRA_DEVICE_ADMIN,
+                    ComponentName(context, MonolithDeviceAdminReceiver::class.java)
+                )
+                putExtra(
+                    DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                    context.getString(R.string.device_admin_add_explanation)
+                )
+            }
+            runCatching { context.startActivity(requestAdmin) }
+                .getOrElse {
+                    launchSettings(context, pinnedSettingsIntent(Settings.ACTION_SECURITY_SETTINGS), "DEVICE ADMIN")
+                }
+        }
+        com.example.service.WatchItemId.NOTIFICATION_LISTENER ->
+            launchSettings(
+                context,
+                pinnedSettingsIntent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"),
+                "NOTIFICATION ACCESS"
+            )
+        com.example.service.WatchItemId.OVERLAY ->
+            launchSettings(
+                context,
+                pinnedSettingsIntent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${context.packageName}")
+                ),
+                "DISPLAY OVER OTHER APPS"
+            )
+        com.example.service.WatchItemId.BATTERY -> {
+            // Issue #94 (F1): on an OEM-autostart-gated skin the
+            // survival trip is the vendor's AUTOSTART pane first —
+            // the AOSP battery pane alone leaves the boot receiver
+            // dead. Each vendor component is a guess that may not
+            // exist on this build; walk the list, then fall back
+            // to the AOSP battery trip.
+            // Issue #78 (merge, STURM3-15): the AOSP fallbacks
+            // below go through pinnedSettingsIntent like every
+            // other Settings route — main's #94 flow arrived with
+            // them bare, which would have reopened the unpinned-
+            // intent finding on this one pane.
+            val gate = com.example.data.OemPolicy.currentGate()
+            val autostartOpened = gate !=
+                com.example.data.OemPolicy.AutostartGate.NONE &&
+                com.example.data.OemPolicy
+                    .autostartIntents(gate, context.packageName)
+                    .any { pane ->
+                        runCatching { context.startActivity(pane) }
+                            .isSuccess
+                    }
+            if (!autostartOpened) {
+                val direct = pinnedSettingsIntent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:${context.packageName}")
+                )
+                runCatching { context.startActivity(direct) }
+                    .getOrElse {
+                        launchSettings(
+                            context,
+                            pinnedSettingsIntent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+                            "BATTERY"
+                        )
+                    }
+            }
+        }
+        else -> launchSettings(context, pinnedSettingsIntent(Settings.ACTION_SETTINGS), item.name)
+    }
+}
+
+// Issue #27 (finding 5): a FIX trip must never die silently.
+// Every Settings launch goes through here: the exact pane
+// first; if the OEM throws, the generic Settings home is the
+// fallback; if even that fails, the user is TOLD, in words,
+// instead of being stranded on a dead tap.
 @Composable
 fun MonolithRootApp(viewModel: MonolithViewModel) {
     val context = LocalContext.current
@@ -479,10 +618,34 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         }
     }
 
+    // Issue #264 B-264-31: the Ledger (VAULT) is the archive —
+    // every receipt, day word and finished session lives there.
+    // While it stands, the window is FLAG_SECURE: no screenshot
+    // and no Recents thumbnail of his history. Every other
+    // destination clears the flag — the Deck and the block
+    // surfaces stay capturable as before. (Verified gap: the
+    // tree carried zero FLAG_SECURE anywhere.)
+    val archiveWindow = (context as? android.app.Activity)?.window
+    LaunchedEffect(currentDestination) {
+        if (archiveSurfaceSecure(currentDestination)) {
+            archiveWindow?.addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE
+            )
+        } else {
+            archiveWindow?.clearFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE
+            )
+        }
+    }
+
     val darkTheme by viewModel.darkTheme.collectAsStateWithLifecycle()
     val themeEvaluation by viewModel.themeEvaluation.collectAsStateWithLifecycle()
     val guardLinePrint by viewModel.guardLinePrint.collectAsStateWithLifecycle()
     val watchSnapshot by viewModel.watchSnapshots.collectAsStateWithLifecycle()
+    // Issue #14 (#70-F2 remainder): the Reception Sheet's later
+    // movement gates on the session history — finished sessions,
+    // and finished sessions in which a Safe Break was taken.
+    val sessionHistory by viewModel.sessionHistory.collectAsStateWithLifecycle()
     val guardSettings by viewModel.guardSettingsState.collectAsStateWithLifecycle()
     // Issue #324, finding 4 (build half, relabelled: primer
     // re-creation + binding + persisted step state): the
@@ -546,6 +709,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val activeTaskFromYesterday by viewModel.activeTaskFromYesterday.collectAsStateWithLifecycle()
     val freshStartNoteVisible by viewModel.freshStartNoteVisible.collectAsStateWithLifecycle()
     val updateNoteVisible by viewModel.updateNoteVisible.collectAsStateWithLifecycle()
+    val shoppingWarningVisible by viewModel.shoppingWarningVisible.collectAsStateWithLifecycle()
     val storedMonths by viewModel.storedMonths.collectAsStateWithLifecycle()
     val drawerMonth by viewModel.drawerMonth.collectAsStateWithLifecycle()
     val drawerRows by viewModel.drawerRows.collectAsStateWithLifecycle()
@@ -651,6 +815,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val totalFocusedMinutes by viewModel.totalFocusedMinutes.collectAsStateWithLifecycle()
     val totalInterceptions by viewModel.totalInterceptions.collectAsStateWithLifecycle()
     val soundEnabled by viewModel.soundEnabled.collectAsStateWithLifecycle()
+    val soundscapeEnabled by viewModel.soundscapeEnabled.collectAsStateWithLifecycle()
     val airlockState by viewModel.airlockState.collectAsStateWithLifecycle()
     val floatingPeekPill by viewModel.floatingPeekPill.collectAsStateWithLifecycle()
     val disarmChallenge by viewModel.disarmChallenge.collectAsStateWithLifecycle()
@@ -1236,26 +1401,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         MonolithDestination.VAULT -> 3
     }
 
-    // Issue #27 (finding 5): a FIX trip must never die silently.
-    // Every Settings launch goes through here: the exact pane
-    // first; if the OEM throws, the generic Settings home is the
-    // fallback; if even that fails, the user is TOLD, in words,
-    // instead of being stranded on a dead tap.
-    fun launchSettings(intent: Intent, what: String) {
-        runCatching { context.startActivity(intent) }
-            .onFailure {
-                runCatching { context.startActivity(pinnedSettingsIntent(Settings.ACTION_SETTINGS)) }
-                    .onFailure {
-                        android.widget.Toast.makeText(
-                            context,
-                            "COULDN'T OPEN SETTINGS FOR $what — OPEN ANDROID SETTINGS AND GRANT IT FROM APPS",
-                            android.widget.Toast.LENGTH_LONG
-                        ).show()
-                    }
-
-            }
-    }
-
     // Issue #534 F3(d): the denied note line's re-ask. While the
     // system will still show its dialog, re-fire the runtime
     // request; once it will not (rationale gone after a recorded
@@ -1276,6 +1421,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             )
         if (rationaleGone && viewModel.postNotificationsGranted() == false) {
             launchSettings(
+                context,
                 pinnedSettingsIntent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
                     putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
                 },
@@ -1283,115 +1429,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             )
         } else {
             notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
-
-    // The FIX key's panes: the exact Settings pane per grant; device
-    // admin instead fires the official activation intent for this
-    // app's own admin (issue #44), with Security Settings as fallback.
-    fun openFixPane(item: com.example.service.WatchItemId) {
-        // Issue #534 F2: a FIX trip is the intro's other spend —
-        // the user engaged with the board, so the intro has done
-        // its work even if the dwell has not elapsed. Spend at the
-        // trip itself; the flag also lets the eventual dismissal
-        // judge the same way.
-        if (parkIntroDeliveredThisOpen && viewModel.parkIntroPending()) {
-            parkIntroFixTripThisOpen = true
-            viewModel.markParkIntroDone()
-        }
-        // Issue #324 finding 4: record the step BEFORE the trip —
-        // the persisted in-flight step is what a process death
-        // during the Settings stay resumes from.
-        permissionStepStore.beginTrip(item)
-        // Issue #308: arm the return trip BEFORE the pane opens —
-        // the service polls this item's grant and brings the user
-        // back the moment it lands, instead of stranding them in
-        // Settings.
-        PermissionReturnService.arm(context, item)
-        when (item) {
-            // Audit R6 #340 F44: AUTOSTART has no pane to be sent
-            // to — the tap IS the oath. It records the attestation
-            // in the Watch Store and returns; no Settings trip is
-            // faked for a gate the OS refuses to report.
-            com.example.service.WatchItemId.AUTOSTART -> {
-                com.example.service.WatchStore.attest(item)
-            }
-            com.example.service.WatchItemId.ACCESSIBILITY ->
-                launchSettings(pinnedSettingsIntent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "ACCESSIBILITY")
-            com.example.service.WatchItemId.USAGE_ACCESS ->
-                launchSettings(pinnedSettingsIntent(Settings.ACTION_USAGE_ACCESS_SETTINGS), "USAGE ACCESS")
-            com.example.service.WatchItemId.DEVICE_ADMIN -> {
-                // Issue #44: ask Android for THIS admin through the
-                // official activation intent — the old hardcoded
-                // com.android.settings component only opened a
-                // generic list (and broke wherever that class name
-                // differed) and never actually requested the admin.
-                // Security Settings is only the fallback for when
-                // the official intent itself cannot be fired.
-                val requestAdmin = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
-                    putExtra(
-                        DevicePolicyManager.EXTRA_DEVICE_ADMIN,
-                        ComponentName(context, MonolithDeviceAdminReceiver::class.java)
-                    )
-                    putExtra(
-                        DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                        context.getString(R.string.device_admin_add_explanation)
-                    )
-                }
-                runCatching { context.startActivity(requestAdmin) }
-                    .getOrElse {
-                        launchSettings(pinnedSettingsIntent(Settings.ACTION_SECURITY_SETTINGS), "DEVICE ADMIN")
-                    }
-            }
-            com.example.service.WatchItemId.NOTIFICATION_LISTENER ->
-                launchSettings(
-                    pinnedSettingsIntent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"),
-                    "NOTIFICATION ACCESS"
-                )
-            com.example.service.WatchItemId.OVERLAY ->
-                launchSettings(
-                    pinnedSettingsIntent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:${context.packageName}")
-                    ),
-                    "DISPLAY OVER OTHER APPS"
-                )
-            com.example.service.WatchItemId.BATTERY -> {
-                // Issue #94 (F1): on an OEM-autostart-gated skin the
-                // survival trip is the vendor's AUTOSTART pane first —
-                // the AOSP battery pane alone leaves the boot receiver
-                // dead. Each vendor component is a guess that may not
-                // exist on this build; walk the list, then fall back
-                // to the AOSP battery trip.
-                // Issue #78 (merge, STURM3-15): the AOSP fallbacks
-                // below go through pinnedSettingsIntent like every
-                // other Settings route — main's #94 flow arrived with
-                // them bare, which would have reopened the unpinned-
-                // intent finding on this one pane.
-                val gate = com.example.data.OemPolicy.currentGate()
-                val autostartOpened = gate !=
-                    com.example.data.OemPolicy.AutostartGate.NONE &&
-                    com.example.data.OemPolicy
-                        .autostartIntents(gate, context.packageName)
-                        .any { pane ->
-                            runCatching { context.startActivity(pane) }
-                                .isSuccess
-                        }
-                if (!autostartOpened) {
-                    val direct = pinnedSettingsIntent(
-                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                        Uri.parse("package:${context.packageName}")
-                    )
-                    runCatching { context.startActivity(direct) }
-                        .getOrElse {
-                            launchSettings(
-                                pinnedSettingsIntent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
-                                "BATTERY"
-                            )
-                        }
-                }
-            }
-            else -> launchSettings(pinnedSettingsIntent(Settings.ACTION_SETTINGS), item.name)
         }
     }
 
@@ -1612,12 +1649,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     warrantProvider = viewModel::armWarrantNow,
                                     onFixBlockingAccess = {
                                         launchSettings(
+                                            context,
                                             pinnedSettingsIntent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
                                             "ACCESSIBILITY"
                                         )
                                     },
                                     onFixUsageAccess = {
                                         launchSettings(
+                                            context,
                                             pinnedSettingsIntent(Settings.ACTION_USAGE_ACCESS_SETTINGS),
                                             "USAGE ACCESS"
                                         )
@@ -1766,7 +1805,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                         val shown = names.take(3).joinToString(", ") { it.uppercase() }
                                         val more = if (names.size > 3) " +${names.size - 3} MORE" else ""
                                         "${names.size} APPS ARE OPEN WITHOUT YOUR REVIEW: $shown$more — SET A RULE FOR EACH BELOW"
-                                    }
+                                    },
+                                    showShoppingWarning = shoppingWarningVisible,
+                                    onDismissShoppingWarning = viewModel::dismissShoppingWarning
                                 )
                             }
 
@@ -1852,9 +1893,11 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                 spendParkIntro = parkIntroSpendForDismissal()
                             )
                         },
-                        onFixClick = { item -> openFixPane(item) },
+                        onFixClick = { item -> openFixPane(context, permissionStepStore, viewModel, parkIntroDeliveredThisOpen, { parkIntroFixTripThisOpen = true }, item) },
                         onCheckClick = { viewModel.runWatchSweep() },
                         onToggleSound = { viewModel.toggleSound() },
+                        soundscapeEnabled = soundscapeEnabled,
+                        onToggleSoundscape = { viewModel.toggleSoundscape() },
                         onToggleShortsReelsSniper = { viewModel.toggleShortsReelsSniper() },
                         // Truth Car 3 (UNA-02): the SOCIAL SITES
                         // board line's sled — reads and writes the
@@ -2159,8 +2202,16 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     routines,
                     System.currentTimeMillis()
                 ),
+                // #70-F2 remainder (issue #14): a Safe Break counts
+                // only where one was actually taken — breakTakenSeconds
+                // is the ledger column every break exit writes, and
+                // it stays 0 for a session that never broke.
+                completedSessions = sessionHistory.count { !it.isActive },
+                sessionsWithSafeBreak = sessionHistory.count {
+                    !it.isActive && it.breakTakenSeconds > 0
+                },
                 onShown = { viewModel.runWatchSweep() },
-                onFixClick = { item -> openFixPane(item) },
+                onFixClick = { item -> openFixPane(context, permissionStepStore, viewModel, parkIntroDeliveredThisOpen, { parkIntroFixTripThisOpen = true }, item) },
                 onCheckClick = { viewModel.runWatchSweep() },
                 onOpenShield = {
                     // H-2: only the unstamped sheet's excursion
@@ -2213,7 +2264,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 grants = permissionGrants,
                 onFixClick = { item ->
                     permissionPrimerDismissed = true
-                    openFixPane(item)
+                    openFixPane(context, permissionStepStore, viewModel, parkIntroDeliveredThisOpen, { parkIntroFixTripThisOpen = true }, item)
                 },
                 onDismiss = { permissionPrimerDismissed = true }
             )
@@ -2360,6 +2411,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     launcherOpen = true
                 },
                 onRequestEmergencyBreak = viewModel::requestDisarmFromAirlock,
+                // Issue #125 (F5 remainder): the door's grace abort
+                // runs the same grace cancel as the Deck's chip.
+                onGraceAbort = viewModel::confirmGraceAbortFromAirlock,
                 // Issue #318 F4: the wall breathes for the stored,
                 // configured length — not a composable-local 5.
                 breathSeconds = remember {
@@ -2405,3 +2459,14 @@ private fun stopIndexOf(destination: MonolithDestination): Int = when (destinati
     MonolithDestination.TASKS -> 2
     MonolithDestination.VAULT -> 3
 }
+
+/**
+ * Issue #264 (B-264-31): which destinations carry the archive.
+ * The Ledger (VAULT) holds every receipt, day word and finished
+ * session — while it stands, the activity window is FLAG_SECURE
+ * (no screenshot, no Recents thumbnail of the user's history).
+ * Every other destination is a working surface, not the archive,
+ * and stays capturable. Pure, so the matrix is unit-tested.
+ */
+internal fun archiveSurfaceSecure(destination: MonolithDestination): Boolean =
+    destination == MonolithDestination.VAULT
