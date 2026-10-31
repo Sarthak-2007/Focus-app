@@ -1,4 +1,8 @@
 package com.example.ui.screens
+import com.example.ui.components.ShieldCapSelector
+import com.example.data.SmartLoadout
+import com.example.data.LoadoutRules
+import com.example.data.FocusProfileEntity
 import androidx.compose.ui.res.stringResource
 import com.example.R
 
@@ -160,6 +164,10 @@ fun ShieldMatrixScreen(
     // Issue #107 (#3): correct the category printed on a catalogue
     // row. Default no-op for render harnesses and previews.
     onSetAppCategory: (String, AppCategory) -> Unit = { _, _ -> },
+    // The sliding cap's commit (train): staged by the cap, applied
+    // only from the preview panel's APPLY. Defaulted so render
+    // harnesses stay whole; MainActivity wires the VM verb.
+    onApplySmartLoadout: (SmartLoadout) -> Unit = {},
     onToggleShortsReelsSniper: () -> Unit,
     onToggleBrowserUrlBlocker: () -> Unit,
     // Issue #337 F1: the accessibility-shortcut binding state and
@@ -246,6 +254,12 @@ fun ShieldMatrixScreen(
     // left it. Saveable, so the place survives this screen being
     // disposed on a tab switch.
     val listState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
+
+    // The sliding cap's staged state (train): the cap rests on the
+    // persisted last hand pick; a selection STAGES a loadout in the
+    // preview panel and applies nothing until APPLY is tapped.
+    var selectedLoadoutIndex by remember(loadoutCapIndex) { mutableIntStateOf(loadoutCapIndex) }
+    var pendingLoadout by remember { mutableStateOf<SmartLoadout?>(null) }
 
     // M3's rest: a flipped line wears its new ruling in its old
     // section, rests 300ms, then leaves — never vanishing under the
@@ -440,6 +454,22 @@ fun ShieldMatrixScreen(
                 change = tierChangeForUndo,
                 onUndo = gatedUndoTierChange
             )
+            val context = LocalContext.current
+            FullBleedSectionHeader(titleWord = "LOADOUT")
+            Spacer(modifier = Modifier.height(8.dp))
+            ShieldCapSelector(
+                selectedIndex = selectedLoadoutIndex,
+                soundEngine = soundEngine,
+                onSelect = { level ->
+                    // Stage, never apply (issue #107 #1) — resolved
+                    // through the ONE index<->loadout mapping
+                    // (LoadoutStore, #58 F6 / Audit R1 #38): an
+                    // index that seats nothing stages nothing.
+                    com.example.data.LoadoutStore.loadoutAtCapIndex(level)?.let { loadout ->
+                        pendingLoadout = loadout
+                    }
+                }
+            )
             // R-4(b) cap-source label (train, ported per M-A3
             // H10): the cap rests on the persisted LAST HAND PICK —
             // it must never wear a running routine's clothes.
@@ -490,13 +520,12 @@ fun ShieldMatrixScreen(
                 )
             }
         }
-        // SECTION 1 was the LOADOUT cap + preview (profiles /
-        // smart loadouts). Shield Rethink 2, Step 2: DELETED by
-        // ruling (#22, Oct 30) — guessed rulings wearing a uniform.
-        // The SmartLoadout enum and LoadoutRules stay in the tree,
-        // orphaned: routines still carry loadouts as payload and the
-        // Deck still applies them; they leave with the routines
-        // disentanglement, not before.
+        // SECTION 1 (composed at the train merge, K8): main's
+        // Shield Rethink 2 deleted the cap by ruling (#22, Oct 30);
+        // the train carries it as Sarthak's sliding-cap pick, and
+        // the cap stands in the composed tree — the selector, its
+        // staged preview and the commit above are live. The
+        // Rethink's receipt + intention lines stand alongside it.
 
         // =====================================================================
         // SECTION 3: ROUTINES — real, persisted, self-arming (Ren)
@@ -2197,6 +2226,69 @@ private fun CatalogueGroupHeader(tier: AppBlockTier) {
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.testTag("peek_contract_line")
+            )
+        }
+    }
+}
+
+
+@Composable
+private fun LoadoutPreviewPanel(
+    loadout: SmartLoadout,
+    preview: LoadoutRules.Preview,
+    onApply: () -> Unit,
+    onKeepMine: () -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp)
+            .testTag("loadout_preview"),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = loadout.title.uppercase(),
+            fontFamily = SoraFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp,
+            color = scheme.onBackground
+        )
+        Text(
+            text = loadout.subtitle,
+            fontFamily = AtkinsonHyperlegibleFamily,
+            fontSize = 12.sp,
+            color = scheme.onBackground,
+            modifier = Modifier.testTag("loadout_preview_subtitle")
+        )
+        if (loadout == SmartLoadout.STUDY) {
+            Text(
+                text = "ALSO SWITCHES ON: SHORTS & REELS SNIPER + BROWSER URL BLOCKER",
+                fontFamily = AnonymousProFamily,
+                fontSize = 11.sp,
+                color = scheme.onBackground,
+                modifier = Modifier.testTag("loadout_preview_side_effects")
+            )
+        }
+        Text(
+            text = "REPLACES ${preview.changed} HAND-SET RULING(S) — " +
+                "LANDS ON ${preview.shut} SHUT · ${preview.peek} PEEK · ${preview.open} OPEN",
+            fontFamily = AnonymousProFamily,
+            fontSize = 11.sp,
+            color = scheme.onSurfaceVariant,
+            modifier = Modifier.testTag("loadout_preview_cost")
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BlockitActionChip(
+                wordLabel = "APPLY LOADOUT",
+                isPrimaryInk = true,
+                onClick = onApply,
+                testTag = "loadout_apply"
+            )
+            BlockitActionChip(
+                wordLabel = "KEEP MY RULES",
+                onClick = onKeepMine,
+                testTag = "loadout_keep_mine"
             )
         }
     }

@@ -324,6 +324,7 @@ abstract class MonolithDatabase : RoomDatabase() {
             }
         }
 
+        /**
          * Batch 10 (17→18 at the #231 composition sitting,
          * K8/floor lane): the train’s composed 12→13 content,
          * landed as a NEW link — main’s 12_13 (#287) is shipped

@@ -5645,45 +5645,66 @@ class MonolithViewModel(
 
 
     /**
-     * The door-originated Disarm entry (issue #11, FIX-8 / P-2):
-     * the honest exit on the Held Door routes HERE — the Disarm
-     * face opens while the door still stands behind it. The exit
-     * voice (FIX-7, Ton §5.6) fires only on this confirmed
-     * handoff, and this route never calls
-     * [requestDisarmChallenge], so no second voice can sound.
+     * The Held Door's honest exit entry (FIX-8 / innovator P-2):
+     * END THE SESSION INSTEAD routes here. Guards, non-negotiable:
+     * - the Disarm face ALWAYS presents — the stopwatch-past-floor
+     *   clean completion is offered on the face as a deliberate
+     *   slab, never taken silently from a footer tap;
+     * - the airlock is NOT dismissed: the Disarm face stands in
+     *   front of the still-standing door, and KEEP FOCUSING
+     *   (dismissDisarmChallenge) returns him to it, untouched —
+     *   looking at the exit books nothing;
+     * - the airlock clears only when a disarm actually completes
+     *   (P-2d, in the completion paths below) — a door never
+     *   stands over a dead session, and a tap that opens nothing
+     *   never strands him on no face at all.
      */
     fun requestDisarmChallengeFromDoor() {
         val current = activeSession.value ?: return
-        // The exit voice (FIX-7, Ton §5.6) fires on the CONFIRMED
-        // handoff only — the session exists and a Disarm outcome
-        // is about to open below. One voice per handoff: this
-        // route never calls requestDisarmChallenge, whose own
-        // voices can therefore never double-sound the seam.
-        soundEngine.playDoorExit()
-        // Same lawful outcomes as requestDisarmChallenge: a
-        // stopwatch session past its floor completes cleanly;
-        // anything else opens the 60-second valve face.
-        if (current.isStopwatchMode &&
+        val cleanCompletion = current.isStopwatchMode &&
             current.elapsedSeconds >= MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
-        ) {
-            viewModelScope.launch {
-                repository.disarmActiveSession(completed = true, outcomeReason = "Stopwatch Completed")
-                MonolithShieldService.stopShield(appContext)
-                com.example.service.RoutineHeartbeat.tickAsync(
-                    appContext, com.example.service.RoutineHeartbeat.Source.SESSION_EDGE
-                )
-                // FIX-R3 seam cure: main retired the manual
-                // _sevenDayStats refresh (its own disarm paths
-                // carry none) — the line is dropped, not renamed.
-            }
-            return
-        }
+        // FIX-7 (Ton §5.6): the exit voice fires HERE — on the
+        // CONFIRMED handoff (the session exists and the Disarm
+        // face is about to open below), never on a tap that opens
+        // nothing. It is the handoff's ONLY voice: this door route
+        // never calls requestDisarmChallenge, so that function's
+        // own playMechanicalLatch(false) can never double-sound
+        // the seam — one voice per handoff, by construction.
+        soundEngine.playDoorExit()
         _disarmChallenge.value = DisarmChallengeState(
             isVisible = true,
-            requiredHoldSeconds = 60
+            requiredHoldSeconds = 60,
+            cleanCompletionAvailable = cleanCompletion
         )
     }
 
+    /**
+     * The door-originated face's END THE SESSION slab (P-2c): the
+     * lawful clean completion of a stopwatch session past its
+     * floor, taken deliberately on the Disarm face. Books exactly
+     * what the Deck shortcut books ("Stopwatch Completed") — the
+     * difference is the man's hand, not the ledger.
+     */
+    fun completeStopwatchCompletionFromDisarmFace() {
+        val current = activeSession.value ?: return
+        if (!current.isStopwatchMode ||
+            current.elapsedSeconds < MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
+        ) {
+            return
+        }
+        soundEngine.playHarmonicSeal(arming = false)
+        _isAlwaysOnDeskClockVisible.value = false
+        _disarmChallenge.value = DisarmChallengeState(isVisible = false)
+        _airlockState.value = _airlockState.value.copy(isVisible = false)
+        viewModelScope.launch {
+            repository.disarmActiveSession(completed = true, outcomeReason = "Stopwatch Completed")
+            MonolithShieldService.stopShield(appContext)
+            com.example.service.RoutineHeartbeat.tickAsync(
+                appContext, com.example.service.RoutineHeartbeat.Source.SESSION_EDGE
+            )
+            _sevenDayStats.value = repository.compute7DayHistory()
+        }
+    }
 
     // Issue #101 F4: a RETURN tap is an intention, not a
     // behaviour. The "Stayed Focused" record (and the urges-stopped

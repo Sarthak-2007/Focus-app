@@ -65,7 +65,6 @@ import com.example.data.MonolithRepository
 import com.example.data.ReturnChitState
 import com.example.data.chitVerdictFor
 import com.example.data.SmartLoadout
-import com.example.data.chitVerdictFor
 import com.example.service.InterceptConsumptionStore
 import com.example.service.InterceptNonce
 import com.example.service.InterceptPath
@@ -75,7 +74,6 @@ import com.example.service.PermPrint
 import com.example.service.PermissionReturnService
 import com.example.service.TactileSoundEngine
 import com.example.service.WatchItemId
-import com.example.service.PermissionReturnService
 import com.example.service.WatchStore
 import com.example.ui.GlanceRouting
 import com.example.ui.MonolithDestination
@@ -1518,11 +1516,11 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     loadoutCapIndex = loadoutCapIndex,
                                     isSessionActive = sealed,
                                     blockingStatus = shieldBlockingStatus,
-                                    isSessionActive = sealed,
                                     receiptLine = shieldReceiptLine,
                                     intention = shieldIntention,
                                     onIntentionChanged = viewModel::setShieldIntention,
                                     isGracePeriod = shieldInGracePeriod,
+                                    onApplySmartLoadout = viewModel::applySmartLoadout,
                                     ratchetWarningMessage = ratchetWarningMessage,
                                     routineConflictNotice = routineConflictNotice,
                                     onDismissRoutineConflictNotice = viewModel::dismissRoutineConflictNotice,
@@ -2039,19 +2037,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 )
             }
 
-            // A PAST SLIP, re-presented from the Vault's receipts
-            // index (issue #157): the SAME sheet composable,
-            // verbatim, over whatever screen invoked it. Its
-            // dismissal is its own — it never touches the standing
-            // receipt's flag above.
-            val presentedReceipt by viewModel.presentedReceipt.collectAsStateWithLifecycle()
-            presentedReceipt?.let { pastReceipt ->
-                com.example.ui.components.ReceiptSheet(
-                    receipt = pastReceipt,
-                    onDismiss = { viewModel.dismissPresentedReceipt() }
-                )
-            }
-
             // THE RECEPTION (Empfang lane, Oct 30 — grafted seat):
             // hosted in the overlay layer, BELOW the airlock and
             // the disarm challenge — safety surfaces always win,
@@ -2291,7 +2276,6 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 onCompleteDisarm = { viewModel.completeEmergencyBreakFromValve() },
                 onHoldBanked = viewModel::recordValveHoldBanked,
                 onCompleteCleanSession = viewModel::completeStopwatchCompletionFromDisarmFace
-                onHoldBanked = viewModel::recordValveHoldBanked
             )
 
             // Issue #143 F1/F6: the break dim stands over the

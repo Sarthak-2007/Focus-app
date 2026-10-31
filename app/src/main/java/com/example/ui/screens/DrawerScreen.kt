@@ -1,4 +1,27 @@
 package com.example.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.example.R
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextDecoration
+import com.example.data.CurioCatalog
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
+import com.example.data.FocusSessionEntity
+import com.example.data.ForgeStat
+import com.example.data.KineticArtifact
+import com.example.data.PARTIAL_STAMP_ARTIFACT
+import com.example.data.PARTIAL_STAMP_ID
+import com.example.data.ReceiptIndexEntry
+import com.example.data.SessionOutcome
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -68,7 +91,16 @@ import java.util.Locale
  * beside its date heading as his authored word — never a number.
  */
 
-private enum class DrawerView { LANDING, MONTH }
+private enum class DrawerView { LANDING, INDEX, MONTH, CABINET, RECEIPTS }
+
+internal fun curioForgeGapMark(record: FocusSessionEntity): String =
+    if (record.outcome == SessionOutcome.ELAPSED_SHIELD_GAP ||
+        record.shieldGapSeen
+    ) {
+        " · SHIELD GAP"
+    } else {
+        ""
+    }
 
 private data class DrawerDayGroup(
     val date: LocalDate,
@@ -1310,6 +1342,93 @@ private fun EarlierRow(onClick: () -> Unit) {
     ) {
         Text(
             text = "EARLIER",
+            fontFamily = AnonymousProFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 11.sp,
+            letterSpacing = 2.sp,
+            color = scheme.onBackground
+        )
+    }
+}
+
+/** One receipts-index row (issue #157): № · date · outcome word,
+ *  in the Drawer's furniture. The warnings print here — in Drawer
+ *  type, on the furniture, never on the slip — only where the
+ *  session's own record proves them: the release-fault stamp
+ *  proves "SHIELD FAULT — SEE RECEIPT"; the re-derived slip's
+ *  shieldWasOff fact (the row's shield-gap outcome) proves "THE
+ *  SHIELD WAS OFF FOR PART OF THAT SESSION". */
+@Composable
+private fun ReceiptIndexRow(entry: ReceiptIndexEntry, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val date = java.time.Instant.ofEpochMilli(entry.endedAtWallMs)
+        .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(vertical = 6.dp)
+            .testTag("receipt_row_${entry.sessionId}"),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        // GESTALT receipts audit F7 (filed on PR #250): numerals are
+        // Anonymous Pro by law — the № segment carries its own span;
+        // date + outcome stay Atkinson.
+        Text(
+            text = buildAnnotatedString {
+                withStyle(SpanStyle(fontFamily = AnonymousProFamily)) {
+                    append(entry.numberPrint)
+                }
+                append(" · ${headingLabel(date, withYear = true)} · ${entry.outcomeWord}")
+            },
+            fontFamily = AtkinsonHyperlegibleFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = 14.sp,
+            color = scheme.onBackground
+        )
+        if (entry.releaseFaultShield) {
+            Text(
+                text = "SHIELD FAULT — SEE RECEIPT",
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 10.5.sp,
+                letterSpacing = 1.sp,
+                color = scheme.onBackground,
+                modifier = Modifier.testTag("receipt_fault_${entry.sessionId}")
+            )
+        }
+        if (entry.shieldWasOff) {
+            Text(
+                text = "THE SHIELD WAS OFF FOR PART OF THAT SESSION",
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 10.5.sp,
+                letterSpacing = 1.sp,
+                color = scheme.onBackground,
+                modifier = Modifier.testTag("receipt_shield_off_${entry.sessionId}")
+            )
+        }
+    }
+    HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant)
+}
+
+@Composable
+private fun EarlierRow(onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                role = androidx.compose.ui.semantics.Role.Button
+            ) { onClick() }
+            .sizeIn(minHeight = 48.dp)
+            .padding(vertical = 10.dp)
+            .testTag("drawer_earlier"),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = stringResource(R.string.drawer_earlier),
             fontFamily = AnonymousProFamily,
             fontWeight = FontWeight.Bold,
             fontSize = 11.sp,
