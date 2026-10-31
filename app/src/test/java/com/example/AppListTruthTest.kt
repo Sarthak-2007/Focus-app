@@ -62,6 +62,17 @@ class AppListTruthTest {
             .allowMainThreadQueries()
             .build()
         repository = MonolithRepository(context, db.monolithDao())
+        // Settled-world stamp (issue #7 rulings landing, BUILDER-7):
+        // the one-time LEGACY OPEN reset (Ren ruling 00:34 IST
+        // Oct 31) fires at the end of the first seed-sync over a
+        // legacy catalogue and closes staged OPEN rows — this
+        // class stages pre-inversion rows to pin the prune laws,
+        // not the reset (the reset's own pin is
+        // LegacyOpenResetRepositoryTest), so the fixture starts in
+        // the world after the reset has run. No assertion in this
+        // class changes.
+        context.getSharedPreferences(MonolithRepository.APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putBoolean(MonolithRepository.LEGACY_OPEN_RESET_DONE_KEY, true).commit()
     }
 
     @After

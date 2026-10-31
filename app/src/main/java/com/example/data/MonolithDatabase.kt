@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DayNoteEntity::class,
         TaskAccrualSegmentEntity::class
     ],
-    version = 21,
+    version = 22,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -429,6 +429,29 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
+         * Issue #525 (20→21): ONE column — focus_sessions
+         * .rebootGapSeconds, the accumulated boot-to-shield
+         * seconds a session's reboots left unshielded, booked at
+         * every re-anchor and printed on the receipt. No backfill:
+         * pre-v21 rows truthfully carry 0 (no reboot gap was ever
+         * booked for them — the old derivation credited the
+         * uptime instead of booking it, and inventing a figure
+         * now would fabricate the record).
+         *
+         * Renumber note: authored as 18→19; issue #324's step
+         * took 18→19 and issue #138's took 19→20 while this PR
+         * was in flight, so this step takes the next free link,
+         * 20→21 — the same etiquette both renumber histories
+         * record.
+         */
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfAbsent(db, "focus_sessions", "rebootGapSeconds",
+                    "ALTER TABLE focus_sessions ADD COLUMN rebootGapSeconds INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
          * Issue #100 (notifications-lived) — Sarthak's ruling:
          * notification-content storage is CUT. The captured
          * notifications table (plaintext message bodies, stored
@@ -439,14 +462,14 @@ abstract class MonolithDatabase : RoomDatabase() {
          *
          * BUILDER-100 composition note (Oct 31): authored as
          * 14→15 on the CUT branch, renumbered 15→16 by DURCH-C,
-         * then 18→19, 19→20 and finally 20→21 across this landing's
-         * compositions — main took 15→16 (#261), 16→17 (#340),
-         * 17→18 (batch-10), 18→19 (#324) and 19→20 (#138's
-         * metadata-only rebuild, kept below as shipped history)
-         * while this lane was in flight. Same drop, same ruling;
-         * only the number moved.
+         * then 18→19, 19→20, 20→21 and finally 21→22 across this
+         * landing's compositions — main took 15→16 (#261), 16→17
+         * (#340), 17→18 (batch-10), 18→19 (#324), 19→20 (#138's
+         * metadata-only rebuild) and 20→21 (#525) while this lane
+         * was in flight. Same drop, same ruling; only the number
+         * moved.
          */
-        val MIGRATION_20_21 = object : Migration(20, 21) {
+        val MIGRATION_21_22 = object : Migration(21, 22) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("DROP TABLE IF EXISTS captured_notifications")
             }
@@ -503,6 +526,40 @@ abstract class MonolithDatabase : RoomDatabase() {
                 )
                 db.execSQL("DROP TABLE IF EXISTS `captured_notifications`")
                 db.execSQL("ALTER TABLE `captured_notifications_new` RENAME TO `captured_notifications`")
+            }
+        }
+
+        /**
+         * Issue #253 lines 8 + 9 (20→21): the full-context
+         * profile bundle lands on focus_profiles — three bundle
+         * CSVs (per-app tiers, per-app limits, blocked sites;
+         * ProfileBundle's encodings) and three nullable fact
+         * columns (sound / sniper / browser-blocker rulings;
+         * NULL = the profile does not rule that surface, which
+         * is every pre-bundle row's truth). No backfill: a
+         * legacy profile keeps behaving as the pure category
+         * stencil it was saved as.
+         *
+         * Renumber history: authored as 18→19 on PR #748;
+         * main took 18→19 (#324 intercept kinds, above) and
+         * 19→20 (#138 CUT, above) while the PR waited, so
+         * the bundle lands as 20→21, the next free link
+         * (FINISHER-748 rebase, Oct 31).
+         */
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfAbsent(db, "focus_profiles", "appTiersCsv",
+                    "ALTER TABLE focus_profiles ADD COLUMN appTiersCsv TEXT NOT NULL DEFAULT ''")
+                addColumnIfAbsent(db, "focus_profiles", "appLimitsCsv",
+                    "ALTER TABLE focus_profiles ADD COLUMN appLimitsCsv TEXT NOT NULL DEFAULT ''")
+                addColumnIfAbsent(db, "focus_profiles", "sitesCsv",
+                    "ALTER TABLE focus_profiles ADD COLUMN sitesCsv TEXT NOT NULL DEFAULT ''")
+                addColumnIfAbsent(db, "focus_profiles", "soundEnabled",
+                    "ALTER TABLE focus_profiles ADD COLUMN soundEnabled INTEGER")
+                addColumnIfAbsent(db, "focus_profiles", "sniperEnabled",
+                    "ALTER TABLE focus_profiles ADD COLUMN sniperEnabled INTEGER")
+                addColumnIfAbsent(db, "focus_profiles", "browserBlockEnabled",
+                    "ALTER TABLE focus_profiles ADD COLUMN browserBlockEnabled INTEGER")
             }
         }
 
@@ -587,7 +644,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance

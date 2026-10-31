@@ -11,7 +11,7 @@ import java.io.File
  * break-end card's self-expiry.
  *
  * The census found BreakEndReceiver's "Break's over" card (id
- * 820000, channel "BreakEnded") was the one moment-card in the
+ * 820000, channel "BreakEnded_v2") was the one moment-card in the
  * shield estate with no timeoutAfter and no cancel path anywhere
  * in the codebase: its siblings — the F3 completion card and the
  * SESSION COMPLETE summons — both expire at 45 minutes, while an

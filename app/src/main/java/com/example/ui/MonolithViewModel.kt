@@ -24,6 +24,7 @@ import com.example.data.InterceptLogEntity
 import com.example.data.KineticArtifact
 import com.example.data.MonolithRepository
 import com.example.data.PruneNote
+import com.example.data.breakRemainingAfter
 import com.example.data.SmartLoadout
 import com.example.data.StudyChecklistItem
 import com.example.data.StudyModePreset
@@ -31,6 +32,7 @@ import com.example.data.SystemGuardStatus
 import com.example.data.TaskQueueStatus
 import com.example.service.InterceptPath
 import com.example.service.MonolithShieldService
+import com.example.service.BreakPillOverlay
 import com.example.service.PeekPillOverlay
 import com.example.service.SoundEffectsSetting
 import com.example.service.TactileSoundEngine
@@ -1412,6 +1414,23 @@ class MonolithViewModel(
         repository.clearPruneNote()
     }
 
+    /** Ren ruling 00:34 IST Oct 31 (#7): the legacy OPEN reset's
+     *  Sheet announcement — the count of apps the one-time reset
+     *  shut, or null when there is nothing to announce. Same
+     *  one-time-strip grammar as the prune note: it prints once,
+     *  above the catalogue where any of them can be re-opened by
+     *  hand, and a tap dismisses it. The reset itself is the
+     *  repository's; this flow only carries its record. */
+    private val _legacyOpenResetCount = MutableStateFlow<Int?>(null)
+    val legacyOpenResetCount: StateFlow<Int?> = _legacyOpenResetCount.asStateFlow()
+
+    fun dismissLegacyOpenResetNote() {
+        if (_legacyOpenResetCount.value != null) {
+            _legacyOpenResetCount.value = null
+        }
+        repository.clearLegacyOpenResetNote()
+    }
+
     /** Issue #129 F1: the review prompt's content — the names of
      *  apps the category guess birthed OPEN that the man has not
      *  ruled on yet. There is NO dismiss: the list empties only
@@ -1926,6 +1945,29 @@ class MonolithViewModel(
         com.example.ui.components.GuardLinePrint("GUARD — NOT CHECKED")
     )
 
+    /** Issue #94 F4: the ROUTINE CHAIN line's print — the first
+     *  reader of the heartbeat's liveness stamp. Combines the
+     *  guard-settings flow (which carries lastRoutineTickMillis),
+     *  the routines list (a window enforcing NOW is what makes a
+     *  stale stamp a death rather than a sleep), and the same 5 s
+     *  guard clock, so a chain that dies while the Shield surface
+     *  stands open is named on the next beat, not at some later
+     *  navigation. Null = no window enforcing — the line prints
+     *  nothing and claims nothing. */
+    val routineChainPrint: StateFlow<com.example.ui.components.GuardLinePrint?> = combine(
+        repository.guardSettingsFlow,
+        routines,
+        guardClock
+    ) { settings, routineList, _ ->
+        val now = System.currentTimeMillis()
+        val windowActive = routineList.any {
+            com.example.data.RoutineSchedule.isEnforcingAt(it, now)
+        }
+        com.example.ui.components.routineChainLineFor(
+            settings?.lastRoutineTickMillis ?: 0L, windowActive, now
+        )
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     // =========================================================================
     // THE CASCADE (Slice D step 4): the arm's proving controller.
     // The slide's latch enters here; the controller dispatches the
@@ -2170,6 +2212,10 @@ class MonolithViewModel(
             // attempt mirror a live door would — the day's ledger
             // count for this package, which already includes the
             // booked arrival this re-derive restores.
+            // Issue #254 line 14: the ladder's prior count rides
+            // the same number minus that restored arrival, so a
+            // restored door prices its wall exactly as the live
+            // door it restores would have.
             val attempts = runCatching {
                 repository.interceptAttemptsToday(newest.packageName, System.currentTimeMillis())
             }.getOrDefault(0)
@@ -2181,7 +2227,8 @@ class MonolithViewModel(
                 path = InterceptPath.UNKNOWN,
                 active = session,
                 appEntity = entity,
-                todayAttempts = attempts
+                todayAttempts = attempts,
+                priorReachesToday = (attempts - 1).coerceAtLeast(0)
             )
         }
         _freshStartNoteVisible.value = repository.freshStartNotePending()
@@ -2197,6 +2244,8 @@ class MonolithViewModel(
             // Re-read now that the seed has completed.
             _freshStartNoteVisible.value = repository.freshStartNotePending()
             _pruneNote.value = repository.pendingPruneNote()
+            _legacyOpenResetCount.value =
+                repository.pendingLegacyOpenResetCount().takeIf { it > 0 }
             refreshUnreviewedOpen()
             // Routines rebuild: no per-routine alarm arming — one
             // forced reconcile derives the truth and rearms the chain.
@@ -2475,6 +2524,35 @@ class MonolithViewModel(
                     )
                 } else {
                     PeekPillOverlay.hide(appContext)
+                }
+            }
+        }
+        // Issue #102 (retained DAYLIGHT break 2): the break gets
+        // the pill the peek already had. Until this collector the
+        // pill was half his idea — peek-only: during a Safe Break,
+        // over other apps, nothing told him how much break was
+        // left, so he had to return to Monolith to learn his own
+        // break was still running. The break face derives its
+        // clock from the session row's stored (remaining, lastTick)
+        // pair via breakRemainingAfter — the same derivation
+        // PillDerivation.Break and the progress machine use — so
+        // this face can never disagree with the break it names.
+        // Its END BREAK routes to the one hand-back verb, exactly
+        // as the peek pill's END PEEK does.
+        BreakPillOverlay.onEndBreakRequest = { endSafeBreakEarly() }
+        viewModelScope.launch {
+            activeSession.collect { session ->
+                if (session != null && session.isActive && session.isInSafeBreak) {
+                    BreakPillOverlay.showOrUpdate(
+                        appContext,
+                        breakRemainingAfter(
+                            storedRemaining = session.safeBreakSecondsRemaining,
+                            lastTickMonoMillis = session.lastTickElapsedRealtimeMillis,
+                            nowMonoMillis = SystemClock.elapsedRealtime()
+                        )
+                    )
+                } else {
+                    BreakPillOverlay.hide(appContext)
                 }
             }
         }
@@ -4412,6 +4490,7 @@ class MonolithViewModel(
      */
     fun cycleAppBlockTier(app: BlockedAppEntity) {
         dismissPruneNote()
+        dismissLegacyOpenResetNote()
         val isLockedSession = activeSession.value?.isActive == true
         if (isLockedSession) {
             when (app.resolvedTier) {
@@ -4441,6 +4520,7 @@ class MonolithViewModel(
 
     fun setAppBlockTier(app: BlockedAppEntity, tier: AppBlockTier) {
         dismissPruneNote()
+        dismissLegacyOpenResetNote()
         val isLockedSession = activeSession.value?.isActive == true
         if (isLockedSession) {
             val currentRank = when (app.resolvedTier) {
@@ -4662,8 +4742,35 @@ class MonolithViewModel(
         }
     }
 
+    /** Issue #274: a dynamic launcher shortcut for a loadout
+     *  lands here (LoadoutShortcuts). The shortcut's whole power
+     *  is the in-app tap's: the loadout is applied through the
+     *  same verb, ratchet guards included, and the user stands
+     *  on the Deck — where the arm and its proving path live.
+     *  Nothing is armed from the launcher. A stale id (the
+     *  loadout was deleted after the shortcut was published)
+     *  is a no-op; the next publish prunes the shortcut. */
+    fun openLoadoutFromShortcut(profileId: Int) {
+        val profile = profiles.value.firstOrNull { it.id == profileId } ?: return
+        selectAndApplyProfile(profile)
+        navigateTo(MonolithDestination.DECK)
+    }
+
     /** Issue #139 F4: one-tap undo of the last profile application —
      *  restores the hand-set per-app tiers and the dial he had. */
+    /** Issue #253 line 8: save the current switchboard state as
+     *  a profile (tiers, limits, sites, sound/sniper/browser
+     *  facts) — the snapshot verb the stencil model never had.
+     *  Named by capture time; the profile then applies like any
+     *  other through the profile doors. */
+    fun saveCurrentAsProfile() {
+        viewModelScope.launch {
+            val stamp = java.text.SimpleDateFormat("HH:mm", java.util.Locale.ROOT)
+                .format(java.util.Date())
+            repository.captureCurrentAsProfile("Snapshot $stamp")
+        }
+    }
+
     fun undoLastProfileApply() {
         viewModelScope.launch {
             if (repository.restoreProfileUndoSnapshot()) {
@@ -5119,6 +5226,12 @@ class MonolithViewModel(
             // is booked, so the number the door prints includes
             // this reach and is exactly the ledger's own. It lands
             // only if this same visit (same nonce) still stands.
+            // Issue #254 line 14 (R6 #340 F17 wiring): the same
+            // read-back also lands the escalation ladder's count —
+            // prior reaches today are the ledger count minus the
+            // arrival just booked, and the overlay prices this
+            // visit's wall from it. Without this landing the ladder
+            // priced every visit at zero priors (built, never wired).
             val attempts = runCatching {
                 repository.interceptAttemptsToday(packageName, nowWall)
             }.getOrNull()
@@ -5127,7 +5240,10 @@ class MonolithViewModel(
                 if (current.interceptNonce == nonce &&
                     current.todayAttempts != attempts
                 ) {
-                    _airlockState.value = current.copy(todayAttempts = attempts)
+                    _airlockState.value = current.copy(
+                        todayAttempts = attempts,
+                        priorReachesToday = (attempts - 1).coerceAtLeast(0)
+                    )
                 }
             }
         }
@@ -5158,7 +5274,12 @@ class MonolithViewModel(
         // caller from the intercept ledger (a live trigger reads it
         // back after booking the arrival; a re-derive reads the
         // day's rows directly). The mint itself counts nothing.
-        todayAttempts: Int = 0
+        todayAttempts: Int = 0,
+        // Issue #254 line 14 (R6 #340 F17 wiring): the escalation
+        // ladder's prior-reach count for today, derived by the
+        // caller from the same ledger count as todayAttempts
+        // (which includes the restored arrival; priors exclude it).
+        priorReachesToday: Int = 0
     ): AirlockInterceptState {
         val nowMono = SystemClock.elapsedRealtime()
         val nowWall = System.currentTimeMillis()
@@ -5314,6 +5435,7 @@ class MonolithViewModel(
                             .coerceAtLeast(0) * 1000L
                 },
             todayAttempts = todayAttempts,
+            priorReachesToday = priorReachesToday,
             // Issue #125 (F5 remainder): the grace facts ride onto
             // the door from the same live row, on the re-derive too —
             // a restored door carries the same abort a live door does.

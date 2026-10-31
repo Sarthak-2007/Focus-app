@@ -46,6 +46,18 @@ object InterceptLaunch {
 
     private const val FALLBACK_NOTIFICATION_ID = 4097
 
+    /** Issue #94 (routed stray ex #155): the fallback's OWN channel.
+     *  This post used to re-create the shield's standing channel
+     *  (MonolithShieldService.CHANNEL_ID) at IMPORTANCE_HIGH while
+     *  the shield creates it at IMPORTANCE_LOW — and Android
+     *  channels are immutable once created, so whichever path ran
+     *  first on a device fixed the shield card's importance
+     *  forever: one dropped intercept could permanently turn the
+     *  silent glance card into an alerting one. The shield channel
+     *  now has exactly one creator (the shield, at LOW); the
+     *  fallback alerts on its own channel, at HIGH, from here only. */
+    const val FALLBACK_CHANNEL_ID = "monolith_intercept_fallback_channel"
+
     /**
      * Launch [intent] (the Airlock intercept) from the background.
      * Returns true when the launch was handed to the system; on any
@@ -80,11 +92,13 @@ object InterceptLaunch {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 manager.createNotificationChannel(
                     NotificationChannel(
-                        MonolithShieldService.CHANNEL_ID,
-                        context.getString(R.string.notification_channel_name),
+                        FALLBACK_CHANNEL_ID,
+                        "Intercept alerts",
                         NotificationManager.IMPORTANCE_HIGH
                     ).apply {
-                        description = context.getString(R.string.notification_channel_desc)
+                        description =
+                            "The tap-to-open card posted when the block screen could not open on its own"
+                        setShowBadge(false)
                     }
                 )
             }
@@ -95,7 +109,7 @@ object InterceptLaunch {
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             )
             val notification = NotificationCompat.Builder(
-                context, MonolithShieldService.CHANNEL_ID
+                context, FALLBACK_CHANNEL_ID
             )
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setContentTitle("$appName blocked")

@@ -763,8 +763,27 @@ class MonolithRepository(
         const val PROFILE_UNDO_KEY = "profile_undo_snapshot_v1"
         const val PROFILE_UNDO_DIAL_KEY = "profile_undo_dial_minutes_v1"
         const val PROFILE_UNDO_NAME_KEY = "profile_undo_name_v1"
+        // Issue #253 lines 8 + 9: the bundle half of the undo
+        // snapshot — per-app limits, the site set, and the
+        // sound/sniper/browser facts as they stood before the
+        // apply, so undo restores the whole pre-apply context,
+        // not just the tiers.
+        const val PROFILE_UNDO_LIMITS_KEY = "profile_undo_limits_v1"
+        const val PROFILE_UNDO_SITES_KEY = "profile_undo_sites_v1"
+        const val PROFILE_UNDO_FACTS_KEY = "profile_undo_facts_v1"
         const val PRUNE_NOTE_COUNT_KEY = "prune_note_count"
         const val PRUNE_NOTE_RULES_KEY = "prune_note_rules_removed"
+
+        /** Ren ruling 00:34 IST Oct 31 (#7): the one-time LEGACY
+         *  OPEN reset (see LegacyOpenReset). DONE stamps that the
+         *  consideration has run on this install — set exactly
+         *  once, whether it reset rows or found nothing to reset,
+         *  so the pass never repeats. COUNT is the pending Sheet
+         *  announcement: how many rows the reset shut, held until
+         *  the Sheet has shown the strip and it is dismissed.
+         *  Prefs, not Room — same reasoning as the prune note. */
+        const val LEGACY_OPEN_RESET_DONE_KEY = "legacy_open_reset_v1_done"
+        const val LEGACY_OPEN_RESET_COUNT_KEY = "legacy_open_reset_pending_count"
 
         /** Issue #129 F1: the unreviewed-auto-OPEN record — the
          *  packages the category guess birthed OPEN with no preset
@@ -920,6 +939,14 @@ class MonolithRepository(
     ) = withContext(Dispatchers.IO) {
         seedMutex.withLock {
         recordProvenanceIfResurrected()
+
+        // Ren ruling 00:34 IST Oct 31 (#7): whether this install
+        // ALREADY had a catalogue when this sync began — the fact
+        // the one-time legacy OPEN reset at the end of this pass
+        // keys on. Captured before any seeding/reconcile below can
+        // birth rows of its own: a fresh install has nothing
+        // legacy, and its newborn rows are never a "reset".
+        val catalogueExistedAtEntry = dao.getAllAppsSnapshot().isNotEmpty()
 
         // Audit R2 #96: seed only a store that has never carried
         // content. Once content exists (seeded or the user's own)
@@ -1383,6 +1410,17 @@ class MonolithRepository(
             // row on every cold start. No pass may delete a session
             // for resembling another.
         }
+        // Ren ruling 00:34 IST Oct 31 (#7): the one-time LEGACY
+        // OPEN reset runs at the end of the first seed-sync after
+        // the inversion lands, over the reconciled catalogue. A
+        // failure here must never break the sync itself — the
+        // done-flag stays unstamped and the pass retries on the
+        // next run.
+        try {
+            runLegacyOpenResetIfNeeded(catalogueExistedAtEntry)
+        } catch (e: Exception) {
+            swallow("runLegacyOpenResetIfNeeded", e)
+        }
         drainDayWordsLocked()
         }
     }
@@ -1470,6 +1508,66 @@ class MonolithRepository(
             .edit()
             .remove(PRUNE_NOTE_COUNT_KEY)
             .remove(PRUNE_NOTE_RULES_KEY)
+            .apply()
+    }
+
+    // ------------------------------------------------------------------
+    // THE LEGACY OPEN RESET (Ren ruling 00:34 IST Oct 31, #7):
+    // run once — read the announcement — clear it on dismissal.
+    // ------------------------------------------------------------------
+
+    /**
+     * The one-time reset itself. Runs inside the seed-sync (the
+     * caller's mutex), after the reconcile, so the snapshot it
+     * reads is the phone's whole settled catalogue.
+     *
+     * One-time is a persisted fact, not a hope: [LEGACY_OPEN_RESET_DONE_KEY]
+     * is stamped on every path out of the first consideration —
+     * rows reset, nothing to reset, or no legacy catalogue at all —
+     * and it is stamped LAST, after the writes, so a pass that dies
+     * mid-write has not claimed a consideration it never finished.
+     *
+     * A fresh install (no catalogue at entry) is stamped done
+     * WITHOUT resetting or announcing: nothing on that phone is
+     * legacy, the rows this sync birthed are the reconcile's
+     * business (born SHUT under the inversion), and announcing a
+     * "reset" of apps nobody ever held open would be a lie on the
+     * Sheet.
+     */
+    private suspend fun runLegacyOpenResetIfNeeded(catalogueExistedAtEntry: Boolean) {
+        val prefs = context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(LEGACY_OPEN_RESET_DONE_KEY, false)) return
+        if (!catalogueExistedAtEntry) {
+            prefs.edit().putBoolean(LEGACY_OPEN_RESET_DONE_KEY, true).apply()
+            return
+        }
+        val snapshot = dao.getAllAppsSnapshot()
+        val targets = LegacyOpenReset.packagesToReset(snapshot, context.packageName)
+        if (targets.isNotEmpty()) {
+            val targetSet = targets.toSet()
+            dao.insertApps(
+                snapshot.filter { it.packageName in targetSet }
+                    .map { it.copy(blockTier = AppBlockTier.LOCKED.name).normalized() }
+            )
+            // A reset row has a ruling now — the reset itself — so
+            // it leaves the unreviewed-OPEN record, exactly as a
+            // loadout landing does in applySmartLoadout.
+            clearUnreviewedOpen(targets)
+            prefs.edit().putInt(LEGACY_OPEN_RESET_COUNT_KEY, targets.size).apply()
+        }
+        prefs.edit().putBoolean(LEGACY_OPEN_RESET_DONE_KEY, true).apply()
+    }
+
+    /** The pending announcement's count, or 0 when the Sheet has
+     *  nothing to announce (no reset rows, or already dismissed). */
+    fun pendingLegacyOpenResetCount(): Int =
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .getInt(LEGACY_OPEN_RESET_COUNT_KEY, 0)
+
+    fun clearLegacyOpenResetNote() {
+        context.getSharedPreferences(APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove(LEGACY_OPEN_RESET_COUNT_KEY)
             .apply()
     }
 
@@ -2212,11 +2310,15 @@ class MonolithRepository(
      * 2. Across device reboots (`LOCKED_BOOT_COMPLETED` where `currentBoot != session.bootCount` or
      *    `nowMono < session.lastTickElapsedRealtimeMillis`), preserves the elapsed banked before
      *    the reboot and credits NOTHING for the unobserved interval — neither the powered-off
-     *    downtime nor the new boot's uptime before this first post-reboot tick. That time was
-     *    never witnessed by the shield or the session clock, so booking it as focus was a
-     *    fabrication (Audit R3 #113, finding 5). A reboot neither resets the timer nor
-     *    inflates it: the count resumes from the banked figure and ticks from the re-anchor
-     *    [updateSessionProgress] persists.
+     *    downtime nor the new boot's uptime before the shield's first post-reboot raise. That
+     *    time was never witnessed by the shield or the session clock, so booking it as focus
+     *    was a fabrication (Audit R3 #113, finding 5). Issue #525: the witnessed span is
+     *    measured from the boot's shield-raise stamp (ShieldRaiseStore, written at the
+     *    shield's first protecting flip) — raise-to-tick is credited, everything before
+     *    the raise is booked as the session's reboot gap, never as focus; with no stamp
+     *    standing, nothing past the banked figure is credited at all. A reboot neither
+     *    resets the timer nor inflates it: the count resumes from the banked figure and
+     *    ticks from the re-anchor [updateSessionProgress] persists.
      * 3. Verifies the AndroidKeyStore `HmacSHA256` signature via `CryptoIntegrityManager.verifySessionState`.
      */
     @WorkerThread
@@ -2243,7 +2345,8 @@ class MonolithRepository(
             Pair((session.accumulatedBeforeRebootSeconds + monoElapsedSec.toInt()), tamper)
         } else {
             // Device rebooted during an active lock (LOCKED_BOOT_COMPLETED):
-            // Resume from accumulated elapsed seconds prior to reboot + seconds elapsed since current boot.
+            // Resume from accumulated elapsed seconds prior to reboot + the span
+            // this boot's shield actually witnessed since its first raise (#525).
             // Issue #81 F3: the tamper term is no longer !hmacValid
             // alone. An unwitnessed intermediate boot (Safe Mode —
             // Monolith cannot run there, so it never re-anchors —
@@ -2256,10 +2359,48 @@ class MonolithRepository(
             // forgiven: they cost the tamper penalty instead of
             // passing as a free, invisible freeze.
             val priorElapsed = max(session.accumulatedBeforeRebootSeconds, session.elapsedSeconds)
-            val sinceRebootSec = (nowMono / 1000L).toInt().coerceAtLeast(0)
+            // Issue #525: credit ONLY the witnessed span — from
+            // this boot's first shield raise (ShieldRaiseStore)
+            // to this tick. The old figure gifted the ENTIRE
+            // uptime (nowMono, i.e. seconds since power-on) on
+            // the doctrine that the shield stands from
+            // BOOT_COMPLETED; it stands from its first
+            // protecting flip, and the uptime before that flip
+            // ran unshielded. No stamp stands → nothing was
+            // witnessed → nothing past the banked figure.
+            val raiseMono = currentBoot?.let { ShieldRaiseStore.raiseMonoForBoot(context, it) }
+            val sinceRebootSec = (witnessedPostRebootMillis(nowMono, raiseMono) / 1000L)
+                .toInt().coerceAtLeast(0)
             val unwitnessed = currentBoot != null && TamperWitness.unwitnessedBoot(session.bootCount, currentBoot)
             Pair(priorElapsed + sinceRebootSec, !hmacValid || unwitnessed)
         }
+    }
+
+    /**
+     * Issue #525: the booking a reboot crossing leaves on the
+     * row — this boot's unshielded span (uptime before the
+     * shield's first raise, off the ShieldRaiseStore stamp)
+     * accumulated onto the session's reboot-gap ledger, and the
+     * shield-gap latch set when that span crosses the 10s law:
+     * a session that crossed a long unshielded boot must not
+     * book ELAPSED_CLEAN for time nobody watched. Returns the
+     * row's standing (latch, ledger) unchanged when no reboot
+     * crossed. The credited side of the same stamp is priced in
+     * [computeVerifiedSessionElapsed]; the two never overlap —
+     * witnessed + unshielded = the uptime the old derivation
+     * gifted whole.
+     */
+    private fun rebootGapBooking(
+        session: FocusSessionEntity,
+        nowMono: Long,
+        rebootDetected: Boolean,
+        currentBoot: Int?
+    ): Pair<Boolean, Int> {
+        if (!rebootDetected) return session.shieldGapSeen to session.rebootGapSeconds
+        val raiseMono = currentBoot?.let { ShieldRaiseStore.raiseMonoForBoot(context, it) }
+        val gapMillis = unshieldedRebootMillis(nowMono, raiseMono)
+        return (session.shieldGapSeen || gapMillis > SHIELD_GAP_THRESHOLD_MILLIS) to
+            (session.rebootGapSeconds + (gapMillis / 1000L).toInt())
     }
 
     suspend fun getSystemGuardStatus(): SystemGuardStatus = withContext(Dispatchers.IO) {
@@ -2397,7 +2538,11 @@ class MonolithRepository(
         MonolithWidgetProvider.requestUpdate(context)
     }
 
-    /** Guard settings as a flow (reset-note strip + tick stamps). */
+    /** Guard settings as a flow (reset-note strip + tick stamps).
+     *  Issue #94 F4: this flow is also the routine chain liveness
+     *  stamp's reader path — MonolithViewModel.routineChainPrint
+     *  derives the Shield surface's ROUTINE line from its
+     *  lastRoutineTickMillis column. */
     val guardSettingsFlow: Flow<GuardSettingsEntity?> = dao.getGuardSettingsFlow()
 
     /**
@@ -3080,15 +3225,59 @@ class MonolithRepository(
             }
             .toMap()
         if (saved.isEmpty()) return false
+        val prefs = profileUndoPrefs()
+        // Issue #253 lines 8 + 9: the bundle half of the snapshot,
+        // when the apply that wrote it carried one — per-app
+        // limits ride back with the tiers.
+        val savedLimits = prefs.getString(PROFILE_UNDO_LIMITS_KEY, null)
+            ?.lineSequence()
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.mapNotNull { line ->
+                val parts = line.split("|")
+                if (parts.size == 2) parts[0] to parts[1].toIntOrNull() else null
+            }
+            ?.mapNotNull { (pkg, mins) -> mins?.let { pkg to it } }
+            ?.toMap()
+            ?: emptyMap()
         val restored = dao.getAllAppsSnapshot().map { app ->
             val (tier, blocked) = saved[app.packageName] ?: return@map app
-            app.copy(blockTier = tier, isBlocked = blocked)
+            val withTier = app.copy(blockTier = tier, isBlocked = blocked)
+            savedLimits[app.packageName]
+                ?.let { withTier.copy(dailyLimitMinutes = it) } ?: withTier
         }
         dao.insertApps(restored)
-        profileUndoPrefs().edit()
+        // The site set and the ruled facts ride back too, when
+        // they were snapshotted.
+        prefs.getString(PROFILE_UNDO_SITES_KEY, null)?.let { sitesCsv ->
+            val target = ProfileBundle.parseSites(sitesCsv).toSet()
+            val now = dao.getAllSitesSnapshot()
+            now.filter { it.domain.lowercase() !in target }
+                .forEach { dao.deleteSite(it.domain) }
+            val nowDomains = now.map { it.domain.lowercase() }.toSet()
+            val adds = target.filter { it !in nowDomains }
+            if (adds.isNotEmpty()) {
+                dao.insertSites(adds.map { BlockedSiteEntity(it) })
+            }
+        }
+        prefs.getString(PROFILE_UNDO_FACTS_KEY, null)?.let { facts ->
+            val parsed = facts.split(";").mapNotNull {
+                val kv = it.split("=", limit = 2)
+                if (kv.size == 2) kv[0] to (kv[1] == "1") else null
+            }.toMap()
+            parsed["sound"]?.let {
+                com.example.service.SoundEffectsSetting.setEnabled(context, it)
+            }
+            parsed["sniper"]?.let { setShortsReelsSniperEnabled(it) }
+            parsed["browser"]?.let { setBrowserBlockerEnabled(it) }
+        }
+        prefs.edit()
             .remove(PROFILE_UNDO_KEY)
             .remove(PROFILE_UNDO_DIAL_KEY)
             .remove(PROFILE_UNDO_NAME_KEY)
+            .remove(PROFILE_UNDO_LIMITS_KEY)
+            .remove(PROFILE_UNDO_SITES_KEY)
+            .remove(PROFILE_UNDO_FACTS_KEY)
             .apply()
         return true
     }
@@ -3124,7 +3313,18 @@ class MonolithRepository(
         // named CRITICAL; the loadout half was cured by #304, this
         // door was not). Unsealed, the profile lands whole.
         val sealed = dao.getActiveSessionSnapshot()?.isActive == true
-        // Snapshot BEFORE the overwrite (issue #139 F4).
+        // Issue #253 lines 8 + 9: the bundle the profile carries
+        // beyond the stencil — per-app tier rulings, per-app
+        // limits, the site set, and the sound/sniper/browser
+        // facts it rules (null = does not rule that surface).
+        val bundleTiers = ProfileBundle.parseAppTiers(profile.appTiersCsv)
+        val bundleLimits = ProfileBundle.parseAppLimits(profile.appLimitsCsv)
+        val bundleSites = ProfileBundle.parseSites(profile.sitesCsv)
+        val currentSites = dao.getAllSitesSnapshot()
+        // Snapshot BEFORE the overwrite (issue #139 F4) — tiers in
+        // the v1 key, and (lines 8 + 9) the limits, site set and
+        // ruled facts alongside, so undo restores the whole
+        // pre-apply context the bundle is about to move.
         profileUndoPrefs().edit()
             .putString(
                 PROFILE_UNDO_KEY,
@@ -3132,10 +3332,26 @@ class MonolithRepository(
                     "${app.packageName}|${app.blockTier}|${if (app.isBlocked) "1" else "0"}"
                 }
             )
+            .putString(
+                PROFILE_UNDO_LIMITS_KEY,
+                currentApps.joinToString("\n") { app ->
+                    "${app.packageName}|${app.dailyLimitMinutes}"
+                }
+            )
+            .putString(
+                PROFILE_UNDO_SITES_KEY,
+                ProfileBundle.formatSites(currentSites.map { it.domain })
+            )
+            .putString(
+                PROFILE_UNDO_FACTS_KEY,
+                "sound=${if (com.example.service.SoundEffectsSetting.isEnabled(context)) 1 else 0}" +
+                    ";sniper=${if (isShortsReelsSniperEnabled()) 1 else 0}" +
+                    ";browser=${if (isBrowserBlockerEnabled()) 1 else 0}"
+            )
             .apply()
         val updated = currentApps.map { app ->
             val shouldBlock = app.category in activeCategories
-            val rawTier = when {
+            val stencilTier = when {
                 // Issue #139 F2: clock + navigation are exempt — a
                 // profile can never lock how he wakes or gets home.
                 isProfileExempt(app.packageName) -> AppBlockTier.OPEN
@@ -3150,6 +3366,18 @@ class MonolithRepository(
                 app.category == AppCategory.FINANCE.name -> AppBlockTier.PEEK_2M
                 else -> AppBlockTier.LOCKED
             }
+            // Issue #253 line 8: a per-app ruling saved in the
+            // profile beats the category stencil — that is what
+            // makes the profile a snapshot (and an OPEN entry the
+            // per-app exception). The invariants still bind the
+            // ruling exactly as they bind the stencil: the
+            // clock/navigation exemption is supreme (no profile
+            // may ever lock them, saved ruling or not) and the
+            // dialler floor applies before the copy.
+            val rawTier = when {
+                isProfileExempt(app.packageName) -> AppBlockTier.OPEN
+                else -> bundleTiers[app.packageName] ?: stencilTier
+            }
             // Issue #32 F4: tier is the truth; isBlocked is derived
             // by normalized() — note shouldBlock (category match) and
             // tier != OPEN can differ for MESSAGING (PEEK), and the
@@ -3162,10 +3390,87 @@ class MonolithRepository(
             // no bulk door can loosen while a session runs.
             val floored = EssentialApps.floorTier(app.packageName, rawTier)
             val tier = SessionTierGate.clampWhileSealed(app.resolvedTier, floored, sealed)
-            app.copy(blockTier = tier.name).normalized()
+            val limited = bundleLimits[app.packageName]
+                ?.let { app.copy(dailyLimitMinutes = it) } ?: app
+            limited.copy(blockTier = tier.name).normalized()
         }
         dao.insertApps(updated)
+        // Issue #253 line 9: the site set the profile carries
+        // replaces the standing set — under the same one-way law
+        // as every bulk door: while a session is sealed the
+        // profile's sites may only be ADDED (a removal would
+        // loosen mid-session); unsealed, the set lands whole.
+        if (profile.sitesCsv.isNotBlank()) {
+            val currentDomains = currentSites.map { it.domain.lowercase() }.toSet()
+            if (sealed) {
+                val adds = bundleSites.filter { it !in currentDomains }
+                if (adds.isNotEmpty()) {
+                    dao.insertSites(adds.map { BlockedSiteEntity(it) })
+                }
+            } else {
+                val target = bundleSites.toSet()
+                currentSites
+                    .filter { it.domain.lowercase() !in target }
+                    .forEach { dao.deleteSite(it.domain) }
+                val adds = bundleSites.filter { it !in currentDomains }
+                if (adds.isNotEmpty()) {
+                    dao.insertSites(adds.map { BlockedSiteEntity(it) })
+                }
+            }
+        }
+        // Issue #253 line 9: the facts the profile rules land
+        // through their own stores' verbs — a null rules nothing.
+        profile.soundEnabled?.let {
+            com.example.service.SoundEffectsSetting.setEnabled(context, it)
+        }
+        profile.sniperEnabled?.let { setShortsReelsSniperEnabled(it) }
+        profile.browserBlockEnabled?.let { setBrowserBlockerEnabled(it) }
     }
+
+    /**
+     * Issue #253 line 8: save the CURRENT switchboard state as a
+     * profile — the "save current as profile" verb the stencil
+     * model never had. The snapshot records every app's tier and
+     * daily limit, the standing site set, and the sound / sniper
+     * / browser-blocker facts as they stand, so applying the
+     * saved profile later reproduces this exact context (through
+     * the same invariants and sealed clamp as any profile).
+     */
+    suspend fun captureCurrentAsProfile(name: String): FocusProfileEntity =
+        withContext(Dispatchers.IO) {
+            val apps = dao.getAllAppsSnapshot()
+            val sites = dao.getAllSitesSnapshot()
+            val profile = FocusProfileEntity(
+                name = name,
+                codeName = "SNAPSHOT",
+                description = "Saved from the switchboard state at capture time.",
+                defaultMinutes = 50,
+                blockedCategoriesCsv = apps
+                    .filter { it.resolvedTier != AppBlockTier.OPEN }
+                    .map { it.category }
+                    .distinct()
+                    .joinToString(","),
+                scheduleLabel = "",
+                isScheduleEnabled = false,
+                startHour = 0,
+                startMinute = 0,
+                endHour = 0,
+                endMinute = 0,
+                appTiersCsv = ProfileBundle.formatAppTiers(
+                    apps.associate { it.packageName to it.resolvedTier }
+                ),
+                appLimitsCsv = ProfileBundle.formatAppLimits(
+                    apps.filter { it.dailyLimitMinutes > 0 }
+                        .associate { it.packageName to it.dailyLimitMinutes }
+                ),
+                sitesCsv = ProfileBundle.formatSites(sites.map { it.domain }),
+                soundEnabled = com.example.service.SoundEffectsSetting.isEnabled(context),
+                sniperEnabled = isShortsReelsSniperEnabled(),
+                browserBlockEnabled = isBrowserBlockerEnabled()
+            )
+            val id = dao.insertProfile(profile)
+            profile.copy(id = id.toInt())
+        }
 
     suspend fun toggleProfileSchedule(profile: FocusProfileEntity) {
         dao.updateProfile(profile.copy(isScheduleEnabled = !profile.isScheduleEnabled))
@@ -3859,6 +4164,9 @@ class MonolithRepository(
             // its lived Safe Breaks, from the row's own ledgers.
             completedTasks = completedTasks,
             safeBreakSeconds = row.breakTakenSeconds,
+            // Issue #525: the row's booked reboot gap rides the
+            // slip (see PendingReceipt.rebootGapSeconds).
+            rebootGapSeconds = row.rebootGapSeconds,
             // W-41 FILL POINT (batch-10, landed): the split columns
             // now exist (MIGRATION_12_13) and the birth writer stores
             // them with the enforcer-derived sites figure. The gate
@@ -4013,6 +4321,7 @@ class MonolithRepository(
             restored = false,
             receiptPublishedMonoMs = 0L,
             penaltySecondsAdded = pending.penaltySecondsAdded,
+            rebootGapSeconds = pending.rebootGapSeconds,
             forgedArtifactName = pending.forgedArtifactName,
             heldShutAtSeal = pending.heldShutAtSeal,
             heldPeekAtSeal = pending.heldPeekAtSeal,
@@ -4225,6 +4534,7 @@ class MonolithRepository(
             restored = true,
             receiptPublishedMonoMs = 0L,
             penaltySecondsAdded = pending.penaltySecondsAdded,
+            rebootGapSeconds = pending.rebootGapSeconds,
             forgedArtifactName = pending.forgedArtifactName,
             heldShutAtSeal = pending.heldShutAtSeal,
             heldPeekAtSeal = pending.heldPeekAtSeal,
@@ -4558,11 +4868,12 @@ class MonolithRepository(
         // on the row at entry — a mid-block break resumes the block
         // it froze; a flip-born break advances past the finished
         // block. The taken booking is identical either way.
-        val next = if (row.midBlockSafeBreak) {
+        val currentBoot = querySystemBootCountOrNull()
+        val exited = if (row.midBlockSafeBreak) {
             resumeBlockFromMidBreak(
                 session = row,
                 nowMono = nowMono,
-                currentBoot = querySystemBootCountOrNull() ?: row.bootCount,
+                currentBoot = currentBoot ?: row.bootCount,
                 beatWall = row.shieldLastBeatWallMillis,
                 breakTakenSeconds = row.breakTakenSeconds + taken
             )
@@ -4570,11 +4881,19 @@ class MonolithRepository(
             advancePastBreak(
                 session = row,
                 nowMono = nowMono,
-                currentBoot = querySystemBootCountOrNull() ?: row.bootCount,
+                currentBoot = currentBoot ?: row.bootCount,
                 beatWall = row.shieldLastBeatWallMillis,
                 breakTakenSeconds = row.breakTakenSeconds + taken
             )
         }
+        // Issue #525: this exit re-anchors like every other door —
+        // a reboot that crossed during the break books its
+        // unshielded span here too, on the row the exit persists.
+        val rebootCrossed = (currentBoot != null && row.bootCount > 0 && currentBoot != row.bootCount) ||
+            (row.lastTickElapsedRealtimeMillis > 0L && nowMono < row.lastTickElapsedRealtimeMillis)
+        val (gapSeen, gapSeconds) =
+            rebootGapBooking(row, nowMono, rebootCrossed, currentBoot)
+        val next = exited.copy(shieldGapSeen = gapSeen, rebootGapSeconds = gapSeconds)
         dao.updateSession(next)
         // Issue #155 (IQ-4 edge 8a): the widget's break line must
         // fall the moment the break ends early — the glance follows
@@ -4774,6 +5093,13 @@ class MonolithRepository(
         if (frame.updateDetected && accrualPrefs.contains(ACCRUAL_KEY_MONO)) {
             accrualPrefs.edit().putLong(ACCRUAL_KEY_MONO, nowMono).apply()
         }
+        // Issue #525: book this reboot's unshielded span in the
+        // same write that re-anchors — the gap ledger and the
+        // latch ride every copy this tick persists below, so no
+        // exit from this function can re-anchor across a reboot
+        // and leave the books silent about the unshielded time.
+        val (newShieldGapSeen, newRebootGapSeconds) =
+            rebootGapBooking(session, nowMono, rebootDetected, currentBoot)
 
         // Issue #122 (finding 4): battery death IS an ending. On
         // the reboot branch only — the battery-death signature,
@@ -4804,6 +5130,8 @@ class MonolithRepository(
                 hmacSignature = newHmac,
                 penaltySecondsAdded = penaltyAdd,
                 tamperDetected = tamper,
+                shieldGapSeen = newShieldGapSeen,
+                rebootGapSeconds = newRebootGapSeconds,
                 shieldLastBeatWallMillis = beatWall,
                 outcome = SessionOutcome.ELAPSED_SHIELD_GAP,
                 endWallMillis = if (session.endWallMillis == 0L) plannedEnd else session.endWallMillis
@@ -4852,7 +5180,8 @@ class MonolithRepository(
                     hmacSignature = newHmac,
                     penaltySecondsAdded = penaltyAdd,
                     tamperDetected = tamper,
-                    shieldGapSeen = session.shieldGapSeen || updateGapLatched,
+                    shieldGapSeen = newShieldGapSeen || updateGapLatched,
+                    rebootGapSeconds = newRebootGapSeconds,
                     shieldLastBeatWallMillis = beatWall,
                     isActive = false,
                     completedSuccessfully = true,
@@ -4880,7 +5209,8 @@ class MonolithRepository(
                 hmacSignature = newHmac,
                 penaltySecondsAdded = penaltyAdd,
                 tamperDetected = tamper,
-                shieldGapSeen = session.shieldGapSeen || updateGapLatched,
+                shieldGapSeen = newShieldGapSeen || updateGapLatched,
+                rebootGapSeconds = newRebootGapSeconds,
                 shieldLastBeatWallMillis = beatWall
             )
             dao.updateSession(updated)
@@ -4931,9 +5261,17 @@ class MonolithRepository(
                 // exit follows the break's ORIGIN (issue #261): a
                 // mid-block break resumes its frozen block; a
                 // flip-born break advances past the finished one.
+                // Issue #525: a reboot that crossed during the
+                // break books its unshielded span at this exit
+                // re-anchor, like every other re-anchor door —
+                // the exit copies build on the booked row.
+                val exitSession = session.copy(
+                    shieldGapSeen = newShieldGapSeen,
+                    rebootGapSeconds = newRebootGapSeconds
+                )
                 val nextBlockSession = if (session.midBlockSafeBreak) {
                     resumeBlockFromMidBreak(
-                        session = session,
+                        session = exitSession,
                         nowMono = nowMono,
                         currentBoot = newBootCount,
                         beatWall = beatWall,
@@ -4942,7 +5280,7 @@ class MonolithRepository(
                     )
                 } else {
                     advancePastBreak(
-                        session = session,
+                        session = exitSession,
                         nowMono = nowMono,
                         currentBoot = newBootCount,
                         beatWall = beatWall,
@@ -5008,7 +5346,8 @@ class MonolithRepository(
                 hmacSignature = newHmac,
                 penaltySecondsAdded = penaltyAdd,
                 tamperDetected = tamper,
-                shieldGapSeen = session.shieldGapSeen || updateGapLatched,
+                shieldGapSeen = newShieldGapSeen || updateGapLatched,
+                rebootGapSeconds = newRebootGapSeconds,
                 shieldLastBeatWallMillis = beatWall
             )
             dao.updateSession(heldFinish)
@@ -5023,6 +5362,8 @@ class MonolithRepository(
                 lastTickElapsedRealtimeMillis = nowMono,
                 penaltySecondsAdded = penaltyAdd,
                 tamperDetected = tamper,
+                shieldGapSeen = newShieldGapSeen,
+                rebootGapSeconds = newRebootGapSeconds,
                 shieldLastBeatWallMillis = beatWall
             )
             dao.updateSession(safeBreakSession)
@@ -5120,11 +5461,14 @@ class MonolithRepository(
         }
 
         val outcomeStamp = classifyElapsedOutcome(
-            // Issue #524: an absorb that latched this very tick
-            // convicts through the classifier's latch term too —
-            // the row it judges carries the latch the absorb set.
+            // Issues #524 + #525: the classification reads the
+            // row as THIS tick books it — an absorb that latched
+            // this very tick (#524) and a reboot whose unshielded
+            // span first latches the gap on the finishing tick
+            // (#525) both convict through the classifier's latch
+            // term; neither may classify as clean.
             session = session.copy(
-                shieldGapSeen = session.shieldGapSeen || updateGapLatched
+                shieldGapSeen = newShieldGapSeen || updateGapLatched
             ),
             allBlocksCompleted = allBlocksCompleted,
             isRoutineSession = isRoutineSession,
@@ -5150,6 +5494,7 @@ class MonolithRepository(
             completedSuccessfully = allBlocksCompleted && !isRoutineSession &&
                 outcomeStamp != SessionOutcome.ELAPSED_OPEN_EXPOSURE,
             tamperDetected = tamper,
+            rebootGapSeconds = newRebootGapSeconds,
             forgedArtifactId = if (isRoutineSession ||
                 outcomeStamp == SessionOutcome.ELAPSED_OPEN_EXPOSURE
             ) {
@@ -5157,7 +5502,10 @@ class MonolithRepository(
             } else {
                 forgedId ?: session.forgedArtifactId
             },
-            shieldGapSeen = session.shieldGapSeen || updateGapLatched,
+            // Composed (#524 + #525): the row books BOTH latches
+            // that fired by this tick — the update absorb's and
+            // the reboot's unshielded span.
+            shieldGapSeen = newShieldGapSeen || updateGapLatched,
             shieldLastBeatWallMillis = beatWall,
             outcome = outcomeStamp,
             // Truth Car 2 (RC-01): the true end, stamped in the

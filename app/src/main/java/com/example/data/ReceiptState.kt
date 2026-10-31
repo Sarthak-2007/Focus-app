@@ -462,6 +462,13 @@ data class PendingReceipt(
     // silently stretched the plan (it is inside spanTargetSeconds)
     // and no surface ever mentioned it.
     val penaltySecondsAdded: Int = 0,
+    // Issue #525: the boot-to-shield seconds this session's
+    // reboots left unshielded (the row's rebootGapSeconds),
+    // threaded so the slip can NAME them — the uptime before
+    // the shield's first raise was never credited, and the
+    // REBOOT line says so instead of letting the reboot pass
+    // silently. 0 prints nothing (the omission law).
+    val rebootGapSeconds: Int = 0,
     /** Issue #129 F3: the unguarded apps actually used inside
      *  this session's window (labels, longest-use first), read
      *  back from the ending write's exposure booking. Empty for
@@ -524,6 +531,9 @@ data class ReceiptState(
     // Audit R3 #113, finding 4: see PendingReceipt — the slip
     // prints the penalty its plan silently included.
     val penaltySecondsAdded: Int = 0,
+    // Issue #525: see PendingReceipt.rebootGapSeconds — the
+    // slip prints the REBOOT line the reboot honestly cost.
+    val rebootGapSeconds: Int = 0,
     /** Issue #129 F3: see [PendingReceipt.openExposureApps]. */
     val openExposureApps: List<String> = emptyList(),
     // Audit R3b #145: see PendingReceipt.forgedArtifactName.

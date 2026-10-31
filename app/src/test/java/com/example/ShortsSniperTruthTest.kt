@@ -27,6 +27,10 @@ import org.robolectric.shadows.ShadowLooper
 import org.robolectric.shadows.ShadowSystemClock
 
 /**
+ * PIN scope: PLUMBING — its migration-chain half pins the
+ * schema validation end-to-end; the toggle-truth assertions
+ * are SOURCE.
+ *
  * Truth Car 3 — UNA-01: SHORTS + REELS WAS A PHANTOM.
  *
  * The charge, verified in trunk before the cure: the toggle lived
@@ -57,7 +61,7 @@ import org.robolectric.shadows.ShadowSystemClock
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
-// PIN-SCOPE: PLUMBING — migration chain to v19 + settings persistence (working-rules adoption, Oct 31 18:06 IST).
+// PIN-SCOPE: PLUMBING — migration chain to v21 + settings persistence (working-rules adoption, Oct 31 18:06 IST).
 class ShortsSniperTruthTest {
 
     private val context: Context
@@ -223,14 +227,15 @@ class ShortsSniperTruthTest {
                 MonolithDatabase.MIGRATION_17_18,
                 MonolithDatabase.MIGRATION_18_19,
                 MonolithDatabase.MIGRATION_19_20,
-                MonolithDatabase.MIGRATION_20_21
+                MonolithDatabase.MIGRATION_20_21,
+                MonolithDatabase.MIGRATION_21_22
             )
             .build()
         runBlocking {
             val dao = room.monolithDao()
             // The read forces the open: Room has migrated
-            // 7→8→9→10→11→12→13→14→15→16→17 AND validated the
-            // result against every v17 entity.
+            // 7→8→9→10→11→12→13→14→15→16→17→18→19→20→21 AND
+            // validated the result against every v21 entity.
             val settings = dao.getGuardSettingsSnapshot()
             assertNotNull(settings)
             assertTrue(settings!!.shortsReelsSniperEnabled)

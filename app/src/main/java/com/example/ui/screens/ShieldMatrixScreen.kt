@@ -139,6 +139,10 @@ fun ShieldMatrixScreen(
     // composed once from the beat's proof by the ViewModel and
     // printed verbatim under GUARDS. Null in render harnesses.
     receiptLine: String? = null,
+    // Issue #94 F4: the routine-chain liveness line, composed by
+    // the ViewModel from the heartbeat's stamp. Null = no routine
+    // window is enforcing — the line is absent, never a claim.
+    routineChainLine: String? = null,
     // Shield Rethink 2, Step 2: the intention line — his words,
     // written here on the Sheet, read back by the arm and the
     // session plate verbatim. Blank is a complete state. The write
@@ -222,6 +226,14 @@ fun ShieldMatrixScreen(
     // composed by the caller, printed exactly.
     pruneNoteText: String? = null,
     onPruneNoteDismissed: () -> Unit = {},
+    // Ren ruling 00:34 IST Oct 31 (#7): the legacy OPEN reset's
+    // announcement — the counted strip above the catalogue, in the
+    // same one-time-strip grammar as the prune note. The words are
+    // the ruling's sentence with the live count, composed by the
+    // caller from the repository's record (LegacyOpenReset).
+    // Null = nothing to announce.
+    legacyResetNoteText: String? = null,
+    onLegacyResetNoteDismissed: () -> Unit = {},
     // Issue #129 F1: the unreviewed-auto-OPEN review prompt. Not
     // dismissible — it stands until each named app has a ruling.
     unreviewedOpenText: String? = null,
@@ -598,6 +610,28 @@ fun ShieldMatrixScreen(
             }
         }
 
+        // Ren ruling 00:34 IST Oct 31 (#7): the legacy OPEN reset
+        // announces itself here — on the Sheet, the only
+        // law-writing place — directly above the catalogue where
+        // any reset app is re-opened by hand. One quiet counted
+        // line, same grammar as the prune note above; tapping it
+        // dismisses it, and so does the first row tap (the
+        // ViewModel owns that half, as with the prune note).
+        if (legacyResetNoteText != null) {
+            item {
+                Text(
+                    text = legacyResetNoteText,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onLegacyResetNoteDismissed() }
+                        .testTag("app_list_legacy_reset_note")
+                )
+            }
+        }
+
         // #129 F1: the review prompt — apps the keyword guess set
         // OPEN that he never ruled on, named, directly above the
         // catalogue where the ruling is made. No tap target: it
@@ -909,6 +943,20 @@ fun ShieldMatrixScreen(
                     color = scheme.onSurfaceVariant,
                     modifier = Modifier.testTag("shield_detector_health_line")
                 )
+                // Issue #94 F4: the routine-chain liveness line —
+                // the heartbeat stamp's first reader, printed under
+                // the detector line. Absent unless a routine window
+                // is enforcing right now; then it names the chain
+                // LIVE or DEAD with the stamp's age.
+                if (routineChainLine != null) {
+                    Text(
+                        text = routineChainLine,
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("shield_routine_chain_line")
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,

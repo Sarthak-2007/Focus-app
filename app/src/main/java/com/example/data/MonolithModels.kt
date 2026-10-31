@@ -384,7 +384,26 @@ data class FocusProfileEntity(
     val startHour: Int,
     val startMinute: Int,
     val endHour: Int,
-    val endMinute: Int
+    val endMinute: Int,
+    // Issue #253 lines 8 + 9: the full-context bundle (DB 20→21).
+    // A profile is a SNAPSHOT, not just a category stencil:
+    // appTiersCsv carries per-app tier rulings (an OPEN entry is
+    // the per-app exception), appLimitsCsv the per-app daily
+    // limits, sitesCsv the blocked-site set — all encoded by
+    // ProfileBundle. The three strictness/sound facts are
+    // nullable: null means this profile does not rule that
+    // surface (every pre-bundle row), a value means applying
+    // the profile writes that fact. Notifications are NOT in
+    // the bundle on purpose: the app's only notification facts
+    // are the seal's automatic DND engagement (session-scoped,
+    // not a preference) and a privacy consent a profile must
+    // never flip — there is no lawful stored carrier today.
+    val appTiersCsv: String = "",
+    val appLimitsCsv: String = "",
+    val sitesCsv: String = "",
+    val soundEnabled: Boolean? = null,
+    val sniperEnabled: Boolean? = null,
+    val browserBlockEnabled: Boolean? = null
 ) {
     /** Issue #32 F2 (write-boundary cure): hours/minutes inside
      *  their lawful ranges. endHour may be 24 — the existing
@@ -520,6 +539,16 @@ data class FocusSessionEntity(
     // stale past the grace, the latch is set forever — a shield
     // that comes back late does not un-break the session's books.
     val shieldGapSeen: Boolean = false,
+    // Issue #525 (20→21): the boot-to-shield seconds this
+    // session's reboots left UNSHIELDED — the uptime between
+    // power-on and the shield's first protecting flip of each
+    // boot the session survived (ShieldRaiseStore's stamp),
+    // accumulated at every re-anchor. Booked, never credited:
+    // the elapsed derivation counts only the witnessed span
+    // past the raise, and the receipt prints this figure as
+    // its REBOOT line. 0 = no reboot crossed this session
+    // (every pre-v21 row).
+    val rebootGapSeconds: Int = 0,
     // Truth Car 2 (10→11, RC-01): the session's true end, wall
     // clock, stamped ONCE at the ending write (the elapsed path
     // in updateSessionProgress, the disarm doors, the routine

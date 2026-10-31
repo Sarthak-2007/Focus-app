@@ -21,7 +21,7 @@ import org.robolectric.annotation.Config
  * This file is what survives of Issue #45's NotificationRetention-
  * DaoTest: the retention/prune/matching-delete tests pinned the
  * captured_notifications store, which Issue #100's CUT deleted
- * (table dropped by MIGRATION_20_21); the covering-instant tests
+ * (table dropped by MIGRATION_21_22); the covering-instant tests
  * pin a query that still exists and now carries the hold's
  * session-end maths, so they stay.
  *

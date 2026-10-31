@@ -107,8 +107,14 @@ class ShieldSetupTruthPureTest {
                 AppCategory.MESSAGING.name
             )
         )
+        // Ren ruling 00:34 IST Oct 31 (#7) SUPERSEDES the old line
+        // here: an unruled category (SHOPPING) with no tier of his
+        // own used to default OPEN under STUDY — that default was
+        // the loadout leak that undid the inversion. The default
+        // is now SHUT; the full ruling matrix is pinned in
+        // ShieldRulingsOct31Test.
         assertEquals(
-            AppBlockTier.OPEN,
+            AppBlockTier.LOCKED,
             LoadoutRules.tierFor(
                 SmartLoadout.STUDY, "com.google.android.apps.docs", "Docs",
                 AppCategory.SHOPPING.name

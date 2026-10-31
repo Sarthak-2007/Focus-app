@@ -17,6 +17,8 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 import org.robolectric.annotation.Config
 
 /**
@@ -67,6 +69,17 @@ class MidBlockSafeBreakRepositoryTest {
 
     @Before
     fun setup() {
+        // AUDIT-CLOCK census seat (d) cure (#166): studyingRow
+        // fabricates its start anchor `elapsed` seconds before
+        // nowMono (up to target + 10 = 1510s in this file);
+        // unadvanced, the shadow clock starts near zero, the
+        // anchor goes negative, and the helper signs an HMAC
+        // over a row the verified path can only read through
+        // the reboot fallback — its "anchors agreeing to the
+        // second" doc was not true of the mono leg. Advance
+        // past the largest fabrication first (the ForgeLot
+        // idiom) so the signed anchors are real.
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(1800))
         db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
             .allowMainThreadQueries()
             .build()

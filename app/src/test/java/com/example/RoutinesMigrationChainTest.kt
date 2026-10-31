@@ -24,6 +24,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
+ * PIN scope: PLUMBING — pins the full migration chain's schema
+ * validation, no behaviour.
+ *
  * Routines rebuild — Migration chain 7→8→9.
  *
  * 8a: a v7-shaped file runs BOTH migrations: the token ledger appears
@@ -43,7 +46,7 @@ import org.robolectric.annotation.Config
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
-// PIN-SCOPE: PLUMBING — Room migration chain 7→19, schema validation (working-rules adoption, Oct 31 18:06 IST).
+// PIN-SCOPE: PLUMBING — Room migration chain 7→21, schema validation (working-rules adoption, Oct 31 18:06 IST).
 class RoutinesMigrationChainTest {
 
     private val context: Context
@@ -341,15 +344,17 @@ class RoutinesMigrationChainTest {
                 MonolithDatabase.MIGRATION_17_18,
                 MonolithDatabase.MIGRATION_18_19,
                 MonolithDatabase.MIGRATION_19_20,
-                MonolithDatabase.MIGRATION_20_21
+                MonolithDatabase.MIGRATION_20_21,
+                MonolithDatabase.MIGRATION_21_22
             )
             .build()
 
         runBlocking {
             val dao = room.monolithDao()
             // This read forces the open: Room has now migrated
-            // 7→8→9→10→11→12→13→14→15→16→17 AND validated the resulting
-            // schema against every v17 entity, day_notes included.
+            // 7→8→9→10→11→12→13→14→15→16→17→18→19→20→21 AND
+            // validated the resulting schema against every v21
+            // entity, day_notes included.
             assertTrue(dao.getAllDayNotesSnapshot().isEmpty())
             dao.insertDayNotes(listOf(DayNoteEntity("2026-10-29", "REST")))
             assertEquals(
@@ -383,7 +388,7 @@ class RoutinesMigrationChainTest {
         )
         assertFalse(tables.contains("routine_attendance"))
         // Issue #100 CUT: the notification-content store is GONE at
-        // v21 — MIGRATION_20_21 dropped the table the v7 fixture
+        // v22 — MIGRATION_21_22 dropped the table the v7 fixture
         // created; no content store may stand at the latest schema.
         assertFalse(tables.contains("captured_notifications"))
 
