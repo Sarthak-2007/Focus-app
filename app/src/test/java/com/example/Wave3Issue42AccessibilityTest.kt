@@ -2,10 +2,15 @@ package com.example
 
 import android.media.AudioManager
 import com.example.service.extractUrlHost
+import com.example.service.isCallControlLabel
+import com.example.service.isCallControlViewId
+import com.example.service.isCallSurfaceClassName
 import com.example.service.isCallSurfacePackage
 import com.example.service.isTamperActionViewId
 import com.example.service.matchBlockedDomain
 import com.example.service.shouldBypassForCall
+import com.example.service.shouldLockCallOwner
+import com.example.service.windowCarriesCallControls
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -379,6 +384,14 @@ class Wave3Issue42AccessibilityTest {
     // what keeps the shipped promise — a blocked WhatsApp in a call
     // is exempt on its own screen — without reopening the hole:
     // the same WhatsApp, NOT owning the call, stays blocked.
+    //
+    // Issue #520 (5-C) narrowed this leg: the owner is exempt ONLY
+    // while its call surface is in front (ownerSurfaceVisible).
+    // The two bypass tests below therefore pass the surface fact
+    // explicitly — the promise they guard ("exempt on its own
+    // screen") is unchanged; what died is the old reading under
+    // which owning a call exempted the whole app, surface or not.
+    // That dead reading is pinned as a denial further down.
     // ---------------------------------------------------------------
 
     @Test
@@ -387,7 +400,8 @@ class Wave3Issue42AccessibilityTest {
             shouldBypassForCall(
                 AudioManager.MODE_IN_COMMUNICATION,
                 "com.whatsapp",
-                callOwnerPackage = "com.whatsapp"
+                callOwnerPackage = "com.whatsapp",
+                ownerSurfaceVisible = true
             )
         )
     }
@@ -405,11 +419,14 @@ class Wave3Issue42AccessibilityTest {
 
     @Test
     fun shouldBypassForCall_ringingVoipApp_bypasses() {
+        // The ringing screen IS the call surface — the surface
+        // fact stands while it is in front (issue #520).
         assertTrue(
             shouldBypassForCall(
                 AudioManager.MODE_RINGTONE,
                 "org.telegram.messenger",
-                callOwnerPackage = "org.telegram.messenger"
+                callOwnerPackage = "org.telegram.messenger",
+                ownerSurfaceVisible = true
             )
         )
     }
@@ -423,6 +440,221 @@ class Wave3Issue42AccessibilityTest {
                 AudioManager.MODE_IN_CALL,
                 "com.truecaller",
                 defaultDialerPackage = "com.truecaller"
+            )
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // 1. GLOBAL-KILL-SWITCH, part D — issue #520 (5-C): the owner
+    // leg exempts the call SURFACE, not the app. The same owner,
+    // mid-call, on any other of its own windows (chats, Status,
+    // feeds) stays blocked.
+    // ---------------------------------------------------------------
+
+    @Test
+    fun shouldBypassForCall_voipOwnerOffItsCallSurface_staysBlocked() {
+        assertFalse(
+            shouldBypassForCall(
+                AudioManager.MODE_IN_COMMUNICATION,
+                "com.whatsapp",
+                callOwnerPackage = "com.whatsapp",
+                ownerSurfaceVisible = false
+            )
+        )
+    }
+
+    @Test
+    fun shouldBypassForCall_surfaceFactAloneWithoutOwnership_staysBlocked() {
+        // A call surface standing in SOME window does not exempt
+        // a package that does not own the call.
+        assertFalse(
+            shouldBypassForCall(
+                AudioManager.MODE_IN_COMMUNICATION,
+                "com.whatsapp",
+                callOwnerPackage = "org.telegram.messenger",
+                ownerSurfaceVisible = true
+            )
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // 1. GLOBAL-KILL-SWITCH, part E — issue #520 (C-11): the LOCK.
+    // Communication mode alone never mints an owner; one proof
+    // (surface package, dialer role, Telecom call, or a window
+    // carrying call controls) must stand.
+    // ---------------------------------------------------------------
+
+    @Test
+    fun shouldLockCallOwner_modeFlipAlone_noLock() {
+        // The exploit as filed: a game foreground flips
+        // MODE_IN_COMMUNICATION (voice chat). No proof stands.
+        assertFalse(
+            shouldLockCallOwner(
+                AudioManager.MODE_IN_COMMUNICATION,
+                candidatePackage = "com.example.voicegame"
+            )
+        )
+    }
+
+    @Test
+    fun shouldLockCallOwner_surfaceProvenVoip_locks() {
+        assertTrue(
+            shouldLockCallOwner(
+                AudioManager.MODE_IN_COMMUNICATION,
+                candidatePackage = "com.whatsapp",
+                candidateSurfaceVisible = true
+            )
+        )
+    }
+
+    @Test
+    fun shouldLockCallOwner_telecomCallActive_locks() {
+        assertTrue(
+            shouldLockCallOwner(
+                AudioManager.MODE_IN_CALL,
+                candidatePackage = "com.example.selfmanagedvoip",
+                telecomCallActive = true
+            )
+        )
+    }
+
+    @Test
+    fun shouldLockCallOwner_surfacePackageCandidate_locks() {
+        assertTrue(
+            shouldLockCallOwner(
+                AudioManager.MODE_RINGTONE,
+                candidatePackage = "com.android.incallui"
+            )
+        )
+    }
+
+    @Test
+    fun shouldLockCallOwner_dialerRoleCandidate_locks() {
+        assertTrue(
+            shouldLockCallOwner(
+                AudioManager.MODE_IN_CALL,
+                candidatePackage = "com.truecaller",
+                defaultDialerPackage = "com.truecaller"
+            )
+        )
+    }
+
+    @Test
+    fun shouldLockCallOwner_normalMode_neverLocks() {
+        // Every proof offered, no call mode: no lock.
+        assertFalse(
+            shouldLockCallOwner(
+                AudioManager.MODE_NORMAL,
+                candidatePackage = "com.whatsapp",
+                defaultDialerPackage = "com.whatsapp",
+                telecomCallActive = true,
+                candidateSurfaceVisible = true
+            )
+        )
+    }
+
+    @Test
+    fun shouldLockCallOwner_noCandidate_noLock() {
+        assertFalse(
+            shouldLockCallOwner(
+                AudioManager.MODE_IN_COMMUNICATION,
+                candidatePackage = null,
+                telecomCallActive = true,
+                candidateSurfaceVisible = true
+            )
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // 1. GLOBAL-KILL-SWITCH, part F — issue #520 (5-C): the
+    // visible-surface test itself. A window is a call surface by
+    // what it CARRIES: a call-activity class name, a call-control
+    // view id, or a call-control label. A chat window that merely
+    // TALKS about a call ("Call ended") carries none of them.
+    // ---------------------------------------------------------------
+
+    @Test
+    fun windowCarriesCallControls_whatsappVoiceCallClass_isSurface() {
+        assertTrue(
+            windowCarriesCallControls(
+                "com.whatsapp.voicecalling.VoiceCallActivity",
+                emptyList(), emptyList()
+            )
+        )
+    }
+
+    @Test
+    fun windowCarriesCallControls_telegramVoipClass_isSurface() {
+        assertTrue(isCallSurfaceClassName("org.telegram.ui.VoIPActivity"))
+        assertTrue(
+            windowCarriesCallControls("org.telegram.ui.VoIPActivity", emptyList(), emptyList())
+        )
+    }
+
+    @Test
+    fun windowCarriesCallControls_endCallViewId_isSurface() {
+        assertTrue(isCallControlViewId("com.whatsapp:id/end_call_button"))
+        assertTrue(
+            windowCarriesCallControls(
+                "com.whatsapp.MainActivity",
+                listOf("com.whatsapp:id/conversation_text", "com.whatsapp:id/end_call_button"),
+                listOf("Type a message")
+            )
+        )
+    }
+
+    @Test
+    fun windowCarriesCallControls_endCallLabel_isSurface() {
+        assertTrue(isCallControlLabel("End call"))
+        assertTrue(isCallControlLabel("Hang up"))
+        assertTrue(
+            windowCarriesCallControls(
+                "com.example.customvoip.CallHostActivity",
+                emptyList(),
+                listOf("Mute", "End call", "Speaker")
+            )
+        )
+    }
+
+    @Test
+    fun windowCarriesCallControls_chatWindowMentioningACall_isNotSurface() {
+        // The chat RECORD of a call is not a call surface: a
+        // "Call ended" status line and ordinary composer ids mint
+        // nothing.
+        assertFalse(isCallControlLabel("Call ended"))
+        assertFalse(
+            windowCarriesCallControls(
+                "com.whatsapp.Conversation",
+                listOf("com.whatsapp:id/conversation_text", "com.whatsapp:id/input"),
+                listOf("Call ended", "Type a message")
+            )
+        )
+    }
+
+    @Test
+    fun windowCarriesCallControls_voipInPackageNameAlone_isNotSurface() {
+        // The class leg judges the simple class name: an app
+        // whose PACKAGE mentions voip does not carry the surface
+        // on its ordinary windows.
+        assertFalse(isCallSurfaceClassName("com.voipdiscount.app.HomeActivity"))
+        assertFalse(
+            windowCarriesCallControls(
+                "com.voipdiscount.app.HomeActivity",
+                listOf("com.voipdiscount.app:id/home_list"),
+                listOf("Cheap international calls")
+            )
+        )
+    }
+
+    @Test
+    fun windowCarriesCallControls_voiceGameWindow_isNotSurface() {
+        // The C-11 shape at the window level: a voice-chat game
+        // window carries no call controls.
+        assertFalse(
+            windowCarriesCallControls(
+                "com.example.voicegame.GameActivity",
+                listOf("com.example.voicegame:id/voice_chat_toggle"),
+                listOf("Voice chat on", "Push to talk")
             )
         )
     }

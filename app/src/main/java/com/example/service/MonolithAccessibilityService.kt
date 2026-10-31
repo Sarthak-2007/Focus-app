@@ -407,6 +407,20 @@ internal fun extractUrlHost(urlText: String): String? {
  * A blocked app that is none of the three stays blocked mid-call;
  * a call app that IS blocked is exempt on its own surface only —
  * the shipped promise — and its call unblocks nothing else.
+ *
+ * Issue #520 narrowed leg 2 and the lock itself (Day-walk
+ * Step 5): as first shipped, the OWNER leg exempted the whole
+ * owner app for the call's duration (5-C), and the owner LOCKED
+ * onto whatever package was foreground when MODE_IN_COMMUNICATION
+ * was first observed — so any app could mint itself the exemption
+ * by flipping the audio mode (C-11). The owner leg now exempts
+ * the owner ONLY while its call surface is in front
+ * ([shouldBypassForCall]'s ownerSurfaceVisible), and the lock
+ * itself requires proof ([shouldLockCallOwner]): a call-surface
+ * package, the dialer role, a Telecom-owned call, or a foreground
+ * window that carries call controls ([windowCarriesCallControls]
+ * — the sniper's visible-surface technique). Communication mode
+ * alone is evidence, never proof.
  */
 internal val CALL_SURFACE_PACKAGES = setOf(
     "com.google.android.dialer",
@@ -425,23 +439,112 @@ internal fun isCallSurfacePackage(packageName: String): Boolean =
         packageName.endsWith(".incallui") ||
         packageName.contains(".incallui.")
 
+/** The call-like audio modes, one test for every door. */
+internal fun isCallAudioMode(audioMode: Int): Boolean =
+    audioMode == AudioManager.MODE_RINGTONE ||
+        audioMode == AudioManager.MODE_IN_CALL ||
+        audioMode == AudioManager.MODE_IN_COMMUNICATION
+
 /** Pure decision: does a live call exempt THIS event's package?
- *  [callOwnerPackage] is the foreground package captured when the
- *  current call became active (null when unknown); [defaultDialerPackage]
- *  is Telecom's current default dialer (null when unread). */
+ *  [callOwnerPackage] is the package the current call locked onto
+ *  (null when no lock stands); [defaultDialerPackage] is Telecom's
+ *  current default dialer (null when unread); [ownerSurfaceVisible]
+ *  is the tracked fact that the owner's CALL SURFACE is the window
+ *  in front right now (issue #520, 5-C: the owner leg exempts that
+ *  surface, never the whole app for the call's duration — the
+ *  owner's chats and feeds stay blocked mid-call). */
 internal fun shouldBypassForCall(
     audioMode: Int,
     packageName: String,
     callOwnerPackage: String? = null,
-    defaultDialerPackage: String? = null
+    defaultDialerPackage: String? = null,
+    ownerSurfaceVisible: Boolean = false
 ): Boolean {
-    val callMode = audioMode == AudioManager.MODE_RINGTONE ||
-        audioMode == AudioManager.MODE_IN_CALL ||
-        audioMode == AudioManager.MODE_IN_COMMUNICATION
-    if (!callMode) return false
+    if (!isCallAudioMode(audioMode)) return false
     return isCallSurfacePackage(packageName) ||
-        packageName == callOwnerPackage ||
-        packageName == defaultDialerPackage
+        packageName == defaultDialerPackage ||
+        (packageName == callOwnerPackage && ownerSurfaceVisible)
+}
+
+/** Issue #520 (5-C): view-id fragments that name a call CONTROL —
+ *  the button that ends or refuses the call. Resource ids are code
+ *  identifiers: they survive locale, which spoken labels cannot
+ *  promise. Matched against the id's entry segment (after ":id/"),
+ *  never the package segment. */
+internal val CALL_CONTROL_VIEW_ID_MARKERS = listOf(
+    "end_call", "endcall", "hang_up", "hangup", "call_end", "decline_call"
+)
+
+internal fun isCallControlViewId(viewIdResourceName: String?): Boolean {
+    val id = viewIdResourceName?.lowercase(Locale.ROOT) ?: return false
+    val entry = id.substringAfter(":id/", id)
+    return CALL_CONTROL_VIEW_ID_MARKERS.any { entry.contains(it) }
+}
+
+/** Issue #520 (5-C): spoken labels of the same controls — the
+ *  fallback leg for apps whose call screens expose no usable ids
+ *  (custom-drawn VoIP UIs). Exact or leading-phrase matches only:
+ *  a "Call ended" status line inside a chat is a record of a call,
+ *  not a control, and must never mint the surface. */
+internal val CALL_CONTROL_LABELS = setOf("end call", "hang up", "hangup", "decline")
+
+internal fun isCallControlLabel(label: String?): Boolean {
+    val text = label?.trim()?.lowercase(Locale.ROOT) ?: return false
+    return text in CALL_CONTROL_LABELS ||
+        text.startsWith("end call ") || text.startsWith("hang up ")
+}
+
+/** Issue #520 (5-C): the window-class leg of the call surface —
+ *  the call activities of the VoIP apps name themselves (WhatsApp
+ *  VoiceCallActivity, Telegram VoIPActivity, Signal's
+ *  WebRtcCallActivity, the platform InCallUI…), and the class name
+ *  rides every window event with no tree read at all. Judged on
+ *  the SIMPLE class name only: a package that merely mentions
+ *  voip in its own name must not mint the surface on every one of
+ *  its windows. */
+internal fun isCallSurfaceClassName(className: String?): Boolean {
+    val cls = className?.lowercase(Locale.ROOT) ?: return false
+    val simple = cls.substringAfterLast('.')
+    return simple.contains("voip") || simple.contains("voicecall") ||
+        simple.contains("videocall") || simple.contains("incall") ||
+        simple.contains("callactivity") || simple.contains("callscreen")
+}
+
+/** Issue #520 (5-C): the visible-surface test — is THIS window a
+ *  call surface? The class leg, the view-id leg, or the label leg
+ *  (the sniper's technique: a surface is what its window CARRIES,
+ *  never what its package is named). */
+internal fun windowCarriesCallControls(
+    windowClassName: String?,
+    viewIds: Collection<String>,
+    labels: Collection<String>
+): Boolean =
+    isCallSurfaceClassName(windowClassName) ||
+        viewIds.any { isCallControlViewId(it) } ||
+        labels.any { isCallControlLabel(it) }
+
+/** Issue #520 (C-11): the owner LOCK decision. Before this cure,
+ *  the first package in the foreground when a call mode was
+ *  observed became the owner — communication mode alone minted
+ *  the exemption, so a game with voice chat (or a recorder) that
+ *  flipped MODE_IN_COMMUNICATION owned a call that did not exist.
+ *  The lock now requires one independent proof: the candidate is
+ *  a call-surface package, it holds the dialer role, Telecom
+ *  reports a call of its own, or the candidate's foreground
+ *  window carries call controls. Mode is evidence, never proof. */
+internal fun shouldLockCallOwner(
+    audioMode: Int,
+    candidatePackage: String?,
+    defaultDialerPackage: String? = null,
+    telecomCallActive: Boolean = false,
+    candidateSurfaceVisible: Boolean = false
+): Boolean {
+    if (!isCallAudioMode(audioMode)) return false
+    val candidate = candidatePackage ?: return false
+    return isCallSurfacePackage(candidate) ||
+        candidate == defaultDialerPackage ||
+        telecomCallActive ||
+        candidateSurfaceVisible
 }
 
 /** Installer surfaces that can force-stop / uninstall Monolith
@@ -706,6 +809,19 @@ class MonolithAccessibilityService : AccessibilityService() {
         var foregroundMono: Long = 0L
             internal set
 
+        /** Issue #520 (5-D): the call owner, exported for the
+         *  shield door — the a11y door's one call truth, mirrored
+         *  the instant the lock takes or clears (setCallOwner is
+         *  the only writer) and zeroed with the binding beside
+         *  [foregroundPackage]. The shield's selection exempts
+         *  this package alongside the safety floor, so the
+         *  fallback door can never yank a live call the a11y
+         *  door lawfully exempted into the Airlock. Null whenever
+         *  no call stands or this service is unbound. */
+        @Volatile
+        var callOwnerPackageNow: String? = null
+            internal set
+
         /** Truth Car 3 (UNA-01): the sniper's gate. The sniper
          *  fires only where its persisted switch says so — OFF
          *  means Shorts and Reels are left alone. A missing
@@ -853,6 +969,11 @@ class MonolithAccessibilityService : AccessibilityService() {
         // renders, so enforcement no longer waits for the rendered
         // player the old path needed to see.
         val sniperTabClicked: Boolean = false,
+        /** Issue #520 (5-C): this window's tree carries call
+         *  controls — the per-window call-surface fact, captured
+         *  from THIS window's root (a swept PiP call window
+         *  carries its own verdict, not the active window's). */
+        val callSurfaceVisible: Boolean = false,
         /** Issue #121: the foreground window's class name, captured
          *  synchronously from the event for the worker's
          *  ringing-window check (an alarm-class package whose
@@ -948,6 +1069,7 @@ class MonolithAccessibilityService : AccessibilityService() {
             armedMono = 0L
             foregroundPackage = null
             foregroundMono = 0L
+            callOwnerPackageNow = null
             WatchStore.onAccessibilityBound(false)
         }
         return super.onUnbind(intent)
@@ -1022,12 +1144,13 @@ class MonolithAccessibilityService : AccessibilityService() {
         // only that a root EXISTS, never its content.)
         if (armedSessionId == -1) return
 
-        // Call tracking + bypass — PER CALL (Wave-3 #42): refresh
+        // Call tracking + bypass — PER CALL (Wave-3 #42; the
+        // lock and the owner leg narrowed by issue #520): refresh
         // the foreground tracker and the call owner from this
         // event first, then ask the pure decision. A live call
         // exempts its own surface only; it no longer suspends
         // blocking for every other app on the phone.
-        refreshCallTracking(pkgName, event.eventType)
+        refreshCallTracking(pkgName, event.eventType, event.className?.toString())
         if (isCallActiveForPackage(pkgName)) return
 
         // Synchronous fact capture: every node-derived verdict is
@@ -1039,9 +1162,14 @@ class MonolithAccessibilityService : AccessibilityService() {
         // coroutine latency, or the feed renders first anyway.
         val tabClicked = event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED &&
             isSniperTabClick(event)
-        val facts = captureEventFacts(pkgName).copy(
+        val captured = captureEventFacts(pkgName)
+        val facts = captured.copy(
             sniperTabClicked = tabClicked,
-            windowClassName = event?.className?.toString().orEmpty()
+            windowClassName = event?.className?.toString().orEmpty(),
+            // Issue #520 (5-C): the class-name leg of this event's
+            // own window joins the tree leg the capture took.
+            callSurfaceVisible = captured.callSurfaceVisible ||
+                isCallSurfaceClassName(event?.className?.toString())
         )
         val snapshot = EventSnapshot(pkgName, facts, armedSessionId)
         if (facts.tamperSurface) {
@@ -1141,12 +1269,19 @@ class MonolithAccessibilityService : AccessibilityService() {
     }
 
     // ------------------------------------------------------------------
-    // Call tracking (Wave-3 #42): the foreground package is tracked
-    // from window-state events (package name only — no content), so
-    // the moment a call becomes active the service can name its
-    // OWNER: the app that was in front when the call began. The
-    // owner locks on first observation and clears when the call
-    // ends; it never follows the user into other apps mid-call.
+    // Call tracking (Wave-3 #42; lock + surface narrowed by issue
+    // #520): the foreground package is tracked from window-state
+    // events, so the moment a call becomes active the service can
+    // name its OWNER — but the lock now requires proof
+    // (shouldLockCallOwner): a call mode observed over an arbitrary
+    // foreground app locks NOTHING (C-11). A window that proves
+    // itself a call surface can take the lock over from an
+    // unproven holder, so the lock converges to the app actually
+    // showing the call. The owner clears when the call ends; it
+    // never follows the user into other apps mid-call.
+    // [callOwnerSurfaceInFront] is the companion fact: the active
+    // window right now IS the owner's call surface. The owner leg
+    // of the bypass stands only while it does (5-C).
     // ------------------------------------------------------------------
 
     // Audit R6 #340 F10: per-domain redirect return leases —
@@ -1160,7 +1295,22 @@ class MonolithAccessibilityService : AccessibilityService() {
     @Volatile
     private var callOwnerPackage: String? = null
 
-    private fun refreshCallTracking(pkgName: String, eventType: Int) {
+    /** Issue #520 (5-C): the active window is the owner's call
+     *  surface — refreshed on window-state events while a call
+     *  stands; the owner leg of the bypass reads it. */
+    @Volatile
+    private var callOwnerSurfaceInFront: Boolean = false
+
+    /** Sets the owner and its exported mirror together (issue
+     *  #520, 5-D): the shield door imports the mirror, so the two
+     *  must never disagree. */
+    private fun setCallOwner(pkg: String?) {
+        if (callOwnerPackage == pkg) return
+        callOwnerPackage = pkg
+        callOwnerPackageNow = pkg
+    }
+
+    private fun refreshCallTracking(pkgName: String, eventType: Int, windowClassName: String?) {
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             lastForegroundPackage = pkgName
         }
@@ -1169,21 +1319,66 @@ class MonolithAccessibilityService : AccessibilityService() {
         } catch (_: Exception) {
             null
         } ?: return
-        val callMode = mode == AudioManager.MODE_RINGTONE ||
-            mode == AudioManager.MODE_IN_CALL ||
-            mode == AudioManager.MODE_IN_COMMUNICATION
-        if (callMode) {
-            if (callOwnerPackage == null) {
-                callOwnerPackage = if (
-                    eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-                ) {
-                    pkgName
-                } else {
-                    lastForegroundPackage
+        if (!isCallAudioMode(mode)) {
+            if (callOwnerPackage != null) setCallOwner(null)
+            callOwnerSurfaceInFront = false
+            return
+        }
+        val windowState = eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        // The surface verdict for the window this event describes,
+        // probed ONLY when a decision below consumes it (the
+        // owner's own window changing, a lock challenge, a lock
+        // attempt): the class leg is free; the tree leg reads the
+        // active window's root once.
+        val surfaceHere = lazy(LazyThreadSafetyMode.NONE) {
+            activeWindowCarriesCallControls(windowClassName)
+        }
+        if (windowState) {
+            when {
+                pkgName == callOwnerPackage ->
+                    callOwnerSurfaceInFront = surfaceHere.value
+                // Any other app in front: the owner's surface is
+                // not the window being judged. (Its call window
+                // may still stand as a swept window — that verdict
+                // rides the snapshot's own facts, not this one.)
+                callOwnerPackage != null -> callOwnerSurfaceInFront = false
+            }
+            // A window that PROVES itself a call surface takes
+            // the lock (issue #520, C-11 convergence): the lock
+            // belongs to the app showing the call, never to
+            // whichever app happened to be foreground when the
+            // mode flipped.
+            if (pkgName != callOwnerPackage && surfaceHere.value) {
+                setCallOwner(pkgName)
+                callOwnerSurfaceInFront = true
+            }
+        }
+        if (callOwnerPackage == null) {
+            val candidate = if (windowState) pkgName else lastForegroundPackage
+            val telecom = try {
+                getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+            } catch (e: Exception) {
+                noteDetectionFailure("callTrackingTelecom", e); null
+            }
+            val defaultDialer = telecom?.let {
+                try { it.defaultDialerPackage } catch (e: Exception) {
+                    noteDetectionFailure("callTrackingDialer", e); null
                 }
             }
-        } else if (callOwnerPackage != null) {
-            callOwnerPackage = null
+            val telecomInCall = telecom?.let {
+                try { it.isInCall } catch (e: Exception) {
+                    noteDetectionFailure("callTrackingIsInCall", e); false
+                }
+            } ?: false
+            // The candidate IS the foreground app in both shapes
+            // (this event's package on a window change; the
+            // tracked foreground otherwise), so the active
+            // window's verdict is the candidate's own.
+            val candidateSurface = candidate != null && surfaceHere.value
+            if (shouldLockCallOwner(mode, candidate, defaultDialer, telecomInCall, candidateSurface)) {
+                setCallOwner(candidate)
+                callOwnerSurfaceInFront = candidateSurface
+            }
         }
     }
 
@@ -1227,10 +1422,15 @@ class MonolithAccessibilityService : AccessibilityService() {
             collectNodeTexts(rootNode, out, 0)
             out
         }
-        if (!needsRoot) return EventFacts(windowTexts = windowTexts)
-        
+        val callSurfaceVisible = treeCarriesCallControls(rootNode)
+        if (!needsRoot) return EventFacts(
+            windowTexts = windowTexts,
+            callSurfaceVisible = callSurfaceVisible
+        )
+
         val facts = EventFacts(
             tamperSurface = isPackageInstallerOrTamperSettings(pkgName, rootNode),
+            callSurfaceVisible = callSurfaceVisible,
             sniperFeedVisible = detectShortsOrReelsFeed(rootNode),
             browserUrlTexts = if (isSupportedBrowser(pkgName)) {
                 extractBrowserUrlTexts(rootNode, pkgName)
@@ -1271,6 +1471,50 @@ class MonolithAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Issue #520 (5-C): the bounded tree walk for call controls —
+     *  same discipline as [collectNodeTexts] (depth/count caps;
+     *  focused nodes skipped for labels, since a label being typed
+     *  is not a control). View ids are structure, not typed
+     *  content, and are always collected. */
+    private fun collectCallControlSignals(
+        node: AccessibilityNodeInfo?,
+        ids: MutableList<String>,
+        labels: MutableList<String>,
+        depth: Int
+    ) {
+        if (node == null || depth > 12 || ids.size + labels.size > 240) return
+        node.viewIdResourceName?.let { ids.add(it) }
+        if (!node.isFocused) {
+            node.text?.toString()?.let { labels.add(it) }
+            node.contentDescription?.toString()?.let { labels.add(it) }
+        }
+        for (i in 0 until node.childCount) {
+            if (ids.size + labels.size > 240) return
+            collectCallControlSignals(node.getChild(i), ids, labels, depth + 1)
+        }
+    }
+
+    /** Does this window's tree carry call controls? (issue #520) */
+    private fun treeCarriesCallControls(rootNode: AccessibilityNodeInfo?): Boolean {
+        if (rootNode == null) return false
+        val ids = mutableListOf<String>()
+        val labels = mutableListOf<String>()
+        collectCallControlSignals(rootNode, ids, labels, 0)
+        return windowCarriesCallControls(null, ids, labels)
+    }
+
+    /** The call-surface verdict for the CURRENT foreground window:
+     *  the class leg first (no tree read), the tree leg on the
+     *  active window's root when the class is silent (issue #520).
+     *  A failed root read is "no proof", never a crash. */
+    private fun activeWindowCarriesCallControls(windowClassName: String?): Boolean {
+        if (isCallSurfaceClassName(windowClassName)) return true
+        val rootNode = try { rootInActiveWindow } catch (e: Exception) {
+            noteDetectionFailure("callSurfaceRoot", e); null
+        } ?: return false
+        return treeCarriesCallControls(rootNode)
+    }
+
     /** The ONE worker's per-event body: sequential, single-flight,
      *  fed only by synchronously captured facts. The app table is
      *  read once and shared by the lease check and the tier door
@@ -1286,8 +1530,11 @@ class MonolithAccessibilityService : AccessibilityService() {
         // Call re-check at processing time: a call that began after
         // this event was captured (owner not yet locked at capture)
         // still exempts its own surface — the intercept must never
-        // win the race against the ring.
-        if (isCallActiveForPackage(pkgName)) return
+        // win the race against the ring. The snapshot's own
+        // per-window surface fact rides along (issue #520): a
+        // swept PiP call window is judged on ITS tree, not on the
+        // active window's verdict.
+        if (isCallActiveForPackage(pkgName, snapshot.facts.callSurfaceVisible)) return
 
         // Issue #121 (Audit R3b, alarm-fires-mid-session): the
         // time-critical alert gate. This door's call bypass can
@@ -1756,7 +2003,15 @@ class MonolithAccessibilityService : AccessibilityService() {
         return com.example.data.TimeCriticalApps.isAlarmPackage(pkgName, alarmHandlers)
     }
 
-    private fun isCallActiveForPackage(pkgName: String): Boolean {
+    /** [snapshotSurfaceVisible] is the per-window fact a swept
+     *  snapshot carries for its OWN window (issue #520): the
+     *  tracked active-window verdict cannot speak for a PiP call
+     *  window standing behind another app, so the worker's
+     *  re-check honours either. */
+    private fun isCallActiveForPackage(
+        pkgName: String,
+        snapshotSurfaceVisible: Boolean = false
+    ): Boolean {
         return try {
             val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return false
             val defaultDialer = try {
@@ -1766,7 +2021,11 @@ class MonolithAccessibilityService : AccessibilityService() {
                 MLog.d("a11y defaultDialerPackage probe failed: ${e.message}")
                 null
             }
-            shouldBypassForCall(am.mode, pkgName, callOwnerPackage, defaultDialer)
+            shouldBypassForCall(
+                am.mode, pkgName, callOwnerPackage, defaultDialer,
+                ownerSurfaceVisible = pkgName == callOwnerPackage &&
+                    (callOwnerSurfaceInFront || snapshotSurfaceVisible)
+            )
         } catch (e: Exception) {
             // Issue #76: a thrown AudioManager query is not "no call"
             // — the bypass is still lost (fail-closed stands), but
@@ -2145,6 +2404,7 @@ class MonolithAccessibilityService : AccessibilityService() {
             armedMono = 0L
             foregroundPackage = null
             foregroundMono = 0L
+            callOwnerPackageNow = null
             WatchStore.onAccessibilityBound(false)
         }
         scope.cancel()
