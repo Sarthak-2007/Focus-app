@@ -19,6 +19,7 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.example.MainActivity
+import com.example.R
 import com.example.data.MonolithDao
 import com.example.data.MonolithRepository
 import kotlinx.coroutines.CoroutineScope
@@ -155,9 +156,13 @@ class PillController(
         when (face) {
             is PillFace.Session -> {
                 labelText?.text = if (face.isStopwatch) {
-                    "SESSION · ELAPSED"
+                    context.getString(R.string.pill_label_session_elapsed)
                 } else {
-                    "SESSION · BLOCK ${face.blockIndex}/${face.blockCount}"
+                    context.getString(
+                        R.string.pill_label_session_block,
+                        face.blockIndex,
+                        face.blockCount
+                    )
                 }
                 timeText?.text = if (face.isStopwatch) {
                     "+${formatClock(face.elapsedSeconds)}"
@@ -167,7 +172,7 @@ class PillController(
                 closeText?.visibility = View.GONE
             }
             is PillFace.Break -> {
-                labelText?.text = "BREAK"
+                labelText?.text = context.getString(R.string.pill_label_break)
                 timeText?.text = formatClock(face.remainingSeconds)
                 closeText?.visibility = View.GONE
             }
