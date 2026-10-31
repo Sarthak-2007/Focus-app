@@ -10,12 +10,15 @@ import com.example.data.MonolithRepository
 import com.example.data.SessionOutcome
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 
 /**
  * Issue #103 F2 — the 10-second grace deadline is enforced in the
@@ -40,6 +43,18 @@ class GraceDeadlineRepositoryTest {
         dao: MonolithDao,
         secondsAgo: Long
     ): Int {
+        // AUDIT-CLOCK census seat (a) cure (#166): Robolectric's
+        // shadow monotonic clock starts near zero, so the raw
+        // backdate below clamped the mono anchor to 1L — the
+        // verified clock then read (0s, tamper = true), and every
+        // assertion in this file rode the presaved stored counter
+        // alone; the verified leg these tests advertise did not
+        // exist. Give the phone an uptime past the backdate first
+        // (the ForgeLot idiom), inside the helper so both call
+        // sites are cured: the anchor pair is now real, the
+        // verified read equals the backdate, and a break in the
+        // verified-clock path moves the booked outcome.
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(secondsAgo + 60L))
         val nowWall = System.currentTimeMillis()
         val nowMono = SystemClock.elapsedRealtime()
         val id = dao.insertSession(
@@ -72,6 +87,10 @@ class GraceDeadlineRepositoryTest {
         val row = dao.getSessionHistorySnapshot().first { it.id == sessionId }
         assertEquals(0, row.elapsedSeconds)
         assertEquals(SessionOutcome.GRACE_CANCEL, row.outcome)
+        // The verified leg is real now (seat (a) cure): the two
+        // anchors agree, so the ending write stamps no tamper.
+        // Before the cure this row silently carried tamper = true.
+        assertFalse(row.tamperDetected)
     }
 
     @Test
@@ -79,8 +98,9 @@ class GraceDeadlineRepositoryTest {
         val dao = MonolithDatabase.getInstance(context).monolithDao()
         val repo = MonolithRepository(context, dao)
         // Five real minutes in — far past the printed 10 seconds.
-        // The stored counter and the verified clock agree; only the
-        // string claims "Grace Cancel".
+        // The stored counter and the verified clock agree (the
+        // helper advances the shadow clock so both anchors are
+        // real); only the string claims "Grace Cancel".
         val sessionId = insertActiveSessionBackdated(dao, secondsAgo = 300L)
 
         repo.disarmActiveSession(
@@ -96,5 +116,10 @@ class GraceDeadlineRepositoryTest {
         )
         assertEquals(SessionOutcome.ENDED_EARLY, row.outcome)
         assertEquals("partial_stamp", row.forgedArtifactId)
+        // The verified leg is real now (seat (a) cure): the two
+        // anchors agree, so the ending write stamps no tamper.
+        // Before the cure the verified read was (0s, tamper =
+        // true) and this booking rode the stored counter alone.
+        assertFalse(row.tamperDetected)
     }
 }
