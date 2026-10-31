@@ -1,5 +1,8 @@
 package com.example.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
+import android.graphics.Bitmap
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -9,6 +12,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -24,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -42,13 +47,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -90,6 +102,7 @@ import kotlinx.coroutines.delay
  * - ShieldCapSelector for discrete 3-position Loadout selection (STUDY / WORK / SLEEP).
  * - AppRowSledToggleView ultra-minimal installed app rows with 3-stop sled switches (SHUT / PEEK / OPEN).
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun ShieldMatrixScreen(
     allApps: List<BlockedAppEntity>,
@@ -129,6 +142,17 @@ fun ShieldMatrixScreen(
     onUndoProfileApply: () -> Unit = {},
     onToggleShortsReelsSniper: () -> Unit,
     onToggleBrowserUrlBlocker: () -> Unit,
+    // Issue #337 F1: the accessibility-shortcut binding state and
+    // its deep link. Defaults keep render harnesses unchanged.
+    accessibilityShortcutSet: Boolean = false,
+    onOpenAccessibilityShortcutSettings: () -> Unit = {},
+    // Issue #339 (Second-pass F1): the Web Gate — block-all mode
+    // and its allowed-host list. Defaults keep harnesses unchanged.
+    webBlockAll: Boolean = false,
+    onToggleWebBlockAll: () -> Unit = {},
+    allowedWebHosts: List<String> = emptyList(),
+    onAddAllowedWebHost: (String) -> Unit = {},
+    onRemoveAllowedWebHost: (String) -> Unit = {},
     routines: List<com.example.data.RoutineEntity> = emptyList(),
     showResetNote: Boolean = false,
     onDismissResetNote: () -> Unit = {},
@@ -163,7 +187,10 @@ fun ShieldMatrixScreen(
     // Null = nothing pending; the words are the repository's record,
     // composed by the caller, printed exactly.
     pruneNoteText: String? = null,
-    onPruneNoteDismissed: () -> Unit = {}
+    onPruneNoteDismissed: () -> Unit = {},
+    // Issue #129 F1: the unreviewed-auto-OPEN review prompt. Not
+    // dismissible — it stands until each named app has a ruling.
+    unreviewedOpenText: String? = null
 ) {
     val scheme = MaterialTheme.colorScheme
     val effectiveNight = isDarkTheme || isSessionActive
@@ -212,12 +239,19 @@ fun ShieldMatrixScreen(
     // Sweeper: a rest whose lifecycle was interrupted (an outside
     // actor re-tiered the app mid-rest) retires by age — a resting
     // entry may never become a permanent suppression.
+    // Issue #69 F5(a) — demand-driven: the old loop woke every
+    // 700 ms for the screen's whole life just to check the map
+    // was empty. Now it runs only while a rest exists to retire
+    // (the prune predicate is age-based at 1,200 ms, so starting
+    // the sweep when the first rest lands cannot miss one).
     LaunchedEffect(Unit) {
-        while (true) {
-            delay(700)
-            if (restingFlips.isNotEmpty()) {
-                val now = SystemClock.elapsedRealtime()
-                restingFlips = restingFlips.filterValues { now - it.createdAtMs <= 1200 }
+        snapshotFlow { restingFlips }.collect { flips ->
+            if (flips.isNotEmpty()) {
+                while (restingFlips.isNotEmpty()) {
+                    delay(700)
+                    val now = SystemClock.elapsedRealtime()
+                    restingFlips = pruneRests(restingFlips, now)
+                }
             }
         }
     }
@@ -241,10 +275,16 @@ fun ShieldMatrixScreen(
             onSetAppTier(pkg, resting.from)
         } else {
             val current = app.resolvedTier
-            val target = if (current == AppBlockTier.LOCKED) {
-                AppBlockTier.PEEK_2M
-            } else {
-                AppBlockTier.LOCKED
+            // Audit R6 #341 F22: the tap path walks the FULL ring
+            // LOCKED -> PEEK -> OPEN -> LOCKED. Before this, OPEN was
+            // unreachable by tap and one tap on an OPEN app silently
+            // LOCKED it — the only non-drag control destroyed the
+            // ruling it touched. The mid-session weakening ratchet
+            // below still refuses a weakening flip while sealed.
+            val target = when (current) {
+                AppBlockTier.LOCKED -> AppBlockTier.PEEK_2M
+                AppBlockTier.PEEK_2M -> AppBlockTier.OPEN
+                AppBlockTier.OPEN -> AppBlockTier.LOCKED
             }
             onSetAppTier(pkg, target)
             // The choreography runs only when the commit will land:
@@ -264,34 +304,6 @@ fun ShieldMatrixScreen(
         }
     }
 
-    /** The slip's lines for one section: committed lines in place,
-     *  plus any line resting here after a flip — and a line resting
-     *  elsewhere is suppressed here, so an app is present in exactly
-     *  one section at any instant. */
-    fun slipLines(tier: AppBlockTier): List<SlipLine> {
-        val committed = when (tier) {
-            AppBlockTier.PEEK_2M -> rules.peek
-            AppBlockTier.LOCKED -> rules.shut
-            AppBlockTier.OPEN -> rules.open
-        }
-        val lines = mutableListOf<SlipLine>()
-        for (app in committed) {
-            val resting = restingFlips[app.packageName]
-            if (resting != null && resting.from != tier) continue
-            lines += SlipLine(app = app, word = app.resolvedTier, resting = null)
-        }
-        for ((pkg, resting) in restingFlips) {
-            if (resting.from != tier) continue
-            val app = allApps.firstOrNull { it.packageName == pkg } ?: continue
-            if (app.resolvedTier == tier) continue
-            lines += SlipLine(app = app, word = resting.to, resting = resting)
-        }
-        // AppRules' total order (issue #35): name, then package —
-        // a name tie can never inherit feed/intercept order here.
-        return lines.sortedWith(
-            compareBy<SlipLine> { it.app.appName.lowercase(java.util.Locale.ROOT) }.thenBy { it.app.packageName }
-        )
-    }
 
     LazyColumn(
         state = listState,
@@ -306,67 +318,15 @@ fun ShieldMatrixScreen(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 100.dp)
     ) {
         // One-Way Ratchet warning banner if user tries to weaken rules during active session
-        item {
-            AnimatedVisibility(visible = !ratchetWarningMessage.isNullOrBlank()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(scheme.primaryContainer)
-                        .padding(12.dp)
-                ) {
-                    Text(
-                        text = ratchetWarningMessage ?: "",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        color = TokenColorOnPrimary
-                    )
-                }
-                // #153 F4: a day that needs a different block can
-                // get one — routines are addable, not just seeded.
-                BlockitActionChip(wordLabel = "+ ADD ROUTINE", isPrimaryInk = true, onClick = onAddRoutine)
-            }
-        }
+        item { RatchetWarningBanner(message = ratchetWarningMessage, onAddRoutine = onAddRoutine) }
 
-        // Issue #141: the sled commit's receipt + take-back. A tier
-        // change used to land silently and forever; while the undo
-        // window lasts, the banner names what changed and offers
-        // the reversal on the spot.
+        // Issue #141: the sled commit's receipt + take-back (the
+        // banner body lives in TierChangeUndoBanner below).
         item {
-            AnimatedVisibility(visible = tierChangeForUndo != null) {
-                val change = tierChangeForUndo
-                if (change != null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(scheme.primaryContainer)
-                            .padding(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "'${change.appName.uppercase()}' SET TO ${tierWord(change.toTier)}",
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = Color(0xFFFBF1EC)
-                            )
-                            Text(
-                                text = "UNDO",
-                                modifier = Modifier.clickable { onUndoTierChange() },
-                                fontFamily = AtkinsonHyperlegibleFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = Color(0xFFFBF1EC)
-                            )
-                        }
-                    }
-                }
-            }
+            TierChangeUndoBanner(
+                change = tierChangeForUndo,
+                onUndo = onUndoTierChange
+            )
         }
 
         // Issue #139 F4: the undo strip — a profile application
@@ -399,6 +359,7 @@ fun ShieldMatrixScreen(
         // the same 84dp slot the knob's AndroidView held)
         // =====================================================================
         item {
+            val context = LocalContext.current
             // The counts left this header (Liv D3, adopted by Gust):
             // SHUT / PEEK / OPEN live on the standing-orders tally
             // below — one home per number, or numbers are decoration.
@@ -423,7 +384,22 @@ fun ShieldMatrixScreen(
                 LoadoutPreviewPanel(
                     loadout = loadout,
                     preview = remember(loadout, allApps) {
-                        LoadoutRules.preview(loadout, allApps)
+                        // Issue #121: the preview resolves the same
+                        // structural time-critical set the commit
+                        // path uses (SLEEP only) — issue #107's law:
+                        // the printed counts are computed by the
+                        // exact rule that will commit them.
+                        LoadoutRules.preview(
+                            loadout, allApps,
+                            if (loadout == com.example.data.SmartLoadout.SLEEP) {
+                                com.example.data.TimeCriticalApps
+                                    .resolveTimeCriticalPackages(
+                                        context, allApps.map { it.packageName }
+                                    )
+                            } else {
+                                emptySet()
+                            }
+                        )
                     },
                     onApply = {
                         // Reverse direction of the same ONE mapping
@@ -442,85 +418,24 @@ fun ShieldMatrixScreen(
         // SECTION 3: ROUTINES — real, persisted, self-arming (Ren)
         // =====================================================================
         item {
-            FullBleedSectionHeader(
-                titleWord = "ROUTINES",
-                rightWordPrefix = "",
-                // UNA-09: count what the scheduler counts — LIVE
-                // routines only (RoutineSchedule.liveCount: enabled
-                // AND at least one day). A daysMask == 0 routine the
-                // chain skips is never printed as ACTIVE.
-                rightMonoNumber = com.example.data.RoutineSchedule.liveCount(routines).toString(),
-                rightWordSuffix = " ACTIVE"
+            RoutinesSection(
+                routines = routines,
+                showResetNote = showResetNote,
+                showFreshStartNote = showFreshStartNote,
+                showUpdateNote = showUpdateNote,
+                onDismissResetNote = onDismissResetNote,
+                onDismissFreshStartNote = onDismissFreshStartNote,
+                onDismissUpdateNote = onDismissUpdateNote,
+                onToggleRoutine = onToggleRoutine,
+                onCycleRoutineLoadout = onCycleRoutineLoadout,
+                onAdjustRoutineTime = onAdjustRoutineTime,
+                onToggleRoutineDay = onToggleRoutineDay,
+                onSkipRoutineToday = onSkipRoutineToday,
+                onResumeRoutine = onResumeRoutine,
+                onDeleteRoutine = onDeleteRoutine,
+                onRenameRoutine = onRenameRoutine,
+                onSetRoutineTime = onSetRoutineTime
             )
-            if (showFreshStartNote) {
-                // R3b #161 (update-day): a fresh seed means this
-                // phone holds no Monolith past — said once, plainly,
-                // at first open, in the open instead of buried in
-                // the Drawer's PARK plate. Tap dismisses.
-                Text(
-                    text = "FRESH START ON THIS PHONE — NO PAST CAME WITH IT. IF YOU HAD MONOLITH BEFORE, ITS RECORD STAYED ON THAT PHONE: MONOLITH KEEPS EVERYTHING ON THE PHONE IT WAS MADE ON. TAP TO CLOSE.",
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 11.sp,
-                    color = scheme.primary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp)
-                        .clickable { onDismissFreshStartNote() }
-                        .testTag("fresh_start_note")
-                )
-            }
-            if (showUpdateNote) {
-                // R3b #161: an update used to land in silence (the
-                // boot receiver swallowed MY_PACKAGE_REPLACED). Now
-                // the first open after an update says so, once.
-                Text(
-                    text = "MONOLITH UPDATED — THIS PHONE'S TASKS, HISTORY AND SHIELD CAME THROUGH THE UPDATE WITH IT. TAP TO CLOSE.",
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 11.sp,
-                    color = scheme.primary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp)
-                        .clickable { onDismissUpdateNote() }
-                        .testTag("update_note")
-                )
-            }
-            if (showResetNote) {
-                // One-time reseed strip (Freya §3.3; R3b #161): his
-                // schedule was reset to his real day. The note now
-                // says what was NOT touched, and only his tap on
-                // the note itself dismisses it — obeying it (an
-                // edit) no longer erases the record.
-                Text(
-                    text = "AN UPDATE RESET YOUR ROUTINE TIMES TO YOUR DAY — YOUR TASKS, HISTORY AND SHIELD WERE NOT TOUCHED. TAP A ROW TO CHANGE A TIME. TAP THIS NOTE TO CLOSE IT.",
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 11.sp,
-                    color = scheme.primary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp)
-                        .clickable { onDismissResetNote() }
-                        .testTag("routine_reset_note")
-                )
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                routines.forEach { routine ->
-                    RoutineRow(
-                        routine = routine,
-                        onToggle = { onToggleRoutine(routine) },
-                        onCycleLoadout = { onCycleRoutineLoadout(routine) },
-                        onAdjustStart = { delta -> onAdjustRoutineTime(routine, true, delta) },
-                        onAdjustEnd = { delta -> onAdjustRoutineTime(routine, false, delta) },
-                        onToggleDay = { day -> onToggleRoutineDay(routine, day) },
-                        onSkipToday = { onSkipRoutineToday(routine) },
-                        onResume = { onResumeRoutine(routine) },
-                        onDelete = { onDeleteRoutine(routine) },
-                        onRename = { name -> onRenameRoutine(routine, name) },
-                        onSetTime = { start, end -> onSetRoutineTime(routine, start, end) }
-                    )
-                }
-            }
         }
 
         // =====================================================================
@@ -554,6 +469,20 @@ fun ShieldMatrixScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     StandingTallyLine(counts = tallyShown)
+                    // Issue #129 F5: the tally's OPEN figure is
+                    // exposure, and the slip now says so in words
+                    // — an open app is not bookkeeping, it is a
+                    // door nothing guards for a whole session.
+                    if (rules.unguardedCount > 0) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "${rules.unguardedCount} OPEN — NOT HELD. ANY OF THEM CAN BE USED FOR THE WHOLE SESSION.",
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("open_exposure_line")
+                        )
+                    }
                     // Issue #107 (#2): the PEEK terms, printed where
                     // the rulings are read.
                     Text(
@@ -567,7 +496,7 @@ fun ShieldMatrixScreen(
                     )
                 }
             }
-            val peekLines = slipLines(AppBlockTier.PEEK_2M)
+            val peekLines = slipLines(AppBlockTier.PEEK_2M, rules, restingFlips, allApps)
             item { SlipSectionHeader(word = "PEEK") }
             if (peekLines.isEmpty()) {
                 item { SlipNoneLine() }
@@ -588,7 +517,7 @@ fun ShieldMatrixScreen(
                     )
                 }
             }
-            val shutLines = slipLines(AppBlockTier.LOCKED)
+            val shutLines = slipLines(AppBlockTier.LOCKED, rules, restingFlips, allApps)
             item { SlipSectionHeader(word = "SHUT") }
             if (shutLines.isEmpty()) {
                 item { SlipNoneLine() }
@@ -615,7 +544,7 @@ fun ShieldMatrixScreen(
             // only by the absence nobody audits. The open rulings are
             // printed like the others; a line tap shuts the app
             // (the book amends in both directions).
-            val openLines = slipLines(AppBlockTier.OPEN)
+            val openLines = slipLines(AppBlockTier.OPEN, rules, restingFlips, allApps)
             item { SlipSectionHeader(word = "OPEN") }
             if (openLines.isEmpty()) {
                 item { SlipNoneLine() }
@@ -662,6 +591,24 @@ fun ShieldMatrixScreen(
             }
         }
 
+        // #129 F1: the review prompt — apps the keyword guess set
+        // OPEN that he never ruled on, named, directly above the
+        // catalogue where the ruling is made. No tap target: it
+        // leaves only by being answered, app by app.
+        if (unreviewedOpenText != null) {
+            item {
+                Text(
+                    text = unreviewedOpenText,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("unreviewed_open_note")
+                )
+            }
+        }
+
         // =====================================================================
         // SECTION 4: SEARCH & CATEGORY FILTER STRIP
         // =====================================================================
@@ -678,8 +625,20 @@ fun ShieldMatrixScreen(
                 color = scheme.onSurfaceVariant,
                 modifier = Modifier.testTag("shield_catalog_scope_line")
             )
-            Spacer(modifier = Modifier.height(8.dp))
+        }
 
+        // Issue #142: the search bar and the category chips PIN to
+        // the top of the list (stickyHeader). Finding an app used
+        // to start with scrolling back up the page; now the strip
+        // stays where the results are, and the query can be refined
+        // or cleared in place (the ✕ at the bar's end).
+        stickyHeader {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(scheme.background)
+                    .padding(vertical = 8.dp)
+            ) {
             // Recessed 12dp search bar
             Box(
                 modifier = Modifier
@@ -690,31 +649,47 @@ fun ShieldMatrixScreen(
                     .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.CenterStart
             ) {
-                if (searchQuery.isEmpty()) {
-                    Text(
-                        text = "Filter apps by name or package…",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 13.sp,
-                        color = scheme.onSurfaceVariant
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        if (searchQuery.isEmpty()) {
+                            Text(
+                                text = "Filter apps by name or package…",
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 13.sp,
+                                color = scheme.onSurfaceVariant
+                            )
+                        }
+                        BasicTextField(
+                            value = searchQuery,
+                            onValueChange = onSearchQueryChanged,
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = scheme.onBackground
+                            ),
+                            // The accent law (chrome C7): a caret is furniture,
+                            // not a commit — it wears ink, never the accent.
+                            cursorBrush = SolidColor(scheme.onBackground),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("shield_search_input")
+                        )
+                    }
+                    if (searchQuery.isNotEmpty()) {
+                        Text(
+                            text = "✕",
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 13.sp,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clickable { onSearchQueryChanged("") }
+                                .padding(start = 8.dp)
+                                .testTag("shield_search_clear")
+                        )
+                    }
                 }
-                BasicTextField(
-                    value = searchQuery,
-                    onValueChange = onSearchQueryChanged,
-                    singleLine = true,
-                    textStyle = TextStyle(
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        color = scheme.onBackground
-                    ),
-                    // The accent law (chrome C7): a caret is furniture,
-                    // not a commit — it wears ink, never the accent.
-                    cursorBrush = SolidColor(scheme.onBackground),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("shield_search_input")
-                )
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -740,6 +715,41 @@ fun ShieldMatrixScreen(
                         onClick = { onSelectCategory(if (selectedCategory == cat) null else cat) }
                     )
                 }
+            }
+            // The zero-result line pins WITH the search strip
+            // (issue #142, closure fix): the answer stays on screen
+            // while the query is refined, instead of living in a
+            // list item the catalogue can scroll past. The line's
+            // semantics are unchanged - an empty list is answered
+            // in print, never with a void (Liv/Gust); a search hit
+            // under another category says exactly that (fresh-eyes
+            // L7); the existence check uses the SAME match as the
+            // filter (appMatchesQuery, #107/#142), and the search
+            // line never claims an app is absent from the phone.
+            if (filteredApps.isEmpty()) {
+                val existsOutsideFilter = searchQuery.isNotBlank() && allApps.any {
+                    com.example.ui.appMatchesQuery(it, searchQuery)
+                }
+                Text(
+                    text = when {
+                        searchQuery.isNotBlank() && existsOutsideFilter ->
+                            "THAT NAME IS ON THIS PHONE — NOT IN THIS CATEGORY"
+                        searchQuery.isNotBlank() && selectedCategory != null ->
+                            "NO MATCH FOR THAT SEARCH IN ${selectedCategory.label.uppercase()} — TRY THE APP'S NAME OR ITS PACKAGE NAME"
+                        searchQuery.isNotBlank() ->
+                            "NO MATCH FOR THAT SEARCH — TRY THE APP'S NAME OR ITS PACKAGE NAME"
+                        selectedCategory != null ->
+                            "NO APPS IN THIS CATEGORY ON THIS PHONE"
+                        else -> "NO APPS ON THIS PHONE"
+                    },
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .padding(top = 8.dp)
+                        .testTag("shield_no_match_line")
+                )
+            }
             }
         }
 
@@ -770,40 +780,6 @@ fun ShieldMatrixScreen(
                 onCycleDailyLimit = onCycleDailyLimit,
                 onSetAppCategory = onSetAppCategory
             )
-        }
-
-        // The first sentence the installed-only cure lets the app say
-        // honestly (Liv, adopted by Gust): an empty list is answered
-        // in print, never with a void. Fresh-eyes L7: the filtered
-        // list is query AND category chip, so a search hit that
-        // lives under another category must say exactly that — the
-        // phone fact is only claimed when the name matches NOTHING
-        // in the full catalog. Issue #51 F5 widened the trigger:
-        // the non-search empties (a category void, a whole-list
-        // void) print their fact too. (Union merged by STOSS-34:
-        // L7's cross-category case first, #107's never-deny search
-        // line second, #51's two void facts last.)
-        if (filteredApps.isEmpty()) {
-            item {
-                val existsOutsideFilter = allApps.any {
-                    it.appName.contains(searchQuery, ignoreCase = true)
-                }
-                Text(
-                    text = when {
-                        searchQuery.isNotBlank() && existsOutsideFilter ->
-                            "THAT NAME IS ON THIS PHONE — NOT IN THIS CATEGORY"
-                        searchQuery.isNotBlank() ->
-                            "NO MATCH FOR THAT SEARCH — TRY THE APP'S NAME OR ITS PACKAGE NAME"
-                        selectedCategory != null ->
-                            "NO APPS IN THIS CATEGORY ON THIS PHONE"
-                        else -> "NO APPS ON THIS PHONE"
-                    },
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 11.sp,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.testTag("shield_no_match_line")
-                )
-            }
         }
 
         // =====================================================================
@@ -840,6 +816,41 @@ fun ShieldMatrixScreen(
                         testTag = "shield_sniper_toggle"
                     )
                 }
+                // #337 F1: the accessibility shortcut — the second,
+                // system-level activation path for the service. The
+                // chip names the binding's actual state and opens
+                // the exact system screen where it is made.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "ACCESSIBILITY SHORTCUT",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground
+                    )
+                    BlockitActionChip(
+                        wordLabel = if (accessibilityShortcutSet) "SET" else "BIND",
+                        isPrimaryInk = accessibilityShortcutSet,
+                        onClick = onOpenAccessibilityShortcutSettings,
+                        testTag = "shield_a11y_shortcut_chip"
+                    )
+                }
+                // #335 F5: the detector-health line — first/last
+                // node, stale and slow-scan states, printed from
+                // the DetectorHealth record the services write.
+                Text(
+                    text = com.example.ui.components.detectorLineFor(
+                        com.example.service.DetectorHealth.snapshot(),
+                        SystemClock.elapsedRealtime()
+                    ).text,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("shield_detector_health_line")
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -857,6 +868,99 @@ fun ShieldMatrixScreen(
                         onClick = onToggleBrowserUrlBlocker,
                         testTag = "shield_browser_blocker_toggle"
                     )
+                }
+                // #339 F1: the Web Gate row — block the whole web
+                // except the allowed hosts below.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "WEB GATE — BLOCK ALL BUT ALLOWED",
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        color = scheme.onBackground
+                    )
+                    BlockitActionChip(
+                        wordLabel = if (webBlockAll) "ON" else "OFF",
+                        isPrimaryInk = webBlockAll,
+                        onClick = onToggleWebBlockAll,
+                        testTag = "shield_web_gate_toggle"
+                    )
+                }
+                if (webBlockAll) {
+                    var allowedHostText by remember { mutableStateOf("") }
+                    var allowedHostError by remember { mutableStateOf<String?>(null) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        BasicTextField(
+                            value = allowedHostText,
+                            onValueChange = { allowedHostText = it },
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 14.sp,
+                                color = scheme.onBackground
+                            ),
+                            cursorBrush = SolidColor(scheme.onBackground),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("shield_web_gate_host_input")
+                        )
+                        BlockitActionChip(
+                            wordLabel = "ALLOW",
+                            isPrimaryInk = true,
+                            onClick = {
+                                val normalised =
+                                    com.example.data.normaliseAllowedHost(allowedHostText)
+                                when {
+                                    allowedHostText.isBlank() -> Unit
+                                    normalised == null -> allowedHostError =
+                                        "NOT A HOST — CHECK THE ADDRESS AND TRY AGAIN"
+                                    allowedWebHosts.contains(normalised) -> allowedHostError =
+                                        "ALREADY ALLOWED"
+                                    else -> {
+                                        onAddAllowedWebHost(normalised)
+                                        allowedHostText = ""
+                                        allowedHostError = null
+                                    }
+                                }
+                            },
+                            testTag = "shield_web_gate_add"
+                        )
+                    }
+                    if (allowedHostError != null) {
+                        Text(
+                            text = allowedHostError!!,
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            color = scheme.onSurfaceVariant
+                        )
+                    }
+                    allowedWebHosts.forEach { host ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = host,
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 13.sp,
+                                color = scheme.onBackground
+                            )
+                            BlockitActionChip(
+                                wordLabel = "REMOVE",
+                                isPrimaryInk = false,
+                                onClick = { onRemoveAllowedWebHost(host) },
+                                testTag = "shield_web_gate_remove_$host"
+                            )
+                        }
+                    }
                 }
                 if (profiles.isNotEmpty()) {
                     Row(
@@ -935,7 +1039,7 @@ fun ShieldMatrixScreen(
                     ) {
                         if (newSiteText.isEmpty()) {
                             Text(
-                                text = "Add a site — e.g. news.ycombinator.com",
+                                text = stringResource(R.string.shield_add_site_hint),
                                 fontFamily = AtkinsonHyperlegibleFamily,
                                 fontSize = 13.sp,
                                 color = scheme.onSurfaceVariant
@@ -1022,6 +1126,194 @@ internal val PEEK_TERMS_LINE: String =
  * applies until APPLY LOADOUT is tapped; KEEP MY RULES stages
  * nothing and changes nothing.
  */
+// ------------------------------------------------------------------
+// Issue #90 (complexity F4, section extractions): the banner pair
+// and the routines section used to live inline in ShieldMatrixScreen's
+// LazyColumn. They are standalone composables now, with every input
+// passed explicitly; bodies are verbatim, behaviour unchanged.
+// ------------------------------------------------------------------
+
+@Composable
+private fun RatchetWarningBanner(
+    message: String?,
+    onAddRoutine: (() -> Unit)? = null
+) {
+    val scheme = MaterialTheme.colorScheme
+    AnimatedVisibility(visible = !message.isNullOrBlank()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(scheme.primaryContainer)
+                .padding(12.dp)
+        ) {
+            Text(
+                text = message ?: "",
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                color = TokenColorOnPrimary
+            )
+        }
+        if (onAddRoutine != null) {
+            // #153 F4: a day that needs a different block can
+            // get one — routines are addable, not just seeded.
+            BlockitActionChip(wordLabel = "+ ADD ROUTINE", isPrimaryInk = true, onClick = onAddRoutine)
+        }
+    }
+}
+
+/** Issue #141: the sled commit's receipt + take-back. A tier
+ *  change used to land silently and forever; while the undo
+ *  window lasts, the banner names what changed and offers
+ *  the reversal on the spot. */
+@Composable
+private fun TierChangeUndoBanner(
+    change: TierChangeForUndo?,
+    onUndo: () -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    AnimatedVisibility(visible = change != null) {
+        if (change != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(scheme.primaryContainer)
+                    .padding(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "'${change.appName.uppercase()}' SET TO ${tierWord(change.toTier)}",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = Color(0xFFFBF1EC)
+                    )
+                    Text(
+                        text = "UNDO",
+                        modifier = Modifier.clickable { onUndo() },
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = Color(0xFFFBF1EC)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Issue #90 (complexity F4, section extraction): the ROUTINES
+ *  section — header, the one-time notes (fresh start / update /
+ *  reseed) and the routine rows — as one private composable.
+ *  Re-extracted at the #90 merge onto current main: the notes
+ *  (R3b #161) and the wider RoutineRow API are main's, verbatim. */
+@Composable
+private fun RoutinesSection(
+    routines: List<com.example.data.RoutineEntity>,
+    showResetNote: Boolean,
+    showFreshStartNote: Boolean,
+    showUpdateNote: Boolean,
+    onDismissResetNote: () -> Unit,
+    onDismissFreshStartNote: () -> Unit,
+    onDismissUpdateNote: () -> Unit,
+    onToggleRoutine: (com.example.data.RoutineEntity) -> Unit,
+    onCycleRoutineLoadout: (com.example.data.RoutineEntity) -> Unit,
+    onAdjustRoutineTime: (com.example.data.RoutineEntity, Boolean, Int) -> Unit,
+    onToggleRoutineDay: (com.example.data.RoutineEntity, Int) -> Unit,
+    onSkipRoutineToday: (com.example.data.RoutineEntity) -> Unit,
+    onResumeRoutine: (com.example.data.RoutineEntity) -> Unit,
+    onDeleteRoutine: (com.example.data.RoutineEntity) -> Unit,
+    onRenameRoutine: (com.example.data.RoutineEntity, String) -> Unit,
+    onSetRoutineTime: (com.example.data.RoutineEntity, Int, Int) -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    FullBleedSectionHeader(
+        titleWord = "ROUTINES",
+        rightWordPrefix = "",
+        // UNA-09: count what the scheduler counts — LIVE
+        // routines only (RoutineSchedule.liveCount: enabled
+        // AND at least one day). A daysMask == 0 routine the
+        // chain skips is never printed as ACTIVE.
+        rightMonoNumber = com.example.data.RoutineSchedule.liveCount(routines).toString(),
+        rightWordSuffix = " ACTIVE"
+    )
+    if (showFreshStartNote) {
+        // R3b #161 (update-day): a fresh seed means this
+        // phone holds no Monolith past — said once, plainly,
+        // at first open, in the open instead of buried in
+        // the Drawer's PARK plate. Tap dismisses.
+        Text(
+            text = "FRESH START ON THIS PHONE — NO PAST CAME WITH IT. IF YOU HAD MONOLITH BEFORE, ITS RECORD STAYED ON THAT PHONE: MONOLITH KEEPS EVERYTHING ON THE PHONE IT WAS MADE ON. TAP TO CLOSE.",
+            fontFamily = AnonymousProFamily,
+            fontSize = 11.sp,
+            color = scheme.primary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp)
+                .clickable { onDismissFreshStartNote() }
+                .testTag("fresh_start_note")
+        )
+    }
+    if (showUpdateNote) {
+        // R3b #161: an update used to land in silence (the
+        // boot receiver swallowed MY_PACKAGE_REPLACED). Now
+        // the first open after an update says so, once.
+        Text(
+            text = "MONOLITH UPDATED — THIS PHONE'S TASKS, HISTORY AND SHIELD CAME THROUGH THE UPDATE WITH IT. TAP TO CLOSE.",
+            fontFamily = AnonymousProFamily,
+            fontSize = 11.sp,
+            color = scheme.primary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp)
+                .clickable { onDismissUpdateNote() }
+                .testTag("update_note")
+        )
+    }
+    if (showResetNote) {
+        // One-time reseed strip (Freya §3.3; R3b #161): his
+        // schedule was reset to his real day. The note now
+        // says what was NOT touched, and only his tap on
+        // the note itself dismisses it — obeying it (an
+        // edit) no longer erases the record.
+        Text(
+            text = "AN UPDATE RESET YOUR ROUTINE TIMES TO YOUR DAY — YOUR TASKS, HISTORY AND SHIELD WERE NOT TOUCHED. TAP A ROW TO CHANGE A TIME. TAP THIS NOTE TO CLOSE IT.",
+            fontFamily = AnonymousProFamily,
+            fontSize = 11.sp,
+            color = scheme.primary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp)
+                .clickable { onDismissResetNote() }
+                .testTag("routine_reset_note")
+        )
+    }
+    Spacer(modifier = Modifier.height(4.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        routines.forEach { routine ->
+            RoutineRow(
+                routine = routine,
+                onToggle = { onToggleRoutine(routine) },
+                onCycleLoadout = { onCycleRoutineLoadout(routine) },
+                onAdjustStart = { delta -> onAdjustRoutineTime(routine, true, delta) },
+                onAdjustEnd = { delta -> onAdjustRoutineTime(routine, false, delta) },
+                onToggleDay = { day -> onToggleRoutineDay(routine, day) },
+                onSkipToday = { onSkipRoutineToday(routine) },
+                onResume = { onResumeRoutine(routine) },
+                onDelete = { onDeleteRoutine(routine) },
+                onRename = { name -> onRenameRoutine(routine, name) },
+                onSetTime = { start, end -> onSetRoutineTime(routine, start, end) }
+            )
+        }
+    }
+       
+}
+
 @Composable
 private fun LoadoutPreviewPanel(
     loadout: SmartLoadout,
@@ -1086,6 +1378,15 @@ private fun LoadoutPreviewPanel(
 
 private fun fmtRoutineTime(minutes: Int): String =
     "%02d:%02d".format(minutes / 60, minutes % 60)
+
+/** Issue #152: the current local UTC offset ("+05:30"; UTC is
+ *  "+00:00"), printed beside routine times so the zone a printed
+ *  wall time lives in is never left implicit. */
+private fun localOffsetLabel(): String {
+    val offset = java.time.ZoneId.systemDefault().rules
+        .getOffset(java.time.Instant.now())
+    return if (offset == java.time.ZoneOffset.UTC) "+00:00" else offset.id
+}
 
 private fun routineDaysLabel(mask: Int): String = when (mask) {
     127 -> "DAILY"
@@ -1166,7 +1467,7 @@ private fun RoutineRow(
                     color = scheme.onBackground
                 )
                 Text(
-                    text = "→ " + fmtRoutineTime(draftEnd),
+                    text = stringResource(R.string.shield_routine_end, fmtRoutineTime(draftEnd)),
                     fontFamily = AnonymousProFamily,
                     fontSize = 11.sp,
                     color = scheme.onSurfaceVariant
@@ -1184,7 +1485,12 @@ private fun RoutineRow(
                     color = scheme.onBackground
                 )
                 Text(
-                    text = "${routineDaysLabel(routine.daysMask)} · ${routineLoadoutLabel(routine.loadoutName)}",
+                    // Issue #152: a routine's printed times are
+                    // LOCAL wall times in the zone in force — the
+                    // line now says so, with the current offset,
+                    // so after a landing no printed routine time
+                    // is ambiguous about which zone it means.
+                    text = "${routineDaysLabel(routine.daysMask)} · ${routineLoadoutLabel(routine.loadoutName)} · LOCAL ${localOffsetLabel()}",
                     fontFamily = AnonymousProFamily,
                     fontSize = 12.sp,
                     color = scheme.onSurfaceVariant
@@ -1221,7 +1527,7 @@ private fun RoutineRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "START",
+                text = stringResource(R.string.label_start),
                 fontFamily = AnonymousProFamily,
                 fontSize = 11.sp,
                 color = scheme.onSurfaceVariant
@@ -1229,7 +1535,7 @@ private fun RoutineRow(
             BlockitActionChip(wordLabel = "−30", onClick = { draftAdjust(true, -30) })
             BlockitActionChip(wordLabel = "+30", onClick = { draftAdjust(true, 30) })
             Text(
-                text = "END",
+                text = stringResource(R.string.label_end),
                 fontFamily = AnonymousProFamily,
                 fontSize = 11.sp,
                 color = scheme.onSurfaceVariant
@@ -1243,11 +1549,21 @@ private fun RoutineRow(
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf("M", "T", "W", "T", "F", "S", "S").forEachIndexed { index, letter ->
+            // Audit R6 #341 F61: two-letter labels (TU != TH, SA != SU)
+            // with the full day name + selected state in semantics —
+            // before this, 'T' was two different days, selection was
+            // colour-only, and Voice Access could not name a chip.
+            listOf("MO", "TU", "WE", "TH", "FR", "SA", "SU").forEachIndexed { index, letter ->
+                val dayName = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")[index]
+                val daySelected = routine.daysMask and (1 shl index) != 0
                 BlockitActionChip(
                     wordLabel = letter,
-                    isPrimaryInk = routine.daysMask and (1 shl index) != 0,
-                    onClick = { onToggleDay(index) }
+                    isPrimaryInk = daySelected,
+                    onClick = { onToggleDay(index) },
+                    modifier = Modifier.semantics {
+                        contentDescription = dayName
+                        stateDescription = if (daySelected) "Selected" else "Not selected"
+                    }
                 )
             }
         }
@@ -1361,15 +1677,66 @@ private fun FilterWord(
  *  section, rests 300ms, then exits over 280ms and is present in its
  *  new section when next seen. [createdAtMs] lets the screen's
  *  sweeper retire an entry whose lifecycle was interrupted. */
-private data class RestingFlip(
+internal data class RestingFlip(
     val from: AppBlockTier,
     val to: AppBlockTier,
     val exiting: Boolean,
     val createdAtMs: Long
 )
 
+/** Issue #69 F5(a): the sweeper's prune law, pure — a rest
+ *  retires once it is older than [REST_MAX_AGE_MS]; younger
+ *  rests stay. The sweeper itself is demand-driven (it runs
+ *  only while the rests map is non-empty), so with no rests
+ *  there is no loop and nothing to prune. */
+internal const val REST_MAX_AGE_MS = 1200L
+internal fun pruneRests(
+    rests: Map<String, RestingFlip>,
+    nowMs: Long
+): Map<String, RestingFlip> =
+    rests.filterValues { nowMs - it.createdAtMs <= REST_MAX_AGE_MS }
+
 /** One printed line of the book: the app, the ruling word it wears
  *  right now, and its rest state when it is mid-flip. */
+/** Issue #90: hoisted out of ShieldMatrixScreen's body — it was a
+ *  nested local helper defined mid-composable; as a top-level
+ *  function its three captures (rules, restingFlips, allApps) are
+ *  explicit parameters and the derivation is testable in isolation.
+ *
+ *  The slip's lines for one section: committed lines in place,
+ *  plus any line resting here after a flip — and a line resting
+ *  elsewhere is suppressed here, so an app is present in exactly
+ *  one section at any instant. */
+private fun slipLines(
+    tier: AppBlockTier,
+    rules: com.example.data.AppRules,
+    restingFlips: Map<String, RestingFlip>,
+    allApps: List<BlockedAppEntity>
+): List<SlipLine> {
+    val committed = when (tier) {
+        AppBlockTier.PEEK_2M -> rules.peek
+        AppBlockTier.LOCKED -> rules.shut
+        AppBlockTier.OPEN -> rules.open
+    }
+    val lines = mutableListOf<SlipLine>()
+    for (app in committed) {
+        val resting = restingFlips[app.packageName]
+        if (resting != null && resting.from != tier) continue
+        lines += SlipLine(app = app, word = app.resolvedTier, resting = null)
+    }
+    for ((pkg, resting) in restingFlips) {
+        if (resting.from != tier) continue
+        val app = allApps.firstOrNull { it.packageName == pkg } ?: continue
+        if (app.resolvedTier == tier) continue
+        lines += SlipLine(app = app, word = resting.to, resting = resting)
+    }
+    // AppRules' total order (issue #35): name, then package —
+    // a name tie can never inherit feed/intercept order here.
+    return lines.sortedWith(
+        compareBy<SlipLine> { it.app.appName.lowercase() }.thenBy { it.app.packageName }
+    )
+}
+
 private data class SlipLine(
     val app: BlockedAppEntity,
     val word: AppBlockTier,
@@ -1432,7 +1799,7 @@ private fun SlipHeaderRow(right: AnnotatedString?) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "YOUR RULES",
+                text = stringResource(R.string.shield_your_rules),
                 fontFamily = AtkinsonHyperlegibleFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 11.5.sp,
@@ -1499,7 +1866,7 @@ private fun SlipNoneLine() {
         contentAlignment = Alignment.CenterStart
     ) {
         Text(
-            text = "NONE",
+            text = stringResource(R.string.label_none),
             fontFamily = AnonymousProFamily,
             fontSize = 11.sp,
             letterSpacing = 1.sp,
@@ -1573,6 +1940,9 @@ private fun SlipLineRow(
             overflow = TextOverflow.Ellipsis
         )
         Text(
+            // Audit R6 #341 F62: drawn leader, not typed text — a
+            // screen reader stepping the rules hit a meaningless
+            // 90-dot string on every row before the ruling.
             text = " .".repeat(90),
             fontFamily = AnonymousProFamily,
             fontSize = 11.sp,
@@ -1583,6 +1953,7 @@ private fun SlipLineRow(
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 6.dp)
+                .clearAndSetSemantics { }
         )
         // The re-strike: the word lifts and lands whole, 260ms
         // Curve A — never a roll (M4's governor rides the tally;
@@ -1629,31 +2000,64 @@ private fun CatalogueAppRow(
         runCatching { AppCategory.valueOf(app.category) }.getOrNull()
     }
     Column(modifier = Modifier.fillMaxWidth()) {
-        AndroidView(
-            factory = { ctx ->
-                AppRowSledToggleView(ctx).apply {
-                    this.soundEngine = soundEngine
-                }
-            },
-            update = { view ->
-                view.isNightMode = effectiveNight
-                view.soundEngine = soundEngine
-                view.appName = app.appName
-                view.currentTier = app.resolvedTier
+        // Issue #142 (closure pass, STURM-4): the app's real icon
+        // beside the sled — the audit's twin-apps charge ("Clock"
+        // vs "Clock", identical truncated prefixes) is answered by
+        // the icon AND the package line below, not the package
+        // alone. Same PackageManager pattern as the launcher
+        // tiles (LauncherBlockScreen); a package with no icon
+        // simply leaves the slot empty.
+        val rowContext = LocalContext.current
+        val rowIcon: Bitmap? = remember(app.packageName) {
+            runCatching {
+                val drawable = rowContext.packageManager.getApplicationIcon(app.packageName)
+                val bmp = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
+                val canvas = android.graphics.Canvas(bmp)
+                drawable.setBounds(0, 0, 96, 96)
+                drawable.draw(canvas)
+                bmp
+            }.getOrNull()
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (rowIcon != null) {
+                Image(
+                    bitmap = rowIcon.asImageBitmap(),
+                    contentDescription = app.appName,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .padding(end = 10.dp)
+                        .testTag("app_icon_${app.packageName}")
+                )
+            }
+            AndroidView(
+                factory = { ctx ->
+                    AppRowSledToggleView(ctx).apply {
+                        this.soundEngine = soundEngine
+                    }
+                },
+                update = { view ->
+                    view.isNightMode = effectiveNight
+                    view.soundEngine = soundEngine
+                    view.appName = app.appName
+                    view.currentTier = app.resolvedTier
                 // Issue #140: the daily limit, printed on the row,
-                // and the hold that steps it — see MonolithViewModel
+                // and the hold that steps it - see MonolithViewModel
                 // .cycleAppDailyLimit.
                 view.usageCaption = "USED ${app.todayUsageMinutes} OF ${app.dailyLimitMinutes} MIN TODAY"
                 view.onDailyLimitLongPress = { onCycleDailyLimit(app) }
-                view.onTierSelected = { newTier ->
-                    onSetAppTier(app.packageName, newTier)
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(54.dp)
-                .testTag("app_row_${app.packageName}")
-        )
+                    view.onTierSelected = { newTier ->
+                        onSetAppTier(app.packageName, newTier)
+                    }
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(54.dp)
+                    .testTag("app_row_${app.packageName}")
+            )
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1685,5 +2089,19 @@ private fun CatalogueAppRow(
                 color = scheme.onSurfaceVariant
             )
         }
+        // Issue #142: the package name, printed on every row.
+        // Similar-named apps (and the twin builds a long name
+        // truncates into sameness on the sled) are told apart by
+        // the one string that is never shared.
+        Text(
+            text = app.packageName,
+            fontFamily = AnonymousProFamily,
+            fontSize = 10.sp,
+            letterSpacing = 1.sp,
+            color = scheme.onSurfaceVariant,
+            modifier = Modifier
+                .padding(vertical = 1.dp)
+                .testTag("app_package_${app.packageName}")
+        )
     }
 }

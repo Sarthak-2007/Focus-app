@@ -16,6 +16,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -90,22 +91,32 @@ class ScreenshotHarnessTest {
     private lateinit var viewModel: MonolithViewModel
     private lateinit var soundEngine: TactileSoundEngine
 
-    // Lane redirect (pipeline law, Oct 29): a lane tree drops a
-    // one-line shots-redirect.txt (module root or repo root) naming
-    // its OWN shots dir, so parallel lanes never overwrite each
-    // other's renders. No file -> the shared trunk default below.
+    // Output dir (issue #382 cure; same shape as Boden's test-floor
+    // cure tracked on #166): the old law read a committed
+    // shots-redirect.txt whose target was an absolute path on the
+    // author's machine — every CI capture died at the PNG write
+    // (FileNotFoundException, 14 of this class's 15 tests red in CI,
+    // 15/15 green locally). Order now: explicit env/property override
+    // (CI sets SCREENSHOTS_DIR) -> a lane redirect ONLY when its
+    // first-line target is creatable and writable on THIS machine ->
+    // the module build dir, which exists anywhere the build runs.
     private val shotsDir: File = run {
+        val override = System.getenv("SCREENSHOTS_DIR")?.takeIf { it.isNotBlank() }
+            ?: System.getProperty("monolith.screenshotsDir")?.takeIf { it.isNotBlank() }
+        if (override != null) return@run File(override)
         val redirect = listOf(
             File("shots-redirect.txt"),
             File("../shots-redirect.txt"),
             File("app/shots-redirect.txt")
         ).firstOrNull { it.isFile }
-        val target = redirect?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        // Issue #66 finisher cure: a redirect naming a directory that cannot
-        // be created on THIS machine (a lane-local absolute path committed by
-        // accident poisoned every CI capture with FileNotFoundException at
-        // the FileOutputStream below) must fall through to the next
-        // candidate instead of being honoured blindly.
+        // Merged resolution (issue #382 x issue #66 finisher cure):
+        // first line only (the committed file carries prose on line
+        // 2), then the #66 fall-through — a redirect naming a
+        // directory that cannot be created on THIS machine must not
+        // be honoured blindly; MONOLITH_SHOTS_DIR next; the module
+        // build dir last, which exists anywhere the build runs.
+        val target = redirect?.readText()?.lineSequence()?.firstOrNull()?.trim()
+            ?.takeIf { it.isNotEmpty() }
         listOfNotNull(target, System.getenv("MONOLITH_SHOTS_DIR"), "build/outputs/screenshots")
             .map { File(it) }
             .first { it.mkdirs() || it.isDirectory }
@@ -114,6 +125,12 @@ class ScreenshotHarnessTest {
     @Before
     fun setup() {
         shotsDir.mkdirs()
+        // Fail HERE, loudly, if the dir cannot be written — the old
+        // silent mkdirs() failure surfaced 50 lines later as a
+        // FileNotFoundException at the PNG write and hid the cause.
+        check(shotsDir.isDirectory && shotsDir.canWrite()) {
+            "ScreenshotHarnessTest: shots dir not writable: ${shotsDir.absolutePath}"
+        }
         context = ApplicationProvider.getApplicationContext()
         db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
             .allowMainThreadQueries()
@@ -131,6 +148,27 @@ class ScreenshotHarnessTest {
 
     @After
     fun tearDown() {
+        closeDb()
+    }
+
+    // Issue #382, technique from Boden's test-floor round 4 (#166,
+    // SoundAndSocialTruthTest): closing the DB under in-flight
+    // ViewModel coroutines threw pool-closed IllegalStateExceptions
+    // (SQLiteConnectionPool / SQLiteClosable) that surfaced inside
+    // the NEXT test — in CI this killed hb4JammedRootApp and
+    // tcDrawerDetailsAndSubSteps while 13 sibling tests passed.
+    // Drain both schedulers first, then close.
+    private fun closeDb() {
+        repeat(40) {
+            ShadowLooper.idleMainLooper()
+            try {
+                composeRule.waitForIdle()
+            } catch (_: Throwable) {
+                // Infinite animations can keep the rule non-idle; the
+                // loop's sleeps still give writers their window.
+            }
+            Thread.sleep(25L)
+        }
         db.close()
     }
 
@@ -213,7 +251,7 @@ class ScreenshotHarnessTest {
             captureTo(File(shotsDir, name))
         }
 
-        // The Drawer cabinet (chrome C10): from the landing's CURIOS row.
+        // The Drawer cabinet (chrome C10): from the landing's CABINET row (issue #115; was CURIOS).
         composeRule.runOnUiThread { viewModel.navigateTo(MonolithDestination.VAULT) }
         settle(900)
         composeRule.onNodeWithTag("drawer_curios_row").performClick()
@@ -794,7 +832,19 @@ class ScreenshotHarnessTest {
         // through search, which reads every stored row.
         composeRule.onNodeWithTag("drawer_search_input")
             .performTextInput("Finished Past Midnight")
-        settle(700)
+        // Issue #382: search results arrive asynchronously (Room
+        // flow -> recomposition). A fixed settle(700) lost that race
+        // on the CI runner — the row simply was not composed yet
+        // when the click asserted its existence (AssertionError at
+        // this click, run 41033306008). Wait for the row itself with
+        // the harness's own pumpUntil; the assertion is unchanged,
+        // only the waiting is honest. (waitUntilExactlyOneExists is
+        // an experimental test API this project compiles as error.)
+        val rowShown = pumpUntil(15_000) {
+            composeRule.onAllNodesWithTag("drawer_row_$smallHoursRowId")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        assertTrue("search must surface the Finished Past Midnight row", rowShown)
         composeRule.onNodeWithTag("drawer_row_$smallHoursRowId").performClick()
         settle(700)
         captureTo(File(shotsDir, "tc_drawer_detail_small_hours.png"))

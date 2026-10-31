@@ -13,7 +13,6 @@ import com.example.ui.evaluateTheme
 import com.example.ui.views.RailGeometry
 import java.util.Calendar
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -165,24 +164,38 @@ class ChromeWaveUnitTest {
         // All six measured at 10_000; read at 60_000 -> all stale,
         // the first in board order is named with the suffix.
         assertEquals(
-            "GUARD 0/6 — ACCESSIBILITY STALE",
+            "GUARD 0/6 — USAGE ACCESS STALE",
             guardLineFor(snap, nowMono = 60_000L)?.text
         )
     }
 
     @Test
-    fun guardLine_unmeasuredPrintsNothing() {
+    fun guardLine_unmeasuredPrintsNotChecked() {
+        // Issue #9, P-6: unmeasured prints the confession, never a
+        // blank and never a fabricated count.
         val snap = countedSnap(
             PermState.GRANTED, PermState.GRANTED, PermState.GRANTED, PermState.GRANTED
         )
         val partial = snap.copy(items = snap.items - WatchItemId.DEVICE_ADMIN)
-        assertNull(guardLineFor(partial, nowMono = 20_000L))
-        // An unmeasured OVERLAY silences the line too — no partial
+        assertEquals(
+            "GUARD — NOT CHECKED",
+            guardLineFor(partial, nowMono = 20_000L).text
+        )
+        // An unmeasured OVERLAY gates the line too — no partial
         // denominator is ever printed as if it were the whole.
         val noOverlay = snap.copy(items = snap.items - WatchItemId.OVERLAY)
-        assertNull(guardLineFor(noOverlay, nowMono = 20_000L))
-        assertNull(guardLineFor(null, nowMono = 20_000L))
-        assertNull(guardLineFor(WatchSnapshot.EMPTY, nowMono = 20_000L))
+        assertEquals(
+            "GUARD — NOT CHECKED",
+            guardLineFor(noOverlay, nowMono = 20_000L).text
+        )
+        assertEquals(
+            "GUARD — NOT CHECKED",
+            guardLineFor(null, nowMono = 20_000L).text
+        )
+        assertEquals(
+            "GUARD — NOT CHECKED",
+            guardLineFor(WatchSnapshot.EMPTY, nowMono = 20_000L).text
+        )
     }
 
     // ------------------------------------------------------------------
@@ -303,12 +316,18 @@ class ChromeWaveUnitTest {
         assertTrue(!day.isNight)
         assertEquals("AUTO · DAY — NO ROUTINE OWNS IT", day.readout)
 
+        // Audit R3b #116 (finding 1): a disabled or paused SLEEP
+        // routine no longer costs the dark UI — clock night owns
+        // the theme at 21:30 even when no routine does. (Before
+        // the fix these two asserted DAY: darkness was hostage to
+        // accepting SLEEP's blocking.)
         val disabled = evaluateTheme(
             sessionActive = false,
             routines = listOf(sleepRoutine(20 * 60, 3 * 60 + 30, enabled = false)),
             nowMillis = at2130
         )
-        assertTrue(!disabled.isNight)
+        assertTrue(disabled.isNight)
+        assertEquals("AUTO · NIGHT — CLOCK 20:00–06:00", disabled.readout)
 
         val paused = evaluateTheme(
             sessionActive = false,
@@ -317,6 +336,16 @@ class ChromeWaveUnitTest {
             ),
             nowMillis = at2130
         )
-        assertTrue(!paused.isNight)
+        assertTrue(paused.isNight)
+        assertEquals("AUTO · NIGHT — CLOCK 20:00–06:00", paused.readout)
+
+        // Midday with SLEEP disabled stays DAY: the clock step is
+        // a night signal, not a permanent dark mode.
+        val disabledDay = evaluateTheme(
+            sessionActive = false,
+            routines = listOf(sleepRoutine(20 * 60, 3 * 60 + 30, enabled = false)),
+            nowMillis = at1200
+        )
+        assertTrue(!disabledDay.isNight)
     }
 }

@@ -18,6 +18,13 @@ import org.junit.Test
  *     here by a source tripwire in the TruthCar3Sweep style, plus
  *     the assertion that the SITE door still honours the lease
  *     (the amendment is sniper-only, not a blanket lease repeal).
+ *     COMPOSITION NOTE (W3 #130, on top of #131): #130 is the
+ *     separately-ordered site-door amendment #131's text foresaw
+ *     as out of its scope — the site gate no longer honours the
+ *     BLANKET lease either; it honours only a domain-scoped site
+ *     peek (sitePeekExempts + SitePeekStore). The site-door
+ *     tripwire below was updated to pin that composed truth; the
+ *     sniper tripwires are #131's, unchanged.
  *  2. The PARK toggle was a lived no-op in default config: cured
  *     by the same wiring (the toggle now decides whether Shorts
  *     may play inside the default YouTube peek). The gate function
@@ -75,7 +82,7 @@ class ShortsReelsLivedTest {
     // --- Finding 1/2: the lease no longer silences the sniper ----
 
     @Test
-    fun sniperGate_doesNotConsultTheLease_siteDoorStillDoes() {
+    fun sniperGate_doesNotConsultTheLease_siteDoorHonoursOnlyScopedPeek() {
         val source = locateMainSource(
             "com/example/service/MonolithAccessibilityService.kt"
         ).readText()
@@ -85,11 +92,32 @@ class ShortsReelsLivedTest {
         )
         assertTrue(
             "the sniper gate must still exist, armed by the persisted switch alone",
-            source.contains("if (shortsSniperArmed(guardSettings, pkgName))")
+            // #130 composition repair: the #42 pipeline merge
+            // re-shaped this gate to `... && snapshot.facts.…`
+            // after #131 wrote this tripwire, so the original
+            // substring no longer exists on main and this
+            // assertion was already red there. The pinned shape
+            // below is the gate's current form — same intent:
+            // the switch (plus the captured feed fact), no lease.
+            // #166 U2 re-pin (W2 BUILDER-B4): the gate has since
+            // gained its surface-store parameter
+            // (`shortsSniperArmed(guardSettings, pkgName, surfaceStore)`),
+            // so the two-argument pin died again; the pin below is
+            // the gate's full current prefix — stricter, same
+            // intent: the switch + the store + the captured feed
+            // fact, still no lease anywhere in it.
+            source.contains("if (shortsSniperArmed(guardSettings, pkgName, surfaceStore) && snapshot.facts.sniperFeedVisible)")
+        )
+        // #130 composition (see the class doc): the site gate must
+        // NOT be blanket-silenced by a package lease any more —
+        // its only exemption is the domain-scoped site peek.
+        assertFalse(
+            "the site blocker is blanket-silenced by the lease again — a browser peek is back to being a web pass (#130)",
+            source.contains("if (!leaseLive && (guardSettings?.browserBlockerEnabled")
         )
         assertTrue(
-            "the site blocker must still honour the lease (the #131 amendment is sniper-only)",
-            source.contains("if (!leaseLive && (guardSettings?.browserBlockerEnabled")
+            "the site blocker must honour the domain-scoped site peek (sitePeekExempts, #130)",
+            source.contains("sitePeekExempts(")
         )
     }
 
@@ -102,7 +130,15 @@ class ShortsReelsLivedTest {
         ).readText()
         assertTrue(
             "the PARK sniper plate must claim FEED scope, not whole-app policing",
-            source.contains("text = \"SHORTS + REELS FEED\"")
+            // Recomposition repair (PR #445): the design-revamp
+            // reworded the plate to carry its setting word
+            // ("SHORTS + REELS FEED \u2014 SETTING", ParkDrawer.kt)
+            // after #131 wrote this tripwire, so the exact-match
+            // string no longer exists on main and this assertion
+            // was already red there. The pinned shape below is
+            // the plate's current form \u2014 same intent: the
+            // claim is FEED scope, not whole-app policing.
+            source.contains("text = \"SHORTS + REELS FEED \u2014 SETTING\"")
         )
     }
 

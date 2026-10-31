@@ -3,9 +3,9 @@ package com.example.service
 import android.content.Context
 import android.os.SystemClock
 import android.util.Log
+import com.example.data.DayWordStore
+import com.example.data.DrawerDay
 import com.example.data.GuardSettingsEntity
-import com.example.data.MonolithDatabase
-import com.example.data.MonolithRepository
 import com.example.data.RoutineDerive
 import com.example.data.SmartLoadout
 import kotlinx.coroutines.CancellationException
@@ -116,7 +116,7 @@ object RoutineHeartbeat {
      *  the failure above is already in the log. */
     private suspend fun recoverChainAfterFailure(appContext: Context) {
         try {
-            val dao = MonolithDatabase.getInstance(appContext).monolithDao()
+            val dao = com.example.AppContainer.dao(appContext) // ISSUE-67: single construction point
             val now = System.currentTimeMillis()
             val boundary = RoutineDerive.nextBoundaryMillis(dao.getAllRoutinesSnapshot(), now)
             RoutineScheduler.rearmChain(appContext, recoveryRearmMillis(boundary, now))
@@ -147,9 +147,9 @@ object RoutineHeartbeat {
     }
 
     private suspend fun reconcileOnce(appContext: Context) {
-        val database = MonolithDatabase.getInstance(appContext)
-        val dao = database.monolithDao()
-        val repository = MonolithRepository(appContext, dao)
+        // ISSUE-67: construction via the single point.
+        val dao = com.example.AppContainer.dao(appContext)
+        val repository = com.example.AppContainer.repository(appContext)
 
         // Issue #82 (clock-attacks F2): the reconcile's "now" is
         // the HONEST now (monotonic-anchored), never the raw wall
@@ -179,12 +179,23 @@ object RoutineHeartbeat {
         val sessionsById = sessions.associateBy { it.id }
         val settings = dao.getGuardSettingsSnapshot()
 
+        // Excused dates (issue #137, F1): filing dates whose declared
+        // day word is an excuse word (ILL / REST / FAMILY), read
+        // through the repository's union of both word stores (prefs
+        // capture + drained day_notes table), so a drained word
+        // excuses exactly as a fresh one does.
+        val excusedDateIsos = repository.allDayWords().entries
+            .filter { DayWordStore.isExcuse(it.value) }
+            .map { it.key }
+            .toSet()
+
         val result = RoutineDerive.derive(
             routines = routines,
             nowMillis = now,
             activeSession = active,
             sessions = sessions,
-            settings = settings ?: GuardSettingsEntity()
+            settings = settings ?: GuardSettingsEntity(),
+            excusedDateIsos = excusedDateIsos
         )
 
         // 1. Finalise everything derive() declares due — known routines
@@ -227,7 +238,14 @@ object RoutineHeartbeat {
             // window stays refused: the tombstone persists across
             // process death (issue #48). It is checked BEFORE
             // materialising, never after.
-            if (transition.isTombstoned(desired.routineId, desired.windowStartMillis)) {
+            // Issue #137, F1b: never auto-start a session for a
+            // window on an excused date — checked here at the hand
+            // as well as in derive(), so no caller of this funnel
+            // can materialise over a declared sick day.
+            val desiredExcused = DrawerDay.dateIso(
+                DrawerDay.filingDate(desired.windowStartMillis)
+            ) in excusedDateIsos
+            if (desiredExcused || transition.isTombstoned(desired.routineId, desired.windowStartMillis)) {
                 materialised = false
             } else {
                 val session = repository.materialiseRoutineSession(desired)
@@ -252,6 +270,41 @@ object RoutineHeartbeat {
         //    session (manual or routine) is never stopped here.
         if (activeFinalised && !materialised) {
             MonolithShieldService.stopShield(appContext)
+        }
+
+        // 4b. Shield resurrection (issue #81 F2): a session that is
+        //    still live after this pass but whose shield PROCESS is
+        //    gone gets its shield re-raised. The hole this closes:
+        //    force-stop/kill cancels the FGS and every alarm and
+        //    blocks all broadcasts until the user relaunches by
+        //    hand — and that manual relaunch (MainActivity →
+        //    ViewModel init → this funnel's RESUME tick) previously
+        //    reconciled routines and advanced the timer while never
+        //    restarting the shield, so the session ran out its clock
+        //    unprotected, indefinitely. Every recovery door (boot,
+        //    resume, chain alarm, opportunistic service ticks) runs
+        //    this same pass, so the resurrection lives here, once.
+        //    Guarded by the in-memory registry: a live shield is
+        //    never re-started — a second onStartCommand would reset
+        //    its protecting witness and prove nothing.
+        val sessionLiveAfter = materialised || (active != null && !activeFinalised)
+        if (sessionLiveAfter && MonolithShieldService.instance == null) {
+            MonolithShieldService.startShield(appContext)
+        }
+
+        // 4c. Component-surgery witness (issue #81 F5): if a
+        //    critical component (shield, accessibility, listener,
+        //    boot receiver) has been disabled — the adb / pm-disable
+        //    route, invisible to the Settings text guard — while a
+        //    session is live, the session's gap is latched in this
+        //    same pass. The loss is thereby on the session's own
+        //    record (the finish can never certify it clean), not
+        //    discovered later as a generic "service not bound".
+        //    Re-latched by every pass for as long as the component
+        //    stays down, so a tick's full-row write landing between
+        //    passes cannot quietly erase it.
+        if (sessionLiveAfter && repository.disabledCriticalComponents().isNotEmpty()) {
+            repository.latchShieldGapNow()
         }
 
         // 5. Rearm the chain when the boundary moved or the chain is
