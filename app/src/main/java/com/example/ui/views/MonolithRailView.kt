@@ -103,9 +103,12 @@ object RailGeometry {
  *
  * A 52dp recessed band flush at the foot of the screen: four stops
  * printed ON the recess (DECK · SHIELD · TASKS · LEDGER) and, at the
- * track's end, the PARK zone — a flat 48dp stretch that prints NO
- * word ever, because PARK is where the machine's own state lives,
- * not a place he goes. One cap travels the stops under KIN-NAV.
+ * track's end, the PARK zone — a flat 48dp stretch that prints the
+ * one word PARK (issue #115: the zone holds the machine's own state
+ * AND every Settings surface — sound, theme, the Guard board — so a
+ * blank, wordless strip was undiscoverable; the word prints in the
+ * same mono hand as the four stops, nothing else is added). One cap
+ * travels the stops under KIN-NAV.
  *
  * The old MonolithBottomNavView's vocabulary is dead with it: no
  * icons, no badges, no counts, no FOCUS·SYSTEM·HORIZON words, no
@@ -408,8 +411,9 @@ class MonolithRailView(context: Context) : BlockitCanvasView(context) {
         )
 
         // PARK zone furniture: score line at its inner edge, end-wall
-        // line at the track's end, the notch grip between them. The
-        // notch inks up as the cap enters the zone.
+        // line at the track's end, and the PARK word between them
+        // (printed with the stop words below — it inks up as the cap
+        // enters the zone, as the old notch grip did).
         val parkStartX = left + dp(RailGeometry.parkStartDp(recessW))
         val trackRightX = left + dp(RailGeometry.trackRightDp(recessW))
         val parkFraction = (capPos - 3f).coerceIn(0f, 1f)
@@ -418,10 +422,12 @@ class MonolithRailView(context: Context) : BlockitCanvasView(context) {
         canvas.drawLine(parkStartX, dp(6f), parkStartX, h - dp(6f), paintStroke)
         paintStroke.color = inkWithAlpha(0.35f)
         canvas.drawLine(trackRightX - dp(0.5f), dp(6f), trackRightX - dp(0.5f), h - dp(6f), paintStroke)
-        paintStroke.color = inkWithAlpha(0.35f + 0.35f * parkFraction)
+        // The PARK word replaces the old notch grip (issue #115):
+        // the grip was a glyph nobody could read as "settings live
+        // here"; the word is the discoverability. It is printed
+        // AFTER the cap (below, with the stop words) so it stays
+        // legible over the cap exactly like DECK/SHIELD/TASKS/LEDGER.
         val notchCx = (parkStartX + trackRightX) / 2f
-        canvas.drawLine(notchCx - dp(2f), centerY - dp(7f), notchCx - dp(2f), centerY + dp(7f), paintStroke)
-        canvas.drawLine(notchCx + dp(2f), centerY - dp(7f), notchCx + dp(2f), centerY + dp(7f), paintStroke)
 
         // The cap: ink fill, visual only. A DOWN on the selected stop
         // steps its bottom band one tone down — a null press: the
@@ -465,6 +471,16 @@ class MonolithRailView(context: Context) : BlockitCanvasView(context) {
             }
             canvas.drawText(RailGeometry.WORDS[i], cx, wordBaseline, paintMono)
         }
+        // PARK, in the same hand, dead-centre in its zone: secondary
+        // ink at rest, the on-control tone once the cap stands in the
+        // zone (parkFraction tracks the cap's entry), full ink while
+        // pressed — the four stops' tone language, no new vocabulary.
+        paintMono.color = when {
+            pressedStop == RailGeometry.PARK_INDEX && !dragging -> tokTextPrimary()
+            parkOpen || parkFraction >= 0.5f -> tokOnControlFill()
+            else -> inkWithAlpha(0.55f + 0.45f * parkFraction)
+        }
+        canvas.drawText("PARK", notchCx, wordBaseline, paintMono)
 
         // The armed marker at the DECK stop: stroked circle, filled
         // centre, ink — drawn last, over whatever the cap is doing.
@@ -583,6 +599,20 @@ class MonolithRailView(context: Context) : BlockitCanvasView(context) {
                 animateCapTo(RailGeometry.PARK_INDEX.toFloat()) { onParkInvoked?.invoke() }
             stop == selectedTabIndex -> animateCapTo(selectedTabIndex.toFloat(), null)
             else -> animateCapTo(stop.toFloat()) { onTabSelected?.invoke(stop) }
+        }
+    }
+
+    /** Settle the cap onto [stop] (0..3) or the PARK zone (4) —
+     *  the host's truth-telling move after it REFUSES a seat the
+     *  cap already travelled to (issues #128 findings 1 + 4): the
+     *  committed stop never changed, so without this the cap would
+     *  stand over a destination the phone is not on and the band
+     *  would lie about where you are. No seat callback fires: this
+     *  is a return, not a navigation. */
+    fun settleCapTo(stop: Int) {
+        val target = stop.coerceIn(0, RailGeometry.PARK_INDEX).toFloat()
+        if (kotlin.math.abs(capPos - target) > 0.001f) {
+            animateCapTo(target, null)
         }
     }
 

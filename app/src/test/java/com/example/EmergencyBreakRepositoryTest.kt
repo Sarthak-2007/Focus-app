@@ -21,6 +21,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.util.TimeZone
 
 /**
  * TOKEN-SPEC §8 tests 3 + 4 + the restart property of 7, at the
@@ -96,9 +97,10 @@ class EmergencyBreakRepositoryTest {
         // right after the real completion (see below) and every
         // later assertion reads the week the spend actually booked.
         var anchorNow = MonolithWeek.weekAnchorMillis(System.currentTimeMillis())
+        var nextAnchorNow = MonolithWeek.nextWeekAnchorMillis(System.currentTimeMillis())
 
         // Fresh week: the full break is available.
-        assertEquals(0, dao.getSpendsForWeek(anchorNow).size)
+        assertEquals(0, dao.getSpendsForWeek(anchorNow, nextAnchorNow).size)
         assertEquals(1, repo.emergencyBreaksRemaining())
 
         // Test 4a — forced failure at the spend insert: the session
@@ -111,7 +113,7 @@ class EmergencyBreakRepositoryTest {
         } catch (expected: IllegalStateException) {
             assertEquals("forced insert failure", expected.message)
         }
-        assertEquals(0, dao.getSpendsForWeek(anchorNow).size)
+        assertEquals(0, dao.getSpendsForWeek(anchorNow, nextAnchorNow).size)
         assertNotNull(dao.getActiveSessionSnapshot())
 
         // Test 4b — forced failure inside the disarm step: the spend
@@ -124,7 +126,7 @@ class EmergencyBreakRepositoryTest {
         } catch (expected: IllegalStateException) {
             assertEquals("forced disarm failure", expected.message)
         }
-        assertEquals(0, dao.getSpendsForWeek(anchorNow).size)
+        assertEquals(0, dao.getSpendsForWeek(anchorNow, nextAnchorNow).size)
         assertEquals(sessionId, dao.getActiveSessionSnapshot()?.id)
 
         // The real completion: spend + disarm commit together.
@@ -136,7 +138,8 @@ class EmergencyBreakRepositoryTest {
         // straddled Monday 00:00 since anchorNow was captured.
         val spendRow = dao.getAllSpendsSnapshot().single { it.sessionId == sessionId }
         anchorNow = MonolithWeek.weekAnchorMillis(spendRow.spentAtWallMillis)
-        val spends = dao.getSpendsForWeek(anchorNow)
+        nextAnchorNow = MonolithWeek.nextWeekAnchorMillis(spendRow.spentAtWallMillis)
+        val spends = dao.getSpendsForWeek(anchorNow, nextAnchorNow)
         assertEquals(1, spends.size)
         val spend = spends.single()
         assertEquals(sessionId, spend.sessionId)
@@ -165,7 +168,7 @@ class EmergencyBreakRepositoryTest {
         val secondId = insertActiveSession(dao, "Manual Focus")
         assertEquals(BreakResult.RefusedNoToken, relaunchedRepo.completeEmergencyBreak())
         assertEquals(secondId, dao.getActiveSessionSnapshot()?.id)
-        assertEquals(1, dao.getSpendsForWeek(anchorNow).size)
+        assertEquals(1, dao.getSpendsForWeek(anchorNow, nextAnchorNow).size)
 
         // §4.4 — the grace cancel never passes through the ledger: it
         // ends its session booking zero and writes no spend.
@@ -174,8 +177,149 @@ class EmergencyBreakRepositoryTest {
             outcomeReason = "Accidental Start Grace Cancel"
         )
         assertNull(dao.getActiveSessionSnapshot())
-        assertEquals(1, dao.getSpendsForWeek(anchorNow).size)
+        assertEquals(1, dao.getSpendsForWeek(anchorNow, nextAnchorNow).size)
         val grace = dao.getSessionHistorySnapshot().first { it.id == secondId }
         assertEquals(0, grace.elapsedSeconds)
+    }
+
+    // -----------------------------------------------------------------
+    // Issue #82 tightening (STURM3-16) — the default argument of
+    // emergencyBreaksRemaining must resolve to the HONEST now (the
+    // week completeEmergencyBreak books against), never the raw
+    // wall clock: a no-argument caller reads this week's spend as
+    // spent, while an explicit instant a week later still reads a
+    // fresh token — explicit instants are honoured exactly.
+    // -----------------------------------------------------------------
+
+    @Test
+    fun emergencyBreaksRemaining_defaultArgumentReadsTheHonestWeek() = runBlocking {
+        val database = MonolithDatabase.getInstance(context)
+        val dao = database.monolithDao()
+        val repo = MonolithRepository(context, dao)
+        var sessionId: Int? = null
+        try {
+            // Deterministic reset (the issue #66 pattern, as in the
+            // timezone tests below): clear anything counting against
+            // this week before asserting on it.
+            val now = System.currentTimeMillis()
+            val anchor = MonolithWeek.weekAnchorMillis(now)
+            val nextAnchor = MonolithWeek.nextWeekAnchorMillis(now)
+            val tol = MonolithWeek.WEEK_ANCHOR_ZONE_TOLERANCE_MILLIS
+            database.openHelper.writableDatabase.execSQL(
+                "DELETE FROM emergency_break_spends WHERE " +
+                    "(weekAnchorMillis BETWEEN ${anchor - tol} AND ${anchor + tol}) " +
+                    "OR (spentAtWallMillis >= $anchor AND spentAtWallMillis < $nextAnchor)"
+            )
+            assertEquals(1, repo.emergencyBreaksRemaining())
+            assertEquals(1, repo.emergencyBreaksRemaining(Long.MIN_VALUE))
+
+            sessionId = insertActiveSession(dao, "Manual Focus")
+            assertEquals(BreakResult.Completed, repo.completeEmergencyBreak())
+
+            // No argument (and the explicit sentinel) read the honest
+            // week the spend booked against: the token is spent.
+            assertEquals(0, repo.emergencyBreaksRemaining())
+            assertEquals(0, repo.emergencyBreaksRemaining(Long.MIN_VALUE))
+            // An explicit instant is still honoured exactly: next
+            // week has a fresh token.
+            assertEquals(1, repo.emergencyBreaksRemaining(repo.honestNowMillis() + 7 * 24 * 3600_000L))
+        } finally {
+            if (sessionId != null) {
+                database.openHelper.writableDatabase.execSQL(
+                    "DELETE FROM emergency_break_spends WHERE sessionId = $sessionId"
+                )
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Issue #39 F1 — the timezone hole, end to end. A break spent
+    // under one default zone must STILL count after the device zone
+    // changes: remaining stays 0 and a second completion is refused.
+    // Under the old anchor-equality matching every one of these read
+    // remaining == 1 after the switch and minted a second break.
+    // -----------------------------------------------------------------
+
+    @Test
+    fun timezoneChange_istToNewYork_capStaysSpent() = runBlocking {
+        assertCapSurvivesZoneChange("Asia/Kolkata", "America/New_York")
+    }
+
+    @Test
+    fun timezoneChange_newYorkToIst_capStaysSpent() = runBlocking {
+        assertCapSurvivesZoneChange("America/New_York", "Asia/Kolkata")
+    }
+
+    @Test
+    fun timezoneChange_plus14ToMinus12_capStaysSpent() = runBlocking {
+        // The widest real pair: +14 (Kiritimati) to −12 (Etc/GMT+12) —
+        // the same Monday sits the ruled-maximum 26h apart.
+        assertCapSurvivesZoneChange("Pacific/Kiritimati", "Etc/GMT+12")
+    }
+
+    private suspend fun assertCapSurvivesZoneChange(fromZone: String, toZone: String) {
+        val originalZone = TimeZone.getDefault()
+        val database = MonolithDatabase.getInstance(context)
+        val dao = database.monolithDao()
+        val repo = MonolithRepository(context, dao)
+        val createdSessionIds = mutableListOf<Int>()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone(fromZone))
+            // Deterministic reset (the issue #66 pattern): no row
+            // that would count against THIS week may pre-exist —
+            // precisely the rows the new matching would count.
+            val now = System.currentTimeMillis()
+            val anchor = MonolithWeek.weekAnchorMillis(now)
+            val nextAnchor = MonolithWeek.nextWeekAnchorMillis(now)
+            val tol = MonolithWeek.WEEK_ANCHOR_ZONE_TOLERANCE_MILLIS
+            database.openHelper.writableDatabase.execSQL(
+                "DELETE FROM emergency_break_spends WHERE " +
+                    "(weekAnchorMillis BETWEEN ${anchor - tol} AND ${anchor + tol}) " +
+                    "OR (spentAtWallMillis >= $anchor AND spentAtWallMillis < $nextAnchor)"
+            )
+            assertEquals(1, repo.emergencyBreaksRemaining())
+
+            // Spend the week's one break under the FROM zone.
+            val firstId = insertActiveSession(dao, "Manual Focus")
+            createdSessionIds += firstId
+            assertEquals(BreakResult.Completed, repo.completeEmergencyBreak())
+            assertEquals(0, repo.emergencyBreaksRemaining())
+
+            // The phone lands in the TO zone: the stored spend was
+            // minted under a foreign Monday, yet the cap must hold —
+            // on the one-shot read, on the live flow, and at the
+            // enforcement point itself.
+            TimeZone.setDefault(TimeZone.getTimeZone(toZone))
+            assertEquals(
+                "weekly cap must survive the zone change $fromZone -> $toZone",
+                0, repo.emergencyBreaksRemaining()
+            )
+            assertEquals(0, repo.observeEmergencyBreaksRemaining().first())
+            val secondId = insertActiveSession(dao, "Manual Focus")
+            createdSessionIds += secondId
+            assertEquals(BreakResult.RefusedNoToken, repo.completeEmergencyBreak())
+            assertEquals(secondId, dao.getActiveSessionSnapshot()?.id)
+            // Exactly one spend row was ever written by this test.
+            assertEquals(1, dao.getAllSpendsSnapshot().count { it.sessionId in createdSessionIds })
+        } finally {
+            TimeZone.setDefault(originalZone)
+            // Leave the shared ledger and session state exactly as
+            // found: this test's spend rows are deleted by session
+            // id and its refused session is grace-cancelled, so no
+            // foreign-zone row can leak into another test's week.
+            if (createdSessionIds.isNotEmpty()) {
+                val ids = createdSessionIds.joinToString(",")
+                database.openHelper.writableDatabase.execSQL(
+                    "DELETE FROM emergency_break_spends WHERE sessionId IN ($ids)"
+                )
+            }
+            val activeId = dao.getActiveSessionSnapshot()?.id
+            if (activeId != null && activeId in createdSessionIds) {
+                repo.disarmActiveSession(
+                    completed = false,
+                    outcomeReason = "Accidental Start Grace Cancel"
+                )
+            }
+        }
     }
 }

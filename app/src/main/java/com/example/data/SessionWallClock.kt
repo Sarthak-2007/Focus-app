@@ -45,7 +45,17 @@ object SessionWallClock {
             val breakElapsed = (MonolithRepository.SAFE_BREAK_DURATION_SECONDS -
                 session.safeBreakSecondsRemaining)
                 .coerceIn(0, MonolithRepository.SAFE_BREAK_DURATION_SECONDS)
-            session.effectiveTargetSeconds + breakElapsed
+            // Issue #261: a flip-born break stands on a FINISHED
+            // block (the whole target ran); a mid-block break
+            // stands on the block's frozen elapsed — the block
+            // has not finished, and pricing it whole would move
+            // the last-known-alive anchor into the future.
+            val blockPart = if (session.midBlockSafeBreak) {
+                session.elapsedSeconds.coerceAtLeast(0)
+            } else {
+                session.effectiveTargetSeconds
+            }
+            blockPart + breakElapsed
         } else {
             session.elapsedSeconds
         }

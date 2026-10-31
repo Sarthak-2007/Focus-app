@@ -13,7 +13,6 @@ import com.example.ui.evaluateTheme
 import com.example.ui.views.RailGeometry
 import java.util.Calendar
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -49,7 +48,16 @@ class ChromeWaveUnitTest {
             for (stamped in listOf(false, true)) {
                 for (usage in UsageAccess.entries) {
                     for (protecting in listOf(false, true)) {
-                        val w = WatchStore.deriveWarrant(bound, stamped, usage, protecting)
+                        // readMono is handed in explicitly (0 = no
+                        // instant carried, warrantAgeMs's own
+                        // age-unknown value): the parameter's
+                        // default reads SystemClock.elapsedRealtime(),
+                        // which a plain unit test cannot do — and
+                        // the state table under test never consults
+                        // it. Production callers keep the default,
+                        // which stamps the read instant (issue #7's
+                        // cold-start cure reads the age off it).
+                        val w = WatchStore.deriveWarrant(bound, stamped, usage, protecting, readMono = 0L)
                         assertEquals(
                             "bound=$bound stamped=$stamped usage=$usage",
                             referenceWarrantState(bound, stamped, usage),
@@ -165,24 +173,38 @@ class ChromeWaveUnitTest {
         // All six measured at 10_000; read at 60_000 -> all stale,
         // the first in board order is named with the suffix.
         assertEquals(
-            "GUARD 0/6 — ACCESSIBILITY STALE",
+            "GUARD 0/6 — USAGE ACCESS STALE",
             guardLineFor(snap, nowMono = 60_000L)?.text
         )
     }
 
     @Test
-    fun guardLine_unmeasuredPrintsNothing() {
+    fun guardLine_unmeasuredPrintsNotChecked() {
+        // Issue #9, P-6: unmeasured prints the confession, never a
+        // blank and never a fabricated count.
         val snap = countedSnap(
             PermState.GRANTED, PermState.GRANTED, PermState.GRANTED, PermState.GRANTED
         )
         val partial = snap.copy(items = snap.items - WatchItemId.DEVICE_ADMIN)
-        assertNull(guardLineFor(partial, nowMono = 20_000L))
-        // An unmeasured OVERLAY silences the line too — no partial
+        assertEquals(
+            "GUARD — NOT CHECKED",
+            guardLineFor(partial, nowMono = 20_000L).text
+        )
+        // An unmeasured OVERLAY gates the line too — no partial
         // denominator is ever printed as if it were the whole.
         val noOverlay = snap.copy(items = snap.items - WatchItemId.OVERLAY)
-        assertNull(guardLineFor(noOverlay, nowMono = 20_000L))
-        assertNull(guardLineFor(null, nowMono = 20_000L))
-        assertNull(guardLineFor(WatchSnapshot.EMPTY, nowMono = 20_000L))
+        assertEquals(
+            "GUARD — NOT CHECKED",
+            guardLineFor(noOverlay, nowMono = 20_000L).text
+        )
+        assertEquals(
+            "GUARD — NOT CHECKED",
+            guardLineFor(null, nowMono = 20_000L).text
+        )
+        assertEquals(
+            "GUARD — NOT CHECKED",
+            guardLineFor(WatchSnapshot.EMPTY, nowMono = 20_000L).text
+        )
     }
 
     // ------------------------------------------------------------------

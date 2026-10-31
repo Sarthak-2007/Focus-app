@@ -146,14 +146,26 @@ class RebootTruthRepositoryTest {
         val startWall = wallNow - 3_500_000L
         val startMono = monoNow - 3_500_000L
         val anchoredBoot = machineBoot - 1
+        // Floor lane (census #6, row 15): the target is derived
+        // from the witnessed figure itself. This scenario is a
+        // MID-SESSION resume — banked + this boot's uptime must
+        // stay below the target, or the tick lawfully finishes
+        // the block and books elapsed AT the target (the old
+        // fixed 3_600 did exactly that once the rig's accumulated
+        // uptime passed ~110 s: expected 10,690, booked 3,600).
+        // Deriving the target makes the scenario independent of
+        // how much virtual time the sandbox clock has already
+        // lived through; every assertion below is unchanged.
+        val target = banked + uptimeSec + 600
         val row = insert(
             sessionRow(
                 startWall = startWall,
                 startMono = startMono,
                 boot = anchoredBoot,
+                target = target,
                 elapsed = banked,
                 lastTickMono = monoNow - 10_000L,
-                hmac = sign(startWall, startMono, anchoredBoot, 3_600)
+                hmac = sign(startWall, startMono, anchoredBoot, target)
             )
         )
 
