@@ -717,17 +717,17 @@ fun TactileDeckScreen(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "Monolith shuts the apps you name while a study session runs.",
+                    text = stringResource(R.string.deck_intro_what),
                     style = BodyTextStyle,
                     color = scheme.onBackground
                 )
                 Text(
-                    text = "Two switches make it work. Both live in PARK, at the far end of the rail.",
+                    text = stringResource(R.string.deck_intro_switches),
                     style = BodyTextStyle,
                     color = scheme.onBackground
                 )
                 Text(
-                    text = "Nothing leaves this phone.",
+                    text = stringResource(R.string.deck_intro_privacy),
                     style = BodyTextStyle,
                     color = scheme.onSurfaceVariant
                 )
@@ -1047,7 +1047,7 @@ private fun DeckInstrumentSection(
                 horizontalArrangement = Arrangement.End
             ) {
                 Text(
-                    text = "LAST RECEIPT",
+                    text = stringResource(R.string.deck_last_receipt),
                     fontFamily = AnonymousProFamily,
                     fontSize = 10.sp,
                     letterSpacing = 2.sp,
@@ -1170,7 +1170,7 @@ private fun DeckInstrumentSection(
         // census on run 41201464326 and moved here.
         if (!isSessionRunning && receiptState == null) {
             Text(
-                text = "ARMED WRONG? ${MonolithRepository.GRACE_WINDOW_SECONDS}S FREE ABORT — CANCEL FREE, NOTHING BOOKED",
+                text = stringResource(R.string.deck_armed_wrong, MonolithRepository.GRACE_WINDOW_SECONDS),
                 fontFamily = AnonymousProFamily,
                 fontSize = 10.sp,
                 letterSpacing = 1.sp,
@@ -1348,7 +1348,7 @@ private fun DeckInstrumentSection(
                             .testTag("dial_step_down")
                     ) {
                         Text(
-                            text = "−1",
+                            text = stringResource(R.string.deck_minus_one),
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.sp,
@@ -1369,7 +1369,7 @@ private fun DeckInstrumentSection(
                             .testTag("dial_precise_entry_toggle")
                     ) {
                         Text(
-                            text = "TYPE MINUTES",
+                            text = stringResource(R.string.deck_type_minutes),
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.sp,
@@ -1390,7 +1390,7 @@ private fun DeckInstrumentSection(
                             .testTag("dial_step_up")
                     ) {
                         Text(
-                            text = "+1",
+                            text = stringResource(R.string.deck_plus_one),
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.sp,
@@ -1416,7 +1416,7 @@ private fun DeckInstrumentSection(
                         ) {
                             if (preciseEntryText.isEmpty()) {
                                 Text(
-                                    text = "10–180",
+                                    text = stringResource(R.string.deck_minutes_range),
                                     fontFamily = AnonymousProFamily,
                                     fontSize = 13.sp,
                                     color = scheme.onSurfaceVariant
@@ -1464,7 +1464,7 @@ private fun DeckInstrumentSection(
                                 .testTag("dial_precise_entry_set")
                         ) {
                             Text(
-                                text = "SET",
+                                text = stringResource(R.string.deck_set),
                                 fontFamily = AnonymousProFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 11.sp,
@@ -1854,7 +1854,7 @@ private fun DeckPinnedStack(
                 Spacer(Modifier.height(8.dp))
                 if (graceEditSession.isStopwatchMode) {
                     Text(
-                        text = "FLOW — NO SET DURATION TO CORRECT",
+                        text = stringResource(R.string.deck_flow_no_duration),
                         fontFamily = AnonymousProFamily,
                         fontSize = 9.5.sp,
                         letterSpacing = 0.8.sp,
@@ -1881,7 +1881,7 @@ private fun DeckPinnedStack(
                                 .testTag("grace_edit_minutes_down")
                         ) {
                             Text(
-                                text = "−5",
+                                text = stringResource(R.string.deck_minus_five),
                                 fontFamily = AnonymousProFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 11.sp,
@@ -1890,7 +1890,7 @@ private fun DeckPinnedStack(
                             )
                         }
                         Text(
-                            text = "DURATION · $editMinutes MIN",
+                            text = stringResource(R.string.deck_duration_edit, editMinutes),
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.sp,
@@ -1912,7 +1912,7 @@ private fun DeckPinnedStack(
                                 .testTag("grace_edit_minutes_up")
                         ) {
                             Text(
-                                text = "+5",
+                                text = stringResource(R.string.deck_plus_five),
                                 fontFamily = AnonymousProFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 11.sp,
@@ -1940,7 +1940,7 @@ private fun DeckPinnedStack(
                             .testTag("grace_edit_blocks_down")
                     ) {
                         Text(
-                            text = "−1",
+                            text = stringResource(R.string.deck_minus_one),
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.sp,
@@ -1969,7 +1969,7 @@ private fun DeckPinnedStack(
                             .testTag("grace_edit_blocks_up")
                     ) {
                         Text(
-                            text = "+1",
+                            text = stringResource(R.string.deck_plus_one),
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.sp,
@@ -2543,7 +2543,7 @@ private fun DeckTaskSection(
                 // it never poses as a fresh start chosen today.
                 if (activeTaskFromYesterday) {
                     Text(
-                        text = "FROM YESTERDAY",
+                        text = stringResource(R.string.deck_from_yesterday),
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 9.5.sp,
