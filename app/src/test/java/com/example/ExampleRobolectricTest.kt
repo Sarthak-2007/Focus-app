@@ -24,6 +24,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -82,6 +84,15 @@ class ExampleRobolectricTest {
 
     @Test
     fun `verify monotonic clock anti-tamper and HMAC signature verification`() {
+        // AUDIT-CLOCK census seat (c) cure (#166): the shadow
+        // monotonic clock starts near zero, so the 10-second
+        // backdate below clamped the mono anchor to 1L and the
+        // "honest" pair actually disagreed by ~10s — assertFalse
+        // passed only inside production's 90s drift tolerance,
+        // and the verified elapsed was ~0, not 10. Advance past
+        // the backdate first (the ForgeLot idiom) so the anchor
+        // is real and the agreement is proven, not tolerated.
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(30))
         val nowWall = System.currentTimeMillis()
         val nowMono = SystemClock.elapsedRealtime()
         val bootCount = repository.querySystemBootCount()
@@ -107,7 +118,11 @@ class ExampleRobolectricTest {
             completedSuccessfully = false
         )
 
-        val (_, honestTamper) = repository.computeVerifiedSessionElapsed(honestSession)
+        val (honestElapsed, honestTamper) = repository.computeVerifiedSessionElapsed(honestSession)
+        // Seat (c) cure: the verified elapsed is asserted, not
+        // discarded — with the anchor real it is the full 10
+        // seconds the fixture claims (it read ~0 before).
+        assertEquals(10, honestElapsed)
         assertFalse("Honest clock and HMAC should not flag tamper", honestTamper)
         assertTrue("Honest HMAC should be valid", CryptoIntegrityManager.verifySessionState(honestSession))
 
@@ -256,6 +271,12 @@ class ExampleRobolectricTest {
             durationMinutes = 25,
             studyBlocksCount = 1
         )
+        // AUDIT-CLOCK census seat (b) cure (#166): advance the
+        // shadow clock past the 5-minute backdate before
+        // fabricating the anchor — clamped to 1L, the verified
+        // clock read (0s, tamper = true) and the stamp banked
+        // solely on the stored counter. The ForgeLot idiom.
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(330))
         val fiveMinsAgoMono = (SystemClock.elapsedRealtime() - 300_000L).coerceAtLeast(1L)
         db.monolithDao().updateSession(
             session.copy(
@@ -271,6 +292,10 @@ class ExampleRobolectricTest {
         assertFalse(unlatched.isActive)
         assertTrue("Partial session >= 60s must bank elapsed seconds", unlatched.elapsedSeconds >= 60)
         assertEquals("partial_stamp", unlatched.forgedArtifactId)
+        // Seat (b) cure: the ending write stamps no tamper —
+        // the verified leg ran and agreed (before the cure the
+        // row was silently stamped tamperDetected).
+        assertFalse(unlatched.tamperDetected)
     }
 
     @Test
