@@ -142,6 +142,9 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | The Dawn Line: widget shows the just-ended session's finish verdict (receipt words from persisted outcome) only when the ending was unwitnessed; burns on first tap/open or noon — one session, no list/count/streak | INNOVATOR-5 (WING-A) | #155 | PANEL-QUEUED (filed #155 comment 6536557343 + Discussion; M ~2 days; identity CONDITIONAL PASS — dies if panel rules any next-morning surface a tracker) |
 | The Seal That Expires on Its Own Face: every SEALED widget render arms a one-shot AlarmManager self-update at +90 s and at printed end, bounding a dead shield's stale SEALED print to ~90 s (mechanism answering CRITIC-5 charge 6536252752; DURCH-D's lane decides) | INNOVATOR-5 (WING-A) | #155 | PANEL-QUEUED (filed #155 comment 6536557343 + Discussion; S–M ~1 day; consult to DURCH-D) |
 
+| AS-OF stamp on the glance: widget line carries its render instant (`· AS OF HH:mm`), so a stale frame is self-evidently stale even when every refresh trigger fails (process death, standby-bucket deferral, OEM launcher frame caching) — IDEA-G1, Discussion #640 | INNOVATOR-4 (adversary seat, WING-A) | #155 | PANEL-QUEUED (priced S ~0.25 builder-day; consult filed on #155, comment 6536827668) |
+| Until+1 appointment: M4's re-render appointments gain a third firing at printed-until + 1 min, so a SEALED-until sitting in the past is re-examined within a minute of becoming false — IDEA-G2 (delta on THOUGHTFUL-5/IMPROVER-2's M4, credited there), Discussion #640 | INNOVATOR-4 (adversary seat, WING-A) | #155 | PANEL-QUEUED (priced inside M4's ~1 builder-day) |
+
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
 
 ## Pill × receipt relation (WING-C DESIGN, Wave reseat)
