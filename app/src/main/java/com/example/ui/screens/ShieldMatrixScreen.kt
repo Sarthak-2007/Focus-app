@@ -47,6 +47,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -243,12 +244,19 @@ fun ShieldMatrixScreen(
     // Sweeper: a rest whose lifecycle was interrupted (an outside
     // actor re-tiered the app mid-rest) retires by age — a resting
     // entry may never become a permanent suppression.
+    // Issue #69 F5(a) — demand-driven: the old loop woke every
+    // 700 ms for the screen's whole life just to check the map
+    // was empty. Now it runs only while a rest exists to retire
+    // (the prune predicate is age-based at 1,200 ms, so starting
+    // the sweep when the first rest lands cannot miss one).
     LaunchedEffect(Unit) {
-        while (true) {
-            delay(700)
-            if (restingFlips.isNotEmpty()) {
-                val now = SystemClock.elapsedRealtime()
-                restingFlips = restingFlips.filterValues { now - it.createdAtMs <= 1200 }
+        snapshotFlow { restingFlips }.collect { flips ->
+            if (flips.isNotEmpty()) {
+                while (restingFlips.isNotEmpty()) {
+                    delay(700)
+                    val now = SystemClock.elapsedRealtime()
+                    restingFlips = pruneRests(restingFlips, now)
+                }
             }
         }
     }
@@ -1700,12 +1708,24 @@ private fun FilterWord(
  *  section, rests 300ms, then exits over 280ms and is present in its
  *  new section when next seen. [createdAtMs] lets the screen's
  *  sweeper retire an entry whose lifecycle was interrupted. */
-private data class RestingFlip(
+internal data class RestingFlip(
     val from: AppBlockTier,
     val to: AppBlockTier,
     val exiting: Boolean,
     val createdAtMs: Long
 )
+
+/** Issue #69 F5(a): the sweeper's prune law, pure — a rest
+ *  retires once it is older than [REST_MAX_AGE_MS]; younger
+ *  rests stay. The sweeper itself is demand-driven (it runs
+ *  only while the rests map is non-empty), so with no rests
+ *  there is no loop and nothing to prune. */
+internal const val REST_MAX_AGE_MS = 1200L
+internal fun pruneRests(
+    rests: Map<String, RestingFlip>,
+    nowMs: Long
+): Map<String, RestingFlip> =
+    rests.filterValues { nowMs - it.createdAtMs <= REST_MAX_AGE_MS }
 
 /** One printed line of the book: the app, the ruling word it wears
  *  right now, and its rest state when it is mid-flip. */

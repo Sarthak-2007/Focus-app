@@ -196,27 +196,80 @@ data class FocusTaskEntity(
             }
         }
 
+        /**
+         * SPLIT's steps (issue #106, finding 5). The old generator
+         * never read [title] at all: it switched on category alone,
+         * and every task the composer creates is category "Study",
+         * so every task — "Revise History dates", "Learn French
+         * verbs" — was stamped with the same three problem-set steps
+         * ("Sketch diagram & list known variables" …) and presented
+         * as that task's own breakdown. Now the task's OWN words
+         * decide, in this order:
+         *
+         * 1. A title that already lists its parts ("Read Ch.4; make
+         *    notes; self-test") is split on its own separators —
+         *    those parts ARE the steps, verbatim.
+         * 2. A title/category that names a kind of work (code,
+         *    writing, exam, a problem set, language drill, reading /
+         *    revision) gets the method steps for THAT kind — the
+         *    problem-set triple survives only where the task is
+         *    actually problem work, which is the one place it was
+         *    ever a deliberate template.
+         * 3. Anything else gets three phases of the task itself,
+         *    named with its own title — begin it, finish it, check
+         *    it — never a borrowed subject's steps.
+         */
         fun defaultSubStepsForCategory(title: String, category: String): List<TaskSubStep> {
-            return when (category.lowercase(java.util.Locale.ROOT)) {
-                "code" -> listOf(
+            val cleanTitle = title.trim()
+            val listedParts = cleanTitle
+                .split(';', '•', '|')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+            if (listedParts.size >= 2) {
+                return listedParts.take(5).mapIndexed { idx, part ->
+                    TaskSubStep(idx, part, false)
+                }
+            }
+            val words = cleanTitle.lowercase(java.util.Locale.ROOT)
+            fun mentions(vararg needles: String) = needles.any { it in words }
+            return when {
+                category.lowercase(java.util.Locale.ROOT) == "code" ||
+                    mentions("code", "coding", "debug", "program", "algorithm") -> listOf(
                     TaskSubStep(0, "Trace base cases & data invariants", false),
                     TaskSubStep(1, "Implement core algorithm logic", false),
                     TaskSubStep(2, "Verify edge cases & complexity", false)
                 )
-                "writing" -> listOf(
+                category.lowercase(java.util.Locale.ROOT) == "writing" ||
+                    mentions("write", "essay", "draft", "report") -> listOf(
                     TaskSubStep(0, "Draft 3-bullet structural outline", false),
                     TaskSubStep(1, "Write core synthesis section", false),
                     TaskSubStep(2, "Tighten key takeaways & citations", false)
                 )
-                "exam" -> listOf(
+                category.lowercase(java.util.Locale.ROOT) == "exam" ||
+                    mentions("exam", "mock test", "quiz") -> listOf(
                     TaskSubStep(0, "First pass without reference notes", false),
                     TaskSubStep(1, "Flag & drill missed concepts", false),
                     TaskSubStep(2, "Final rapid recall check", false)
                 )
-                else -> listOf(
+                mentions("problem", "equation", "numerical", "diagram", "units") -> listOf(
                     TaskSubStep(0, "Sketch diagram & list known variables", false),
                     TaskSubStep(1, "Solve core problem set step-by-step", false),
                     TaskSubStep(2, "Check units & boundary conditions", false)
+                )
+                mentions("verb", "vocab", "grammar", "spelling", "french", "spanish", "german", "language") -> listOf(
+                    TaskSubStep(0, "Go through the list once, saying each item aloud", false),
+                    TaskSubStep(1, "Drill only the items you missed", false),
+                    TaskSubStep(2, "Final recall pass from memory, no notes", false)
+                )
+                mentions("revise", "revision", "read", "learn", "memori", "chapter", "notes", "history", "dates", "theory", "recall") -> listOf(
+                    TaskSubStep(0, "First pass through the material, marking what is unclear", false),
+                    TaskSubStep(1, "Second pass on the marked parts only", false),
+                    TaskSubStep(2, "Close the material and recall the key points from memory", false)
+                )
+                else -> listOf(
+                    TaskSubStep(0, "Begin: $cleanTitle", false),
+                    TaskSubStep(1, "Continue and complete: $cleanTitle", false),
+                    TaskSubStep(2, "Review what you did for: $cleanTitle", false)
                 )
             }
         }
@@ -509,7 +562,7 @@ data class FocusSessionEntity(
     val failureCausePackage: String = "",
     val failureCauseKind: String = "",
     val reflectionNote: String = "",
-    // Audit R6 #340 F5/F48 (14→15): the FINISH seal. The arm-time
+    // Audit R6 #340 F5/F48 (16→17): the FINISH seal. The arm-time
     // hmacSignature covers only the session's first five fields;
     // this second signature is minted at publish time over the
     // finished receipt's own claims (№, outcome word, arm/end
@@ -518,12 +571,30 @@ data class FocusSessionEntity(
     // previous receipt's finish seal — so the receipts form a
     // hash chain: editing, reordering or dropping one slip breaks
     // every later verification loudly. '' = never sealed (every
-    // pre-v15 row, and any row whose publish never ran).
+    // pre-v17 row, and any row whose publish never ran).
     val finishSignature: String = "",
     // The previous receipt's finish seal, embedded in this row's
     // finish payload at sign time (the chain link itself, kept
     // on the row so verification needs no ordering assumption).
-    val prevFinishSignature: String = ""
+    val prevFinishSignature: String = "",
+    // Issue #261 (15→16, the mid-block Safe Break door — the
+    // transferred W9 DAYLIGHT DS3 finding): a Safe Break entered
+    // MID-BLOCK, at the man's tap, instead of only at a block
+    // flip. midBlockSafeBreak marks the CURRENT break's origin
+    // while it runs (false = the break in force, if any, began
+    // at a block flip; the flip's own rows never set it) — the
+    // break exits read it to choose resume-same-block over
+    // advance-to-next-block, a fact recorded on the row, never
+    // inferred from elapsed arithmetic. Cleared at every break
+    // exit. extraSafeBreakSeconds is the PLANNED extra break
+    // time this session has booked by entering mid-block breaks
+    // (the break length in force, stamped once per entry, never
+    // revised): spanTargetSeconds prices it, because a mid-block
+    // break is a break slot the (totalStudyBlocks − 1) scheduled
+    // slots do not contain. 0 / false ARE the truthful pre-v16
+    // values — before this door no break could start mid-block.
+    val midBlockSafeBreak: Boolean = false,
+    val extraSafeBreakSeconds: Int = 0
 ) {
     // ONE derivation of session time (the Now Frame fix, Nadia x Freya):
     // every surface - Deck, desk clock, airlock, the enforcing service -
@@ -576,6 +647,7 @@ data class FocusSessionEntity(
         currentBlockIndex = currentBlockIndex.coerceIn(1, totalStudyBlocks.coerceIn(1, 64)),
         safeBreakSecondsRemaining = safeBreakSecondsRemaining.coerceAtLeast(0),
         breakTakenSeconds = breakTakenSeconds.coerceAtLeast(0),
+        extraSafeBreakSeconds = extraSafeBreakSeconds.coerceAtLeast(0),
         penaltySecondsAdded = penaltySecondsAdded.coerceAtLeast(0),
         tasksCompletedCount = tasksCompletedCount.coerceAtLeast(0),
         receiptNumber = receiptNumber.coerceAtLeast(0)
@@ -590,9 +662,17 @@ data class FocusSessionEntity(
     // against current code: Safe Break is a fixed 10-minute
     // mechanism everywhere it is armed, MonolithRepository.kt's
     // SAFE_BREAK_DURATION_SECONDS, and presets never arm it.)
+    // Issue #261: the planned span also prices every mid-block
+    // Safe Break entered (extraSafeBreakSeconds, stamped at each
+    // entry) — a mid-block break is real span time the scheduled
+    // (blocks − 1) break slots do not contain, and a target that
+    // ignored it would let the desk clock and the planned-end
+    // derivation call the session finished while its resumed
+    // block still had the break's length left to run.
     val spanTargetSeconds: Int
         get() = safeTotalBlocks * effectiveTargetSeconds +
-            (safeTotalBlocks - 1).coerceAtLeast(0) * MonolithRepository.SAFE_BREAK_DURATION_SECONDS
+            (safeTotalBlocks - 1).coerceAtLeast(0) * MonolithRepository.SAFE_BREAK_DURATION_SECONDS +
+            extraSafeBreakSeconds.coerceAtLeast(0)
 
     // Truth Car 3 (ST-02, Tamm): completed breaks contribute the
     // seconds ACTUALLY taken (breakTakenSeconds, booked at every
@@ -607,7 +687,19 @@ data class FocusSessionEntity(
     // the seam is declared in mail/rurik/2250.
     val spanElapsedSeconds: Int
         get() {
-            return if (isInSafeBreak) {
+            return if (isInSafeBreak && midBlockSafeBreak) {
+                // Issue #261: inside a MID-BLOCK break the current
+                // block has NOT finished — the span is the finished
+                // blocks, this block's frozen elapsed, the breaks
+                // already booked, and the running part of this one.
+                // (The flip-born branch below prices the current
+                // block whole, because at a flip it HAS finished.)
+                (safeCurrentBlockIndex - 1).coerceAtLeast(0) * effectiveTargetSeconds +
+                    elapsedSeconds.coerceAtLeast(0) +
+                    breakTakenSeconds.coerceAtLeast(0) +
+                    (MonolithRepository.SAFE_BREAK_DURATION_SECONDS - safeBreakSecondsRemaining)
+                        .coerceAtLeast(0)
+            } else if (isInSafeBreak) {
                 safeCurrentBlockIndex * effectiveTargetSeconds +
                     breakTakenSeconds.coerceAtLeast(0) +
                     (MonolithRepository.SAFE_BREAK_DURATION_SECONDS - safeBreakSecondsRemaining)
@@ -621,6 +713,41 @@ data class FocusSessionEntity(
 
     val spanRemainingSeconds: Int
         get() = (spanTargetSeconds - spanElapsedSeconds).coerceAtLeast(0)
+
+    // #127 (glance-time-remaining, finding 1): the labelled scope of
+    // every number a glance can meet. Per-block remaining and whole-
+    // session (span) remaining are BOTH true — the lie was printing
+    // either one unlabelled, so two surfaces could answer the same
+    // question with different numbers. Every running surface that
+    // prints a time now also prints this caption's scope words, or
+    // the scope word for its own number, so a two-second glance
+    // always knows WHICH truth it is reading.
+    val glanceCaption: String
+        get() = when {
+            isStopwatchMode -> "ELAPSED · NO SET END"
+            isInSafeBreak ->
+                "BREAK ${formatSessionDuration(safeBreakSecondsRemaining)} LEFT" +
+                    " · SESSION ${formatSessionDuration(spanRemainingSeconds)} LEFT"
+            totalStudyBlocks > 1 ->
+                "BLOCK $currentBlockIndex/$totalStudyBlocks" +
+                    " · ${formatSessionDuration(remainingSeconds)} LEFT IN BLOCK" +
+                    " · SESSION ${formatSessionDuration(spanRemainingSeconds)} LEFT"
+            else -> "SESSION ${formatSessionDuration(spanRemainingSeconds)} LEFT"
+        }
+}
+
+/**
+ * #127: one duration print for glance surfaces. Under an hour it is
+ * MM:SS; at an hour or more it is H:MM:SS — never "170:00", which a
+ * glance reads as a broken clock, not as 2 hours 50 minutes.
+ */
+fun formatSessionDuration(totalSeconds: Int): String {
+    val s = totalSeconds.coerceAtLeast(0)
+    val h = s / 3600
+    val m = (s % 3600) / 60
+    val sec = s % 60
+    return if (h > 0) String.format(java.util.Locale.US, "%d:%02d:%02d", h, m, sec)
+    else String.format(java.util.Locale.US, "%02d:%02d", m, sec)
 }
 
 /**
@@ -838,6 +965,23 @@ object RoutineSchedule {
     private fun bitFor(calendar: java.util.Calendar): Int =
         (calendar.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
 
+    /** Audit R5 #259 (R5-0266): a window's end is a WALL-CLOCK time,
+     *  never start + elapsed duration. A routine stores wall-clock
+     *  start/end minutes; pricing the end as startMillis + durMs
+     *  made overnight windows end an hour late on spring-forward
+     *  nights and an hour early on fall-back nights. The end is the
+     *  start's local date-time plus the duration on the LOCAL
+     *  timeline, resolved in the system zone — identical to the old
+     *  arithmetic on every non-transition day. */
+    private fun wallEndMillis(startMillis: Long, durationMinutes: Int): Long {
+        val zone = java.time.ZoneId.systemDefault()
+        val startLocal = java.time.LocalDateTime.ofInstant(
+            java.time.Instant.ofEpochMilli(startMillis), zone
+        )
+        return startLocal.plusMinutes(durationMinutes.toLong())
+            .atZone(zone).toInstant().toEpochMilli()
+    }
+
     private fun atMinutes(day: java.util.Calendar, minutes: Int): Long {
         // Audit R6 #341 F29: java.time resolution, the same rules
         // MonolithWeek and DrawerDay already live by — this was the
@@ -904,14 +1048,14 @@ object RoutineSchedule {
     fun nextEndMillis(routine: RoutineEntity, nowMillis: Long): Long? {
         val r = routine.sanitized()
         if (r.daysMask == 0) return null
-        val durMs = durationMinutes(r) * 60_000L
+        val durMin = durationMinutes(r)
         val day = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
         // A window that started yesterday may still be running (overnight).
         day.add(java.util.Calendar.DAY_OF_YEAR, -1)
         repeat(9) {
             if (r.daysMask and (1 shl bitFor(day)) != 0) {
                 val start = atMinutes(day, r.startMinutes)
-                val end = start + durMs
+                val end = wallEndMillis(start, durMin)
                 if (nowMillis < end && end > nowMillis && start <= nowMillis) return end
                 if (start > nowMillis) return end
             }
@@ -930,13 +1074,13 @@ object RoutineSchedule {
     fun windowContaining(routine: RoutineEntity, nowMillis: Long): WindowInstance? {
         val r = routine.sanitized()
         if (r.daysMask == 0) return null
-        val durMs = durationMinutes(r) * 60_000L
+        val durMin = durationMinutes(r)
         val day = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
         day.add(java.util.Calendar.DAY_OF_YEAR, -1)
         repeat(2) {
             if (r.daysMask and (1 shl bitFor(day)) != 0) {
                 val start = atMinutes(day, r.startMinutes)
-                val end = start + durMs
+                val end = wallEndMillis(start, durMin)
                 if (nowMillis in start until end) {
                     return WindowInstance(
                         startMillis = start,
@@ -972,7 +1116,7 @@ object RoutineSchedule {
     /** The next window to start strictly after [nowMillis], as an instance. */
     fun nextWindow(routine: RoutineEntity, nowMillis: Long): WindowInstance? {
         val start = nextStartMillis(routine, nowMillis) ?: return null
-        val end = start + durationMinutes(routine) * 60_000L
+        val end = wallEndMillis(start, durationMinutes(routine))
         return WindowInstance(
             startMillis = start,
             endMillis = end,
@@ -999,12 +1143,12 @@ object RoutineSchedule {
     fun latestClosedWindow(routine: RoutineEntity, nowMillis: Long): WindowInstance? {
         val r = routine.sanitized()
         if (r.daysMask == 0) return null
-        val durMs = durationMinutes(r) * 60_000L
+        val durMin = durationMinutes(r)
         val day = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
         repeat(9) {
             if (r.daysMask and (1 shl bitFor(day)) != 0) {
                 val start = atMinutes(day, r.startMinutes)
-                val end = start + durMs
+                val end = wallEndMillis(start, durMin)
                 if (end <= nowMillis) {
                     return WindowInstance(
                         startMillis = start,

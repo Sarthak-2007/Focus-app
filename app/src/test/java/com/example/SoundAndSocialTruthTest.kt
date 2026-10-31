@@ -461,7 +461,6 @@ class SoundAndSocialTruthTest {
                     isSealed = false,
                     isNight = false,
                     soundEnabled = true,
-                    shortsReelsSniperEnabled = true,
                     soundEngine = vm.soundEngine,
                     socialSitesEnabled = socialOn,
                     onToggleSocialSites = { vm.toggleBrowserUrlBlocker() },
@@ -470,6 +469,7 @@ class SoundAndSocialTruthTest {
                     onDismiss = {},
                     onFixClick = {},
                     onToggleSound = {},
+                    shortsReelsSniperEnabled = true,
                     onToggleShortsReelsSniper = {}
                 )
             }

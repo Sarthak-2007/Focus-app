@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         EmergencyBreakSpendEntity::class,
         DayNoteEntity::class
     ],
-    version = 16,
+    version = 17,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -261,16 +261,42 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
-         * AUDIT R6 #340 (15→16): schema only, zero data writes, no
-         * backfill — every default IS the truthful pre-v16 value.
-         * (15→16, renumbered at landing: this cure was authored
-         * against v12, but v13 was taken by the failure-cause
-         * columns, v14 by the held-split, and v15 by W3 #134's
-         * callExcludedSeconds above while it was in flight — the
-         * seal chains after all three, and all land.)
+         * Issue #261 (15→16): schema only, zero data writes, no
+         * backfill — both defaults ARE the truthful pre-v16 values
+         * (0 / false: before this door, no Safe Break could start
+         * mid-block, so no past row entered one or booked its
+         * planned length).
+         *
+         * focus_sessions +2, both for the mid-block Safe Break
+         * door (the transferred W9 DAYLIGHT DS3 finding):
+         * midBlockSafeBreak — the CURRENT break's origin marker,
+         * read by the break exits to resume the same block instead
+         * of advancing past it; extraSafeBreakSeconds — the
+         * planned length of every mid-block break entered, priced
+         * by spanTargetSeconds.
+         *
+         * NOT created, by name: testDateEpochDay — the test-date
+         * predicate stays STRUCK (Ren), as at v9–v15.
+         */
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN midBlockSafeBreak INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN extraSafeBreakSeconds INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * AUDIT R6 #340 (16→17): schema only, zero data writes, no
+         * backfill — every default IS the truthful pre-v17 value.
+         * (Renumbered at the FIX-R3 landing: this cure was authored
+         * against v12, renumbered through v13/v14/v15 in flight and
+         * carried as 15→16 on the branch — but main took 15→16
+         * itself for issue #261's Safe Break columns above while
+         * this landing was blocked, so the seal chains after it as
+         * 16→17. Both column sets land; neither migration is lost.)
          *
          * focus_sessions +2 (F5/F48): the finish seal and its chain
-         * link. '' = never sealed — every pre-v16 receipt stands
+         * link. '' = never sealed — every pre-v17 receipt stands
          * exactly as provable as it was the day it printed, and no
          * seal is ever minted retroactively over old claims.
          * blocked_sites +1 (F10): the per-site redirect target.
@@ -278,11 +304,8 @@ abstract class MonolithDatabase : RoomDatabase() {
          * guard_settings +1 (F68): notification-body consent, kept
          * apart from the listener grant. 'UNSET' = bodies are NOT
          * kept — the private posture is the default posture.
-         *
-         * NOT created, by name: testDateEpochDay — the test-date
-         * predicate stays STRUCK (Ren), as at v9–v15.
          */
-        val MIGRATION_15_16 = object : Migration(15, 16) {
+        val MIGRATION_16_17 = object : Migration(16, 17) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE focus_sessions ADD COLUMN finishSignature TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE focus_sessions ADD COLUMN prevFinishSignature TEXT NOT NULL DEFAULT ''")
@@ -379,7 +402,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
                     .addCallback(RECLAIM_CALLBACK)
                     .build()
                 INSTANCE = instance

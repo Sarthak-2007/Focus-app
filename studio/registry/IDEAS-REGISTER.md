@@ -131,4 +131,15 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | Test call-site census script (stdlib, prints PASS, catches seeded regressions) | Fuge | #2 | BUILT (studio/tools/check_test_callsites.py, on main via PR #165) |
 | Launcher block screen: un-exitable launcher surface + separate allowed/peek screens | Sarthak's ruling 04:29 (not a seat idea — his order) | #22/#18 | BUILT-IN-PROGRESS (Umbau lane; first slice merged via PR #167) |
 
+| The Seal Answers Back: on a reach this session, the shield card's title promotes the session's own hold record for 10 min, countdown demoted to BigText (temptation-moment glance) | INNOVATOR-5 (WING-A) | #155 | PANEL-QUEUED (filed #155 comment 6536557343 + Discussion; S–M ~1 day; identity PASS, session-scoped) |
+| The Arming Verdict: one-shot summons per arm — "SEALED • SHIELD PROVED HH:MM:SS" on the protecting flip within ~15 s, else "SHIELD DID NOT PROVE — NOT PROTECTED" with repair actions; 45-min expiry | INNOVATOR-5 (WING-A) | #155 | PANEL-QUEUED (filed #155 comment 6536557343 + Discussion; M ~1.5 days; identity PASS) |
+| The Dawn Line: widget shows the just-ended session's finish verdict (receipt words from persisted outcome) only when the ending was unwitnessed; burns on first tap/open or noon — one session, no list/count/streak | INNOVATOR-5 (WING-A) | #155 | PANEL-QUEUED (filed #155 comment 6536557343 + Discussion; M ~2 days; identity CONDITIONAL PASS — dies if panel rules any next-morning surface a tracker) |
+| The Seal That Expires on Its Own Face: every SEALED widget render arms a one-shot AlarmManager self-update at +90 s and at printed end, bounding a dead shield's stale SEALED print to ~90 s (mechanism answering CRITIC-5 charge 6536252752; DURCH-D's lane decides) | INNOVATOR-5 (WING-A) | #155 | PANEL-QUEUED (filed #155 comment 6536557343 + Discussion; S–M ~1 day; consult to DURCH-D) |
+
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
+
+## Pill × receipt relation (WING-C DESIGN, Wave reseat)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| The pill is the receipt's stub — one object, two tenses: claim the receipt № at ARM, pill Session face prints the same № + intention frozen at the claim; identity unifies (№, intention, row, derivation, type), tense never crosses (no outcome/sealed facts on the pill; no verbs/ephemerality on the receipt); valve/grace endings burn the claimed № | INTENTIONALITY-4 (origin: T01) | #16 | PANEL-QUEUED (verdict: https://github.com/Sarthak-2007/Focus-app/issues/16#issuecomment-6537576045 · Discussion: https://github.com/Sarthak-2007/Focus-app/discussions/671 · priced ~125 lines + 6 tests, ≈1 builder-day, after pill merge + C13 ghost deletion) |

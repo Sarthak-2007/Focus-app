@@ -164,7 +164,7 @@ class ChromeWaveUnitTest {
         // All six measured at 10_000; read at 60_000 -> all stale,
         // the first in board order is named with the suffix.
         assertEquals(
-            "GUARD 0/6 — ACCESSIBILITY STALE",
+            "GUARD 0/6 — USAGE ACCESS STALE",
             guardLineFor(snap, nowMono = 60_000L)?.text
         )
     }
