@@ -4,11 +4,12 @@ import android.content.Context
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.CurioCatalog
@@ -359,8 +360,20 @@ class VaultHistoryTruthTest {
         // The Partial Stamp stands as its own honest row and its
         // detail never calls it forged.
         composeRule.onNodeWithText("STAMPED").assertIsDisplayed()
-        composeRule.onNodeWithTag("cabinet_row_partial_stamp").performClick()
+        // The row is clicked through its OnClick semantics, not by
+        // coordinates: after the back navigation above, the list is
+        // still re-laying out when the coordinate click is fetched,
+        // and in the PR-run environment the tap landed while the
+        // rows were mid-relayout — the detail never opened and the
+        // "Partial Stamp" name assertion below passed on the list
+        // row itself (semantics dump, PR #705 diagnostic run). The
+        // detail's serial plate — a tag only the detail carries —
+        // is asserted before any detail text is read, so a missed
+        // navigation can never again masquerade as a text failure.
+        composeRule.onNodeWithTag("cabinet_row_partial_stamp")
+            .performSemanticsAction(SemanticsActions.OnClick)
         settle()
+        composeRule.onNodeWithTag("cabinet_serial_plate").assertExists()
         composeRule.onNodeWithText("Partial Stamp").assertIsDisplayed()
         // Floor lane (census #6, row 29): the two record lines
         // below are asserted with assertExists, deliberately —
@@ -369,20 +382,13 @@ class VaultHistoryTruthTest {
         // finding's claim; displayed-ness is the scroller's
         // business"). The Partial Stamp's lore runs several lines
         // longer than the gyro's, so inside the cabinet's
-        // LazyColumn these lines sit past the fold: the census
-        // run finds them composed but clipped, and two scroll
-        // cures (performScrollTo on the node; performScrollToNode
-        // on the container — the list reports a zero scroll range
-        // in this rig) failed their gates on fetch/scroll
-        // mechanics, recorded on PR #705. What this test proves
-        // is what PRINTS — the honest stamp line and the forge
-        // record, exact text — and that claim stands at full
-        // strength. The gyro half above keeps assertIsDisplayed:
-        // its lines are in view, and there displayed-ness is
-        // part of the claim.
-        println("K8DIAG-BEGIN")
-        println(composeRule.onNodeWithTag("drawer_cabinet", useUnmergedTree = true).printToString())
-        println("K8DIAG-END")
+        // LazyColumn these lines sit past the fold — the census
+        // run finds them composed but clipped. What this test
+        // proves is what PRINTS — the honest stamp line and the
+        // forge record, in exact text — and that claim stands at
+        // full strength. The gyro half above keeps
+        // assertIsDisplayed: its lines are in view, and there
+        // displayed-ness is part of the claim.
         composeRule.onNodeWithText("STAMPED — IT STANDS IN THE CABINET").assertExists()
         composeRule.onNodeWithText(
             "STAMPED ×2 · LAST ${headingWithYear(LocalDate.of(2026, 10, 20))}"
