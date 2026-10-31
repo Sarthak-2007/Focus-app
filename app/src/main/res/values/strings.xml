@@ -122,4 +122,23 @@
     <string name="launcher_shut_count">%1$d SHUT</string>
     <string name="launcher_return_to_deck">RETURN TO THE DECK</string>
     <string name="launcher_back">‹ LAUNCHER</string>
+    <string name="receipt_slip_brand">MONOLITH</string>
+    <string name="receipt_ended_outcome">%1$s · %2$s</string>
+    <string name="receipt_ran_total">RAN %1$s</string>
+    <string name="receipt_held_split_line">HELD %1$d SHUT · %2$d PEEK (2 MIN) · %3$d WEBSITES</string>
+    <string name="receipt_held_total_line">HELD %1$d APPS · %2$d SITES ON THIS PHONE</string>
+    <string name="receipt_forged_line">FORGED — %1$s</string>
+    <string name="receipt_break_banked_span">BREAK BANKED %1$s</string>
+    <string name="receipt_break_taken_span">BREAK TAKEN %1$s</string>
+    <string name="receipt_done_entry">DONE · %1$s</string>
+    <string name="receipt_deflection_lead">"· "</string>
+    <string name="receipt_deflection_outcome">" · %1$s"</string>
+    <string name="receipt_deflection_site">" · SITE"</string>
+    <string name="receipt_tamper_penalty">A %1$d MIN TAMPER PENALTY WAS ADDED TO THIS SESSION</string>
+    <string name="receipt_reboot_gap">REBOOT — %1$ds UNSHIELDED, NOT COUNTED</string>
+    <string name="receipt_open_apps_used">OPEN APPS USED IN THAT SESSION: %1$s</string>
+    <string name="receipt_footer_log">THIS APP KEEPS ITS OWN LOG · STUDY TIME IS IN THE STUDY TIMER</string>
+    <string name="receipt_done_with_task">DONE WITH THIS TASK</string>
+    <string name="receipt_next_session">NEXT SESSION</string>
+    <string name="receipt_quiet_span">%1$s QUIET</string>
 </resources>

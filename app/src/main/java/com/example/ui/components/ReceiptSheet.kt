@@ -176,7 +176,7 @@ fun ReceiptSheet(
                 // was missing was Monolith's own name on its artefact.
                 if (!receipt.faulted) {
                     Text(
-                        text = "MONOLITH",
+                        text = stringResource(R.string.receipt_slip_brand),
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 9.sp,
@@ -334,7 +334,7 @@ fun ReceiptSheet(
                     }
                 )
                 ReceiptMonoLine(
-                    text = "$endedPrint · ${receipt.outcomeWord}"
+                    text = stringResource(R.string.receipt_ended_outcome, endedPrint, receipt.outcomeWord)
                 )
                 // #57: the slip's total — the sealed elapsed,
                 // carried in state since Slice E and printed
@@ -347,7 +347,7 @@ fun ReceiptSheet(
                     // divider-less sheet: no rule is added, only
                     // the strike the wave-2 line never carried.
                     ReceiptMonoLine(
-                        text = "RAN ${longSpan(receipt.sealedElapsedSeconds)}",
+                        text = stringResource(R.string.receipt_ran_total, longSpan(receipt.sealedElapsedSeconds)),
                         bold = true
                     )
                 }
@@ -364,11 +364,17 @@ fun ReceiptSheet(
                     // never invented for a row that predates it.
                     if (receipt.heldShutAtSeal >= 0 && receipt.heldPeekAtSeal >= 0) {
                         ReceiptMonoLine(
-                            text = "HELD ${receipt.heldShutAtSeal} SHUT · ${receipt.heldPeekAtSeal} PEEK (2 MIN) · ${receipt.heldSitesAtSeal} WEBSITES"
+                            text = stringResource(
+                            R.string.receipt_held_split_line,
+                            receipt.heldShutAtSeal, receipt.heldPeekAtSeal, receipt.heldSitesAtSeal
+                        )
                         )
                     } else {
                         ReceiptMonoLine(
-                            text = "HELD ${receipt.heldAppsAtSeal} APPS · ${receipt.heldSitesAtSeal} SITES ON THIS PHONE"
+                            text = stringResource(
+                            R.string.receipt_held_total_line,
+                            receipt.heldAppsAtSeal, receipt.heldSitesAtSeal
+                        )
                         )
                     }
                 }
@@ -377,7 +383,7 @@ fun ReceiptSheet(
                 // itself, in the same mono register as the HELD line.
                 receipt.forgedArtifactName?.let { forgedName ->
                     ReceiptMonoLine(
-                        text = "FORGED — ${forgedName.uppercase(Locale.US)}"
+                        text = stringResource(R.string.receipt_forged_line, forgedName.uppercase(Locale.US))
                     )
                 }
                 if (receipt.bankedBreakSeconds > 0) {
@@ -385,7 +391,7 @@ fun ReceiptSheet(
                     // false `0 MIN` for 1–59 banked seconds and
                     // truncated every other figure.
                     ReceiptMonoLine(
-                        text = "BREAK BANKED ${longSpan(receipt.bankedBreakSeconds)}"
+                        text = stringResource(R.string.receipt_break_banked_span, longSpan(receipt.bankedBreakSeconds))
                     )
                 }
                 // Issue #105 (F4): the Safe Breaks actually lived
@@ -397,7 +403,7 @@ fun ReceiptSheet(
                 // Exact span via longSpan, never rounded.
                 if (receipt.safeBreakSeconds > 0) {
                     ReceiptMonoLine(
-                        text = "BREAK TAKEN ${longSpan(receipt.safeBreakSeconds)}"
+                        text = stringResource(R.string.receipt_break_taken_span, longSpan(receipt.safeBreakSeconds))
                     )
                 }
                 // Issue #105 (F1): the tasks finished inside this
@@ -405,7 +411,7 @@ fun ReceiptSheet(
                 // booked them (completedTasksSummary) — the work
                 // the slip attests, named on the slip.
                 receipt.completedTasks.forEach { entry ->
-                    ReceiptMonoLine(text = "DONE · $entry")
+                    ReceiptMonoLine(text = stringResource(R.string.receipt_done_entry, entry))
                 }
                 // Nachdruck R2/R3/R4 (Finisher 3 §2.2/§3/§4,
                 // landed via WELLE-6 recovery, adapted to main's
@@ -444,9 +450,9 @@ fun ReceiptSheet(
                             // are different events and now print
                             // differently. No outcome recorded, no
                             // word printed (outcomePrint is empty).
-                            text = "· " + d.appName +
-                                (if (d.outcomePrint.isNotEmpty()) " · ${d.outcomePrint}" else "") +
-                                (if (d.isSite) " · SITE" else ""),
+                            text = stringResource(R.string.receipt_deflection_lead) + d.appName +
+                                (if (d.outcomePrint.isNotEmpty()) stringResource(R.string.receipt_deflection_outcome, d.outcomePrint) else "") +
+                                (if (d.isSite) stringResource(R.string.receipt_deflection_site) else ""),
                             fontFamily = AnonymousProFamily,
                             fontSize = 11.sp,
                             letterSpacing = 1.sp,
@@ -476,7 +482,7 @@ fun ReceiptSheet(
                     // plan silently included, in the same bold
                     // register as the shield-gap line.
                     Text(
-                        text = "A ${receipt.penaltySecondsAdded / 60} MIN TAMPER PENALTY WAS ADDED TO THIS SESSION",
+                        text = stringResource(R.string.receipt_tamper_penalty, receipt.penaltySecondsAdded / 60),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -491,7 +497,7 @@ fun ReceiptSheet(
                     // letting a genuine reboot pass silently
                     // (or worse, convert into gifted seconds).
                     Text(
-                        text = "REBOOT — ${receipt.rebootGapSeconds}s UNSHIELDED, NOT COUNTED",
+                        text = stringResource(R.string.receipt_reboot_gap, receipt.rebootGapSeconds),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -505,8 +511,10 @@ fun ReceiptSheet(
                     // session stamped OPEN APP USED never reads
                     // as clean, and the names are the evidence.
                     Text(
-                        text = "OPEN APPS USED IN THAT SESSION: " +
-                            receipt.openExposureApps.joinToString(", ") { it.uppercase() },
+                        text = stringResource(
+                            R.string.receipt_open_apps_used,
+                            receipt.openExposureApps.joinToString(", ") { it.uppercase() }
+                        ),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -543,7 +551,7 @@ fun ReceiptSheet(
                 // in plain words. 61 visible chars — inside the
                 // 62-char budget the 0.25.sp measurement allows.
                 Text(
-                    text = "THIS APP KEEPS ITS OWN LOG · STUDY TIME IS IN THE STUDY TIMER",
+                    text = stringResource(R.string.receipt_footer_log),
                     fontFamily = AnonymousProFamily,
                     fontSize = 9.sp,
                     letterSpacing = 0.25.sp,
@@ -563,14 +571,14 @@ fun ReceiptSheet(
                     ) {
                         if (onDoneWithTask != null) {
                             ReceiptDoor(
-                                text = "DONE WITH THIS TASK",
+                                text = stringResource(R.string.receipt_done_with_task),
                                 modifier = Modifier.weight(1f),
                                 onClick = onDoneWithTask
                             )
                         }
                         if (onNextSession != null) {
                             ReceiptDoor(
-                                text = "NEXT SESSION",
+                                text = stringResource(R.string.receipt_next_session),
                                 modifier = Modifier.weight(1f),
                                 onClick = onNextSession
                             )
@@ -678,7 +686,7 @@ private fun ReceiptQuietRule(gapSeconds: Int) {
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
-            text = "${longSpan(gapSeconds)} QUIET",
+            text = stringResource(R.string.receipt_quiet_span, longSpan(gapSeconds)),
             fontFamily = AnonymousProFamily,
             fontSize = 11.sp,
             letterSpacing = 1.sp,
