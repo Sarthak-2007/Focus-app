@@ -212,6 +212,7 @@ Filed on #155 comment 6536721775 (design) + the reseat completion filing; `VERIF
 | The Plate: the glance rebuilt as the receipt slip's nameplate — fixed-geometry porcelain/ink plate, stamp-word state (SEALED/OPEN/UNPROVEN identical in silhouette), registration-mark accent in every state, typeset in the house fonts | DESIGNER-W-1 (Wow-level designer, WING-A) | #155 | PANEL-QUEUED |
 
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
+| One-time widget pin offer at the first receipt (system pin prompt, dismissible forever, never re-asked) — the #155 glance only helps users who place widgets; the offer rides on trust earned by a held block | CONSUMER-1 (Consumer seat, #155) | #155 · Discussion #615 | PANEL-QUEUED |
 
 ## Pill × receipt relation (WING-C DESIGN, Wave reseat)
 
