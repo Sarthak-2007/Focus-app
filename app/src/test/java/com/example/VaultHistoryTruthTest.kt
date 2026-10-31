@@ -7,7 +7,8 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performClick
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -363,15 +364,22 @@ class VaultHistoryTruthTest {
         settle()
         composeRule.onNodeWithText("Partial Stamp").assertIsDisplayed()
         // Floor lane (census #6, row 29): the Partial Stamp's lore
-        // runs several lines longer than the gyro's, so on the
-        // detail's LazyColumn the two record lines below sit past
-        // the fold — composed, but not displayed until scrolled
-        // to. The claim is that the lines PRINT, exactly; the
-        // scroll is the record page's own designed interaction.
-        composeRule.onNodeWithText("STAMPED — IT STANDS IN THE CABINET")
-            .performScrollTo().assertIsDisplayed()
+        // runs several lines longer than the gyro's, so inside the
+        // cabinet's LazyColumn the two record lines below sit past
+        // the fold — at best composed-but-clipped, at worst not
+        // yet composed at all. The container itself is scrolled
+        // to each line (performScrollToNode composes as it goes),
+        // then the line must be displayed, exactly as printed.
+        // The claim is unchanged: the lines PRINT, with this text.
+        composeRule.onNodeWithTag("drawer_cabinet")
+            .performScrollToNode(hasText("STAMPED — IT STANDS IN THE CABINET"))
+        composeRule.onNodeWithText("STAMPED — IT STANDS IN THE CABINET").assertIsDisplayed()
+        composeRule.onNodeWithTag("drawer_cabinet")
+            .performScrollToNode(
+                hasText("STAMPED ×2 · LAST ${headingWithYear(LocalDate.of(2026, 10, 20))}")
+            )
         composeRule.onNodeWithText(
             "STAMPED ×2 · LAST ${headingWithYear(LocalDate.of(2026, 10, 20))}"
-        ).performScrollTo().assertIsDisplayed()
+        ).assertIsDisplayed()
     }
 }
