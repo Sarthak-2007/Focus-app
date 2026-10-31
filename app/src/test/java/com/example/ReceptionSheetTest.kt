@@ -159,6 +159,8 @@ class ReceptionSheetTest {
         assertEquals("NOT SET", receptionDoorWord(com.example.service.PermPrint.MISSING))
         assertEquals("UNPROVED", receptionDoorWord(com.example.service.PermPrint.STALE))
         assertEquals("NOT CHECKED", receptionDoorWord(com.example.service.PermPrint.UNMEASURED))
+        // #340 F44: the oath print reprints as itself, as on the board.
+        assertEquals("SWORN", receptionDoorWord(com.example.service.PermPrint.SWORN))
     }
 
     @Test

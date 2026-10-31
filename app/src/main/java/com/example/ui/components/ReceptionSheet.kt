@@ -135,6 +135,12 @@ fun receptionDoorWord(print: PermPrint): String = when (print) {
     PermPrint.MISSING_STALE -> "NOT SET"
     PermPrint.UNPROVED -> "UNPROVED"
     PermPrint.UNMEASURED -> "NOT CHECKED"
+    // The enum grew again on main (Audit R6 #340 F44): SWORN,
+    // the user's own timestamped oath where the OS cannot
+    // measure. The board prints the word itself (ParkDrawer's
+    // two SWORN rows), and this sheet reprints the board's
+    // grammar — so the sheet's word is the same word.
+    PermPrint.SWORN -> "SWORN"
 }
 
 /** First-open gate: the sheet opens itself only while the setup
