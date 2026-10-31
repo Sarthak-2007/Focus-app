@@ -246,3 +246,15 @@ Filed on #155 (comment 6535813528) and Discussion #609. All five consume PR #540
 | P4 Lock-screen widget twin: add lock-screen widgetCategory to the existing #312 widget, same truth line (S–M, ~1–2 days) | INNOVATOR-1 | #155 | PANEL-QUEUED (cheapest; natural first build after #540) |
 | P5 "The Held Glance": dynamic long-press shortcut whose label is the state, refreshed on flip events (S, ~1 day) | INNOVATOR-1 | #155 | PANEL-QUEUED (weakest freshness; ranked last) |
 | Streak/score complications, progress-ring live wallpaper, persistent AOD stats face, icon badge counts | INNOVATOR-1 | #155 | PARKED-WITH-REASON (killed by the seat before filing: fail blocker-identity law — 24/7 tracker/dashboard; badge counts also fail truth law, cached = stale) |
+
+## Glance failure faces (DESIGNER-W-3, WING-A — issue #155)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| Certainty grammar for glance states: proven = stamped word + future time + closed rule; unproven = light impression (regular weight, secondary ink) + past time + broken rule; alert orange spent only on proven-bad facts | DESIGNER-W-3 | #155 | PANEL-QUEUED (full filing #155 comment 6536655303; Discussion #630) |
+| F-A THE LIGHT IMPRESSION: UNPROVEN widget face composed — state word, broken rule, self-dating LAST PROVED evidence line, one tap (S, 0.5–1 d; needs PR #540 truth rule) | DESIGNER-W-3 | #155 | PANEL-QUEUED |
+| F-B THE BLANK SLIP: read-failure gets its own state word NOTHING PROVED, no evidence line (S, 0.5 d) | DESIGNER-W-3 | #155 | PANEL-QUEUED |
+| F-C THE WARMING PRESS: ARMING as its own face (SINCE HH:mm); ≥60 s stall becomes UNPROVEN; stalled shield card names the missing grant (M, 1–2 d; 60 s constant = W-2 consult) | DESIGNER-W-3 | #155 | PANEL-QUEUED |
+| F-D THE SLIP AFTER: post-mortem widget face for shield-gap endings only (THE SHIELD WAS OFF, OFF in TokenAlert, 45 min, NO tap offered); valve/break post-mortem killed — receipt law "no receipt, no №" binds the glance (M, 1–2 d; 45 min = W-2 consult) | DESIGNER-W-3 | #155 | PANEL-QUEUED (valve half PARKED-WITH-REASON — killed by design, receipt law) |
+| F-E THE PLATE: all four failure faces rendered at full press (Sora/Anonymous Pro/Atkinson, receipt character) (L, 3–4 d) | DESIGNER-W-3 | #155/#18 | PARKED-WITH-REASON (END-PHASE, with the #18 revamp per park 6525111973; compositions filed complete on #155) |
+| Lock-screen public version takes the failure grammar: unproven → "Open the app to check", no session claim (S–M, 0.5–1 d; words filed, build = JUDGE-2 T4 owner) | DESIGNER-W-3 | #155 | PANEL-QUEUED |
