@@ -132,3 +132,16 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | Launcher block screen: un-exitable launcher surface + separate allowed/peek screens | Sarthak's ruling 04:29 (not a seat idea — his order) | #22/#18 | BUILT-IN-PROGRESS (Umbau lane; first slice merged via PR #167) |
 
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
+
+## Glance temporal design — RECEIPT TIME (DESIGNER-W-2, WING-A — issue #155)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| Three-clocks law for every glance surface: SYSTEM time (the OS chronometer — the only thing allowed to tick, dies with its loop) / EVENT time (stamps, printed once, never updated) / READ time (an AS-OF line on any surface that can outlive its data). A machine that moves only when the truth moves; no ambient animation, no widget chronometer ever | DESIGNER-W-2 | #155 | PANEL-QUEUED (as law; full filing #155 comment 6536763616) |
+| P1 Arming deadline: ARMING card replaced at 5.0 s from promote by UNPROVEN ("Shield not proven — open the app", no chronometer, no counts) if the protecting flip has not landed; chronometer is born at the flip, never backdated (S, 0.5 builder-day) | DESIGNER-W-2 | #155 | PANEL-QUEUED (constant conflicts with DESIGNER-W-3 F-C's 60 s stall — ruling needed, flagged on #155) |
+| P2 Widget AS-OF stamp + day words: SEALED line gains "AS OF {HH:mm}"; NEXT SEAL / UNTIL print TODAY / TOMORROW / weekday — no day-less HH:mm for a future event (S, 0.5 builder-day) | DESIGNER-W-2 | #155 | PANEL-QUEUED |
+| P3 Widget break truth: during a Safe Break the widget prints "ON BREAK • SEAL RESUMES {HH:mm} • AS OF {HH:mm}", with widget pushes on break enter/exit (S/M, 1 builder-day) | DESIGNER-W-2 | #155 | PANEL-QUEUED |
+| P4 Dated completion: completion card sets setWhen(completionMillis) + setShowWhen(true) — a receipt is dated or it is not a receipt; arming a new session cancels any stale summons (id 4097) instantly (XS/S, 0.25 builder-day) | DESIGNER-W-2 | #155 | PANEL-QUEUED |
+| P5 Event-gated standing-card repost: the card re-notifies on truth events only (flip, break enter/exit, grace end, count changes, final minute, end change), never on the 1 s heartbeat; the system chronometer carries time between events (M, 1.5 builder-days) | DESIGNER-W-2 | #155 | PANEL-QUEUED |
+| P6 Morning-after line: before the day's first seal the idle widget reads "OPEN • LAST SEAL ENDED {HH:mm} YESTERDAY • NEXT SEAL {name} TODAY {HH:mm}" — one trace of yesterday, cleared at the first flip; no streaks, no scores (S, 0.5 builder-day) | DESIGNER-W-2 | #155 | PANEL-QUEUED |
+| Temporal never-list, banned by name: ticking element on a surface that survives its loop; present-tense state line with neither a live owner nor an AS-OF stamp; transitional claim with no deadline; undated completion/break card; summons outliving its event past the shared 45:00 or surviving into the next session | DESIGNER-W-2 | #155 | PANEL-QUEUED (as law) |
