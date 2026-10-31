@@ -844,8 +844,29 @@ data class InterceptLogEntity(
     val outcome: String,
     // FIX-3a: the "Habit" default dies — a log row nobody
     // explained books UNSTATED, never a fabricated reason.
-    val triggerReason: String = "UNSTATED"
-)
+    val triggerReason: String = "UNSTATED",
+    // Issue #324 finding 3 (build half): the TYPED event, stored
+    // as enum NAMEs beside the legacy words (migration 18→19).
+    // Writers compute them at the write via InterceptOutcomeKind
+    // .fromStoredWord / InterceptTriggerKind.derive; rows that
+    // predate the typing carry UNKNOWN and derive on read below.
+    val outcomeKind: String = InterceptOutcomeKind.UNKNOWN.name,
+    val triggerKind: String = InterceptTriggerKind.UNKNOWN.name
+) {
+    /** This row's typed outcome: the persisted kind, falling
+     *  back to derivation from the legacy word for rows written
+     *  before the typing landed (their column reads UNKNOWN). */
+    val outcomeKindTyped: InterceptOutcomeKind
+        get() = InterceptOutcomeKind.fromKindName(outcomeKind)
+            .takeIf { it != InterceptOutcomeKind.UNKNOWN }
+            ?: InterceptOutcomeKind.fromStoredWord(outcome)
+
+    /** This row's typed trigger, same fallback as above. */
+    val triggerKindTyped: InterceptTriggerKind
+        get() = InterceptTriggerKind.fromKindName(triggerKind)
+            .takeIf { it != InterceptTriggerKind.UNKNOWN }
+            ?: InterceptTriggerKind.derive(triggerReason, packageName)
+}
 
 @Entity(tableName = "captured_notifications")
 data class CapturedNotificationEntity(

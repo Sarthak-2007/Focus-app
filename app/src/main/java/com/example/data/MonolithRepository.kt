@@ -5061,7 +5061,9 @@ class MonolithRepository(
                         appName = exposed.appName,
                         sessionIntention = session.intention,
                         outcome = EXPOSURE_LOG_OUTCOME,
-                        triggerReason = exposed.packageName
+                        triggerReason = exposed.packageName,
+                        outcomeKind = InterceptOutcomeKind.OPEN_EXPOSURE.name,
+                        triggerKind = InterceptTriggerKind.SYSTEM.name
                     )
                 )
             }
@@ -5100,6 +5102,10 @@ class MonolithRepository(
         // reads), but neither counter may call a let-through a
         // stop: the shield's "N reaches blocked" counts only
         // reaches that were not let through.
+        // Issue #324 finding 3: the typed event is derived ONCE,
+        // here at the write — the peek test below reads the kind,
+        // and the row persists both kinds beside the legacy words.
+        val outcomeKind = InterceptOutcomeKind.fromStoredWord(outcome)
         // Issue #7 charge N2 (DURCH-PRUEF2, verified LIVE on
         // current main): the launcher-door exit is the same
         // lie in a second verb — he was LET THROUGH (the doors
@@ -5109,10 +5115,13 @@ class MonolithRepository(
         // deliberate exception stands untouched: "Left Airlock
         // Without Choosing" still counts — #99 F3 ruled the
         // escape itself moves the counter, and that ruling is
-        // preserved by name, not inherited by accident.
+        // preserved by name, not inherited by accident. (Both
+        // gates read the typed kind since #324: USED_PEEK and
+        // OPENED_LAUNCHER are the let-throughs; LEFT_WITHOUT_
+        // CHOOSING is neither, so it counts exactly as before.)
         val countAsBlocked = countAsReach &&
-            outcome != InterceptOutcome.USED_PEEK &&
-            outcome != InterceptOutcome.OPENED_LAUNCHER
+            outcomeKind != InterceptOutcomeKind.USED_PEEK &&
+            outcomeKind != InterceptOutcomeKind.OPENED_LAUNCHER
         databaseProvider().withTransaction {
             if (countAsBlocked) {
                 dao.incrementInterceptCount(packageName)
@@ -5124,7 +5133,9 @@ class MonolithRepository(
                     appName = appName,
                     sessionIntention = sessionIntention,
                     outcome = outcome,
-                    triggerReason = triggerReason
+                    triggerReason = triggerReason,
+                    outcomeKind = outcomeKind.name,
+                    triggerKind = InterceptTriggerKind.derive(triggerReason, packageName).name
                 )
             )
             if (countAsBlocked) {
@@ -5612,7 +5623,9 @@ class MonolithRepository(
                         packageName = "com.monolith.system",
                         appName = if (bankedElapsed >= 60) "Partial Stamp (${bankedElapsed / 60}m)" else "Unlatched Early",
                         sessionIntention = active.intention,
-                        outcome = outcomeReason
+                        outcome = outcomeReason,
+                        outcomeKind = InterceptOutcomeKind.SESSION_END.name,
+                        triggerKind = InterceptTriggerKind.SYSTEM.name
                     )
                 )
             }

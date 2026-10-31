@@ -337,7 +337,8 @@ class RoutinesMigrationChainTest {
                 MonolithDatabase.MIGRATION_14_15,
                 MonolithDatabase.MIGRATION_15_16,
                 MonolithDatabase.MIGRATION_16_17,
-                MonolithDatabase.MIGRATION_17_18
+                MonolithDatabase.MIGRATION_17_18,
+                MonolithDatabase.MIGRATION_18_19
             )
             .build()
 
