@@ -567,100 +567,31 @@ fun DrawerScreen(
                 item { Spacer(Modifier.height(0.dp)) }
             }
             DrawerView.INDEX -> {
-                // ---------- ALL MONTHS ----------
-                item {
-                    DrawerNavRow(
-                        label = "BACK",
-                        onClick = { viewName = DrawerView.LANDING.name }
-                    )
-                }
-                items(storedMonths, key = { "month-${it.year}-${it.month}" }) { month ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(
-                                role = androidx.compose.ui.semantics.Role.Button
-                            ) {
-                                onSelectMonth(month.year, month.month)
-                                monthEnteredFromName = DrawerView.INDEX.name
-                                viewName = DrawerView.MONTH.name
-                            }
-                            .sizeIn(minHeight = 48.dp)
-                            .padding(vertical = 10.dp)
-                            .testTag("drawer_month_${month.year}_${month.month}"),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = monthLabel(month.year, month.month),
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 14.sp,
-                            color = scheme.onBackground
-                        )
-                    }
-                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-                }
+                drawerMonthIndex(
+                    scheme = scheme,
+                    storedMonths = storedMonths,
+                    onSelectMonth = onSelectMonth,
+                    onBackToLanding = { viewName = DrawerView.LANDING.name },
+                    onEnteredFromIndex = { monthEnteredFromName = DrawerView.INDEX.name },
+                    onNavigateToMonth = { viewName = DrawerView.MONTH.name }
+                )
             }
 
             DrawerView.MONTH -> {
-                // ---------- ONE MONTH ----------
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = monthLabel(drawerMonth.first, drawerMonth.second),
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onSurfaceVariant
-                        )
-                        // BACK — one costume, true parent (AUDIT-
-                        // drawer §2): the parent is LANDING, and
-                        // going back no longer silently resets the
-                        // VM's month — the landing re-derives its
-                        // own current month; the viewed month is
-                        // simply left, not rewritten.
-                        Text(
-                            text = "BACK",
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = scheme.onBackground,
-                            modifier = Modifier
-                                .clickable { viewName = DrawerView.LANDING.name }
-                                .padding(horizontal = 12.dp, vertical = 10.dp)
-                                .testTag("drawer_month_back")
-                        )
-                    }
-                }
-                val groups = buildDayGroups(
-                    rows = drawerRows,
+                drawerOneMonth(
+                    scheme = scheme,
+                    drawerMonth = drawerMonth,
+                    drawerRows = drawerRows,
                     dayWords = dayWords,
-                    scopeMonth = drawerMonth,
-                    includeTodayGroup = !isSealed &&
-                        drawerMonth == currentYearMonth,
-                    today = today
+                    currentYearMonth = currentYearMonth,
+                    today = today,
+                    isSealed = isSealed,
+                    onDeclareDayWord = onDeclareDayWord,
+                    drawerHasEarlier = drawerHasEarlier,
+                    onLoadEarlier = onLoadEarlier,
+                    onBackToLanding = { viewName = DrawerView.LANDING.name },
+                    onSelectTask = { selectedTaskId = it }
                 )
-                groups.forEach { group ->
-                    item(key = "month-head-${group.date}") {
-                        DayHeading(
-                            group = group,
-                            today = today,
-                            isSealed = isSealed,
-                            onDeclareDayWord = onDeclareDayWord
-                        )
-                    }
-                    items(group.rows, key = { "month-${it.id}" }) { task ->
-                        StoredRow(task = task, onClick = { selectedTaskId = task.id })
-                    }
-                }
-                if (drawerHasEarlier) {
-                    item { EarlierRow(onClick = onLoadEarlier) }
-                }
             }
 
             DrawerView.LANDING -> {
@@ -1533,6 +1464,142 @@ private fun LazyListScope.drawerSearchResults(
             }
         }
     }
+}
+
+/**
+ * Issue #90 (complexity F2 slice): the INDEX arm (all months) of
+ * the Drawer's list column — extracted as a LazyListScope
+ * extension, in the pattern of drawerSearchResults.
+ * Behaviour-identical: same items, same keys, same testTags; the
+ * host's captures are explicit parameters and the arm's state
+ * writes (back-to-landing, entered-from record, month
+ * navigation) ride callbacks to the host's saveable holders, in
+ * the arm's standing order.
+ */
+private fun LazyListScope.drawerMonthIndex(
+    scheme: androidx.compose.material3.ColorScheme,
+    storedMonths: List<StoredMonth>,
+    onSelectMonth: (Int, Int) -> Unit,
+    onBackToLanding: () -> Unit,
+    onEnteredFromIndex: () -> Unit,
+    onNavigateToMonth: () -> Unit
+) {
+        // ---------- ALL MONTHS ----------
+        item {
+            DrawerNavRow(
+                label = "BACK",
+                onClick = { onBackToLanding() }
+            )
+        }
+        items(storedMonths, key = { "month-${it.year}-${it.month}" }) { month ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        role = androidx.compose.ui.semantics.Role.Button
+                    ) {
+                        onSelectMonth(month.year, month.month)
+                        onEnteredFromIndex()
+                        onNavigateToMonth()
+                    }
+                    .sizeIn(minHeight = 48.dp)
+                    .padding(vertical = 10.dp)
+                    .testTag("drawer_month_${month.year}_${month.month}"),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = monthLabel(month.year, month.month),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.sp,
+                    color = scheme.onBackground
+                )
+            }
+            HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+        }
+}
+
+/**
+ * Issue #90 (complexity F2 slice): the MONTH arm (one month) of
+ * the Drawer's list column — extracted as a LazyListScope
+ * extension, in the pattern of drawerSearchResults.
+ * Behaviour-identical: same items, same keys, same testTags; the
+ * host's captures are explicit parameters and the arm's state
+ * writes (back-to-landing, row selection) ride callbacks to the
+ * host's saveable state holders.
+ */
+private fun LazyListScope.drawerOneMonth(
+    scheme: androidx.compose.material3.ColorScheme,
+    drawerMonth: Pair<Int, Int>,
+    drawerRows: List<FocusTaskEntity>,
+    dayWords: Map<String, String>,
+    currentYearMonth: Pair<Int, Int>,
+    today: LocalDate,
+    isSealed: Boolean,
+    onDeclareDayWord: (LocalDate, String?) -> Unit,
+    drawerHasEarlier: Boolean,
+    onLoadEarlier: () -> Unit,
+    onBackToLanding: () -> Unit,
+    onSelectTask: (Int) -> Unit
+) {
+        // ---------- ONE MONTH ----------
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = monthLabel(drawerMonth.first, drawerMonth.second),
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onSurfaceVariant
+                )
+                // BACK — one costume, true parent (AUDIT-
+                // drawer §2): the parent is LANDING, and
+                // going back no longer silently resets the
+                // VM's month — the landing re-derives its
+                // own current month; the viewed month is
+                // simply left, not rewritten.
+                Text(
+                    text = "BACK",
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = scheme.onBackground,
+                    modifier = Modifier
+                        .clickable { onBackToLanding() }
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .testTag("drawer_month_back")
+                )
+            }
+        }
+        val groups = buildDayGroups(
+            rows = drawerRows,
+            dayWords = dayWords,
+            scopeMonth = drawerMonth,
+            includeTodayGroup = !isSealed &&
+                drawerMonth == currentYearMonth,
+            today = today
+        )
+        groups.forEach { group ->
+            item(key = "month-head-${group.date}") {
+                DayHeading(
+                    group = group,
+                    today = today,
+                    isSealed = isSealed,
+                    onDeclareDayWord = onDeclareDayWord
+                )
+            }
+            items(group.rows, key = { "month-${it.id}" }) { task ->
+                StoredRow(task = task, onClick = { onSelectTask(task.id) })
+            }
+        }
+        if (drawerHasEarlier) {
+            item { EarlierRow(onClick = onLoadEarlier) }
+        }
 }
 
 @Composable
