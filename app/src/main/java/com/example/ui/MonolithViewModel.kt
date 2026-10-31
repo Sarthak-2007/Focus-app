@@ -4114,10 +4114,12 @@ class MonolithViewModel(
         return AirlockInterceptState(
             isVisible = true,
             interceptedPackageName = packageName,
-            priorInterceptsThisSession = sessionInterceptCount(
+            // FIX-R3 seam cure: main made the mint's session
+            // nullable — count/break only where a session stands.
+            priorInterceptsThisSession = if (active != null) sessionInterceptCount(
                 interceptLogs.value, active.startWallTimeMillis, packageName
-            ),
-            nextBreakAtMillis = nextBreakInstantMillis(active, System.currentTimeMillis()),
+            ) else 0,
+            nextBreakAtMillis = active?.let { nextBreakInstantMillis(it, System.currentTimeMillis()) },
             interceptedAppName = appName,
             // The badge arrives as this mint's reasonBadge parameter
             // (the trigger passes its effectiveBadge; a re-derive
@@ -4429,7 +4431,9 @@ class MonolithViewModel(
                 com.example.service.RoutineHeartbeat.tickAsync(
                     appContext, com.example.service.RoutineHeartbeat.Source.SESSION_EDGE
                 )
-                _sevenDayStats.value = repository.compute7DayHistory()
+                // FIX-R3 seam cure: main retired the manual
+                // _sevenDayStats refresh (its own disarm paths
+                // carry none) — the line is dropped, not renamed.
             }
             return
         }
