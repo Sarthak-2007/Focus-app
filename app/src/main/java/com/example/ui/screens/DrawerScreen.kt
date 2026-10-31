@@ -439,9 +439,7 @@ fun DrawerScreen(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "REPLACE THE DAY WORD ${pendingDayWordConfirm.existingWord} " +
-                            "WITH ${pendingDayWordConfirm.word}? THE WORD IS THE DAY'S " +
-                            "PERMANENT EXPLANATION — THE CHANGE IS ITSELF RECORDED.",
+                        text = stringResource(R.string.drawer_replace_day_word, pendingDayWordConfirm.existingWord, pendingDayWordConfirm.word),
                         fontFamily = AnonymousProFamily,
                         fontSize = 12.sp,
                         color = scheme.onBackground
@@ -465,7 +463,7 @@ fun DrawerScreen(
         }
         item {
             Text(
-                text = "STORED",
+                text = stringResource(R.string.drawer_stored_word),
                 fontFamily = AnonymousProFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 13.sp,
@@ -493,7 +491,7 @@ fun DrawerScreen(
                 ) {
                     if (drawerQuery.isEmpty()) {
                         Text(
-                            text = "TYPE TO FIND A TASK",
+                            text = stringResource(R.string.drawer_type_to_find),
                             fontFamily = AnonymousProFamily,
                             fontSize = 12.sp,
                             letterSpacing = 1.sp,
@@ -784,7 +782,7 @@ private fun DrawerCabinetView(
                         )
                     } else {
                         Text(
-                            text = "NOT YET FORGED",
+                            text = stringResource(R.string.drawer_not_yet_forged),
                             fontFamily = AnonymousProFamily,
                             fontSize = 10.5.sp,
                             letterSpacing = 1.sp,
@@ -929,7 +927,7 @@ private fun DrawerCabinetView(
                         // outcome-only test marked nothing.
                         val gapMark = curioForgeGapMark(record)
                         Text(
-                            text = "$forgeDay · ${record.intention}$gapMark",
+                            text = stringResource(R.string.drawer_forge_day_line, forgeDay, record.intention, gapMark),
                             fontFamily = AnonymousProFamily,
                             fontSize = 10.5.sp,
                             color = scheme.onSurfaceVariant
@@ -985,7 +983,7 @@ private fun DrawerReceiptsView(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "RECEIPTS",
+                    text = stringResource(R.string.drawer_receipts),
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp,
@@ -1007,7 +1005,7 @@ private fun DrawerReceiptsView(
         if (receipts.isEmpty()) {
             item {
                 Text(
-                    text = "NO RECEIPTS YET",
+                    text = stringResource(R.string.drawer_no_receipts_yet),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontSize = 13.sp,
                     color = scheme.onSurfaceVariant,
@@ -1072,7 +1070,7 @@ private fun DrawerDetailView(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "STORED",
+                    text = stringResource(R.string.drawer_stored_word),
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp,
@@ -1080,7 +1078,7 @@ private fun DrawerDetailView(
                     color = scheme.onSurfaceVariant
                 )
                 Text(
-                    text = "BACK",
+                    text = stringResource(R.string.drawer_back),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
@@ -1142,7 +1140,7 @@ private fun DrawerDetailView(
                     // IN TOTAL — the detail's spent is the
                     // task's lifetime accrual, same law as the
                     // row's TOTAL print.
-                    text = "SPENT IN TOTAL ${spentLabel(detail.actualSecondsSpent)}",
+                    text = stringResource(R.string.drawer_spent_in_total, spentLabel(detail.actualSecondsSpent)),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontSize = 13.sp,
                     color = scheme.onBackground
@@ -1217,7 +1215,7 @@ private fun LazyListScope.drawerSearchResults(
             // a mode you leave only by erasing your own
             // typing is a trap — BACK clears the query.
             Text(
-                text = "BACK",
+                text = stringResource(R.string.drawer_back),
                 fontFamily = AtkinsonHyperlegibleFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 12.sp,
@@ -1235,7 +1233,7 @@ private fun LazyListScope.drawerSearchResults(
             // the territory match — this search looks at
             // stored TASKS only, and now says so.
             Text(
-                text = "NO STORED TASK UNDER “$drawerQuery”",
+                text = stringResource(R.string.drawer_no_stored_task_under, drawerQuery),
                 fontFamily = AtkinsonHyperlegibleFamily,
                 fontSize = 13.sp,
                 color = scheme.onSurfaceVariant,
@@ -1397,7 +1395,7 @@ private fun LazyListScope.drawerOneMonth(
                 // own current month; the viewed month is
                 // simply left, not rewritten.
                 Text(
-                    text = "BACK",
+                    text = stringResource(R.string.drawer_back),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
@@ -1466,7 +1464,7 @@ private fun LazyListScope.drawerLandingBody(
     if (globallyEmpty) {
         item {
             Text(
-                text = "NOTHING STORED YET",
+                text = stringResource(R.string.drawer_nothing_stored_yet),
                 fontFamily = AtkinsonHyperlegibleFamily,
                 fontSize = 13.sp,
                 color = scheme.onSurfaceVariant,
@@ -1534,7 +1532,7 @@ private fun LazyListScope.drawerLandingBody(
         if (earlierMonths.isNotEmpty()) {
             item {
                 Text(
-                    text = "MONTHS",
+                    text = stringResource(R.string.drawer_months),
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.sp,
@@ -1771,7 +1769,7 @@ private fun FilingDayLine(
     val scheme = MaterialTheme.colorScheme
     if (word != null) {
         Text(
-            text = "${headingLabel(date, withYear = false)} · $word",
+            text = stringResource(R.string.drawer_heading_word, headingLabel(date, withYear = false), word),
             fontFamily = AnonymousProFamily,
             fontWeight = FontWeight.Bold,
             fontSize = 10.5.sp,
@@ -1882,7 +1880,7 @@ private fun StoredRow(
                 // not time that day contained. Both parents'
                 // VaultHistoryTruthTest pins this print; the
                 // train's bare-label row contradicted its own.
-                text = "TOTAL ${spentLabel(task.actualSecondsSpent)}",
+                text = stringResource(R.string.drawer_total_spent, spentLabel(task.actualSecondsSpent)),
                 fontFamily = AnonymousProFamily,
                 fontSize = 10.5.sp,
                 color = scheme.onSurfaceVariant
@@ -1949,7 +1947,7 @@ private fun ReceiptIndexRow(entry: ReceiptIndexEntry, onClick: () -> Unit) {
         )
         if (entry.releaseFaultShield) {
             Text(
-                text = "SHIELD FAULT — SEE RECEIPT",
+                text = stringResource(R.string.drawer_shield_fault),
                 fontFamily = AnonymousProFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 10.5.sp,
@@ -1960,7 +1958,7 @@ private fun ReceiptIndexRow(entry: ReceiptIndexEntry, onClick: () -> Unit) {
         }
         if (entry.shieldWasOff) {
             Text(
-                text = "THE SHIELD WAS OFF FOR PART OF THAT SESSION",
+                text = stringResource(R.string.drawer_shield_was_off),
                 fontFamily = AnonymousProFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 10.5.sp,

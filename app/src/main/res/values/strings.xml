@@ -189,4 +189,20 @@
     <string name="deck_duration_edit">DURATION · %1$d MIN</string>
     <string name="deck_plus_five">+5</string>
     <string name="deck_from_yesterday">FROM YESTERDAY</string>
+    <string name="drawer_replace_day_word">REPLACE THE DAY WORD %1$s WITH %2$s? THE WORD IS THE DAY\'S PERMANENT EXPLANATION — THE CHANGE IS ITSELF RECORDED.</string>
+    <string name="drawer_forge_day_line">%1$s · %2$s%3$s</string>
+    <string name="drawer_spent_in_total">SPENT IN TOTAL %1$s</string>
+    <string name="drawer_no_stored_task_under">NO STORED TASK UNDER “%1$s”</string>
+    <string name="drawer_heading_word">%1$s · %2$s</string>
+    <string name="drawer_total_spent">TOTAL %1$s</string>
+    <string name="drawer_stored_word">STORED</string>
+    <string name="drawer_type_to_find">TYPE TO FIND A TASK</string>
+    <string name="drawer_not_yet_forged">NOT YET FORGED</string>
+    <string name="drawer_receipts">RECEIPTS</string>
+    <string name="drawer_no_receipts_yet">NO RECEIPTS YET</string>
+    <string name="drawer_back">BACK</string>
+    <string name="drawer_nothing_stored_yet">NOTHING STORED YET</string>
+    <string name="drawer_months">MONTHS</string>
+    <string name="drawer_shield_fault">SHIELD FAULT — SEE RECEIPT</string>
+    <string name="drawer_shield_was_off">THE SHIELD WAS OFF FOR PART OF THAT SESSION</string>
 </resources>
