@@ -17,9 +17,14 @@ import com.example.service.PermState
 import com.example.service.WatchItemId
 import com.example.service.WatchMeasurement
 import com.example.service.WatchSnapshot
+import com.example.ui.components.RECEPTION_LATER_PAIR
 import com.example.ui.components.ReceptionSheet
+import com.example.ui.components.receptionDoorJob
+import com.example.ui.components.receptionDoorPrepare
+import com.example.ui.components.receptionDoorPrepareShort
 import com.example.ui.components.receptionDoorWord
 import com.example.ui.components.receptionFirstRoutineLine
+import com.example.ui.components.receptionFullProtectionShown
 import com.example.ui.components.receptionInitiallyOpen
 import com.example.ui.components.receptionTotal
 import com.example.ui.theme.MyApplicationTheme
@@ -595,5 +600,140 @@ class ReceptionSheetTest {
             .performScrollTo()
             .performClick()
         assertTrue(opened)
+    }
+
+    // ------------------------------------------------------------
+    // The later movement — the #70-F2 remainder (issue #14):
+    // OVERLAY + BATTERY, job + escort, behind their gate
+    // ------------------------------------------------------------
+
+    @Test
+    fun fullProtectionGateWaitsForASessionAndASafeBreak() {
+        // The remainder's own sequence, as a truth table: the
+        // movement is owed only after BOTH proofs stand.
+        assertFalse(receptionFullProtectionShown(0, 0))
+        assertFalse(receptionFullProtectionShown(1, 0))
+        assertFalse(receptionFullProtectionShown(0, 1))
+        assertFalse(receptionFullProtectionShown(0, 5))
+        assertTrue(receptionFullProtectionShown(1, 1))
+        assertTrue(receptionFullProtectionShown(4, 2))
+    }
+
+    @Test
+    fun laterPairCarriesJobAndEscortAndStaysUncounted() {
+        assertEquals(
+            listOf(WatchItemId.OVERLAY, WatchItemId.BATTERY),
+            RECEPTION_LATER_PAIR
+        )
+        for (item in RECEPTION_LATER_PAIR) {
+            // The treatment the remainder owes: a job in his
+            // life's words and an escort that names the pane —
+            // neither may fall through to the empty else.
+            assertTrue(receptionDoorJob(item).isNotBlank())
+            assertTrue(receptionDoorPrepare(item).isNotBlank())
+            assertTrue(receptionDoorPrepareShort(item).isNotBlank())
+            // And the count is untouched: the pair never joins
+            // the counted four, in the enum or in the total.
+            assertFalse(WatchItemId.COUNTED.contains(item))
+        }
+        assertEquals(4, WatchItemId.COUNTED.size)
+        // The escorts name the panes the host actually opens.
+        assertTrue(receptionDoorPrepare(WatchItemId.OVERLAY)
+            .contains("DISPLAY OVER OTHER APPS"))
+        assertTrue(receptionDoorPrepare(WatchItemId.BATTERY)
+            .contains("AUTOSTART"))
+        // The two jobs are two jobs, not one line twice.
+        assertTrue(
+            receptionDoorJob(WatchItemId.OVERLAY) !=
+                receptionDoorJob(WatchItemId.BATTERY)
+        )
+    }
+
+    /** The counted four as in [setSheet] (USAGE missing), with
+     *  the later pair measured MISSING, and the gate inputs
+     *  passed through. */
+    private fun setSheetLaterPair(
+        completedSessions: Int,
+        sessionsWithSafeBreak: Int,
+        onFix: (WatchItemId) -> Unit = {}
+    ) {
+        val now = SystemClock.elapsedRealtime()
+        val snap = snapshotWith(
+            mapOf(
+                WatchItemId.ACCESSIBILITY to PermState.GRANTED,
+                WatchItemId.USAGE_ACCESS to PermState.MISSING,
+                WatchItemId.DEVICE_ADMIN to PermState.GRANTED,
+                WatchItemId.NOTIFICATION_LISTENER to PermState.GRANTED,
+                WatchItemId.OVERLAY to PermState.MISSING,
+                WatchItemId.BATTERY to PermState.MISSING
+            ),
+            now
+        )
+        composeRule.setContent {
+            MyApplicationTheme(darkTheme = false) {
+                ReceptionSheet(
+                    visible = true,
+                    snapshot = snap,
+                    isFirstOpen = false,
+                    isNight = false,
+                    returnTick = 0,
+                    soundEngine = null,
+                    firstRoutineLine = null,
+                    completedSessions = completedSessions,
+                    sessionsWithSafeBreak = sessionsWithSafeBreak,
+                    onShown = {},
+                    onFixClick = onFix,
+                    onCheckClick = {},
+                    onOpenShield = {},
+                    onDone = {}
+                )
+            }
+        }
+        settle(900)
+    }
+
+    @Test
+    fun sheetPrintsTheLaterMovementBehindItsGate() {
+        setSheetLaterPair(completedSessions = 1, sessionsWithSafeBreak = 1)
+        composeRule.onNodeWithText("LATER, FOR FULL PROTECTION").assertExists()
+        // Both doors stand as cards with their own FIX keys.
+        composeRule.onNodeWithTag("reception_door_OVERLAY").assertExists()
+        composeRule.onNodeWithTag("reception_door_BATTERY").assertExists()
+        composeRule.onNodeWithTag("reception_fix_OVERLAY").assertExists()
+        composeRule.onNodeWithTag("reception_fix_BATTERY").assertExists()
+        // The roof's job prints in the sheet's words.
+        composeRule.onNodeWithText(
+            "THE ROOF. Stands the block surface over a shut app — " +
+                "the wall itself, held over the app it seals. " +
+                "It draws nothing outside a session."
+        ).assertExists()
+        // The count is the four's, exactly as without the
+        // movement: the pair never leaks into the total.
+        composeRule.onNodeWithText("GUARD 3/4").assertExists()
+    }
+
+    @Test
+    fun sheetHidesTheLaterMovementBeforeItsGate() {
+        setSheetLaterPair(completedSessions = 0, sessionsWithSafeBreak = 0)
+        composeRule.onNodeWithText("LATER, FOR FULL PROTECTION")
+            .assertDoesNotExist()
+        composeRule.onNodeWithTag("reception_door_OVERLAY").assertDoesNotExist()
+        composeRule.onNodeWithTag("reception_door_BATTERY").assertDoesNotExist()
+        // The sheet itself stands whole without it.
+        composeRule.onNodeWithText("GUARD 3/4").assertExists()
+    }
+
+    @Test
+    fun sheetLaterPairFixKeyRoutesItsDoor() {
+        var fixed: WatchItemId? = null
+        setSheetLaterPair(
+            completedSessions = 2,
+            sessionsWithSafeBreak = 1,
+            onFix = { fixed = it }
+        )
+        composeRule.onNodeWithTag("reception_fix_BATTERY")
+            .performScrollTo()
+            .performClick()
+        assertEquals(WatchItemId.BATTERY, fixed)
     }
 }
