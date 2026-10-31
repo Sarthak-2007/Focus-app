@@ -7,12 +7,15 @@ import java.time.ZoneId
 /**
  * The Drawer's one day rule: his day starts at 03:30 (he wakes at
  * 03:30), not at midnight. Every Drawer derivation of "which day /
- * which month" — the DAO months index, the repository month bounds,
- * the screen's grouping keys — goes through here or through the SQL
- * twin of this rule (the months index subtracts the same 210
- * minutes inside SQLite). Without it, a task finished at 00:02
- * files under the next day AND the next month, and a phantom month
- * appears in the index.
+ * which month" — the repository months index, the repository month
+ * bounds, the screen's grouping keys — goes through here, and ONLY
+ * here. A SQL twin of this rule used to compute the months index
+ * by subtracting 210 elapsed minutes inside SQLite; the two were
+ * different functions on DST days (Audit R1 #37, verified at the
+ * 2026-11-01 America/New_York fall-back boundary), so the twin is
+ * dead: the DAO returns raw instants and this object files them.
+ * Without the rule, a task finished at 00:02 files under the next
+ * day AND the next month, and a phantom month appears in the index.
  *
  * Row finish times are NEVER shifted: they print true clock. Only
  * the filing boundary moves.
@@ -22,7 +25,9 @@ object DrawerDay {
     /** 03:30 = 210 minutes after midnight. */
     const val DAY_START_OFFSET_MINUTES: Long = 210L
 
-    /** The same offset in seconds, for the SQLite months index. */
+    /** The same offset in seconds. Retained for callers that work
+     *  in epoch seconds; the months index no longer consumes it
+     *  (Audit R1 #37 killed the SQL twin — see class doc). */
     const val DAY_START_OFFSET_SECONDS: Long = 12_600L
 
     /** The filing date of an instant: the local date of (instant − 210 min). */
@@ -50,6 +55,13 @@ object DrawerDay {
 
     fun dateIso(date: LocalDate): String = date.toString()
 
+    /** The wall instant the current filing day began: filingDate's
+     *  03:30 local. Ranges that mean "today" (the Drawer's, and
+     *  Audit R6 #340 F17's per-day Airlock escalation) start here,
+     *  never at midnight. */
+    fun dayStartMillis(instantMillis: Long, zone: ZoneId = ZoneId.systemDefault()): Long =
+        filingDate(instantMillis, zone).atTime(3, 30).atZone(zone).toInstant().toEpochMilli()
+
     /**
      * The next instant at which [filingDate] changes for a clock
      * starting at [fromMillis] — the next local 03:30 strictly
@@ -61,7 +73,21 @@ object DrawerDay {
      * DST shift inside the span).
      */
     fun nextBoundaryMillis(fromMillis: Long, zone: ZoneId = ZoneId.systemDefault()): Long {
-        val dayStart = filingDate(fromMillis, zone).atTime(3, 30).atZone(zone)
-        return dayStart.plusDays(1).toInstant().toEpochMilli()
+        val boundaryTime = filingDate(fromMillis, zone).plusDays(1).atTime(3, 30)
+        val resolved = boundaryTime.atZone(zone)
+        if (resolved.toLocalDateTime() == boundaryTime) {
+            return resolved.toInstant().toEpochMilli()
+        }
+        // Audit R6 #341 F69: 03:30 falls inside a spring-forward gap
+        // (EU rule: 03:00 -> 04:00). atZone shifts the nonexistent
+        // 03:30 forward by the gap, landing 30+ minutes AFTER the
+        // filing rule itself has already flipped (filingDate flips
+        // the instant the local clock first reads >= 03:30, which is
+        // the transition instant itself). Wake at the transition.
+        val transition = zone.rules.getTransition(boundaryTime)
+        if (transition != null && transition.isGap) {
+            return transition.instant.toEpochMilli()
+        }
+        return resolved.toInstant().toEpochMilli()
     }
 }

@@ -27,6 +27,10 @@ import org.robolectric.shadows.ShadowLooper
 import org.robolectric.shadows.ShadowSystemClock
 
 /**
+ * PIN scope: PLUMBING — its migration-chain half pins the
+ * schema validation end-to-end; the toggle-truth assertions
+ * are SOURCE.
+ *
  * Truth Car 3 — UNA-01: SHORTS + REELS WAS A PHANTOM.
  *
  * The charge, verified in trunk before the cure: the toggle lived
@@ -44,7 +48,7 @@ import org.robolectric.shadows.ShadowSystemClock
  *  1. The 11→12 migration lands the column on a real v11 row with
  *     the truthful default (1 — the sniper was always on), the row
  *     otherwise intact.
- *  2. The full chain (v7 entity file → Room at v12) validates and
+ *  2. The full chain (v7 entity file → Room at v14) validates and
  *     the switch round-trips through the DAO.
  *  3. The repository read is the store, not memory: a fresh
  *     repository instance — process death's honest simulation —
@@ -57,6 +61,7 @@ import org.robolectric.shadows.ShadowSystemClock
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
+// PIN-SCOPE: PLUMBING — migration chain to v21 + settings persistence (working-rules adoption, Oct 31 18:06 IST).
 class ShortsSniperTruthTest {
 
     private val context: Context
@@ -108,6 +113,17 @@ class ShortsSniperTruthTest {
                             "receiptSequence, lastReceiptSessionId) " +
                             "VALUES (1, 1, 1, 0, 123, 456, 7, 'KEPT', 41, 9)"
                     )
+                    // Test-floor cure: MIGRATION_11_12 also alters
+                    // focus_sessions; a v11 file without that table made
+                    // the migration die with SQLiteException at open.
+                    // A real v11 file always carries focus_sessions —
+                    // the fixture now does too (shape mirrored from
+                    // BreakMigrationTest's v11).
+                    db.execSQL(
+                        "CREATE TABLE IF NOT EXISTS `focus_sessions` (" +
+                            "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "`intention` TEXT NOT NULL)"
+                    )
                 }
 
                 override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
@@ -150,7 +166,7 @@ class ShortsSniperTruthTest {
     }
 
     /** The full v7 entity schema (the Slice E chain test's DDL,
-     *  verbatim) — Room opens it at v12 and validates everything. */
+     *  verbatim) — Room opens it at v14 and validates everything. */
     private fun createV7EntityFile() {
         val factory = FrameworkSQLiteOpenHelperFactory()
         val config = SupportSQLiteOpenHelper.Configuration.builder(context)
@@ -194,7 +210,7 @@ class ShortsSniperTruthTest {
     }
 
     @Test
-    fun v7EntitySchema_fullChain_roomValidatesAtV12_shortsDefaultsTrue_thenRoundTrips() {
+    fun v7EntitySchema_fullChain_roomValidatesAtV17_shortsDefaultsTrue_thenRoundTrips() {
         createV7EntityFile()
         val room = Room.databaseBuilder(context, MonolithDatabase::class.java, dbName)
             .addMigrations(
@@ -202,14 +218,25 @@ class ShortsSniperTruthTest {
                 MonolithDatabase.MIGRATION_8_9,
                 MonolithDatabase.MIGRATION_9_10,
                 MonolithDatabase.MIGRATION_10_11,
-                MonolithDatabase.MIGRATION_11_12
+                MonolithDatabase.MIGRATION_11_12,
+                MonolithDatabase.MIGRATION_12_13,
+                MonolithDatabase.MIGRATION_13_14,
+                MonolithDatabase.MIGRATION_14_15,
+                MonolithDatabase.MIGRATION_15_16,
+                MonolithDatabase.MIGRATION_16_17,
+                MonolithDatabase.MIGRATION_17_18,
+                MonolithDatabase.MIGRATION_18_19,
+                MonolithDatabase.MIGRATION_19_20,
+                MonolithDatabase.MIGRATION_20_21,
+                MonolithDatabase.MIGRATION_21_22,
+                MonolithDatabase.MIGRATION_22_23
             )
             .build()
         runBlocking {
             val dao = room.monolithDao()
             // The read forces the open: Room has migrated
-            // 7→8→9→10→11→12 AND validated the result against
-            // every v12 entity.
+            // 7→8→9→10→11→12→13→14→15→16→17→18→19→20→21 AND
+            // validated the result against every v21 entity.
             val settings = dao.getGuardSettingsSnapshot()
             assertNotNull(settings)
             assertTrue(settings!!.shortsReelsSniperEnabled)

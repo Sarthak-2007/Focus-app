@@ -30,12 +30,6 @@ import org.robolectric.shadows.ShadowLooper
  * sheet and the sled present under its tag; stored ON → no OFF
  * anywhere and the sled still present.
  *
- * The social-sites row, which joined the sheet after this header
- * was written, contributes no "OFF" text node either: with a null
- * snapshot its board word is null, and its sled is a canvas view
- * in chrome mode that draws no text — the count still isolates
- * the sniper sled's margin word alone.
- *
  * The drive half of the standard (throwing the sled changes the
  * row, not a flow) is covered where the wiring lives:
  * ShortsSniperTruthTest.viewModel_printIsTheStore_toggleWritesTheStore
@@ -55,7 +49,7 @@ class ShortsToggleRenderTest {
     private fun setPark(storedShorts: Boolean) {
         val soundEngine = TactileSoundEngine(context)
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 ParkDrawer(
                     visible = true,
                     snapshot = null,
@@ -68,12 +62,23 @@ class ShortsToggleRenderTest {
                     parkReturnTick = 0,
                     onDismiss = {},
                     onFixClick = {},
+                    onCheckClick = {},
                     onToggleSound = {},
                     onToggleShortsReelsSniper = {},
                     // Wave-2 premise: social pair is scaffolding here —
                     // `true` is the persisted default; the toggle is not under test in this file.
                     socialSitesEnabled = true,
-                    onToggleSocialSites = {}
+                    onToggleSocialSites = {},
+                    // #253 line 1 premise (merge-introduced cure,
+                    // PR #723): the plate now carries a third sled
+                    // — the session soundscape's. Like the Sound
+                    // sled above, it prints ON in this fixture so
+                    // the file's invariant (the only OFF word on
+                    // the sheet is the sniper sled's) still holds;
+                    // the soundscape fact's own default (OFF) is
+                    // pinned in SoundscapeSettingTest, not here.
+                    soundscapeEnabled = true,
+                    onToggleSoundscape = {}
                 )
             }
         }

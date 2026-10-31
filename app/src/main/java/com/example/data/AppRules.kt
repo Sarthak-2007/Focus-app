@@ -60,6 +60,14 @@ data class AppRules(
     val openCount: Int get() = open.size
     val corruptCount: Int get() = corrupt.size
 
+    /** Issue #129 F5: the OPEN count under its true name. An
+     *  OPEN app is an unguarded door — usable for a whole session
+     *  while the record counts only what was held. Surfaces that
+     *  print the tally as bookkeeping read [openCount]; surfaces
+     *  that speak to the man about risk read this, so the number
+     *  is framed as exposure, never as neutral completeness. */
+    val unguardedCount: Int get() = open.size
+
     /** Every de-duplicated input app, accounted for exactly once. */
     val accountedCount: Int get() = peekCount + shutCount + openCount + corruptCount
 
@@ -71,7 +79,7 @@ data class AppRules(
 /** The ledger's total order: name (case-insensitive), then the
  *  unique package name — no tie can inherit feed order. */
 private val ledgerOrder: Comparator<BlockedAppEntity> =
-    compareBy<BlockedAppEntity> { it.appName.lowercase() }.thenBy { it.packageName }
+    compareBy<BlockedAppEntity> { it.appName.lowercase(java.util.Locale.ROOT) }.thenBy { it.packageName }
 
 /** Strictness rank for de-duplication: higher wins. A corrupt
  *  (unparseable) tier ranks below every real ruling. */
@@ -113,3 +121,25 @@ fun List<BlockedAppEntity>.groupedByRule(): AppRules {
         corrupt = corrupt.sortedWith(ledgerOrder)
     )
 }
+
+/**
+ * THE CATALOGUE'S GROUPS (Shield audit R-1; issue #7 builder pass).
+ * The catalogue is the ONE enumeration of his rulings on Shield:
+ * the Standing Orders slip's per-app lines are retired, and the
+ * catalogue itself groups by ruling so a name appears exactly
+ * once on the screen. Group order is the slip's order — PEEK
+ * before SHUT (the holes are the urgent read), OPEN last — and
+ * alphabetical inside each group, the ledger's order. A ruling
+ * with no apps in this list contributes no group: its absence is
+ * printed once, by the tally's zero above the catalogue, never by
+ * an empty section here.
+ */
+fun List<BlockedAppEntity>.groupedForCatalogue():
+    List<Pair<AppBlockTier, List<BlockedAppEntity>>> =
+    listOf(AppBlockTier.PEEK_2M, AppBlockTier.LOCKED, AppBlockTier.OPEN)
+        .map { tier ->
+            tier to filter { it.resolvedTier == tier }
+                .sortedBy { it.appName.lowercase() }
+        }
+        .filter { it.second.isNotEmpty() }
+
