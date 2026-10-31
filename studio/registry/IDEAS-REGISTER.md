@@ -102,6 +102,20 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | Signed issue/PR comments + studio/plan in repo as the collaboration surface | Methods (Postamt) | — | BUILT (programme already works this way) |
 | PR template with evidence fields | Methods | #22 | PANEL-QUEUED (draft exists in wave2-methods-files/) |
 
+## System surfaces — glance doors (INNOVATOR-2, WING-A ideation, #155)
+
+Full deep-dives: #155 comment 6537513966 · Discussion (INNOVATOR-2 system surfaces, #155). Verification VERIFIED vs main `235a382a`: TileService, ShortcutManager, requestPinAppWidget and WidgetSealTruth all 0 hits in `app/src` (code search + local grep + manifest read); widget present via PR #312; witness gate exists only on PR #540.
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| Witness Tile: Quick Settings TileService that is never a toggle — three states (SEALED only when minted in onStartListening against witness + <30s beat; UNPROVEN greyed; OPEN), click only escorts to SHIELD, flip-push via requestListeningState on #540's refresh funnel | INNOVATOR-2 | #155 | PANEL-QUEUED (M, 2–3 days; after #540 merges — needs the real WidgetSealTruth gate) |
+| Pocket Receipt shortcuts, static half: shortcuts.xml verbs only ("Seal a session" → DECK arm flow, "Open Shield" → SHIELD) — static content is fixed at install, so any state word in it is a lie by construction | INNOVATOR-2 | #155 | PANEL-QUEUED (S, 0.5–1 day; independent of #540) |
+| Pocket Receipt shortcuts, dynamic half: exactly ONE dynamic ShortcutManager shortcut, label-only truth ("SEALED — OPEN MONOLITH"), pushed/removed only at seal flips via the refresh funnel, rate-limit guard, no UNTIL/intention in the cached label, icon constant (honours DESIGNER-E-4's icon-flip kill) | INNOVATOR-2 | #155 | PANEL-QUEUED (S–M, +1–2 days; after #540 merges) |
+| Ask Once, At The Sealing: requestPinAppWidget door for the existing widget — isRequestPinAppWidgetSupported gate, already-placed check, once-ever flag, offered only at first successful seal (or first completion card, never both), honest fallback card on unsupported launchers | INNOVATOR-2 | #155 | PANEL-QUEUED (S, 0.5–1 day; independent of #540) |
+| Assistant / voice arming ("Hey Google, seal…") | INNOVATOR-2 | #155 | PARKED-WITH-REASON (killed in filing §4: voice arm = pocket-arming with a microphone; fails blocker identity) |
+| Lock-screen widgets / glanceable hub as a glance surface | INNOVATOR-2 | #155 | PARKED-WITH-REASON (judged NOT REAL today in filing §4: no general third-party API on the user's device class; revisit only if a stable API ships) |
+| Tile-as-toggle / tap-to-arm shortcut (naive forms) | INNOVATOR-2 | #155 | PARKED-WITH-REASON (killed by name in filing §4 so no later lane "simplifies" into them: toggle = 60s-hold bypass; tap-arm = ritual bypass) |
+
 ## Decisions & deliberations
 
 | Idea | Seat | Issue | Disposition |
