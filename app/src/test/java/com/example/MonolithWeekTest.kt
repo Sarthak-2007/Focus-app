@@ -1,5 +1,6 @@
 package com.example
 
+import com.example.data.ClockHonesty
 import com.example.data.MonolithWeek
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -206,5 +207,43 @@ class MonolithWeekTest {
         assertEquals(LocalTime.MIDNIGHT, Instant.ofEpochMilli(istAnchor).atZone(ist).toLocalTime())
         assertEquals(DayOfWeek.MONDAY, Instant.ofEpochMilli(nyAnchor).atZone(ny).dayOfWeek)
         assertEquals(LocalTime.MIDNIGHT, Instant.ofEpochMilli(nyAnchor).atZone(ny).toLocalTime())
+    }
+
+    // -----------------------------------------------------------------
+    // Issue #82 tightening (STURM3-16) — composition: the honest now
+    // feeding the week anchor. Under in-boot travel of ±7 days the
+    // honest now does not move (60 s of monotonic time only), so a
+    // spend's week anchor is IDENTICAL under both attacks. UTC zone
+    // pinned, per the patch spec.
+    // -----------------------------------------------------------------
+
+    private fun honestNowUnderTravel(travelMillis: Long): Long {
+        val utc = ZoneId.of("UTC")
+        val anchorWall = ZonedDateTime.of(2026, 10, 28, 12, 0, 0, 0, utc)
+            .toInstant().toEpochMilli() // Wednesday mid-week
+        val decision = ClockHonesty.decide(
+            anchorWallMillis = anchorWall,
+            anchorElapsedRealtimeMillis = 500_000L,
+            anchorBootCount = 7,
+            nowWallMillis = anchorWall + travelMillis,
+            nowElapsedRealtimeMillis = 500_000L + 60_000L, // 60 s really passed
+            nowBootCount = 7
+        )
+        assertEquals(anchorWall + 60_000L, decision.honestNowMillis)
+        return decision.honestNowMillis
+    }
+
+    @Test
+    fun spendWeekAnchorIdenticalUnderPlusSevenDayTravel() {
+        val utc = ZoneId.of("UTC")
+        val honest = honestNowUnderTravel(7 * 24 * 3600_000L)
+        assertEquals(expectedAnchor(2026, 10, 26, utc), MonolithWeek.weekAnchorMillis(honest, utc))
+    }
+
+    @Test
+    fun spendWeekAnchorIdenticalUnderMinusSevenDayTravel() {
+        val utc = ZoneId.of("UTC")
+        val honest = honestNowUnderTravel(-7 * 24 * 3600_000L)
+        assertEquals(expectedAnchor(2026, 10, 26, utc), MonolithWeek.weekAnchorMillis(honest, utc))
     }
 }

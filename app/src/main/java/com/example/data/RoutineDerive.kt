@@ -9,7 +9,10 @@ package com.example.data
  * randomness inside derive(). Every input arrives as a parameter;
  * the same inputs return an equal result, always. This is what
  * makes a stale or hallucinated caller harmless: a wrong *trigger*
- * can only ever produce a correct *evaluation of now*.
+ * can only ever produce a correct *evaluation of now*. F-1's
+ * queue-head title honours the same law: the caller resolves it
+ * (resolveHeadTitle over its own DAO snapshot) and passes the
+ * resulting String? in — derive() never reads the task queue.
  *
  * There is NO test-date suppression anywhere in this file (Ren,
  * 0915 — struck in its widest form): the app does not know that a
@@ -30,7 +33,12 @@ data class DesiredSession(
     val windowEndMillis: Long,
     val durationMinutes: Int,    // = remainderMinutes, NEVER the full window
     val loadoutName: String,     // routine.loadoutName, applied at materialise
-    val intention: String,       // = routine.name
+    val intention: String,       // F-1 (issue #12): the queue head's title as
+                                 // resolved by the caller (see resolveHeadTitle);
+                                 // the routine's own name when no head exists,
+                                 // and ALWAYS the routine's own name for SLEEP
+                                 // routines (lead ruling: the head names work,
+                                 // never sleep)
     val profileName: String      // = "Routine: <name>" — legacy rendering only;
                                  // identity is routineId, never this string
 )
@@ -76,15 +84,46 @@ object RoutineDerive {
      *  him for its own lateness. */
     const val MIN_REMAINDER_MINUTES = 5
 
+    /**
+     * F-1 (issue #12): resolves the queue head's title from the
+     * caller's ordered task snapshot. PURE — a list in, a title
+     * (or null) out; no DAO, no Context, no clock — so the rule
+     * is unit-tested directly and derive() purity is untouched:
+     * derive() only ever receives the String? this returns.
+     *
+     * Input contract: [tasks] in the DAO's queue order (MonolithDao
+     * getAllTasksSnapshot: status CASE ACTIVE, QUEUED, DEFERRED,
+     * else; queueOrder ASC; id ASC). Candidates are ACTIVE or
+     * QUEUED rows only — a DEFERRED task is "not today" and NEVER
+     * headlines a session (plan ruling 7: no next-up helper with a
+     * DEFERRED fallback may serve this seam), and COMPLETED rows
+     * are the Drawer's record, not the queue's future. A blank or
+     * whitespace title is skipped to the next eligible row. Null
+     * when nothing is eligible (empty queue, DEFERRED-only,
+     * all-blank): the caller passes null on and deriveOne falls
+     * back to the routine name — the pre-F-1 behaviour.
+     */
+    fun resolveHeadTitle(tasks: List<FocusTaskEntity>): String? =
+        tasks.firstOrNull { task ->
+            (task.resolvedStatus == TaskQueueStatus.ACTIVE ||
+                task.resolvedStatus == TaskQueueStatus.QUEUED) &&
+                task.title.isNotBlank()
+        }?.title
+
     fun derive(
         routines: List<RoutineEntity>,
         nowMillis: Long,
         activeSession: FocusSessionEntity?,
         sessions: List<FocusSessionEntity>,
-        settings: GuardSettingsEntity
+        settings: GuardSettingsEntity,
+        headTaskTitle: String? = null,
+        excusedDateIsos: Set<String> = emptySet()
     ): DeriveResult {
         val derivations = routines.map { routine ->
-            deriveOne(routine, nowMillis, activeSession, sessions, settings)
+            deriveOne(
+                routine, nowMillis, activeSession, sessions, settings,
+                headTaskTitle = headTaskTitle, excusedDateIsos = excusedDateIsos
+            )
         }
         val knownIds = routines.map { it.id }.toSet()
         val orphans = sessions.filter { s ->
@@ -103,7 +142,9 @@ object RoutineDerive {
         nowMillis: Long,
         activeSession: FocusSessionEntity?,
         sessions: List<FocusSessionEntity>,
-        settings: GuardSettingsEntity
+        settings: GuardSettingsEntity,
+        headTaskTitle: String? = null,
+        excusedDateIsos: Set<String> = emptySet()
     ): RoutineDerivation {
         val mine = sessions.filter { it.routineId == routine.id }
         val isSleep = routine.loadoutName == SmartLoadout.SLEEP.name
@@ -134,7 +175,7 @@ object RoutineDerive {
             }
         }
 
-        val judgement = if (isSleep) null else judgeLatestClosed(routine, nowMillis, sessions, settings)
+        val judgement = if (isSleep) null else judgeLatestClosed(routine, nowMillis, sessions, settings, excusedDateIsos)
 
         if (!routine.enabled) {
             return RoutineDerivation(routine.id, WindowState.DISABLED, null, null, finaliseDue, judgement)
@@ -148,6 +189,14 @@ object RoutineDerive {
             // materialises at remainder (Otis §2.4 amendment / T8) —
             // the pause killed the start, not the whole window.
             if (nowMillis < routine.pausedUntilMillis && window.startMillis < routine.pausedUntilMillis) {
+                return RoutineDerivation(routine.id, WindowState.PAUSED, window, null, finaliseDue, judgement)
+            }
+            // Excused date (issue #137, F1b): the window's filing
+            // date carries an excuse word (ILL / REST / FAMILY), so
+            // no session materialises for it. The state reuses
+            // PAUSED — the existing "this window does not run"
+            // state; no new vocabulary is invented for it.
+            if (isExcused(window.startMillis, excusedDateIsos)) {
                 return RoutineDerivation(routine.id, WindowState.PAUSED, window, null, finaliseDue, judgement)
             }
             val active = activeSession
@@ -179,14 +228,16 @@ object RoutineDerive {
                     windowEndMillis = window.endMillis,
                     durationMinutes = window.remainderMinutes,
                     loadoutName = routine.loadoutName,
-                    // Issue #124: a routine arms the block, not
-                    // the words — the session's intention is what
-                    // the user declares, and an auto-armed session
-                    // was declared by nobody. The old value filed
-                    // the routine's NAME as the session intention,
-                    // where the receipt and airlock read it back as
-                    // the user's own declaration.
-                    intention = "",
+                    // R1 (lead ruling at the main-merge sitting,
+                    // on M-A1 OPEN-2 / M-A3 §7 H3): the head names
+                    // the session when the queue has one — his own
+                    // queued words, frozen at seal; later queue edits
+                    // cannot rewrite it, and sealing consumes nothing.
+                    // When there is no head, the intention is ""
+                    // (issue #124): a routine arms the block, not the
+                    // words — the routine’s NAME is never filed as
+                    // his declaration, SLEEP included, no exceptions.
+                    intention = headTaskTitle?.takeIf { it.isNotBlank() } ?: "",
                     profileName = "Routine: ${routine.name}"
                 )
             } else {
@@ -213,15 +264,27 @@ object RoutineDerive {
      *  struck suppression clause of J6: paused/disabled windows do
      *  not exist for judgement — a day he paused in advance cannot
      *  be a miss). */
+    /** True when [windowStartMillis]'s filing date (DrawerDay's
+     *  03:30 rule — the same date the Drawer files the word under)
+     *  is one of the excused date isos the caller read from the
+     *  day-word stores. */
+    private fun isExcused(windowStartMillis: Long, excusedDateIsos: Set<String>): Boolean =
+        DrawerDay.dateIso(DrawerDay.filingDate(windowStartMillis)) in excusedDateIsos
+
     private fun judgeLatestClosed(
         routine: RoutineEntity,
         nowMillis: Long,
         sessions: List<FocusSessionEntity>,
-        settings: GuardSettingsEntity
+        settings: GuardSettingsEntity,
+        excusedDateIsos: Set<String> = emptySet()
     ): WindowJudgement? {
         val closed = RoutineSchedule.latestClosedWindow(routine, nowMillis) ?: return null
         // J6: a window the pause covered end-to-end never existed.
         if (routine.pausedUntilMillis >= closed.endMillis) return null
+        // J6b (issue #137, F1a): a window whose filing date carries
+        // an excuse word gets the same amnesty as J6 — it is never
+        // judged MISSED (or NOT_DELIVERED) for a day he declared.
+        if (isExcused(closed.startMillis, excusedDateIsos)) return null
         val claim = pickClaim(sessions.filter {
             it.routineId == routine.id && it.windowStartMillis == closed.startMillis
         })
@@ -323,7 +386,7 @@ object RoutineDerive {
         for (routine in routines) {
             // UNA-09: the chain reads the ONE live definition
             // (RoutineSchedule.isLive) — the same predicate Shield's
-            // "n ACTIVE" count prints.
+            // "n ARMED" count prints (R-6 wording).
             if (!RoutineSchedule.isLive(routine)) continue
             offer(RoutineSchedule.windowContaining(routine, nowMillis)?.endMillis)
             offer(RoutineSchedule.nextStartMillis(routine, nowMillis))

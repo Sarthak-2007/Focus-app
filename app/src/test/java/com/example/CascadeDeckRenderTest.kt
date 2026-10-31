@@ -130,6 +130,7 @@ class CascadeDeckRenderTest {
 
     private fun capture(name: String) {
         val out = File(shotsDir, name)
+        out.parentFile?.mkdirs() // batch-10 CI cure: shots dir must exist on a clean runner
         composeRule.runOnUiThread {
             val decor = composeRule.activity.window.decorView
             val w = if (decor.width > 0) decor.width else 1318
@@ -213,17 +214,42 @@ class CascadeDeckRenderTest {
         capture("cascade_idle_blocks_day.png")
     }
 
+    // The jam sentence's live form (issue #126 F4): the Deck
+    // renders jamSentenceFor(phase, nowMono) — the sentence names
+    // the first STILL-pending link from the live links map,
+    // carries the retry verb, and counts down to the annulment
+    // ("SHIELD STILL HASN'T ANSWERED — RETRYING · ANNULS IN nS.").
+    // The retired sentence this pair once asserted ("THE SHIELD
+    // DIDN'T ANSWER — STILL CHECKING.") exists in no resource:
+    // #126 F4 replaced the frozen jamSet form because it kept
+    // accusing links that had already answered and hid the
+    // deadline until it fired. The exact wording — both forms,
+    // the name argument, the countdown arithmetic — is pinned
+    // deterministically in ArmProvingControllerTest; the seconds
+    // digit here is the machine's live clock reading and cannot
+    // be asserted as a constant. What this render pair guards is
+    // the claim in its name: in the composed frame, the jam slot
+    // prints, and it names the unanswering link — SHIELD, the
+    // fixture's one pending link (SESSION and ACCESS confirmed;
+    // naming either of them fails this assertion).
+    private fun assertJamNamesTheShield() {
+        composeRule.onNodeWithText(
+            "SHIELD STILL HASN'T ANSWERED — RETRYING · ANNULS IN",
+            substring = true
+        ).assertIsDisplayed()
+    }
+
     @Test
     fun jammedNamesTheUnansweringLink() {
         setDeck(jammed(), dark = false)
-        composeRule.onNodeWithText("THE SHIELD DIDN'T ANSWER — STILL CHECKING.").assertIsDisplayed()
+        assertJamNamesTheShield()
         capture("cascade_jammed_day.png")
     }
 
     @Test
     fun jammedNamesTheUnansweringLinkAtNight() {
         setDeck(jammed(), dark = true)
-        composeRule.onNodeWithText("THE SHIELD DIDN'T ANSWER — STILL CHECKING.").assertIsDisplayed()
+        assertJamNamesTheShield()
         capture("cascade_jammed_night.png")
     }
 

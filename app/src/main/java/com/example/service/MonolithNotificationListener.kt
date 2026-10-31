@@ -3,6 +3,7 @@ package com.example.service
 import android.app.Notification
 import android.content.ComponentName
 import android.os.Build
+import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -138,7 +139,22 @@ internal fun snoozeDurationMillis(session: FocusSessionEntity, nowMillis: Long):
 }
 
 /** One app's cached hold facts: its tier and category. */
-internal data class CachedAppRule(val tier: AppBlockTier, val category: String)
+internal data class CachedAppRule(
+    val tier: AppBlockTier,
+    val category: String,
+    val activePeekUntilElapsedRealtime: Long = 0L
+)
+
+/**
+ * TAGWERK finding on #100 (6524365581): a package whose peek
+ * lease is live is being looked at by design — its notifications
+ * are the user's to receive, never holds. The lease end is the
+ * same stored read the enforcement doors use
+ * (BlockedAppEntity.activePeekUntilElapsedRealtime, elapsed-
+ * realtime clock); a lease end of 0 is never live.
+ */
+internal fun peekLeaseLive(activePeekUntilElapsedRealtime: Long, nowElapsedRealtime: Long): Boolean =
+    activePeekUntilElapsedRealtime > 0L && activePeekUntilElapsedRealtime > nowElapsedRealtime
 
 /**
  * Issue #100 F1 mitigation: the in-memory hold decision. The
@@ -163,7 +179,7 @@ object NotificationHoldCache {
         sessionEndMillis = sessionEndWallMillis(session)
         stopwatch = session.isStopwatchMode
         rules = apps.associate {
-            it.packageName to CachedAppRule(it.resolvedTier, it.category)
+            it.packageName to CachedAppRule(it.resolvedTier, it.category, it.activePeekUntilElapsedRealtime)
         }
     }
 
@@ -176,7 +192,7 @@ object NotificationHoldCache {
 
     /** The cached rule for [pkg] if a cached session window
      *  covers [postTimeMillis], else null (judge async). */
-    fun ruleCovering(pkg: String, postTimeMillis: Long): CachedAppRule? {
+    internal fun ruleCovering(pkg: String, postTimeMillis: Long): CachedAppRule? {
         if (sessionStartMillis <= 0L) return null
         if (postTimeMillis < sessionStartMillis || postTimeMillis > sessionEndMillis) return null
         return rules[pkg]
@@ -213,6 +229,20 @@ object NotificationHoldCache {
  * - During a Safe Break, PEEK-tier apps are unlocked by design
  *   and their notifications are not held.
  */
+/**
+ * The hold rule (Audit R3, safe-break-lived #2): a notification is
+ * held — digested and cancelled — when its app's tier is not OPEN,
+ * EXCEPT that a Safe Break releases the apps the break itself
+ * unlocks: a PEEK-tier app is freely open for the break's length
+ * (the accessibility service's Safe Break rule), so holding its
+ * notifications while its owner chats inside it made the "unlock"
+ * half a lie — messages arrived silently into the HELD digest.
+ * LOCKED apps stay held through the break, exactly as they stay
+ * locked. Pure, so the rule is unit-tested without the service.
+ */
+internal fun notificationHeldDuringSession(isInSafeBreak: Boolean, tier: AppBlockTier): Boolean =
+    tier != AppBlockTier.OPEN && !(isInSafeBreak && tier == AppBlockTier.PEEK_2M)
+
 class MonolithNotificationListener : NotificationListenerService() {
 
     private val scope = CoroutineScope(
@@ -369,6 +399,7 @@ class MonolithNotificationListener : NotificationListenerService() {
         // question is live state, not cache material).
         val cached = NotificationHoldCache.ruleCovering(pkg, postTimeMillis)
         if (cached != null) {
+            if (peekLeaseLive(cached.activePeekUntilElapsedRealtime, SystemClock.elapsedRealtime())) return
             if (cached.tier == AppBlockTier.OPEN) return
             if (cached.tier == AppBlockTier.LOCKED &&
                 cached.category != AppCategory.FINANCE.name
@@ -402,6 +433,10 @@ class MonolithNotificationListener : NotificationListenerService() {
             // design (the shield's own blocked-set logic); their
             // notifications are the user's to receive, not holds.
             if (session.isInSafeBreak && appRule.resolvedTier == AppBlockTier.PEEK_2M) return@launch
+            // TAGWERK (#100, 6524365581): a live peek lease for
+            // THIS package means he is looking at the app right
+            // now — skip the hold, whatever the tier.
+            if (peekLeaseLive(appRule.activePeekUntilElapsedRealtime, SystemClock.elapsedRealtime())) return@launch
             holdNotification(key, snoozeDurationMillis(session, System.currentTimeMillis()))
         }
     }

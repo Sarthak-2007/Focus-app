@@ -4,10 +4,13 @@ import com.example.data.AppBlockTier
 import com.example.data.BlockedAppEntity
 import com.example.data.FocusSessionEntity
 import com.example.service.NotificationHoldCache
+import com.example.service.peekLeaseLive
 import com.example.service.SNOOZE_CHUNK_MILLIS
 import com.example.service.sessionEndWallMillis
 import com.example.service.snoozeDurationMillis
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -83,5 +86,15 @@ class Issue100NotificationsTest {
         assertEquals(6_000_000L, NotificationHoldCache.snoozeDuration(1_600_000L))
         NotificationHoldCache.clear()
         assertNull(NotificationHoldCache.ruleCovering("com.chat", 2_000_000L))
+    }
+
+    @Test
+    fun peekLeaseLive_onlyWhileLeaseEndIsInTheFuture() {
+        // TAGWERK (#100): a live peek lease exempts the package
+        // from holds; an expired or never-granted lease does not.
+        assertTrue(peekLeaseLive(5_000L, 4_999L))
+        assertFalse(peekLeaseLive(5_000L, 5_000L))
+        assertFalse(peekLeaseLive(5_000L, 6_000L))
+        assertFalse(peekLeaseLive(0L, 1_000L))
     }
 }

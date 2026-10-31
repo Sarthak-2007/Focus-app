@@ -20,6 +20,16 @@ package com.example.data
  * end stamped at the ending write) and receiptNumber (RC-04,
  * the № this session claimed, stamped inside the claim
  * transaction; the claim latches on the row).
+ *
+ * Receipt audit (issue #10): two more persisted/carried facts.
+ * The DISMISSED № lives OUTSIDE Room, in the repository's
+ * `monolith_receipt` SharedPreferences (the audit's interim law,
+ * item 20: a dismissed slip stays dismissed across process
+ * death) — deliberately no guard_settings column, so this
+ * contract implies NO database version change. And the HELD
+ * line's future figures ride as [ReceiptHeldFigures]: today
+ * nothing fills them (see that type), so the line does not
+ * print at all.
  */
 
 /** Nocke §2.3's outcome vocabulary — the discriminator stamped
@@ -138,7 +148,16 @@ fun finishKindOf(row: FocusSessionEntity, isSleepLoadout: Boolean, nowWallMillis
 
 /** Whether this finish kind sounds the E700 completion pulse.
  *  Death-booked finishes (ELAPSED_SHIELD_GAP) never pulse (B-12);
- *  PARTIAL never pulses; the rest of the publishable kinds do. */
+ *  PARTIAL never pulses; the rest of the publishable kinds do.
+ *
+ *  Issue #13, A-10(i) — SILENCE FOR THE KIND: the stand-down
+ *  returns false. The machine does not applaud sleep. The gate
+ *  sits on the finish ceremony's CALLS in the VM (the E0 knock
+ *  and the E880 pair die with the pulse), so the haptic half —
+ *  triggerWaveform fires unconditionally inside the sound
+ *  engine, NOT gated by the sound toggle — dies with the audio.
+ *  The voices themselves are untouched for every witnessed
+ *  finish. */
 fun finishPulses(kind: String, row: FocusSessionEntity): Boolean = when (kind) {
     // An exposed finish is death-booked in the same sense as a
     // shield gap (#129 F3): the record stands, the pulse does not.
@@ -146,6 +165,19 @@ fun finishPulses(kind: String, row: FocusSessionEntity): Boolean = when (kind) {
         row.outcome != SessionOutcome.ELAPSED_OPEN_EXPOSURE
     FinishKind.FLOW_FINISH -> true
     FinishKind.ROUTINE_ATTENDED -> true
+    FinishKind.ROUTINE_SLEEP_STANDDOWN -> false
+    else -> false
+}
+
+/** Issue #13, A-10(ii): routine-born kinds. A receipt of one of
+ *  these kinds is BORN FILED — it never stands on the Deck; it
+ *  stays reachable as a record. One persisted filed-marker
+ *  (ReceiptFiledStore, beside the standing pointer's world)
+ *  carries the fact; rehydration and the standing composition
+ *  both refuse a filed slip. */
+fun isRoutineBornKind(kind: String): Boolean = when (kind) {
+    FinishKind.ROUTINE_ATTENDED,
+    FinishKind.ROUTINE_PARTIAL,
     FinishKind.ROUTINE_SLEEP_STANDDOWN -> true
     else -> false
 }
@@ -197,6 +229,12 @@ object InterceptOutcome {
 fun isBlockedInterceptOutcome(outcome: String): Boolean =
     InterceptOutcome.BLOCKED_OUTCOMES.any { it.equals(outcome.trim(), ignoreCase = true) }
 
+/** Issue #13, A-10(iv): kinds whose end is a STORED-END fact —
+ *  a routine row's end is its frozen windowEndMillis, so filing
+ *  at any age is truthful and branch U's 10-minute cliff (which
+ *  guards against fabricating a № for an unwitnessed finish)
+ *  does not apply. Witnessed manual finishes keep the cliff. */
+fun receiptCliffExempt(kind: String): Boolean = isRoutineBornKind(kind)
 
 /** One row of the Vault's receipts index (issue #157): the facts
  *  a claimed session's own row proves, nothing more — its №, its
@@ -219,7 +257,8 @@ data class ReceiptIndexEntry(
 
 /** One deflection on the slip: a blocked attempt the machine
  *  turned away during the session, reduced at assembly (window
- *  ∩ intention match ∩ 30s-per-package dedupe, first kept).
+ *  ∩ intention match ∩ BLOCKED outcome ∩ 30s-per-package
+ *  dedupe, first kept).
  *  There is deliberately NO total/count field anywhere in this
  *  contract (Zettel): the slip lists; it never sums.
  *
@@ -260,6 +299,42 @@ data class ReceiptDeflection(
             outcome.trim().equals("Used 2m Peek", ignoreCase = true) -> "PEEKED 2 MIN"
             else -> outcome.trim().uppercase(java.util.Locale.US)
         }
+}
+
+/**
+ * The HELD line's figures, in the only form the slip may print
+ * (receipt audit item 9 / W-41): apps split by what enforcement
+ * actually did — [shutApps] held shut, [peekApps] peek-tier,
+ * [heldSites] derived from the enforcer, never a list size.
+ *
+ * W-41 PREPARATION ONLY (issue #10): the persisted split columns
+ * (heldShutAtSeal / heldPeekAtSeal + an enforcer-derived sites
+ * figure) do NOT exist yet — they are Ren's batch-10 data work.
+ * Nothing in this codebase fills this type today: assembly
+ * leaves it null and the sheet prints no HELD line at all,
+ * under the slip's own omission law (an absent line over a
+ * false one). When the columns land, assembly fills this type
+ * from them at the one marked fill point in
+ * MonolithRepository.assemblePendingReceipt, and the line
+ * prints with no sheet change. The legacy summed columns
+ * (heldAppsAtSeal / heldSitesAtSeal) stay on the state as
+ * record, STATE-ONLY — the sheet never reads them again.
+ */
+data class ReceiptHeldFigures(
+    val shutApps: Int,
+    val peekApps: Int,
+    val heldSites: Int
+) {
+    /** The printed line, in the Shield header's split dialect
+     *  (MonolithCustomComponents' heldSplitText): zero parts are
+     *  omitted; null when nothing was held at all. */
+    fun printLine(): String? {
+        val parts = mutableListOf<String>()
+        if (shutApps > 0) parts += "$shutApps HELD"
+        if (peekApps > 0) parts += "$peekApps PEEK"
+        if (heldSites > 0) parts += "$heldSites SITES"
+        return if (parts.isEmpty()) null else parts.joinToString(" · ")
+    }
 }
 
 /** The facts gathered at E0 for a publish, before the claim
@@ -313,7 +388,11 @@ data class PendingReceipt(
     // this session (the row's breakTakenSeconds), NOT the
     // valve ledger [bankedBreakSeconds] reads.
     val completedTasks: List<String> = emptyList(),
-    val safeBreakSeconds: Int = 0
+    val safeBreakSeconds: Int = 0,
+    // W-41 seam (see ReceiptHeldFigures): null until the
+    // persisted SHUT/PEEK split columns land; assembly is the
+    // only fill point.
+    val heldFigures: ReceiptHeldFigures? = null
 )
 
 /**
@@ -366,8 +445,27 @@ data class ReceiptState(
     // Issue #105 (F1/F4): see PendingReceipt.completedTasks /
     // safeBreakSeconds — carried through publish + rehydrate.
     val completedTasks: List<String> = emptyList(),
-    val safeBreakSeconds: Int = 0
+    val safeBreakSeconds: Int = 0,
+    // Issue #152 residue (reopened): the IANA zone the session
+    // ENDED in, captured at the session-ending write into the
+    // same store's end slot (ArmZoneStore, keyed by the end
+    // instant). Null when unknown (a session that ended before
+    // the capture existed). The slip renders ENDED in this zone
+    // — with its offset printed — whenever it differs from the
+    // zone in force at render, exactly as ARMED renders in its
+    // own witness. Before this field existed ENDED was the one
+    // line on the slip still derived at print time.
+    val endZoneId: String? = null,
+    // W-41 seam (see ReceiptHeldFigures): null until the
+    // persisted SHUT/PEEK split columns land — while null, the
+    // sheet prints NO HELD line (the old summed line booked
+    // PEEK apps as held and counted sites blind; killed as
+    // printed, audit item 9).
+    val heldFigures: ReceiptHeldFigures? = null
 ) {
+    /** The HELD line this slip may print, or null when the line
+     *  is omitted whole (figures uncaptured, or nothing held). */
+    val heldLine: String? get() = heldFigures?.printLine()
     /** The printed №: zero-padded to a minimum of 3, never
      *  truncated (№ 048 … № 1048). */
     val numberPrint: String get() = "№ " + number.toString().padStart(3, '0')

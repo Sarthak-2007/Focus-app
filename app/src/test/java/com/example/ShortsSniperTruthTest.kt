@@ -108,6 +108,17 @@ class ShortsSniperTruthTest {
                             "receiptSequence, lastReceiptSessionId) " +
                             "VALUES (1, 1, 1, 0, 123, 456, 7, 'KEPT', 41, 9)"
                     )
+                    // Test-floor cure: MIGRATION_11_12 also alters
+                    // focus_sessions; a v11 file without that table made
+                    // the migration die with SQLiteException at open.
+                    // A real v11 file always carries focus_sessions —
+                    // the fixture now does too (shape mirrored from
+                    // BreakMigrationTest's v11).
+                    db.execSQL(
+                        "CREATE TABLE IF NOT EXISTS `focus_sessions` (" +
+                            "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "`intention` TEXT NOT NULL)"
+                    )
                 }
 
                 override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
@@ -194,7 +205,7 @@ class ShortsSniperTruthTest {
     }
 
     @Test
-    fun v7EntitySchema_fullChain_roomValidatesAtV14_shortsDefaultsTrue_thenRoundTrips() {
+    fun v7EntitySchema_fullChain_roomValidatesAtV17_shortsDefaultsTrue_thenRoundTrips() {
         createV7EntityFile()
         val room = Room.databaseBuilder(context, MonolithDatabase::class.java, dbName)
             .addMigrations(
@@ -205,14 +216,18 @@ class ShortsSniperTruthTest {
                 MonolithDatabase.MIGRATION_11_12,
                 MonolithDatabase.MIGRATION_12_13,
                 MonolithDatabase.MIGRATION_13_14,
-                MonolithDatabase.MIGRATION_14_15, MonolithDatabase.MIGRATION_15_16
+                MonolithDatabase.MIGRATION_14_15,
+                MonolithDatabase.MIGRATION_15_16,
+                MonolithDatabase.MIGRATION_16_17,
+                MonolithDatabase.MIGRATION_17_18,
+                MonolithDatabase.MIGRATION_18_19
             )
             .build()
         runBlocking {
             val dao = room.monolithDao()
             // The read forces the open: Room has migrated
-            // 7→8→9→10→11→12→13→14→15 AND validated the result
-            // against every v15 entity.
+            // 7→8→9→10→11→12→13→14→15→16→17 AND validated the
+            // result against every v17 entity.
             val settings = dao.getGuardSettingsSnapshot()
             assertNotNull(settings)
             assertTrue(settings!!.shortsReelsSniperEnabled)
