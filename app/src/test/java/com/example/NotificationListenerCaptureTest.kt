@@ -121,6 +121,40 @@ class NotificationListenerCaptureTest {
         assertEquals(postTime, rows.single().timestampMillis)
     }
 
+    /**
+     * Issue #155 WING-F (SMALL-2): the badge/Deck held count is this
+     * table's SIZE, so a duplicate row is a false glance claim. A
+     * fresh listener instance (empty in-memory dedupe — the state
+     * after a process restart, when the rebind sweep re-walks a
+     * still-live held notification) re-posting the identical
+     * capture must insert NOTHING: the table's own stored
+     * quadruple is the durable dedupe.
+     */
+    @Test
+    fun recaptureByFreshListenerInstanceDoesNotDuplicateHeldRow() = runBlocking {
+        val listener = armedListener()
+        val postTime = System.currentTimeMillis()
+
+        listener.onNotificationPosted(sbn("Mum", "hi", postTime))
+        val rows = awaitRows { it.isNotEmpty() }
+        assertTrue("the capture never landed", rows.isNotEmpty())
+        assertEquals(1, rows.size)
+        delay(300L)
+
+        // A NEW listener instance: its dedupe tracker starts empty,
+        // exactly as after a process death + rebind sweep.
+        val freshListener = Robolectric.buildService(
+            MonolithNotificationListener::class.java
+        ).create().get()
+        freshListener.onNotificationPosted(sbn("Mum", "hi", postTime))
+        delay(900L)
+        assertEquals(
+            "a re-capture of an already-held notification must not " +
+                "inflate the held count the badge prints",
+            1, dao.getCapturedNotificationsSnapshot().size
+        )
+    }
+
     @Test
     fun removalDeletesHeldCopyButOurOwnCancelDoesNot() = runBlocking {
         val listener = armedListener()

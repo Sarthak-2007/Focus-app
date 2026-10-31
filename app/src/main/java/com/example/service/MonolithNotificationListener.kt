@@ -160,6 +160,20 @@ class CaptureDedupeTracker {
  * - Saves captured notifications to Room persistent disk storage so they survive background
  *   restarts and can be read, cleared, or tapped to open after studying.
  */
+/**
+ * The hold rule (Audit R3, safe-break-lived #2): a notification is
+ * held — digested and cancelled — when its app's tier is not OPEN,
+ * EXCEPT that a Safe Break releases the apps the break itself
+ * unlocks: a PEEK-tier app is freely open for the break's length
+ * (the accessibility service's Safe Break rule), so holding its
+ * notifications while its owner chats inside it made the "unlock"
+ * half a lie — messages arrived silently into the HELD digest.
+ * LOCKED apps stay held through the break, exactly as they stay
+ * locked. Pure, so the rule is unit-tested without the service.
+ */
+internal fun notificationHeldDuringSession(isInSafeBreak: Boolean, tier: AppBlockTier): Boolean =
+    tier != AppBlockTier.OPEN && !(isInSafeBreak && tier == AppBlockTier.PEEK_2M)
+
 class MonolithNotificationListener : NotificationListenerService() {
 
     private val scope = CoroutineScope(
@@ -171,9 +185,10 @@ class MonolithNotificationListener : NotificationListenerService() {
 
     // Issue #45 (C5) dedupe: updates of a notification this
     // instance already holds, recognised by sbn.key + content
-    // fingerprint. In-memory only, by design: after a process
-    // restart the worst case is one duplicate row for a still-live
-    // notification, never a lost message.
+    // fingerprint. In-memory only, by design — a restart loses the
+    // tracker, never a message; the duplicate row that used to be
+    // the restart's worst case is now stopped by the durable
+    // quadruple check on the insert path (issue #155 WING-F).
     internal val dedupe = CaptureDedupeTracker()
 
     companion object {
@@ -331,7 +346,7 @@ class MonolithNotificationListener : NotificationListenerService() {
             // the POST TIME, not about now — a coroutine scheduled
             // after the session ended still captures a message
             // that arrived while the session was running.
-            dao.getSessionCoveringInstant(postTimeMillis) ?: return@launch
+            val coveringSession = dao.getSessionCoveringInstant(postTimeMillis) ?: return@launch
 
             val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
             // Issue #120: FINANCE is never captured and never
@@ -345,7 +360,9 @@ class MonolithNotificationListener : NotificationListenerService() {
             if (appRule != null && appRule.category == AppCategory.FINANCE.name) {
                 return@launch
             }
-            if (appRule != null && appRule.resolvedTier != AppBlockTier.OPEN) {
+            if (appRule != null &&
+                notificationHeldDuringSession(coveringSession.isInSafeBreak, appRule.resolvedTier)
+            ) {
                 val storedTitle = title.ifEmpty { appRule.appName }
                 if (key != null) {
                     // Dedupe, second gate (inside the coroutine, so
@@ -367,8 +384,30 @@ class MonolithNotificationListener : NotificationListenerService() {
                         )?.let { stale -> dao.deleteCapturedNotification(stale.id) }
                     }
                 }
-                dao.insertCapturedNotification(
-                    CapturedNotificationEntity(
+                // Issue #155 WING-F (SMALL-2): the two dedupe gates
+                // above ride the IN-MEMORY tracker, which dies with
+                // this process. The class doc already concedes the
+                // consequence — "after a process restart the worst
+                // case is one duplicate row" — but the digest has a
+                // reader that turns that duplicate into a false
+                // claim: the launcher badge (MonolithShieldService)
+                // and the Deck's HELD chip both print this table's
+                // SIZE, so every re-capture of a still-live held
+                // notification (the rebind sweep re-walks the shade;
+                // a never-cancelled OTP copy stays live by design)
+                // inflated the badge by one per restart. The table
+                // itself is the durable dedupe: the same stored
+                // quadruple the replace/removal paths already treat
+                // as a capture's identity, checked before inserting.
+                // An existing identical row means this exact capture
+                // is already held — record the tracker and fall
+                // through to the cancel below, but insert nothing.
+                val alreadyHeld = dao.findCapturedNotificationMatching(
+                    pkg, storedTitle, text, postTimeMillis
+                ) != null
+                if (!alreadyHeld) {
+                    dao.insertCapturedNotification(
+                        CapturedNotificationEntity(
                         // The row's timestamp is the capture
                         // snapshot — sbn.postTime — not the time
                         // this coroutine happened to run.
@@ -384,8 +423,9 @@ class MonolithNotificationListener : NotificationListenerService() {
                         // sentence was invented copy wearing the
                         // sender's name.
                         messageBody = text
+                        )
                     )
-                )
+                }
                 pruneCaptured(postTimeMillis)
                 if (key != null) {
                     dedupe.record(

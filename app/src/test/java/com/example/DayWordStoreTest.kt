@@ -77,10 +77,79 @@ class DayWordStoreTest {
     }
 
     @Test
+    fun put_sameWordRedeclare_doesNotMoveTheZoneWitness() {
+        // Issue #152 residue: re-declaring the SAME word after a
+        // landing must not re-witness the date in the arrival
+        // zone — the old unconditional overwrite re-opened the
+        // cross-zone overwrite door F1 closed (a different word
+        // would then pass the repository's refusal, which reads
+        // this witness).
+        val original = java.util.TimeZone.getDefault()
+        try {
+            java.util.TimeZone.setDefault(
+                java.util.TimeZone.getTimeZone("Asia/Kolkata")
+            )
+            val store = DayWordStore(context)
+            assertTrue(store.put("2026-10-26", "REST"))
+            assertEquals("Asia/Kolkata", store.declaredZone("2026-10-26"))
+
+            // The landing: same word re-declared in the new zone.
+            java.util.TimeZone.setDefault(
+                java.util.TimeZone.getTimeZone("America/New_York")
+            )
+            assertTrue(store.put("2026-10-26", "REST"))
+            assertEquals(
+                "the witness must stay with the zone the declaration was made in",
+                "Asia/Kolkata", store.declaredZone("2026-10-26")
+            )
+            assertEquals(mapOf("2026-10-26" to "REST"), store.all())
+        } finally {
+            java.util.TimeZone.setDefault(original)
+        }
+    }
+
+    @Test
+    fun put_changedWord_earnsAFreshWitness() {
+        // Control for the test above: a genuinely changed word
+        // IS a new declaration and re-witnesses in the zone it is
+        // made in. (Also proves the zone switch in these tests is
+        // real — if systemDefault() did not follow setDefault,
+        // this assertion fails loudly instead of the same-word
+        // test passing vacuously.)
+        val original = java.util.TimeZone.getDefault()
+        try {
+            java.util.TimeZone.setDefault(
+                java.util.TimeZone.getTimeZone("Asia/Kolkata")
+            )
+            val store = DayWordStore(context)
+            assertTrue(store.put("2026-10-26", "REST"))
+            java.util.TimeZone.setDefault(
+                java.util.TimeZone.getTimeZone("America/New_York")
+            )
+            assertTrue(store.put("2026-10-26", "ILL"))
+            assertEquals("America/New_York", store.declaredZone("2026-10-26"))
+        } finally {
+            java.util.TimeZone.setDefault(original)
+        }
+    }
+
+    @Test
     fun put_refusesOutOfListWord() {
         val store = DayWordStore(context)
         assertFalse(store.put("2026-10-26", "TEST"))
         assertTrue(store.all().isEmpty())
+    }
+
+    @Test
+    fun isExcuse_coversExactlyTheClosedList() {
+        // Issue #137, F1: the amnesty keys off isExcuse — every
+        // declarable word excuses, nothing else does.
+        assertTrue(DayWordStore.isExcuse("ILL"))
+        assertTrue(DayWordStore.isExcuse("REST"))
+        assertTrue(DayWordStore.isExcuse("FAMILY"))
+        assertFalse(DayWordStore.isExcuse("TEST"))
+        assertFalse(DayWordStore.isExcuse(null))
+        assertEquals(DayWordStore.WORDS.toSet(), DayWordStore.EXCUSE_WORDS)
     }
 
     @Test

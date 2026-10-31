@@ -650,14 +650,9 @@ fun ImprintSlot(
             onStruck(key)
             // Reduced motion (animator scale 0): the Strike is a
             // single-frame step, filed in §3.3 — snap, don't tween.
-            val animatorScale = runCatching {
-                android.provider.Settings.Global.getFloat(
-                    context.contentResolver,
-                    android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
-                    1f
-                )
-            }.getOrDefault(1f)
-            if (animatorScale == 0f) {
+            // Issue #256: the read is the shared isReducedMotion —
+            // this site was the tree's only consumer of it.
+            if (isReducedMotion(context)) {
                 scale.snapTo(1f)
                 inkAlpha.snapTo(0.88f)
             } else {
