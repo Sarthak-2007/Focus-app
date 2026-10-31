@@ -1386,7 +1386,6 @@ private fun StoredRow(
 }
 
 @Composable
-@Composable
 private fun DrawerNavRow(
     label: String,
     onClick: () -> Unit,
