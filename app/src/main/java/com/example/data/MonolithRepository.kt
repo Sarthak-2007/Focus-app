@@ -313,8 +313,7 @@ internal data class TickFrame(
     val newAccumulated: Int,
     val newStartMono: Long,
     val newStartWall: Long,
-    val newBootCount: Int,
-    val newHmac: String
+    val newBootCount: Int
 )
 
 internal fun tickFrameFor(
@@ -441,17 +440,13 @@ internal fun tickFrameFor(
     val newStartMono = if (rebootDetected || updateDetected) nowMono else session.startElapsedRealtimeMillis
     val newStartWall = if (rebootDetected || updateDetected) nowWall else session.startWallTimeMillis
     val newBootCount = if (rebootDetected) currentBoot ?: session.bootCount else session.bootCount
-    val newHmac = if (rebootDetected || updateDetected) {
-        CryptoIntegrityManager.signSessionState(
-            newStartWall,
-            newStartMono,
-            newBootCount,
-            session.targetDurationSeconds,
-            session.isStopwatchMode
-        )
-    } else {
-        session.hmacSignature
-    }
+    // Issue #36 (ruling 3): the frame carries NO signature. The
+    // v2 payload covers the persisted elapsed, which only the
+    // writer knows (it differs per exit — coercions, the
+    // call-excluded figure, the break-entry target) — so signing
+    // is the writers' act: every exit of updateSessionProgressLocked
+    // signs the exact row it persists (see signedForPersist). The
+    // frame judges anchors, penalty and target; it mints nothing.
     return TickFrame(
         beatWall = beatWall,
         penaltyAdd = penaltyAdd,
@@ -463,10 +458,26 @@ internal fun tickFrameFor(
         newAccumulated = newAccumulated,
         newStartMono = newStartMono,
         newStartWall = newStartWall,
-        newBootCount = newBootCount,
-        newHmac = newHmac
+        newBootCount = newBootCount
     )
 }
+
+/**
+ * Issue #36 (rulings 2+3): the persist half of the signature law.
+ * Every session row this repository writes is signed over its own
+ * final fields in the same act that persists it, so the stored
+ * signature is always the signature OF the stored row — including
+ * the four trusted time fields whose mutation the v1 payload
+ * could not see. HMAC is deterministic: re-signing an unchanged
+ * row yields the identical signature, so writers sign
+ * unconditionally rather than tracking which covered field moved.
+ * Where no keystore key can be obtained, signSessionState returns
+ * blank and the row stands unsigned — rejected by verification
+ * (fail closed) until a working keystore signs it; no substitute
+ * key ever stands in.
+ */
+private fun signedForPersist(session: FocusSessionEntity): FocusSessionEntity =
+    session.copy(hmacSignature = CryptoIntegrityManager.signSessionState(session))
 
 /**
  * Issue #524: did the running build land mid-session — after
@@ -1717,6 +1728,18 @@ class MonolithRepository(
                 dao.deleteTaskById(task.id)
             }
         }
+        // Issue #36 (ruling 1): the unsigned-row migration runs at
+        // the same tail — every standing blank-signature row is
+        // signed over its standing fields, once, so fail-closed
+        // verification never convicts a row the old semantics left
+        // unsigned. Idempotent (the blank-row query empties
+        // itself) and failure-safe: an un-signable row stays blank
+        // and the pass retries on the next sync.
+        try {
+            migrateUnsignedSessionSignatures()
+        } catch (e: Exception) {
+            swallow("migrateUnsignedSessionSignatures", e)
+        }
         // Audit R6 #341 F04: the session dedup pass that used to
         // live here is DELETED. Sessions are events, not catalogue
         // rows: two sessions sharing intention + duration + task
@@ -1861,6 +1884,35 @@ class MonolithRepository(
             prefs.edit().putInt(LEGACY_OPEN_RESET_COUNT_KEY, targets.size).apply()
         }
         prefs.edit().putBoolean(LEGACY_OPEN_RESET_DONE_KEY, true).apply()
+    }
+
+    /**
+     * Issue #36 (ruling 1 — MIGRATE, then FAIL CLOSED): sign every
+     * standing unsigned session row over its own fields, so the
+     * row the old blank-accepting semantics left behind carries a
+     * real v2 signature from this pass on. Verification itself
+     * never signs (finding 5); this sweep is a WRITE path, run at
+     * seed-sync and — per row — at the tick head and the
+     * guard-status read, so no verify-facing flow can meet an
+     * unmigrated legacy row first. A row that cannot be signed
+     * (no keystore key obtainable) stays blank and fails closed
+     * until a later pass signs it; nothing is ever force-accepted.
+     */
+    private suspend fun migrateUnsignedSessionSignatures() {
+        for (row in dao.getUnsignedSessionsSnapshot()) {
+            migrateUnsignedRow(row)
+        }
+    }
+
+    /** The per-row half of the ruling-1 migration: returns the row
+     *  to work on — signed and stamped when it stood unsigned and
+     *  a signature could be minted, the row unchanged otherwise. */
+    private suspend fun migrateUnsignedRow(row: FocusSessionEntity): FocusSessionEntity {
+        if (row.hmacSignature.isNotBlank()) return row
+        val signature = CryptoIntegrityManager.signSessionState(row)
+        if (signature.isBlank()) return row
+        dao.stampSessionSignatureIfUnsigned(row.id, signature)
+        return row.copy(hmacSignature = signature)
     }
 
     /** The pending announcement's count, or 0 when the Sheet has
@@ -2716,7 +2768,11 @@ class MonolithRepository(
     }
 
     suspend fun getSystemGuardStatus(): SystemGuardStatus = withContext(Dispatchers.IO) {
-        val active = dao.getActiveSessionSnapshot()
+        // Issue #36 (ruling 1): the status read verifies the
+        // active row — a legacy unsigned row is migrated first,
+        // exactly as at the tick head, so the surface never
+        // reports a pre-migration row as a signature failure.
+        val active = dao.getActiveSessionSnapshot()?.let { migrateUnsignedRow(it) }
         // Issue #28: with no active session there is nothing to
         // measure against — intact stays false (unproven), never
         // a free pass printed as a fact.
@@ -3127,8 +3183,11 @@ class MonolithRepository(
             attended >= yardstickSec - ATTENDANCE_FLOOR_SECONDS -> WindowJudgement.ATTENDED
             else -> WindowJudgement.PARTIAL
         }
+        // Issue #36 (ruling 3): the funnel books the attended
+        // elapsed — a covered field — so the booked row is signed
+        // over its final fields like every covered write.
         dao.updateSession(
-            session.copy(
+            signedForPersist(session.copy(
                 elapsedSeconds = attended,
                 completedSuccessfully = outcome == WindowJudgement.ATTENDED,
                 forgedArtifactId = if (outcome == WindowJudgement.ATTENDED) session.forgedArtifactId else null,
@@ -3145,7 +3204,7 @@ class MonolithRepository(
                 } else {
                     session.endWallMillis
                 }
-            )
+            ))
         )
         // #152 residue: witness the end zone at this ending write.
         captureEndZone(session.endWallMillis, nowMillis)
@@ -3967,15 +4026,12 @@ class MonolithRepository(
         val wallNow = System.currentTimeMillis()
         val monoNow = SystemClock.elapsedRealtime()
         val bootCount = querySystemBootCountOrNull() ?: 0
-        val hmac = CryptoIntegrityManager.signSessionState(
-            startWallTimeMillis = wallNow,
-            startElapsedRealtimeMillis = monoNow,
-            bootCount = bootCount,
-            targetDurationSeconds = targetSecs,
-            isStopwatch = isStopwatch
-        )
 
-        val session = FocusSessionEntity(
+        // Issue #36 (ruling 3): the row is built first and signed
+        // over its own final (sanitized) fields by signedForPersist
+        // below — the stored signature is the signature OF the
+        // stored row.
+        val session = signedForPersist(FocusSessionEntity(
             // Issue #124 (typing-intention): the intention is
             // frozen HERE, at birth, exactly as declared — trimmed
             // and capped, and a blank stays blank. The old ifBlank
@@ -3994,7 +4050,7 @@ class MonolithRepository(
             bootCount = bootCount,
             accumulatedBeforeRebootSeconds = 0,
             lastTickElapsedRealtimeMillis = monoNow,
-            hmacSignature = hmac,
+            hmacSignature = "",
             isStopwatchMode = isStopwatch,
             totalStudyBlocks = studyBlocksCount.coerceIn(1, 8),
             currentBlockIndex = 1,
@@ -4022,7 +4078,7 @@ class MonolithRepository(
             // E1: the window is open and his kit is on (Sten §1.6.1).
             // first/last evidence stamps stay 0 until E2/E4 land.
             evidenceMask = if (routineId != null) EVIDENCE_E1_START else 0
-        ).sanitized() // Issue #32 F2: write-boundary sanitize (startSession funnel)
+        ).sanitized()) // Issue #32 F2: write-boundary sanitize (startSession funnel)
         // Issue #152: witness the zone this arming is lived in,
         // keyed by the arm instant, so the receipt can print its
         // ARMED time truthfully after a landing. Written at this
@@ -4166,19 +4222,16 @@ class MonolithRepository(
             val row = dao.getActiveSessionSnapshot() ?: return@withTransaction false
             if (row.id != sessionId || !row.isActive) return@withTransaction false
             val wallNow = System.currentTimeMillis()
-            val hmac = CryptoIntegrityManager.signSessionState(
-                startWallTimeMillis = wallNow,
-                startElapsedRealtimeMillis = t0Mono,
-                bootCount = row.bootCount,
-                targetDurationSeconds = row.targetDurationSeconds,
-                isStopwatch = row.isStopwatchMode
-            )
+            // Issue #36 (ruling 3): the re-anchored row is signed
+            // over its own final fields (anchors AND the moved
+            // lastTick), as at every re-anchor in this machine.
             dao.updateSession(
-                row.copy(
-                    startWallTimeMillis = wallNow,
-                    startElapsedRealtimeMillis = t0Mono,
-                    lastTickElapsedRealtimeMillis = t0Mono,
-                    hmacSignature = hmac
+                signedForPersist(
+                    row.copy(
+                        startWallTimeMillis = wallNow,
+                        startElapsedRealtimeMillis = t0Mono,
+                        lastTickElapsedRealtimeMillis = t0Mono
+                    )
                 )
             )
             true
@@ -5177,9 +5230,6 @@ class MonolithRepository(
         breakTakenSeconds: Int
     ): FocusSessionEntity {
         val wallNow = System.currentTimeMillis()
-        val freshHmac = CryptoIntegrityManager.signSessionState(
-            wallNow, nowMono, currentBoot, session.targetDurationSeconds, false
-        )
         // ST-03: the exit speaks here, at the flip — the one
         // point every break exit crosses exactly once, so the
         // timer's end and the hand's end sound identically,
@@ -5191,26 +5241,28 @@ class MonolithRepository(
         // alarm already fired, its ledger entry stands and the
         // cancel is a no-op.
         com.example.service.BreakEndScheduler.cancel(context)
-        return session.copy(
-            currentBlockIndex = (session.currentBlockIndex + 1).coerceAtMost(session.totalStudyBlocks),
-            isInSafeBreak = false,
-            midBlockSafeBreak = false,
-            safeBreakSecondsRemaining = 0,
-            breakTakenSeconds = breakTakenSeconds,
-            // W3 #134: the call ledger is per-block, like the
-            // anchors this write re-bases — the next block's
-            // verified elapsed counts from the fresh anchor, so
-            // the exclusion must restart with it or one block's
-            // call would tax the next block's clock.
-            callExcludedSeconds = 0,
-            elapsedSeconds = 0,
-            startWallTimeMillis = wallNow,
-            startElapsedRealtimeMillis = nowMono,
-            bootCount = currentBoot,
-            accumulatedBeforeRebootSeconds = 0,
-            lastTickElapsedRealtimeMillis = nowMono,
-            hmacSignature = freshHmac,
-            shieldLastBeatWallMillis = beatWall
+        // Issue #36 (ruling 3): signed over the built row itself.
+        return signedForPersist(
+            session.copy(
+                currentBlockIndex = (session.currentBlockIndex + 1).coerceAtMost(session.totalStudyBlocks),
+                isInSafeBreak = false,
+                midBlockSafeBreak = false,
+                safeBreakSecondsRemaining = 0,
+                breakTakenSeconds = breakTakenSeconds,
+                // W3 #134: the call ledger is per-block, like the
+                // anchors this write re-bases — the next block's
+                // verified elapsed counts from the fresh anchor, so
+                // the exclusion must restart with it or one block's
+                // call would tax the next block's clock.
+                callExcludedSeconds = 0,
+                elapsedSeconds = 0,
+                startWallTimeMillis = wallNow,
+                startElapsedRealtimeMillis = nowMono,
+                bootCount = currentBoot,
+                accumulatedBeforeRebootSeconds = 0,
+                lastTickElapsedRealtimeMillis = nowMono,
+                shieldLastBeatWallMillis = beatWall
+            )
         )
     }
 
@@ -5240,25 +5292,24 @@ class MonolithRepository(
         breakTakenSeconds: Int
     ): FocusSessionEntity {
         val wallNow = System.currentTimeMillis()
-        val freshHmac = CryptoIntegrityManager.signSessionState(
-            wallNow, nowMono, currentBoot, session.targetDurationSeconds, false
-        )
         breakBoundaryKnock(true)
         com.example.service.BreakEndScheduler.cancel(context)
-        return session.copy(
-            isInSafeBreak = false,
-            midBlockSafeBreak = false,
-            safeBreakSecondsRemaining = 0,
-            breakTakenSeconds = breakTakenSeconds,
-            callExcludedSeconds = 0,
-            elapsedSeconds = session.elapsedSeconds,
-            accumulatedBeforeRebootSeconds = session.elapsedSeconds.coerceAtLeast(0),
-            startWallTimeMillis = wallNow,
-            startElapsedRealtimeMillis = nowMono,
-            bootCount = currentBoot,
-            lastTickElapsedRealtimeMillis = nowMono,
-            hmacSignature = freshHmac,
-            shieldLastBeatWallMillis = beatWall
+        // Issue #36 (ruling 3): signed over the built row itself.
+        return signedForPersist(
+            session.copy(
+                isInSafeBreak = false,
+                midBlockSafeBreak = false,
+                safeBreakSecondsRemaining = 0,
+                breakTakenSeconds = breakTakenSeconds,
+                callExcludedSeconds = 0,
+                elapsedSeconds = session.elapsedSeconds,
+                accumulatedBeforeRebootSeconds = session.elapsedSeconds.coerceAtLeast(0),
+                startWallTimeMillis = wallNow,
+                startElapsedRealtimeMillis = nowMono,
+                bootCount = currentBoot,
+                lastTickElapsedRealtimeMillis = nowMono,
+                shieldLastBeatWallMillis = beatWall
+            )
         )
     }
 
@@ -5368,7 +5419,11 @@ class MonolithRepository(
      *  exactly as the flip's entry does (ST-03 / issue #339) —
      *  one entry shape, whoever opens the door. */
     suspend fun startSafeBreakMidBlock(sessionId: Int): FocusSessionEntity? {
-        val row = dao.getActiveSessionSnapshot() ?: return null
+        val loaded = dao.getActiveSessionSnapshot() ?: return null
+        // Issue #36 (ruling 1): this door adjudicates on the
+        // verified clock — a legacy unsigned row is migrated
+        // before the adjudication, as at the tick head.
+        val row = migrateUnsignedRow(loaded)
         if (row.id != sessionId || !row.isActive || row.isInSafeBreak ||
             row.isStopwatchMode
         ) return row
@@ -5378,13 +5433,18 @@ class MonolithRepository(
         if (focusElapsed >= row.effectiveTargetSeconds) return row
         val nowMono = SystemClock.elapsedRealtime()
         val length = breakLengthSeconds(row)
-        val entered = row.copy(
-            elapsedSeconds = focusElapsed,
-            isInSafeBreak = true,
-            midBlockSafeBreak = true,
-            safeBreakSecondsRemaining = length,
-            extraSafeBreakSeconds = row.extraSafeBreakSeconds + length,
-            lastTickElapsedRealtimeMillis = nowMono
+        // Issue #36 (ruling 3): the entry moves two covered
+        // fields (elapsed, lastTick) — the persisted row is signed
+        // over its final fields, as at every covered write.
+        val entered = signedForPersist(
+            row.copy(
+                elapsedSeconds = focusElapsed,
+                isInSafeBreak = true,
+                midBlockSafeBreak = true,
+                safeBreakSecondsRemaining = length,
+                extraSafeBreakSeconds = row.extraSafeBreakSeconds + length,
+                lastTickElapsedRealtimeMillis = nowMono
+            )
         )
         dao.updateSession(entered)
         com.example.service.BreakEndScheduler.schedule(
@@ -5428,14 +5488,11 @@ class MonolithRepository(
         val effectiveTarget = session.targetDurationSeconds + session.penaltySecondsAdded
         if (effectiveTarget - verifiedElapsed >= 3600) return false
         val newTarget = session.targetDurationSeconds + addSeconds
-        val reSigned = session.copy(
-            targetDurationSeconds = newTarget,
-            hmacSignature = CryptoIntegrityManager.signSessionState(
-                session.startWallTimeMillis,
-                session.startElapsedRealtimeMillis,
-                session.bootCount,
-                newTarget,
-                session.isStopwatchMode
+        // Issue #36 (ruling 3): re-signed over the extended row
+        // itself, in the same write.
+        val reSigned = signedForPersist(
+            session.copy(
+                targetDurationSeconds = newTarget
             )
         )
         dao.updateSession(reSigned)
@@ -5507,11 +5564,7 @@ class MonolithRepository(
                 edited = edited.copy(
                     targetDurationSeconds = newTarget,
                     hmacSignature = CryptoIntegrityManager.signSessionState(
-                        fresh.startWallTimeMillis,
-                        fresh.startElapsedRealtimeMillis,
-                        fresh.bootCount,
-                        newTarget,
-                        fresh.isStopwatchMode
+                        fresh.copy(targetDurationSeconds = newTarget)
                     )
                 )
             }
@@ -5551,7 +5604,11 @@ class MonolithRepository(
         when {
             fresh == null -> session
             !fresh.isActive -> fresh
-            else -> updateSessionProgressLocked(fresh, stampShieldBeat)
+            // Issue #36 (ruling 1): a legacy unsigned row is
+            // migrated BEFORE the tick's verification reads it, so
+            // fail-closed never convicts a row the old semantics
+            // left unsigned.
+            else -> updateSessionProgressLocked(migrateUnsignedRow(fresh), stampShieldBeat)
         }
     }
 
@@ -5592,7 +5649,6 @@ class MonolithRepository(
         val newStartMono = frame.newStartMono
         val newStartWall = frame.newStartWall
         val newBootCount = frame.newBootCount
-        val newHmac = frame.newHmac
         if (updateGapLatched) {
             dao.latchShieldGap(session.id)
         }
@@ -5632,7 +5688,7 @@ class MonolithRepository(
             SessionWallClock.wallDeadlinePassed(session, System.currentTimeMillis())
         ) {
             val plannedEnd = SessionWallClock.plannedEndWallMillis(session)!!
-            val ended = session.copy(
+            val ended = signedForPersist(session.copy(
                 isActive = false,
                 completedSuccessfully = false,
                 isInSafeBreak = false,
@@ -5641,7 +5697,6 @@ class MonolithRepository(
                 bootCount = newBootCount,
                 accumulatedBeforeRebootSeconds = newAccumulated,
                 lastTickElapsedRealtimeMillis = nowMono,
-                hmacSignature = newHmac,
                 penaltySecondsAdded = penaltyAdd,
                 tamperDetected = tamper,
                 shieldGapSeen = newShieldGapSeen,
@@ -5649,7 +5704,7 @@ class MonolithRepository(
                 shieldLastBeatWallMillis = beatWall,
                 outcome = SessionOutcome.ELAPSED_SHIELD_GAP,
                 endWallMillis = if (session.endWallMillis == 0L) plannedEnd else session.endWallMillis
-            )
+            ))
             dao.updateSession(ended)
             // Audit R6 #341 F05: this ending write appends its
             // ENDED transition to the session's event log.
@@ -5700,13 +5755,12 @@ class MonolithRepository(
             // ends it and stamps the end then — the same held-
             // finish law as the timed path.
             if (!callActive && focusElapsed >= STOPWATCH_MAX_CAP_SECONDS) {
-                val capped = session.copy(
+                val capped = signedForPersist(session.copy(
                     elapsedSeconds = STOPWATCH_MAX_CAP_SECONDS,
                     startElapsedRealtimeMillis = newStartMono,
                     bootCount = newBootCount,
                     accumulatedBeforeRebootSeconds = newAccumulated,
                     lastTickElapsedRealtimeMillis = nowMono,
-                    hmacSignature = newHmac,
                     penaltySecondsAdded = penaltyAdd,
                     tamperDetected = tamper,
                     shieldGapSeen = newShieldGapSeen || updateGapLatched,
@@ -5720,14 +5774,14 @@ class MonolithRepository(
                     } else {
                         session.endWallMillis
                     }
-                )
+                ))
                 dao.updateSession(capped)
                 // #152 residue: witness the end zone at this
                 // ending write (keyed by the stamped end itself).
                 captureEndZone(session.endWallMillis, capped.endWallMillis)
                 return capped
             }
-            val updated = session.copy(
+            val updated = signedForPersist(session.copy(
                 elapsedSeconds = focusElapsed,
                 callExcludedSeconds = callExcluded,
                 startWallTimeMillis = newStartWall,
@@ -5735,13 +5789,12 @@ class MonolithRepository(
                 bootCount = newBootCount,
                 accumulatedBeforeRebootSeconds = newAccumulated,
                 lastTickElapsedRealtimeMillis = nowMono,
-                hmacSignature = newHmac,
                 penaltySecondsAdded = penaltyAdd,
                 tamperDetected = tamper,
                 shieldGapSeen = newShieldGapSeen || updateGapLatched,
                 rebootGapSeconds = newRebootGapSeconds,
                 shieldLastBeatWallMillis = beatWall
-            )
+            ))
             dao.updateSession(updated)
             return updated
         }
@@ -5759,9 +5812,14 @@ class MonolithRepository(
             // the drain resumes from exactly this remainder when
             // the call ends.
             if (callActive) {
-                val heldBreak = session.copy(
-                    lastTickElapsedRealtimeMillis = nowMono,
-                    shieldLastBeatWallMillis = beatWall
+                // Issue #36 (ruling 3): the hold moves lastTick, a
+                // covered field — the held row is re-signed over
+                // its final fields like every covered write.
+                val heldBreak = signedForPersist(
+                    session.copy(
+                        lastTickElapsedRealtimeMillis = nowMono,
+                        shieldLastBeatWallMillis = beatWall
+                    )
                 )
                 dao.updateSession(heldBreak)
                 return heldBreak
@@ -5823,10 +5881,15 @@ class MonolithRepository(
                 MonolithWidgetProvider.requestUpdate(context)
                 nextBlockSession
             } else {
-                val updatedBreak = session.copy(
-                    safeBreakSecondsRemaining = nextBreakRemaining,
-                    lastTickElapsedRealtimeMillis = nextBreakAnchor,
-                    shieldLastBeatWallMillis = beatWall
+                // Issue #36 (ruling 3): the countdown moves
+                // lastTick, a covered field — re-signed over its
+                // final fields like every covered write.
+                val updatedBreak = signedForPersist(
+                    session.copy(
+                        safeBreakSecondsRemaining = nextBreakRemaining,
+                        lastTickElapsedRealtimeMillis = nextBreakAnchor,
+                        shieldLastBeatWallMillis = beatWall
+                    )
                 )
                 dao.updateSession(updatedBreak)
                 updatedBreak
@@ -5865,25 +5928,27 @@ class MonolithRepository(
         // user can actually see the session change state. The
         // shield loop reads isActive and keeps protecting.
         if (callActive && blockFinished) {
-            val heldFinish = session.copy(
+            val heldFinish = signedForPersist(session.copy(
                 elapsedSeconds = focusElapsed.coerceAtMost(effectiveTarget),
                 callExcludedSeconds = callExcluded,
                 startElapsedRealtimeMillis = newStartMono,
                 bootCount = newBootCount,
                 accumulatedBeforeRebootSeconds = newAccumulated,
                 lastTickElapsedRealtimeMillis = nowMono,
-                hmacSignature = newHmac,
                 penaltySecondsAdded = penaltyAdd,
                 tamperDetected = tamper,
                 shieldGapSeen = newShieldGapSeen || updateGapLatched,
                 rebootGapSeconds = newRebootGapSeconds,
                 shieldLastBeatWallMillis = beatWall
-            )
+            ))
             dao.updateSession(heldFinish)
             return heldFinish
         }
         if (blockFinished && session.currentBlockIndex < session.totalStudyBlocks) {
-            val safeBreakSession = session.copy(
+            // Issue #36 (ruling 3): the flip books the block's
+            // final elapsed and penalty — covered fields — so the
+            // entry row is signed over its final fields.
+            val safeBreakSession = signedForPersist(session.copy(
                 elapsedSeconds = effectiveTarget,
                 callExcludedSeconds = callExcluded,
                 isInSafeBreak = true,
@@ -5894,7 +5959,7 @@ class MonolithRepository(
                 shieldGapSeen = newShieldGapSeen,
                 rebootGapSeconds = newRebootGapSeconds,
                 shieldLastBeatWallMillis = beatWall
-            )
+            ))
             dao.updateSession(safeBreakSession)
             // Issue #155 (IQ-4 edge 8a): the block-flip break
             // ENTRY flips the widget to its break line here too —
@@ -6006,7 +6071,7 @@ class MonolithRepository(
             openExposureSeen = exposedAtEnd.isNotEmpty()
         )
 
-        val updated = session.copy(
+        val updated = signedForPersist(session.copy(
             elapsedSeconds = focusElapsed.coerceAtMost(effectiveTarget),
             callExcludedSeconds = callExcluded,
             startWallTimeMillis = newStartWall,
@@ -6014,7 +6079,6 @@ class MonolithRepository(
             bootCount = newBootCount,
             accumulatedBeforeRebootSeconds = newAccumulated,
             lastTickElapsedRealtimeMillis = nowMono,
-            hmacSignature = newHmac,
             penaltySecondsAdded = penaltyAdd,
             isActive = !allBlocksCompleted,
             // #129 F3: an exposed session elapsed, but it did not
@@ -6047,7 +6111,7 @@ class MonolithRepository(
             } else {
                 session.endWallMillis
             }
-        )
+        ))
         dao.updateSession(updated)
         // Audit R6 #341 F05: a completed span appends its ENDED
         // transition (first ending write only — a re-tick of an
@@ -6397,7 +6461,11 @@ class MonolithRepository(
      *   [finaliseRoutineSession] books evidence-derived seconds only.
      *   No Partial Stamp is written for a routine session, ever.
      */
-    private suspend fun disarmRoutineSessionByBreak(active: FocusSessionEntity) {
+    private suspend fun disarmRoutineSessionByBreak(activeIn: FocusSessionEntity) {
+        // Issue #36 (ruling 1): this door stamps tamper from the
+        // verified clock — a legacy unsigned row is migrated
+        // before the adjudication, as at the tick head.
+        val active = migrateUnsignedRow(activeIn)
         if (active.routineId == null) {
             val (_, tamper) = computeVerifiedSessionElapsed(active)
             // Issue #287 F5: the routine-break door stamps the
@@ -6475,16 +6543,12 @@ class MonolithRepository(
             val active = dao.getActiveSessionSnapshot() ?: return@withContext null
             if (extraMinutes <= 0 || active.isStopwatchMode) return@withContext active
             val newTarget = active.targetDurationSeconds + extraMinutes * 60
-            val hmac = CryptoIntegrityManager.signSessionState(
-                startWallTimeMillis = active.startWallTimeMillis,
-                startElapsedRealtimeMillis = active.startElapsedRealtimeMillis,
-                bootCount = active.bootCount,
-                targetDurationSeconds = newTarget,
-                isStopwatch = active.isStopwatchMode
-            )
-            val updated = active.copy(
-                targetDurationSeconds = newTarget,
-                hmacSignature = hmac
+            // Issue #36 (ruling 3): re-signed over the extended
+            // row itself, in the same write.
+            val updated = signedForPersist(
+                active.copy(
+                    targetDurationSeconds = newTarget
+                )
             )
             dao.updateSession(updated)
             // Issue #155 (3c): widget SEALED-until refresh, as above.
@@ -6509,8 +6573,12 @@ class MonolithRepository(
             true
         }
 
+    // Issue #36 (ruling 1): the disarm doors adjudicate on the
+    // verified clock — a legacy unsigned row is migrated before
+    // the adjudication, as at the tick head, so an ending write
+    // never stamps a pre-migration row tampered.
     suspend fun disarmActiveSession(completed: Boolean, outcomeReason: String): DisarmResult {
-        val active = dao.getActiveSessionSnapshot() ?: return DisarmResult.NoActiveSession
+        val active = dao.getActiveSessionSnapshot()?.let { migrateUnsignedRow(it) } ?: return DisarmResult.NoActiveSession
         val (verifiedElapsed, tamper) = computeVerifiedSessionElapsed(active)
         // Audit R3b #149: the grace-window law (30s since issue
         // #125 F1's ruling), enforced where the booking happens —
@@ -6607,7 +6675,10 @@ class MonolithRepository(
         // log commit together or not at all — a kill between them
         // used to leave a disarmed session with no log, or a log
         // for a session still standing.
-        val disarmed = active.copy(
+        // Issue #36 (ruling 3): the disarm banks the final
+        // elapsed — a covered field — so the ending row is signed
+        // over its final fields like every covered write.
+        val disarmed = signedForPersist(active.copy(
             elapsedSeconds = bankedElapsed,
             isActive = false,
             completedSuccessfully = completed,
@@ -6627,7 +6698,7 @@ class MonolithRepository(
             } else {
                 active.endWallMillis
             }
-        )
+        ))
         databaseProvider().withTransaction {
             dao.updateSession(disarmed)
             // Audit R6 #341 F05: the disarm ending appends its

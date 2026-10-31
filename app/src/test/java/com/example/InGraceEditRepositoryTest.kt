@@ -62,22 +62,27 @@ class InGraceEditRepositoryTest {
         val startWall = nowWall - secondsAgo * 1000L
         val startMono = (nowMono - secondsAgo * 1000L).coerceAtLeast(1L)
         dao.deactivateAllSessions()
+        // Issue #36 (rulings 2+3): the scalar signSessionState
+        // overload is deleted; the row is signed in the entity
+        // form over exactly the row that persists — the same
+        // writer idiom the repository itself uses.
+        val unsignedRow = FocusSessionEntity(
+            intention = "In-grace edit test session",
+            profileName = profileName,
+            targetDurationSeconds = targetDurationSeconds,
+            elapsedSeconds = secondsAgo.toInt(),
+            startWallTimeMillis = startWall,
+            startElapsedRealtimeMillis = startMono,
+            hmacSignature = "",
+            isStopwatchMode = isStopwatchMode,
+            totalStudyBlocks = totalStudyBlocks,
+            isActive = true,
+            completedSuccessfully = false,
+            routineId = routineId
+        )
         val id = dao.insertSession(
-            FocusSessionEntity(
-                intention = "In-grace edit test session",
-                profileName = profileName,
-                targetDurationSeconds = targetDurationSeconds,
-                elapsedSeconds = secondsAgo.toInt(),
-                startWallTimeMillis = startWall,
-                startElapsedRealtimeMillis = startMono,
-                hmacSignature = CryptoIntegrityManager.signSessionState(
-                    startWall, startMono, 0, targetDurationSeconds, isStopwatchMode
-                ),
-                isStopwatchMode = isStopwatchMode,
-                totalStudyBlocks = totalStudyBlocks,
-                isActive = true,
-                completedSuccessfully = false,
-                routineId = routineId
+            unsignedRow.copy(
+                hmacSignature = CryptoIntegrityManager.signSessionState(unsignedRow)
             )
         )
         return id.toInt()

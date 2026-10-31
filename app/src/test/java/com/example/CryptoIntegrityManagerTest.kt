@@ -20,9 +20,20 @@ import org.robolectric.annotation.Config
  * false, and a verify against a missing key returns false WITHOUT
  * minting the key it failed to find.
  *
- * The blank-signature test at the bottom documents CURRENT semantics
- * only — whether an unsigned row is valid is parked decision #21
- * (finding 1), not settled by this suite.
+ * Issue #36 build (the four #21 rulings, Oct 31 2026): the suite
+ * now also pins the ruled state — blank FAILS CLOSED (ruling 1,
+ * re-pinning the old parked-decision test below), no fallback key
+ * exists so a keyless sign mints nothing (ruling 2), the v2
+ * payload covers the four trusted time fields while pre-existing
+ * v1 signatures keep verifying (ruling 3), and the hardware-backed
+ * claim reads false wherever it cannot be verified (ruling 4).
+ * The suite runs against the test-only AndroidKeyStore double
+ * (FakeAndroidKeyStoreProvider, via TestMonolithApp): the
+ * production keystore path is what executes here.
+ *
+ * PIN-SCOPE: SOURCE for the sign/verify contract tests in this
+ * file (they pin the crypto source's own behaviour); the
+ * environment tests at the bottom are PLUMBING.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -43,13 +54,7 @@ class CryptoIntegrityManagerTest {
         )
 
     private fun signFor(targetDurationSeconds: Int = 1800): String =
-        CryptoIntegrityManager.signSessionState(
-            startWallTimeMillis = 1_700_000_000_000L,
-            startElapsedRealtimeMillis = 123_456L,
-            bootCount = 3,
-            targetDurationSeconds = targetDurationSeconds,
-            isStopwatch = false
-        )
+        CryptoIntegrityManager.signSessionState(sessionWith("", targetDurationSeconds))
 
     private fun keyStoreHasHmacKey(): Boolean = try {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -110,8 +115,11 @@ class CryptoIntegrityManagerTest {
 
     @Test
     fun `truncated signature fails verification`() {
-        val full = Base64.decode(signFor(), Base64.NO_WRAP)
-        val truncated = Base64.encodeToString(full.copyOf(16), Base64.NO_WRAP)
+        // Issue #36: the stored form carries the "v2:" prefix —
+        // the truncation cuts the MAC bytes beneath it, and the
+        // truncated v2 signature is what must fail.
+        val full = Base64.decode(signFor().removePrefix("v2:"), Base64.NO_WRAP)
+        val truncated = "v2:" + Base64.encodeToString(full.copyOf(16), Base64.NO_WRAP)
         assertFalse(
             "A truncated MAC must fail the byte comparison",
             CryptoIntegrityManager.verifySessionState(sessionWith(truncated))
@@ -138,8 +146,10 @@ class CryptoIntegrityManagerTest {
     fun `verify after key deletion returns false and does not resurrect the key`() {
         val signature = signFor()
         // Only meaningful where the sign path actually persisted a
-        // keystore key; in a keystore-less runtime there is no key
-        // whose deletion could be masked, so the case cannot arise.
+        // keystore key. Under the test AndroidKeyStore double the
+        // case is real (the sign path mints into the double), so
+        // this test now RUNS in the suite instead of skipping; the
+        // assumeTrue stays for any runtime where it cannot arise.
         assumeTrue("Sign path must have created a keystore key for this case", keyStoreHasHmacKey())
         assertTrue(
             "Precondition: the fresh signature verifies while its key exists",
@@ -262,14 +272,158 @@ class CryptoIntegrityManagerTest {
         )
     }
 
+    // PIN-SCOPE: SOURCE
     @Test
-    fun `blank signature keeps current accepted semantics pending decision 21`() {
-        // Documents finding-1 behaviour as it stands today (blank =
-        // accepted). The rule is Sarthak's parked decision #21; this
-        // test pins that the finding-5 fix did not silently change it.
-        assertTrue(
-            "Blank signature follows the existing line-84 semantics",
+    fun `blank signature fails closed under ruling 1`() {
+        // RULING-DRIVEN RE-PIN (issue #36, ruling 1 — MIGRATE, then
+        // FAIL CLOSED): this test previously pinned blank = accepted
+        // as the parked decision #21's standing semantics. The
+        // ruling reverses it: unsigned rows are migrated by the
+        // repository sweep, and a blank signature that reaches
+        // verify is REJECTED. Blank never means valid again.
+        assertFalse(
+            "A blank signature must fail closed (ruling 1)",
             CryptoIntegrityManager.verifySessionState(sessionWith(""))
         )
+    }
+
+    // ------------------------------------------------------------------
+    // Issue #36, rulings 2–4.
+    // ------------------------------------------------------------------
+
+    /** The keystore key of record, read from the (double) store —
+     *  used to mint a genuine V1 signature the way pre-#36 code
+     *  did, so the survival clause is exercised against a real
+     *  legacy artefact, not a fabrication of the new code. */
+    private fun keystoreKey(): javax.crypto.SecretKey {
+        signFor() // the sign path mints the key if absent
+        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        return (ks.getEntry("monolith_hmac_timer_guard_v1", null)
+            as KeyStore.SecretKeyEntry).secretKey
+    }
+
+    private fun macWithKeystoreKey(payload: String): String {
+        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+        mac.init(keystoreKey())
+        return Base64.encodeToString(
+            mac.doFinal(payload.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP
+        )
+    }
+
+    // PIN-SCOPE: SOURCE
+    @Test
+    fun `new signatures carry the v2 version prefix`() {
+        assertTrue(
+            "Every newly minted session signature is a v2 signature (ruling 3)",
+            signFor().startsWith("v2:")
+        )
+    }
+
+    // PIN-SCOPE: SOURCE
+    @Test
+    fun `legacy v1 signature keeps verifying after the extension`() {
+        // Ruling 3's survival clause: a signature minted under the
+        // five-field v1 payload (the pre-#36 stored form, bare
+        // Base64, no prefix) verifies against exactly what it
+        // signed — records survive the versioned migration.
+        val v1Payload = "1700000000000|123456|3|1800|false"
+        val v1Signature = macWithKeystoreKey(v1Payload)
+        assertTrue(
+            "A genuine v1 signature must still verify (ruling 3 survival)",
+            CryptoIntegrityManager.verifySessionState(sessionWith(v1Signature))
+        )
+        assertFalse(
+            "A v1 signature still binds its five fields — an edited anchor must fail",
+            CryptoIntegrityManager.verifySessionState(
+                sessionWith(v1Signature, targetDurationSeconds = 60)
+            )
+        )
+    }
+
+    // PIN-SCOPE: SOURCE
+    @Test
+    fun `tampered time fields fail verification under v2`() {
+        // Ruling 3's substance: each of the four trusted
+        // elapsed-time fields is inside the v2 payload, so editing
+        // any of them in the stored row breaks its signature.
+        val signed = sessionWith(signFor())
+        assertTrue(
+            "Precondition: the untouched signed row verifies",
+            CryptoIntegrityManager.verifySessionState(signed)
+        )
+        assertFalse(
+            "elapsedSeconds is signed (ruling 3)",
+            CryptoIntegrityManager.verifySessionState(signed.copy(elapsedSeconds = 11))
+        )
+        assertFalse(
+            "accumulatedBeforeRebootSeconds is signed (ruling 3)",
+            CryptoIntegrityManager.verifySessionState(
+                signed.copy(accumulatedBeforeRebootSeconds = 5)
+            )
+        )
+        assertFalse(
+            "lastTickElapsedRealtimeMillis is signed (ruling 3)",
+            CryptoIntegrityManager.verifySessionState(
+                signed.copy(lastTickElapsedRealtimeMillis = 999L)
+            )
+        )
+        assertFalse(
+            "penaltySecondsAdded is signed (ruling 3)",
+            CryptoIntegrityManager.verifySessionState(signed.copy(penaltySecondsAdded = 900))
+        )
+    }
+
+    // PIN-SCOPE: PLUMBING
+    @Test
+    fun `with no keystore provider the sign path mints nothing and verify fails closed`() {
+        // Ruling 2's fail-closed shape: there is NO fallback key,
+        // so in a runtime with no AndroidKeyStore at all, signing
+        // produces blank (nothing a substitute key sealed) and a
+        // presented signature cannot verify.
+        java.security.Security.removeProvider("AndroidKeyStore")
+        try {
+            assertTrue(
+                "No keystore, no signature — sign mints nothing (ruling 2)",
+                CryptoIntegrityManager.signSessionState(sessionWith("")).isBlank()
+            )
+            assertFalse(
+                "No keystore, no verification (ruling 2)",
+                CryptoIntegrityManager.verifySessionState(
+                    sessionWith("v2:" + Base64.encodeToString(ByteArray(32), Base64.NO_WRAP))
+                )
+            )
+        } finally {
+            TestMonolithApp.installTestKeyStore()
+        }
+    }
+
+    // PIN-SCOPE: PLUMBING
+    @Test
+    fun `hardware backing claim is dropped where it cannot be verified`() {
+        // Ruling 4 (verify-or-drop): the test double deliberately
+        // serves no KeyInfo, so the platform cannot verify secure
+        // hardware custody here — the claim must read false, never
+        // asserted on faith.
+        signFor() // a key exists; custody is what cannot be proven
+        assertFalse(
+            "Where KeyInfo cannot verify TEE/StrongBox custody, the claim is dropped (ruling 4)",
+            CryptoIntegrityManager.hardwareBackingVerified()
+        )
+    }
+
+    // PIN-SCOPE: SOURCE
+    @Test
+    fun `finish seal fails once its key is gone`() {
+        // The finish seal obeys ruling 2 like the arm signature:
+        // keystore key or nothing. With the key deleted, a minted
+        // seal stops verifying and verify does not resurrect it.
+        val seal = signFinish()
+        assertTrue("Precondition: the fresh seal verifies", verifyFinish(seal))
+        deleteHmacKeyIfPresent()
+        assertFalse(
+            "A seal whose key is gone must not verify (ruling 2)",
+            verifyFinish(seal)
+        )
+        assertFalse("Verify must not resurrect the key", keyStoreHasHmacKey())
     }
 }

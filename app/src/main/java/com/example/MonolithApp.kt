@@ -11,7 +11,7 @@ import java.io.File
  * activity or service runs: the uncaught-exception capture below and
  * the [MLog] boot line. Registered as android:name=".MonolithApp".
  */
-class MonolithApp : Application() {
+open class MonolithApp : Application() {
     override fun onCreate() {
         super.onCreate()
         CrashCapture.install(this)
