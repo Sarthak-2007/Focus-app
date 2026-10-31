@@ -1,5 +1,7 @@
 package com.example.data
 
+import com.example.service.InterceptPath
+
 /**
  * SLICE E — THE RECEIPT CONTRACT (Zettel, reconciled §10-Z1..Z6;
  * Nocke's discriminator + detention arithmetic; Reihe's issuance
@@ -324,6 +326,110 @@ enum class InterceptTriggerKind {
             entries.firstOrNull { it.name == name } ?: UNKNOWN
     }
 }
+
+/**
+ * Issue #785 (the #324 follow-on, sequenced after #341 PR-B):
+ * the intercept log's TYPED stop reason — why the wall rose,
+ * persisted beside the outcome/trigger kinds (intercept_logs
+ * .stopReason, migration 24→25). PR #599 described this column
+ * as the third of its typed delta; PR #594 landed the other two
+ * (outcomeKind, triggerKind at 18→19) and this one waited for
+ * its own lane, exactly as #324's closure priced it.
+ *
+ * Stamped at the write from facts the firing door actually
+ * holds — its [InterceptPath] and the session's routine birth
+ * ([interceptStopReasonFor]). Values no writer can truthfully
+ * distinguish today (a daily-opens LIMIT_HIT, a PEEK_EXPIRY
+ * re-intercept) are NOT in the enum: inventing them would
+ * fabricate history. They arrive with #55's design pass, when
+ * a surface exists that can tell them apart. UNKNOWN is the
+ * truthful value for "never recorded": a pre-v25 row's door is
+ * gone, and both the migration backfill and the read derivation
+ * stamp only what the row itself proves
+ * ([interceptStopReasonFromLegacy]).
+ */
+enum class InterceptStopReason {
+    /** A hand-armed (manual) session's tier door stopped him. */
+    SESSION_LOCK,
+
+    /** A routine-born session's window stopped him. */
+    ROUTINE_WINDOW,
+
+    /** The uninstall guard door (settings / app-info reach). */
+    UNINSTALL_GUARD,
+
+    /** The Shorts/Reels sniper door. */
+    SNIPER,
+
+    /** The browser site door. */
+    SITE,
+
+    /** The ending write's exposure booking (not a wall at all —
+     *  the row exists so the receipt can name the exposed apps). */
+    OPEN_EXPOSURE,
+
+    /** The system disarm row: the "stop" was the session ending. */
+    SESSION_DISARM,
+
+    /** Never recorded, or a door this build does not know. */
+    UNKNOWN;
+
+    companion object {
+        /** The kind persisted under a kind NAME (the stopReason
+         *  column stores [Enum.name]); blank/garbled → [UNKNOWN],
+         *  and callers fall back to the row's own evidence when
+         *  this yields UNKNOWN for a pre-v25 row. */
+        fun fromKindName(name: String?): InterceptStopReason =
+            entries.firstOrNull { it.name == name } ?: UNKNOWN
+    }
+}
+
+/**
+ * The stop reason a firing door can truthfully stamp: the guard,
+ * sniper and site doors name themselves; the tier doors
+ * (APP_TIER / SHIELD_APP) are told apart by the session's birth —
+ * a routine-born session's stop is a ROUTINE_WINDOW stop, a
+ * hand-armed session's is a SESSION_LOCK stop. An unprovenanced
+ * door (UNKNOWN path) stamps UNKNOWN rather than guessing.
+ * (PR #599's door matrix, verbatim.)
+ */
+fun interceptStopReasonFor(path: InterceptPath, sessionIsRoutine: Boolean): InterceptStopReason =
+    when (path) {
+        InterceptPath.UNINSTALL_GUARD -> InterceptStopReason.UNINSTALL_GUARD
+        InterceptPath.SNIPER -> InterceptStopReason.SNIPER
+        InterceptPath.SITE -> InterceptStopReason.SITE
+        InterceptPath.APP_TIER, InterceptPath.SHIELD_APP ->
+            if (sessionIsRoutine) InterceptStopReason.ROUTINE_WINDOW
+            else InterceptStopReason.SESSION_LOCK
+        InterceptPath.UNKNOWN -> InterceptStopReason.UNKNOWN
+    }
+
+/**
+ * The stop reason a stored row proves on its own, for rows whose
+ * writer stamped none: the two reserved packages and the
+ * uninstall outcome are hard evidence; everything else is
+ * UNKNOWN — a historical row's door cannot be reconstructed
+ * from prose. Mirrors the MIGRATION_24_25 backfill exactly.
+ */
+fun interceptStopReasonFromLegacy(packageName: String, outcome: String): InterceptStopReason =
+    when {
+        packageName == "com.monolith.system" ->
+            InterceptStopReason.SESSION_DISARM
+        packageName == "com.monolith.exposure" ->
+            InterceptStopReason.OPEN_EXPOSURE
+        InterceptOutcomeKind.fromStoredWord(outcome) ==
+            InterceptOutcomeKind.UNINSTALL_ATTEMPT_RETURNED ->
+            InterceptStopReason.UNINSTALL_GUARD
+        else -> InterceptStopReason.UNKNOWN
+    }
+
+/** Counts per stop reason over any row set — the aggregation
+ *  PR #599 named as this column's entry point: the typed input
+ *  #55's per-reason Airlock pass will aggregate against, and
+ *  any stats surface reads the same numbers from the same rows,
+ *  with no string matching anywhere downstream. */
+fun Iterable<InterceptLogEntity>.countByStopReason(): Map<InterceptStopReason, Int> =
+    groupingBy { it.stopReasonTyped }.eachCount()
 
 /** Issue #13, A-10(iv): kinds whose end is a STORED-END fact —
  *  a routine row's end is its frozen windowEndMillis, so filing

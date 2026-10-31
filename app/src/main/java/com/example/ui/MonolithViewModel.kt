@@ -25,6 +25,7 @@ import com.example.data.InterceptLogEntity
 import com.example.data.KineticArtifact
 import com.example.data.MonolithRepository
 import com.example.data.PruneNote
+import com.example.data.interceptStopReasonFor
 import com.example.data.breakRemainingAfter
 import com.example.data.SmartLoadout
 import com.example.data.StudyChecklistItem
@@ -5343,7 +5344,14 @@ class MonolithViewModel(
                     packageName = packageName,
                     appName = appName,
                     sessionIntention = arrivalIntention,
-                    arrivedAtWallMillis = nowWall
+                    arrivedAtWallMillis = nowWall,
+                    // Issue #785: the arrival write is the one
+                    // moment the firing door and the session's
+                    // birth are both in hand — stamp why the wall
+                    // rose now; resolutions never re-stamp it.
+                    stopReason = interceptStopReasonFor(
+                        path, active?.routineId != null
+                    )
                 )
             }.getOrDefault(0L)
             if (rowId > 0L && _airlockState.value.interceptNonce == nonce) {
@@ -5820,7 +5828,8 @@ class MonolithViewModel(
                     // own reason, exactly as main's verb booked it.
                     triggerReason = state.selectedReason.shortTag,
                     timestampMillis = state.interceptArrivedAtWallMillis
-                        .takeIf { it > 0L } ?: System.currentTimeMillis()
+                        .takeIf { it > 0L } ?: System.currentTimeMillis(),
+                    stopReason = stopReasonFor(state)
                 )
             }
         }
@@ -5877,6 +5886,13 @@ class MonolithViewModel(
         }
     }
 
+    /** Issue #785 (the #324 follow-on): the stop reason for a
+     *  standing airlock's verb writes — the door the state itself
+     *  carries, told apart by the session birth the state froze
+     *  at arrival. Mirrors PR #599's helper of the same name. */
+    private fun stopReasonFor(state: AirlockInterceptState) =
+        interceptStopReasonFor(state.interceptPath, state.sessionIsRoutine)
+
     /**
      * Issue #99 F3: the dishonest exit leaves a trace. Called when
      * the host activity stops while an Airlock still stands
@@ -5902,7 +5918,8 @@ class MonolithViewModel(
                 // from the live draft.
                 sessionIntention = state.sessionIntention,
                 outcome = "Left Airlock Without Choosing",
-                triggerReason = state.selectedReason.shortTag
+                triggerReason = state.selectedReason.shortTag,
+                stopReason = stopReasonFor(state)
             )
         }
     }
@@ -6061,7 +6078,8 @@ class MonolithViewModel(
                     sessionIntention = state.sessionIntention,
                     outcome = "Uninstall Attempt — Returned",
                     triggerReason = state.selectedReason.shortTag,
-                    countAsReach = false
+                    countAsReach = false,
+                    stopReason = stopReasonFor(state)
                 )
             }
             return
@@ -6070,6 +6088,7 @@ class MonolithViewModel(
         val appName = state.interceptedAppName
         val intention = state.sessionIntention
         val reason = state.selectedReason.shortTag
+        val stopReason = stopReasonFor(state)
         pendingReturnBanks.remove(pkg)?.cancel()
         pendingReturnBanks[pkg] = viewModelScope.launch {
             delay(RETURN_BANK_DELAY_MS)
@@ -6078,7 +6097,8 @@ class MonolithViewModel(
                 appName = appName,
                 sessionIntention = intention,
                 outcome = "Stayed Focused",
-                triggerReason = reason
+                triggerReason = reason,
+                stopReason = stopReason
             )
             pendingReturnBanks.remove(pkg)
         }
@@ -6100,7 +6120,8 @@ class MonolithViewModel(
                 appName = state.interceptedAppName.ifBlank { "Blocked App" },
                 sessionIntention = state.sessionIntention.ifBlank { _intentionText.value },
                 outcome = "Opened Launcher",
-                triggerReason = state.selectedReason.shortTag
+                triggerReason = state.selectedReason.shortTag,
+                stopReason = stopReasonFor(state)
             )
         }
     }
