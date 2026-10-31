@@ -1,4 +1,6 @@
 package com.example.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 import android.graphics.Bitmap
 import android.os.SystemClock
@@ -45,6 +47,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -54,6 +57,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -232,12 +239,19 @@ fun ShieldMatrixScreen(
     // Sweeper: a rest whose lifecycle was interrupted (an outside
     // actor re-tiered the app mid-rest) retires by age — a resting
     // entry may never become a permanent suppression.
+    // Issue #69 F5(a) — demand-driven: the old loop woke every
+    // 700 ms for the screen's whole life just to check the map
+    // was empty. Now it runs only while a rest exists to retire
+    // (the prune predicate is age-based at 1,200 ms, so starting
+    // the sweep when the first rest lands cannot miss one).
     LaunchedEffect(Unit) {
-        while (true) {
-            delay(700)
-            if (restingFlips.isNotEmpty()) {
-                val now = SystemClock.elapsedRealtime()
-                restingFlips = restingFlips.filterValues { now - it.createdAtMs <= 1200 }
+        snapshotFlow { restingFlips }.collect { flips ->
+            if (flips.isNotEmpty()) {
+                while (restingFlips.isNotEmpty()) {
+                    delay(700)
+                    val now = SystemClock.elapsedRealtime()
+                    restingFlips = pruneRests(restingFlips, now)
+                }
             }
         }
     }
@@ -261,10 +275,16 @@ fun ShieldMatrixScreen(
             onSetAppTier(pkg, resting.from)
         } else {
             val current = app.resolvedTier
-            val target = if (current == AppBlockTier.LOCKED) {
-                AppBlockTier.PEEK_2M
-            } else {
-                AppBlockTier.LOCKED
+            // Audit R6 #341 F22: the tap path walks the FULL ring
+            // LOCKED -> PEEK -> OPEN -> LOCKED. Before this, OPEN was
+            // unreachable by tap and one tap on an OPEN app silently
+            // LOCKED it — the only non-drag control destroyed the
+            // ruling it touched. The mid-session weakening ratchet
+            // below still refuses a weakening flip while sealed.
+            val target = when (current) {
+                AppBlockTier.LOCKED -> AppBlockTier.PEEK_2M
+                AppBlockTier.PEEK_2M -> AppBlockTier.OPEN
+                AppBlockTier.OPEN -> AppBlockTier.LOCKED
             }
             onSetAppTier(pkg, target)
             // The choreography runs only when the commit will land:
@@ -1019,7 +1039,7 @@ fun ShieldMatrixScreen(
                     ) {
                         if (newSiteText.isEmpty()) {
                             Text(
-                                text = "Add a site — e.g. news.ycombinator.com",
+                                text = stringResource(R.string.shield_add_site_hint),
                                 fontFamily = AtkinsonHyperlegibleFamily,
                                 fontSize = 13.sp,
                                 color = scheme.onSurfaceVariant
@@ -1447,7 +1467,7 @@ private fun RoutineRow(
                     color = scheme.onBackground
                 )
                 Text(
-                    text = "→ " + fmtRoutineTime(draftEnd),
+                    text = stringResource(R.string.shield_routine_end, fmtRoutineTime(draftEnd)),
                     fontFamily = AnonymousProFamily,
                     fontSize = 11.sp,
                     color = scheme.onSurfaceVariant
@@ -1507,7 +1527,7 @@ private fun RoutineRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "START",
+                text = stringResource(R.string.label_start),
                 fontFamily = AnonymousProFamily,
                 fontSize = 11.sp,
                 color = scheme.onSurfaceVariant
@@ -1515,7 +1535,7 @@ private fun RoutineRow(
             BlockitActionChip(wordLabel = "−30", onClick = { draftAdjust(true, -30) })
             BlockitActionChip(wordLabel = "+30", onClick = { draftAdjust(true, 30) })
             Text(
-                text = "END",
+                text = stringResource(R.string.label_end),
                 fontFamily = AnonymousProFamily,
                 fontSize = 11.sp,
                 color = scheme.onSurfaceVariant
@@ -1529,11 +1549,21 @@ private fun RoutineRow(
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf("M", "T", "W", "T", "F", "S", "S").forEachIndexed { index, letter ->
+            // Audit R6 #341 F61: two-letter labels (TU != TH, SA != SU)
+            // with the full day name + selected state in semantics —
+            // before this, 'T' was two different days, selection was
+            // colour-only, and Voice Access could not name a chip.
+            listOf("MO", "TU", "WE", "TH", "FR", "SA", "SU").forEachIndexed { index, letter ->
+                val dayName = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")[index]
+                val daySelected = routine.daysMask and (1 shl index) != 0
                 BlockitActionChip(
                     wordLabel = letter,
-                    isPrimaryInk = routine.daysMask and (1 shl index) != 0,
-                    onClick = { onToggleDay(index) }
+                    isPrimaryInk = daySelected,
+                    onClick = { onToggleDay(index) },
+                    modifier = Modifier.semantics {
+                        contentDescription = dayName
+                        stateDescription = if (daySelected) "Selected" else "Not selected"
+                    }
                 )
             }
         }
@@ -1647,12 +1677,24 @@ private fun FilterWord(
  *  section, rests 300ms, then exits over 280ms and is present in its
  *  new section when next seen. [createdAtMs] lets the screen's
  *  sweeper retire an entry whose lifecycle was interrupted. */
-private data class RestingFlip(
+internal data class RestingFlip(
     val from: AppBlockTier,
     val to: AppBlockTier,
     val exiting: Boolean,
     val createdAtMs: Long
 )
+
+/** Issue #69 F5(a): the sweeper's prune law, pure — a rest
+ *  retires once it is older than [REST_MAX_AGE_MS]; younger
+ *  rests stay. The sweeper itself is demand-driven (it runs
+ *  only while the rests map is non-empty), so with no rests
+ *  there is no loop and nothing to prune. */
+internal const val REST_MAX_AGE_MS = 1200L
+internal fun pruneRests(
+    rests: Map<String, RestingFlip>,
+    nowMs: Long
+): Map<String, RestingFlip> =
+    rests.filterValues { nowMs - it.createdAtMs <= REST_MAX_AGE_MS }
 
 /** One printed line of the book: the app, the ruling word it wears
  *  right now, and its rest state when it is mid-flip. */
@@ -1757,7 +1799,7 @@ private fun SlipHeaderRow(right: AnnotatedString?) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "YOUR RULES",
+                text = stringResource(R.string.shield_your_rules),
                 fontFamily = AtkinsonHyperlegibleFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 11.5.sp,
@@ -1824,7 +1866,7 @@ private fun SlipNoneLine() {
         contentAlignment = Alignment.CenterStart
     ) {
         Text(
-            text = "NONE",
+            text = stringResource(R.string.label_none),
             fontFamily = AnonymousProFamily,
             fontSize = 11.sp,
             letterSpacing = 1.sp,
@@ -1898,6 +1940,9 @@ private fun SlipLineRow(
             overflow = TextOverflow.Ellipsis
         )
         Text(
+            // Audit R6 #341 F62: drawn leader, not typed text — a
+            // screen reader stepping the rules hit a meaningless
+            // 90-dot string on every row before the ruling.
             text = " .".repeat(90),
             fontFamily = AnonymousProFamily,
             fontSize = 11.sp,
@@ -1908,6 +1953,7 @@ private fun SlipLineRow(
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 6.dp)
+                .clearAndSetSemantics { }
         )
         // The re-strike: the word lifts and lands whole, 260ms
         // Curve A — never a roll (M4's governor rides the tally;

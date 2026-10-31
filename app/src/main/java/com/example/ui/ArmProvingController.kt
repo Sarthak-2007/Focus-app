@@ -1,4 +1,5 @@
 package com.example.ui
+import com.example.R
 
 import android.util.Log
 import com.example.MLog
@@ -460,7 +461,8 @@ class ArmProvingController(
         if (verdict == com.example.service.SealVerdict.ANNULLED) {
             _annulCount.value += 1
             val sentence = RefusalSentence(
-                text = "${ArmLink.SESSION_ROW.displayName} — NO PROOF. NOTHING WAS SEALED. ANY BLOCKING FROM THE WAIT IS OFF.",
+                textRes = R.string.sentence_no_proof_blocking_off,
+                args = listOf(ArmLink.SESSION_ROW.displayName),
                 action = null
             )
             _armSentence.value = sentence
@@ -795,7 +797,7 @@ class ArmProvingController(
         _phase.value = ArmPhase.Idle
         _annulCount.value += 1
         val sentence = RefusalSentence(
-            text = "NOT SEALED — THE SESSION DIDN'T ANSWER.",
+            textRes = R.string.sentence_not_sealed_session,
             action = null
         )
         _armSentence.value = sentence
@@ -863,8 +865,8 @@ class ArmProvingController(
         // above). Wording is conditional ("ANY") because in the
         // SESSION_ROW-jammed path no row ever armed the gate.
         val sentence = RefusalSentence(
-            text = if (annulFailed) {
-                "ANNUL FAILED — THE ROW MAY STILL STAND. NOTHING WAS PROVED."
+            textRes = if (annulFailed) {
+                R.string.sentence_annul_failed
             } else {
                 // R3b #164 F5: the failed link is named in plain
                 // words and the sentence says what happened, in
@@ -878,8 +880,9 @@ class ArmProvingController(
                 // shield above, so any blocking the wait ran is
                 // off, and the recovery path's sentence in
                 // resolveRecovery still says so in words.)
-                "NOT SEALED — ${first.plainName} DIDN'T ANSWER."
+                R.string.sentence_not_sealed_named
             },
+            args = if (annulFailed) emptyList() else listOf(first.plainName),
             action = null
         )
         _armSentence.value = sentence

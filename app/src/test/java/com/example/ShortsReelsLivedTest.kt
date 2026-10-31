@@ -99,7 +99,14 @@ class ShortsReelsLivedTest {
             // assertion was already red there. The pinned shape
             // below is the gate's current form — same intent:
             // the switch (plus the captured feed fact), no lease.
-            source.contains("if (shortsSniperArmed(guardSettings, pkgName) &&")
+            // #166 U2 re-pin (W2 BUILDER-B4): the gate has since
+            // gained its surface-store parameter
+            // (`shortsSniperArmed(guardSettings, pkgName, surfaceStore)`),
+            // so the two-argument pin died again; the pin below is
+            // the gate's full current prefix — stricter, same
+            // intent: the switch + the store + the captured feed
+            // fact, still no lease anywhere in it.
+            source.contains("if (shortsSniperArmed(guardSettings, pkgName, surfaceStore) && snapshot.facts.sniperFeedVisible)")
         )
         // #130 composition (see the class doc): the site gate must
         // NOT be blanket-silenced by a package lease any more —

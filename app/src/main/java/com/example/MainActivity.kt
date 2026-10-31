@@ -56,6 +56,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.data.SmartLoadout
 import com.example.service.InterceptConsumptionStore
 import com.example.service.InterceptNonce
 import com.example.service.InterceptPath
@@ -63,9 +64,13 @@ import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithShieldService
 import com.example.service.PermissionReturnService
 import com.example.service.WatchStore
+import com.example.ui.GlanceRouting
 import com.example.ui.MonolithDestination
 import com.example.ui.ArmPhase
 import com.example.ui.MonolithViewModel
+import com.example.ui.BreakDimScrim
+import com.example.ui.nightDesaturate
+import com.example.ui.rememberBreakDimAlpha
 import com.example.ui.components.AirlockInterceptOverlay
 import com.example.ui.components.BlockitActionChip
 import com.example.ui.components.AlwaysOnDeskClockOverlay
@@ -122,7 +127,12 @@ class MainActivity : ComponentActivity() {
                 android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT
             ),
-            navigationBarStyle = SystemBarStyle.dark(
+            // Issue #256: the birth pin matches the day ground for
+            // BOTH bars (the ground effect below re-pins on night).
+            // The nav bar was pinned dark here and in the effect —
+            // light glyphs on the light day ground, illegible.
+            navigationBarStyle = SystemBarStyle.light(
+                android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT
             )
         )
@@ -196,22 +206,39 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIncomingInterceptIntent(intent: Intent?, viewModel: MonolithViewModel) {
         if (intent == null) return
-        // Issue #155 (F5, re-homed at the STURM-4 merge): a tap on
-        // the shield notification is about the shield — land on
-        // SHIELD, not the default Deck. Intercept extras take
-        // precedence: when a firing's package rides the same intent,
-        // the intercept path below owns the delivery and this extra
-        // is simply consumed.
+        // Issue #155 (F5): a tap on a glance card lands on the
+        // surface the card is ABOUT, per GlanceRouting's per-state
+        // table — not the #312 single route to SHIELD, which the
+        // seal law in navigateTo refuses mid-session (dead code)
+        // and which, at completion, lands where the receipt is
+        // not. The about extra is routing-only: it names a
+        // destination, never a session action, so honouring it
+        // from any delivery can move the user's eyes but can
+        // never touch the seal. Intercept extras take precedence:
+        // when a firing's package rides the same intent, the
+        // intercept path below owns the delivery and these extras
+        // are simply consumed.
         val fromShieldNotification = intent.getBooleanExtra(
             MonolithShieldService.EXTRA_FROM_SHIELD_NOTIFICATION, false
+        )
+        val glanceAbout = GlanceRouting.parseAbout(
+            intent.getStringExtra(GlanceRouting.EXTRA_GLANCE_ABOUT)
         )
         if (fromShieldNotification) {
             intent.removeExtra(MonolithShieldService.EXTRA_FROM_SHIELD_NOTIFICATION)
         }
+        intent.removeExtra(GlanceRouting.EXTRA_GLANCE_ABOUT)
         val pkg = intent.getStringExtra(MonolithShieldService.EXTRA_INTERCEPTED_PACKAGE)
         if (pkg.isNullOrBlank()) {
             if (fromShieldNotification) {
-                viewModel.navigateTo(MonolithDestination.SHIELD)
+                // Cards posted by the current shield build carry
+                // only the boolean; infer their state from the
+                // live session fact. Per-state writers (the
+                // EXTRA_GLANCE_ABOUT extra) ride PR #540's lane.
+                val about = glanceAbout ?: GlanceRouting.aboutForLegacyShieldTap(
+                    sessionActive = viewModel.activeSession.value?.isActive == true
+                )
+                GlanceRouting.destinationFor(about)?.let { viewModel.navigateTo(it) }
             }
             return
         }
@@ -367,6 +394,27 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val themeEvaluation by viewModel.themeEvaluation.collectAsStateWithLifecycle()
     val guardLinePrint by viewModel.guardLinePrint.collectAsStateWithLifecycle()
     val watchSnapshot by viewModel.watchSnapshots.collectAsStateWithLifecycle()
+    // Issue #324, finding 4 (build half, relabelled: primer
+    // re-creation + binding + persisted step state): the
+    // permission sequence's persisted step. The store holds the
+    // in-flight FIX trip across process death; the standing step
+    // itself is DERIVED below from the sweep's live grants plus
+    // that in-flight record — never from a stored "done" bit.
+    val permissionStepStore = remember { com.example.data.PermissionStepStore(context) }
+    var permissionPrimerDismissed by remember { mutableStateOf(false) }
+    val permissionGrants = watchSnapshot.items.mapValues { (_, measurement) ->
+        measurement.perm == com.example.service.PermState.GRANTED
+    }
+    val permissionStep = com.example.data.PermissionStepLogic.currentStep(
+        permissionGrants, permissionStepStore.inFlightItem()
+    )
+    // A landed in-flight grant closes its trip in the store.
+    LaunchedEffect(watchSnapshot) {
+        val inFlight = permissionStepStore.inFlightItem()
+        if (inFlight != null && permissionGrants[inFlight] == true) {
+            permissionStepStore.clearInFlight()
+        }
+    }
     val dialMinutes by viewModel.dialMinutes.collectAsStateWithLifecycle()
     val studyBlocksCount by viewModel.studyBlocksCount.collectAsStateWithLifecycle()
     val studyPreset by viewModel.studyPreset.collectAsStateWithLifecycle()
@@ -439,6 +487,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val receiptState by viewModel.receiptState.collectAsStateWithLifecycle()
     val lastReceiptSessionId by viewModel.lastReceiptSessionId.collectAsStateWithLifecycle()
     val isAlwaysOnDeskClockVisible by viewModel.isAlwaysOnDeskClockVisible.collectAsStateWithLifecycle()
+    // Issue #143 F4: the DND gate's line for the Deck.
+    val dndLine by viewModel.dndLine.collectAsStateWithLifecycle()
+    // Issue #143 F1/F5/F6: the shield loop's published break-dim
+    // phase — the descent into the break and the fade out of it.
+    val breakDimState by MonolithShieldService.breakDim.collectAsStateWithLifecycle()
+    val breakDimAlpha = rememberBreakDimAlpha(breakDimState)
     val burnInFigure8MinuteStep by viewModel.burnInFigure8MinuteStep.collectAsStateWithLifecycle()
     val showNotificationDigestSheet by viewModel.showNotificationDigestSheet.collectAsStateWithLifecycle()
     val capturedNotifications by viewModel.capturedNotifications.collectAsStateWithLifecycle()
@@ -495,9 +549,19 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     android.graphics.Color.TRANSPARENT
                 )
             },
-            navigationBarStyle = SystemBarStyle.dark(
-                android.graphics.Color.TRANSPARENT
-            )
+            // Issue #256: the nav bar follows the ground exactly
+            // like the status bar — it was pinned dark in both
+            // branches, guaranteeing an illegible bar by day.
+            navigationBarStyle = if (groundNight) {
+                SystemBarStyle.dark(
+                    android.graphics.Color.TRANSPARENT
+                )
+            } else {
+                SystemBarStyle.light(
+                    android.graphics.Color.TRANSPARENT,
+                    android.graphics.Color.TRANSPARENT
+                )
+            }
         )
     }
     // The receipt sheet's dismissal is host state (F-B1): the
@@ -636,6 +700,12 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     LaunchedEffect(parkOpen) {
         if (parkOpen) {
             viewModel.runWatchSweep()
+        } else {
+            // Issue #324 finding 4: primer dismissal is per
+            // Park-open — closing and reopening the Park (or a
+            // fresh process) raises the primer again at the
+            // persisted step. That reopening IS the resume.
+            permissionPrimerDismissed = false
         }
     }
 
@@ -727,6 +797,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // admin instead fires the official activation intent for this
     // app's own admin (issue #44), with Security Settings as fallback.
     fun openFixPane(item: com.example.service.WatchItemId) {
+        // Issue #324 finding 4: record the step BEFORE the trip —
+        // the persisted in-flight step is what a process death
+        // during the Settings stay resumes from.
+        permissionStepStore.beginTrip(item)
         // Issue #308: arm the return trip BEFORE the pane opens —
         // the service polls this item's grant and brings the user
         // back the moment it lands, instead of stranding them in
@@ -812,6 +886,48 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
         }
     }
 
+    // Issue #143 F6: the window's own brightness rides the same
+    // dim progression — the palette was never the only lever, and
+    // on an LCD the backlight is the light. While the dim is up,
+    // this window's brightness steps down with it; at rest (and on
+    // dispose) the override is released back to the system value
+    // the user set. Scoped to Monolith's window only — nothing
+    // here touches the device-wide brightness.
+    val rootView = androidx.compose.ui.platform.LocalView.current
+    androidx.compose.runtime.DisposableEffect(rootView) {
+        onDispose {
+            var ctx: android.content.Context? = rootView.context
+            var activity: android.app.Activity? = null
+            while (ctx is android.content.ContextWrapper) {
+                if (ctx is android.app.Activity) { activity = ctx; break }
+                ctx = ctx.baseContext
+            }
+            activity?.window?.let { window ->
+                val attrs = window.attributes
+                attrs.screenBrightness =
+                    android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                window.attributes = attrs
+            }
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(breakDimAlpha, rootView) {
+        var ctx: android.content.Context? = rootView.context
+        var activity: android.app.Activity? = null
+        while (ctx is android.content.ContextWrapper) {
+            if (ctx is android.app.Activity) { activity = ctx; break }
+            ctx = ctx.baseContext
+        }
+        activity?.window?.let { window ->
+            val attrs = window.attributes
+            attrs.screenBrightness = if (breakDimAlpha > 0.001f) {
+                com.example.data.NightDimMath.windowBrightnessForDim(breakDimAlpha)
+            } else {
+                android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+            window.attributes = attrs
+        }
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
@@ -821,6 +937,14 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                // Issue #143 F5: while the break dim is up, the
+                // whole room drains toward monochrome on the dim's
+                // own curve — night/sealed surfaces only in effect,
+                // because the dim itself only exists inside a
+                // sealed session's break and its fade.
+                .nightDesaturate(
+                    com.example.data.NightDimMath.saturationForDim(breakDimAlpha)
+                )
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // The header band (chrome C2): brand + Guard line.
@@ -914,8 +1038,21 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                     onOpenAlwaysOnDeskClock = { viewModel.toggleAlwaysOnDeskClock(true) },
                                     onOpenNotificationDigest = { viewModel.toggleNotificationDigestSheet(true) },
                                     onEndSafeBreak = { viewModel.endSafeBreakEarly() },
+                                    onStartSafeBreak = { viewModel.startSafeBreakMidBlock() },
                                     onExtendSession = viewModel::extendActiveSession,
+                                    dndLine = dndLine,
                                     weeklyEmergencyTokensRemaining = weeklyEmergencyTokensRemaining,
+                                    // Issue #103 F1: the repository
+                                    // diverts a non-SLEEP routine
+                                    // session to its judging funnel —
+                                    // a deleted routine row judges
+                                    // too (null loadout != SLEEP);
+                                    // SLEEP rows fall through to the
+                                    // real grace path.
+                                    isActiveRoutineJudged = activeSession?.routineId?.let { rid ->
+                                        routines.firstOrNull { it.id == rid }
+                                            ?.loadoutName != SmartLoadout.SLEEP.name
+                                    } ?: false,
                                     appsCellCount = appsCellCount,
                                     appsSplit = appsSplit,
                                     deckWarrant = deckWarrant,
@@ -1269,6 +1406,22 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                 else -> MonolithDestination.VAULT
                             }
                             viewModel.navigateTo(dest)
+                            // Issue #128 finding 1: a refused
+                            // navigation (e.g. any rail travel
+                            // while sealed) changes no state, so
+                            // no recomposition would ever re-seat
+                            // the cap — settle it back onto the
+                            // destination the phone is actually
+                            // on, or the band lies.
+                            if (viewModel.currentDestination.value != dest) {
+                                val actualIdx = when (viewModel.currentDestination.value) {
+                                    MonolithDestination.DECK -> 0
+                                    MonolithDestination.SHIELD -> 1
+                                    MonolithDestination.TASKS -> 2
+                                    MonolithDestination.VAULT -> 3
+                                }
+                                view.settleCapTo(actualIdx)
+                            }
                         }
                         view.onParkInvoked = {
                             if (parkOpen) {
@@ -1278,6 +1431,23 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                 )
                             } else {
                                 openPark(parkOpenState, sealed, viewModel)
+                                // Issue #128 finding 4: the cap
+                                // travelled into the PARK zone
+                                // BEFORE this ask, and a refusal
+                                // (sealed / navigation-locked)
+                                // changes no state — no
+                                // recomposition would ever re-seat
+                                // it, so the band stood over the
+                                // blank zone printing a selection
+                                // that does not exist. On refusal:
+                                // the refusal knock (the same
+                                // voice as a refused navigation)
+                                // and the cap settles back onto
+                                // the committed stop.
+                                if (!parkOpen) {
+                                    viewModel.soundEngine.playSeatKnock(6, 0.2f, 320f)
+                                    view.settleCapTo(view.selectedTabIndex)
+                                }
                             }
                         }
                     },
@@ -1297,7 +1467,8 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 activeTask = activeTask,
                 dialMinutes = dialMinutes,
                 burnInStep = burnInFigure8MinuteStep,
-                onDismiss = { viewModel.toggleAlwaysOnDeskClock(false) }
+                onDismiss = { viewModel.toggleAlwaysOnDeskClock(false) },
+                dimAlpha = breakDimAlpha
             )
 
             // The digest renders the sealed snapshot whenever a
@@ -1374,11 +1545,30 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 )
             }
 
-            // The ShieldPermissionPrimerModal binding stays REMOVED
-            // (Slice D): its "COMMIT & ARM ANYWAY" path was the
-            // register's LR2-S1-18 — the slide reads the warrant
-            // itself now and refuses in the open, with the FIX
-            // routes on the sentence itself.
+            // Issue #324, finding 4 (build half, relabelled):
+            // the ShieldPermissionPrimerModal is RE-CREATED and
+            // bound here. This is NOT the Slice D modal restored:
+            // its "COMMIT & ARM ANYWAY" path (register LR2-S1-18)
+            // does not exist in the re-creation — the only action
+            // is FIX, routed through openFixPane to the step's own
+            // Settings pane, and arming still lives where Slice D
+            // put it: the warrant slide reads the grants itself
+            // and refuses in the open. The primer stands over an
+            // open Park while a measured board shows an ungranted
+            // step; the step derives from the live grants plus
+            // PermissionStepStore's persisted in-flight record, so
+            // an interrupted sequence resumes where it stopped.
+            com.example.ui.components.ShieldPermissionPrimerModal(
+                visible = parkOpen && watchSnapshot.items.isNotEmpty() &&
+                    permissionStep != null && !permissionPrimerDismissed,
+                currentStep = permissionStep,
+                grants = permissionGrants,
+                onFixClick = { item ->
+                    permissionPrimerDismissed = true
+                    openFixPane(item)
+                },
+                onDismiss = { permissionPrimerDismissed = true }
+            )
 
             // THE LAUNCHER BLOCK SURFACE: hosted under the Airlock,
             // so a fresh intercept's door always stands above it.
@@ -1542,8 +1732,16 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 soundEngine = viewModel.soundEngine,
                 onDismissKeepFocusing = viewModel::dismissDisarmChallenge,
                 onCompleteDisarm = { viewModel.completeEmergencyBreakFromValve() },
-                onHoldStarted = viewModel::recordValveHoldStarted
+                onHoldBanked = viewModel::recordValveHoldBanked
             )
+
+            // Issue #143 F1/F6: the break dim stands over the
+            // whole room — topmost, and strictly visual (no
+            // pointer handlers): the descent into the break and
+            // the fade out at its end. Everything beneath it —
+            // Deck, desk clock, the Yield sheet — stays tappable;
+            // only the light is taken away.
+            BreakDimScrim(alpha = breakDimAlpha)
 
         }
     }
