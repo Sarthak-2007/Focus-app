@@ -381,152 +381,11 @@ fun DrawerScreen(
     }
 
     if (detail != null) {
-        // DRW-03 (Truth Car 2): the detail's date-line derives
-        // from the finish's own instant — its true calendar date
-        // beside its true clock time, a single moment that
-        // actually happened. The old line composed the FILING
-        // date with the true clock: every finish between 00:00
-        // and 03:29 printed a date-time pair that never occurred.
-        // The filing date still governs the shelves (the list
-        // headings); a shelf label and a timestamp are different
-        // facts, and only the timestamp was lying.
-        val finishDate = java.time.Instant.ofEpochMilli(detail.completedAtMillis)
-            .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
-        val dateLine = if (finishDate.year == LocalDate.now().year) {
-            "${headingLabel(finishDate, withYear = false)} · ${clockTime(detail.completedAtMillis)}"
-        } else {
-            "${headingLabel(finishDate, withYear = true)} · ${clockTime(detail.completedAtMillis)}"
-        }
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(scheme.background)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .testTag("drawer_screen"),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(bottom = 100.dp)
-        ) {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "STORED",
-                        fontFamily = AnonymousProFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        letterSpacing = 2.sp,
-                        color = scheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "BACK",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        color = scheme.onBackground,
-                        modifier = Modifier
-                            .clickable { selectedTaskId = -1 }
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
-                            .testTag("drawer_detail_back")
-                    )
-                }
-            }
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = detail.title,
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp,
-                        color = scheme.onBackground
-                    )
-                    Text(
-                        text = dateLine,
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 12.sp,
-                        color = scheme.onSurfaceVariant
-                    )
-                    // Provenance block (AUDIT-drawer §2, wave-2):
-                    // category and ESTIMATE stand together as what
-                    // the task WAS; SPENT stands alone after a
-                    // spacer as what it COST — the subtraction
-                    // column the stacked pair formed is broken.
-                    // Estimate and actual remain two separate plain
-                    // facts — never a delta, never a percentage. The
-                    // estimate prints only where one was actually
-                    // given (MINUTES DIE): never "ESTIMATE 0 MIN".
-                    // Issue #270: a tag prints only when one exists —
-                    // a blank tag is nameless by the user's ruling,
-                    // never an empty line or a dangling separator
-                    // standing for a category. The estimate keeps its
-                    // own law above: it prints only where given.
-                    if (detail.categoryTag.isNotBlank() || detail.estimatedMinutes > 0) {
-                        Text(
-                            text = when {
-                                detail.categoryTag.isNotBlank() && detail.estimatedMinutes > 0 ->
-                                    "${detail.categoryTag} · ESTIMATE ${detail.estimatedMinutes} MIN"
-                                detail.categoryTag.isNotBlank() -> detail.categoryTag
-                                else -> "ESTIMATE ${detail.estimatedMinutes} MIN"
-                            },
-                            fontFamily = AnonymousProFamily,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        // Issue #110, finding 2 (main's form,
-                        // restored at the composition, K8): SPENT
-                        // IN TOTAL — the detail's spent is the
-                        // task's lifetime accrual, same law as the
-                        // row's TOTAL print.
-                        text = "SPENT IN TOTAL ${spentLabel(detail.actualSecondsSpent)}",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 13.sp,
-                        color = scheme.onBackground
-                    )
-                }
-            }
-            if (detail.subSteps.isNotEmpty()) {
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        detail.subSteps.forEachIndexed { stepIdx, step ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 14.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                // AUDIT-drawer §2 (wave-2): ONE voice
-                                // for every substep — strike-through
-                                // is a working surface's verb imported
-                                // into the archive, and it made
-                                // finished work read unfinished. The
-                                // two-digit number (DRW-08) leads.
-                                Text(
-                                    text = com.example.data.twoDigitCount(stepIdx + 1),
-                                    fontFamily = AnonymousProFamily,
-                                    fontSize = 10.5.sp,
-                                    color = scheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(end = 10.dp)
-                                )
-                                Text(
-                                    text = step.title,
-                                    fontFamily = AtkinsonHyperlegibleFamily,
-                                    fontWeight = FontWeight.Medium,
-                                    fontSize = 12.5.sp,
-                                    color = scheme.onBackground,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        DrawerDetailView(
+            scheme = scheme,
+            detail = detail,
+            onBack = { selectedTaskId = -1 }
+        )
         return
     }
 
@@ -1477,6 +1336,169 @@ private fun DrawerReceiptsView(
                     entry = entry,
                     onClick = { onReceiptClick(entry.sessionId) }
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Issue #90 (complexity F2 slice): the DETAIL view — extracted
+ * out of DrawerScreen's body as its own composable, in the pattern
+ * of DrawerCabinetView. Behaviour-identical: same rows, same keys,
+ * same testTags; the host's captures are explicit parameters and
+ * the back state write rides a callback to the host's saveable
+ * state holder. The section header and the M1 BackHandler stay in
+ * the host — they serve the dispatch, not the view.
+ */
+@Composable
+private fun DrawerDetailView(
+    scheme: androidx.compose.material3.ColorScheme,
+    detail: FocusTaskEntity,
+    onBack: () -> Unit
+) {
+    // DRW-03 (Truth Car 2): the detail's date-line derives
+    // from the finish's own instant — its true calendar date
+    // beside its true clock time, a single moment that
+    // actually happened. The old line composed the FILING
+    // date with the true clock: every finish between 00:00
+    // and 03:29 printed a date-time pair that never occurred.
+    // The filing date still governs the shelves (the list
+    // headings); a shelf label and a timestamp are different
+    // facts, and only the timestamp was lying.
+    val finishDate = java.time.Instant.ofEpochMilli(detail.completedAtMillis)
+        .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+    val dateLine = if (finishDate.year == LocalDate.now().year) {
+        "${headingLabel(finishDate, withYear = false)} · ${clockTime(detail.completedAtMillis)}"
+    } else {
+        "${headingLabel(finishDate, withYear = true)} · ${clockTime(detail.completedAtMillis)}"
+    }
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(scheme.background)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .testTag("drawer_screen"),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(bottom = 100.dp)
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "STORED",
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    letterSpacing = 2.sp,
+                    color = scheme.onSurfaceVariant
+                )
+                Text(
+                    text = "BACK",
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = scheme.onBackground,
+                    modifier = Modifier
+                        .clickable { onBack() }
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .testTag("drawer_detail_back")
+                )
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = detail.title,
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp,
+                    color = scheme.onBackground
+                )
+                Text(
+                    text = dateLine,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 12.sp,
+                    color = scheme.onSurfaceVariant
+                )
+                // Provenance block (AUDIT-drawer §2, wave-2):
+                // category and ESTIMATE stand together as what
+                // the task WAS; SPENT stands alone after a
+                // spacer as what it COST — the subtraction
+                // column the stacked pair formed is broken.
+                // Estimate and actual remain two separate plain
+                // facts — never a delta, never a percentage. The
+                // estimate prints only where one was actually
+                // given (MINUTES DIE): never "ESTIMATE 0 MIN".
+                // Issue #270: a tag prints only when one exists —
+                // a blank tag is nameless by the user's ruling,
+                // never an empty line or a dangling separator
+                // standing for a category. The estimate keeps its
+                // own law above: it prints only where given.
+                if (detail.categoryTag.isNotBlank() || detail.estimatedMinutes > 0) {
+                    Text(
+                        text = when {
+                            detail.categoryTag.isNotBlank() && detail.estimatedMinutes > 0 ->
+                                "${detail.categoryTag} · ESTIMATE ${detail.estimatedMinutes} MIN"
+                            detail.categoryTag.isNotBlank() -> detail.categoryTag
+                            else -> "ESTIMATE ${detail.estimatedMinutes} MIN"
+                        },
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        letterSpacing = 1.sp,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    // Issue #110, finding 2 (main's form,
+                    // restored at the composition, K8): SPENT
+                    // IN TOTAL — the detail's spent is the
+                    // task's lifetime accrual, same law as the
+                    // row's TOTAL print.
+                    text = "SPENT IN TOTAL ${spentLabel(detail.actualSecondsSpent)}",
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontSize = 13.sp,
+                    color = scheme.onBackground
+                )
+            }
+        }
+        if (detail.subSteps.isNotEmpty()) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    detail.subSteps.forEachIndexed { stepIdx, step ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // AUDIT-drawer §2 (wave-2): ONE voice
+                            // for every substep — strike-through
+                            // is a working surface's verb imported
+                            // into the archive, and it made
+                            // finished work read unfinished. The
+                            // two-digit number (DRW-08) leads.
+                            Text(
+                                text = com.example.data.twoDigitCount(stepIdx + 1),
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 10.5.sp,
+                                color = scheme.onSurfaceVariant,
+                                modifier = Modifier.padding(end = 10.dp)
+                            )
+                            Text(
+                                text = step.title,
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 12.5.sp,
+                                color = scheme.onBackground,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
             }
         }
     }
