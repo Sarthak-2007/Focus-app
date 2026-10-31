@@ -30,6 +30,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowWindowManagerImpl
 
 /**
  * PIN-scope: RENDER — [PillController]'s window labels, driven through
@@ -162,7 +163,7 @@ class PillControllerRenderTest {
                 for (i in 0 until view.childCount) walk(view.getChildAt(i))
             }
         }
-        shadowOf(wm).views.forEach { walk(it) }
+        (shadowOf(wm) as ShadowWindowManagerImpl).views.forEach { walk(it) }
         return out
     }
 
