@@ -867,6 +867,18 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
      *  saved state when it consumes the completion callback). */
     var onBankedProgressChanged: ((bankedMs: Long) -> Unit)? = null
 
+    /** Issue #523 (6-1): the session this valve instance serves, set
+     *  by the host before the view joins the hierarchy. The saved
+     *  bank is stamped with the key at save time and restored ONLY
+     *  when the stamp matches the key set for the session now being
+     *  served — a view-state bundle that outlives its session
+     *  (rotation across a session change, process death and relaunch
+     *  into a later session) can no longer pour the dead session's
+     *  bank into the new session's valve. -1 = unkeyed: only an
+     *  unkeyed stamp restores. The Compose host keys its hoisted
+     *  bank the same way; this gate guards the view's own bundle. */
+    var bankSessionKey: Int = -1
+
     /** Read-only snapshots for the hoisting caller and tests. */
     val currentHeldMs: Long get() = heldMs
     val currentBankedMs: Long get() = bankedMs
@@ -910,6 +922,8 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
         bundle.putLong("heldMs", heldMs)
         bundle.putLong("bankedMs", bankedMs)
         bundle.putInt("requiredSeconds", requiredSeconds)
+        // Issue #523 (6-1): stamp the bank with the session that owns it.
+        bundle.putInt("bankSessionKey", bankSessionKey)
         return bundle
     }
 
@@ -918,6 +932,10 @@ class Emergency60sValveView(context: Context) : BlockitCanvasView(context) {
             @Suppress("DEPRECATION")
             super.onRestoreInstanceState(state.getParcelable("super"))
             requiredSeconds = state.getInt("requiredSeconds", 60)
+            // Issue #523 (6-1): a bank stamped by another session is
+            // not restored — neither the chambers nor the in-flight
+            // remainder that belongs to them.
+            if (state.getInt("bankSessionKey", -1) != bankSessionKey) return
             restoreBankedProgress(state.getLong("bankedMs", 0L))
             // The un-banked remainder restores only up to the next
             // chamber — it had not locked, but it was earned in this

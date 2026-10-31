@@ -101,6 +101,20 @@ sealed interface BreakResult {
 }
 
 /**
+ * What a [MonolithRepository.disarmActiveSession] call did. Until
+ * issue #523 (6-3) the door returned nothing and a caller could not
+ * tell a disarm from a refusal; the grace law's refusal half needs
+ * the distinction at the call site — on
+ * [DisarmResult.RefusedLateGraceCancel] nothing was written, the
+ * session stays sealed, and the shield must NOT come down.
+ */
+sealed interface DisarmResult {
+    object Disarmed : DisarmResult
+    object NoActiveSession : DisarmResult
+    object RefusedLateGraceCancel : DisarmResult
+}
+
+/**
  * The prune's record (Ordner lane, Mikro M5): how many rows the last
  * unannounced prune(s) took off the app list, and whether any stored
  * ruling went with them. Accumulates in prefs until the Shield strip
@@ -732,6 +746,16 @@ class MonolithRepository(
         const val CLOCK_ANCHOR_MONO_KEY = "anchor_elapsed_realtime_ms"
         const val CLOCK_ANCHOR_BOOT_KEY = "anchor_boot_count"
 
+        /** Issue #523 (6-2): the token week guard's persisted state
+         *  ([TokenWeekGuard.State]) — the last corroborated token
+         *  instant and, while a week skip stands uncorroborated, the
+         *  claim that raised it. Same prefs home as the clock anchor:
+         *  machinery state, not record. */
+        const val TOKEN_WEEK_MARKER_KEY = "token_week_marker_wall_ms"
+        const val TOKEN_SKIP_CLAIM_KEY = "token_skip_claim_wall_ms"
+        const val TOKEN_SKIP_BOOT_KEY = "token_skip_boot_count"
+        const val TOKEN_SKIP_MONO_KEY = "token_skip_gate_elapsed_ms"
+
         /** Issue #48: EVERY sealed session's id, as a string set.
          *  The single int above is one slot — sealing a second
          *  session used to erase the first session's only on-disk
@@ -873,6 +897,67 @@ class MonolithRepository(
         }
         return decision.honestNowMillis
 
+    }
+
+    /**
+     * The token's now (issue #523, finding 6-2): the honest now,
+     * passed through [TokenWeekGuard] — a week that skips past the
+     * last corroborated instant while a spend stands against that
+     * instant's week is refused, and the token evaluates at the
+     * marker instead. Every token read (remaining count, the week
+     * tick flow) and the one token write (the spend transaction)
+     * take their "now" here, never from [honestNowMillis] directly:
+     * the mint lived exactly in the gap between a powered-off date
+     * change and the first corroborated read of the new boot.
+     */
+    private suspend fun tokenNowMillis(): Long {
+        val now = honestNowMillis()
+        val prefs = context.getSharedPreferences(CLOCK_PREFS_NAME, Context.MODE_PRIVATE)
+        val state = TokenWeekGuard.State(
+            markerWallMillis = prefs.getLong(TOKEN_WEEK_MARKER_KEY, 0L),
+            pendingClaimWallMillis = prefs.getLong(TOKEN_SKIP_CLAIM_KEY, 0L),
+            pendingBootCount = prefs.getInt(TOKEN_SKIP_BOOT_KEY, -1),
+            pendingGateElapsedRealtimeMillis = prefs.getLong(TOKEN_SKIP_MONO_KEY, 0L)
+        )
+        // The guard consults the ledger only on the reads that can
+        // raise or seed a skip — ordinary same-week reads never
+        // touch it.
+        val latestSpendWallMillis = if (state.markerWallMillis <= 0L) {
+            dao.getAllSpendsSnapshot().firstOrNull()?.spentAtWallMillis ?: 0L
+        } else {
+            0L
+        }
+        val markerWeekHasSpend = when {
+            state.pendingClaimWallMillis > 0L -> false // not consulted while a skip stands
+            state.markerWallMillis > 0L &&
+                MonolithWeek.weekAnchorMillis(now) >
+                MonolithWeek.weekAnchorMillis(state.markerWallMillis) ->
+                dao.getSpendsForWeek(
+                    MonolithWeek.weekAnchorMillis(state.markerWallMillis),
+                    MonolithWeek.nextWeekAnchorMillis(state.markerWallMillis)
+                ).isNotEmpty()
+            // An unseeded marker seeds FROM the latest spend, and
+            // that spend counts against its own week by construction.
+            state.markerWallMillis <= 0L -> latestSpendWallMillis > 0L
+            else -> false
+        }
+        val result = TokenWeekGuard.evaluate(
+            state = state,
+            nowMillis = now,
+            nowBootCount = querySystemBootCount(),
+            nowElapsedRealtimeMillis = SystemClock.elapsedRealtime(),
+            markerWeekHasSpend = markerWeekHasSpend,
+            latestSpendWallMillis = latestSpendWallMillis
+        )
+        if (result.state != state) {
+            prefs.edit()
+                .putLong(TOKEN_WEEK_MARKER_KEY, result.state.markerWallMillis)
+                .putLong(TOKEN_SKIP_CLAIM_KEY, result.state.pendingClaimWallMillis)
+                .putInt(TOKEN_SKIP_BOOT_KEY, result.state.pendingBootCount)
+                .putLong(TOKEN_SKIP_MONO_KEY, result.state.pendingGateElapsedRealtimeMillis)
+                .apply()
+        }
+        return result.effectiveNowMillis
     }
 
     /** The seal marker's session id, or -1 when no seal has ever
@@ -5671,7 +5756,10 @@ class MonolithRepository(
      *  reopen the date-travel token renewal (F3) on this surface.
      *  Explicit instants (tests) are honoured exactly as before. */
     suspend fun emergencyBreaksRemaining(nowMillis: Long = Long.MIN_VALUE): Int {
-        val effectiveNow = if (nowMillis == Long.MIN_VALUE) honestNowMillis() else nowMillis
+        // Issue #523 (6-2): the sentinel path resolves through the
+        // token week guard, not the honest now alone — a powered-off
+        // date change must not refill the count on this surface.
+        val effectiveNow = if (nowMillis == Long.MIN_VALUE) tokenNowMillis() else nowMillis
         val anchor = MonolithWeek.weekAnchorMillis(effectiveNow)
         val nextAnchor = MonolithWeek.nextWeekAnchorMillis(effectiveNow)
         return emergencyBreaksRemainingFromSpendCount(dao.getSpendsForWeek(anchor, nextAnchor).size)
@@ -5689,8 +5777,11 @@ class MonolithRepository(
         while (true) {
             // Issue #82 (clock-attacks F3): the displayed week is
             // the honest week — date travel must not refresh the
-            // token on any surface either.
-            val now = honestNowMillis()
+            // token on any surface either. Issue #523 (6-2): the
+            // honest week is the GUARDED week — a week skip past
+            // the last corroborated instant does not refresh the
+            // displayed count either.
+            val now = tokenNowMillis()
             val anchor = MonolithWeek.weekAnchorMillis(now)
             if (anchor != lastAnchor) {
                 lastAnchor = anchor
@@ -5790,7 +5881,11 @@ class MonolithRepository(
             // clock — travelling the date into any other week used
             // to mint a fresh, unspent token; monotonic time does
             // not travel, so the anchor stays in the real week.
-            val now = honestNowMillis()
+            // Issue #523 (6-2): the honest now is the guarded one —
+            // a powered-off date change is a week skip until
+            // corroborated, and a spend never books against a
+            // skipped week.
+            val now = tokenNowMillis()
             val anchor = MonolithWeek.weekAnchorMillis(now)
             val nextAnchor = MonolithWeek.nextWeekAnchorMillis(now)
             if (dao.getSpendsForWeek(anchor, nextAnchor).size >= 1) {
@@ -5941,8 +6036,29 @@ class MonolithRepository(
             true
         }
 
-    suspend fun disarmActiveSession(completed: Boolean, outcomeReason: String) {
-        val active = dao.getActiveSessionSnapshot() ?: return
+    suspend fun disarmActiveSession(completed: Boolean, outcomeReason: String): DisarmResult {
+        val active = dao.getActiveSessionSnapshot() ?: return DisarmResult.NoActiveSession
+        val (verifiedElapsed, tamper) = computeVerifiedSessionElapsed(active)
+        // Audit R3b #149: the 10-second law, enforced where the
+        // booking happens — not only by one chip's visibility. The
+        // law's elapsed is the anchor-derived figure (the same max
+        // the bank uses), computed ahead of every disarm path below.
+        val lawElapsed = max(verifiedElapsed, active.elapsedSeconds)
+        // Issue #523 (6-3): the REFUSAL half of the grace law. #149
+        // stopped a late "Grace Cancel" from laundering itself (it
+        // booked ENDED_EARLY instead of GRACE_CANCEL) — but it still
+        // DISARMED: an un-tokened exit wearing a booking fix. A
+        // grace-cancel reason arriving after the window is now
+        // refused outright — nothing is written, the session stays
+        // sealed, and the caller is forced through the valve, the
+        // only priced door left. The check sits ahead of every
+        // disarm path in this function, the routine funnel
+        // included: a late grace string buys no exit anywhere.
+        if (outcomeReason.contains("Grace Cancel", ignoreCase = true) &&
+            lawElapsed > GRACE_WINDOW_SECONDS
+        ) {
+            return DisarmResult.RefusedLateGraceCancel
+        }
         // Routine sessions never take the generic path (Sten §4.1):
         // non-SLEEP routine rows are booked only by the finalise funnel
         // (this also seals a session whose routine row was deleted);
@@ -5955,17 +6071,9 @@ class MonolithRepository(
                 // a disarm door too — the glance refreshes here as
                 // at the generic ending write below.
                 MonolithWidgetProvider.requestUpdate(context)
-                return
+                return DisarmResult.Disarmed
             }
         }
-        val (verifiedElapsed, tamper) = computeVerifiedSessionElapsed(active)
-        // Audit R3b #149: the 10-second law, enforced where the
-        // booking happens — not only by one chip's visibility. The
-        // grace classification requires the anchor-derived elapsed
-        // (the same max the bank uses) to be inside the window; a
-        // "Grace Cancel" reason arriving late books as an early
-        // end instead of laundering itself through the string.
-        val lawElapsed = max(verifiedElapsed, active.elapsedSeconds)
         val isGraceCancel = outcomeReason.contains("Grace Cancel", ignoreCase = true) &&
             lawElapsed <= GRACE_WINDOW_SECONDS
         // W3 #134: the disarm doors bank the same focus-only
@@ -6070,6 +6178,7 @@ class MonolithRepository(
         // so a session ended here could leave SEALED standing on
         // the home screen until the period update.
         MonolithWidgetProvider.requestUpdate(context)
+        return DisarmResult.Disarmed
     }
 
     /**

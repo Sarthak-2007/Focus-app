@@ -3,6 +3,7 @@ package com.example
 import android.content.Context
 import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
+import com.example.data.DisarmResult
 import com.example.data.FocusSessionEntity
 import com.example.data.MonolithDao
 import com.example.data.MonolithDatabase
@@ -11,6 +12,7 @@ import com.example.data.SessionOutcome
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -21,6 +23,8 @@ import org.robolectric.shadows.ShadowSystemClock
 import java.time.Duration
 
 /**
+ * PIN scope: PLUMBING.
+ *
  * Issue #103 F2 — the 10-second grace deadline is enforced in the
  * ending write, not only rendered by the Deck.
  *
@@ -31,6 +35,13 @@ import java.time.Duration
  * elapsed against [MonolithRepository.GRACE_WINDOW_SECONDS]:
  * inside the window the cancel is free and books zero; past it,
  * the same call books the real elapsed as an ordinary early end.
+ *
+ * Issue #523 (6-3) completes the law's other half: booking the late
+ * grace cancel honestly still DISARMED it — an un-tokened exit.
+ * Now a grace-cancel reason past the window is REFUSED:
+ * [DisarmResult.RefusedLateGraceCancel], nothing is written, and
+ * the session stays sealed. Ordinary early ends (any other reason)
+ * keep the #149 booking exactly as before.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -78,11 +89,12 @@ class GraceDeadlineRepositoryTest {
         val repo = MonolithRepository(context, dao)
         val sessionId = insertActiveSessionBackdated(dao, secondsAgo = 5L)
 
-        repo.disarmActiveSession(
+        val result = repo.disarmActiveSession(
             completed = false,
             outcomeReason = "Accidental Start Grace Cancel"
         )
 
+        assertEquals(DisarmResult.Disarmed, result)
         assertNull(dao.getActiveSessionSnapshot())
         val row = dao.getSessionHistorySnapshot().first { it.id == sessionId }
         assertEquals(0, row.elapsedSeconds)
@@ -94,24 +106,69 @@ class GraceDeadlineRepositoryTest {
     }
 
     @Test
-    fun graceCancelAfterTheWindow_booksRealElapsedAsEarlyEnd() = runBlocking {
+    fun graceCancelAfterTheWindow_isRefused_sessionStaysSealedAndUnbooked() = runBlocking {
         val dao = MonolithDatabase.getInstance(context).monolithDao()
         val repo = MonolithRepository(context, dao)
         // Five real minutes in — far past the printed 10 seconds.
         // The stored counter and the verified clock agree (the
         // helper advances the shadow clock so both anchors are
         // real); only the string claims "Grace Cancel".
+        // Issue #523 (6-3): the call
+        // is refused — the #149-era expectation (booked ENDED_EARLY)
+        // is superseded for grace reasons; the exit itself is what
+        // was never priced, and the refusal is the cure.
         val sessionId = insertActiveSessionBackdated(dao, secondsAgo = 300L)
 
-        repo.disarmActiveSession(
+        val result = repo.disarmActiveSession(
             completed = false,
             outcomeReason = "Accidental Start Grace Cancel"
         )
 
+        assertEquals(DisarmResult.RefusedLateGraceCancel, result)
+        val stillActive = dao.getActiveSessionSnapshot()
+        assertNotNull("a refused disarm leaves the session sealed", stillActive)
+        assertEquals(sessionId, stillActive!!.id)
+        // Nothing was booked: the session's own row is still the
+        // ACTIVE row (getSessionHistorySnapshot lists every row, so
+        // the refusal's proof is the row's state, not its absence).
+        val unbooked = dao.getSessionHistorySnapshot().first { it.id == sessionId }
+        assertTrue("a refused disarm books no ending", unbooked.isActive)
+
+        // The sealed session remains endable through the ordinary
+        // door — and cleanup restores this class's shared-DB
+        // invariant (no active rows left behind for sibling tests).
+        val cleanup = repo.disarmActiveSession(
+            completed = false,
+            outcomeReason = "Ended Early"
+        )
+        assertEquals(DisarmResult.Disarmed, cleanup)
+        assertNull(dao.getActiveSessionSnapshot())
+        val booked = dao.getSessionHistorySnapshot().first { it.id == sessionId }
+        assertEquals(SessionOutcome.ENDED_EARLY, booked.outcome)
+        // The verified leg is real now (seat (a) cure): the two
+        // anchors agree, so the ending write stamps no tamper.
+        assertFalse(booked.tamperDetected)
+    }
+
+    @Test
+    fun ordinaryEarlyEndAfterTheWindow_stillBooksRealElapsed() = runBlocking {
+        val dao = MonolithDatabase.getInstance(context).monolithDao()
+        val repo = MonolithRepository(context, dao)
+        // The refusal is scoped to the grace string: an ordinary
+        // early end at the same elapsed keeps the #149 booking —
+        // real elapsed, ENDED_EARLY, partial stamp.
+        val sessionId = insertActiveSessionBackdated(dao, secondsAgo = 300L)
+
+        val result = repo.disarmActiveSession(
+            completed = false,
+            outcomeReason = "Ended Early"
+        )
+
+        assertEquals(DisarmResult.Disarmed, result)
         assertNull(dao.getActiveSessionSnapshot())
         val row = dao.getSessionHistorySnapshot().first { it.id == sessionId }
         assertTrue(
-            "a late grace cancel must not zero real history (was ${row.elapsedSeconds})",
+            "an ordinary early end must keep real history (was ${row.elapsedSeconds})",
             row.elapsedSeconds >= 60
         )
         assertEquals(SessionOutcome.ENDED_EARLY, row.outcome)
