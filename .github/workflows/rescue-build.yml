@@ -163,18 +163,6 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # FIX-BOLT TEMPORARY DIAGNOSTIC (issue #4 / PR #500): upload the
-      # unit-test JUnit XML so the BoltRenderGateTest IllegalStateException
-      # stack trace can be read. Removed before merge — not part of the fix.
-      - name: Upload unit-test reports (FIX-BOLT diagnostic, temporary)
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: unit-test-reports-fixbolt
-          path: app/build/test-results/testDebugUnitTest
-          retention-days: 3
-          if-no-files-found: ignore
-
       - name: Assemble debug
         id: assemble
         run: ./gradlew --console=plain assembleDebug

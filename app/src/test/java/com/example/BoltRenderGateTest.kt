@@ -7,6 +7,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -52,6 +55,21 @@ class BoltRenderGateTest {
 
     private val shotsDir = File("build/bolt-gate-shots").apply { mkdirs() }
 
+    // FIX-BOLT (issue #4): the current Compose test rule allows ONE
+    // setContent per test — a second call throws IllegalStateException
+    // ("has already set content"), which is how all five gate tests
+    // originally died (each on its second render, before any assertion
+    // on that render ran; run 41113979080's successor run
+    // 41165105931, TEST-com.example.BoltRenderGateTest.xml).
+    // So the content is set once and the face is swapped through
+    // snapshot state; every capture below is of the settled face,
+    // exactly as when each render was a fresh composition.
+    private var faceState by mutableStateOf<BoltFace?>(null)
+    private var darkState by mutableStateOf(true)
+    private var endsState by mutableStateOf<String?>(null)
+    private var plannedState by mutableStateOf<String?>(null)
+    private var contentSet = false
+
     private fun renderBar(
         face: BoltFace,
         dark: Boolean,
@@ -59,19 +77,36 @@ class BoltRenderGateTest {
         planned: String? = null,
         name: String
     ): Bitmap {
-        composeRule.setContent {
-            MyApplicationTheme(darkTheme = dark) {
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.background)
-                ) {
-                    SealBar(
-                        face = face,
-                        endsAtNumerals = ends,
-                        plannedEndsAtNumerals = planned
-                    )
+        if (!contentSet) {
+            contentSet = true
+            faceState = face
+            darkState = dark
+            endsState = ends
+            plannedState = planned
+            composeRule.setContent {
+                val currentFace = faceState
+                MyApplicationTheme(darkTheme = darkState) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.background)
+                    ) {
+                        if (currentFace != null) {
+                            SealBar(
+                                face = currentFace,
+                                endsAtNumerals = endsState,
+                                plannedEndsAtNumerals = plannedState
+                            )
+                        }
+                    }
                 }
+            }
+        } else {
+            composeRule.runOnUiThread {
+                faceState = face
+                darkState = dark
+                endsState = ends
+                plannedState = planned
             }
         }
         ShadowLooper.idleMainLooper()
