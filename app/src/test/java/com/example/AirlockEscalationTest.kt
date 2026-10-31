@@ -6,11 +6,21 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
  * Audit R6 #340: F17's escalating wall ladder and F63's cross-door
  * episode claim, pinned as pure behaviour.
+ *
+ * Robolectric runner (FIX-R3 landing fix): InterceptClaim reads
+ * SystemClock.elapsedRealtime(), which is an Android stub under
+ * plain JUnit — the two episode-claim tests could never pass
+ * without the shadow. The ladder tests are pure and unaffected.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
 class AirlockEscalationTest {
 
     @Test
