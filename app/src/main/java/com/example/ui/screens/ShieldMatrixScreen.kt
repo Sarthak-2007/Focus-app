@@ -2296,7 +2296,6 @@ private fun SlipLineRow(
  *  filters and loadouts — and tapping that line cycles it to the
  *  next category, so a wrong guess is visible and correctable on
  *  the spot (a plain row update; no schema change). */
-@Composable
 /**
  * Audit R6 #341 F64: the catalogue sled as pure Compose — name +
  * usage caption on the left, the three-stop sled (SHUT / PEEK /
