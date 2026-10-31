@@ -19,8 +19,13 @@ import org.robolectric.annotation.Config
  * §2.1, §4.4's lease cases at today's defaults):
  *
  *  1. A grant stamps the end from the single read-point's length
- *     (today the shipped 120 s) and pre-arms the cooldown anchor
- *     to the same instant.
+ *     (today the shipped 120 s) and leaves the cooldown anchor
+ *     UNSTAMPED: under the standing #118 semantics the anchor is
+ *     stamped only by the peek's end (recordPeekEnded), never by
+ *     the grant. (D1, ruled at the train merge: this file formerly
+ *     required the grant to pre-arm the anchor to the lease's own
+ *     end — a claim PeekCooldownArmingTest contradicts under any
+ *     production semantics; the #118 form governs.)
  *  2. A grant zeroes every OTHER row's lease — storage can never
  *     hold two live fuses — while leaving the zeroed row's earned
  *     cooldown anchor standing.
@@ -52,7 +57,7 @@ class PillLeaseRepositoryTest {
     )
 
     @Test
-    fun grantStampsEndAndPreArmsCooldown() = runBlocking {
+    fun grantStampsEndAndLeavesCooldownAnchorUnstamped() = runBlocking {
         val repo = repository()
         val dao = MonolithDatabase.getInstance(context).monolithDao()
         dao.insertApp(app("com.pillg.grant"))
@@ -67,8 +72,8 @@ class PillLeaseRepositoryTest {
             remainingMs in 100_000L..120_000L
         )
         assertEquals(
-            "cooldown anchor pre-armed to the lease's own end",
-            row.activePeekUntilElapsedRealtime,
+            "cooldown anchor unstamped by the grant (#118: it stamps only at recordPeekEnded)",
+            0L,
             row.lastPeekEndElapsedRealtime
         )
     }
@@ -85,10 +90,22 @@ class PillLeaseRepositoryTest {
             )
         )
 
+        // Earn the first row a REAL cooldown anchor before the
+        // second grant: grant, hand back (the anchor stamps at the
+        // hand-back, #118), then grant again so the row holds a
+        // live lease AND a non-zero anchor. (D1: the anchor leg
+        // below was vacuous while the grant itself pre-armed the
+        // anchor — it compared the pre-arm against itself.)
+        repo.startPeekLease("com.pillz.first")
+        repo.recordPeekEnded("com.pillz.first")
         repo.startPeekLease("com.pillz.first")
         val firstGrant = dao.getAllAppsSnapshot()
             .first { it.packageName == "com.pillz.first" }
         assertTrue(firstGrant.activePeekUntilElapsedRealtime > 0L)
+        assertTrue(
+            "the earned anchor is real (non-vacuous leg)",
+            firstGrant.lastPeekEndElapsedRealtime > 0L
+        )
 
         repo.startPeekLease("com.pillz.second")
 
