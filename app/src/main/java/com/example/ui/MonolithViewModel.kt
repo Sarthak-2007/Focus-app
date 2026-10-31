@@ -1323,6 +1323,19 @@ class MonolithViewModel(
         java.util.Collections.synchronizedSet(mutableSetOf())
     private var finishControllerStarted = false
 
+    // Declared BEFORE init{} on purpose (una07, #166): the init
+    // block's carryover collector can deliver its first emission
+    // during construction, and refreshActiveTaskCarryover writes
+    // this flow — declared after init{}, its backing field was
+    // still null at that moment (construction-time NPE).
+    // R3b #163 F5: the NOW task's day boundary. FocusTaskEntity
+    // has no created-at and this fix does not migrate the schema;
+    // the first active task seen on a filing date is noted in
+    // prefs, so the Deck can tag a carried-over NOW task
+    // "FROM YESTERDAY" instead of letting it pose as today's.
+    private val activeTaskDayStore by lazy { com.example.data.ActiveTaskDayStore(appContext) }
+    private val _activeTaskFromYesterday = MutableStateFlow(false)
+    val activeTaskFromYesterday: StateFlow<Boolean> = _activeTaskFromYesterday
     init {
         // Issue #139 F4: a profile-undo snapshot survives process
         // death in prefs; if one is on disk, the undo door stands.
@@ -3313,14 +3326,6 @@ class MonolithViewModel(
         }
     }
 
-    // R3b #163 F5: the NOW task's day boundary. FocusTaskEntity
-    // has no created-at and this fix does not migrate the schema;
-    // the first active task seen on a filing date is noted in
-    // prefs, so the Deck can tag a carried-over NOW task
-    // "FROM YESTERDAY" instead of letting it pose as today's.
-    private val activeTaskDayStore by lazy { com.example.data.ActiveTaskDayStore(appContext) }
-    private val _activeTaskFromYesterday = MutableStateFlow(false)
-    val activeTaskFromYesterday: StateFlow<Boolean> = _activeTaskFromYesterday
 
     private fun refreshActiveTaskCarryover(task: FocusTaskEntity?) {
         if (task == null) {
