@@ -164,20 +164,19 @@ class Issue155ResiduePinsTest {
     }
 
     @Test
-    fun breakOverSummonsStaysUntimed() {
-        // The cure deliberately leaves BREAK OVER unchanged: only
-        // the completion summons gained a timeout. If a future
-        // edit times the break-over summons too, that is a
-        // behaviour change this pin makes visible.
+    fun breakOverSummonsCarriesTheSameExpiry() {
+        // IQ-2 VC-4 (wing-added cure, superseding this file's
+        // original untimed pin and the PR body's "BREAK OVER
+        // unchanged"): the break-over summons must carry the
+        // same 45-minute expiry — untimed, it could sit in the
+        // shade asserting "has started" until tapped.
         val source = shieldSource()
         val callIdx = source.indexOf("\"BREAK OVER\"")
         assertTrue("break-over summons call missing", callIdx >= 0)
-        val callEnd = source.indexOf(")", callIdx)
-        assertTrue(callEnd > callIdx)
-        val call = source.substring(callIdx, callEnd)
+        val window = source.substring(callIdx, minOf(callIdx + 700, source.length))
         assertTrue(
-            "BREAK OVER summons must not gain a timeout",
-            !call.contains("timeoutAfterMs")
+            "BREAK OVER summons must carry the F3 timeout",
+            window.contains("timeoutAfterMs = COMPLETION_TIMEOUT_MS")
         )
     }
 
@@ -207,7 +206,7 @@ class Issue155ResiduePinsTest {
             ruleWindow.contains("beatWallMillis = session.shieldLastBeatWallMillis")
         )
         val unprovenIdx = render.indexOf(
-            "\"SESSION LIVE \\u2022 SHIELD UNPROVEN", ruleIdx
+            "\"SHIELD UNPROVEN \\u2022 OPEN THE APP TO CHECK\"", ruleIdx
         )
         assertTrue(
             "unproven world must print the honest line",
