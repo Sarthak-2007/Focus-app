@@ -4786,6 +4786,20 @@ class MonolithViewModel(
         }
     }
 
+    /** Issue #274: a dynamic launcher shortcut for a loadout
+     *  lands here (LoadoutShortcuts). The shortcut's whole power
+     *  is the in-app tap's: the loadout is applied through the
+     *  same verb, ratchet guards included, and the user stands
+     *  on the Deck — where the arm and its proving path live.
+     *  Nothing is armed from the launcher. A stale id (the
+     *  loadout was deleted after the shortcut was published)
+     *  is a no-op; the next publish prunes the shortcut. */
+    fun openLoadoutFromShortcut(profileId: Int) {
+        val profile = profiles.value.firstOrNull { it.id == profileId } ?: return
+        selectAndApplyProfile(profile)
+        navigateTo(MonolithDestination.DECK)
+    }
+
     /** Issue #139 F4: one-tap undo of the last profile application —
      *  restores the hand-set per-app tiers and the dial he had. */
     fun undoLastProfileApply() {

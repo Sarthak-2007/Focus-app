@@ -57,6 +57,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -76,6 +77,7 @@ import com.example.service.TactileSoundEngine
 import com.example.service.WatchItemId
 import com.example.service.WatchStore
 import com.example.ui.GlanceRouting
+import com.example.ui.LoadoutShortcuts
 import com.example.ui.MonolithDestination
 import com.example.ui.ArmPhase
 import com.example.ui.MonolithViewModel
@@ -105,6 +107,7 @@ import com.example.ui.screens.TactileDeckScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.views.MonolithRailView
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /** Issue #78 (Audit R2, ipc-intents): the system Settings app's
  *  package — the ONLY lawful home of every Settings pane this app
@@ -212,6 +215,19 @@ class MainActivity : ComponentActivity() {
         )[MonolithViewModel::class.java]
         pendingInterceptIntent = intent
 
+        // Issue #274 (finding #14's remainder): the dynamic
+        // per-loadout launcher shortcuts mirror the profiles
+        // flow — publish on every emission while this activity
+        // lives, so a loadout created, renamed or deleted in
+        // the Matrix reaches the launcher without a second
+        // source of truth. Publication is replace-all and
+        // failure-swallowed (LoadoutShortcuts.publish).
+        lifecycleScope.launch {
+            rootViewModel.profiles.collect { profiles ->
+                LoadoutShortcuts.publish(applicationContext, profiles)
+            }
+        }
+
         setContent {
             val viewModel = rootViewModel
             viewModelRef = viewModel
@@ -260,6 +276,16 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIncomingInterceptIntent(intent: Intent?, viewModel: MonolithViewModel) {
         if (intent == null) return
+        // Issue #274: a dynamic loadout shortcut carries exactly
+        // one extra and no intercept payload — consume it FIRST,
+        // so its id can never be mistaken for intercept state by
+        // the readers below, and remove it so a later re-delivery
+        // of the same intent cannot apply the loadout twice.
+        val loadoutId = intent.getIntExtra(LoadoutShortcuts.EXTRA_OPEN_LOADOUT_ID, -1)
+        if (loadoutId != -1) {
+            intent.removeExtra(LoadoutShortcuts.EXTRA_OPEN_LOADOUT_ID)
+            viewModel.openLoadoutFromShortcut(loadoutId)
+        }
         // Issue #155 (F5): a tap on a glance card lands on the
         // surface the card is ABOUT, per GlanceRouting's per-state
         // table — not the #312 single route to SHIELD, which the
