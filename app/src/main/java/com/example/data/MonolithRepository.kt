@@ -451,6 +451,13 @@ class MonolithRepository(
         /** Chrome's prefs file + PARK's first-run bit (chrome C4). */
         const val CHROME_PREFS_NAME = "monolith_chrome"
         const val PARK_INTRO_DONE_KEY = "park_intro_done"
+
+        /** Issue #534 F3: the recorded POST_NOTIFICATIONS runtime
+         *  answer, kept in the same chrome prefs file. Presence of
+         *  the key is the "an answer was recorded" fact; the value
+         *  is the answer. Deliberately NOT a Guard grant: the six
+         *  counted grants and their denominator never read this. */
+        const val POST_NOTIFICATIONS_RESULT_KEY = "post_notifications_granted"
         /** Issue #70 F3: the Deck primer's first-run bit. */
         const val DECK_PRIMER_DONE_KEY = "deck_primer_done"
 
@@ -1351,6 +1358,25 @@ class MonolithRepository(
     fun markParkIntroDone() {
         context.getSharedPreferences(CHROME_PREFS_NAME, Context.MODE_PRIVATE)
             .edit().putBoolean(PARK_INTRO_DONE_KEY, true).apply()
+    }
+
+    /** Issue #534 F3: record the POST_NOTIFICATIONS runtime
+     *  answer instead of discarding it (the launcher callback used
+     *  to be `{ }`). */
+    fun recordPostNotificationsResult(granted: Boolean) {
+        context.getSharedPreferences(CHROME_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putBoolean(POST_NOTIFICATIONS_RESULT_KEY, granted).apply()
+    }
+
+    /** The recorded POST_NOTIFICATIONS answer, or null when no
+     *  answer has ever been recorded. */
+    fun postNotificationsGranted(): Boolean? {
+        val prefs = context.getSharedPreferences(CHROME_PREFS_NAME, Context.MODE_PRIVATE)
+        return if (prefs.contains(POST_NOTIFICATIONS_RESULT_KEY)) {
+            prefs.getBoolean(POST_NOTIFICATIONS_RESULT_KEY, false)
+        } else {
+            null
+        }
     }
 
     private suspend fun drainDayWordsLocked() {
