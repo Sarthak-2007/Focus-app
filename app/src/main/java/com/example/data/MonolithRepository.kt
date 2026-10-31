@@ -7,6 +7,7 @@ import android.app.usage.UsageStatsManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.media.AudioManager
@@ -32,6 +33,7 @@ import com.example.service.WatchStore
 import androidx.annotation.WorkerThread
 import androidx.room.withTransaction
 import com.example.domain.FocusDomain
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -40,6 +42,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -531,6 +535,16 @@ class MonolithRepository(
     // Main's provider seam, composed with the injection above:
     // the provider resolves the injected database when present,
     // else the singleton — one resolution path either way.
+    // Issue #515 F1: owns the fire-and-forget birth catalogue
+    // sync fired by startSession (see launchBirthCatalogSync).
+    // Injected so a test can hold the launch on a test
+    // dispatcher and prove the sync is NOT on the seal's
+    // birth path; production uses the IO default. Placed
+    // before databaseProvider on purpose: the provider stays
+    // the LAST parameter, so existing trailing-lambda
+    // constructions (Issue33RepositoryTest) keep binding to it.
+    private val birthSyncScope: CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val databaseProvider: () -> MonolithDatabase = { database ?: MonolithDatabase.getInstance(context) }
 ) {
     private fun db(): MonolithDatabase = databaseProvider()
@@ -1035,498 +1049,116 @@ class MonolithRepository(
         forceCatalogSync: Boolean = false
     ) = withContext(Dispatchers.IO) {
         seedMutex.withLock {
-        recordProvenanceIfResurrected()
-
-        // Ren ruling 00:34 IST Oct 31 (#7): whether this install
-        // ALREADY had a catalogue when this sync began — the fact
-        // the one-time legacy OPEN reset at the end of this pass
-        // keys on. Captured before any seeding/reconcile below can
-        // birth rows of its own: a fresh install has nothing
-        // legacy, and its newborn rows are never a "reset".
-        val catalogueExistedAtEntry = dao.getAllAppsSnapshot().isNotEmpty()
-
-        // Audit R2 #96: seed only a store that has never carried
-        // content. Once content exists (seeded or the user's own)
-        // the seeded-ever flag is set, and a later empty store is
-        // the user's own emptying — honoured, never resurrected.
-        val seedPrefs = context.getSharedPreferences(SEED_PREFS_NAME, Context.MODE_PRIVATE)
-        val sitesNow = dao.getAllSitesSnapshot()
-        if (!seedPrefs.getBoolean(SEED_SITES_KEY, false)) {
-            if (sitesNow.isEmpty()) {
-                dao.insertSites(BlockedBrowserDomains.defaultDomains.map { BlockedSiteEntity(it) })
-            }
-            seedPrefs.edit().putBoolean(SEED_SITES_KEY, true).apply()
-
+            val seedHead = seedStandingStateHead()
+            reconcileCatalogueLocked(forceCatalogSync)
+            runLegacyOpenResetStep(seedHead.catalogueExistedAtEntry)
+            seedStandingStateTail(seedHead.seedPrefs)
+            runPlannedEndRestoreStep()
         }
-        // W3 #130 F2 seed-upgrade (verifier correction, DURCH-D):
-        // an install that ran the v1 seed before "youtube.com"
-        // joined the defaults never re-seeds, so the host rule
-        // must be DELIVERED — once, and only where the legacy
-        // factory entry proves the seed stands unedited (the pure
-        // decision above; a user's deletion is never resurrected).
-        // A fresh install reaches this line with the current
-        // defaults just seeded, so the decision adds nothing and
-        // the flag simply closes. Runs under the same seed lock.
-        if (!seedPrefs.getBoolean(SEED_SITES_V2_KEY, false)) {
-            if (seedPrefs.getBoolean(SEED_SITES_KEY, false)) {
-                val upgradeAdds = youtubeHostSeedUpgrade(
-                    dao.getAllSitesSnapshot().map { it.domain }
-                )
-                if (upgradeAdds.isNotEmpty()) {
-                    dao.insertSites(upgradeAdds.map { BlockedSiteEntity(it) })
-                }
-            }
-            seedPrefs.edit().putBoolean(SEED_SITES_V2_KEY, true).apply()
-        }
-        if (dao.getGuardSettingsSnapshot() == null) {
-            dao.insertGuardSettings(GuardSettingsEntity())
-        }
-        // Routines: a fresh install seeds his real day directly and is
-        // marked reseed-done (it never "migrates" and never sees the
-        // reset note); an existing install runs the version-blind
-        // reseed transform once (Sten §2).
-        if (dao.getAllRoutinesSnapshot().isEmpty()) {
-            // Audit R2 #96: the fresh seed stamps its edit horizon,
-            // exactly as the reseed path does. With the default 0,
-            // every window that ended before the install would be
-            // judged MISSED — the derive law's own rule ("before
-            // that horizon judgement is UNKNOWN, never an invented
-            // MISSED") defeated by the seed itself.
-            val seededAtMillis = System.currentTimeMillis()
-            dao.insertRoutines(
-                routineTargets().map { it.copy(scheduleEditedAtMillis = seededAtMillis) }
-            )
-            // R3b #161 (update-day): an empty routines table means
-            // this install has never seeded — a first install, a
-            // wiped phone and a new phone are indistinguishable from
-            // inside, so the seed owes the user one honest sentence
-            // at first open instead of a silent factory state.
-            InstallNoteStore(context).markFreshStart()
-            val fresh = dao.getGuardSettingsSnapshot()
-            if (fresh != null && !fresh.routineReseedV1Done) {
-                dao.insertGuardSettings(
-                    fresh.copy(routineReseedV1Done = true, routineReseedNoteDismissed = true)
-                )
-            }
-        } else {
-            reseedRoutinesV1()
-        }
-        try {
-            // THE COLLAPSE GUARD (fresh-eyes L3): the two-strike
-            // prune is only as honest as the distance between the
-            // strikes. The ViewModel's init calls this sync and
-            // then its guard refresh calls it AGAIN seconds later
-            // (PARK's open does the same) — identical
-            // PackageManager state, so one transiently-filtered
-            // cold-start query used to satisfy both strikes in a
-            // single launch and prune. A non-forced call inside
-            // the window after a completed sync therefore skips
-            // the reconcile entirely: it touches no strikes, files
-            // no tombstones, prunes nothing. The rest of this
-            // seeding pass (sites, profiles, tasks, the day-word
-            // drain) is idempotent and still runs. A forced call,
-            // and any call after the window, is a genuinely
-            // separate look and reconciles normally.
-            val collapseRepeat = AppCatalogReconcile.isEnumerationSkipped(
-                forceCatalogSync = forceCatalogSync,
-                lastSuccessfulSyncMillis = loadLastCatalogSyncMillis(),
-                nowMillis = System.currentTimeMillis()
-            )
-            // Issue #69 F4 (startup half): the collapse check now
-            // gates the ENUMERATION itself, not only the reconcile
-            // after it. The ViewModel init pays this sync twice in
-            // seconds (ensureSeededAndSyncPackages, then again via
-            // refreshSystemGuard); on the old shape the repeat call
-            // still ran the full PackageManager + LauncherApps
-            // enumeration before the guard let it skip the
-            // reconcile. Inside the collapse window both
-            // enumerations are skipped, so the repeat costs no PM
-            // work at all; `installed` is empty, the reconcile
-            // below stays skipped exactly as before, and every
-            // other seeding step in this pass still runs. Data and
-            // behaviour identical — one enumeration, not two.
-            val pm = context.packageManager
-            val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
-                addCategory(Intent.CATEGORY_LAUNCHER)
-            }
-            val resolvedList = if (collapseRepeat) {
-                emptyList()
-            } else {
-                pm.queryIntentActivities(mainIntent, 0)
-            }
-            // The main activity per package (its launch intent's
-            // component), resolved once per package — the reconcile's
-            // dedupe rule lets it win over shortcut activities.
-            val mainActivityByPackage = mutableMapOf<String, String?>()
-            val installedFromPm = resolvedList.mapNotNull { resolveInfo ->
-                val pkg = resolveInfo.activityInfo?.packageName ?: return@mapNotNull null
-                if (pkg == context.packageName || pkg.startsWith("com.android.settings")) {
-                    return@mapNotNull null
-                }
-                val label = resolveInfo.loadLabel(pm)?.toString()
-                    ?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                val mainActivity = mainActivityByPackage.getOrPut(pkg) {
-                    runCatching {
-                        pm.getLaunchIntentForPackage(pkg)?.component?.className
-                    }.getOrNull()
-                }
-                InstalledPackage(
-                    pkg, label,
-                    isMainActivity = mainActivity != null &&
-                        mainActivity == resolveInfo.activityInfo?.name
-                )
-            }
-            // Issue #80 finding 1 (partial): the PackageManager
-            // query above only sees the CALLING profile. LauncherApps
-            // additionally enumerates the other profiles this user
-            // owns (work profile, dual-app/clone user), so a package
-            // installed only there is at least DISCOVERED and not
-            // pruned from the catalog. Per-profile rules remain
-            // impossible from one install — see the #80 report.
-            val profiled = installedFromPm.map {
-                ProfiledInstalledPackage(
-                    it.packageName, it.label, Process.myUserHandle().toString()
-                )
-            }.toMutableList()
-            try {
-                val launcherApps =
-                    context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as? LauncherApps
-                // Issue #69 F4: the per-profile enumeration is
-                // gated by the same collapse check — a repeat sync
-                // inside the window enumerates nothing, anywhere.
-                if (launcherApps != null && !collapseRepeat) {
-                    for (profile in launcherApps.profiles) {
-                        val activities = try {
-                            launcherApps.getActivityList(null, profile)
-                        } catch (_: Exception) {
-                            null
-                        } ?: continue
-                        for (info in activities) {
-                            val pkg = info.componentName?.packageName ?: continue
-                            if (pkg == context.packageName ||
-                                pkg.startsWith("com.android.settings")
-                            ) {
-                                continue
-                            }
-                            val label = info.label?.toString()
-                                ?.takeIf { it.isNotBlank() } ?: continue
-                            profiled.add(
-                                ProfiledInstalledPackage(pkg, label, profile.toString())
-                            )
-                        }
-                    }
-                }
-            } catch (_: Exception) {
-                // Discovery stays exactly as complete as the old
-                // single-profile query when LauncherApps refuses.
-            }
-            // STURM3-13 port note: the calling-profile entries keep
-            // their isMainActivity flags (issue #34's dedupe rule
-            // depends on them), so the merged catalog is the PM list
-            // plus ONLY the packages other profiles add — the pure
-            // mergeProfiledInstalls view decides which those are.
-            val pmPackages = installedFromPm.map { it.packageName }.toSet()
-            val installed = installedFromPm +
-                AppCatalogReconcile.mergeProfiledInstalls(profiled)
-                    .filter { it.packageName !in pmPackages }
+    }
 
-            // THE CATALOG IS THE PHONE'S TRUTH (Ordner lane, Sarthak's
-            // complaint Oct 29 22:40: the list carried apps he never
-            // installed). There is no blind factory seed any more:
-            // this sync reconciles the table to the installed
-            // launchable set — rows for packages absent on TWO
-            // consecutive syncs are PRUNED (with their rulings filed
-            // in the catalog memory first, issue #34), present
-            // packages are discovered without a cap, and the
-            // factory presets survive only as birth rules applied to
-            // packages that actually exist on this phone. An empty
-            // query result can only mean the query failed (the
-            // <queries> declaration in the manifest makes every
-            // launcher app visible), so an empty result skips the
-            // reconcile entirely rather than pruning his rules away.
-            if (installed.isNotEmpty() && !collapseRepeat) {
-                val existingRows = dao.getAllAppsSnapshot()
-                val plan = AppCatalogReconcile.reconcile(
-                    existing = existingRows,
-                    installed = installed,
-                    usageMinutes = queryRealTodayUsageMinutes(),
-                    categorize = ::categorizePackage,
-                    previouslyAbsent = loadAbsentOnce(),
-                    rememberedRules = loadRememberedRules()
-                )
-                if (plan.toInsert.isNotEmpty()) {
-                    dao.insertApps(plan.toInsert)
-                    // A restored package's tombstone is spent.
-                    forgetRememberedRules(plan.toInsert.map { it.packageName })
-                }
-                if (plan.unreviewedOpenPackages.isNotEmpty()) {
-                    recordUnreviewedOpen(plan.unreviewedOpenPackages)
-                }
-                plan.usageUpdates.forEach { dao.updateApp(it) }
-                if (plan.toPrune.isNotEmpty()) {
-                    // M5 (Mikro): the prune announces itself once, so
-                    // record what it took BEFORE the rows leave —
-                    // how many, and whether any stored ruling went
-                    // with them. The Shield strip prints exactly
-                    // this record, once, and nothing it can't prove.
-                    val prunedRows = existingRows.filter {
-                        it.packageName in plan.toPrune
-                    }
-                    // Issue #34: file the rulings BEFORE the rows
-                    // leave, so a returning package is reborn with
-                    // its own ruling, never a silent OPEN.
-                    rememberPrunedRules(prunedRows)
-                    recordPruneNote(
-                        appsRemoved = prunedRows.size,
-                        rulesRemoved = prunedRows.any {
-                            it.resolvedTier != AppBlockTier.OPEN
-                        }
-                    )
-                    // A pruned app can no longer be reviewed; its
-                    // unreviewed entry leaves with its row (#129 F1).
-                    clearUnreviewedOpen(plan.toPrune)
-                    dao.deleteAppsByPackage(plan.toPrune)
-                }
-                // The strike set for the next sync: only packages
-                // absent for the FIRST time here. A package absent
-                // twice has been pruned above; one present again
-                // clears itself by not being absent.
-                saveAbsentOnce(plan.pendingPrune.toSet())
-                // The sync completed: this instant anchors the
-                // collapse window (L3). Only a reconcile that
-                // actually ran earns the stamp — an empty query
-                // above is a failed look and starts no window.
-                saveLastCatalogSyncMillis(System.currentTimeMillis())
-            }
-        } catch (e: Exception) {
-            // Safe fallback if package querying is restricted — logged, not silent (#33).
-            swallow("ensureSeededAndSyncPackages catalog sync", e)
+    /** Issue #515 F1 (the split cure): the SEED half of
+     *  [ensureSeededAndSyncPackages] alone — provenance,
+     *  sites, guard settings, routines, profiles, the starter
+     *  task slate, the task dedup and the day-word drain.
+     *  Cheap Room/prefs writes, and other paths rely on them
+     *  being SETTLED rather than in flight: a seed pass landing
+     *  mid-flow can drop the starter slate into a queue its
+     *  owner has just emptied (PR #719's first cure shape —
+     *  the fully-async pass raced a wiped task queue in
+     *  IntentionFreezeRepositoryTest and a session completion
+     *  promoted a seeded task over the flow's own).
+     *  [startSession] therefore awaits this half before its
+     *  birth insert, exactly as it awaited the whole pass
+     *  before #515; only the catalogue half rides async
+     *  (see [syncBirthCatalogue]).
+     *
+     *  Composition (RULING 2, 6544113775): the head captures
+     *  the catalogue-existed-at-entry fact before any seeding
+     *  in this sequence can birth rows, and this function
+     *  RETURNS it so the caller can thread it into the
+     *  catalogue half — the legacy OPEN reset fires at that
+     *  half's end, never here. This half alone may never fire
+     *  the reset: run over an unreconciled catalogue it would
+     *  judge a stale row set and stamp its one-time done-flag. */
+    suspend fun ensureSeeded(): Boolean = withContext(Dispatchers.IO) {
+        seedMutex.withLock {
+            val seedHead = seedStandingStateHead()
+            seedStandingStateTail(seedHead.seedPrefs)
+            seedHead.catalogueExistedAtEntry
         }
+    }
 
-        val existingProfiles = dao.getAllProfilesSnapshot()
-        if (existingProfiles.isEmpty()) {
-            val defaultProfiles = listOf(
-                FocusProfileEntity(
-                    name = "Study Loadout",
-                    codeName = "Study Mode",
-                    description = "Locks Social, Games & short video (YouTube included), sets Messaging to 2m Peek, arms Shorts Sniper.",
-                    defaultMinutes = 50,
-                    blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES",
-                    scheduleLabel = "09:00 – 13:00 • Weekdays",
-                    isScheduleEnabled = false,
-                    startHour = 9,
-                    startMinute = 0,
-                    endHour = 13,
-                    endMinute = 0
-                ),
-                FocusProfileEntity(
-                    name = "Exam Lockdown",
-                    codeName = "Exam Mode",
-                    description = "Full 90-minute exam shield across all feeds, games, and video apps.",
-                    defaultMinutes = 90,
-                    blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,MESSAGING,BROWSERS",
-                    scheduleLabel = "14:00 – 18:00 • Exam Prep",
-                    isScheduleEnabled = false,
-                    startHour = 14,
-                    startMinute = 0,
-                    endHour = 18,
-                    endMinute = 0
-                ),
-                FocusProfileEntity(
-                    name = "Sleep Loadout",
-                    codeName = "Sleep Guard",
-                    description = "Locks every app except Phone, Clock, and Maps so you sleep on time.",
-                    defaultMinutes = 60,
-                    blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS,MESSAGING",
-                    scheduleLabel = "22:30 – 07:00 • Nightly",
-                    isScheduleEnabled = false,
-                    startHour = 22,
-                    startMinute = 30,
-                    endHour = 7,
-                    endMinute = 0
-                ),
-                FocusProfileEntity(
-                    name = "Quick Homework",
-                    codeName = "25m Sprint",
-                    description = "Blocks short-form video while keeping messaging on 2m Peek for study groups.",
-                    defaultMinutes = 25,
-                    blockedCategoriesCsv = "SHORT_VIDEO,GAMES",
-                    scheduleLabel = "19:00 – 21:00 • Daily",
-                    isScheduleEnabled = false,
-                    startHour = 19,
-                    startMinute = 0,
-                    endHour = 21,
-                    endMinute = 0
-                )
-            )
-            dao.insertProfiles(defaultProfiles)
+    /** Issue #515 F1: the birth resync's catalogue half
+     *  alone — the collapse guard, the PackageManager
+     *  enumeration and the reconcile, and at its end the
+     *  one-time legacy OPEN reset over the reconciled
+     *  catalogue (RULING 2, 6544113775: the reset's home is
+     *  the end of the catalogue reconcile, exactly where the
+     *  monolith pass fired it). Runs under the same seed lock
+     *  as every other pass, so its strikes and stamps stay
+     *  single-writer with the ViewModel's init syncs.
+     *
+     *  [catalogueExistedAtEntry] is the fact the sequence's
+     *  seed half captured at its head, threaded in by the
+     *  caller ([startSession] via [ensureSeeded]); a
+     *  standalone entry passes null and captures the fact at
+     *  its own head, before reconciling — the flag always
+     *  describes the catalogue as the pass found it, never
+     *  as the pass made it. */
+    private suspend fun syncBirthCatalogue(
+        catalogueExistedAtEntry: Boolean? = null
+    ) = withContext(Dispatchers.IO) {
+        seedMutex.withLock {
+            val existedAtEntry = catalogueExistedAtEntry
+                ?: captureCatalogueExistedAtEntry()
+            reconcileCatalogueLocked(forceCatalogSync = false)
+            runLegacyOpenResetStep(existedAtEntry)
+            runPlannedEndRestoreStep()
         }
+    }
 
-        // Issue #139 truth patches for rows seeded by older builds:
-        // the Sleep seed forgot MESSAGING (WhatsApp stayed open under
-        // a profile that promises to lock everything but Phone,
-        // Clock and Maps), the Study seed promised YouTube a 2m
-        // Peek the category system cannot give it, and every seed
-        // claimed an enabled schedule no engine has ever read.
-        // Patches bite only on rows still carrying the exact old
-        // seed values — a hand-edited profile is never rewritten.
-        val seededNames = setOf("Study Loadout", "Exam Lockdown", "Sleep Loadout", "Quick Homework")
-        existingProfiles.forEach { profile ->
-            var patched = profile
-            if (profile.name == "Sleep Loadout" &&
-                profile.blockedCategoriesCsv == "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS"
-            ) {
-                patched = patched.copy(
-                    blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS,MESSAGING"
-                )
-            }
-            if (profile.name == "Study Loadout" &&
-                profile.description == "Locks Social & Games, sets YouTube & Messaging to 2m Peek, arms Shorts Sniper."
-            ) {
-                patched = patched.copy(
-                    description = "Locks Social, Games & short video (YouTube included), sets Messaging to 2m Peek, arms Shorts Sniper."
-                )
-            }
-            if (profile.name in seededNames && profile.isScheduleEnabled) {
-                patched = patched.copy(isScheduleEnabled = false)
-            }
-            if (patched != profile) dao.updateProfile(patched)
-        }
+    /** Ren ruling 00:34 IST Oct 31 (#7): whether this install
+     *  ALREADY has a catalogue at the moment of capture — the
+     *  fact the one-time legacy OPEN reset at the end of the
+     *  catalogue reconcile keys on. Captured before any
+     *  seeding/reconcile in the sequence can birth rows of
+     *  its own: a fresh install has nothing legacy, and its
+     *  newborn rows are never a "reset". */
+    private suspend fun captureCatalogueExistedAtEntry(): Boolean =
+        dao.getAllAppsSnapshot().isNotEmpty()
 
-        // Fabricated demo history STRUCK in this lane too (Lie
-        // Register 3 F-3; caught by Ren's pre-merge S1 sweep,
-        // Oct 29): this copy of the seed block still inserted
-        // three invented sessions, invented intercept logs and
-        // invented captured notifications on first run — the
-        // frozen base predated trunk's scrub. Fresh installs
-        // now start with an empty, true history.
-
-        val existingTasks = dao.getAllTasksSnapshot()
-        // Audit R2 #96: the same seeded-ever law as the sites —
-        // an emptied queue is the user's own, never refilled.
-        if (existingTasks.isEmpty() && !seedPrefs.getBoolean(SEED_TASKS_KEY, false)) {
-            // Audit R2 #96: the starter slate is honest — QUEUED,
-            // zero seconds spent, no substep pre-done. The previous
-            // seed fabricated work history (an ACTIVE first task
-            // with 420s spent and a substep already done) that a
-            // fresh install never did.
-            val defaultTasks = listOf(
-                FocusTaskEntity(
-                    title = "Finish Chapter 4 Problem Set (#1–6)",
-                    notesOrSubsteps = FocusTaskEntity.serializeSubSteps(
-                        listOf(
-                            TaskSubStep(0, "Draw free-body diagrams for problems #1–3", false),
-                            TaskSubStep(1, "Solve equilibrium equations for #1–3", false),
-                            TaskSubStep(2, "Complete problems #4–6 & verify units", false)
-                        )
-                    ),
-                    estimatedMinutes = 25,
-                    actualSecondsSpent = 0,
-                    categoryTag = "Study",
-                    queueOrder = 0,
-                    status = TaskQueueStatus.QUEUED.name
-                ),
-                FocusTaskEntity(
-                    title = "Synthesize Lecture 9 Architecture Notes",
-                    notesOrSubsteps = FocusTaskEntity.serializeSubSteps(
-                        listOf(
-                            TaskSubStep(0, "Extract L1/L2 cache hierarchy diagrams", false),
-                            TaskSubStep(1, "Summarize virtual page table walkthrough", false),
-                            TaskSubStep(2, "Write 3 self-test recall prompts", false)
-                        )
-                    ),
-                    estimatedMinutes = 25,
-                    actualSecondsSpent = 0,
-                    categoryTag = "Writing",
-                    queueOrder = 1,
-                    status = TaskQueueStatus.QUEUED.name
-                ),
-                FocusTaskEntity(
-                    title = "Debug Dynamic Programming Memo Table",
-                    notesOrSubsteps = FocusTaskEntity.serializeSubSteps(
-                        listOf(
-                            TaskSubStep(0, "Trace base case indices on paper first", false),
-                            TaskSubStep(1, "Fix off-by-one transition in memo[i][j]", false),
-                            TaskSubStep(2, "Run edge-case unit test suite", false)
-                        )
-                    ),
-                    estimatedMinutes = 45,
-                    actualSecondsSpent = 0,
-                    categoryTag = "Code",
-                    queueOrder = 2,
-                    status = TaskQueueStatus.QUEUED.name
-                )
-            )
-            dao.insertTasks(defaultTasks)
-            seedPrefs.edit().putBoolean(SEED_TASKS_KEY, true).apply()
-        } else {
-            // Content exists — seeded or the user's own. Record
-            // seeded-ever (an install predating the flag counts as
-            // seeded) so a later emptying is honoured as his own.
-            if (!seedPrefs.getBoolean(SEED_TASKS_KEY, false)) {
-                seedPrefs.edit().putBoolean(SEED_TASKS_KEY, true).apply()
-            }
-            // Deduplicate ONLY true duplicates created by a prior
-            // double-insert race (issue #106, finding 1).
-            // PERMANENCE GUARD: a COMPLETED task is a stored record (the
-            // Drawer) — repeat-titled completions are the normal shape of
-            // a year, and this pass must never delete one. Stored rows are
-            // skipped entirely: not deleted, and not registered as a
-            // dedup key against anything.
-            // The old key was title+status alone, so two DIFFERENT user
-            // tasks that happen to share a title ("Revision", "Read
-            // Chapter 4" for two subjects — both QUEUED) silently lost
-            // the later one at every launch, with no undo. A title is
-            // not an identity. A row is only a true duplicate when
-            // EVERY field that could distinguish two tasks matches an
-            // earlier row — title, status, category, sub-steps, estimate,
-            // seconds spent, queue order and completion stamps — i.e.
-            // the same insertion written twice, never two tasks the man
-            // wrote. Anything short of that is kept, both of them.
-            val seenExactTasks = mutableSetOf<String>()
-            for (task in existingTasks.sortedBy { it.id }) {
-                if (task.resolvedStatus == TaskQueueStatus.COMPLETED) continue
-                val key = listOf(
-                    task.title.lowercase(java.util.Locale.ROOT), task.status, task.categoryTag,
-                    task.notesOrSubsteps, task.estimatedMinutes.toString(),
-                    task.actualSecondsSpent.toString(), task.queueOrder.toString(),
-                    task.completedAtMillis.toString(),
-                    task.completedInSessionId.toString(),
-                    task.startedAtSessionElapsedSec?.toString() ?: "null"
-                ).joinToString("|")
-                if (!seenExactTasks.add(key)) {
-                    dao.deleteTaskById(task.id)
-                }
-            }
-            // Audit R6 #341 F04: the session dedup pass that used to
-            // live here is DELETED. Sessions are events, not catalogue
-            // rows: two sessions sharing intention + duration + task
-            // summary are two sessions (the normal shape of a daily
-            // practice), and keying deletion on user-visible content
-            // silently collapsed a history of daily sessions to one
-            // row on every cold start. No pass may delete a session
-            // for resembling another.
-        }
-        // Ren ruling 00:34 IST Oct 31 (#7): the one-time LEGACY
-        // OPEN reset runs at the end of the first seed-sync after
-        // the inversion lands, over the reconciled catalogue. A
-        // failure here must never break the sync itself — the
-        // done-flag stays unstamped and the pass retries on the
-        // next run.
+    /** The reset step of the catalogue half: the one-time
+     *  LEGACY OPEN reset runs over the reconciled catalogue,
+     *  keyed on the entry-captured fact. A failure here must
+     *  never break the sync itself — the done-flag stays
+     *  unstamped and the pass retries on the next run. */
+    private suspend fun runLegacyOpenResetStep(catalogueExistedAtEntry: Boolean) {
         try {
             runLegacyOpenResetIfNeeded(catalogueExistedAtEntry)
         } catch (e: Exception) {
             swallow("runLegacyOpenResetIfNeeded", e)
         }
-        drainDayWordsLocked()
-        // Audit R6 #341 F05: the planned-end restore rides the
-        // same pass — a failure here must never break the sync
-        // itself (same discipline as the legacy reset above).
+    }
+
+    /** The planned-end restore step of the catalogue pass
+     *  (Audit R6 #341 F05, landed by PR #781 on the monolith
+     *  pass). Composition (FINISHER-719D, on the #781
+     *  recomposition): on the monolith this step rode the
+     *  pass's tail, after the legacy reset and the day-word
+     *  drain; in the split it runs at the end of the
+     *  catalogue half — in [syncBirthCatalogue] after the
+     *  reset step, and in [ensureSeededAndSyncPackages]
+     *  after the seed tail (which ends in the drain) — under
+     *  the same discipline: a failure here must never break
+     *  the sync itself. It does not run in [ensureSeeded]
+     *  alone, exactly like the reset: it keys on the
+     *  reconciled pass, not the seed half. */
+    private suspend fun runPlannedEndRestoreStep() {
         try {
             restorePlannedEndIfLost()
         } catch (e: Exception) {
             swallow("restorePlannedEndIfLost", e)
-        }
         }
     }
 
@@ -1583,6 +1215,519 @@ class MonolithRepository(
                 kind = kind, target = target, oldValue = oldValue, newValue = newValue
             )
         )
+    }
+
+    /** The seed head's yield: the seed prefs the tail reads
+     *  its seeded-ever flags from, and the
+     *  catalogue-existed-at-entry fact the head captured at
+     *  main's own position — after the resurrection
+     *  measurement (which births no catalogue rows), before
+     *  any seeding below it. */
+    private class SeedHead(
+        val seedPrefs: SharedPreferences,
+        val catalogueExistedAtEntry: Boolean
+    )
+
+    /** Seed half, head: the resurrection measurement, the
+     *  blocked-sites seed (and its v2 host upgrade), the
+     *  guard-settings row and the routines seed/reseed. The
+     *  caller holds [seedMutex]. Returns the head's yield —
+     *  the seed prefs, and the entry fact captured at the
+     *  position the monolith pass captured it. */
+    private suspend fun seedStandingStateHead(): SeedHead {
+    recordProvenanceIfResurrected()
+
+    // Ren ruling 00:34 IST Oct 31 (#7): whether this install
+    // ALREADY had a catalogue when this sync began — the fact
+    // the one-time legacy OPEN reset at the end of this pass
+    // keys on. Captured before any seeding/reconcile below can
+    // birth rows of its own: a fresh install has nothing
+    // legacy, and its newborn rows are never a "reset".
+    val catalogueExistedAtEntry = captureCatalogueExistedAtEntry()
+
+    // Audit R2 #96: seed only a store that has never carried
+    // content. Once content exists (seeded or the user's own)
+    // the seeded-ever flag is set, and a later empty store is
+    // the user's own emptying — honoured, never resurrected.
+    val seedPrefs = context.getSharedPreferences(SEED_PREFS_NAME, Context.MODE_PRIVATE)
+    val sitesNow = dao.getAllSitesSnapshot()
+    if (!seedPrefs.getBoolean(SEED_SITES_KEY, false)) {
+        if (sitesNow.isEmpty()) {
+            dao.insertSites(BlockedBrowserDomains.defaultDomains.map { BlockedSiteEntity(it) })
+        }
+        seedPrefs.edit().putBoolean(SEED_SITES_KEY, true).apply()
+
+    }
+    // W3 #130 F2 seed-upgrade (verifier correction, DURCH-D):
+    // an install that ran the v1 seed before "youtube.com"
+    // joined the defaults never re-seeds, so the host rule
+    // must be DELIVERED — once, and only where the legacy
+    // factory entry proves the seed stands unedited (the pure
+    // decision above; a user's deletion is never resurrected).
+    // A fresh install reaches this line with the current
+    // defaults just seeded, so the decision adds nothing and
+    // the flag simply closes. Runs under the same seed lock.
+    if (!seedPrefs.getBoolean(SEED_SITES_V2_KEY, false)) {
+        if (seedPrefs.getBoolean(SEED_SITES_KEY, false)) {
+            val upgradeAdds = youtubeHostSeedUpgrade(
+                dao.getAllSitesSnapshot().map { it.domain }
+            )
+            if (upgradeAdds.isNotEmpty()) {
+                dao.insertSites(upgradeAdds.map { BlockedSiteEntity(it) })
+            }
+        }
+        seedPrefs.edit().putBoolean(SEED_SITES_V2_KEY, true).apply()
+    }
+    if (dao.getGuardSettingsSnapshot() == null) {
+        dao.insertGuardSettings(GuardSettingsEntity())
+    }
+    // Routines: a fresh install seeds his real day directly and is
+    // marked reseed-done (it never "migrates" and never sees the
+    // reset note); an existing install runs the version-blind
+    // reseed transform once (Sten §2).
+    if (dao.getAllRoutinesSnapshot().isEmpty()) {
+        // Audit R2 #96: the fresh seed stamps its edit horizon,
+        // exactly as the reseed path does. With the default 0,
+        // every window that ended before the install would be
+        // judged MISSED — the derive law's own rule ("before
+        // that horizon judgement is UNKNOWN, never an invented
+        // MISSED") defeated by the seed itself.
+        val seededAtMillis = System.currentTimeMillis()
+        dao.insertRoutines(
+            routineTargets().map { it.copy(scheduleEditedAtMillis = seededAtMillis) }
+        )
+        // R3b #161 (update-day): an empty routines table means
+        // this install has never seeded — a first install, a
+        // wiped phone and a new phone are indistinguishable from
+        // inside, so the seed owes the user one honest sentence
+        // at first open instead of a silent factory state.
+        InstallNoteStore(context).markFreshStart()
+        val fresh = dao.getGuardSettingsSnapshot()
+        if (fresh != null && !fresh.routineReseedV1Done) {
+            dao.insertGuardSettings(
+                fresh.copy(routineReseedV1Done = true, routineReseedNoteDismissed = true)
+            )
+        }
+    } else {
+        reseedRoutinesV1()
+    }
+    return SeedHead(seedPrefs, catalogueExistedAtEntry)
+    }
+
+    /** The catalogue half: the collapse guard, the launcher
+     *  enumeration and the reconcile (inserts, usage updates,
+     *  the two-strike prune). The caller holds [seedMutex];
+     *  the body keeps its own try/catch — a restricted
+     *  package query degrades to a logged skip, never a
+     *  failed pass. */
+    private suspend fun reconcileCatalogueLocked(forceCatalogSync: Boolean) {
+    try {
+        // THE COLLAPSE GUARD (fresh-eyes L3): the two-strike
+        // prune is only as honest as the distance between the
+        // strikes. The ViewModel's init calls this sync and
+        // then its guard refresh calls it AGAIN seconds later
+        // (PARK's open does the same) — identical
+        // PackageManager state, so one transiently-filtered
+        // cold-start query used to satisfy both strikes in a
+        // single launch and prune. A non-forced call inside
+        // the window after a completed sync therefore skips
+        // the reconcile entirely: it touches no strikes, files
+        // no tombstones, prunes nothing. The rest of this
+        // seeding pass (sites, profiles, tasks, the day-word
+        // drain) is idempotent and still runs. A forced call,
+        // and any call after the window, is a genuinely
+        // separate look and reconciles normally.
+        val collapseRepeat = AppCatalogReconcile.isEnumerationSkipped(
+            forceCatalogSync = forceCatalogSync,
+            lastSuccessfulSyncMillis = loadLastCatalogSyncMillis(),
+            nowMillis = System.currentTimeMillis()
+        )
+        // Issue #69 F4 (startup half): the collapse check now
+        // gates the ENUMERATION itself, not only the reconcile
+        // after it. The ViewModel init pays this sync twice in
+        // seconds (ensureSeededAndSyncPackages, then again via
+        // refreshSystemGuard); on the old shape the repeat call
+        // still ran the full PackageManager + LauncherApps
+        // enumeration before the guard let it skip the
+        // reconcile. Inside the collapse window both
+        // enumerations are skipped, so the repeat costs no PM
+        // work at all; `installed` is empty, the reconcile
+        // below stays skipped exactly as before, and every
+        // other seeding step in this pass still runs. Data and
+        // behaviour identical — one enumeration, not two.
+        val pm = context.packageManager
+        val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+        val resolvedList = if (collapseRepeat) {
+            emptyList()
+        } else {
+            pm.queryIntentActivities(mainIntent, 0)
+        }
+        // The main activity per package (its launch intent's
+        // component), resolved once per package — the reconcile's
+        // dedupe rule lets it win over shortcut activities.
+        val mainActivityByPackage = mutableMapOf<String, String?>()
+        val installedFromPm = resolvedList.mapNotNull { resolveInfo ->
+            val pkg = resolveInfo.activityInfo?.packageName ?: return@mapNotNull null
+            if (pkg == context.packageName || pkg.startsWith("com.android.settings")) {
+                return@mapNotNull null
+            }
+            val label = resolveInfo.loadLabel(pm)?.toString()
+                ?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val mainActivity = mainActivityByPackage.getOrPut(pkg) {
+                runCatching {
+                    pm.getLaunchIntentForPackage(pkg)?.component?.className
+                }.getOrNull()
+            }
+            InstalledPackage(
+                pkg, label,
+                isMainActivity = mainActivity != null &&
+                    mainActivity == resolveInfo.activityInfo?.name
+            )
+        }
+        // Issue #80 finding 1 (partial): the PackageManager
+        // query above only sees the CALLING profile. LauncherApps
+        // additionally enumerates the other profiles this user
+        // owns (work profile, dual-app/clone user), so a package
+        // installed only there is at least DISCOVERED and not
+        // pruned from the catalog. Per-profile rules remain
+        // impossible from one install — see the #80 report.
+        val profiled = installedFromPm.map {
+            ProfiledInstalledPackage(
+                it.packageName, it.label, Process.myUserHandle().toString()
+            )
+        }.toMutableList()
+        try {
+            val launcherApps =
+                context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as? LauncherApps
+            // Issue #69 F4: the per-profile enumeration is
+            // gated by the same collapse check — a repeat sync
+            // inside the window enumerates nothing, anywhere.
+            if (launcherApps != null && !collapseRepeat) {
+                for (profile in launcherApps.profiles) {
+                    val activities = try {
+                        launcherApps.getActivityList(null, profile)
+                    } catch (_: Exception) {
+                        null
+                    } ?: continue
+                    for (info in activities) {
+                        val pkg = info.componentName?.packageName ?: continue
+                        if (pkg == context.packageName ||
+                            pkg.startsWith("com.android.settings")
+                        ) {
+                            continue
+                        }
+                        val label = info.label?.toString()
+                            ?.takeIf { it.isNotBlank() } ?: continue
+                        profiled.add(
+                            ProfiledInstalledPackage(pkg, label, profile.toString())
+                        )
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            // Discovery stays exactly as complete as the old
+            // single-profile query when LauncherApps refuses.
+        }
+        // STURM3-13 port note: the calling-profile entries keep
+        // their isMainActivity flags (issue #34's dedupe rule
+        // depends on them), so the merged catalog is the PM list
+        // plus ONLY the packages other profiles add — the pure
+        // mergeProfiledInstalls view decides which those are.
+        val pmPackages = installedFromPm.map { it.packageName }.toSet()
+        val installed = installedFromPm +
+            AppCatalogReconcile.mergeProfiledInstalls(profiled)
+                .filter { it.packageName !in pmPackages }
+
+        // THE CATALOG IS THE PHONE'S TRUTH (Ordner lane, Sarthak's
+        // complaint Oct 29 22:40: the list carried apps he never
+        // installed). There is no blind factory seed any more:
+        // this sync reconciles the table to the installed
+        // launchable set — rows for packages absent on TWO
+        // consecutive syncs are PRUNED (with their rulings filed
+        // in the catalog memory first, issue #34), present
+        // packages are discovered without a cap, and the
+        // factory presets survive only as birth rules applied to
+        // packages that actually exist on this phone. An empty
+        // query result can only mean the query failed (the
+        // <queries> declaration in the manifest makes every
+        // launcher app visible), so an empty result skips the
+        // reconcile entirely rather than pruning his rules away.
+        if (installed.isNotEmpty() && !collapseRepeat) {
+            val existingRows = dao.getAllAppsSnapshot()
+            val plan = AppCatalogReconcile.reconcile(
+                existing = existingRows,
+                installed = installed,
+                usageMinutes = queryRealTodayUsageMinutes(),
+                categorize = ::categorizePackage,
+                previouslyAbsent = loadAbsentOnce(),
+                rememberedRules = loadRememberedRules()
+            )
+            if (plan.toInsert.isNotEmpty()) {
+                dao.insertApps(plan.toInsert)
+                // A restored package's tombstone is spent.
+                forgetRememberedRules(plan.toInsert.map { it.packageName })
+            }
+            if (plan.unreviewedOpenPackages.isNotEmpty()) {
+                recordUnreviewedOpen(plan.unreviewedOpenPackages)
+            }
+            plan.usageUpdates.forEach { dao.updateApp(it) }
+            if (plan.toPrune.isNotEmpty()) {
+                // M5 (Mikro): the prune announces itself once, so
+                // record what it took BEFORE the rows leave —
+                // how many, and whether any stored ruling went
+                // with them. The Shield strip prints exactly
+                // this record, once, and nothing it can't prove.
+                val prunedRows = existingRows.filter {
+                    it.packageName in plan.toPrune
+                }
+                // Issue #34: file the rulings BEFORE the rows
+                // leave, so a returning package is reborn with
+                // its own ruling, never a silent OPEN.
+                rememberPrunedRules(prunedRows)
+                recordPruneNote(
+                    appsRemoved = prunedRows.size,
+                    rulesRemoved = prunedRows.any {
+                        it.resolvedTier != AppBlockTier.OPEN
+                    }
+                )
+                // A pruned app can no longer be reviewed; its
+                // unreviewed entry leaves with its row (#129 F1).
+                clearUnreviewedOpen(plan.toPrune)
+                dao.deleteAppsByPackage(plan.toPrune)
+            }
+            // The strike set for the next sync: only packages
+            // absent for the FIRST time here. A package absent
+            // twice has been pruned above; one present again
+            // clears itself by not being absent.
+            saveAbsentOnce(plan.pendingPrune.toSet())
+            // The sync completed: this instant anchors the
+            // collapse window (L3). Only a reconcile that
+            // actually ran earns the stamp — an empty query
+            // above is a failed look and starts no window.
+            saveLastCatalogSyncMillis(System.currentTimeMillis())
+        }
+    } catch (e: Exception) {
+        // Safe fallback if package querying is restricted — logged, not silent (#33).
+        swallow("ensureSeededAndSyncPackages catalog sync", e)
+    }
+    }
+
+    /** Seed half, tail: the profile seed and its standing
+     *  patches, the starter task slate under the seeded-ever
+     *  law, the exact-duplicate task dedup and the day-word
+     *  drain. The caller holds [seedMutex]. The legacy OPEN
+     *  reset is NOT here: it belongs to the catalogue half
+     *  (RULING 2, 6544113775) and never fires from the seed
+     *  tail. */
+    private suspend fun seedStandingStateTail(seedPrefs: SharedPreferences) {
+    val existingProfiles = dao.getAllProfilesSnapshot()
+    if (existingProfiles.isEmpty()) {
+        val defaultProfiles = listOf(
+            FocusProfileEntity(
+                name = "Study Loadout",
+                codeName = "Study Mode",
+                description = "Locks Social, Games & short video (YouTube included), sets Messaging to 2m Peek, arms Shorts Sniper.",
+                defaultMinutes = 50,
+                blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES",
+                scheduleLabel = "09:00 – 13:00 • Weekdays",
+                isScheduleEnabled = false,
+                startHour = 9,
+                startMinute = 0,
+                endHour = 13,
+                endMinute = 0
+            ),
+            FocusProfileEntity(
+                name = "Exam Lockdown",
+                codeName = "Exam Mode",
+                description = "Full 90-minute exam shield across all feeds, games, and video apps.",
+                defaultMinutes = 90,
+                blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,MESSAGING,BROWSERS",
+                scheduleLabel = "14:00 – 18:00 • Exam Prep",
+                isScheduleEnabled = false,
+                startHour = 14,
+                startMinute = 0,
+                endHour = 18,
+                endMinute = 0
+            ),
+            FocusProfileEntity(
+                name = "Sleep Loadout",
+                codeName = "Sleep Guard",
+                description = "Locks every app except Phone, Clock, and Maps so you sleep on time.",
+                defaultMinutes = 60,
+                blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS,MESSAGING",
+                scheduleLabel = "22:30 – 07:00 • Nightly",
+                isScheduleEnabled = false,
+                startHour = 22,
+                startMinute = 30,
+                endHour = 7,
+                endMinute = 0
+            ),
+            FocusProfileEntity(
+                name = "Quick Homework",
+                codeName = "25m Sprint",
+                description = "Blocks short-form video while keeping messaging on 2m Peek for study groups.",
+                defaultMinutes = 25,
+                blockedCategoriesCsv = "SHORT_VIDEO,GAMES",
+                scheduleLabel = "19:00 – 21:00 • Daily",
+                isScheduleEnabled = false,
+                startHour = 19,
+                startMinute = 0,
+                endHour = 21,
+                endMinute = 0
+            )
+        )
+        dao.insertProfiles(defaultProfiles)
+    }
+
+    // Issue #139 truth patches for rows seeded by older builds:
+    // the Sleep seed forgot MESSAGING (WhatsApp stayed open under
+    // a profile that promises to lock everything but Phone,
+    // Clock and Maps), the Study seed promised YouTube a 2m
+    // Peek the category system cannot give it, and every seed
+    // claimed an enabled schedule no engine has ever read.
+    // Patches bite only on rows still carrying the exact old
+    // seed values — a hand-edited profile is never rewritten.
+    val seededNames = setOf("Study Loadout", "Exam Lockdown", "Sleep Loadout", "Quick Homework")
+    existingProfiles.forEach { profile ->
+        var patched = profile
+        if (profile.name == "Sleep Loadout" &&
+            profile.blockedCategoriesCsv == "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS"
+        ) {
+            patched = patched.copy(
+                blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS,MESSAGING"
+            )
+        }
+        if (profile.name == "Study Loadout" &&
+            profile.description == "Locks Social & Games, sets YouTube & Messaging to 2m Peek, arms Shorts Sniper."
+        ) {
+            patched = patched.copy(
+                description = "Locks Social, Games & short video (YouTube included), sets Messaging to 2m Peek, arms Shorts Sniper."
+            )
+        }
+        if (profile.name in seededNames && profile.isScheduleEnabled) {
+            patched = patched.copy(isScheduleEnabled = false)
+        }
+        if (patched != profile) dao.updateProfile(patched)
+    }
+
+    // Fabricated demo history STRUCK in this lane too (Lie
+    // Register 3 F-3; caught by Ren's pre-merge S1 sweep,
+    // Oct 29): this copy of the seed block still inserted
+    // three invented sessions, invented intercept logs and
+    // invented captured notifications on first run — the
+    // frozen base predated trunk's scrub. Fresh installs
+    // now start with an empty, true history.
+
+    val existingTasks = dao.getAllTasksSnapshot()
+    // Audit R2 #96: the same seeded-ever law as the sites —
+    // an emptied queue is the user's own, never refilled.
+    if (existingTasks.isEmpty() && !seedPrefs.getBoolean(SEED_TASKS_KEY, false)) {
+        // Audit R2 #96: the starter slate is honest — QUEUED,
+        // zero seconds spent, no substep pre-done. The previous
+        // seed fabricated work history (an ACTIVE first task
+        // with 420s spent and a substep already done) that a
+        // fresh install never did.
+        val defaultTasks = listOf(
+            FocusTaskEntity(
+                title = "Finish Chapter 4 Problem Set (#1–6)",
+                notesOrSubsteps = FocusTaskEntity.serializeSubSteps(
+                    listOf(
+                        TaskSubStep(0, "Draw free-body diagrams for problems #1–3", false),
+                        TaskSubStep(1, "Solve equilibrium equations for #1–3", false),
+                        TaskSubStep(2, "Complete problems #4–6 & verify units", false)
+                    )
+                ),
+                estimatedMinutes = 25,
+                actualSecondsSpent = 0,
+                categoryTag = "Study",
+                queueOrder = 0,
+                status = TaskQueueStatus.QUEUED.name
+            ),
+            FocusTaskEntity(
+                title = "Synthesize Lecture 9 Architecture Notes",
+                notesOrSubsteps = FocusTaskEntity.serializeSubSteps(
+                    listOf(
+                        TaskSubStep(0, "Extract L1/L2 cache hierarchy diagrams", false),
+                        TaskSubStep(1, "Summarize virtual page table walkthrough", false),
+                        TaskSubStep(2, "Write 3 self-test recall prompts", false)
+                    )
+                ),
+                estimatedMinutes = 25,
+                actualSecondsSpent = 0,
+                categoryTag = "Writing",
+                queueOrder = 1,
+                status = TaskQueueStatus.QUEUED.name
+            ),
+            FocusTaskEntity(
+                title = "Debug Dynamic Programming Memo Table",
+                notesOrSubsteps = FocusTaskEntity.serializeSubSteps(
+                    listOf(
+                        TaskSubStep(0, "Trace base case indices on paper first", false),
+                        TaskSubStep(1, "Fix off-by-one transition in memo[i][j]", false),
+                        TaskSubStep(2, "Run edge-case unit test suite", false)
+                    )
+                ),
+                estimatedMinutes = 45,
+                actualSecondsSpent = 0,
+                categoryTag = "Code",
+                queueOrder = 2,
+                status = TaskQueueStatus.QUEUED.name
+            )
+        )
+        dao.insertTasks(defaultTasks)
+        seedPrefs.edit().putBoolean(SEED_TASKS_KEY, true).apply()
+    } else {
+        // Content exists — seeded or the user's own. Record
+        // seeded-ever (an install predating the flag counts as
+        // seeded) so a later emptying is honoured as his own.
+        if (!seedPrefs.getBoolean(SEED_TASKS_KEY, false)) {
+            seedPrefs.edit().putBoolean(SEED_TASKS_KEY, true).apply()
+        }
+        // Deduplicate ONLY true duplicates created by a prior
+        // double-insert race (issue #106, finding 1).
+        // PERMANENCE GUARD: a COMPLETED task is a stored record (the
+        // Drawer) — repeat-titled completions are the normal shape of
+        // a year, and this pass must never delete one. Stored rows are
+        // skipped entirely: not deleted, and not registered as a
+        // dedup key against anything.
+        // The old key was title+status alone, so two DIFFERENT user
+        // tasks that happen to share a title ("Revision", "Read
+        // Chapter 4" for two subjects — both QUEUED) silently lost
+        // the later one at every launch, with no undo. A title is
+        // not an identity. A row is only a true duplicate when
+        // EVERY field that could distinguish two tasks matches an
+        // earlier row — title, status, category, sub-steps, estimate,
+        // seconds spent, queue order and completion stamps — i.e.
+        // the same insertion written twice, never two tasks the man
+        // wrote. Anything short of that is kept, both of them.
+        val seenExactTasks = mutableSetOf<String>()
+        for (task in existingTasks.sortedBy { it.id }) {
+            if (task.resolvedStatus == TaskQueueStatus.COMPLETED) continue
+            val key = listOf(
+                task.title.lowercase(java.util.Locale.ROOT), task.status, task.categoryTag,
+                task.notesOrSubsteps, task.estimatedMinutes.toString(),
+                task.actualSecondsSpent.toString(), task.queueOrder.toString(),
+                task.completedAtMillis.toString(),
+                task.completedInSessionId.toString(),
+                task.startedAtSessionElapsedSec?.toString() ?: "null"
+            ).joinToString("|")
+            if (!seenExactTasks.add(key)) {
+                dao.deleteTaskById(task.id)
+            }
+        }
+        // Audit R6 #341 F04: the session dedup pass that used to
+        // live here is DELETED. Sessions are events, not catalogue
+        // rows: two sessions sharing intention + duration + task
+        // summary are two sessions (the normal shape of a daily
+        // practice), and keying deletion on user-visible content
+        // silently collapsed a history of daily sessions to one
+        // row on every cold start. No pass may delete a session
+        // for resembling another.
+    }
+    drainDayWordsLocked()
+
     }
 
     /**
@@ -3777,15 +3922,42 @@ class MonolithRepository(
         windowEndMillis: Long = 0L,
         breakMinutes: Int? = null
     ): FocusSessionEntity {
-        // Issue #129 F2: the catalogue resyncs at EVERY session
-        // birth, before the held counts are captured below. An app
-        // installed after the last Monolith launch / sync — even a
-        // factory-preset one that will be born LOCKED — previously
-        // had no row, no tier and no enforcement for the whole
-        // session, because both enforcement doors only read rows
-        // that exist. Birth is the one moment every session passes
-        // through, whichever door armed it (hand or routine).
-        ensureSeededAndSyncPackages()
+        // Issue #129 F2 (placement amended by issue #515 F1): the
+        // catalogue resyncs at EVERY session birth — an app
+        // installed after the last sync must gain its row at
+        // birth, because both enforcement doors only read rows
+        // that exist, and birth is the one moment every session
+        // passes through, whichever door armed it (hand or
+        // routine). But #515 F1 proved the resync's PLACE was
+        // wrong: run inline here, a phone-wide PackageManager +
+        // LauncherApps scan sat inside the proving budget
+        // (DWELL 210 / DEADLINE 500 / ANNUL 1500), so a cold or
+        // slow scan jammed L1 and annulled correctly performed
+        // arms. The birth now inserts from the STANDING catalogue
+        // — the rows that exist; L1 is a Room insert, not a
+        // phone-wide scan — and the CATALOGUE half of the resync
+        // fires async the moment the insert lands
+        // (launchBirthCatalogSync, below); the SEED half is
+        // awaited just below (ensureSeeded) — cheap Room/prefs
+        // writes whose settled-not-in-flight ordering other
+        // paths rely on (the split cure: this lane's first shape
+        // let a fully-async pass seed the starter task slate
+        // into a just-emptied queue mid-flow). The
+        // #129 coverage is preserved: the new row arrives seconds
+        // into the session, both doors read rows live per event
+        // so enforcement picks it up the moment it exists, and
+        // only the seal's printed held count — captured from the
+        // standing catalogue, as its single-writer law requires —
+        // predates it.
+        // Issue #515 F1 (split cure): settle the seed half
+        // before the birth — see ensureSeeded's note. The
+        // phone-wide catalogue scan is the only part of the
+        // old inline pass that stays off this path. The seed
+        // half returns the catalogue-existed-at-entry fact it
+        // captured at this sequence's head; the value rides
+        // into the birth sync below (RULING 2, 6544113775).
+        val catalogueExistedAtEntry = ensureSeeded()
+
         val isStopwatch = durationMinutes < 10
         val targetSecs = if (isStopwatch) {
             STOPWATCH_MIN_FLOOR_SECONDS
@@ -3864,7 +4036,7 @@ class MonolithRepository(
         // itself. Exactly one writer exists for these columns
         // (this insert); no DAO update for them will ever exist.
         val database = db() // ISSUE-67: injected database, no re-fetch
-        return database.withTransaction {
+        val born = database.withTransaction {
             val snapshotApps = dao.getAllAppsSnapshot()
             val heldApps = countHeldApps(snapshotApps)
             // W-41: the tier split rides the same snapshot and
@@ -3915,6 +4087,36 @@ class MonolithRepository(
                 id = id, heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites,
                 heldShutAtSeal = heldShut, heldPeekAtSeal = heldPeek
             )
+        }
+        // Issue #515 F1: the insert has landed — fire the birth
+        // resync off the proving path (see the note at this
+        // function's head). L1 resolves on the insert alone.
+        launchBirthCatalogSync(catalogueExistedAtEntry)
+        return born
+    }
+
+    /** Issue #515 F1: the birth catalogue resync, fired off the
+     *  seal's proving path. It runs the catalogue half only
+     *  (syncBirthCatalogue) — the seed half was awaited before
+     *  the insert (ensureSeeded), so nothing this launch
+     *  writes can land inside another flow's ordering.
+     *  [catalogueExistedAtEntry] is the fact the seed half
+     *  captured at the sequence's head, threaded through so
+     *  the reset at the catalogue half's end keys on the
+     *  catalogue as the sequence found it (RULING 2,
+     *  6544113775). Fire-and-forget by design: the sync
+     *  is mutex-guarded, idempotent and collapse-windowed, and
+     *  its failure is only logged — the next sync any surface
+     *  fires (ViewModel init, shield start, the next birth)
+     *  re-runs it, so a failed birth sync delays catalogue truth
+     *  by one launch at worst. It never blocks, jams or annuls
+     *  the arm that fired it. */
+    private fun launchBirthCatalogSync(catalogueExistedAtEntry: Boolean) {
+        birthSyncScope.launch {
+            runCatching { syncBirthCatalogue(catalogueExistedAtEntry) }
+                .onFailure {
+                    Log.w(TAG, "birth catalogue sync failed; a later sync re-runs it", it)
+                }
         }
     }
 
