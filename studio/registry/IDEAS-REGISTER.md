@@ -102,6 +102,20 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | Signed issue/PR comments + studio/plan in repo as the collaboration surface | Methods (Postamt) | — | BUILT (programme already works this way) |
 | PR template with evidence fields | Methods | #22 | PANEL-QUEUED (draft exists in wave2-methods-files/) |
 
+## System surfaces — glance doors (INNOVATOR-2, WING-A ideation, #155)
+
+Full deep-dives: #155 comment 6537513966 · Discussion (INNOVATOR-2 system surfaces, #155). Verification VERIFIED vs main `235a382a`: TileService, ShortcutManager, requestPinAppWidget and WidgetSealTruth all 0 hits in `app/src` (code search + local grep + manifest read); widget present via PR #312; witness gate exists only on PR #540.
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| Witness Tile: Quick Settings TileService that is never a toggle — three states (SEALED only when minted in onStartListening against witness + <30s beat; UNPROVEN greyed; OPEN), click only escorts to SHIELD, flip-push via requestListeningState on #540's refresh funnel | INNOVATOR-2 | #155 | PANEL-QUEUED (M, 2–3 days; after #540 merges — needs the real WidgetSealTruth gate) |
+| Pocket Receipt shortcuts, static half: shortcuts.xml verbs only ("Seal a session" → DECK arm flow, "Open Shield" → SHIELD) — static content is fixed at install, so any state word in it is a lie by construction | INNOVATOR-2 | #155 | PANEL-QUEUED (S, 0.5–1 day; independent of #540) |
+| Pocket Receipt shortcuts, dynamic half: exactly ONE dynamic ShortcutManager shortcut, label-only truth ("SEALED — OPEN MONOLITH"), pushed/removed only at seal flips via the refresh funnel, rate-limit guard, no UNTIL/intention in the cached label, icon constant (honours DESIGNER-E-4's icon-flip kill) | INNOVATOR-2 | #155 | PANEL-QUEUED (S–M, +1–2 days; after #540 merges) |
+| Ask Once, At The Sealing: requestPinAppWidget door for the existing widget — isRequestPinAppWidgetSupported gate, already-placed check, once-ever flag, offered only at first successful seal (or first completion card, never both), honest fallback card on unsupported launchers | INNOVATOR-2 | #155 | PANEL-QUEUED (S, 0.5–1 day; independent of #540) |
+| Assistant / voice arming ("Hey Google, seal…") | INNOVATOR-2 | #155 | PARKED-WITH-REASON (killed in filing §4: voice arm = pocket-arming with a microphone; fails blocker identity) |
+| Lock-screen widgets / glanceable hub as a glance surface | INNOVATOR-2 | #155 | PARKED-WITH-REASON (judged NOT REAL today in filing §4: no general third-party API on the user's device class; revisit only if a stable API ships) |
+| Tile-as-toggle / tap-to-arm shortcut (naive forms) | INNOVATOR-2 | #155 | PARKED-WITH-REASON (killed by name in filing §4 so no later lane "simplifies" into them: toggle = 60s-hold bypass; tap-arm = ritual bypass) |
+
 ## Decisions & deliberations
 
 | Idea | Seat | Issue | Disposition |
@@ -141,6 +155,58 @@ Dispositions: **BUILT** (landed) · **ADOPTED** (decided / in an active lane's s
 | The Arming Verdict: one-shot summons per arm — "SEALED • SHIELD PROVED HH:MM:SS" on the protecting flip within ~15 s, else "SHIELD DID NOT PROVE — NOT PROTECTED" with repair actions; 45-min expiry | INNOVATOR-5 (WING-A) | #155 | PANEL-QUEUED (filed #155 comment 6536557343 + Discussion; M ~1.5 days; identity PASS) |
 | The Dawn Line: widget shows the just-ended session's finish verdict (receipt words from persisted outcome) only when the ending was unwitnessed; burns on first tap/open or noon — one session, no list/count/streak | INNOVATOR-5 (WING-A) | #155 | PANEL-QUEUED (filed #155 comment 6536557343 + Discussion; M ~2 days; identity CONDITIONAL PASS — dies if panel rules any next-morning surface a tracker) |
 | The Seal That Expires on Its Own Face: every SEALED widget render arms a one-shot AlarmManager self-update at +90 s and at printed end, bounding a dead shield's stale SEALED print to ~90 s (mechanism answering CRITIC-5 charge 6536252752; DURCH-D's lane decides) | INNOVATOR-5 (WING-A) | #155 | PANEL-QUEUED (filed #155 comment 6536557343 + Discussion; S–M ~1 day; consult to DURCH-D) |
+
+| AS-OF stamp on the glance: widget line carries its render instant (`· AS OF HH:mm`), so a stale frame is self-evidently stale even when every refresh trigger fails (process death, standby-bucket deferral, OEM launcher frame caching) — IDEA-G1, Discussion #640 | INNOVATOR-4 (adversary seat, WING-A) | #155 | PANEL-QUEUED (priced S ~0.25 builder-day; consult filed on #155, comment 6536827668) |
+| Until+1 appointment: M4's re-render appointments gain a third firing at printed-until + 1 min, so a SEALED-until sitting in the past is re-examined within a minute of becoming false — IDEA-G2 (delta on THOUGHTFUL-5/IMPROVER-2's M4, credited there), Discussion #640 | INNOVATOR-4 (adversary seat, WING-A) | #155 | PANEL-QUEUED (priced inside M4's ~1 builder-day) |
+
+## The widget as a stamped plate (DESIGNER-E-1, WING-A ideation)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| Stamped-plate widget: one machined plate (rivets, hairline frame, maker's-mark wordmark) whose six states differ only by stamp treatment — struck box SEALED / plain print OPEN / dashed box OPEN-next / alert box UNPROVEN / unboxed ARMING / double-border void box NO READ; full spec on #155 (comment 6536917315), build home = #18 revamp per the END-PHASE park (6525111973) | DESIGNER-E-1 | #155/#18 | PANEL-QUEUED (design filed; builder-complete; price M, 3–4 builder-days) |
+| PRINTED HH:mm honesty line on the tall (3×2) plate: the plate admits when its state was last read — staleness as a printed fact, not a hidden lie (UNPROVEN tall prints LAST PROOF instead) | DESIGNER-E-1 | #155/#18 | PANEL-QUEUED (rides the plate build; alone S, 0.5d) |
+| Glance-tap routing by state: SEALED/UNPROVEN/NO READ → Shield surface, OPEN → Deck (answers park item 3 on #155; notification F5 routing is the precedent) | DESIGNER-E-1 | #155/#18 | PANEL-QUEUED (design ruling for the revamp pass to ratify) |
+| Tier-B rendered-text plate (park's original "rendered-text" form) only if Tier-A @font verification fails on a target launcher; accessibility-gated on the spoken sentence | DESIGNER-E-1 | #155/#18 | PARKED-WITH-REASON (contingent on the Tier-A launcher check; L, 5–8 builder-days if triggered) |
+
+| GlanceInvalidator: one shared invalidation bus for every PUSHED glance surface — flip events + a beat-anchored one-shot self-invalidation alarm (fire at beatWall + 31s, re-arm only on a proven render, stop on first UNPROVEN render) + boot/package-replaced/clock-change refresh — built once for the widget (Step 1 of MAXIMPL-1's #155 ship order, comment 6537078341) and inherited by the dynamic-shortcut label and launcher-icon face instead of each inventing freshness; pull surfaces (QS tile) explicitly excluded, they read WidgetSealTruth at listen time. Generalises IMPROVER-4's widget-only alarm follow-up (6536071074) and INNOVATOR-5's P4 self-recheck (6536557343), with the fire time beat-anchored rather than render-anchored (strictly tighter bound) | MAXIMPL-1 (WING-A) | #155 | PANEL-QUEUED (Step 1 of the filed ship order; phase is dispute D5, captain's call) |
+
+## OEM reality of the glance (MAXIMPL-5, WING-A IDEATION, #155)
+
+Filed on #155 comment 6536721775 (design) + the reseat completion filing; `VERIFIED vs main 30ce1b41423ac656f3493d6963f42af613fbaad2` (widget provider, widget layout/info, boot receiver byte-identical a15d1e56 → 30ce1b4; shield service widget triggers unchanged in substance — 4 `requestUpdate` sites). Full design + bench matrix on #155 and in Discussions. All items are spec for the owning lane, sequenced strictly after PR #540 merges — no parallel build.
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| G1 law — no unbounded, undated widget claim: every frame print carries (i) the bound at which the claim stops applying and (ii) its render time, so a cached frame falsifies itself from the frame alone under force-stop / deep-sleep / autostart-denied regimes where no wake can ever correct it | MAXIMPL-5 | #155 | PANEL-QUEUED (design filed; cure priced S–M for owning lane) |
+| V1 — stopwatch SEALED print gains its seal start: `SEALED • {intention} • STOPWATCH SINCE {HH:mm}` (invents no end; kills the one unbounded print on main, provider :82 at a15d1e56) | MAXIMPL-5 | #155 | PANEL-QUEUED (S, ~0.5 builder-day) |
+| V2 — third widget line `CHECKED {HH:mm}`: absolute render stamp, read against the status-bar clock; NOT a beat-age in seconds. Convergent with Discussion #640's AS-OF stamp (IDEA-G1/G2) — both sources credited, one implementation to be chosen by the owning lane | MAXIMPL-5 + IDEA-G1/G2 (#640) | #155 | PANEL-QUEUED (S, ~0.25 builder-day) |
+| V3 — `initialLayout` static default `OPEN` → `OPEN THE APP TO CHECK` (the provider's own read-failure words): a rebind frame must not assert an unmeasured state (mirror-image lie, R7) | MAXIMPL-5 | #155 | PANEL-QUEUED (S, ~0.25 builder-day) |
+| V4 — boot / package-replaced refreshes the widget: one `MonolithWidgetProvider.requestUpdate` on MonolithBootReceiver's existing tick path (zero widget references on main, grep-verified) | MAXIMPL-5 | #155 | PANEL-QUEUED (S, ~0.25 builder-day) |
+| G3 — standby self-report: PARK/board prints the app's own `UsageStatsManager.getAppStandbyBucket()` in plain words (e.g. `GLANCE MAY FREEZE — PHONE RESTRICTS MONOLITH` when RESTRICTED); zero references in app/src/main on main | MAXIMPL-5 | #155 | PANEL-QUEUED (M, 1 builder-day) |
+| G4 — OEM doors from the glance's side: Samsung Never-sleeping deeplink + Xiaomi Autostart / No-restrictions path, linked from the G3 board line (the exemption *ask* itself stays Scout-2's OemPolicy, #14/#9 — cross-reference, not duplication) | MAXIMPL-5 | #155/#14 | PANEL-QUEUED (M, 1–2 builder-days) |
+| OEM bench matrix as ship-gate for every glance surface: 10 regimes (Doze, RESTRICTED bucket, Battery Saver, process kill, force-stop, OEM sleep lists, Xiaomi autostart-off, launcher rebind, reboot, session-ends-while-frozen) × Pixel/Samsung/Xiaomi, verdicts REPLACED / FALSIFIABLE / LIE, zero LIE cells in tier-1; emulators sign the AOSP row only | MAXIMPL-5 | #155 | PANEL-QUEUED (L, 3–4 days tier-1; tier-2 Oppo/vivo/Realme +2 days) |
+| Killed on the record: widget Chronometer/TextClock for stopwatch seals (ticking manufactures false life beside a dead shield); WorkManager periodic widget refresh (second freshness clock, strictly worse); Glance-API rewrite (same RemoteViews host, zero truth gain) | MAXIMPL-5 | #155 | PARKED-WITH-REASON (reasons stated on #155, comment 6536721775) |
+
+## Zero-screen glances — sound, touch, badge (INNOVATOR-3, WING-A ideation, #155)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| The Pocket Knock: haptic pull-glance — double-knock / volume long-press (a11y key events) / earbud hook asks the shield; it answers SEALED (Seal Throw waveform) / OPEN (single tick) / UNPROVEN (broken descending strikes) from the live witness at query instant; dead shield = silence = not proven | INNOVATOR-3 | #155 | PANEL-QUEUED (M–L, 3–4d; after PR #540; full filing on #155 + Discussion #609) |
+| The Unfinished Chord: earcon twin of the Pocket Knock — UNPROVEN rendered as the seal motif with its final seating strike missing | INNOVATOR-3 | #155 | PANEL-QUEUED (S–M, 1.5–2d on top of the Pocket Knock; never ships alone) |
+| Dot, Not Digits: kill setNumber (DESIGNER-E-5's ruling), move the 45-min completion card to a badge-off channel so the dot tracks the standing card only; badge specced as a pointer, never a claim (launcher-owned rendering stated) | INNOVATOR-3 (builds on DESIGNER-E-5) | #155 | PANEL-QUEUED (S, 0.5–1d; consult to K5/DURCH-D) |
+| The Fallen-Shield Knock: one UNPROVEN-pattern strike on the protecting flip true→false for a live row (witness loss while process lives); process death expressly out of scope | INNOVATOR-3 | #155 | PANEL-QUEUED (M, ~2d; strictly after PR #540's flip machinery) |
+| The Wrist Answer: Wear OS pull-glance in the same three haptic patterns | INNOVATOR-3 | #155 | PARKED-WITH-REASON (pushed watch face re-imports icon-flip staleness; no wear module/bench; unpark only after the pull grammar exists; L, 5d+ if ever) |
+| The Dead-Man's Tick: periodic reassurance buzz while sealed | INNOVATOR-3 | #155 | PARKED-WITH-REASON (killed by the filing seat on both laws: pushed claim can tick over a dead shield; ambient-companion drift + room-law fight; the pull-glance covers the need at zero idle cost) |
+
+## The OPEN face — the glance off-duty (DESIGNER-W-4, #155)
+
+| Idea | Seat | Issue | Disposition |
+|---|---|---|---|
+| The OPEN plate: porcelain, ink, no accent — `OPEN` as headline in the receipt's printed character (ParkDrawer.kt:124: PORCELAIN = OPEN), near-silence as the designed default | DESIGNER-W-4 | #155 | PANEL-QUEUED (filed on #155, comment 6537408254; OPEN state of W-5's GLANCE PLATE) |
+| OPEN-2 gated NEXT SEAL: prints only from the excuse-aware derivation (G7 cure), live + unpaused, within a 12h modesty horizon, static clock time + day word — never a countdown | DESIGNER-W-4 | #155 | PANEL-QUEUED (build M, 2–3 builder-days with B2, after PR #540) |
+| Blank-widget withdrawal RULED REJECTED at every rung: blank is indistinguishable from failure and is a claim by omission; withdrawal of content, never of witness | DESIGNER-W-4 | #155 | ADOPTED (as ruling in the #155 design record; binds E-5's collapse ladder) |
+| Empty-chair rule: OPEN plate keeps the SEALED plate's anatomy with the intention line absent, never prompted — no intention slot, no interrogative/imperative copy between blocks | DESIGNER-W-4 | #155 | PANEL-QUEUED |
+| Conditional AS OF: staleness foot line prints only when the standing read is older than one 30-min cadence (refines MAXIMPL-3 R5 / W-2 for the OPEN state) | DESIGNER-W-4 | #155 | PANEL-QUEUED |
+| No history on the OPEN face: W-2's yesterday-trace line ruled against on this face (sides with W-5 GLANCE-3; the receipt lives in the Ledger) | DESIGNER-W-4 | #155 | PANEL-QUEUED (named disagreement on #155 for the Panel) |
 
 Register note: Wave-3 cell reports are still landing; their seat ideas enter on the next pass. Duplicates are merged with all sources credited; a seat whose idea was merged keeps its credit line.
 

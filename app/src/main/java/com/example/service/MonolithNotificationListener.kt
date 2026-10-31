@@ -348,6 +348,14 @@ class MonolithNotificationListener : NotificationListenerService() {
             // that arrived while the session was running.
             val coveringSession = dao.getSessionCoveringInstant(postTimeMillis) ?: return@launch
 
+            // Audit R6 #340 F68: capturing a notification and
+            // STORING ITS BODY are two different consents. Unless
+            // body consent stands GRANTED, the held copy keeps
+            // sender + title only — the body is blanked at the
+            // capture boundary, never stored-then-hidden.
+            val storedBody =
+                if (dao.getGuardSettingsSnapshot()?.notificationBodyConsent == "GRANTED") text else ""
+
             val appRule = dao.getAllAppsSnapshot().find { it.packageName == pkg }
             // Issue #120: FINANCE is never captured and never
             // cancelled. A bank/UPI/authenticator notification is
@@ -403,7 +411,7 @@ class MonolithNotificationListener : NotificationListenerService() {
                 // is already held — record the tracker and fall
                 // through to the cancel below, but insert nothing.
                 val alreadyHeld = dao.findCapturedNotificationMatching(
-                    pkg, storedTitle, text, postTimeMillis
+                    pkg, storedTitle, storedBody, postTimeMillis
                 ) != null
                 if (!alreadyHeld) {
                     dao.insertCapturedNotification(
@@ -422,7 +430,7 @@ class MonolithNotificationListener : NotificationListenerService() {
                         // the title alone. The old fallback
                         // sentence was invented copy wearing the
                         // sender's name.
-                        messageBody = text
+                        messageBody = storedBody
                         )
                     )
                 }
@@ -434,7 +442,7 @@ class MonolithNotificationListener : NotificationListenerService() {
                             fingerprint = fingerprint,
                             packageName = pkg,
                             senderTitle = storedTitle,
-                            messageBody = text,
+                            messageBody = storedBody,
                             postTimeMillis = postTimeMillis
                         )
                     )
@@ -518,7 +526,10 @@ class MonolithNotificationListener : NotificationListenerService() {
                     fingerprint = NotificationCapturePolicy.contentFingerprint(rawTitle, text),
                     packageName = pkg,
                     senderTitle = rawTitle.ifEmpty { appRule?.appName ?: rawTitle },
-                    messageBody = text,
+                    // F68: match the body AS STORED (blanked
+                    // without body consent), not the raw text.
+                    messageBody =
+                        if (dao.getGuardSettingsSnapshot()?.notificationBodyConsent == "GRANTED") text else "",
                     postTimeMillis = postTimeMillis
                 )
             }

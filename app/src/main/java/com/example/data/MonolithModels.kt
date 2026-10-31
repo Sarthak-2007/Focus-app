@@ -562,6 +562,21 @@ data class FocusSessionEntity(
     val failureCausePackage: String = "",
     val failureCauseKind: String = "",
     val reflectionNote: String = "",
+    // Audit R6 #340 F5/F48 (16→17): the FINISH seal. The arm-time
+    // hmacSignature covers only the session's first five fields;
+    // this second signature is minted at publish time over the
+    // finished receipt's own claims (№, outcome word, arm/end
+    // walls, sealed elapsed, held counts, deflection count,
+    // banked break seconds, gap + break facts) AND over the
+    // previous receipt's finish seal — so the receipts form a
+    // hash chain: editing, reordering or dropping one slip breaks
+    // every later verification loudly. '' = never sealed (every
+    // pre-v17 row, and any row whose publish never ran).
+    val finishSignature: String = "",
+    // The previous receipt's finish seal, embedded in this row's
+    // finish payload at sign time (the chain link itself, kept
+    // on the row so verification needs no ordering assumption).
+    val prevFinishSignature: String = "",
     // Issue #261 (15→16, the mid-block Safe Break door — the
     // transferred W9 DAYLIGHT DS3 finding): a Safe Break entered
     // MID-BLOCK, at the man's tap, instead of only at a block
@@ -883,7 +898,12 @@ object BlockedBrowserDomains {
 /** One user-editable blocked website — the list the browser blocker enforces (Ren). */
 @Entity(tableName = "blocked_sites")
 data class BlockedSiteEntity(
-    @PrimaryKey val domain: String
+    @PrimaryKey val domain: String,
+    // Audit R6 #340 F10 (12→13): where a blocked visit is SENT
+    // instead of dead-ending at BACK + the Airlock wall — a
+    // per-site redirect destination (a full URL the user chose).
+    // '' = no destination: the classic BACK + Airlock stands.
+    val redirectTarget: String = ""
 )
 
 /** A real, persisted routine: a daily window on chosen days that arms a loadout session by itself (Ren). */
@@ -1197,7 +1217,16 @@ data class GuardSettingsEntity(
     // not exist and the sniper fired (or not) on a value no store
     // held. Default true IS the truthful pre-v12 value: the sniper
     // fired unconditionally whenever a session was active.
-    val shortsReelsSniperEnabled: Boolean = true
+    val shortsReelsSniperEnabled: Boolean = true,
+    // Audit R6 #340 F68 (12→13): data consent for OTHER APPS'
+    // notification bodies, kept SEPARATE from the listener grant.
+    // The grant answers "may Monolith hold notifications"; this
+    // answers "may it KEEP the bodies". Values: UNSET / DECLINED /
+    // GRANTED. Anything but GRANTED stores sender-and-app lines
+    // only — the body is blanked at capture, never written — so
+    // the default posture is the private one and keeping bodies
+    // is an explicit, revocable choice of the user's.
+    val notificationBodyConsent: String = "UNSET"
 )
 
 /**

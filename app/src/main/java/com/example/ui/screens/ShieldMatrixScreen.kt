@@ -119,6 +119,11 @@ fun ShieldMatrixScreen(
     loadoutCapIndex: Int = 0,
     isSessionActive: Boolean = false,
     ratchetWarningMessage: String? = null,
+    // Audit R6 #340 F13: the held-save notice — a routine edit that
+    // collided was NOT written, and this banner names the exact
+    // collision until the user dismisses it.
+    routineConflictNotice: String? = null,
+    onDismissRoutineConflictNotice: () -> Unit = {},
     // Issue #141: the staged sled commit + its take-back, rendered
     // as a banner under the ratchet warning while the window lasts.
     tierChangeForUndo: TierChangeForUndo? = null,
@@ -348,6 +353,32 @@ fun ShieldMatrixScreen(
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
                         color = scheme.onBackground
+                    )
+                }
+            }
+        }
+
+        // Audit R6 #340 F13: the held routine save. Same banner
+        // grammar as the ratchet warning; tapping dismisses.
+        // (The issue #141 tier-change banner that also stood here
+        // on this branch lives on main as an extracted component
+        // above — it is NOT duplicated here.)
+        item {
+            AnimatedVisibility(visible = !routineConflictNotice.isNullOrBlank()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(scheme.primaryContainer)
+                        .clickable { onDismissRoutineConflictNotice() }
+                        .padding(12.dp)
+                ) {
+                    Text(
+                        text = routineConflictNotice ?: "",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = TokenColorOnPrimary
                     )
                 }
             }

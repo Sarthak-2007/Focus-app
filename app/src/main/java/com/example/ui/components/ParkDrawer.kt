@@ -633,6 +633,7 @@ fun ParkDrawer(
                                     PermPrint.STALE -> "STALE"
                                     PermPrint.UNPROVED -> "UNPROVED"
                                     PermPrint.MISSING_STALE -> "STALE"
+                                    PermPrint.SWORN -> "SWORN"
                                     PermPrint.UNMEASURED -> null
                                 },
                                 wordIsLack = when (permPrint) {
@@ -687,6 +688,35 @@ fun ParkDrawer(
                             )
                         }
                     }
+                    // Audit R6 #340 F44: the AUTOSTART line — the
+                    // OEM gate no API can measure (autostart /
+                    // background launch / sleeping-apps lists on
+                    // Xiaomi, Oppo, Vivo…). It prints SWORN when
+                    // the user's oath stands and nothing otherwise;
+                    // tapping the unsworn row IS the oath ("I have
+                    // applied it") — there is no settings pane for
+                    // the OS to be sent to, and the word never
+                    // prints GRANTED: testimony is not proof.
+                    ParkBoardRow(
+                        name = WatchItemId.AUTOSTART.boardName,
+                        word = when (
+                            WatchStore.permPrintAt(snapshot, WatchItemId.AUTOSTART, nowMono)
+                        ) {
+                            PermPrint.SWORN -> "SWORN"
+                            else -> null
+                        },
+                        wordIsLack = WatchStore.permPrintAt(
+                            snapshot, WatchItemId.AUTOSTART, nowMono
+                        ) != PermPrint.SWORN,
+                        onClick = {
+                            if (WatchStore.permPrintAt(
+                                    snapshot, WatchItemId.AUTOSTART, nowMono
+                                ) != PermPrint.SWORN
+                            ) {
+                                onFixClick(WatchItemId.AUTOSTART)
+                            }
+                        }
+                    )
                 } else {
                     // Never measured: the board prints its names
                     // only — except the two sled-backed rows
@@ -1261,7 +1291,15 @@ private fun ParkBoardRow(
     name: String,
     word: String?,
     wordIsLack: Boolean,
-    subLine: String? = null
+    // Issue #14 Setup Ledger: an optional second line under the
+    // row (the WAS SET AT SETUP — SINCE LOST print).
+    subLine: String? = null,
+    // Audit R6 #340 F44: exactly one row on the board is tappable —
+    // the AUTOSTART oath row. Every other row stays print, as the
+    // board's law (print and reading, the FIX key the only object)
+    // demands; the oath is a verb no FIX key can perform, since
+    // there is no settings pane to be sent to.
+    onClick: (() -> Unit)? = null
 ) {
     val scheme = MaterialTheme.colorScheme
     Column {
@@ -1269,7 +1307,8 @@ private fun ParkBoardRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp)
-                .semantics(mergeDescendants = true) {},
+                .semantics(mergeDescendants = true) {}
+                .let { if (onClick != null) it.clickable { onClick() } else it },
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(

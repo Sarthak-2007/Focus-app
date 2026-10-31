@@ -5,11 +5,9 @@ import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performTouchInput
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.MonolithDatabase
@@ -35,6 +33,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowLooper
 
 /**
@@ -58,6 +57,19 @@ import org.robolectric.shadows.ShadowLooper
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
+// Test-floor cures (rounds 2+4, proven against run
+// 40994003589's test XMLs): the PARK sleds are raw AndroidViews
+// whose switch fires only on a real MotionEvent ACTION_UP, so the
+// class runs in NATIVE graphics (real interop rendering) and the
+// taps are dispatched straight to the SledSwitchView
+// (tapParkSled). The ViewModel's coroutines — the toggle's Room
+// write, the WatchStore wiring — are driven by waitForIdle inside
+// awaitTrue; wall-clock polling alone left them unadvanced for
+// the full 30 s timeout. And every DB is closed through closeDb,
+// which drains both schedulers first: closing under in-flight
+// coroutines threw pool-closed exceptions that poisoned the next
+// case with UncaughtExceptionsBeforeTest.
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class SoundAndSocialTruthTest {
 
     @get:Rule
@@ -114,7 +126,7 @@ class SoundAndSocialTruthTest {
             )
             assertFalse(vm.soundEngine.soundEnabled)
         } finally {
-            db.close()
+            closeDb(db)
         }
     }
 
@@ -153,7 +165,7 @@ class SoundAndSocialTruthTest {
             assertFalse(vmEngine.soundEnabled)
             assertFalse("PARK's word (the VM flow) must agree", vm.soundEnabled.value)
         } finally {
-            db.close()
+            closeDb(db)
         }
     }
 
@@ -342,7 +354,7 @@ class SoundAndSocialTruthTest {
                     vm.browserUrlBlockerEnabled.value
             }
         } finally {
-            db.close()
+            closeDb(db)
         }
     }
 
@@ -367,19 +379,17 @@ class SoundAndSocialTruthTest {
             composeRule.onNodeWithTag("park_social_sled").assertExists()
             settlePark()
 
-            composeRule.onNodeWithTag("park_social_sled")
-                .performTouchInput { click(center) }
+            tapParkSled()
             awaitTrue("touching the rendered sled writes the stored fact OFF") {
                 !runBlocking { repository.isBrowserBlockerEnabled() }
             }
 
-            composeRule.onNodeWithTag("park_social_sled")
-                .performTouchInput { click(center) }
+            tapParkSled()
             awaitTrue("and a second touch writes it back ON") {
                 runBlocking { repository.isBrowserBlockerEnabled() }
             }
         } finally {
-            db.close()
+            closeDb(db)
         }
     }
 
@@ -420,8 +430,7 @@ class SoundAndSocialTruthTest {
             composeRule.onNodeWithTag("park_social_sled").assertExists()
             composeRule.onNodeWithText("OFF").assertDoesNotExist()
 
-            composeRule.onNodeWithTag("park_social_sled")
-                .performTouchInput { click(center) }
+            tapParkSled()
 
             awaitTrue("the derived board word moves to OFF") {
                 WatchStore.snapshots.value
@@ -434,7 +443,7 @@ class SoundAndSocialTruthTest {
             settlePark()
             composeRule.onNodeWithText("OFF").assertExists()
         } finally {
-            db.close()
+            closeDb(db)
         }
     }
 
@@ -500,14 +509,102 @@ class SoundAndSocialTruthTest {
     /** Poll-with-looper-idle until [condition] holds (the
      *  WatchStoreRobolectricTest idiom: under Robolectric the
      *  looper is parked, so wall-clock polling alone stalls the
-     *  coroutines being awaited). */
+     *  coroutines being awaited).
+     *
+     *  Test-floor cure, round 4 (proven on run 40994003589's test
+     *  XMLs): looper-idle alone does NOT drive the ViewModel's
+     *  coroutines under the Compose test environment — the
+     *  toggle's launched Room write and the VM's WatchStore
+     *  wiring collectors sat unadvanced for the full 30 s while
+     *  the poller slept in wall-clock time, and the failures
+     *  rotated between cases run to run. Driving the compose
+     *  test scheduler (waitForIdle) on every poll advances that
+     *  work deterministically. */
     private fun awaitTrue(what: String, condition: () -> Boolean) {
         val deadline = System.currentTimeMillis() + 30_000L
         while (System.currentTimeMillis() < deadline) {
             if (condition()) return
             ShadowLooper.idleMainLooper()
+            try {
+                composeRule.waitForIdle()
+            } catch (t: Throwable) {
+                // VM-only cases have no composition to idle;
+                // the looper idle above is their driver.
+            }
             Thread.sleep(25L)
         }
         throw AssertionError("Timed out waiting for: $what")
+    }
+
+    /** Test-floor cure, round 4: tap the PARK social sled by
+     *  dispatching real MotionEvents straight to the live
+     *  SledSwitchView. The view's onTouchEvent fires the toggle
+     *  on any ACTION_UP (BlockitSuitcaseAndSwitchesViews.kt:168);
+     *  Compose-test touch injection into the AndroidView interop
+     *  surface proved unreliable in CI, so deliver the events to
+     *  the view itself, on the UI thread, as a finger would. */
+    private fun tapParkSled() {
+        composeRule.onNodeWithTag("park_social_sled").assertExists()
+        var sled: android.view.View? = null
+        composeRule.runOnUiThread {
+            fun find(v: android.view.View) {
+                if (sled != null) return
+                if (v is com.example.ui.views.SledSwitchView) {
+                    sled = v
+                    return
+                }
+                if (v is android.view.ViewGroup) {
+                    for (i in 0 until v.childCount) find(v.getChildAt(i))
+                }
+            }
+            find(composeRule.activity.window.decorView)
+        }
+        val view = sled
+            ?: throw AssertionError("SledSwitchView not found in the PARK hierarchy")
+        val down = SystemClock.uptimeMillis()
+        composeRule.runOnUiThread {
+            val cx = view.width / 2f
+            val cy = view.height / 2f
+            val d = android.view.MotionEvent.obtain(
+                down, down, android.view.MotionEvent.ACTION_DOWN, cx, cy, 0
+            )
+            view.dispatchTouchEvent(d)
+            d.recycle()
+            val u = android.view.MotionEvent.obtain(
+                down, SystemClock.uptimeMillis(),
+                android.view.MotionEvent.ACTION_UP, cx, cy, 0
+            )
+            view.dispatchTouchEvent(u)
+            u.recycle()
+        }
+        ShadowLooper.idleMainLooper()
+        try {
+            composeRule.waitForIdle()
+        } catch (t: Throwable) {
+            // See awaitTrue.
+        }
+    }
+
+    /** Test-floor cure, round 4: drain before closing the DB.
+     *  Run 40994003589's XMLs proved the poison path: a case's
+     *  `finally { db.close() }` landed while its ViewModel's
+     *  coroutines (the init fact-load, the wiring collectors)
+     *  were still in flight; they then hit the closed pool
+     *  (IllegalStateException: connection pool has been closed)
+     *  as UNCAUGHT exceptions and the next case died at birth
+     *  with UncaughtExceptionsBeforeTest. Idling both schedulers
+     *  for a settle window lets the in-flight work finish
+     *  against the live pool before it closes. */
+    private fun closeDb(db: MonolithDatabase) {
+        repeat(40) {
+            ShadowLooper.idleMainLooper()
+            try {
+                composeRule.waitForIdle()
+            } catch (t: Throwable) {
+                // See awaitTrue.
+            }
+            Thread.sleep(25L)
+        }
+        db.close()
     }
 }

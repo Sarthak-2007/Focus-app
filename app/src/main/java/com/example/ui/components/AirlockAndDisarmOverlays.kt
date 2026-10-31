@@ -725,6 +725,27 @@ internal fun airlockCountdownRemaining(
     return (wallSeconds - elapsedSeconds).coerceIn(0, wallSeconds)
 }
 
+/**
+ * Audit R6 #340 F17: the ESCALATING wall. The pre-cure wall was a
+ * fixed 5 seconds for the first reach and the hundredth alike.
+ * The price now doubles per prior reach at the same package
+ * TODAY (the DrawerDay filing day, counted from the persisted
+ * intercept log — so the price survives process death and can
+ * never reset mid-day): 5, 10, 20, 40, 80, then capped at 120.
+ * Locally rendered from the session's own record; no media, no
+ * network, nothing to degrade.
+ */
+internal fun escalatedAirlockWallSeconds(priorReachesToday: Int, baseSeconds: Int = 5): Int {
+    // The base is the configured breath length (issue #318 F4:
+    // AirlockBreathStore, 5 by Decision #16, at most 30); the
+    // ladder doubles FROM it, capped at 120.
+    var wall = baseSeconds.coerceAtLeast(1)
+    repeat(priorReachesToday.coerceIn(0, 10)) {
+        wall = (wall * 2).coerceAtMost(120)
+    }
+    return wall.coerceAtMost(120)
+}
+
 /** Issue #55: whole seconds until [deadlineMillis], ceiling — a
  *  deadline-derived remainder that reaches 0 exactly at the deadline. */
 internal fun cooldownRemainingSeconds(deadlineMillis: Long, nowMillis: Long): Int {
@@ -1188,22 +1209,28 @@ fun AirlockInterceptOverlay(
         // keyed on the intercept INSTANCE (not package+visibility, which
         // a same-package re-intercept left unchanged) and are
         // deadline-derived, so a fresh intercept always restarts the
-        // full 5 seconds and drift can never stretch the wall.
+        // full wall and drift can never stretch it. The wall's LENGTH
+        // is the configured breath (issue #318 F4, [breathSeconds])
+        // escalated per prior reach today (Audit R6 #340 F17): the
+        // ladder doubles from the breath base, capped at 120 —
+        // state.priorReachesToday carries the ViewModel's count.
+        val effectiveWallSeconds =
+            escalatedAirlockWallSeconds(state.priorReachesToday, breathSeconds)
         val wallStartMono = remember(state.interceptInstanceId) {
             state.interceptedAtMonoMillis.takeIf { it > 0L } ?: SystemClock.elapsedRealtime()
         }
         var countdownSecs by remember(state.interceptInstanceId) {
             mutableIntStateOf(
-                airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), breathSeconds)
+                airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), effectiveWallSeconds)
             )
         }
         LaunchedEffect(state.interceptInstanceId, state.isVisible) {
             countdownSecs =
-                airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), breathSeconds)
+                airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), effectiveWallSeconds)
             while (countdownSecs > 0) {
                 delay(200L)
                 countdownSecs =
-                    airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), breathSeconds)
+                    airlockCountdownRemaining(wallStartMono, SystemClock.elapsedRealtime(), effectiveWallSeconds)
             }
         }
 
@@ -1351,7 +1378,10 @@ fun AirlockInterceptOverlay(
                 // counts the pulse). It grants nothing and shortens
                 // nothing; it is the wall's one permitted fidget.
                 Text(
-                    text = if (countdownSecs > 0) String.format(Locale.US, "0%d", countdownSecs) else "00",
+                    // Audit R6 #340 F17: the escalated wall runs to
+                    // 120 — the numeral zero-pads to two, never
+                    // prefixes a fixed "0" onto a 3-digit count.
+                    text = if (countdownSecs > 0) String.format(Locale.US, "%02d", countdownSecs) else "00",
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 88.sp,
